@@ -2182,6 +2182,15 @@ async fn complete_tmux_uncached(
 
         match plan_tmux_retry(&signal, attempt) {
             TmuxRetryPlan::Surface { class, hint } => {
+                let disposition = if class == super::claude_retry::RetryClass::Auth {
+                    super::claude_retry::RetryDisposition::AuthNonRetryable
+                } else {
+                    super::claude_retry::RetryDisposition::Exhausted
+                };
+                permit
+                    .finish_attempt_without_retry(class, disposition)
+                    .await
+                    .context("close final claude_cli retry attempt")?;
                 // Surface. If the pane is dead (SessionCollision), drop +
                 // rotate so the next call respawns cleanly — preserves the
                 // prior PaneDisappeared contract.

@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W217 durable retry visibility (2026-09-22):** classified Claude retry stops
+now carry versioned, content-free receipts in the existing provider terminal.
+Freshly authorized successor intents retain an explicit chain and 1-based
+attempt. Buddy status reads bounded authenticated WAL history and accepts a
+follow-up only in the same session with the immediately succeeding attempt;
+this is lifecycle evidence, not proof of a transport send. Auth and exhausted
+stops remain final. Independent source review passed, including actual permit
+terminal pairing and authenticated readback tests. Four selected regressions
+bring Grouped to 270 and inventory to 531 sources / 813 universal native / 92
+GUI. Fresh Hosted execution remains required. W216 is published at `558163ad`,
+with exact Hosted formatting in `4273f118` and passing Preflight `35777121108`.
+Old full CI `35765595152` is complete: macOS reached its 100-minute compile
+limit while paging, without a Rust diagnostic; its 1.31 GiB partial cache was
+saved. Fresh consolidated native validation remains required. Road counts are
+unchanged. See `docs/gold-wave217-verification.md`; local BSOD hold still applies.
 **W216 Windows regression repair (2026-09-22):** the 14 failures from full CI
 `35765595152` are repaired in source. A real local-model refresh bug erased
 an interrupted operation's uncertainty; refresh now reapplies its exact durable

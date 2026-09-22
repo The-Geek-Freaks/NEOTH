@@ -626,6 +626,9 @@ struct ProviderCallAuditTicket {
     daily_budget_plan: Option<crate::council::daily_budget::DailyBudgetReservationPlan>,
     daily_budget_reservation: Option<crate::council::daily_budget::DailyBudgetReservation>,
     operation_budget_plan: Option<OperationBudgetReservationPlan>,
+    retry_chain_id: Option<String>,
+    retry_attempt: Option<u32>,
+    retry_receipt: Option<super::claude_retry::RetryOperatorReceipt>,
     started: Instant,
 }
 
@@ -662,6 +665,19 @@ impl ProviderCallAuditTicket {
             ("ts_unix".into(), crate::time::now_unix_secs().into()),
         ]);
         add_audit_context(&mut payload, &self.context);
+        if let Some(retry_chain_id) = &self.retry_chain_id {
+            payload.insert("retry_chain_id".into(), retry_chain_id.clone().into());
+        }
+        if let Some(retry_attempt) = self.retry_attempt {
+            payload.insert("retry_attempt".into(), retry_attempt.into());
+        }
+        if let Some(retry_receipt) = &self.retry_receipt {
+            payload.insert(
+                "retry_receipt".into(),
+                serde_json::to_value(retry_receipt)
+                    .expect("typed retry receipt serializes into provider lifecycle"),
+            );
+        }
         if let Some(decision) = &self.role_dispatch {
             payload.insert("hemisphere_role".into(), decision.role.as_str().into());
             payload.insert(
@@ -1201,6 +1217,11 @@ impl Drop for ProviderIntentLifecycle {
 }
 
 impl AuthorizedLeafCall {
+    pub(crate) fn set_retry_provenance(&mut self, retry_chain_id: String, retry_attempt: u32) {
+        self.ticket.retry_chain_id = Some(retry_chain_id);
+        self.ticket.retry_attempt = Some(retry_attempt);
+    }
+
     pub(crate) fn take_role_dispatch(
         &mut self,
     ) -> Option<crate::config::role_policy::RoleDispatchDecision> {
@@ -1293,6 +1314,21 @@ pub(crate) struct ProviderCallAuditGuard {
 }
 
 impl ProviderCallAuditGuard {
+    pub(crate) fn retry_chain_id(&self) -> Option<String> {
+        self.ticket
+            .as_ref()
+            .map(|ticket| ticket.invocation_id.clone())
+    }
+
+    pub(crate) fn attach_retry_receipt(
+        &mut self,
+        receipt: super::claude_retry::RetryOperatorReceipt,
+    ) {
+        if let Some(ticket) = self.ticket.as_mut() {
+            ticket.retry_receipt = Some(receipt);
+        }
+    }
+
     fn elapsed_ns(ticket: &ProviderCallAuditTicket) -> u64 {
         u64::try_from(ticket.started.elapsed().as_nanos()).unwrap_or(u64::MAX)
     }
@@ -2541,6 +2577,9 @@ impl ProviderCallAuthorizer {
                     daily_budget_plan,
                     daily_budget_reservation: None,
                     operation_budget_plan,
+                    retry_chain_id: None,
+                    retry_attempt: None,
+                    retry_receipt: None,
                     started: Instant::now(),
                 },
             });
@@ -2738,6 +2777,9 @@ impl ProviderCallAuthorizer {
                 daily_budget_plan,
                 daily_budget_reservation: None,
                 operation_budget_plan,
+                retry_chain_id: None,
+                retry_attempt: None,
+                retry_receipt: None,
                 started: Instant::now(),
             },
         })
@@ -3918,6 +3960,35 @@ mod tests {
         attempt_closed: tokio::sync::Notify,
     }
 
+    struct FinalRetryProvider {
+        class: super::claude_retry::RetryClass,
+        disposition: super::claude_retry::RetryDisposition,
+        attempts: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for FinalRetryProvider {
+        fn name(&self) -> &'static str {
+            "local_ollama"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("qwen-final-retry-test")
+        }
+
+        async fn complete_raw(
+            &self,
+            _req: Request,
+            permit: &ProviderDispatchPermit,
+        ) -> Result<Completion> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            permit
+                .finish_attempt_without_retry(self.class, self.disposition)
+                .await?;
+            anyhow::bail!("final retry outcome surfaced after typed terminal")
+        }
+    }
+
     #[async_trait]
     impl Provider for BackoffCancellationProvider {
         fn name(&self) -> &'static str {
@@ -4034,6 +4105,21 @@ mod tests {
             ]
         );
         assert_eq!(frames[1].1["error_kind"], "provider_retry_empty_stdout");
+        assert_eq!(
+            frames[1].1["retry_receipt"]["schema"],
+            "neoth.retry-receipt.v1"
+        );
+        assert_eq!(
+            frames[1].1["retry_receipt"]["disposition"],
+            "retry_intent_closed"
+        );
+        assert_eq!(frames[1].1["retry_receipt"]["attempt"], 1);
+        assert_eq!(
+            frames[2].1["retry_chain_id"],
+            frames[1].1["retry_receipt"]["retry_chain_id"],
+            "the re-authorized 0x20 carries the explicit retry chain"
+        );
+        assert_eq!(frames[2].1["retry_attempt"], 2);
     }
 
     #[tokio::test]
@@ -4081,6 +4167,84 @@ mod tests {
                 .all(|frame| frame.1["error_kind"] != "provider_call_failed"),
             "the outer boundary must not append a duplicate terminal"
         );
+    }
+
+    #[tokio::test]
+    async fn final_retry_receipts_close_once_and_buddy_never_marks_them_followed_up() {
+        for (class, disposition, expected_class, expected_disposition) in [
+            (
+                super::claude_retry::RetryClass::Auth,
+                super::claude_retry::RetryDisposition::AuthNonRetryable,
+                "auth",
+                "auth_non_retryable",
+            ),
+            (
+                super::claude_retry::RetryClass::Transient,
+                super::claude_retry::RetryDisposition::Exhausted,
+                "transient",
+                "exhausted",
+            ),
+        ] {
+            let home = tempfile::tempdir().expect("test home");
+            let wal = home.path().join("wal");
+            std::fs::create_dir_all(&wal).expect("create test WAL directory");
+            let segment = wal.join("000001.wal");
+            let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
+                segment.clone(),
+                home.path().to_path_buf(),
+            )
+            .expect("spawn authenticated home WAL writer");
+            ready.wait().await.expect("ready authenticated home WAL writer");
+            let inner = FinalRetryProvider {
+                class,
+                disposition,
+                attempts: AtomicUsize::new(0),
+            };
+            let provider = CostAuthorizingProvider::new(
+                &inner,
+                ProviderCallAuthorizer::fail_closed(
+                    AutonomyLevel::Strict,
+                    Some(writer.clone()),
+                    test_input_token_cap(),
+                ),
+                None,
+                "test.final_retry_receipt",
+            );
+            provider
+                .complete(Request::default())
+                .await
+                .expect_err("final retry outcome surfaces after closing its terminal");
+            assert_eq!(inner.attempts.load(Ordering::SeqCst), 1);
+            drop(provider);
+            drop(writer);
+            join.await.expect("writer join").expect("writer completion");
+
+            let frames = wal_frames(&segment);
+            let lifecycle = frames
+                .iter()
+                .filter(|frame| {
+                    matches!(
+                        frame.0,
+                        crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST
+                            | crate::wal::events::EVENT_TYPE_PROVIDER_ERROR
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(lifecycle.len(), 2, "one 0x20 pairs with exactly one 0x22");
+            assert_eq!(lifecycle[0].0, crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST);
+            assert_eq!(lifecycle[1].0, crate::wal::events::EVENT_TYPE_PROVIDER_ERROR);
+            let receipt = &lifecycle[1].1["retry_receipt"];
+            assert_eq!(receipt["class"], expected_class);
+            assert_eq!(receipt["disposition"], expected_disposition);
+            assert_eq!(receipt["attempt"], 1);
+            assert_eq!(receipt["provider"], "local_ollama");
+            assert_eq!(receipt["wire_model"], "qwen-final-retry-test");
+
+            let history = super::claude_retry::retry_operator_history(home.path());
+            let rows = history["receipts"].as_array().expect("Buddy receipt rows");
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0]["follow_up_lifecycle"], "not_observed");
+        }
     }
 
     #[tokio::test]

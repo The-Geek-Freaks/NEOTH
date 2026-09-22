@@ -418,6 +418,7 @@ async fn run_status(output: OutputFormat) -> Result<()> {
     let vault_mirror =
         crate::cli::backup::mirror_status_wire(&vault_mirror::status(&home, &cfg.vault_mirror));
     let local_models = buddy_local_models_status(&home).await;
+    let provider_retry = crate::providers::claude_retry::retry_operator_history(&home);
     let self_improve_quality = passive::quality_snapshot(&home);
     let path = FreedomConfig::default_path();
     let mut skill_autonomy_caps = Vec::new();
@@ -450,6 +451,7 @@ async fn run_status(output: OutputFormat) -> Result<()> {
                     "self_improve_quality": self_improve_quality,
                     "vault_mirror": vault_mirror,
                     "local_models": local_models,
+                    "provider_retry": provider_retry,
                 })
             );
         }
@@ -475,6 +477,7 @@ async fn run_status(output: OutputFormat) -> Result<()> {
             );
             println!("vault_mirror            : {}", vault_mirror);
             println!("local_models            : {}", local_models);
+            println!("provider_retry          : {}", provider_retry);
         }
     }
     Ok(())

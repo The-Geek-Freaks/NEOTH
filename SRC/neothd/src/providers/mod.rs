@@ -1500,6 +1500,14 @@ impl ProviderRetryReason {
             Self::Transient => "provider_retry_transient",
         }
     }
+
+    fn retry_class(self) -> claude_retry::RetryClass {
+        match self {
+            Self::EmptyStdout => claude_retry::RetryClass::EmptyStdout,
+            Self::SessionCollision => claude_retry::RetryClass::SessionCollision,
+            Self::Transient => claude_retry::RetryClass::Transient,
+        }
+    }
 }
 
 /// W41 identifies a real outbound action, not an enclosing provider route.
@@ -1763,6 +1771,8 @@ pub struct ProviderDispatchPermit {
     audit: tokio::sync::Mutex<ProviderDispatchAuditState>,
     effect: std::sync::Mutex<Option<ProviderEffectContext>>,
     role_dispatch: Arc<std::sync::Mutex<Option<crate::config::role_policy::RoleDispatchDecision>>>,
+    retry_chain_id: std::sync::Mutex<Option<String>>,
+    retry_attempt: std::sync::Mutex<u32>,
     _private: (),
 }
 
@@ -1799,6 +1809,8 @@ impl ProviderDispatchPermit {
             audit: tokio::sync::Mutex::new(ProviderDispatchAuditState::Active(Box::new(audit))),
             effect: std::sync::Mutex::new(effect),
             role_dispatch,
+            retry_chain_id: std::sync::Mutex::new(None),
+            retry_attempt: std::sync::Mutex::new(0),
             _private: (),
         }
     }
@@ -1823,6 +1835,8 @@ impl ProviderDispatchPermit {
             audit: tokio::sync::Mutex::new(ProviderDispatchAuditState::TransportOnly),
             effect: std::sync::Mutex::new(effect),
             role_dispatch,
+            retry_chain_id: std::sync::Mutex::new(None),
+            retry_attempt: std::sync::Mutex::new(0),
             _private: (),
         }
     }
@@ -1993,6 +2007,48 @@ impl ProviderDispatchPermit {
         Err(error)
     }
 
+    fn retry_receipt(
+        &self,
+        audit: &cost_authorization::ProviderCallAuditGuard,
+        class: claude_retry::RetryClass,
+        disposition: claude_retry::RetryDisposition,
+    ) -> Result<claude_retry::RetryOperatorReceipt> {
+        let retry_chain_id = {
+            let mut chain = self
+                .retry_chain_id
+                .lock()
+                .map_err(|_| anyhow::anyhow!("provider retry chain state is poisoned"))?;
+            if chain.is_none() {
+                *chain = audit.retry_chain_id();
+            }
+            chain
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("active provider audit lacks a retry-chain id"))?
+        };
+        let attempt = {
+            let mut attempt = self
+                .retry_attempt
+                .lock()
+                .map_err(|_| anyhow::anyhow!("provider retry attempt state is poisoned"))?;
+            *attempt = attempt.saturating_add(1);
+            *attempt
+        };
+        let retry = self.retry.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("dispatch permit does not carry retry receipt context")
+        })?;
+        let wire_model = retry.req.model.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("provider retry receipt requires the final wire model")
+        })?;
+        Ok(claude_retry::RetryOperatorReceipt::new(
+            retry_chain_id,
+            class,
+            attempt,
+            retry.provider,
+            wire_model,
+            disposition,
+        ))
+    }
+
     /// Close the current leaf before any retry backoff or session repair. A
     /// cancellation while waiting therefore leaves one paired lifecycle and
     /// no phantom authorization for an attempt that never sent.
@@ -2000,6 +2056,12 @@ impl ProviderDispatchPermit {
         let mut state = self.audit.lock().await;
         match &mut *state {
             ProviderDispatchAuditState::Active(audit) => {
+                let receipt = self.retry_receipt(
+                    audit,
+                    reason.retry_class(),
+                    claude_retry::RetryDisposition::RetryIntentClosed,
+                )?;
+                audit.attach_retry_receipt(receipt);
                 let result = audit.failure(reason.terminal_kind()).await;
                 *state = ProviderDispatchAuditState::BetweenAttempts;
                 result
@@ -2012,6 +2074,33 @@ impl ProviderDispatchPermit {
             }
             ProviderDispatchAuditState::TransportOnly => {
                 anyhow::bail!("transport-only dispatch permits cannot authorize retries")
+            }
+        }
+    }
+
+    /// Close a classified failed attempt that will not schedule another send.
+    /// Its receipt is written through the existing provider terminal, so this
+    /// does not create a second WAL event or claim a later authorization.
+    pub(crate) async fn finish_attempt_without_retry(
+        &self,
+        class: claude_retry::RetryClass,
+        disposition: claude_retry::RetryDisposition,
+    ) -> Result<()> {
+        let mut state = self.audit.lock().await;
+        match &mut *state {
+            ProviderDispatchAuditState::Active(audit) => {
+                let receipt = self.retry_receipt(audit, class, disposition)?;
+                audit.attach_retry_receipt(receipt);
+                let result = audit.failure("provider_retry_stopped").await;
+                *state = ProviderDispatchAuditState::Closed;
+                result
+            }
+            ProviderDispatchAuditState::BetweenAttempts => {
+                anyhow::bail!("provider retry terminal requested between attempts")
+            }
+            ProviderDispatchAuditState::Closed => Ok(()),
+            ProviderDispatchAuditState::TransportOnly => {
+                anyhow::bail!("transport-only dispatch permits cannot write retry receipts")
             }
         }
     }
@@ -2038,6 +2127,19 @@ impl ProviderDispatchPermit {
                 retry.output_token_ceiling,
             )
             .await?;
+        let retry_chain_id = self
+            .retry_chain_id
+            .lock()
+            .map_err(|_| anyhow::anyhow!("provider retry chain state is poisoned"))?
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("provider retry authorization lacks a retry chain"))?;
+        let retry_attempt = self
+            .retry_attempt
+            .lock()
+            .map_err(|_| anyhow::anyhow!("provider retry attempt state is poisoned"))?
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("provider retry attempt overflow"))?;
+        authorized.set_retry_provenance(retry_chain_id, retry_attempt);
         let role_dispatch = authorized.take_role_dispatch();
         let provider_subject = authorized.take_provider_subject();
         let effect = authorized.effect_context();

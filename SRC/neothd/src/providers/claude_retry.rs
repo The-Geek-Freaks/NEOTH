@@ -28,12 +28,155 @@
 //! `claude_cli::plan_tmux_retry` consumes the classifier and turns each
 //! decision into the live tmux retry/reset plan.
 
+use std::path::Path;
 use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+
+/// Stable, content-free operator receipt embedded in the existing provider
+/// lifecycle terminal. The retry chain is explicit so a read-only WAL consumer
+/// never guesses that two equal prompts belong to the same retry.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct RetryOperatorReceipt {
+    pub schema: String,
+    pub retry_chain_id: String,
+    pub class: RetryClass,
+    pub attempt: u32,
+    pub provider: String,
+    pub wire_model: String,
+    pub disposition: RetryDisposition,
+}
+
+impl RetryOperatorReceipt {
+    pub(crate) fn new(
+        retry_chain_id: String,
+        class: RetryClass,
+        attempt: u32,
+        provider: impl Into<String>,
+        wire_model: impl Into<String>,
+        disposition: RetryDisposition,
+    ) -> Self {
+        Self {
+            schema: "neoth.retry-receipt.v1".to_owned(),
+            retry_chain_id,
+            class,
+            attempt,
+            provider: provider.into(),
+            wire_model: wire_model.into(),
+            disposition,
+        }
+    }
+}
+
+/// A confirmed lifecycle fact, never a prediction that a later send occurred.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RetryDisposition {
+    RetryIntentClosed,
+    Exhausted,
+    AuthNonRetryable,
+}
+
+const RETRY_HISTORY_MAX_ENTRIES: usize = 16;
+const RETRY_HISTORY_MAX_FIELD_BYTES: usize = 128;
+const RETRY_HISTORY_MAX_OUTPUT_BYTES: usize = 16 * 1024;
+const RETRY_HISTORY_SCAN_LIMITS: crate::wal::scan::HomeWalScanLimits =
+    crate::wal::scan::HomeWalScanLimits {
+        max_directory_entries: 64,
+        max_segments: 32,
+        max_segment_physical_bytes: 512 * 1024,
+        max_total_physical_bytes: 4 * 1024 * 1024,
+        max_segment_logical_bytes: 1024 * 1024,
+        max_total_logical_bytes: 8 * 1024 * 1024,
+    };
+
+/// Bounded, passive Buddy projection. It reads only the authenticated WAL
+/// prefix and reports a later lifecycle intent as observed, never as a raw
+/// provider send.
+pub(crate) fn retry_operator_history(home: &Path) -> Value {
+    let mut receipts = Vec::new();
+    let scan = crate::wal::scan::for_each_authenticated_prefix_frame_at_home(
+        home,
+        RETRY_HISTORY_SCAN_LIMITS,
+        |_, frame| {
+            let Ok(payload) = serde_json::from_slice::<Value>(frame.payload) else {
+                return Ok(());
+            };
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_ERROR
+                && let Some(receipt) = payload
+                    .get("retry_receipt")
+                    .cloned()
+                    .and_then(|value| serde_json::from_value::<RetryOperatorReceipt>(value).ok())
+                && valid_retry_receipt(&receipt)
+            {
+                let session = frame.header.session_id.opaque_hex();
+                receipts.retain(|entry: &RetryHistoryEntry| {
+                    entry.receipt.retry_chain_id != receipt.retry_chain_id || entry.session != session
+                });
+                if receipts.len() == RETRY_HISTORY_MAX_ENTRIES {
+                    receipts.remove(0);
+                }
+                receipts.push(RetryHistoryEntry {
+                    receipt,
+                    session,
+                    follow_up_lifecycle: "not_observed",
+                });
+            }
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST
+                && let Some(retry_chain_id) = payload.get("retry_chain_id").and_then(Value::as_str)
+                && let Some(retry_attempt) = payload.get("retry_attempt").and_then(Value::as_u64)
+                && let Some(entry) = receipts.iter_mut().rev().find(|entry| {
+                    entry.receipt.retry_chain_id == retry_chain_id
+                        && entry.session == frame.header.session_id.opaque_hex()
+                        && entry.receipt.disposition == RetryDisposition::RetryIntentClosed
+                        && retry_attempt == u64::from(entry.receipt.attempt).saturating_add(1)
+                })
+            {
+                entry.follow_up_lifecycle = "observed";
+            }
+            Ok(())
+        },
+    );
+    match scan {
+        Ok(scan) => {
+            let value = json!({
+                "kind": "available",
+                "authenticated_complete": scan.complete,
+                "receipts": receipts.into_iter().rev().collect::<Vec<_>>(),
+            });
+            match serde_json::to_vec(&value) {
+                Ok(encoded) if encoded.len() <= RETRY_HISTORY_MAX_OUTPUT_BYTES => value,
+                _ => json!({"kind": "unavailable"}),
+            }
+        }
+        Err(_) => json!({"kind": "unavailable"}),
+    }
+}
+
+fn valid_retry_receipt(receipt: &RetryOperatorReceipt) -> bool {
+    receipt.schema == "neoth.retry-receipt.v1"
+        && receipt.attempt != 0
+        && !receipt.retry_chain_id.is_empty()
+        && !receipt.provider.is_empty()
+        && !receipt.wire_model.is_empty()
+        && receipt.retry_chain_id.len() <= RETRY_HISTORY_MAX_FIELD_BYTES
+        && receipt.provider.len() <= RETRY_HISTORY_MAX_FIELD_BYTES
+        && receipt.wire_model.len() <= RETRY_HISTORY_MAX_FIELD_BYTES
+}
+
+#[derive(Serialize)]
+struct RetryHistoryEntry {
+    receipt: RetryOperatorReceipt,
+    session: String,
+    follow_up_lifecycle: &'static str,
+}
 
 /// One of four retry classes covering every observed claude-cli
 /// failure mode. Pinned exhaustively — adding a fifth class is an
 /// architecture change, not a quick fix.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RetryClass {
     /// Network / rate-limit / 5xx upstream. Retry with backoff.
     Transient,
@@ -211,6 +354,40 @@ fn is_empty_stdout_signal(signal: &FailureSignal<'_>) -> bool {
 mod tests {
     use super::*;
 
+    async fn append_authenticated_retry_frame(
+        writer: &crate::wal::writer::WalWriterHandle,
+        event_type: u8,
+        session: crate::wal::WalSessionContext,
+        payload: Value,
+    ) {
+        let payload = serde_json::to_vec(&payload).expect("encode retry WAL fixture");
+        writer
+            .append_authenticated(
+                crate::wal::HeaderBuilder::new(event_type, &payload)
+                    .session_context(Some(session))
+                    .build(),
+                payload,
+            )
+            .await
+            .expect("append authenticated retry WAL fixture");
+    }
+
+    fn receipt_value(
+        chain: &str,
+        attempt: u32,
+        disposition: RetryDisposition,
+    ) -> Value {
+        serde_json::to_value(RetryOperatorReceipt::new(
+            chain.to_owned(),
+            RetryClass::Transient,
+            attempt,
+            "claude_cli",
+            "claude-3-7-sonnet",
+            disposition,
+        ))
+        .expect("serialize retry receipt fixture")
+    }
+
     fn sig(
         exit: Option<i32>,
         stdout: &'static str,
@@ -375,5 +552,165 @@ mod tests {
         assert_eq!(RetryClass::SessionCollision.as_str(), "session_collision");
         assert_eq!(RetryClass::EmptyStdout.as_str(), "empty_stdout");
         assert_eq!(RetryClass::Auth.as_str(), "auth");
+    }
+
+    #[test]
+    fn retry_receipt_wire_is_versioned_and_content_free() {
+        let receipt = RetryOperatorReceipt::new(
+            "invocation-opaque-1".to_owned(),
+            RetryClass::Transient,
+            2,
+            "claude_cli",
+            "claude-3-7-sonnet",
+            RetryDisposition::Exhausted,
+        );
+        let wire = serde_json::to_value(&receipt).expect("retry receipt serializes");
+        assert_eq!(wire["schema"], "neoth.retry-receipt.v1");
+        assert_eq!(wire["class"], "transient");
+        assert_eq!(wire["attempt"], 2);
+        assert_eq!(wire["provider"], "claude_cli");
+        assert_eq!(wire["wire_model"], "claude-3-7-sonnet");
+        assert_eq!(wire["disposition"], "exhausted");
+        assert!(wire.get("prompt").is_none());
+        assert!(wire.get("error").is_none());
+    }
+
+    #[tokio::test]
+    async fn authenticated_retry_history_requires_same_session_next_attempt_and_valid_receipt() {
+        let home = tempfile::tempdir().expect("test home");
+        let wal = home.path().join("wal");
+        let segment = wal.join("000001.wal");
+        std::fs::create_dir_all(&wal).expect("create WAL directory");
+        let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
+            segment.clone(),
+            home.path().to_path_buf(),
+        )
+        .expect("spawn authenticated WAL writer");
+        ready.wait().await.expect("ready authenticated WAL writer");
+        let session_a = crate::wal::WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"test\0retry-history\0session-a",
+        )
+        .expect("session a");
+        let session_b = crate::wal::WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"test\0retry-history\0session-b",
+        )
+        .expect("session b");
+
+        // This request predates its receipt in authenticated frame order.
+        append_authenticated_retry_frame(
+            &writer,
+            crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+            session_a,
+            serde_json::json!({"retry_chain_id":"earlier-request", "retry_attempt":2}),
+        )
+        .await;
+
+        for (chain, attempt, disposition, session) in [
+            ("valid", 1, RetryDisposition::RetryIntentClosed, session_a),
+            ("cross-session", 1, RetryDisposition::RetryIntentClosed, session_a),
+            ("earlier-request", 1, RetryDisposition::RetryIntentClosed, session_a),
+            ("wrong-attempt", 1, RetryDisposition::RetryIntentClosed, session_a),
+            ("exhausted", 1, RetryDisposition::Exhausted, session_a),
+            ("shared-chain", 1, RetryDisposition::RetryIntentClosed, session_a),
+        ] {
+            append_authenticated_retry_frame(
+                &writer,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+                session,
+                serde_json::json!({"retry_receipt": receipt_value(chain, attempt, disposition)}),
+            )
+            .await;
+        }
+        append_authenticated_retry_frame(
+            &writer,
+            crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+            session_b,
+            serde_json::json!({"retry_receipt": receipt_value("shared-chain", 1, RetryDisposition::RetryIntentClosed)}),
+        )
+        .await;
+        append_authenticated_retry_frame(
+            &writer,
+            crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+            session_a,
+            serde_json::json!({"retry_chain_id":"valid", "retry_attempt":2}),
+        )
+        .await;
+        append_authenticated_retry_frame(
+            &writer,
+            crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+            session_b,
+            serde_json::json!({"retry_chain_id":"shared-chain", "retry_attempt":2}),
+        )
+        .await;
+        append_authenticated_retry_frame(
+            &writer,
+            crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+            session_b,
+            serde_json::json!({"retry_chain_id":"cross-session", "retry_attempt":2}),
+        )
+        .await;
+        append_authenticated_retry_frame(
+            &writer,
+            crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+            session_a,
+            serde_json::json!({"retry_chain_id":"wrong-attempt", "retry_attempt":3}),
+        )
+        .await;
+        append_authenticated_retry_frame(
+            &writer,
+            crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+            session_a,
+            serde_json::json!({"retry_chain_id":"exhausted", "retry_attempt":2}),
+        )
+        .await;
+        append_authenticated_retry_frame(
+            &writer,
+            crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+            session_a,
+            serde_json::json!({"retry_receipt": {"schema":"wrong", "attempt":0, "prompt":"must-not-project"}}),
+        )
+        .await;
+
+        // Drain the producer before reading, then add a torn tail. The reader
+        // must retain only the authenticated prefix and create no files.
+        drop(writer);
+        join.await.expect("writer join").expect("writer completion");
+        use std::io::Write as _;
+        let mut tail = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&segment)
+            .expect("open sealed test WAL for torn tail");
+        tail.write_all(b"raw-error-secret")
+            .expect("append truncated tail bytes");
+        tail.sync_all().expect("sync truncated tail bytes");
+
+        let history = retry_operator_history(home.path());
+        let rows = history["receipts"].as_array().expect("receipt rows");
+        assert_eq!(rows.len(), 7, "malformed receipts and live tails stay absent");
+        let valid = rows
+            .iter()
+            .find(|row| row["receipt"]["retry_chain_id"] == "valid")
+            .expect("valid receipt row");
+        assert_eq!(valid["follow_up_lifecycle"], "observed");
+        for chain in ["cross-session", "earlier-request", "wrong-attempt", "exhausted"] {
+            let row = rows
+                .iter()
+                .find(|row| row["receipt"]["retry_chain_id"] == chain)
+                .expect("expected valid receipt row");
+            assert_eq!(row["follow_up_lifecycle"], "not_observed");
+        }
+        let shared = rows
+            .iter()
+            .filter(|row| row["receipt"]["retry_chain_id"] == "shared-chain")
+            .collect::<Vec<_>>();
+        assert_eq!(shared.len(), 2, "same retry chain is isolated by session");
+        assert!(shared.iter().any(|row| row["follow_up_lifecycle"] == "observed"));
+        assert!(shared.iter().any(|row| row["follow_up_lifecycle"] == "not_observed"));
+        let rendered = serde_json::to_string(&history).expect("render history");
+        assert!(!rendered.contains("raw-error-secret"));
+        assert!(!rendered.contains("must-not-project"));
+        assert_eq!(history["authenticated_complete"], false);
     }
 }
