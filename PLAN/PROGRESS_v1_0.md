@@ -20,6 +20,11 @@ supply-input run `35694695810` on `87c18246` succeeded with the exact reviewed
 source commit and three local dependency inputs match. Native dependency/model
 integration, desktop feature selection and audio behavior remain pending.
 
+W185 Preflight `35695006344` passed Rust formatting and locked metadata, then
+caught a macOS fixture array declaring 23 entries while containing 24. Its
+length is corrected to 24; every registered test identity is preserved. Fresh
+Hosted contracts and native execution remain required.
+
 **W184 validation boundary:** full CI `35677727994` on `a130526e` completed
 with failures: five Linux lint diagnostics (source-repaired in W185), 20 distinct
 Windows test failures and 21 macOS test failures. The test failures are grouped

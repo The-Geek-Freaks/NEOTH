@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W185-local-model-operations",
-  "base": "87c182466b9f3cd0c96fa77062a69c036b8d96b5",
-  "capturedUtc": "2026-09-22T06:26:52.0532576Z",
-  "validationStatus": "W185_HOSTED_FORMAT_AND_CORE_REPAIRS_PENDING_RECHECK",
+  "base": "66685f0fdd38e1d6aa8bfee4280f8ef76fc67b6e",
+  "capturedUtc": "2026-09-22T06:29:27.4643734Z",
+  "validationStatus": "W185_HOSTED_MACOS_HARNESS_COUNT_REPAIRED_PENDING_RECHECK",
   "scopeNote": "150 unique Hosted formatting hunks plus four core compiler repairs; native/GUI behavior still pending. Historical freeze objects preserved; W186 product code excluded.",
   "files": [
     {
@@ -474,7 +474,7 @@
     {
       "path": "SRC/neothd-gui/src/main.rs",
       "bytes": 2070592,
-      "sha256": "5CAF78DEE710E8930D200300BCB907572DCB12F95DB73F7F0514DE232803418A"
+      "sha256": "3C970F2AD60F6D195F789DBAA013F9BB071F82704CB827949C01F140E007BB03"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",

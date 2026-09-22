@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W185_HOSTED_FORMAT_AND_CORE_REPAIRS_PENDING_RECHECK",
-  "base": "87c182466b9f3cd0c96fa77062a69c036b8d96b5",
+  "status": "W185_HOSTED_MACOS_HARNESS_COUNT_REPAIRED_PENDING_RECHECK",
+  "base": "66685f0fdd38e1d6aa8bfee4280f8ef76fc67b6e",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 74522,
-    "sha256": "54365A8B792470AD1D409F58070300F4B8C121741F47D7CB904B528E1D4C4D36"
+    "bytes": 74527,
+    "sha256": "610365C08E697F1EF0825AA87AA72402B127A28FFDB0C730114753612D2DA236"
   },
   "sourceInputs": 432,
   "requiredNativeTests": [
@@ -3766,7 +3766,7 @@
     {
       "path": "SRC/neothd-gui/src/main.rs",
       "bytes": 2070592,
-      "sha256": "5CAF78DEE710E8930D200300BCB907572DCB12F95DB73F7F0514DE232803418A"
+      "sha256": "3C970F2AD60F6D195F789DBAA013F9BB071F82704CB827949C01F140E007BB03"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -7860,5 +7860,16 @@
     "path": "SRC/neothd/src/daemon/local_models/tests.rs",
     "sha256": "ACECB61545DF4B29A4CA53F2093D0F9D94584BD8E4DF51BF34B2BE3C982016A2",
     "status": "Exact Hosted follow-up imported; source core35694693234 still running"
+  },
+  "wave185MacosCountRepair": {
+    "source": "66685f0fdd38e1d6aa8bfee4280f8ef76fc67b6e",
+    "run": 35695006344,
+    "format": "passed",
+    "metadata": "passed",
+    "contractFailure": "declared macOS harness array length23 differs from24 registered tests",
+    "repair": "constant length24; all identities retained",
+    "path": "SRC/neothd-gui/src/main.rs",
+    "sha256": "3C970F2AD60F6D195F789DBAA013F9BB071F82704CB827949C01F140E007BB03",
+    "status": "Fresh Hosted contract check pending"
   }
 }
