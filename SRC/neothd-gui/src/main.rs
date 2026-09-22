@@ -21789,7 +21789,7 @@ fn fetch_buddy_status() -> std::result::Result<panel_logic::BuddyStatusSnap, Str
 fn apply_buddy_vault_mirror(window: &MainWindow, mirror: &panel_logic::BuddyVaultMirrorSnap) {
     window.set_bc_vault_mirror_config(mirror.config.as_str().into());
     window.set_bc_vault_mirror_phase(mirror.phase.as_str().into());
-    window.set_bc_vault_mirror_repair(mirror.repair.as_str().into());
+    window.set_bc_vault_mirror_repair_state(mirror.repair.as_str().into());
     window.set_bc_vault_mirror_repair_available(mirror.repair_available);
     window.set_bc_vault_mirror_archive_prefix(
         mirror

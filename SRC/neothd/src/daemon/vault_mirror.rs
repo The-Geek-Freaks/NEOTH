@@ -1182,7 +1182,10 @@ fn config_fingerprint(config: &VaultMirrorConfig) -> String {
 }
 fn redact_remote(value: &str) -> String {
     if let Some((scheme, rest)) = value.split_once("://") {
-        format!("{scheme}://{}", rest.split('@').next_back().unwrap_or_default())
+        format!(
+            "{scheme}://{}",
+            rest.split('@').next_back().unwrap_or_default()
+        )
     } else {
         value.to_string()
     }

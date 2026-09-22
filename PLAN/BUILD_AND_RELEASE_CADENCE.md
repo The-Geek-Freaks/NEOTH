@@ -386,3 +386,10 @@ CLI compilation in 35675458308. Import its generated CLI reference and exact
 Hosted formatting (35675458038), with the masked dummy restored only from the
 frozen source. This is not native behavior acceptance. Old-source Windows/macOS
 runs remain independently identified; no local execution or Road closure.
+
+**W184 native compile follow-up (2026-09-22):** Windows and macOS jobs in
+`35676411709` stopped at the same Slint callback/property name collision.
+The status property is now `bc-vault-mirror-repair-state`; the action callback
+is unchanged. The one formatting hunk from Preflight `35677253412` is imported.
+Only those W184 deltas are admitted here; W185 remains separate working code.
+Native compilation and behavior require rerun; no Road checkbox closes.

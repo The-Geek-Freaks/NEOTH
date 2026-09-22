@@ -192,7 +192,7 @@ export component BuddyConfigView inherits Rectangle {
     /// intentionally never enter the GUI model.
     in property <string> bc-vault-mirror-config: "disabled";
     in property <string> bc-vault-mirror-phase: "not_started";
-    in property <string> bc-vault-mirror-repair: "no_action";
+    in property <string> bc-vault-mirror-repair-state: "no_action";
     in property <string> bc-vault-mirror-archive-prefix: "";
     in property <string> bc-vault-mirror-verified-at: "";
     in property <bool> bc-vault-mirror-repair-available: false;
@@ -343,7 +343,7 @@ export component BuddyConfigView inherits Rectangle {
 
                             InfoRow { label: "CONFIG"; value: root.bc-vault-mirror-config; value-color: root.bc-vault-mirror-config == "ready" ? Theme.accent : Theme.text-tertiary; }
                             InfoRow { label: "PHASE"; value: root.bc-vault-mirror-phase; value-color: root.bc-vault-mirror-phase == "verified" ? Theme.memory : root.bc-vault-mirror-repair-available ? Theme.consent : Theme.warning; }
-                            InfoRow { label: "REPAIR"; value: root.bc-vault-mirror-repair; value-color: root.bc-vault-mirror-repair-available ? Theme.warning : Theme.text-tertiary; }
+                            InfoRow { label: "REPAIR"; value: root.bc-vault-mirror-repair-state; value-color: root.bc-vault-mirror-repair-available ? Theme.warning : Theme.text-tertiary; }
                             if root.bc-vault-mirror-verified-at != "": InfoRow { label: "LAST VERIFIED"; value: root.bc-vault-mirror-verified-at; value-color: Theme.audit; }
                             if root.bc-vault-mirror-archive-prefix != "": InfoRow { label: "ARCHIVE SHA-256"; value: root.bc-vault-mirror-archive-prefix; value-color: Theme.audit; }
 

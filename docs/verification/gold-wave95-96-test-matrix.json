@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W184_SEVEN_HOSTED_CLIPPY_REPAIRS_NATIVE_PENDING",
-  "base": "c07d1599b65e9bb82850a85ccccc84e0a67f6b28",
+  "status": "W184_GUI_NAME_COLLISION_AND_HOSTED_FORMAT_REPAIRED",
+  "base": "4238202d1439dd11b4026c8b17d32c00165b9e7c",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 73484,
-    "sha256": "36C882AD2C7325DAA78603555DD2DE9C5E2B216EA71DDBEFE3502FB225B8C60E"
+    "bytes": 73466,
+    "sha256": "499165A1ECA71C5C36047FAA8E9E9C67EAB8673B2BAB9A9D9596C356B89603DB"
   },
   "sourceInputs": 426,
   "requiredNativeTests": [
@@ -2958,55 +2958,55 @@
     {
       "test": "daemon::vault_mirror::tests::persisted_state_rejects_malformed_receipt_and_duplicate_history",
       "sourcePath": "SRC/neothd/src/daemon/vault_mirror.rs",
-      "sourceSha256": "32572298199045EE580AC7C2DD6B4BF56E97217AF7FB6E64E2EDCFCD2F23BA07",
+      "sourceSha256": "DE96C20D83761E9FDA0D4658773A4FBC106686A7A8DA7749E68CBD7168F57777",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::vault_mirror::tests::persisted_cleanup_requires_unique_verified_owned_candidates",
       "sourcePath": "SRC/neothd/src/daemon/vault_mirror.rs",
-      "sourceSha256": "32572298199045EE580AC7C2DD6B4BF56E97217AF7FB6E64E2EDCFCD2F23BA07",
+      "sourceSha256": "DE96C20D83761E9FDA0D4658773A4FBC106686A7A8DA7749E68CBD7168F57777",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::vault_mirror::tests::hosted_fixture_runs_backup_state_push_remote_and_repair_against_a_real_bare_remote",
       "sourcePath": "SRC/neothd/src/daemon/vault_mirror.rs",
-      "sourceSha256": "32572298199045EE580AC7C2DD6B4BF56E97217AF7FB6E64E2EDCFCD2F23BA07",
+      "sourceSha256": "DE96C20D83761E9FDA0D4658773A4FBC106686A7A8DA7749E68CBD7168F57777",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::vault_mirror::tests::managed_retention_keeps_two_archive_receipts_and_only_removes_owned_manifests",
       "sourcePath": "SRC/neothd/src/daemon/vault_mirror.rs",
-      "sourceSha256": "32572298199045EE580AC7C2DD6B4BF56E97217AF7FB6E64E2EDCFCD2F23BA07",
+      "sourceSha256": "DE96C20D83761E9FDA0D4658773A4FBC106686A7A8DA7749E68CBD7168F57777",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::vault_mirror::tests::repair_settles_an_already_pushed_retention_commit_without_creating_cleanup_history",
       "sourcePath": "SRC/neothd/src/daemon/vault_mirror.rs",
-      "sourceSha256": "32572298199045EE580AC7C2DD6B4BF56E97217AF7FB6E64E2EDCFCD2F23BA07",
+      "sourceSha256": "DE96C20D83761E9FDA0D4658773A4FBC106686A7A8DA7749E68CBD7168F57777",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::vault_mirror::tests::prepared_nonpush_runs_never_touch_an_absent_remote_and_a_later_push_uses_a_new_run",
       "sourcePath": "SRC/neothd/src/daemon/vault_mirror.rs",
-      "sourceSha256": "32572298199045EE580AC7C2DD6B4BF56E97217AF7FB6E64E2EDCFCD2F23BA07",
+      "sourceSha256": "DE96C20D83761E9FDA0D4658773A4FBC106686A7A8DA7749E68CBD7168F57777",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::vault_mirror::tests::active_push_uncertainty_blocks_replay_and_mismatched_repair_preserves_the_receipt",
       "sourcePath": "SRC/neothd/src/daemon/vault_mirror.rs",
-      "sourceSha256": "32572298199045EE580AC7C2DD6B4BF56E97217AF7FB6E64E2EDCFCD2F23BA07",
+      "sourceSha256": "DE96C20D83761E9FDA0D4658773A4FBC106686A7A8DA7749E68CBD7168F57777",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::vault_mirror::tests::malformed_retention_prefix_is_rejected_before_it_can_enter_active_state",
       "sourcePath": "SRC/neothd/src/daemon/vault_mirror.rs",
-      "sourceSha256": "32572298199045EE580AC7C2DD6B4BF56E97217AF7FB6E64E2EDCFCD2F23BA07",
+      "sourceSha256": "DE96C20D83761E9FDA0D4658773A4FBC106686A7A8DA7749E68CBD7168F57777",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::vault_mirror::tests::kernel_lock_can_be_reacquired_after_the_prior_owner_releases_it",
       "sourcePath": "SRC/neothd/src/daemon/vault_mirror.rs",
-      "sourceSha256": "32572298199045EE580AC7C2DD6B4BF56E97217AF7FB6E64E2EDCFCD2F23BA07",
+      "sourceSha256": "DE96C20D83761E9FDA0D4658773A4FBC106686A7A8DA7749E68CBD7168F57777",
       "junitClass": "neoth"
     }
   ],
@@ -3577,8 +3577,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2045547,
-      "sha256": "D6DCC05B5C0EE1C2892B9E51580669B2D087ABD637D3CFB28703DE4C0E262AE0"
+      "bytes": 2045553,
+      "sha256": "9E7A15E6A0CFB6BE18553ACDDC87891F5014ACD8F8C07B6FEEAD845445EDE28C"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -3607,8 +3607,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/main.slint",
-      "bytes": 315933,
-      "sha256": "0BB801CBCB7FC1960C7F3928437F93CB98A37716C91201FF989F14674715C686"
+      "bytes": 315951,
+      "sha256": "E280ED2CD00D78842ED72DB82CC16C8CDD9F797E7AED50D88674D0E0827BDB01"
     },
     {
       "path": "SRC/neothd-gui/ui/overlay.slint",
@@ -7456,6 +7456,18 @@
     "repairedSha256": "32572298199045EE580AC7C2DD6B4BF56E97217AF7FB6E64E2EDCFCD2F23BA07",
     "receipt": "work/gold-20260906/wave184-vault-mirror/CLIPPY-REPAIR-6AC.md",
     "status": "source_repaired_hosted_rerun_required",
+    "roadClosure": false
+  },
+  "wave184GuiCompile": {
+    "run": 35676411709,
+    "source": "6ac451a1a599b0554112a8bf3a0ef4f4988a4b64",
+    "windowsJob": 106583842931,
+    "macosJob": 106583843035,
+    "failure": "Slint callback/property bc-vault-mirror-repair name collision",
+    "repair": "rename status property only to bc-vault-mirror-repair-state",
+    "formatRun": 35677253412,
+    "formatChange": "exact Hosted multiline layout of redact_remote",
+    "status": "source_repaired_native_rerun_required",
     "roadClosure": false
   }
 }

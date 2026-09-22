@@ -2,6 +2,13 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W184 native compile follow-up (2026-09-22):** Windows and macOS jobs in
+`35676411709` stopped at the same Slint callback/property name collision.
+The status property is now `bc-vault-mirror-repair-state`; the action callback
+is unchanged. The one formatting hunk from Preflight `35677253412` is imported.
+Only those W184 deltas are admitted here; W185 remains separate working code.
+Native compilation and behavior require rerun; no Road checkbox closes.
+
 **W184 strict-Clippy follow-up (2026-09-22):** CI `35676411709` on `6ac451a1`
 reported seven lint failures in the mirror module. The active-state guard,
 four redundant borrows, an unused tuple-field projection and a reverse-capable

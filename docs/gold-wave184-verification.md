@@ -55,3 +55,10 @@ four redundant borrows, an unused tuple-field projection and a reverse-capable
 iterator are corrected without changing behavior. Hosted revalidation remains
 required. The existing Windows/macOS run continues on its original source;
 W185 stays outside this repair publication. No Road checkbox closes.
+
+**W184 native compile follow-up (2026-09-22):** Windows and macOS jobs in
+`35676411709` stopped at the same Slint callback/property name collision.
+The status property is now `bc-vault-mirror-repair-state`; the action callback
+is unchanged. The one formatting hunk from Preflight `35677253412` is imported.
+Only those W184 deltas are admitted here; W185 remains separate working code.
+Native compilation and behavior require rerun; no Road checkbox closes.

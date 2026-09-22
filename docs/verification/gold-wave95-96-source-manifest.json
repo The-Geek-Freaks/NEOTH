@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W184-vault-mirror",
-  "base": "c07d1599b65e9bb82850a85ccccc84e0a67f6b28",
-  "capturedUtc": "2026-09-22T01:48:36.0804457Z",
-  "validationStatus": "W184_SEVEN_HOSTED_CLIPPY_REPAIRS_NATIVE_PENDING",
-  "scopeNote": "Seven exact Clippy fixes in vault_mirror only; W185 uncommitted work excluded. Current native run remains on 6ac451a1; new source requires fresh Hosted checks.",
+  "base": "4238202d1439dd11b4026c8b17d32c00165b9e7c",
+  "capturedUtc": "2026-09-22T01:56:25.8951504Z",
+  "validationStatus": "W184_GUI_NAME_COLLISION_AND_HOSTED_FORMAT_REPAIRED",
+  "scopeNote": "Only staged W184 GUI property rename and Hosted formatting admitted. W185 working-tree changes excluded; native source acceptance pending.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -463,8 +463,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2045547,
-      "sha256": "D6DCC05B5C0EE1C2892B9E51580669B2D087ABD637D3CFB28703DE4C0E262AE0"
+      "bytes": 2045553,
+      "sha256": "9E7A15E6A0CFB6BE18553ACDDC87891F5014ACD8F8C07B6FEEAD845445EDE28C"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -528,8 +528,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/buddyconfig.slint",
-      "bytes": 51103,
-      "sha256": "18D85277595D7D13F66532514908FC2902AD74B92CAF818593908ABCD0481C30"
+      "bytes": 51115,
+      "sha256": "39E356668696CD7ADA363FC21BD0D5A9C44F0AD089B5EED38C9AA960C256B611"
     },
     {
       "path": "SRC/neothd-gui/ui/calendar.slint",
@@ -573,8 +573,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/main.slint",
-      "bytes": 315933,
-      "sha256": "0BB801CBCB7FC1960C7F3928437F93CB98A37716C91201FF989F14674715C686"
+      "bytes": 315951,
+      "sha256": "E280ED2CD00D78842ED72DB82CC16C8CDD9F797E7AED50D88674D0E0827BDB01"
     },
     {
       "path": "SRC/neothd-gui/ui/memory_graph.slint",
@@ -1353,8 +1353,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/vault_mirror.rs",
-      "bytes": 75931,
-      "sha256": "32572298199045EE580AC7C2DD6B4BF56E97217AF7FB6E64E2EDCFCD2F23BA07"
+      "bytes": 75965,
+      "sha256": "DE96C20D83761E9FDA0D4658773A4FBC106686A7A8DA7749E68CBD7168F57777"
     },
     {
       "path": "SRC/neothd/src/daemon/worker_watch.rs",
