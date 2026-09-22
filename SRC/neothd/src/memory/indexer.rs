@@ -25,9 +25,9 @@ use tracing::{debug, warn};
 
 use crate::wal::error::HeaderParseError;
 use crate::wal::events::{
-    EVENT_TYPE_CHANNEL_EGRESS, EVENT_TYPE_CHANNEL_INGRESS, EVENT_TYPE_INDEXER_TAMPER_SUSPECT,
-    EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_PROVIDER_RESPONSE, EVENT_TYPE_RAW_TEXT,
-    EVENT_TYPE_EXTENDED, ExtendedSubtype,
+    EVENT_TYPE_CHANNEL_EGRESS, EVENT_TYPE_CHANNEL_INGRESS, EVENT_TYPE_EXTENDED,
+    EVENT_TYPE_INDEXER_TAMPER_SUSPECT, EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_PROVIDER_RESPONSE,
+    EVENT_TYPE_RAW_TEXT, ExtendedSubtype,
 };
 use crate::wal::frame::decode_frame;
 use crate::wal::writer::WalWriterHandle;
@@ -206,11 +206,8 @@ pub async fn tail(
                     let pending = crate::memory::embeddings::pending_episode_texts(&conn, 64);
                     let mut vectors = Vec::with_capacity(pending.len());
                     for (event_id, text) in pending {
-                        if let Some((model, vec)) = crate::memory::embeddings::embed_one(
-                            &text,
-                            p.as_embed_provider(),
-                        )
-                        .await
+                        if let Some((model, vec)) =
+                            crate::memory::embeddings::embed_one(&text, p.as_embed_provider()).await
                         {
                             vectors.push((event_id, model, vec));
                         }
@@ -545,11 +542,17 @@ fn project_w208_origin_receipt(
     match project_origin(tx, &receipt) {
         Ok(OriginProjection::Inserted | OriginProjection::AlreadyProjected) => Ok(()),
         Ok(OriginProjection::Rejected) => {
-            warn!(event_id, "W208 origin cannot establish positive provenance; raw remains unknown");
+            warn!(
+                event_id,
+                "W208 origin cannot establish positive provenance; raw remains unknown"
+            );
             Ok(())
         }
         Ok(OriginProjection::Conflicted) => {
-            warn!(event_id, "W208 conflicting origin quarantined; raw remains unknown");
+            warn!(
+                event_id,
+                "W208 conflicting origin quarantined; raw remains unknown"
+            );
             Ok(())
         }
         Err(error) => {
@@ -568,7 +571,9 @@ use rusqlite::OptionalExtension;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wal::events::{EVENT_TYPE_EXTENDED, EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_RAW_TEXT, ExtendedSubtype};
+    use crate::wal::events::{
+        EVENT_TYPE_EXTENDED, EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_RAW_TEXT, ExtendedSubtype,
+    };
     use crate::wal::frame::{decode_frame, encode_frame};
     use crate::wal::header::{CRC_LEN, HEADER_BODY_LEN, PREAMBLE_LEN};
     use crate::wal::segment_header::SegmentHeader;
@@ -609,7 +614,12 @@ mod tests {
     }
 
     fn origin_header(event_id: u64, payload: &[u8], session: [u8; 16]) -> EventHeaderV2 {
-        let mut header = header_for(EVENT_TYPE_EXTENDED, payload.len() as u32, event_id, 100 + event_id);
+        let mut header = header_for(
+            EVENT_TYPE_EXTENDED,
+            payload.len() as u32,
+            event_id,
+            100 + event_id,
+        );
         header.event_subtype = ExtendedSubtype::RawTextOrigin as u8;
         header.session_id = SessionId(session);
         header
@@ -624,35 +634,56 @@ mod tests {
         let mut raw_header = header_for(EVENT_TYPE_RAW_TEXT, raw.len() as u32, 1, 101);
         raw_header.session_id = SessionId(session);
         raw_header.payload_hash = xxhash_rust::xxh3::xxh3_64(raw);
-        let local = crate::memory::counterparty_consent::serialize_local_origin_receipt(&raw_header)
-            .unwrap();
+        let local =
+            crate::memory::counterparty_consent::serialize_local_origin_receipt(&raw_header)
+                .unwrap();
 
         // A receipt before its raw is deliberately not buffered or guessed.
         index_one(&mut conn, origin_header(2, &local, session), &local);
         index_one(&mut conn, raw_header, raw);
         let early_origin_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM idx_episode_origin_v2 WHERE raw_event_id=1", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM idx_episode_origin_v2 WHERE raw_event_id=1",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(early_origin_count, 0);
 
         // A post-raw valid local receipt creates exactly one positive origin.
         index_one(&mut conn, origin_header(3, &local, session), &local);
         let valid_origin_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM idx_episode_origin_v2 WHERE raw_event_id=1", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM idx_episode_origin_v2 WHERE raw_event_id=1",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(valid_origin_count, 1);
 
         // Bad hash, wrong session, and a conflicting later receipt all advance
         // normally while leaving no eligible origin behind after the conflict.
         let bad_hash = r#"{"version":1,"raw_event_id":1,"raw_payload_hash":"0000000000000000","origin":"local_attested"}"#;
-        index_one(&mut conn, origin_header(4, bad_hash.as_bytes(), session), bad_hash.as_bytes());
+        index_one(
+            &mut conn,
+            origin_header(4, bad_hash.as_bytes(), session),
+            bad_hash.as_bytes(),
+        );
         index_one(&mut conn, origin_header(5, &local, [0x56; 16]), &local);
         index_one(&mut conn, origin_header(6, &local, session), &local);
         let post_conflict_origin_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM idx_episode_origin_v2 WHERE raw_event_id=1", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM idx_episode_origin_v2 WHERE raw_event_id=1",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         let conflict_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM idx_episode_origin_conflict_v1 WHERE raw_event_id=1", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM idx_episode_origin_conflict_v1 WHERE raw_event_id=1",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!((post_conflict_origin_count, conflict_count), (0, 1));
 
@@ -666,16 +697,25 @@ mod tests {
         let mut noise_header = header_for(EVENT_TYPE_RAW_TEXT, noise.len() as u32, 7, 107);
         noise_header.session_id = SessionId(session);
         index_one(&mut conn, noise_header, noise);
-        index_one(&mut conn, origin_header(8, noise_origin.as_bytes(), session), noise_origin.as_bytes());
+        index_one(
+            &mut conn,
+            origin_header(8, noise_origin.as_bytes(), session),
+            noise_origin.as_bytes(),
+        );
         let noise_origin_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM idx_episode_origin_v2 WHERE raw_event_id=7", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM idx_episode_origin_v2 WHERE raw_event_id=7",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(noise_origin_count, 0);
 
         // Channel scope comes only from the serialized typed ChannelRef plus
         // the already-scoped sender digest; display channel fields are absent.
         let channel_raw = b"authenticated channel raw";
-        let mut channel_raw_header = header_for(EVENT_TYPE_RAW_TEXT, channel_raw.len() as u32, 9, 109);
+        let mut channel_raw_header =
+            header_for(EVENT_TYPE_RAW_TEXT, channel_raw.len() as u32, 9, 109);
         channel_raw_header.session_id = SessionId(session);
         channel_raw_header.payload_hash = xxhash_rust::xxh3::xxh3_64(channel_raw);
         let channel_ref = crate::channels::registry::ChannelRef::default_account(
@@ -688,7 +728,11 @@ mod tests {
         )
         .unwrap();
         index_one(&mut conn, channel_raw_header, channel_raw);
-        index_one(&mut conn, origin_header(10, &channel_origin, session), &channel_origin);
+        index_one(
+            &mut conn,
+            origin_header(10, &channel_origin, session),
+            &channel_origin,
+        );
         let scope: (String, String, String) = conn
             .query_row(
                 "SELECT channel_id,account_id,scoped_sender_hash FROM idx_episode_origin_v2 WHERE raw_event_id=9",
@@ -696,7 +740,14 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
-        assert_eq!(scope, ("telegram".to_owned(), "default".to_owned(), "0123456789abcdef".to_owned()));
+        assert_eq!(
+            scope,
+            (
+                "telegram".to_owned(),
+                "default".to_owned(),
+                "0123456789abcdef".to_owned()
+            )
+        );
     }
 
     #[tokio::test]
@@ -709,8 +760,9 @@ mod tests {
         let mut raw_header = header_for(EVENT_TYPE_RAW_TEXT, raw.len() as u32, 1, 101);
         raw_header.session_id = SessionId(session);
         raw_header.payload_hash = xxhash_rust::xxh3::xxh3_64(raw);
-        let origin = crate::memory::counterparty_consent::serialize_local_origin_receipt(&raw_header)
-            .unwrap();
+        let origin =
+            crate::memory::counterparty_consent::serialize_local_origin_receipt(&raw_header)
+                .unwrap();
         let mut receipt_header = origin_header(2, &origin, session);
         receipt_header.payload_hash = xxhash_rust::xxh3::xxh3_64(&origin);
 
@@ -739,8 +791,14 @@ mod tests {
             )
             .optional()
             .unwrap();
-        assert_eq!(episode_count, 0, "raw projection must roll back with failed receipt mutation");
-        assert_eq!(cursor, None, "failed replay must not advance its durable cursor");
+        assert_eq!(
+            episode_count, 0,
+            "raw projection must roll back with failed receipt mutation"
+        );
+        assert_eq!(
+            cursor, None,
+            "failed replay must not advance its durable cursor"
+        );
     }
 
     #[tokio::test]
@@ -772,7 +830,9 @@ mod tests {
             .unwrap();
         assert!(cursor.is_some_and(|offset| offset > 0));
         let origins: i64 = conn
-            .query_row("SELECT COUNT(*) FROM idx_episode_origin_v2", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM idx_episode_origin_v2", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(origins, 0);
     }

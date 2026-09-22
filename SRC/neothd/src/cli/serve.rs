@@ -833,7 +833,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // an auditable 0x5E alert frame instead of a warn-only silent skip.
     // W208 — construct a local-only embedding capability before erasure. The
     // indexer cannot dispatch counterparty text through a generic provider.
-    let indexer_embed_provider = crate::providers::local_embedding_provider_from_config(&config).await;
+    let indexer_embed_provider =
+        crate::providers::local_embedding_provider_from_config(&config).await;
     // GOLD-ADAPT-TRAIL-02: create the views.db change-bus before spawning the
     // indexer so in-process consumers can subscribe before the first change fires.
     let (views_change_tx, views_change_rx) = crate::memory::change_bus::channel();

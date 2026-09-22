@@ -628,10 +628,9 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         // uses this as the trigger anchor for `extract_window`.
         let raw_event_id = raw_header.event_id.0 as i64;
         let raw_session_id = raw_header.session_id;
-        let origin_payload = crate::memory::counterparty_consent::serialize_local_origin_receipt(
-            &raw_header,
-        )
-        .context("serialize local RAW_TEXT origin receipt")?;
+        let origin_payload =
+            crate::memory::counterparty_consent::serialize_local_origin_receipt(&raw_header)
+                .context("serialize local RAW_TEXT origin receipt")?;
         writer
             .append(raw_header, prompt.as_bytes().to_vec())
             .await

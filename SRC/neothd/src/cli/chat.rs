@@ -8453,7 +8453,8 @@ pub(super) async fn run_post_reply_pipelines(
                             // provider is configured. Runs here (post-reply pipeline) so
                             // it never blocks the reply.
                             if let Some(embed_provider) =
-                                crate::providers::local_embedding_provider_from_config(&config).await
+                                crate::providers::local_embedding_provider_from_config(&config)
+                                    .await
                             {
                                 let (returned_conn, n) =
                                     crate::memory::embeddings::embed_pending_episodes(

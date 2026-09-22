@@ -804,7 +804,11 @@ impl EmbeddingIndex {
         for (id, source_kind, source_ref, model, blob, dim_col, created_at) in rows {
             if source_kind == "episode" {
                 let Ok(event_id) = source_ref.parse::<i64>() else {
-                    tracing::warn!(id, source_ref, "W208 deny malformed episode vector from HNSW snapshot");
+                    tracing::warn!(
+                        id,
+                        source_ref,
+                        "W208 deny malformed episode vector from HNSW snapshot"
+                    );
                     skipped += 1;
                     continue;
                 };
@@ -971,11 +975,12 @@ pub async fn embed_pending_episodes(
 /// embeds WITHOUT holding a `&Connection` across the await (which would make the
 /// future non-`Send`, since `rusqlite::Connection` is `Send` but not `Sync`).
 pub(crate) fn pending_episode_texts(conn: &Connection, cap: usize) -> Vec<(i64, String)> {
-    crate::memory::counterparty_consent::claim_local_embedding_candidates(conn, cap)
-        .unwrap_or_else(|error| {
+    crate::memory::counterparty_consent::claim_local_embedding_candidates(conn, cap).unwrap_or_else(
+        |error| {
             tracing::warn!(error = %error, "pending_episode_texts: W208 eligibility query failed");
             Vec::new()
-        })
+        },
+    )
 }
 
 /// Embed one text → `(model, unit-normalised vector)`. Async, touches NO DB
@@ -1837,9 +1842,10 @@ mod tests {
                 .unwrap();
                 "fixture raw".to_owned()
             });
-        let mut raw_header = crate::wal::builder::HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, text.as_bytes())
-            .session(SessionId::ZERO)
-            .build();
+        let mut raw_header =
+            crate::wal::builder::HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, text.as_bytes())
+                .session(SessionId::ZERO)
+                .build();
         raw_header.event_id = EventId(event_id as u64);
         conn.execute(
             "UPDATE idx_episode SET event_type=?1,text_hash=?2,wal_session_id=?3 WHERE event_id=?4",
@@ -1852,10 +1858,11 @@ mod tests {
         )
         .unwrap();
         let payload = serialize_local_origin_receipt(&raw_header).unwrap();
-        let mut receipt_header = crate::wal::builder::HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
-            .event_subtype(ExtendedSubtype::RawTextOrigin as u8)
-            .session(SessionId::ZERO)
-            .build();
+        let mut receipt_header =
+            crate::wal::builder::HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
+                .event_subtype(ExtendedSubtype::RawTextOrigin as u8)
+                .session(SessionId::ZERO)
+                .build();
         receipt_header.event_id = EventId((event_id + 10_000) as u64);
         let receipt = parse_local_origin_receipt(
             &payload,
@@ -1888,9 +1895,10 @@ mod tests {
             crate::channels::registry::ChannelId::Telegram,
         );
         let key = CounterpartyKey::from_authenticated(&channel_ref, sender_hash).unwrap();
-        let mut raw_header = crate::wal::builder::HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, text.as_bytes())
-            .session(SessionId::ZERO)
-            .build();
+        let mut raw_header =
+            crate::wal::builder::HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, text.as_bytes())
+                .session(SessionId::ZERO)
+                .build();
         raw_header.event_id = EventId(event_id as u64);
         conn.execute(
             "INSERT INTO idx_episode(event_id,event_type,ts_ns,text,text_hash,wal_session_id) \
@@ -1904,11 +1912,13 @@ mod tests {
             ],
         )
         .unwrap();
-        let payload = serialize_channel_origin_receipt(&raw_header, &channel_ref, sender_hash).unwrap();
-        let mut receipt_header = crate::wal::builder::HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
-            .event_subtype(ExtendedSubtype::RawTextOrigin as u8)
-            .session(SessionId::ZERO)
-            .build();
+        let payload =
+            serialize_channel_origin_receipt(&raw_header, &channel_ref, sender_hash).unwrap();
+        let mut receipt_header =
+            crate::wal::builder::HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
+                .event_subtype(ExtendedSubtype::RawTextOrigin as u8)
+                .session(SessionId::ZERO)
+                .build();
         receipt_header.event_id = EventId((event_id + 20_000) as u64);
         let receipt = parse_channel_origin_receipt(
             &payload,
@@ -1941,7 +1951,8 @@ mod tests {
             _req: crate::providers::embed::EmbedRequest,
         ) -> anyhow::Result<crate::providers::embed::EmbedResponse> {
             use std::time::Duration;
-            self.calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(crate::providers::embed::EmbedResponse {
                 vector: self.vector.clone(),
                 model: "fixed-test".to_string(),
@@ -2046,14 +2057,21 @@ mod tests {
         let provider = local_test_provider(implementation);
 
         let (conn, processed) = embed_pending_episodes(conn, &provider, 10).await;
-        assert_eq!(processed, 0, "bare historical RAW has no positive origin receipt");
+        assert_eq!(
+            processed, 0,
+            "bare historical RAW has no positive origin receipt"
+        );
         assert_eq!(
             calls.load(std::sync::atomic::Ordering::Relaxed),
             0,
             "a bare historical RAW must be rejected before provider dispatch"
         );
         let vectors: i64 = conn
-            .query_row("SELECT COUNT(*) FROM idx_embedding WHERE source_kind='episode'", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM idx_embedding WHERE source_kind='episode'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(vectors, 0);
     }
@@ -2076,9 +2094,12 @@ mod tests {
         crate::memory::counterparty_consent::revoke_and_quarantine(&tx, &key, 9).unwrap();
         tx.commit().unwrap();
 
-        let hits = find_similar_dispatch(&conn, &[1.0, 0.0], None, 2, Some(&snapshot_path)).unwrap();
+        let hits =
+            find_similar_dispatch(&conn, &[1.0, 0.0], None, 2, Some(&snapshot_path)).unwrap();
         assert_eq!(
-            hits.iter().map(|hit| hit.source_ref.as_str()).collect::<Vec<_>>(),
+            hits.iter()
+                .map(|hit| hit.source_ref.as_str())
+                .collect::<Vec<_>>(),
             vec!["92", "93"],
             "a filtered stale HNSW top-2 must fall back and retain deeper eligible SQLite hits"
         );

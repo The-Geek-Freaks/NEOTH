@@ -26,8 +26,8 @@ use crate::config::{FreedomConfig, InstancePaths};
 use crate::memory::store;
 use crate::providers::{Provider, Request};
 use crate::wal::events::{
-    EVENT_TYPE_CHANNEL_EGRESS, EVENT_TYPE_CHANNEL_INGRESS, EVENT_TYPE_MODE_CHECKPOINT,
-    EVENT_TYPE_EXTENDED, EVENT_TYPE_RAW_TEXT, ExtendedSubtype,
+    EVENT_TYPE_CHANNEL_EGRESS, EVENT_TYPE_CHANNEL_INGRESS, EVENT_TYPE_EXTENDED,
+    EVENT_TYPE_MODE_CHECKPOINT, EVENT_TYPE_RAW_TEXT, ExtendedSubtype,
 };
 use crate::wal::writer::WalWriterHandle;
 

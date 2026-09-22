@@ -191,33 +191,42 @@ pub fn run_sweep(
             let channel_id: Option<String> = r.get(3)?;
             let account_id: Option<String> = r.get(4)?;
             let scoped_sender_hash: Option<String> = r.get(5)?;
-            Ok((source_ref, blob, origin_kind, channel_id, account_id, scoped_sender_hash))
+            Ok((
+                source_ref,
+                blob,
+                origin_kind,
+                channel_id,
+                account_id,
+                scoped_sender_hash,
+            ))
         })?
         .filter_map(|res| {
-            res.ok().and_then(|(source_ref, blob, origin_kind, channel_id, account_id, scoped_sender_hash)| {
-                let vec = blob_to_floats(&blob);
-                if vec.is_empty() {
-                    warn!(
-                        source_ref,
-                        "consolidation_sweep: skipping embedding with bad blob"
-                    );
-                    return None;
-                }
-                let domain = match origin_kind.as_str() {
-                    "local_attested" => EmbeddingDomain::LocalAttested,
-                    "channel_bound" => EmbeddingDomain::ChannelBound {
-                        channel_id: channel_id?,
-                        account_id: account_id?,
-                        scoped_sender_hash: scoped_sender_hash?,
-                    },
-                    _ => return None,
-                };
-                Some(EmbRow {
-                    event_id_str: source_ref,
-                    vec,
-                    domain,
-                })
-            })
+            res.ok().and_then(
+                |(source_ref, blob, origin_kind, channel_id, account_id, scoped_sender_hash)| {
+                    let vec = blob_to_floats(&blob);
+                    if vec.is_empty() {
+                        warn!(
+                            source_ref,
+                            "consolidation_sweep: skipping embedding with bad blob"
+                        );
+                        return None;
+                    }
+                    let domain = match origin_kind.as_str() {
+                        "local_attested" => EmbeddingDomain::LocalAttested,
+                        "channel_bound" => EmbeddingDomain::ChannelBound {
+                            channel_id: channel_id?,
+                            account_id: account_id?,
+                            scoped_sender_hash: scoped_sender_hash?,
+                        },
+                        _ => return None,
+                    };
+                    Some(EmbRow {
+                        event_id_str: source_ref,
+                        vec,
+                        domain,
+                    })
+                },
+            )
         })
         .collect()
     };
@@ -412,8 +421,8 @@ pub fn run_sweep(
 mod tests {
     use super::*;
     use crate::memory::counterparty_consent::{
-        OriginFrameWitness, parse_channel_origin_receipt, parse_local_origin_receipt, project_origin,
-        serialize_channel_origin_receipt, serialize_local_origin_receipt,
+        OriginFrameWitness, parse_channel_origin_receipt, parse_local_origin_receipt,
+        project_origin, serialize_channel_origin_receipt, serialize_local_origin_receipt,
     };
     use crate::memory::store;
     use crate::wal::events::{EVENT_TYPE_EXTENDED, EVENT_TYPE_RAW_TEXT, ExtendedSubtype};
@@ -471,9 +480,10 @@ mod tests {
     }
 
     fn raw_header(event_id: i64, text: &str) -> crate::wal::header::EventHeaderV2 {
-        let mut header = crate::wal::builder::HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, text.as_bytes())
-            .session(SessionId::ZERO)
-            .build();
+        let mut header =
+            crate::wal::builder::HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, text.as_bytes())
+                .session(SessionId::ZERO)
+                .build();
         header.event_id = EventId(event_id as u64);
         header
     }
@@ -809,7 +819,13 @@ mod tests {
             crate::channels::registry::ChannelId::Telegram,
         );
         attest_channel_verified(&conn, 1, "neoth rocks", &telegram, "0123456789abcdef");
-        attest_channel_verified(&conn, 2, "neoth rocks indeed", &telegram, "0123456789abcdef");
+        attest_channel_verified(
+            &conn,
+            2,
+            "neoth rocks indeed",
+            &telegram,
+            "0123456789abcdef",
+        );
         insert_embedding(&conn, 1, &[1.0f32, 0.0, 0.0]);
         insert_embedding(&conn, 2, &[1.0f32, 0.0, 0.0]);
 

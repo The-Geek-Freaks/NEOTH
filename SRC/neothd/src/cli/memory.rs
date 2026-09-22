@@ -1729,11 +1729,9 @@ async fn run_memory_embed_backfill(args: &MemoryArgs) -> Result<()> {
     } else {
         args.limit
     };
-    let candidates = crate::memory::counterparty_consent::claim_local_embedding_candidates(
-        &conn,
-        candidate_cap,
-    )
-    .context("select W208-eligible unembedded episodes for embed-backfill")?;
+    let candidates =
+        crate::memory::counterparty_consent::claim_local_embedding_candidates(&conn, candidate_cap)
+            .context("select W208-eligible unembedded episodes for embed-backfill")?;
     let total_candidates = candidates.len();
     if total_candidates == 0 {
         println!("no eligible unembedded episodes to backfill.");

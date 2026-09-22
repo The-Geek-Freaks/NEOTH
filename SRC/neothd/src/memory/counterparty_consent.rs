@@ -185,7 +185,10 @@ fn parse_local_wire_receipt(
     wire: WireOriginReceipt,
     origin_frame: OriginFrameWitness,
 ) -> Result<OriginReceipt> {
-    ensure!(wire.origin == ORIGIN_LOCAL, "W208 local receipt has wrong origin kind");
+    ensure!(
+        wire.origin == ORIGIN_LOCAL,
+        "W208 local receipt has wrong origin kind"
+    );
     ensure!(
         wire.channel_ref.is_none() && wire.sender_id_hash.is_none(),
         "W208 local receipt must not carry channel or sender fields"
@@ -214,7 +217,10 @@ fn parse_channel_wire_receipt(
     wire: WireOriginReceipt,
     origin_frame: OriginFrameWitness,
 ) -> Result<OriginReceipt> {
-    ensure!(wire.origin == ORIGIN_CHANNEL, "W208 channel receipt has wrong origin kind");
+    ensure!(
+        wire.origin == ORIGIN_CHANNEL,
+        "W208 channel receipt has wrong origin kind"
+    );
     let channel_ref = wire
         .channel_ref
         .ok_or_else(|| anyhow!("W208 channel receipt lacks typed channel_ref"))?;
@@ -262,8 +268,8 @@ fn parse_wire_receipt(
         xxhash_rust::xxh3::xxh3_64(payload) == origin_frame.payload_hash,
         "W208 origin receipt payload does not match authoritative frame hash"
     );
-    let wire: WireOriginReceipt = serde_json::from_slice(payload)
-        .context("W208 parse origin receipt JSON")?;
+    let wire: WireOriginReceipt =
+        serde_json::from_slice(payload).context("W208 parse origin receipt JSON")?;
     ensure!(wire.version == 1, "W208 origin receipt version must be 1");
     ensure!(wire.raw_event_id > 0, "W208 raw event id must be positive");
     ensure!(
@@ -302,10 +308,7 @@ pub enum OriginProjection {
 /// transaction.  The referenced raw event must already be an indexed
 /// `RAW_TEXT` row whose payload hash and session exactly match the receipt.
 /// A receipt arriving before its raw row fails closed and is never buffered.
-pub fn project_origin(
-    tx: &Transaction<'_>,
-    receipt: &OriginReceipt,
-) -> Result<OriginProjection> {
+pub fn project_origin(tx: &Transaction<'_>, receipt: &OriginReceipt) -> Result<OriginProjection> {
     if !validate_raw_witness(tx, receipt)? {
         return Ok(OriginProjection::Rejected);
     }
@@ -408,7 +411,10 @@ pub fn project_origin(
             ],
         )
         .context("W208 insert immutable raw origin")?;
-    ensure!(changed == 1, "W208 origin insert did not affect exactly one row");
+    ensure!(
+        changed == 1,
+        "W208 origin insert did not affect exactly one row"
+    );
     Ok(OriginProjection::Inserted)
 }
 
@@ -429,7 +435,10 @@ fn quarantine_conflicted_raw(
          VALUES(?1,?2,?3,?4,?5)",
         params![raw_event_id, first_origin_event_id, conflicting_origin_event_id, raw_payload_hash, detected_at_ns],
     )?;
-    tx.execute("DELETE FROM idx_episode_origin_v2 WHERE raw_event_id=?1", [raw_event_id])?;
+    tx.execute(
+        "DELETE FROM idx_episode_origin_v2 WHERE raw_event_id=?1",
+        [raw_event_id],
+    )?;
     tx.execute(
         "DELETE FROM idx_embedding WHERE source_kind='episode' AND source_ref=CAST(?1 AS TEXT)",
         [raw_event_id],
@@ -439,7 +448,9 @@ fn quarantine_conflicted_raw(
          WHERE source='synthesis-cron' AND scope='meta' AND revoked_at IS NULL",
     )?;
     let active = facts
-        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     drop(facts);
     for (fact_id, evidence) in active {
@@ -472,12 +483,10 @@ fn validate_raw_witness(tx: &Transaction<'_>, receipt: &OriginReceipt) -> Result
     let Some((event_type, text_hash, session)) = raw else {
         return Ok(false);
     };
-    Ok(
-        receipt.raw_event_id < receipt.origin_frame.event_id
-            && event_type == EVENT_TYPE_RAW_TEXT as i64
-            && text_hash == format!("{:016x}", receipt.raw_payload_hash)
-            && session.as_slice() == receipt.raw_wal_session_id,
-    )
+    Ok(receipt.raw_event_id < receipt.origin_frame.event_id
+        && event_type == EVENT_TYPE_RAW_TEXT as i64
+        && text_hash == format!("{:016x}", receipt.raw_payload_hash)
+        && session.as_slice() == receipt.raw_wal_session_id)
 }
 
 /// Current exact consent state.  W208 exposes no mutation which can produce
@@ -502,8 +511,13 @@ pub fn status(conn: &Connection, key: &CounterpartyKey) -> Result<ConsentStatus>
         .context("W208 read exact consent status")?;
     match row {
         None => Ok(ConsentStatus::Absent),
-        Some((state, revision, verified_at_ns, revoked_at_ns)) if state == CONSENT_VERIFIED_GRANTED => {
-            ensure!(revoked_at_ns.is_none(), "W208 granted row has a revoke timestamp");
+        Some((state, revision, verified_at_ns, revoked_at_ns))
+            if state == CONSENT_VERIFIED_GRANTED =>
+        {
+            ensure!(
+                revoked_at_ns.is_none(),
+                "W208 granted row has a revoke timestamp"
+            );
             Ok(ConsentStatus::VerifiedGranted {
                 revision,
                 verified_at_ns,
@@ -616,14 +630,19 @@ pub fn revoke_and_quarantine(
             1
         }
         ConsentStatus::VerifiedGranted { revision, .. } => {
-            let next = revision.checked_add(1).ok_or_else(|| anyhow!("W208 revision overflow"))?;
+            let next = revision
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("W208 revision overflow"))?;
             let changed = tx.execute(
                 "UPDATE idx_counterparty_clustering_consent_v1 \
                  SET state='revoked',revision=?1,revoked_at_ns=?2 \
                  WHERE channel_id=?3 AND account_id=?4 AND scoped_sender_hash=?5 AND state='verified_granted'",
                 params![next, now_ns, key.channel_id, key.account_id, key.scoped_sender_hash],
             )?;
-            ensure!(changed == 1, "W208 verified grant changed during exact revoke");
+            ensure!(
+                changed == 1,
+                "W208 verified grant changed during exact revoke"
+            );
             next
         }
         ConsentStatus::Revoked { revision, .. } => revision,
@@ -634,8 +653,11 @@ pub fn revoke_and_quarantine(
             "SELECT raw_event_id FROM idx_episode_origin_v2 \
              WHERE origin_kind='channel_bound' AND channel_id=?1 AND account_id=?2 AND scoped_sender_hash=?3",
         )?;
-        stmt.query_map(params![key.channel_id, key.account_id, key.scoped_sender_hash], |row| row.get(0))?
-            .collect::<rusqlite::Result<HashSet<_>>>()?
+        stmt.query_map(
+            params![key.channel_id, key.account_id, key.scoped_sender_hash],
+            |row| row.get(0),
+        )?
+        .collect::<rusqlite::Result<HashSet<_>>>()?
     };
     let vectors_deleted = tx.execute(
         "DELETE FROM idx_embedding WHERE source_kind='episode' AND source_ref IN ( \
@@ -649,7 +671,9 @@ pub fn revoke_and_quarantine(
          WHERE source='synthesis-cron' AND scope='meta' AND revoked_at IS NULL",
     )?;
     let candidates = facts
-        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     drop(facts);
     let mut synthesis_facts_revoked = 0;
@@ -657,9 +681,10 @@ pub fn revoke_and_quarantine(
         let evidence_ids: Option<Vec<i64>> = serde_json::from_str(&evidence).ok();
         // Unknown evidence is conservatively quarantined; returning an error
         // here would roll back the exact consent denial and retain the fact.
-        if evidence_ids.as_ref().map_or(true, |ids| {
-            ids.iter().any(|id| bound_ids.contains(id))
-        }) {
+        if evidence_ids
+            .as_ref()
+            .map_or(true, |ids| ids.iter().any(|id| bound_ids.contains(id)))
+        {
             synthesis_facts_revoked += tx.execute(
                 "UPDATE idx_groundtruth SET revoked_at=?1 WHERE id=?2 AND revoked_at IS NULL",
                 params![now_ns, fact_id],
@@ -727,7 +752,9 @@ mod tests {
             "idx_counterparty_clustering_consent_v1",
         ] {
             let _: i64 = conn
-                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
                 .unwrap();
         }
     }
@@ -744,8 +771,7 @@ mod tests {
             [EVENT_TYPE_RAW_TEXT as i64],
         )
         .unwrap();
-        crate::memory::embeddings::upsert(&conn, "episode", "77", "pre-v42-local", &[1.0])
-            .unwrap();
+        crate::memory::embeddings::upsert(&conn, "episode", "77", "pre-v42-local", &[1.0]).unwrap();
 
         // Build a faithful v41 fixture from the otherwise fresh schema: the
         // historic episode/vector survive, while all v42-only state is absent.
@@ -765,7 +791,14 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
-        assert_eq!(retained, ("pre-v42 retained text".to_owned(), "000000000000004d".to_owned(), EVENT_TYPE_RAW_TEXT as i64));
+        assert_eq!(
+            retained,
+            (
+                "pre-v42 retained text".to_owned(),
+                "000000000000004d".to_owned(),
+                EVENT_TYPE_RAW_TEXT as i64
+            )
+        );
         let vectors: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM idx_embedding WHERE source_kind='episode' AND source_ref='77'",
@@ -780,7 +813,9 @@ mod tests {
             "idx_counterparty_clustering_consent_v1",
         ] {
             let rows: i64 = conn
-                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
                 .unwrap();
             assert_eq!(rows, 0, "v42 migration must not backfill {table}");
         }
@@ -790,10 +825,18 @@ mod tests {
         // preserving the legacy recall/vector state unchanged.
         let reopened = store::open(&database).unwrap();
         let version: String = reopened
-            .query_row("SELECT value FROM meta WHERE key='schema_version'", [], |row| row.get(0))
+            .query_row(
+                "SELECT value FROM meta WHERE key='schema_version'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         let retained_count: i64 = reopened
-            .query_row("SELECT COUNT(*) FROM idx_episode WHERE event_id=77", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM idx_episode WHERE event_id=77",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!((version, retained_count), ("42".to_owned(), 1));
     }
@@ -803,12 +846,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut conn = store::open(&dir.path().join("views.db")).unwrap();
         insert_raw(&conn, 1);
-        assert!(claim_local_embedding_candidates(&conn, 10).unwrap().is_empty());
+        assert!(
+            claim_local_embedding_candidates(&conn, 10)
+                .unwrap()
+                .is_empty()
+        );
 
         let tx = conn.transaction().unwrap();
-        assert_eq!(project_origin(&tx, &local_receipt(1, 101)).unwrap(), OriginProjection::Inserted);
+        assert_eq!(
+            project_origin(&tx, &local_receipt(1, 101)).unwrap(),
+            OriginProjection::Inserted
+        );
         tx.commit().unwrap();
-        assert_eq!(claim_local_embedding_candidates(&conn, 10).unwrap(), vec![(1, "raw".to_owned())]);
+        assert_eq!(
+            claim_local_embedding_candidates(&conn, 10).unwrap(),
+            vec![(1, "raw".to_owned())]
+        );
     }
 
     #[test]
@@ -821,7 +874,10 @@ mod tests {
         tx.commit().unwrap();
 
         let tx = conn.transaction().unwrap();
-        assert_eq!(project_origin(&tx, &local_receipt(1, 102)).unwrap(), OriginProjection::Conflicted);
+        assert_eq!(
+            project_origin(&tx, &local_receipt(1, 102)).unwrap(),
+            OriginProjection::Conflicted
+        );
         tx.commit().unwrap();
         let retained: i64 = conn
             .query_row(
@@ -855,11 +911,7 @@ mod tests {
         .unwrap();
         crate::memory::embeddings::upsert(&conn, "episode", "2", "local-test", &[1.0]).unwrap();
         crate::memory::embeddings::upsert(&conn, "episode", "3", "local-test", &[1.0]).unwrap();
-        for (statement, evidence) in [
-            ("bound", "[2]"),
-            ("unbound", "[3]"),
-            ("malformed", "{}"),
-        ] {
+        for (statement, evidence) in [("bound", "[2]"), ("unbound", "[3]"), ("malformed", "{}")] {
             conn.execute(
                 "INSERT INTO idx_groundtruth(statement,source,scope,asserted_at,evidence) \
                  VALUES(?1,'synthesis-cron','meta',1,?2)",
@@ -873,14 +925,26 @@ mod tests {
         assert_eq!(result.revision, 1);
         assert_eq!(result.vectors_deleted, 1);
         assert_eq!(result.synthesis_facts_revoked, 2);
-        assert_eq!(status(&tx, &key).unwrap(), ConsentStatus::Revoked { revision: 1, revoked_at_ns: 10 });
+        assert_eq!(
+            status(&tx, &key).unwrap(),
+            ConsentStatus::Revoked {
+                revision: 1,
+                revoked_at_ns: 10
+            }
+        );
         tx.commit().unwrap();
         let remaining: i64 = conn
-            .query_row("SELECT COUNT(*) FROM idx_embedding WHERE source_kind='episode'", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM idx_embedding WHERE source_kind='episode'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(remaining, 1);
         let active: Vec<String> = conn
-            .prepare("SELECT statement FROM idx_groundtruth WHERE revoked_at IS NULL ORDER BY statement")
+            .prepare(
+                "SELECT statement FROM idx_groundtruth WHERE revoked_at IS NULL ORDER BY statement",
+            )
             .unwrap()
             .query_map([], |row| row.get(0))
             .unwrap()
