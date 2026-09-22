@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T20:03:51.2329698Z",
-  "validationStatus": "W217 durable retry receipts+authenticated Buddy projection reviewed; Grouped270/531sources/813native pending",
+  "capturedUtc": "2026-09-22T20:09:03.1356003Z",
+  "validationStatus": "Grouped266265/266source-bound; exact baseline fixture correction and W217 Hosted formatting; Grouped270 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -433,18 +433,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 62226,
-      "sha256": "2180406C293CF68C1A82CB86B82D54939D5443130CFF51597FF6544764CBDD2B"
+      "bytes": 62906,
+      "sha256": "C862AB24E3F3DBC7BB305C6339BFF2D785EBB82587055D7C21B51D30A70D30B5"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1065108,
-      "sha256": "AAF67B1E63D804F936B58822BE22AB92CD022E1D048B2ACF604725851FB62AF8"
+      "bytes": 1065788,
+      "sha256": "2BE92CB6D6A2C012FF96096017F62AADF19AD84564DF2EFB01F7DF394277DDDA"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1660555,
-      "sha256": "AD27920C44F27ECF370B5F42B96FD0632BCA2A50B1FA857E9E7F29CC368BC84F"
+      "bytes": 1661235,
+      "sha256": "CBE9ED0AFC45878C405B9ADD82B61C8415C43679EC48F76BA74EC8057F7F271B"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -2173,8 +2173,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "bytes": 304010,
-      "sha256": "FE62F93E46E83F2C31F59DE225B7A7219CFAC61BCE09D1ADBC7770557FE1D0B3"
+      "bytes": 304141,
+      "sha256": "1BD59A3BB8A3F8A14FCF8E8D602A234923402CFE5F565D0E9F0B565B0F2D85D3"
     },
     {
       "path": "SRC/neothd/src/providers/fallback.rs",
@@ -2318,8 +2318,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/loader.rs",
-      "bytes": 127599,
-      "sha256": "C0F19928B157A6624A07C831D897B87776F44F3B1565BA40830DE276363BCFF0"
+      "bytes": 128248,
+      "sha256": "ACB96851A3BEC2A30F4CFD447E6771E7ADF506D2739547B7660F18D6A400A099"
     },
     {
       "path": "SRC/neothd/src/skills/mod.rs",
@@ -2658,8 +2658,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/claude_retry.rs",
-      "bytes": 26869,
-      "sha256": "A4E643E20E631BAC16BE40BAA40D05F6FC60863BD21E824CA84344E836CC9673"
+      "bytes": 27380,
+      "sha256": "0B01FB0358F3567ED04ED2C0D4AE1A7AE4C7230E11274F1EB6DF520FC9851C43"
     }
   ]
 }

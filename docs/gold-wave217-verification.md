@@ -64,3 +64,8 @@ Its Grouped266/Core on `558163ad` remain under evaluation. Old full CI
 `35765595152` ended with macOS compile timeout after 100 minutes of paging,
 without a Rust diagnostic. Its discoverable 1.31 GiB partial cache is retained
 for the next unchanged single-job native compile; Windows14 were repaired W216.
+
+Published33566416757ea69da6e84e4e39233b00955aec09. Exact Hosted formatter
+receipt35778052636 is imported after source SHA, patch SHA and both Git
+pre/postimages were verified. No formatter ran locally. Grouped27035778050758
+and Core35778054554 are running on that source; behavior remains pending.

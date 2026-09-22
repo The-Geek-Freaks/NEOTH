@@ -4115,8 +4115,7 @@ mod tests {
         );
         assert_eq!(frames[1].1["retry_receipt"]["attempt"], 1);
         assert_eq!(
-            frames[2].1["retry_chain_id"],
-            frames[1].1["retry_receipt"]["retry_chain_id"],
+            frames[2].1["retry_chain_id"], frames[1].1["retry_receipt"]["retry_chain_id"],
             "the re-authorized 0x20 carries the explicit retry chain"
         );
         assert_eq!(frames[2].1["retry_attempt"], 2);
@@ -4194,7 +4193,10 @@ mod tests {
                 home.path().to_path_buf(),
             )
             .expect("spawn authenticated home WAL writer");
-            ready.wait().await.expect("ready authenticated home WAL writer");
+            ready
+                .wait()
+                .await
+                .expect("ready authenticated home WAL writer");
             let inner = FinalRetryProvider {
                 class,
                 disposition,
@@ -4231,8 +4233,14 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             assert_eq!(lifecycle.len(), 2, "one 0x20 pairs with exactly one 0x22");
-            assert_eq!(lifecycle[0].0, crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST);
-            assert_eq!(lifecycle[1].0, crate::wal::events::EVENT_TYPE_PROVIDER_ERROR);
+            assert_eq!(
+                lifecycle[0].0,
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST
+            );
+            assert_eq!(
+                lifecycle[1].0,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR
+            );
             let receipt = &lifecycle[1].1["retry_receipt"];
             assert_eq!(receipt["class"], expected_class);
             assert_eq!(receipt["disposition"], expected_disposition);

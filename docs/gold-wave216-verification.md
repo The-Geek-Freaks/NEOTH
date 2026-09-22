@@ -75,3 +75,11 @@ ran locally. Grouped25635775448354 on eefe379d is now source-bound255/256;
 the sole W215 admission-fixture failure is corrected by W216. Core/CLI
 35775451703 on eefe passed. Grouped26635776784587 and Core35776787510 on
 558163ad are running; their behavior results remain pending.
+
+Grouped26635776784587 on558163ad is source-bound265/266 across55source paths.
+AllW215 passed; W2169/10passed. The remaining overflow fixture compared198
+admitted bundled rows to a static197 definition count. It now captures the
+exact ordered baseline with the same readiness probe before installed alpha/
+beta are created, and requires equality after aggregate overflow while retaining
+trusted-bundled-only and alpha/beta exclusion assertions. No production behavior
+is changed by this follow-up. Core/CLI35776787510 on558163ad passed.

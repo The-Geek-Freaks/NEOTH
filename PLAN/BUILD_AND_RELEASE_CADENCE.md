@@ -3,6 +3,15 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**Hosted regression checkpoint (2026-09-22, W216/W217):** Grouped266
+`35776784587` on `558163ad` is source-bound at 265/266. All W215 tests and
+nine of the ten added W216 cases passed; the only failure was the overflow
+fixture's static bundled count (198 versus 197). The fixture now compares the
+exact ordered no-installed-skill baseline under the same readiness probe and
+still requires complete removal of partially admitted installed candidates.
+Core/CLI `35776787510` passed. W217 is published at `33566416`; its exact
+source/SHA-bound formatter receipt `35778052636` is imported. Fresh Grouped270,
+full native CI and GUI evidence remain required; Road counts are unchanged.
 **W217 durable retry visibility (2026-09-22):** classified Claude retry stops
 now carry versioned, content-free receipts in the existing provider terminal.
 Freshly authorized successor intents retain an explicit chain and 1-based

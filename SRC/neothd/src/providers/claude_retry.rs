@@ -112,7 +112,8 @@ pub(crate) fn retry_operator_history(home: &Path) -> Value {
             {
                 let session = frame.header.session_id.opaque_hex();
                 receipts.retain(|entry: &RetryHistoryEntry| {
-                    entry.receipt.retry_chain_id != receipt.retry_chain_id || entry.session != session
+                    entry.receipt.retry_chain_id != receipt.retry_chain_id
+                        || entry.session != session
                 });
                 if receipts.len() == RETRY_HISTORY_MAX_ENTRIES {
                     receipts.remove(0);
@@ -372,11 +373,7 @@ mod tests {
             .expect("append authenticated retry WAL fixture");
     }
 
-    fn receipt_value(
-        chain: &str,
-        attempt: u32,
-        disposition: RetryDisposition,
-    ) -> Value {
+    fn receipt_value(chain: &str, attempt: u32, disposition: RetryDisposition) -> Value {
         serde_json::to_value(RetryOperatorReceipt::new(
             chain.to_owned(),
             RetryClass::Transient,
@@ -581,11 +578,9 @@ mod tests {
         let wal = home.path().join("wal");
         let segment = wal.join("000001.wal");
         std::fs::create_dir_all(&wal).expect("create WAL directory");
-        let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
-            segment.clone(),
-            home.path().to_path_buf(),
-        )
-        .expect("spawn authenticated WAL writer");
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), home.path().to_path_buf())
+                .expect("spawn authenticated WAL writer");
         ready.wait().await.expect("ready authenticated WAL writer");
         let session_a = crate::wal::WalSessionContext::from_admitted_identity(
             home.path(),
@@ -609,11 +604,31 @@ mod tests {
 
         for (chain, attempt, disposition, session) in [
             ("valid", 1, RetryDisposition::RetryIntentClosed, session_a),
-            ("cross-session", 1, RetryDisposition::RetryIntentClosed, session_a),
-            ("earlier-request", 1, RetryDisposition::RetryIntentClosed, session_a),
-            ("wrong-attempt", 1, RetryDisposition::RetryIntentClosed, session_a),
+            (
+                "cross-session",
+                1,
+                RetryDisposition::RetryIntentClosed,
+                session_a,
+            ),
+            (
+                "earlier-request",
+                1,
+                RetryDisposition::RetryIntentClosed,
+                session_a,
+            ),
+            (
+                "wrong-attempt",
+                1,
+                RetryDisposition::RetryIntentClosed,
+                session_a,
+            ),
             ("exhausted", 1, RetryDisposition::Exhausted, session_a),
-            ("shared-chain", 1, RetryDisposition::RetryIntentClosed, session_a),
+            (
+                "shared-chain",
+                1,
+                RetryDisposition::RetryIntentClosed,
+                session_a,
+            ),
         ] {
             append_authenticated_retry_frame(
                 &writer,
@@ -688,13 +703,22 @@ mod tests {
 
         let history = retry_operator_history(home.path());
         let rows = history["receipts"].as_array().expect("receipt rows");
-        assert_eq!(rows.len(), 7, "malformed receipts and live tails stay absent");
+        assert_eq!(
+            rows.len(),
+            7,
+            "malformed receipts and live tails stay absent"
+        );
         let valid = rows
             .iter()
             .find(|row| row["receipt"]["retry_chain_id"] == "valid")
             .expect("valid receipt row");
         assert_eq!(valid["follow_up_lifecycle"], "observed");
-        for chain in ["cross-session", "earlier-request", "wrong-attempt", "exhausted"] {
+        for chain in [
+            "cross-session",
+            "earlier-request",
+            "wrong-attempt",
+            "exhausted",
+        ] {
             let row = rows
                 .iter()
                 .find(|row| row["receipt"]["retry_chain_id"] == chain)
@@ -706,8 +730,16 @@ mod tests {
             .filter(|row| row["receipt"]["retry_chain_id"] == "shared-chain")
             .collect::<Vec<_>>();
         assert_eq!(shared.len(), 2, "same retry chain is isolated by session");
-        assert!(shared.iter().any(|row| row["follow_up_lifecycle"] == "observed"));
-        assert!(shared.iter().any(|row| row["follow_up_lifecycle"] == "not_observed"));
+        assert!(
+            shared
+                .iter()
+                .any(|row| row["follow_up_lifecycle"] == "observed")
+        );
+        assert!(
+            shared
+                .iter()
+                .any(|row| row["follow_up_lifecycle"] == "not_observed")
+        );
         let rendered = serde_json::to_string(&history).expect("render history");
         assert!(!rendered.contains("raw-error-secret"));
         assert!(!rendered.contains("must-not-project"));

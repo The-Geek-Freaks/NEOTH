@@ -2298,6 +2298,18 @@ system_prompt: |
     async fn aggregate_authority_overflow_discards_partially_admitted_snapshot() {
         let home = tempdir().unwrap();
         let skills_dir = home.path().join("skills");
+        let reload = test_reload_controller(home.path());
+        let readiness = W197FixtureProbe::default();
+        let bundled_baseline = load_authorized_with_mode_budget_and_probe(
+            &skills_dir,
+            &reload,
+            UserSkillLoadMode::Quarantine,
+            None,
+            InstalledStoreMode::ReconcileForRuntime,
+            Some(&readiness),
+        )
+        .await
+        .unwrap();
         write_manifest(
             &skills_dir,
             "alpha",
@@ -2319,9 +2331,7 @@ system_prompt: |
         install_test_wal_key(home.path());
         record_test_install_incarnation(home.path(), "alpha");
         record_test_install_incarnation(home.path(), "beta");
-        let reload = test_reload_controller(home.path());
         activate_test_skill(home.path(), "alpha", &reload);
-        let readiness = W197FixtureProbe::default();
 
         // Candidate order is canonical by id. Alpha consumes one package
         // entry plus its one authority-record entry and is admitted. Beta's
@@ -2338,9 +2348,19 @@ system_prompt: |
         .await
         .unwrap();
 
+        let baseline_ids = bundled_baseline
+            .skills
+            .iter()
+            .map(|skill| skill.id())
+            .collect::<Vec<_>>();
+        let snapshot_ids = snapshot
+            .skills
+            .iter()
+            .map(|skill| skill.id())
+            .collect::<Vec<_>>();
         assert_eq!(
-            snapshot.skills.len(),
-            super::super::bundled::BUNDLED_SKILLS.len()
+            snapshot_ids, baseline_ids,
+            "aggregate overflow must restore the exact probe-identical bundled baseline"
         );
         assert!(
             snapshot.skills.iter().all(RuntimeSkill::is_trusted_bundled),
