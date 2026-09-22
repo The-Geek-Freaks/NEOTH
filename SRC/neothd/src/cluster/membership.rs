@@ -10,11 +10,11 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 
 use anyhow::{Context, Result};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier as _, VerifyingKey};
-use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension as _, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-pub const AUTHORITY_SCHEMA_VERSION: i64 = 4;
+pub const AUTHORITY_SCHEMA_VERSION: i64 = 5;
 pub const MEMBERSHIP_SNAPSHOT_VERSION: u16 = 1;
 pub const MEMBERSHIP_SNAPSHOT_WIRE_VERSION: u16 = 1;
 pub const MEMBERSHIP_SNAPSHOT_OPERATION: &str = "cluster.membership.snapshot";
@@ -1873,6 +1873,15 @@ impl MembershipGrant {
             .revalidate_grant(self, now_unix)
     }
 
+    /// The operator-owned delegation ceiling is deliberately independent from
+    /// peer-advertised Hello capabilities. A membership grant only proves who
+    /// the remote peer is; this fresh authority read proves the operator has
+    /// enabled `TaskDelegate` for that exact authenticated carrier key.
+    pub fn task_delegate_authorized(&self) -> Result<bool> {
+        MembershipStore::open_path(self.authority_path.clone(), false)?
+            .task_delegate_authorized(self.carrier, &self.transport_identity)
+    }
+
     /// Start a membership-linearized effect. This read transaction remains
     /// deliberately short: long provider/network effects must never hold a
     /// SQLite read lock. [`MembershipEffectGuard::finish`] performs the second
@@ -2537,6 +2546,16 @@ pub struct MembershipStore {
     effects: Arc<GenerationEffectRegistry>,
 }
 
+/// Durable, operator-owned ceiling for inbound `TaskDelegate` frames. The
+/// identity is the exact authenticated carrier key, never a peer's claimed
+/// capabilities, label, or task payload.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskDelegateAssignment {
+    pub peer_key: String,
+    pub allowed: bool,
+    pub revision: u64,
+}
+
 #[derive(Clone, Debug)]
 struct PendingOutboxEvent {
     id: i64,
@@ -2605,6 +2624,32 @@ impl MembershipStore {
         Self::open_path(path, false).map(Some)
     }
 
+    /// Read one assignment without opening a write-capable connection or
+    /// migrating the authority DB. This is the CLI/status path while a daemon
+    /// may own the durable authority; an older DB therefore remains an honest
+    /// default-deny instead of being mutated by a nominally read-only command.
+    pub fn task_delegate_assignment_read_only(
+        home: &Path,
+        peer_key: &str,
+    ) -> Result<Option<TaskDelegateAssignment>> {
+        validate_peeroxide_transport_key(peer_key)?;
+        let path = home.join(AUTHORITY_DB_FILE);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let conn = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .with_context(|| format!("open membership authority read-only {}", path.display()))?;
+        let has_table: i64 = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_delegate_assignments')",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_table == 0 {
+            return Ok(None);
+        }
+        Self::read_task_delegate_assignment_on(&conn, peer_key)
+    }
+
     pub fn open_path(path: PathBuf, create_private: bool) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -2667,6 +2712,105 @@ impl MembershipStore {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
         Ok((MembershipEpoch::new(epoch)?, MembershipEpoch::new(floor)?))
+    }
+
+    pub fn task_delegate_assignment(&self, peer_key: &str) -> Result<Option<TaskDelegateAssignment>> {
+        validate_peeroxide_transport_key(peer_key)?;
+        let conn = self.connection()?;
+        Self::read_task_delegate_assignment_on(&conn, peer_key)
+    }
+
+    fn read_task_delegate_assignment_on(
+        conn: &Connection,
+        peer_key: &str,
+    ) -> Result<Option<TaskDelegateAssignment>> {
+        conn.query_row(
+            "SELECT allowed,revision FROM task_delegate_assignments
+             WHERE carrier='peeroxide' AND transport_identity=?1",
+            [peer_key],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, u64>(1)?)),
+        )
+        .optional()?
+        .map(|(allowed, revision)| {
+            anyhow::ensure!(matches!(allowed, 0 | 1), "invalid task delegate assignment flag");
+            anyhow::ensure!(revision > 0, "invalid task delegate assignment revision");
+            Ok(TaskDelegateAssignment {
+                peer_key: peer_key.to_string(),
+                allowed: allowed == 1,
+                revision,
+            })
+        })
+        .transpose()
+    }
+
+    /// Compare-and-set one exact peer's delegation ceiling. Revision zero is
+    /// the explicit expected state for a previously unassigned peer; every
+    /// persisted write increments the revision, including a revocation.
+    pub fn set_task_delegate_assignment(
+        &self,
+        peer_key: &str,
+        allowed: bool,
+        expected_revision: u64,
+    ) -> Result<TaskDelegateAssignment> {
+        validate_peeroxide_transport_key(peer_key)?;
+        let mut conn = self.connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let is_active: i64 = tx.query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM members m
+               JOIN transport_bindings b ON b.stable_node_id=m.stable_node_id
+               JOIN authority_meta a ON a.singleton=1
+               WHERE m.state='active' AND b.carrier='peeroxide'
+                 AND b.transport_identity=?1 AND b.auth_epoch=m.auth_epoch
+                 AND b.membership_epoch=m.membership_epoch
+                 AND m.membership_epoch=a.membership_epoch
+                 AND m.membership_epoch>=a.revocation_floor
+             )",
+            [peer_key],
+            |row| row.get(0),
+        )?;
+        anyhow::ensure!(is_active == 1, "task delegate assignment requires an active exact peeroxide membership");
+        let current = tx
+            .query_row(
+                "SELECT revision FROM task_delegate_assignments
+                 WHERE carrier='peeroxide' AND transport_identity=?1",
+                [peer_key],
+                |row| row.get::<_, u64>(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        anyhow::ensure!(
+            current == expected_revision,
+            "task delegate assignment revision conflict: expected {expected_revision}, current {current}"
+        );
+        let revision = current.checked_add(1).context("task delegate assignment revision exhausted")?;
+        tx.execute(
+            "INSERT INTO task_delegate_assignments
+                 (carrier,transport_identity,allowed,revision)
+             VALUES ('peeroxide',?1,?2,?3)
+             ON CONFLICT(carrier,transport_identity) DO UPDATE SET
+               allowed=excluded.allowed,revision=excluded.revision",
+            params![peer_key, i64::from(allowed), revision],
+        )?;
+        tx.commit()?;
+        Ok(TaskDelegateAssignment {
+            peer_key: peer_key.to_string(),
+            allowed,
+            revision,
+        })
+    }
+
+    fn task_delegate_authorized(
+        &self,
+        carrier: CarrierKind,
+        transport_identity: &TransportIdentity,
+    ) -> Result<bool> {
+        if carrier != CarrierKind::Peeroxide {
+            return Ok(false);
+        }
+        Ok(self
+            .task_delegate_assignment(transport_identity.as_str())?
+            .is_some_and(|assignment| assignment.allowed))
     }
 
     pub fn latest_invitation_digest(
@@ -4645,7 +4789,30 @@ fn migrate(conn: &Connection) -> Result<()> {
              PRAGMA user_version=4;",
         )?;
     }
+    // P2-18: assignments share the existing local membership authority DB so
+    // there is one durable operator-controlled source, not a peer-controlled
+    // config overlay. It is created after every historical migration and then
+    // advances the schema atomically to v5.
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS task_delegate_assignments (
+             carrier TEXT NOT NULL CHECK(carrier IN ('peeroxide')),
+             transport_identity TEXT NOT NULL,
+             allowed INTEGER NOT NULL CHECK(allowed IN (0,1)),
+             revision INTEGER NOT NULL CHECK(revision > 0),
+             PRIMARY KEY(carrier,transport_identity)
+         );
+         PRAGMA user_version=5;",
+    )?;
     tx.commit()?;
+    Ok(())
+}
+
+fn validate_peeroxide_transport_key(value: &str) -> Result<()> {
+    anyhow::ensure!(
+        value.len() == 64 && value == value.to_ascii_lowercase()
+            && value.chars().all(|character| matches!(character, '0'..='9' | 'a'..='f')),
+        "task delegate peer key must be exactly 64 lowercase hex characters"
+    );
     Ok(())
 }
 
@@ -4818,6 +4985,105 @@ mod tests {
             migrated.authority_epochs().unwrap(),
             (MembershipEpoch::INITIAL, MembershipEpoch::INITIAL)
         );
+    }
+
+    #[test]
+    fn v4_migration_preserves_membership_rows_and_introduces_default_deny_assignment() {
+        let home = tempfile::tempdir().unwrap();
+        let now = 1_700_000_000;
+        let (_, attestation, transport) = identity_and_attestation(home.path(), now);
+        let peer_key = transport.as_str().to_string();
+        let store = MembershipStore::open(home.path()).unwrap();
+        store
+            .confirm_attestation(
+                &attestation,
+                CarrierKind::Peeroxide,
+                &transport,
+                "v4-migration",
+                "v4-migration",
+                now,
+            )
+            .unwrap();
+        let before = store.snapshot().unwrap();
+        let path = store.path().to_path_buf();
+        drop(store);
+
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch("DROP TABLE task_delegate_assignments; PRAGMA user_version=4;")
+            .unwrap();
+        drop(conn);
+
+        // A status/show read against a daemon-owned v4 authority must not
+        // create the v5 table or bump user_version behind that daemon.
+        assert_eq!(
+            MembershipStore::task_delegate_assignment_read_only(home.path(), &peer_key).unwrap(),
+            None
+        );
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(
+            conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            4
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_delegate_assignments')",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+        drop(conn);
+
+        let migrated = MembershipStore::open_path(path, false).unwrap();
+        assert_eq!(migrated.snapshot().unwrap(), before);
+        assert_eq!(migrated.task_delegate_assignment(&peer_key).unwrap(), None);
+        migrated.integrity_check().unwrap();
+    }
+
+    #[test]
+    fn task_delegate_assignment_is_default_deny_exact_key_and_revisioned() {
+        let home = tempfile::tempdir().unwrap();
+        let now = 1_700_000_000;
+        let (_, attestation, transport) = identity_and_attestation(home.path(), now);
+        let peer_key = transport.as_str().to_string();
+        let store = MembershipStore::open(home.path()).unwrap();
+        store
+            .confirm_attestation(
+                &attestation,
+                CarrierKind::Peeroxide,
+                &transport,
+                "assignment-test",
+                "assignment-test",
+                now,
+            )
+            .unwrap();
+        let grant = store.admit(CarrierKind::Peeroxide, &transport, now).unwrap();
+
+        assert_eq!(store.task_delegate_assignment(&peer_key).unwrap(), None);
+        assert!(!grant.task_delegate_authorized().unwrap());
+
+        let allowed = store
+            .set_task_delegate_assignment(&peer_key, true, 0)
+            .unwrap();
+        assert_eq!(allowed.revision, 1);
+        assert!(grant.task_delegate_authorized().unwrap());
+        assert!(store
+            .task_delegate_assignment(&"ab".repeat(32))
+            .unwrap()
+            .is_none());
+
+        let revoked = store
+            .set_task_delegate_assignment(&peer_key, false, allowed.revision)
+            .unwrap();
+        assert_eq!(revoked.revision, 2);
+        assert!(!grant.task_delegate_authorized().unwrap());
+        assert!(store
+            .set_task_delegate_assignment(&peer_key, true, allowed.revision)
+            .unwrap_err()
+            .to_string()
+            .contains("revision conflict"));
     }
 
     #[test]

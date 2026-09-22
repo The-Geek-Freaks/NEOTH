@@ -1909,6 +1909,30 @@ async fn handle_task_delegate_inner(
         return;
     }
 
+    // Membership authenticates the peer; it does not authorize delegated
+    // provider work. Only the operator-owned, exact-key assignment ceiling
+    // may do that. In particular, Hello.capabilities and task-body fields
+    // never participate in this decision.
+    if !membership_grant
+        .task_delegate_authorized()
+        .unwrap_or(false)
+    {
+        reply_task_rejected(
+            peer_streams,
+            remote_pk_hex,
+            own_peer_id,
+            &task_id,
+            "operator_assignment_denied",
+        );
+        emit_task_rejected_wal(
+            wal_writer.as_deref(),
+            &task_id,
+            remote_pk_hex,
+            "operator_assignment_denied",
+        );
+        return;
+    }
+
     // Checkpoint 1: re-read dedicated authority. `cluster.yaml` is not an
     // authorization source and a passphrase holder is not necessarily active.
     let is_paired = membership_grant.revalidate(now_unix_secs() as i64).is_ok();
@@ -2049,6 +2073,29 @@ async fn handle_task_delegate_inner(
             #[cfg(test)]
             if let Some(hook) = after_gate_before_job {
                 hook();
+            }
+
+            // A CLI revocation can land while the durable autonomy gate was
+            // running. Re-read the assignment immediately before the queued
+            // provider effect; an earlier Allow never becomes a capability.
+            if !membership_grant
+                .task_delegate_authorized()
+                .unwrap_or(false)
+            {
+                reply_task_rejected(
+                    peer_streams,
+                    remote_pk_hex,
+                    own_peer_id,
+                    &task_id,
+                    "operator_assignment_denied",
+                );
+                emit_task_rejected_wal(
+                    wal_writer.as_deref(),
+                    &task_id,
+                    remote_pk_hex,
+                    "operator_assignment_denied",
+                );
+                return;
             }
 
             // `authorized` begins the queued-provider membership effect and
@@ -2549,6 +2596,9 @@ mod tests {
                 now,
             )
             .unwrap();
+        store
+            .set_task_delegate_assignment(&remote_pk_hex, true, 0)
+            .unwrap();
         (
             remote_pk_hex,
             store
@@ -2792,6 +2842,82 @@ mod tests {
             crate::permissions::TrustLedgerCompleteness::Complete
         ));
         assert_eq!(settled_ledger.entries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn delegated_task_default_assignment_deny_never_queues() {
+        let home = tempfile::tempdir().unwrap();
+        let (remote_pk_hex, grant) = paired_peer_grant(home.path());
+        // The shared paired helper grants permission for existing acceptance
+        // tests; revoke that exact revision to exercise the real default-deny
+        // handler path rather than a synthetic policy predicate.
+        super::super::membership::MembershipStore::open(home.path())
+            .unwrap()
+            .set_task_delegate_assignment(&remote_pk_hex, false, 1)
+            .unwrap();
+        let (writer, writer_join) = authenticated_writer(home.path());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let peer_streams = PeerStreamRegistry::new();
+
+        handle_task_delegate(
+            task_delegate("task-default-deny", "prompt"),
+            &remote_pk_hex,
+            "local",
+            &policy(AutonomyLevel::Elevated),
+            home.path(),
+            Some(Arc::clone(&writer)),
+            &peer_streams,
+            Some(&tx),
+            &grant,
+        )
+        .await;
+
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+        drop(writer);
+        writer_join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn delegated_task_assignment_revoked_after_gate_never_queues() {
+        let home = tempfile::tempdir().unwrap();
+        let (remote_pk_hex, grant) = paired_peer_grant(home.path());
+        let (writer, writer_join) = authenticated_writer(home.path());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let peer_streams = PeerStreamRegistry::new();
+        let assignment_home = home.path().to_path_buf();
+        let assignment_peer = remote_pk_hex.clone();
+        let revoke_after_gate = move || {
+            super::super::membership::MembershipStore::open(&assignment_home)
+                .unwrap()
+                .set_task_delegate_assignment(&assignment_peer, false, 1)
+                .unwrap();
+        };
+
+        handle_task_delegate_inner(
+            task_delegate("task-revoked-after-gate", "prompt"),
+            &remote_pk_hex,
+            "local",
+            &policy(AutonomyLevel::Elevated),
+            home.path(),
+            Some(Arc::clone(&writer)),
+            &peer_streams,
+            Some(&tx),
+            &grant,
+            None,
+            Some(&revoke_after_gate),
+            None,
+        )
+        .await;
+
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+        drop(writer);
+        writer_join.await.unwrap();
     }
 
     #[tokio::test]

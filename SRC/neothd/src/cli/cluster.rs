@@ -48,6 +48,29 @@ pub enum ClusterConflictAction {
     },
 }
 
+/// Operator-owned ceiling for inbound delegated provider work. This is keyed
+/// by the authenticated peeroxide public key and deliberately has no link to
+/// peer-advertised Hello capabilities.
+#[derive(Subcommand, Debug, Clone)]
+pub enum ClusterTaskDelegateAction {
+    /// Read one exact peer's durable delegation assignment.
+    Show {
+        #[arg(value_name = "PEER_PK")]
+        peer_key: String,
+    },
+    /// Compare-and-set one exact peer's delegation assignment. Use revision 0
+    /// for an as-yet unassigned active peer; read the returned revision before
+    /// a later change or revocation.
+    Set {
+        #[arg(value_name = "PEER_PK")]
+        peer_key: String,
+        #[arg(long, action = clap::ArgAction::Set)]
+        allowed: bool,
+        #[arg(long, value_name = "REVISION")]
+        expected_revision: u64,
+    },
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum ClusterAction {
     /// Print the active policy + known peer state.
@@ -233,6 +256,13 @@ pub enum ClusterAction {
         #[arg(value_name = "UUID")]
         request_id: String,
     },
+    /// Manage the exact-key operator assignment required for inbound
+    /// `TaskDelegate` frames. Missing assignment is a deny.
+    #[command(name = "task-delegate")]
+    TaskDelegate {
+        #[command(subcommand)]
+        action: ClusterTaskDelegateAction,
+    },
     /// Atomically replace the complete public cluster configuration and ask a
     /// running daemon to reload it. Lists are JSON string arrays so commas and
     /// leading/trailing whitespace survive the CLI/GUI boundary exactly.
@@ -394,6 +424,9 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
         } => run_revoke(&pub_key, request_id.as_deref(), &args.output).await,
         ClusterAction::RevokeStatus { request_id } => {
             run_revoke_status(&request_id, &args.output).await
+        }
+        ClusterAction::TaskDelegate { action } => {
+            run_task_delegate_assignment(action, &args.output)
         }
         ClusterAction::Configure {
             enabled,
@@ -1593,6 +1626,85 @@ async fn run_revoke_status(request_id: &str, output: &OutputFormat) -> Result<()
         },
     }
     Ok(())
+}
+
+fn run_task_delegate_assignment(
+    action: ClusterTaskDelegateAction,
+    output: &OutputFormat,
+) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    match action {
+        ClusterTaskDelegateAction::Show { peer_key } => {
+            let assignment = task_delegate_assignment_show_at(&home, &peer_key)?;
+            match output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&assignment)?),
+                OutputFormat::Jsonl => println!("{}", serde_json::to_string(&assignment)?),
+                OutputFormat::Table => match assignment {
+                    Some(assignment) => println!(
+                        "peer_key={} task_delegate={} revision={}",
+                        assignment.peer_key, assignment.allowed, assignment.revision
+                    ),
+                    None => println!(
+                        "peer_key={} task_delegate=false revision=0 (default deny)",
+                        peer_key
+                    ),
+                },
+            }
+        }
+        ClusterTaskDelegateAction::Set {
+            peer_key,
+            allowed,
+            expected_revision,
+        } => {
+            let readback = task_delegate_assignment_set_at(
+                &home,
+                &peer_key,
+                allowed,
+                expected_revision,
+            )?;
+            match output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&readback)?),
+                OutputFormat::Jsonl => println!("{}", serde_json::to_string(&readback)?),
+                OutputFormat::Table => println!(
+                    "peer_key={} task_delegate={} revision={} (committed and read back)",
+                    readback.peer_key, readback.allowed, readback.revision
+                ),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn task_delegate_assignment_show_at(
+    home: &Path,
+    peer_key: &str,
+) -> Result<Option<crate::cluster::membership::TaskDelegateAssignment>> {
+    validate_pub_key_hex(peer_key)?;
+    crate::cluster::membership::MembershipStore::task_delegate_assignment_read_only(home, peer_key)
+}
+
+fn task_delegate_assignment_set_at(
+    home: &Path,
+    peer_key: &str,
+    allowed: bool,
+    expected_revision: u64,
+) -> Result<crate::cluster::membership::TaskDelegateAssignment> {
+    validate_pub_key_hex(peer_key)?;
+    anyhow::ensure!(
+        live_daemon_owner_pid(home)?.is_none(),
+        "stop the daemon before changing task-delegate assignments; this CLI slice has no daemon authority RPC"
+    );
+    let _offline_authority_lock = acquire_offline_membership_guard(home)?;
+    let store = crate::cluster::membership::MembershipStore::open(home)?;
+    let committed = store.set_task_delegate_assignment(peer_key, allowed, expected_revision)?;
+    let readback = store
+        .task_delegate_assignment(peer_key)?
+        .context("task delegate assignment disappeared after commit")?;
+    anyhow::ensure!(
+        readback == committed,
+        "task delegate assignment readback differs from committed value"
+    );
+    Ok(readback)
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
@@ -5079,6 +5191,59 @@ mod tests {
             }
             _ => panic!("expected Discover variant"),
         }
+    }
+
+    #[test]
+    fn task_delegate_set_show_is_revisioned_and_readback_exact() {
+        let home = tempfile::tempdir().unwrap();
+        let now = crate::time::now_unix_i64();
+        let identity = crate::cluster::membership::LocalNodeIdentity::load_or_create(home.path())
+            .unwrap();
+        let transport = crate::cluster::membership::TransportIdentity::peeroxide(
+            &identity.peeroxide_key_pair().public_key,
+        );
+        let peer_key = transport.as_str().to_string();
+        let attestation = identity
+            .attest_endpoint(
+                crate::cluster::membership::CarrierKind::Peeroxide,
+                transport.clone(),
+                crate::cluster::membership::BootId::new(),
+                "cluster-cli-assignment".into(),
+                "test".into(),
+                crate::cluster::membership::AuthEpoch::INITIAL,
+                crate::cluster::membership::MembershipEpoch::new(2).unwrap(),
+                Some("test".into()),
+                now + 60,
+            )
+            .unwrap();
+        let store = crate::cluster::membership::MembershipStore::open(home.path()).unwrap();
+        store
+            .confirm_attestation(
+                &attestation,
+                crate::cluster::membership::CarrierKind::Peeroxide,
+                &transport,
+                "test",
+                "cluster-cli-assignment",
+                now,
+            )
+            .unwrap();
+
+        assert_eq!(task_delegate_assignment_show_at(home.path(), &peer_key).unwrap(), None);
+        let allowed = task_delegate_assignment_set_at(home.path(), &peer_key, true, 0).unwrap();
+        assert!(allowed.allowed);
+        assert_eq!(allowed.revision, 1);
+        assert_eq!(
+            task_delegate_assignment_show_at(home.path(), &peer_key).unwrap(),
+            Some(allowed.clone())
+        );
+        assert!(task_delegate_assignment_set_at(home.path(), &peer_key, false, 0)
+            .unwrap_err()
+            .to_string()
+            .contains("revision conflict"));
+        assert_eq!(
+            task_delegate_assignment_show_at(home.path(), &peer_key).unwrap(),
+            Some(allowed)
+        );
     }
 
     // ── Bite #3: cluster confirm --interactive ─────────────────────

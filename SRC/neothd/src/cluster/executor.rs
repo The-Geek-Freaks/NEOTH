@@ -431,8 +431,24 @@ fn assemble_cluster_request(
 /// returns the body to ship back.
 async fn run_one_task_execution(
     provider: Option<Arc<crate::providers::cost_authorization::AuthorizedProvider>>,
+    job: ClusterTaskJob,
+    execution_context: ClusterExecutionContext,
+) -> TaskExecutionResult {
+    run_one_task_execution_inner(
+        provider,
+        job,
+        execution_context,
+        #[cfg(test)]
+        None,
+    )
+    .await
+}
+
+async fn run_one_task_execution_inner(
+    provider: Option<Arc<crate::providers::cost_authorization::AuthorizedProvider>>,
     mut job: ClusterTaskJob,
     execution_context: ClusterExecutionContext,
+    #[cfg(test)] before_external_permit: Option<&(dyn Fn() + Sync)>,
 ) -> TaskExecutionResult {
     let mut effect_guard = match job.queued_effect.take() {
         Some(guard) => guard,
@@ -461,6 +477,30 @@ async fn run_one_task_execution(
         }
         .into();
     };
+    // Queue admission was authorized separately, but assignment revocation is
+    // live operator state. Re-read it at executor entry so a queued task is
+    // stopped before request assembly when its exact peer permission was
+    // removed. A second check is the final provider-boundary seam below.
+    if !job
+        .membership_grant
+        .task_delegate_authorized()
+        .unwrap_or(false)
+    {
+        tracing::warn!(
+            task_id = %job.task_id,
+            stable_node_id = %job.membership_grant.stable_node_id(),
+            "cluster executor: operator task-delegate assignment denied before provider dispatch"
+        );
+        return TaskResultBody {
+            task_id: job.task_id.clone(),
+            status: TaskResultStatus::Rejected {
+                reason: "operator_assignment_denied".to_string(),
+            },
+            result: None,
+            provider_name: None,
+        }
+        .into();
+    }
     let provider_name = provider.name().to_string();
     let provider = provider.with_audit_context(
         crate::providers::cost_authorization::ProviderCallAuditContext {
@@ -521,9 +561,34 @@ async fn run_one_task_execution(
         .into();
     }
 
+    #[cfg(test)]
+    if let Some(hook) = before_external_permit {
+        hook();
+    }
+
     // The external permit is the final process-local linearization point.
     // Revoke-first makes this fail before provider bytes can leave. Dispatch-
     // first makes revoke wait until we durably classify the provider outcome.
+    if !job
+        .membership_grant
+        .task_delegate_authorized()
+        .unwrap_or(false)
+    {
+        tracing::warn!(
+            task_id = %job.task_id,
+            stable_node_id = %job.membership_grant.stable_node_id(),
+            "cluster executor: operator task-delegate assignment denied at final provider boundary"
+        );
+        return TaskResultBody {
+            task_id: job.task_id.clone(),
+            status: TaskResultStatus::Rejected {
+                reason: "operator_assignment_denied".to_string(),
+            },
+            result: None,
+            provider_name: Some(provider_name),
+        }
+        .into();
+    }
     let mut external_permit = match effect_guard.begin_external((now_unix_ms() / 1_000) as i64) {
         Ok(permit) => permit,
         Err(error) => {
@@ -750,6 +815,9 @@ mod tests {
                 now,
             )
             .unwrap();
+        store
+            .set_task_delegate_assignment(transport.as_str(), true, 0)
+            .unwrap();
         ClusterTaskJob::authorized(
             "t-1".into(),
             prompt.into(),
@@ -858,6 +926,108 @@ mod tests {
         assert!(matches!(
             result.status,
             TaskResultStatus::Failed { ref error } if error == "membership_revoked"
+        ));
+    }
+
+    #[tokio::test]
+    async fn assignment_revoked_after_queue_before_dispatch_makes_zero_provider_calls() {
+        use crate::providers::Completion;
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountingProvider(Arc<AtomicUsize>);
+
+        #[async_trait]
+        impl Provider for CountingProvider {
+            fn name(&self) -> &'static str {
+                "local_qwen"
+            }
+
+            async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                anyhow::bail!("must not be called after assignment revoke")
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let queued = job(home.path(), "queued before assignment revoke");
+        let peer_key = queued.membership_grant.transport_identity().as_str().to_string();
+        crate::cluster::membership::MembershipStore::open(home.path())
+            .unwrap()
+            .set_task_delegate_assignment(&peer_key, false, 1)
+            .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+            Arc::new(CountingProvider(Arc::clone(&calls))),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            None,
+            "cluster.test.assignment",
+        );
+        let result = run_one_task(
+            Some(Arc::new(provider)),
+            queued,
+            execution_context(home.path(), crate::config::FreedomConfig::default()),
+        )
+        .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(matches!(
+            result.status,
+            TaskResultStatus::Rejected { ref reason } if reason == "operator_assignment_denied"
+        ));
+    }
+
+    #[tokio::test]
+    async fn assignment_revoked_at_final_provider_boundary_makes_zero_provider_calls() {
+        use crate::providers::Completion;
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountingProvider(Arc<AtomicUsize>);
+
+        #[async_trait]
+        impl Provider for CountingProvider {
+            fn name(&self) -> &'static str {
+                "local_qwen"
+            }
+
+            async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                anyhow::bail!("must not be called after final assignment revoke")
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let queued = job(home.path(), "final assignment revoke");
+        let assignment_home = home.path().to_path_buf();
+        let assignment_peer = queued.membership_grant.transport_identity().as_str().to_string();
+        let revoke_before_external = move || {
+            crate::cluster::membership::MembershipStore::open(&assignment_home)
+                .unwrap()
+                .set_task_delegate_assignment(&assignment_peer, false, 1)
+                .unwrap();
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+            Arc::new(CountingProvider(Arc::clone(&calls))),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            None,
+            "cluster.test.assignment-final-boundary",
+        );
+        let result = run_one_task_execution_inner(
+            Some(Arc::new(provider)),
+            queued,
+            execution_context(home.path(), crate::config::FreedomConfig::default()),
+            Some(&revoke_before_external),
+        )
+        .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(matches!(
+            result.body.status,
+            TaskResultStatus::Rejected { ref reason } if reason == "operator_assignment_denied"
         ));
     }
 

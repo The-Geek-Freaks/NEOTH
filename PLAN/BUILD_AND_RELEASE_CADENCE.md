@@ -3,6 +3,21 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W226 operator cluster assignments (2026-09-22):** the existing membership DB
+now persists exact-key TaskDelegate assignments with default denial and CAS
+revisions. CLI show is read-only/no-migrate; set requires the existing offline
+authority lock and exact readback. Inbound and executor checks include the final
+pre-provider boundary. Independent focused source review passed after fixing
+read-only migration and queued/final revocation cases. Seven new behavioral
+cases plus fourteen affected existing cases join Grouped303. Hosted behavior
+and generated CLI-reference acceptance are pending; P2-18 remains open for
+skills/channel/failover and GUI/Buddy scope. Inventory: **534 source paths /
+841 native / 94 GUI**, unchanged platform extras and 26 custom macOS cases.
+Road remains **1016 checked / 306 open / 2 partial** (1324 total). See
+`docs/gold-wave226-verification.md`. W225's first Grouped282 compile errors
+were repaired in `5dff0afb`; new run `35787943413` is pending. The synchronized
+Road/Progress counters passed Preflight `35788156226` on `02f4c5ea`.
+All executable validation remains on GitHub; the local BSOD hold is unchanged.
 **W224 accepted / W225 queued (2026-09-22):** P2-10 is now accepted against
 `778637e0`: Grouped281 `35785415701` passed all 281 exact selected tests;
 58 source-path hashes, the matrix, Cargo.lock and each case's result terminal
