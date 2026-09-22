@@ -8814,9 +8814,7 @@ fn finish_cli_chat_turn_with_response_feedback(
     response_feedback_home: &std::path::Path,
     response_feedback_incognito: bool,
     response_feedback_control_token: Option<&str>,
-    response_feedback_receipt: Option<
-        &crate::memory::transcript_store::CommittedAgentTurnReceipt,
-    >,
+    response_feedback_receipt: Option<&crate::memory::transcript_store::CommittedAgentTurnReceipt>,
 ) -> Result<()> {
     match result {
         Ok(deferred) => {
@@ -8831,10 +8829,9 @@ fn finish_cli_chat_turn_with_response_feedback(
                 // constructs its deferred terminal or StreamDone output.
                 if response_feedback_incognito {
                     terminal.mark_response_feedback_unavailable();
-                } else if let (Some(session_id), Some(receipt)) = (
-                    terminal_session_id(&terminal),
-                    response_feedback_receipt,
-                ) {
+                } else if let (Some(session_id), Some(receipt)) =
+                    (terminal_session_id(&terminal), response_feedback_receipt)
+                {
                     match crate::feedback::response::register_drained_terminal_response_bound(
                         response_feedback_home,
                         session_id,
@@ -25142,8 +25139,8 @@ mod wave35_adapter_lifecycle_tests {
         home: &std::path::Path,
         session_id: &str,
     ) -> crate::memory::transcript_store::CommittedAgentTurnReceipt {
-        let conn = crate::memory::store::open(home.join("views.db"))
-            .expect("open fixture views database");
+        let conn =
+            crate::memory::store::open(home.join("views.db")).expect("open fixture views database");
         crate::memory::transcript_store::insert_feedback_eligible_agent_turn(
             home,
             &conn,

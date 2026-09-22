@@ -198,13 +198,10 @@ pub(crate) fn validate_feedback_eligible_agent_receipt(
     if !valid_feedback_session_id(session_id) || receipt.session_id != session_id {
         return Err(FeedbackEligibleAgentReceiptError::Unavailable);
     }
-    let home_directory = crate::skills::store::open_bound_directory(
-        home,
-        false,
-        "response feedback home",
-    )
-    .map_err(|_| FeedbackEligibleAgentReceiptError::Unavailable)?
-    .ok_or(FeedbackEligibleAgentReceiptError::Unavailable)?;
+    let home_directory =
+        crate::skills::store::open_bound_directory(home, false, "response feedback home")
+            .map_err(|_| FeedbackEligibleAgentReceiptError::Unavailable)?
+            .ok_or(FeedbackEligibleAgentReceiptError::Unavailable)?;
     if home_directory.physical_display_path != receipt.home_physical {
         return Err(FeedbackEligibleAgentReceiptError::Unavailable);
     }

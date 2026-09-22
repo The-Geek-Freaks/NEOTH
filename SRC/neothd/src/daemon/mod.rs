@@ -83,7 +83,6 @@ pub mod doctor_cron;
 /// switch `drift_alert.enabled`).
 pub mod drift_alert_cron;
 pub mod export;
-pub mod train_export;
 /// Round-3 v0.4 G-02 cron-wiring — daily tick that scans
 /// `idx_profile` for novel high-confidence claims via
 /// `profile::surfacing::find_novel_high_confidence_claims` +
@@ -229,6 +228,7 @@ pub mod synthesis_cron;
 /// GOLD-ADAPT-JV-PRO-02 — token-anomaly security tripwire cron (scans WAL usage
 /// frames over a rolling baseline; emits `0x6E TOKEN_ANOMALY_DETECTED`).
 pub mod token_anomaly_cron;
+pub mod train_export;
 pub(crate) mod updater_cron;
 /// GOLD-FEAT-09 — daemon watchdog/auto-recovery cron. Probes supervised local
 /// services (n8n / Ollama) every `watchdog.interval_secs`, restarts them at

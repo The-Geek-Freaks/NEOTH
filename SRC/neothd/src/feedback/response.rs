@@ -264,8 +264,10 @@ pub(crate) fn apply_response_feedback(
     validate_session_id(expected_session_id)?;
     with_projection(home, |projection| {
         let target = find_target_mut(projection, response_id, expected_session_id)?;
-        if matches!(operation, ResponseFeedbackOperation::Set(ResponseSignal::Accepted))
-            && target.raw_turn_id.is_none()
+        if matches!(
+            operation,
+            ResponseFeedbackOperation::Set(ResponseSignal::Accepted)
+        ) && target.raw_turn_id.is_none()
         {
             return Ok((
                 ResponseFeedbackOutcome::Rejected(ResponseFeedbackRejection::Unavailable),
@@ -342,12 +344,10 @@ pub(crate) fn active_response_feedback_summary(
 pub(crate) fn read_training_export_candidates(
     home: &Path,
 ) -> Result<Vec<TrainingExportCandidate>, ResponseFeedbackRejection> {
-    let Some(home_directory) = crate::skills::store::open_bound_directory(
-        home,
-        false,
-        "response feedback export home",
-    )
-    .map_err(|_| ResponseFeedbackRejection::Unavailable)? else {
+    let Some(home_directory) =
+        crate::skills::store::open_bound_directory(home, false, "response feedback export home")
+            .map_err(|_| ResponseFeedbackRejection::Unavailable)?
+    else {
         return Ok(Vec::new());
     };
     let namespace_path = home_directory.physical_display_path.join(STORE_DIR);
@@ -356,7 +356,8 @@ pub(crate) fn read_training_export_candidates(
         false,
         "response feedback export directory",
     )
-    .map_err(|_| ResponseFeedbackRejection::Unavailable)? else {
+    .map_err(|_| ResponseFeedbackRejection::Unavailable)?
+    else {
         return Ok(Vec::new());
     };
     let projection = read_projection(&namespace.dir, &namespace_path.join(STORE_FILE))?;
@@ -395,7 +396,10 @@ fn validate_projection(projection: &StoredProjection) -> Result<(), ResponseFeed
     }
     for (index, target) in projection.targets.iter().enumerate() {
         validate_session_id(&target.session_id)?;
-        if target.raw_turn_id.is_some_and(|raw_turn_id| raw_turn_id <= 0) {
+        if target
+            .raw_turn_id
+            .is_some_and(|raw_turn_id| raw_turn_id <= 0)
+        {
             return Err(ResponseFeedbackRejection::Unavailable);
         }
         if projection.targets[..index]
@@ -617,36 +621,20 @@ mod tests {
             "reply",
         )
         .unwrap();
-        assert!(register_drained_terminal_response_bound(
-            home.path(),
-            SESSION,
-            false,
-            10,
-            &receipt,
-        )
-        .unwrap()
-        .is_some());
+        assert!(
+            register_drained_terminal_response_bound(home.path(), SESSION, false, 10, &receipt,)
+                .unwrap()
+                .is_some()
+        );
         assert_eq!(
-            register_drained_terminal_response_bound(
-                home.path(),
-                SESSION,
-                false,
-                11,
-                &receipt,
-            ),
+            register_drained_terminal_response_bound(home.path(), SESSION, false, 11, &receipt,),
             Err(ResponseFeedbackRejection::Unavailable)
         );
 
         let foreign = tempfile::tempdir().unwrap();
         crate::memory::store::open(&foreign.path().join("views.db")).unwrap();
         assert_eq!(
-            register_drained_terminal_response_bound(
-                foreign.path(),
-                SESSION,
-                false,
-                12,
-                &receipt,
-            ),
+            register_drained_terminal_response_bound(foreign.path(), SESSION, false, 12, &receipt,),
             Err(ResponseFeedbackRejection::Unavailable)
         );
         assert!(!foreign.path().join(STORE_DIR).exists());
@@ -688,7 +676,8 @@ mod tests {
         );
 
         let path = store_path(home.path());
-        let mut projection: StoredProjection = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let mut projection: StoredProjection =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         projection.targets[0].raw_turn_id = None;
         std::fs::write(&path, serde_json::to_vec(&projection).unwrap()).unwrap();
         assert!(matches!(
@@ -716,7 +705,11 @@ mod tests {
     #[test]
     fn training_export_reader_is_read_only_for_absent_projection() {
         let home = tempfile::tempdir().unwrap();
-        assert!(read_training_export_candidates(home.path()).unwrap().is_empty());
+        assert!(
+            read_training_export_candidates(home.path())
+                .unwrap()
+                .is_empty()
+        );
         assert!(!home.path().join(STORE_DIR).exists());
     }
 

@@ -382,15 +382,17 @@ mod tests {
         let connection = super::super::persist::open_read_only(&database).unwrap();
         let request = DiffImpactRequest {
             repo_root: repo.path().to_path_buf(),
-            input: DiffImpactInput::stdin(concat!(
-                "diff --git a/src/lib.rs b/src/lib.rs\n",
-                "--- a/src/lib.rs\n",
-                "+++ b/src/lib.rs\n",
-                "@@ -2 +2 @@\n",
-                "-    \"before\"\n",
-                "+    \"after\"\n",
-            )
-            .into()),
+            input: DiffImpactInput::stdin(
+                concat!(
+                    "diff --git a/src/lib.rs b/src/lib.rs\n",
+                    "--- a/src/lib.rs\n",
+                    "+++ b/src/lib.rs\n",
+                    "@@ -2 +2 @@\n",
+                    "-    \"before\"\n",
+                    "+    \"after\"\n",
+                )
+                .into(),
+            ),
             options: ImpactOptions {
                 direction: super::super::impact::ImpactDirection::Callers,
                 max_depth: 1,
@@ -409,8 +411,10 @@ mod tests {
                 symbol: Some("changed_symbol".into()),
             }]
         );
-        assert!(receipt.impact.impacted_nodes.iter().any(|node| {
-            node.node.file == "src/lib.rs" && node.node.symbol == "caller_symbol"
-        }));
+        assert!(
+            receipt.impact.impacted_nodes.iter().any(|node| {
+                node.node.file == "src/lib.rs" && node.node.symbol == "caller_symbol"
+            })
+        );
     }
 }

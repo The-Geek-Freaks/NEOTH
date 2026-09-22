@@ -46025,12 +46025,30 @@ exit 0
         let calls = std::fs::read_to_string(fixture.path().join("calls"))
             .expect("read W177 callback CLI fixture calls");
         for (expected, count) in [
-            ("feedback-response:--output json feedback response set --response aabbccddeeff00112233445566778899 --session session-w164 --revision 0 --signal accepted", 2_usize),
-            ("feedback-response:--output json feedback response status --response aabbccddeeff00112233445566778899 --session session-w164", 8_usize),
-            ("feedback-response:--output json feedback response set --response aabbccddeeff00112233445566778899 --session session-w164 --revision 1 --signal needs-correction", 2_usize),
-            ("feedback-response:--output json feedback response set --response aabbccddeeff00112233445566778899 --session session-w164 --revision 2 --signal not-helpful", 2_usize),
-            ("feedback-response:--output json feedback response remove --response aabbccddeeff00112233445566778899 --session session-w164 --revision 3", 2_usize),
-            ("feedback-response:--output json feedback response set --response aabbccddeeff00112233445566778899 --session session-w164 --revision 4 --signal accepted", 2_usize),
+            (
+                "feedback-response:--output json feedback response set --response aabbccddeeff00112233445566778899 --session session-w164 --revision 0 --signal accepted",
+                2_usize,
+            ),
+            (
+                "feedback-response:--output json feedback response status --response aabbccddeeff00112233445566778899 --session session-w164",
+                8_usize,
+            ),
+            (
+                "feedback-response:--output json feedback response set --response aabbccddeeff00112233445566778899 --session session-w164 --revision 1 --signal needs-correction",
+                2_usize,
+            ),
+            (
+                "feedback-response:--output json feedback response set --response aabbccddeeff00112233445566778899 --session session-w164 --revision 2 --signal not-helpful",
+                2_usize,
+            ),
+            (
+                "feedback-response:--output json feedback response remove --response aabbccddeeff00112233445566778899 --session session-w164 --revision 3",
+                2_usize,
+            ),
+            (
+                "feedback-response:--output json feedback response set --response aabbccddeeff00112233445566778899 --session session-w164 --revision 4 --signal accepted",
+                2_usize,
+            ),
         ] {
             assert_eq!(
                 calls.lines().filter(|line| *line == expected).count(),

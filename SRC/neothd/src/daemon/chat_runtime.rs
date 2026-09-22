@@ -282,7 +282,7 @@ impl DaemonChatRuntime {
             incognito,
             feedback_eligible_agent_receipt.as_ref(),
         )
-            .await;
+        .await;
         Ok(terminal)
     }
 
@@ -298,8 +298,7 @@ impl DaemonChatRuntime {
             &crate::memory::transcript_store::CommittedAgentTurnReceipt,
         >,
     ) {
-        if terminal.response_feedback_target().is_some()
-            || terminal.response_feedback_unavailable()
+        if terminal.response_feedback_target().is_some() || terminal.response_feedback_unavailable()
         {
             return;
         }
@@ -570,7 +569,7 @@ impl DaemonChatRuntime {
             false,
             feedback_eligible_agent_receipt.as_ref(),
         )
-            .await;
+        .await;
         let response = DaemonPlainChatResponse {
             records: sink.records,
             terminal: terminal.into(),
@@ -921,20 +920,12 @@ mod tests {
     #[tokio::test]
     async fn w177_daemon_gui_feedback_receipt_exports_only_redacted_accepted_pair() {
         let secret = "token=sk-abcdefghijklmnopqrstuvwxyz1234567890";
-        let (runtime, provider, home, writer, writer_join) = test_runtime_with_reply(
-            true,
-            0,
-            format!("W177 assistant reply {secret}"),
-        )
-        .await;
+        let (runtime, provider, home, writer, writer_join) =
+            test_runtime_with_reply(true, 0, format!("W177 assistant reply {secret}")).await;
 
-        let terminal = execute_gui_turn(
-            &runtime,
-            format!("W177 operator prompt {secret}"),
-            false,
-        )
-        .await
-        .expect("execute real daemon GUI producer");
+        let terminal = execute_gui_turn(&runtime, format!("W177 operator prompt {secret}"), false)
+            .await
+            .expect("execute real daemon GUI producer");
         let target = terminal
             .response_feedback_target()
             .cloned()
@@ -968,8 +959,7 @@ mod tests {
         )
         .expect("export accepted OpenAI training pair");
         assert_eq!(openai_summary.exported, 1);
-        let openai_text =
-            std::fs::read_to_string(&openai_path).expect("read OpenAI export");
+        let openai_text = std::fs::read_to_string(&openai_path).expect("read OpenAI export");
         let openai_lines: Vec<_> = openai_text.lines().collect();
         assert_eq!(openai_lines.len(), 1);
         let openai: serde_json::Value =
@@ -995,8 +985,7 @@ mod tests {
         )
         .expect("export accepted ShareGPT training pair");
         assert_eq!(sharegpt_summary.exported, 1);
-        let sharegpt_text =
-            std::fs::read_to_string(&sharegpt_path).expect("read ShareGPT export");
+        let sharegpt_text = std::fs::read_to_string(&sharegpt_path).expect("read ShareGPT export");
         let sharegpt_lines: Vec<_> = sharegpt_text.lines().collect();
         assert_eq!(sharegpt_lines.len(), 1);
         let sharegpt: serde_json::Value =

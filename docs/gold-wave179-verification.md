@@ -36,3 +36,12 @@ trait import and the required borrow. Fresh Hosted test compilation remains
 required; current W177 work is excluded.
 The three diagnostics are retained in jobs 106557462826 and 106557462919.
 Compile-repair receipt SHA-256: 51C0F2F5DC10440952810105379DA21C2698206048ADFE53D30B628DC2D9846C.
+
+W177/W180 Hosted follow-up: Code Quality 35670058797 passed on 314a3637.
+The exact 56 Preflight 35670059731 formatting hunks are imported across ten
+source files. CLI build 35670060449 exposed three E0412 names in the W179
+type alias: the imports are function-local. Moving the unchanged alias beside
+those imports repairs the scope. A fresh CLI build, formatting and behavior
+run is required. The old a72 full CI is confirmed cancelled after its shared
+library-test compile failures; completed evidence is retained.
+Formatter receipt SHA-256: 4C1116CAB323306FFB92452E7E5CD407865ED212E16545992426907FF2569C16.

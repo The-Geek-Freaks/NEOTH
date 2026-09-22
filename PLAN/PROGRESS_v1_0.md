@@ -19,6 +19,14 @@ Underlying repair remains unproven. See [W180](../docs/gold-wave180-verification
 W179 Preflight 35668976295 and Code Quality 35668975284 passed on 1bc30c4d;
 its test-compilation repair still requires fresh Hosted execution.
 
+W177/W180 Hosted follow-up: Code Quality 35670058797 passed on 314a3637.
+The exact 56 Preflight 35670059731 formatting hunks are imported across ten
+source files. CLI build 35670060449 exposed three E0412 names in the W179
+type alias: the imports are function-local. Moving the unchanged alias beside
+those imports repairs the scope. A fresh CLI build, formatting and behavior
+run is required. The old a72 full CI is confirmed cancelled after its shared
+library-test compile failures; completed evidence is retained.
+
 **W179 Hosted Clippy repair (2026-09-22):** a72b4038 passed Preflight
 35667753310 and Code Quality 35667752599. Full CI35667842810's Linux job
 106557462709 found two type-complexity errors in prompt-layer arrays. The

@@ -448,10 +448,7 @@ mod tests {
             .finish_verified_action(&action, 3, Some(FeedbackSignal::Accepted))
             .expect("fresh readback");
         assert!(!snapshot.running);
-        assert_eq!(
-            snapshot.active_signal,
-            Some(FeedbackSignal::Accepted)
-        );
+        assert_eq!(snapshot.active_signal, Some(FeedbackSignal::Accepted));
 
         let stale = projection
             .begin_action(Action::Remove)

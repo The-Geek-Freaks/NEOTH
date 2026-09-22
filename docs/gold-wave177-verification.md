@@ -53,3 +53,12 @@ the two remaining CRLF lines, and keeps owned dataset text alive while the
 daemon test borrows its lines. Review03 confirms the error/line-ending delta
 (SHA-256 242729A376DED2F35D77B407A28AA1896315ABB27F37A079F5A029AF26977D36);
 Root reviewed the two test-only lifetime repairs. Prior reviews remain intact.
+
+W177/W180 Hosted follow-up: Code Quality 35670058797 passed on 314a3637.
+The exact 56 Preflight 35670059731 formatting hunks are imported across ten
+source files. CLI build 35670060449 exposed three E0412 names in the W179
+type alias: the imports are function-local. Moving the unchanged alias beside
+those imports repairs the scope. A fresh CLI build, formatting and behavior
+run is required. The old a72 full CI is confirmed cancelled after its shared
+library-test compile failures; completed evidence is retained.
+Formatter receipt SHA-256: 4C1116CAB323306FFB92452E7E5CD407865ED212E16545992426907FF2569C16.

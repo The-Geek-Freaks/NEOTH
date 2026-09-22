@@ -74,8 +74,18 @@ pub struct TrainingSetArgs {
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy)]
-pub enum TrainingSetFormatArg { Openai, Sharegpt }
-impl TrainingSetFormatArg { fn as_export_format(self) -> train_export::TrainingSetFormat { match self { Self::Openai => train_export::TrainingSetFormat::Openai, Self::Sharegpt => train_export::TrainingSetFormat::Sharegpt } } }
+pub enum TrainingSetFormatArg {
+    Openai,
+    Sharegpt,
+}
+impl TrainingSetFormatArg {
+    fn as_export_format(self) -> train_export::TrainingSetFormat {
+        match self {
+            Self::Openai => train_export::TrainingSetFormat::Openai,
+            Self::Sharegpt => train_export::TrainingSetFormat::Sharegpt,
+        }
+    }
+}
 
 pub async fn run_export(args: ExportArgs) -> Result<()> {
     ensure_generic_export_authority(&args)?;
@@ -84,9 +94,12 @@ pub async fn run_export(args: ExportArgs) -> Result<()> {
     }
     let home = args.home.unwrap_or_else(FreedomConfig::default_neoth_home);
     let out = args.out.unwrap_or_else(export::default_export_dir);
-    let format = export::ExportFormat::from_str(&args.format).ok_or_else(|| anyhow::anyhow!("invalid --format '{}'. Expected: jsonl | md", args.format))?;
+    let format = export::ExportFormat::from_str(&args.format).ok_or_else(|| {
+        anyhow::anyhow!("invalid --format '{}'. Expected: jsonl | md", args.format)
+    })?;
     let since = export::parse_since(args.since.as_deref())?;
-    let summary = export::run_export(&home, &out, format, since).with_context(|| format!("export {} → {}", home.display(), out.display()))?;
+    let summary = export::run_export(&home, &out, format, since)
+        .with_context(|| format!("export {} → {}", home.display(), out.display()))?;
     match args.output {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&summary)?),
         OutputFormat::Jsonl => println!("{}", serde_json::to_string(&summary)?),
@@ -117,7 +130,8 @@ pub async fn run_export(args: ExportArgs) -> Result<()> {
 
 fn run_training_set(args: TrainingSetArgs, output: OutputFormat) -> Result<()> {
     let home = args.home.unwrap_or_else(FreedomConfig::default_neoth_home);
-    let summary = train_export::export_training_set(&home, &args.out, args.format.as_export_format())?;
+    let summary =
+        train_export::export_training_set(&home, &args.out, args.format.as_export_format())?;
     match output {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&summary)?),
         OutputFormat::Jsonl => println!("{}", serde_json::to_string(&summary)?),
@@ -128,12 +142,27 @@ fn run_training_set(args: TrainingSetArgs, output: OutputFormat) -> Result<()> {
             println!("  format              : {}", summary.format);
             println!("  exported            : {}", summary.exported);
             println!("  teacher corrected   : {}", summary.teacher_corrected);
-            println!("  excluded negatives  : {}", summary.excluded_needs_correction + summary.excluded_not_helpful);
+            println!(
+                "  excluded negatives  : {}",
+                summary.excluded_needs_correction + summary.excluded_not_helpful
+            );
             println!("  excluded unlabelled : {}", summary.excluded_unlabelled);
-            println!("  excluded legacy     : {}", summary.excluded_legacy_unbound);
-            println!("  excluded missing    : {}", summary.excluded_missing_source);
-            println!("  excluded duplicate  : {}", summary.excluded_duplicate_binding);
-            println!("  excluded teacher    : {}", summary.excluded_teacher_ambiguous);
+            println!(
+                "  excluded legacy     : {}",
+                summary.excluded_legacy_unbound
+            );
+            println!(
+                "  excluded missing    : {}",
+                summary.excluded_missing_source
+            );
+            println!(
+                "  excluded duplicate  : {}",
+                summary.excluded_duplicate_binding
+            );
+            println!(
+                "  excluded teacher    : {}",
+                summary.excluded_teacher_ambiguous
+            );
             println!("  unchanged           : {}", summary.unchanged);
         }
     }
@@ -141,7 +170,9 @@ fn run_training_set(args: TrainingSetArgs, output: OutputFormat) -> Result<()> {
 }
 
 fn ensure_generic_export_authority(args: &ExportArgs) -> Result<()> {
-    if args.subject.is_some() || args.list_subjects { return Err(export::private_dsar_authority_unavailable()); }
+    if args.subject.is_some() || args.list_subjects {
+        return Err(export::private_dsar_authority_unavailable());
+    }
     Ok(())
 }
 
@@ -183,11 +214,45 @@ mod tests {
 
     #[test]
     fn training_set_cli_is_explicit() {
-        use crate::cli::{Cli, Commands}; use clap::Parser;
-        let cli = Cli::try_parse_from(["neoth", "export", "training-set", "--out", "set.jsonl", "--format", "openai"]).unwrap();
-        assert!(matches!(cli.command, Commands::Export(ExportArgs { action: Some(ExportAction::TrainingSet(TrainingSetArgs { format: TrainingSetFormatArg::Openai, .. })), .. })));
-        assert!(Cli::try_parse_from(["neoth", "export", "training-set", "--format", "openai"]).is_err());
-        assert!(Cli::try_parse_from(["neoth", "export", "training-set", "--out", "set.jsonl", "--format", "openai", "--text", "no"]).is_err());
+        use crate::cli::{Cli, Commands};
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "neoth",
+            "export",
+            "training-set",
+            "--out",
+            "set.jsonl",
+            "--format",
+            "openai",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Export(ExportArgs {
+                action: Some(ExportAction::TrainingSet(TrainingSetArgs {
+                    format: TrainingSetFormatArg::Openai,
+                    ..
+                })),
+                ..
+            })
+        ));
+        assert!(
+            Cli::try_parse_from(["neoth", "export", "training-set", "--format", "openai"]).is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "neoth",
+                "export",
+                "training-set",
+                "--out",
+                "set.jsonl",
+                "--format",
+                "openai",
+                "--text",
+                "no"
+            ])
+            .is_err()
+        );
     }
 
     #[test]
