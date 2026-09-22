@@ -2,6 +2,13 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W184 strict-Clippy follow-up (2026-09-22):** CI `35676411709` on `6ac451a1`
+reported seven lint failures in the mirror module. The active-state guard,
+four redundant borrows, an unused tuple-field projection and a reverse-capable
+iterator are corrected without changing behavior. Hosted revalidation remains
+required. The existing Windows/macOS run continues on its original source;
+W185 stays outside this repair publication. No Road checkbox closes.
+
 **W184 Hosted follow-up (2026-09-22):** core test typechecking and the public
 CLI build passed in run `35675458308` on `eabc22a5`. The generated CLI reference
 was imported with its source and SHA-256 witness. Preflight `35675458038`

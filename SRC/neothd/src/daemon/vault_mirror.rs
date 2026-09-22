@@ -364,17 +364,17 @@ async fn run_impl_for_remote(
         },
         Err(_) => return VaultMirrorStatus::blocked(MirrorBlockReason::CorruptState),
     };
-    if let Some(active) = state.active.clone() {
-        if matches!(
+    if let Some(active) = state.active.clone()
+        && matches!(
             active.phase,
             MirrorPhase::PushIntent | MirrorPhase::Indeterminate(_)
-        ) {
-            return VaultMirrorStatus {
-                config: MirrorConfigStatus::Blocked,
-                receipt: Some(active),
-                repair: MirrorRepairAdvice::RunVerification,
-            };
-        }
+        )
+    {
+        return VaultMirrorStatus {
+            config: MirrorConfigStatus::Blocked,
+            receipt: Some(active),
+            repair: MirrorRepairAdvice::RunVerification,
+        };
     }
     let result = prepare_and_maybe_push(
         home, config, &paths, &mut state, &run_id, push, remote, &lock,
@@ -485,7 +485,7 @@ async fn prepare_and_maybe_push(
     receipt.commit_oid = Some(commit.clone());
     receipt.phase = MirrorPhase::PushIntent;
     state.active = Some(receipt.clone());
-    if persist_state(&paths, state).is_err() {
+    if persist_state(paths, state).is_err() {
         return VaultMirrorStatus::blocked(MirrorBlockReason::CorruptState);
     }
     match git_push_exact(&paths.repository, remote, &commit, &config.branch).await {
@@ -495,7 +495,7 @@ async fn prepare_and_maybe_push(
                 receipt.remote_head_oid = Some(oid);
                 receipt.verified_at_unix = Some(now());
                 let receipt = settle_verified(state, receipt);
-                if persist_state(&paths, state).is_err() {
+                if persist_state(paths, state).is_err() {
                     return VaultMirrorStatus::blocked(MirrorBlockReason::CorruptState);
                 }
                 match apply_managed_retention(paths, state, config, remote).await {
@@ -674,7 +674,7 @@ async fn apply_managed_retention(
         },
     };
     state.active = Some(cleanup.clone());
-    persist_state(&paths, state)
+    persist_state(paths, state)
         .map_err(|_| VaultMirrorStatus::blocked(MirrorBlockReason::CorruptState))?;
     match git_push_exact(&paths.repository, remote, &commit, &config.branch).await {
         Ok(()) => match git_ls_remote(&paths.repository, remote, &config.branch).await {
@@ -683,7 +683,7 @@ async fn apply_managed_retention(
                 cleanup.remote_head_oid = Some(oid);
                 cleanup.verified_at_unix = Some(now());
                 settle_verified(state, cleanup);
-                persist_state(&paths, state)
+                persist_state(paths, state)
                     .map_err(|_| VaultMirrorStatus::blocked(MirrorBlockReason::CorruptState))
             }
             Ok(_) | Err(_) => Err(indeterminate(
@@ -880,8 +880,7 @@ impl MirrorPaths {
                     display,
                 )?;
             } else {
-                crate::skills::store::open_bound_real_child_dir(&root, OsStr::new(name), display)?
-                    .0;
+                crate::skills::store::open_bound_real_child_dir(&root, OsStr::new(name), display)?;
             }
         }
         let (stage_dir, stage_binding) = crate::skills::store::open_bound_real_child_dir(
@@ -1183,7 +1182,7 @@ fn config_fingerprint(config: &VaultMirrorConfig) -> String {
 }
 fn redact_remote(value: &str) -> String {
     if let Some((scheme, rest)) = value.split_once("://") {
-        format!("{scheme}://{}", rest.split('@').last().unwrap_or_default())
+        format!("{scheme}://{}", rest.split('@').next_back().unwrap_or_default())
     } else {
         value.to_string()
     }

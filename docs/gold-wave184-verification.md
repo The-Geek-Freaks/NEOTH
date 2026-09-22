@@ -48,3 +48,10 @@ CLI compilation in 35675458308. Import its generated CLI reference and exact
 Hosted formatting (35675458038), with the masked dummy restored only from the
 frozen source. This is not native behavior acceptance. Old-source Windows/macOS
 runs remain independently identified; no local execution or Road closure.
+
+**W184 strict-Clippy follow-up (2026-09-22):** CI `35676411709` on `6ac451a1`
+reported seven lint failures in the mirror module. The active-state guard,
+four redundant borrows, an unused tuple-field projection and a reverse-capable
+iterator are corrected without changing behavior. Hosted revalidation remains
+required. The existing Windows/macOS run continues on its original source;
+W185 stays outside this repair publication. No Road checkbox closes.

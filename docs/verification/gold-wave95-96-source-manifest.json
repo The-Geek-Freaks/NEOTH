@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W184-vault-mirror",
-  "base": "eabc22a5d49d1a06df9c42c4853f7ce0ef2f52c7",
-  "capturedUtc": "2026-09-22T01:34:48.6837378Z",
-  "validationStatus": "W184_CORE_TYPECHECK_CLI_BUILD_PASS_FORMAT_IMPORTED_NATIVE_PENDING",
-  "scopeNote": "W184 Hosted formatting and source-bound generated CLI reference imported; exact-head native and GUI acceptance pending; no Road closures.",
+  "base": "c07d1599b65e9bb82850a85ccccc84e0a67f6b28",
+  "capturedUtc": "2026-09-22T01:48:36.0804457Z",
+  "validationStatus": "W184_SEVEN_HOSTED_CLIPPY_REPAIRS_NATIVE_PENDING",
+  "scopeNote": "Seven exact Clippy fixes in vault_mirror only; W185 uncommitted work excluded. Current native run remains on 6ac451a1; new source requires fresh Hosted checks.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -1353,8 +1353,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/vault_mirror.rs",
-      "bytes": 75981,
-      "sha256": "12C67C2B2EC241734C1797754E60C37C1C334D7C6E61F4E8C2F364D224D4A7EF"
+      "bytes": 75931,
+      "sha256": "32572298199045EE580AC7C2DD6B4BF56E97217AF7FB6E64E2EDCFCD2F23BA07"
     },
     {
       "path": "SRC/neothd/src/daemon/worker_watch.rs",
