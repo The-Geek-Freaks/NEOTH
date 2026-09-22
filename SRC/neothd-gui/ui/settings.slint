@@ -726,6 +726,14 @@ export component SettingsView inherits Rectangle {
     /// so the combo never silently falls back to row 0 for a provider missing
     /// from a stale hardcoded list.
     in-out property <int> provider-current-index: 0;
+    // W211 is deliberately independent from the chat provider. Rust owns the
+    // selection transaction and publishes the confirmed typed config readback.
+    in-out property <string> embedding-model-current: "qwen3_q8";
+    // Core supplies the confirmed index after its selection transaction; the
+    // selector restores this value synchronously after every click.
+    in-out property <int> embedding-model-current-index: 0;
+    in property <bool> embedding-model-status-valid: false;
+    in property <bool> embedding-model-in-flight: false;
 
     // GR-10 — Safety Rails (from `neoth security safe-mode --json`), rendered in
     // the Privacy tab. Rust populates these on startup; `engaged` rails are the
@@ -1125,6 +1133,7 @@ export component SettingsView inherits Rectangle {
     /// Config tab. Rust persists the change to freedom.yaml + drops
     /// the reload sentinel.
     callback provider-changed(string);
+    callback embedding-model-changed(string);
     /// Operator clicked "Refresh" on the Code Sessions tab. Rust side
     /// re-runs `neothd kanban list/show` + re-populates the 5 board
     /// properties. Live-tail (Pick #8 step 4) will replace this with
@@ -6871,6 +6880,35 @@ export component SettingsView inherits Rectangle {
                     }
                     Text {
                         text: "Click Reload config (Maintenance below) after any provider change so the daemon picks it up within ~2 seconds.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                }
+
+                Expander {
+                    title: "Embedding model";
+                    hint: root.embedding-model-current;
+                    NeothComboBox {
+                        model: ["Qwen3 (default)", "BGE-M3"];
+                        current-index <=> root.embedding-model-current-index;
+                        enabled: root.embedding-model-status-valid && !root.embedding-model-in-flight;
+                        selected(i) => {
+                            let selected-model = i == 1 ? "bge_m3" : "qwen3_q8";
+                            // The core selection transaction owns durable state.
+                            // Keep the displayed value at the last typed readback
+                            // until Rust confirms the exact persisted choice.
+                            root.embedding-model-changed(selected-model);
+                            root.embedding-model-current-index = root.embedding-model-current == "bge_m3" ? 1 : 0;
+                        }
+                    }
+                    Text {
+                        text: !root.embedding-model-status-valid
+                            ? "Checking the saved embedding model before changes are available."
+                            : root.embedding-model-in-flight
+                            ? "Updating embedding model..."
+                            : "Choose the model for local memory comparison. Verify checks its current readiness; NEOTH also validates it when used.";
                         font-family: Theme.font-display;
                         font-size: Theme.font-size-caption;
                         color: Theme.text-muted;

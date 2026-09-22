@@ -72,6 +72,14 @@ pub enum ModelsAction {
         #[command(subcommand)]
         action: BgeM3ModelsAction,
     },
+    /// Inspect or explicitly operate the selected local embedding model.
+    /// `--config` binds this command to that exact instance home.
+    Embedding {
+        #[arg(long, value_name = "PATH")]
+        config: Option<PathBuf>,
+        #[command(subcommand)]
+        action: EmbeddingModelsAction,
+    },
     /// Download a model's artifacts into `~/.neoth/models/<flat>/`.
     /// `neoth model fetch <name>` is an accepted alias for this.
     #[command(visible_alias = "fetch")]
@@ -157,6 +165,43 @@ pub enum BgeM3ModelsAction {
     Repair,
     /// Remove only the exact owned BGE-M3 cache after lifecycle safeguards.
     Prune,
+}
+
+/// Versioned embedding-surface actions. Pull, repair, and prune are currently
+/// available only for BGE-M3's reviewed artifact lifecycle.
+#[derive(Subcommand, Debug, Clone)]
+pub enum EmbeddingModelsAction {
+    /// Cheap cache/config snapshot. It never reports a loaded runtime ready.
+    List,
+    /// Alias of list for GUI and operator status polling.
+    Status,
+    /// Persist the closed embedding-model selection and return exact readback.
+    Select { model: EmbeddingModelArg },
+    /// Construct and validate only the explicitly selected local adapter.
+    Probe,
+    /// Pull the exact pinned BGE-M3 artifacts, then return a fresh snapshot.
+    Pull,
+    /// Reconcile BGE-M3's exact lifecycle, then return a fresh snapshot.
+    Repair,
+    /// Prune the exact BGE-M3 cache, then return a fresh snapshot.
+    Prune,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy)]
+pub enum EmbeddingModelArg {
+    #[value(name = "qwen3_q8")]
+    Qwen3Q8,
+    #[value(name = "bge_m3")]
+    BgeM3,
+}
+
+impl From<EmbeddingModelArg> for crate::config::embedding::EmbeddingModel {
+    fn from(value: EmbeddingModelArg) -> Self {
+        match value {
+            EmbeddingModelArg::Qwen3Q8 => Self::Qwen3Q8,
+            EmbeddingModelArg::BgeM3 => Self::BgeM3,
+        }
+    }
 }
 
 /// Operator-facing lineage choice for `models recommend`.
@@ -362,6 +407,9 @@ pub async fn run_models(args: ModelsArgs) -> Result<()> {
         ModelsAction::List => run_list(&args.output),
         ModelsAction::Catalog => run_catalog(&args.output),
         ModelsAction::BgeM3 { action } => run_bge_m3(action, &args.output).await,
+        ModelsAction::Embedding { config, action } => {
+            run_embedding_models(action, config.as_deref(), &args.output).await
+        }
         ModelsAction::Pull { name, repo } => run_pull(&name, repo.as_deref()).await,
         ModelsAction::Prune { name } => run_prune(&name),
         ModelsAction::Recommend {
@@ -916,76 +964,151 @@ struct ListRow {
     error: Option<String>,
 }
 
-#[derive(Debug, serde::Serialize)]
-struct BgeM3Status {
-    selected_model: String,
-    selected: bool,
-    repository: &'static str,
-    revision: &'static str,
-    cache_dir: String,
-    health: String,
-    artifact_cached: bool,
+const EMBEDDING_STATUS_SCHEMA_VERSION: u8 = 1;
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum EmbeddingArtifactState { Unavailable, Installed }
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum EmbeddingReadinessState { Unavailable, Installed, Ready, ReachableButUnready }
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmbeddingActions { probe: bool, pull: bool, repair: bool, prune: bool }
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmbeddingStatusRow {
+    model: String,
+    artifact_state: EmbeddingArtifactState,
+    readiness_state: EmbeddingReadinessState,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repository: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    revision: Option<String>,
+    actions: EmbeddingActions,
 }
 
-fn bge_m3_status(neoth_home: &Path, cfg: &FreedomConfig) -> BgeM3Status {
-    let artifacts = crate::providers::bge_m3_artifacts::BgeM3Artifacts::at_neoth_home(neoth_home);
-    let pending =
-        crate::media::model_manager::has_pending_download(artifacts.cache_dir()).unwrap_or(false);
-    // Status is intentionally a non-loading, non-hashing artifact snapshot.
-    // Pull/repair prove the full manifest and adapter load before D8 success.
-    let health = artifacts.cache_health();
-    let (health, reason) = if pending {
-        (
-            "installing".to_string(),
-            Some("an exact BGE-M3 model-download lifecycle is pending; run `neoth models bge-m3 repair` to reconcile it".to_string()),
-        )
-    } else if health.is_ready() {
-        ("cached".to_string(), None)
-    } else {
-        (health.label().to_string(), Some(health.to_string()))
-    };
-    BgeM3Status {
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmbeddingStatusSnapshot {
+    schema_version: u8,
+    observed_at_unix_ms: u64,
+    selected_model: String,
+    source: String,
+    rows: Vec<EmbeddingStatusRow>,
+}
+
+fn embedding_observed_at_unix_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default().as_millis().try_into().unwrap_or(u64::MAX)
+}
+
+fn embedding_snapshot(home: &Path, cfg: &FreedomConfig) -> EmbeddingStatusSnapshot {
+    let bge = crate::providers::bge_m3_artifacts::BgeM3Artifacts::at_neoth_home(home);
+    let health = bge.cache_health();
+    let bge_installed = health.is_ready();
+    let bge_selected = matches!(cfg.embed.model, crate::config::embedding::EmbeddingModel::BgeM3);
+    let (bge_repo, bge_revision) = crate::providers::local_bge_m3::pinned_model_identity();
+    EmbeddingStatusSnapshot {
+        schema_version: EMBEDDING_STATUS_SCHEMA_VERSION,
+        observed_at_unix_ms: embedding_observed_at_unix_ms(),
         selected_model: cfg.embed.model.as_str().to_string(),
-        selected: matches!(
-            cfg.embed.model,
-            crate::config::embedding::EmbeddingModel::BgeM3
-        ),
-        repository: crate::providers::bge_m3_artifacts::DEFAULT_REPO,
-        revision: crate::providers::bge_m3_artifacts::DEFAULT_REVISION,
-        cache_dir: artifacts.cache_dir().display().to_string(),
-        artifact_cached: health == "cached",
-        health,
-        reason,
+        source: "status".to_string(),
+        rows: vec![
+            EmbeddingStatusRow {
+                model: "qwen3_q8".to_string(),
+                artifact_state: EmbeddingArtifactState::Unavailable,
+                readiness_state: EmbeddingReadinessState::Unavailable,
+                reason: Some("not supported: Qwen has no verified read-only CLI load probe or standalone lifecycle".to_string()),
+                repository: None, revision: None,
+                actions: EmbeddingActions { probe: false, pull: false, repair: false, prune: false },
+            },
+            EmbeddingStatusRow {
+                model: "bge_m3".to_string(),
+                artifact_state: if bge_installed { EmbeddingArtifactState::Installed } else { EmbeddingArtifactState::Unavailable },
+                readiness_state: if bge_installed { EmbeddingReadinessState::Installed } else { EmbeddingReadinessState::Unavailable },
+                reason: if !bge_selected { Some("select embed.model=bge_m3 to enable BGE lifecycle actions".to_string()) } else { (!bge_installed).then(|| health.to_string()) },
+                repository: Some(bge_repo.to_string()),
+                revision: Some(bge_revision.to_string()),
+                actions: EmbeddingActions { probe: bge_selected, pull: bge_selected, repair: bge_selected, prune: bge_selected },
+            },
+        ],
+    }
+}
+
+fn embedding_scope(config: Option<&Path>) -> (PathBuf, PathBuf) {
+    let home = ollama_ipc_home(config);
+    let path = config.map(Path::to_path_buf).unwrap_or_else(|| home.join("freedom.yaml"));
+    (home, path)
+}
+
+fn render_embedding_snapshot(snapshot: &EmbeddingStatusSnapshot, output: &OutputFormat) -> Result<()> {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string(&snapshot)?),
+        OutputFormat::Table => {
+            println!("Embedding selection: {}", snapshot.selected_model);
+            for row in &snapshot.rows { println!("{}  artifact={:?} readiness={:?}", row.model, row.artifact_state, row.readiness_state); }
+        }
+    }
+    Ok(())
+}
+
+fn select_embedding_model(
+    path: &Path,
+    selected: crate::config::embedding::EmbeddingModel,
+) -> Result<FreedomConfig> {
+    FreedomConfig::update_at(path, |current| {
+        current.embed.model = selected;
+        Ok(())
+    })?;
+    let readback = FreedomConfig::load_from_path(path)?;
+    anyhow::ensure!(readback.embed.model == selected, "embedding selection readback did not retain the requested model");
+    Ok(readback)
+}
+
+async fn run_embedding_models(action: EmbeddingModelsAction, config: Option<&Path>, output: &OutputFormat) -> Result<()> {
+    let (home, path) = embedding_scope(config);
+    let mut cfg = if config.is_some() { FreedomConfig::load_from_path(&path)? } else { load_models_config(&home)? };
+    match action {
+        EmbeddingModelsAction::List | EmbeddingModelsAction::Status => render_embedding_snapshot(&embedding_snapshot(&home, &cfg), output),
+        EmbeddingModelsAction::Select { model } => {
+            cfg = select_embedding_model(&path, model.into())?;
+            render_embedding_snapshot(&embedding_snapshot(&home, &cfg), output)
+        }
+        EmbeddingModelsAction::Probe => {
+            anyhow::ensure!(matches!(cfg.embed.model, crate::config::embedding::EmbeddingModel::BgeM3), "qwen3_q8 has no verified read-only load probe; it remains unavailable until a no-download runtime probe exists");
+            let readiness = crate::providers::local_embedding_readiness_from_config_at(&cfg, &home).await;
+            let readback = FreedomConfig::load_from_path(&path)?;
+            anyhow::ensure!(readback.embed.model == cfg.embed.model && readback.inference.embedding_provider == cfg.inference.embedding_provider, "embedding configuration changed during probe; refusing stale ready result");
+            let mut snapshot = embedding_snapshot(&home, &cfg);
+            snapshot.source = "probe".to_string();
+            let row = snapshot.rows.iter_mut().find(|row| row.model == cfg.embed.model.as_str()).expect("closed embedding row");
+            match readiness { crate::providers::LocalEmbeddingReadiness::Ready { .. } => { row.readiness_state = EmbeddingReadinessState::Ready; row.reason = None; }, crate::providers::LocalEmbeddingReadiness::Unavailable { reason, .. } => { row.readiness_state = EmbeddingReadinessState::ReachableButUnready; row.reason = Some(reason); } }
+            render_embedding_snapshot(&snapshot, output)
+        }
+        EmbeddingModelsAction::Pull | EmbeddingModelsAction::Repair => {
+            anyhow::ensure!(matches!(cfg.embed.model, crate::config::embedding::EmbeddingModel::BgeM3), "pull/repair are supported only when embed.model=bge_m3; Qwen has no standalone lifecycle owner");
+            run_pull_with_config(&home, &cfg, "bge-m3", None, true).await?;
+            let cfg = FreedomConfig::load_from_path(&path)?;
+            render_embedding_snapshot(&embedding_snapshot(&home, &cfg), output)
+        }
+        EmbeddingModelsAction::Prune => {
+            anyhow::ensure!(matches!(cfg.embed.model, crate::config::embedding::EmbeddingModel::BgeM3), "prune is supported only when embed.model=bge_m3; Qwen has no standalone lifecycle owner");
+            run_prune_with_config(&home, &cfg, "bge-m3", true)?;
+            let cfg = FreedomConfig::load_from_path(&path)?;
+            render_embedding_snapshot(&embedding_snapshot(&home, &cfg), output)
+        }
     }
 }
 
 async fn run_bge_m3(action: BgeM3ModelsAction, output: &OutputFormat) -> Result<()> {
-    let neoth_home = FreedomConfig::default_neoth_home();
-    let cfg = load_models_config(&neoth_home)?;
     match action {
-        BgeM3ModelsAction::List | BgeM3ModelsAction::Status => {
-            let status = bge_m3_status(&neoth_home, &cfg);
-            match output {
-                OutputFormat::Json | OutputFormat::Jsonl => {
-                    println!("{}", serde_json::to_string_pretty(&status)?);
-                }
-                OutputFormat::Table => {
-                    println!(
-                        "BGE-M3 selected: {} ({})",
-                        status.selected, status.selected_model
-                    );
-                    println!("pin: {}@{}", status.repository, status.revision);
-                    println!("cache: {}", status.cache_dir);
-                    println!("status: {}", status.health);
-                    if let Some(reason) = status.reason {
-                        println!("reason: {reason}");
-                    }
-                }
-            }
-            Ok(())
-        }
+        BgeM3ModelsAction::List | BgeM3ModelsAction::Status => run_embedding_models(EmbeddingModelsAction::Status, None, output).await,
         BgeM3ModelsAction::Pull | BgeM3ModelsAction::Repair => run_pull("bge-m3", None).await,
         BgeM3ModelsAction::Prune => run_prune("bge-m3"),
     }
@@ -1124,9 +1247,22 @@ async fn execute_pull_with(
 }
 
 async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {
-    let neoth_home = FreedomConfig::default_neoth_home();
+    run_pull_at(&FreedomConfig::default_neoth_home(), name, repo_override).await
+}
+
+async fn run_pull_at(neoth_home: &Path, name: &str, repo_override: Option<&str>) -> Result<()> {
     let cfg = load_models_config(&neoth_home)?;
-    let target = resolve_managed_model(&neoth_home, name, repo_override, &cfg)?;
+    run_pull_with_config(neoth_home, &cfg, name, repo_override, false).await
+}
+
+async fn run_pull_with_config(
+    neoth_home: &Path,
+    cfg: &FreedomConfig,
+    name: &str,
+    repo_override: Option<&str>,
+    quiet: bool,
+) -> Result<()> {
+    let target = resolve_managed_model(neoth_home, name, repo_override, cfg)?;
     let model_id = target.model_id().to_string();
     let cache_dir = target.cache_path().to_path_buf();
     let mut attempt = crate::media::model_manager::ModelDownloadAttempt::acquire(
@@ -1151,7 +1287,7 @@ async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {
             .is_some();
         if daemon_live {
             Some(PullAuditSink::Daemon {
-                home: neoth_home.clone(),
+                home: neoth_home.to_path_buf(),
             })
         } else {
             let wal_dir = neoth_home.join("wal");
@@ -1162,7 +1298,7 @@ async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {
                 "explicit-model-download",
             );
             let (writer, completion) =
-                crate::wal::writer::spawn_for_home_with_completion(segment, neoth_home.clone())
+                crate::wal::writer::spawn_for_home_with_completion(segment, neoth_home.to_path_buf())
                     .context("spawn mandatory home-bound model-download WAL writer")?;
             audit_completion = Some(completion);
             Some(PullAuditSink::Wal(writer))
@@ -1286,7 +1422,9 @@ async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {
         }
     }
 
-    println!("{} cached at {}", name, cache_dir.display());
+    if !quiet {
+        println!("{} cached at {}", name, cache_dir.display());
+    }
     Ok(())
 }
 
@@ -1333,13 +1471,34 @@ async fn finalize_model_pull(
 }
 
 fn run_prune(name: &str) -> Result<()> {
-    let neoth_home = FreedomConfig::default_neoth_home();
-    let cfg = load_models_config(&neoth_home)?;
-    let target = resolve_managed_model(&neoth_home, name, None, &cfg)?;
-    prune_target(name, &target, &neoth_home)
+    run_prune_at(&FreedomConfig::default_neoth_home(), name)
+}
+
+fn run_prune_at(neoth_home: &Path, name: &str) -> Result<()> {
+    let cfg = load_models_config(neoth_home)?;
+    run_prune_with_config(neoth_home, &cfg, name, false)
+}
+
+fn run_prune_with_config(
+    neoth_home: &Path,
+    cfg: &FreedomConfig,
+    name: &str,
+    quiet: bool,
+) -> Result<()> {
+    let target = resolve_managed_model(neoth_home, name, None, cfg)?;
+    prune_target_with_output(name, &target, neoth_home, quiet)
 }
 
 fn prune_target(name: &str, target: &ManagedModel, neoth_home: &std::path::Path) -> Result<()> {
+    prune_target_with_output(name, target, neoth_home, false)
+}
+
+fn prune_target_with_output(
+    name: &str,
+    target: &ManagedModel,
+    neoth_home: &std::path::Path,
+    quiet: bool,
+) -> Result<()> {
     let dir = target.cache_path();
     if !target.cache_is_neoth_owned() {
         anyhow::bail!(
@@ -1372,7 +1531,7 @@ fn prune_target(name: &str, target: &ManagedModel, neoth_home: &std::path::Path)
     let metadata = match std::fs::symlink_metadata(dir) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            println!("{} already absent at {}", name, dir.display());
+            if !quiet { println!("{} already absent at {}", name, dir.display()); }
             return Ok(());
         }
         Err(error) => {
@@ -1427,7 +1586,7 @@ fn prune_target(name: &str, target: &ManagedModel, neoth_home: &std::path::Path)
         anyhow::bail!("refusing unsafe model cache path `{}`", dir.display());
     }
     std::fs::remove_dir_all(dir).with_context(|| format!("remove_dir_all {}", dir.display()))?;
-    println!("removed {} ({})", dir.display(), target.model_id());
+    if !quiet { println!("removed {} ({})", dir.display(), target.model_id()); }
     Ok(())
 }
 
@@ -1518,6 +1677,63 @@ mod tests {
         assert!(
             ModelsCli::try_parse_from(["models", "bge-m3", "pull", "--revision", "main"]).is_err()
         );
+    }
+
+    #[test]
+    fn embedding_commands_bind_config_and_closed_selection() {
+        let cli = ModelsCli::try_parse_from([
+            "models", "embedding", "--config", "C:/instances/blue/freedom.yaml", "select", "bge_m3",
+        ]).unwrap();
+        assert!(matches!(cli.args.action, ModelsAction::Embedding { config: Some(_), action: EmbeddingModelsAction::Select { model: EmbeddingModelArg::BgeM3 } }));
+        assert!(ModelsCli::try_parse_from(["models", "embedding", "select", "remote_model"]).is_err());
+    }
+
+    #[test]
+    fn cheap_embedding_status_never_claims_fresh_ready() {
+        let home = tempfile::tempdir().unwrap();
+        let snapshot = embedding_snapshot(home.path(), &FreedomConfig::default());
+        assert_eq!(snapshot.schema_version, EMBEDDING_STATUS_SCHEMA_VERSION);
+        assert_eq!(snapshot.source, "status");
+        assert_eq!(snapshot.rows.len(), 2);
+        assert!(snapshot.rows.iter().all(|row| !matches!(row.readiness_state, EmbeddingReadinessState::Ready)));
+    }
+
+    #[test]
+    fn embedding_actions_follow_the_selected_model() {
+        let home = tempfile::tempdir().unwrap();
+        let qwen = embedding_snapshot(home.path(), &FreedomConfig::default());
+        assert!(!qwen.rows[0].actions.probe);
+        assert!(!qwen.rows[1].actions.pull);
+        let mut bge_cfg = FreedomConfig::default();
+        bge_cfg.embed.model = crate::config::embedding::EmbeddingModel::BgeM3;
+        let bge = embedding_snapshot(home.path(), &bge_cfg);
+        assert!(bge.rows[1].actions.probe && bge.rows[1].actions.pull && bge.rows[1].actions.repair && bge.rows[1].actions.prune);
+    }
+
+    #[test]
+    fn embedding_select_transaction_reads_back_custom_named_config_and_preserves_other_fields() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("operator-blue.yaml");
+        std::fs::write(&path, "operator_id: blue-operator\nonboarding_complete: true\n").unwrap();
+        let readback = select_embedding_model(&path, crate::config::embedding::EmbeddingModel::BgeM3).unwrap();
+        assert_eq!(readback.embed.model, crate::config::embedding::EmbeddingModel::BgeM3);
+        let rendered = std::fs::read_to_string(&path).unwrap();
+        assert!(rendered.contains("operator_id: blue-operator"));
+        assert!(rendered.contains("onboarding_complete: true"));
+        assert!(!home.path().join("freedom.yaml").exists());
+    }
+
+    #[test]
+    fn embedding_status_json_is_a_single_strict_snapshot() {
+        let home = tempfile::tempdir().unwrap();
+        let snapshot = embedding_snapshot(home.path(), &FreedomConfig::default());
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let decoded: EmbeddingStatusSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.schema_version, EMBEDDING_STATUS_SCHEMA_VERSION);
+        assert_eq!(decoded.source, "status");
+        let mut unknown = serde_json::to_value(&snapshot).unwrap();
+        unknown["unexpected"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<EmbeddingStatusSnapshot>(unknown).is_err());
     }
 
     #[tokio::test]

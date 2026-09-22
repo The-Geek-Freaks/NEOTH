@@ -28,8 +28,9 @@ ignored official-model test. It uploads source-bound receipts and logs only;
 model weights stay on the hosted runner.
 
 Independent integrated static review passed after repairing readiness, blocking
-work, terminal replay and tokenization boundaries. Hosted compile, focused
-behavior and official-model execution remain pending. GUI/Buddy lifecycle
+work, terminal replay and tokenization boundaries. Hosted compile and all 13 focused tests passed on ab2902ec; official-model
+CLI pull, native smoke and retained-Ready recovery passed on db27a66c
+(runs 35759964957, 35759967854 and 35760067844; exact receipts admitted). GUI/Buddy lifecycle
 parity is the following W211 batch. `GOLD-LF-P2-24` remains open; this source
 slice does not establish full native-platform or release acceptance. The
 workstation remains under the absolute local BSOD hold, with no local compiler,

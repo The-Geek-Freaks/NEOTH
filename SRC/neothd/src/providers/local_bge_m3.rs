@@ -28,6 +28,11 @@ pub const BGE_M3_DIM: usize = BGE_M3_EMBEDDING_DIMENSION;
 /// The official BGE-M3 model supports sequences through 8192 tokens.
 pub const BGE_M3_MAX_TOKENS: usize = MANIFEST_MAX_TOKENS;
 
+/// Exact official artifact identity shared with operator surfaces.
+pub const fn pinned_model_identity() -> (&'static str, &'static str) {
+    (DEFAULT_REPO, DEFAULT_REVISION)
+}
+
 struct LoadedBgeM3 {
     model: XLMRobertaModel,
     tokenizer: Tokenizer,

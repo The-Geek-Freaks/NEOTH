@@ -49,6 +49,20 @@ export struct LocalModelRow {
     can-retry: bool,
 }
 
+// W211 embedding lifecycle row. This is intentionally separate from the
+// daemon-owned Ollama row: cached artifacts do not imply a verified embedding
+// adapter, and BGE has pull/repair/prune rather than Ollama operation controls.
+export struct EmbeddingModelRow {
+    model: string,
+    artifact-state: string,
+    readiness: string,
+    detail: string,
+    can-probe: bool,
+    can-pull: bool,
+    can-repair: bool,
+    can-prune: bool,
+}
+
 // Resources — the live hardware probe (CPU / memory / accelerator / VRAM /
 // disk / local models), the mockup's "neoth-core" surface.
 export component ResourcesView inherits Rectangle {
@@ -77,9 +91,23 @@ export component ResourcesView inherits Rectangle {
     callback local-model-prune(string);
     callback local-model-cancel(string);
     callback local-model-retry(string);
+    // W211 has its own typed core envelope and actions. Polling status stays
+    // cheap; Probe is the explicit operation that may validate an adapter.
+    in property <[EmbeddingModelRow]> embedding-models: [];
+    in property <bool> embedding-model-status-valid: false;
+    in property <string> embedding-model-status-error: "";
+    in property <bool> embedding-model-in-flight: false;
+    in property <string> embedding-model-refreshed: "";
+    callback embedding-model-probe(string);
+    callback embedding-model-pull(string);
+    callback embedding-model-repair(string);
+    callback embedding-model-prune(string);
 
     background: Theme.bg-base;
-    VerticalLayout {
+    ScrollView {
+        width: parent.width;
+        height: parent.height;
+        VerticalLayout {
         padding: 28px; spacing: 14px; alignment: start;
 
         Text {
@@ -163,6 +191,46 @@ export component ResourcesView inherits Rectangle {
                 }
                 if root.local-model-refreshed != "": Text { text: root.local-model-refreshed; color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; }
             }
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+            height: embedding-models-body.preferred-height + Theme.space-8;
+            border-radius: Theme.radius-lg; background: Theme.surface-1;
+            border-width: 1px; border-color: root.embedding-model-status-valid ? Theme.border-subtle : Theme.border-accent;
+            embedding-models-body := VerticalLayout {
+                x: Theme.space-base; y: Theme.space-base;
+                width: parent.width - Theme.space-base * 2; spacing: Theme.space-tight;
+                HorizontalLayout {
+                    Text { text: "Embedding models"; color: Theme.text-primary; font-family: Theme.font-mono; font-size: Theme.font-size-sm; }
+                    Text { horizontal-stretch: 1; text: root.embedding-model-in-flight ? "Updating embedding model..." : root.embedding-model-refreshed; color: Theme.text-secondary; font-family: Theme.font-sans; font-size: Theme.font-size-sm; overflow: elide; horizontal-alignment: right; }
+                }
+                Text { text: "Verify checks the selected model's current readiness for local memory comparison and recall. NEOTH checks again when it uses the model."; color: Theme.text-tertiary; font-family: Theme.font-sans; font-size: Theme.font-size-2xs; wrap: word-wrap; }
+                if root.embedding-model-status-error != "": Text { text: root.embedding-model-status-error; color: Theme.warning; font-family: Theme.font-sans; font-size: Theme.font-size-sm; wrap: word-wrap; }
+                if root.embedding-models.length == 0: Text { text: root.embedding-model-status-valid ? "No embedding model status returned." : "Embedding-model status has not been verified."; color: Theme.text-tertiary; font-family: Theme.font-sans; font-size: Theme.font-size-sm; }
+                for row in root.embedding-models: Rectangle {
+                    horizontal-stretch: 1;
+                    height: embedding-model-row-body.preferred-height + Theme.space-loose; border-radius: Theme.radius-md;
+                    background: Theme.surface-2; border-width: 1px; border-color: Theme.border-subtle;
+                    embedding-model-row-body := VerticalLayout {
+                        x: Theme.space-3; y: Theme.space-3;
+                        width: parent.width - Theme.space-loose; spacing: Theme.space-tight;
+                        HorizontalLayout {
+                            Text { text: row.model; horizontal-stretch: 1; color: Theme.text-primary; font-family: Theme.font-mono; font-size: Theme.font-size-sm; overflow: elide; }
+                            Text { text: row.readiness; color: row.readiness == "Ready (fresh load verified)" ? Theme.accent : Theme.text-secondary; font-family: Theme.font-sans; font-size: Theme.font-size-sm; overflow: elide; }
+                        }
+                        Text { text: "Downloaded files: " + row.artifact-state; color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; overflow: elide; }
+                        if row.detail != "": Text { text: row.detail; color: Theme.text-tertiary; font-family: Theme.font-sans; font-size: Theme.font-size-2xs; wrap: word-wrap; }
+                        HorizontalLayout { spacing: Theme.space-tight;
+                            NeothButton { label: "Verify"; size: "sm"; primary: false; enabled: row.can-probe && !root.embedding-model-in-flight; clicked => { if (row.can-probe && !root.embedding-model-in-flight) { root.embedding-model-probe(row.model); } } }
+                            NeothButton { label: "Download"; size: "sm"; primary: false; enabled: row.can-pull && !root.embedding-model-in-flight; clicked => { if (row.can-pull && !root.embedding-model-in-flight) { root.embedding-model-pull(row.model); } } }
+                            NeothButton { label: "Repair"; size: "sm"; primary: false; enabled: row.can-repair && !root.embedding-model-in-flight; clicked => { if (row.can-repair && !root.embedding-model-in-flight) { root.embedding-model-repair(row.model); } } }
+                            NeothButton { label: "Remove files"; size: "sm"; primary: false; danger: true; enabled: row.can-prune && !root.embedding-model-in-flight; clicked => { if (row.can-prune && !root.embedding-model-in-flight) { root.embedding-model-prune(row.model); } } }
+                        }
+                    }
+                }
+            }
+        }
         }
     }
 }

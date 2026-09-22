@@ -27,7 +27,7 @@ import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
 import { MiniOverlay } from "overlay.slint";
 export { MiniOverlay }
-import { ResourcesView, DoctorView, ProbeView, SlashCmdsView, SlashCmdRow, LocalModelRow } from "tabs.slint";
+import { ResourcesView, DoctorView, ProbeView, SlashCmdsView, SlashCmdRow, LocalModelRow, EmbeddingModelRow } from "tabs.slint";
 import { AgentsView, AgentRow } from "agents_view.slint";
 import { WalInspectorView, WalEventRow } from "wal_inspector.slint";
 import { WalTimelineStrip, WalBucket } from "wal_timeline.slint";
@@ -79,6 +79,7 @@ export { CronJobRow }
 export { ConsentGrant }
 // W185 Resources local-model rows, constructed by Rust from the core status DTO.
 export { LocalModelRow }
+export { EmbeddingModelRow }
 export { CodeMapImpactTestRow }
 
 export enum WizardStep {
@@ -1372,6 +1373,20 @@ export component MainWindow inherits Window {
     callback local-model-prune(string);
     callback local-model-cancel(string);
     callback local-model-retry(string);
+    // W211 embedding-model status is intentionally separate from the Ollama
+    // daemon snapshot and its operation-id controls.
+    in property <[EmbeddingModelRow]> embedding-model-rows: [];
+    in property <bool> embedding-model-status-valid: false;
+    in property <string> embedding-model-status-error: "";
+    in property <bool> embedding-model-in-flight: false;
+    in property <string> embedding-model-refreshed: "";
+    in-out property <string> embedding-model-current: "qwen3_q8";
+    in-out property <int> embedding-model-current-index: 0;
+    callback embedding-model-changed(string);
+    callback embedding-model-probe(string);
+    callback embedding-model-pull(string);
+    callback embedding-model-repair(string);
+    callback embedding-model-prune(string);
     // GOLD-PROG-05 — cluster peer topology, forwarded to SettingsView.
     in property <[ClusterPeerRow]> cluster-peers: [];
     in property <bool> cluster-topology-valid: false;
@@ -3779,6 +3794,11 @@ export component MainWindow inherits Window {
                     autonomy-current: root.autonomy-choice;
             provider-current: root.provider-choice;
             provider-current-index: root.provider-choice-index;
+            embedding-model-current <=> root.embedding-model-current;
+            embedding-model-current-index <=> root.embedding-model-current-index;
+            embedding-model-status-valid: root.embedding-model-status-valid;
+            embedding-model-in-flight: root.embedding-model-in-flight;
+            embedding-model-changed(model) => { root.embedding-model-changed(model); }
             // GU-03 panel-visibility flows MainWindow → SettingsView.
             show-hemispheres: root.settings-show-hemispheres;
             show-channels: root.settings-show-channels;
@@ -4456,6 +4476,15 @@ export component MainWindow inherits Window {
                     local-model-prune(model) => { root.local-model-prune(model); }
                     local-model-cancel(operation) => { root.local-model-cancel(operation); }
                     local-model-retry(operation) => { root.local-model-retry(operation); }
+                    embedding-models: root.embedding-model-rows;
+                    embedding-model-status-valid: root.embedding-model-status-valid;
+                    embedding-model-status-error: root.embedding-model-status-error;
+                    embedding-model-in-flight: root.embedding-model-in-flight;
+                    embedding-model-refreshed: root.embedding-model-refreshed;
+                    embedding-model-probe(model) => { root.embedding-model-probe(model); }
+                    embedding-model-pull(model) => { root.embedding-model-pull(model); }
+                    embedding-model-repair(model) => { root.embedding-model-repair(model); }
+                    embedding-model-prune(model) => { root.embedding-model-prune(model); }
                 }
                 // Net-new mockup tab — Doctor (`neoth doctor`, wired).
                 if root.nav-active == "doctor": DoctorView {

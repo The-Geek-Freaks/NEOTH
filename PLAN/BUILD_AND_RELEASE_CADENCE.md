@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W211 embedding operator surface (2026-09-22):** typed CLI and GUI now expose
+selection, cache status, fresh BGE verification and lifecycle actions against
+the exact config/home. Cache status never claims Ready; stale results and wrong
+model pins are rejected. Five core and five GUI regressions bring inventory to
+524 sources / 752 universal native / 92 GUI, with unchanged platform extras;
+the grouped lane selects 205. Source review corrections are integrated; Hosted
+compile, behavior and GUI rendering remain pending. W210 admitted evidence:
+13/13 focused tests, real product CLI pull, official native smoke and retained
+Ready recovery; W207 17/17 also passed. W205 full-symbol repair is published at
+`ff9fe8e2`, with fresh Grouped200/Core runs `35762299584` / `35762303618` underway.
+W212 model-generation isolation is in active implementation. Road remains
+1324 / 1015 checked / 307 open / 2 partial. See `docs/gold-wave211-verification.md`.
+
 **W210 Hosted model result and W205 exact-symbol correction (2026-09-22):**
 BGE run `35760067844` on `db27a66c` succeeded, including product CLI pull,
 native official-model load and the exact smoke/recovery tests; detailed receipt

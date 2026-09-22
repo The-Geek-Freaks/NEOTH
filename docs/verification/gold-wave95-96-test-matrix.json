@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W210 hosted model success; W205 full-symbol fixture pending hosted execution",
+  "status": "W211 CLI GUI integrated static PASS; Hosted compile/behavior/GUI pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 90606,
-    "sha256": "0D49C509CA2794D2A8E852671755A96D8D776EC3B46865EDB2A68D6508C35C76"
+    "bytes": 90602,
+    "sha256": "9E078FC7EA8E7BEE03A87DC8EDC51FE6AAA083582C6EDBDEAA214D22074A0B54"
   },
   "sourceInputs": 524,
   "requiredNativeTests": [
@@ -450,7 +450,7 @@
     {
       "test": "cli::default_invocation_tests::channel_add_line_webhook_port_is_typed_and_bounded_at_clap_boundary",
       "sourcePath": "SRC/neothd/src/cli/mod.rs",
-      "sourceSha256": "233D273E9AA22209162C34810DBFA14982D0224C1B9F22DD033FEDD0B56438CA",
+      "sourceSha256": "A4370861BAB9BB674F563F0D774554BD3193B7145B820F1D100C6A0398DFC58A",
       "junitClass": "neoth"
     },
     {
@@ -480,7 +480,7 @@
     {
       "test": "cli::default_invocation_tests::channel_add_irc_public_settings_preserve_false_and_reject_invalid_ports",
       "sourcePath": "SRC/neothd/src/cli/mod.rs",
-      "sourceSha256": "233D273E9AA22209162C34810DBFA14982D0224C1B9F22DD033FEDD0B56438CA",
+      "sourceSha256": "A4370861BAB9BB674F563F0D774554BD3193B7145B820F1D100C6A0398DFC58A",
       "junitClass": "neoth"
     },
     {
@@ -528,7 +528,7 @@
     {
       "test": "cli::default_invocation_tests::hidden_pairing_approve_request_keeps_public_approve_argv_intact",
       "sourcePath": "SRC/neothd/src/cli/mod.rs",
-      "sourceSha256": "233D273E9AA22209162C34810DBFA14982D0224C1B9F22DD033FEDD0B56438CA",
+      "sourceSha256": "A4370861BAB9BB674F563F0D774554BD3193B7145B820F1D100C6A0398DFC58A",
       "junitClass": "neoth"
     },
     {
@@ -3174,7 +3174,7 @@
     {
       "test": "cli::models::tests::ollama_nested_commands_preserve_exact_selectors_and_operation_ids",
       "sourcePath": "SRC/neothd/src/cli/models.rs",
-      "sourceSha256": "C9913643D2090B2DBF849920162F55FA112F5C1A3991166993147A4F36BFB4A7",
+      "sourceSha256": "36A747BD74ABF898CDEBAC5977C55432CD61CF4423658C34AA1302581D727FB1",
       "junitClass": "neoth"
     },
     {
@@ -3186,7 +3186,7 @@
     {
       "test": "cli::models::tests::ollama_config_selects_the_same_spaced_parent_home_as_serve",
       "sourcePath": "SRC/neothd/src/cli/models.rs",
-      "sourceSha256": "C9913643D2090B2DBF849920162F55FA112F5C1A3991166993147A4F36BFB4A7",
+      "sourceSha256": "36A747BD74ABF898CDEBAC5977C55432CD61CF4423658C34AA1302581D727FB1",
       "junitClass": "neoth"
     },
     {
@@ -4464,7 +4464,7 @@
     {
       "test": "providers::local_bge_m3::tests::bge_vector_normalization_requires_exact_finite_dimension",
       "sourcePath": "SRC/neothd/src/providers/local_bge_m3.rs",
-      "sourceSha256": "25528185B9EC39CF2F697FBCDEE0F5AF2893292C25BFB05B882DD0DCA129AC80",
+      "sourceSha256": "CC59852FA052574DCA7446E9D913A5EF43F979BB773DAB8EACC9C4B927D1E271",
       "junitClass": "neoth"
     },
     {
@@ -4476,19 +4476,49 @@
     {
       "test": "cli::models::tests::bge_m3_nested_commands_have_no_mutable_artifact_selectors",
       "sourcePath": "SRC/neothd/src/cli/models.rs",
-      "sourceSha256": "C9913643D2090B2DBF849920162F55FA112F5C1A3991166993147A4F36BFB4A7",
+      "sourceSha256": "36A747BD74ABF898CDEBAC5977C55432CD61CF4423658C34AA1302581D727FB1",
       "junitClass": "neoth"
     },
     {
       "test": "cli::models::tests::bge_m3_load_failure_records_failed_d8_and_never_ready",
       "sourcePath": "SRC/neothd/src/cli/models.rs",
-      "sourceSha256": "C9913643D2090B2DBF849920162F55FA112F5C1A3991166993147A4F36BFB4A7",
+      "sourceSha256": "36A747BD74ABF898CDEBAC5977C55432CD61CF4423658C34AA1302581D727FB1",
       "junitClass": "neoth"
     },
     {
       "test": "providers::local_qwen::tests::preflight_disk_space_rejects_absurd_minimum",
       "sourcePath": "SRC/neothd/src/providers/local_qwen.rs",
       "sourceSha256": "339928A9F816746EEEE865F8096BCF43AC9C6FFFE821852A500386FFAFAAABD6",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::models::tests::embedding_commands_bind_config_and_closed_selection",
+      "sourcePath": "SRC/neothd/src/cli/models.rs",
+      "sourceSha256": "36A747BD74ABF898CDEBAC5977C55432CD61CF4423658C34AA1302581D727FB1",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::models::tests::cheap_embedding_status_never_claims_fresh_ready",
+      "sourcePath": "SRC/neothd/src/cli/models.rs",
+      "sourceSha256": "36A747BD74ABF898CDEBAC5977C55432CD61CF4423658C34AA1302581D727FB1",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::models::tests::embedding_actions_follow_the_selected_model",
+      "sourcePath": "SRC/neothd/src/cli/models.rs",
+      "sourceSha256": "36A747BD74ABF898CDEBAC5977C55432CD61CF4423658C34AA1302581D727FB1",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::models::tests::embedding_select_transaction_reads_back_custom_named_config_and_preserves_other_fields",
+      "sourcePath": "SRC/neothd/src/cli/models.rs",
+      "sourceSha256": "36A747BD74ABF898CDEBAC5977C55432CD61CF4423658C34AA1302581D727FB1",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::models::tests::embedding_status_json_is_a_single_strict_snapshot",
+      "sourcePath": "SRC/neothd/src/cli/models.rs",
+      "sourceSha256": "36A747BD74ABF898CDEBAC5977C55432CD61CF4423658C34AA1302581D727FB1",
       "junitClass": "neoth"
     }
   ],
@@ -4579,7 +4609,12 @@
     "dream_cron_gui_tests::finish_navigation_is_owned_by_verified_rust_completion",
     "wizard_session_controller::tests::prepared_config_hash_is_stable_and_content_bound",
     "wizard_session_controller::tests::binding_uses_exact_next_sequence_and_never_wraps",
-    "chat_stream_phase::tests::timeout_guidance_survives_failed_terminal_and_cannot_cross_generation"
+    "chat_stream_phase::tests::timeout_guidance_survives_failed_terminal_and_cannot_cross_generation",
+    "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_unknown_fields_and_bad_row_contract",
+    "panel_logic::embedding_models_contract_tests::only_fresh_exact_ready_bge_snapshot_passes_buddy_gate",
+    "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_actions_for_unselected_or_qwen_rows",
+    "panel_logic::embedding_models_contract_tests::buddy_gate_rejects_cache_source_even_with_ready_bge",
+    "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_wrong_pin_and_impossible_observation"
   ],
   "requiredGuiClass": "neothd-gui::bin/neothd-gui",
   "additionalGuiCopies": {
@@ -5074,8 +5109,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2087006,
-      "sha256": "5424B20405D72CC597A73F31A9027016409A208B02E6CF3BF2372465BD30D637"
+      "bytes": 2106731,
+      "sha256": "E157EA45212D86F1D3BAA5CB24FCB3977B4645CDDDC55BB2044A1CB19955996E"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -5084,8 +5119,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 578031,
-      "sha256": "C51A8B967C2F70AAF18740249DD8516340C40DD14418D5A54763519809736DC5"
+      "bytes": 592455,
+      "sha256": "C9C97BC1AC1B2477A54E68FE622B0E8A9C723AD7CCF132094558B1AEC0A6DE1A"
     },
     {
       "path": "SRC/neothd-gui/tests/gui_chat_bridge_public_api.rs",
@@ -5104,8 +5139,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/main.slint",
-      "bytes": 318691,
-      "sha256": "50455674B29B2463436FB5B59BB1D87D160C89712399611E79834D267410C7D4"
+      "bytes": 320658,
+      "sha256": "26BD2AADE9AB8CD59685C970AE40CA3AB3A51E330A920C184105687816750D41"
     },
     {
       "path": "SRC/neothd-gui/ui/overlay.slint",
@@ -5114,8 +5149,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/tabs.slint",
-      "bytes": 34121,
-      "sha256": "33BA87931946708BBDEDF7A611C5E141806825DE0AADDA7DF0B109E4F427FC5F"
+      "bytes": 39684,
+      "sha256": "A0AF943FAA3AA9C42B2C3862502FD53781C79AF145445E2F39FA8A227ED98D32"
     },
     {
       "path": "SRC/neothd-gui/src/wizard_session_controller.rs",
@@ -13276,6 +13311,83 @@
       }
     ],
     "note": "ab29 Grouped200 sole W205 failure: delegated is not a symbol identifier; use seeded leaf_delegated plus actual recall precondition. Preserve all WAL session assertions. W210 CLI snapshot imported from source-bound successful ab29 export.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave211": {
+    "sourceBase": "ff9fe8e2fa110ab5eb363c057b0685a67000ac0c",
+    "requiredTests": [
+      "cli::models::tests::embedding_commands_bind_config_and_closed_selection",
+      "cli::models::tests::cheap_embedding_status_never_claims_fresh_ready",
+      "cli::models::tests::embedding_actions_follow_the_selected_model",
+      "cli::models::tests::embedding_select_transaction_reads_back_custom_named_config_and_preserves_other_fields",
+      "cli::models::tests::embedding_status_json_is_a_single_strict_snapshot"
+    ],
+    "requiredGuiTests": [
+      "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_unknown_fields_and_bad_row_contract",
+      "panel_logic::embedding_models_contract_tests::only_fresh_exact_ready_bge_snapshot_passes_buddy_gate",
+      "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_actions_for_unselected_or_qwen_rows",
+      "panel_logic::embedding_models_contract_tests::buddy_gate_rejects_cache_source_even_with_ready_bge",
+      "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_wrong_pin_and_impossible_observation"
+    ],
+    "report": "docs/gold-wave211-verification.md",
+    "review": "Integrated static review final corrections applied; Hosted execution pending",
+    "localValidationRan": false,
+    "releaseReady": false
+  },
+  "wave211SourceBinding": {
+    "base": "ff9fe8e2fa110ab5eb363c057b0685a67000ac0c",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2106731,
+        "sha256": "E157EA45212D86F1D3BAA5CB24FCB3977B4645CDDDC55BB2044A1CB19955996E",
+        "blob": "043684bc9989e25face5fd9efce263015971ad76"
+      },
+      {
+        "path": "SRC/neothd-gui/src/panel_logic.rs",
+        "bytes": 592455,
+        "sha256": "C9C97BC1AC1B2477A54E68FE622B0E8A9C723AD7CCF132094558B1AEC0A6DE1A",
+        "blob": "85e7c6d1413c7a299bc493c867e918ef6985875b"
+      },
+      {
+        "path": "SRC/neothd-gui/ui/main.slint",
+        "bytes": 320658,
+        "sha256": "26BD2AADE9AB8CD59685C970AE40CA3AB3A51E330A920C184105687816750D41",
+        "blob": "8f2de58468c3324136358eeb2c1174ecc0451c37"
+      },
+      {
+        "path": "SRC/neothd-gui/ui/settings.slint",
+        "bytes": 443389,
+        "sha256": "B888F68D9141F9184D384C42BAA3BC4172B40B718EEF1EAF77A32CD795EFE9FC",
+        "blob": "b4fa40f7446d842ee9315e5cd75a4df1b04be581"
+      },
+      {
+        "path": "SRC/neothd-gui/ui/tabs.slint",
+        "bytes": 39684,
+        "sha256": "A0AF943FAA3AA9C42B2C3862502FD53781C79AF145445E2F39FA8A227ED98D32",
+        "blob": "aa1b83ce8187ec5d7982462b093c2654f651281c"
+      },
+      {
+        "path": "SRC/neothd/src/cli/mod.rs",
+        "bytes": 114715,
+        "sha256": "A4370861BAB9BB674F563F0D774554BD3193B7145B820F1D100C6A0398DFC58A",
+        "blob": "6b38981582aaae0ee3ff773d853b9186bb43a1a3"
+      },
+      {
+        "path": "SRC/neothd/src/cli/models.rs",
+        "bytes": 89024,
+        "sha256": "36A747BD74ABF898CDEBAC5977C55432CD61CF4423658C34AA1302581D727FB1",
+        "blob": "19e3f6a3f28a5b07141f186298e456ecd84d4544"
+      },
+      {
+        "path": "SRC/neothd/src/providers/local_bge_m3.rs",
+        "bytes": 13864,
+        "sha256": "CC59852FA052574DCA7446E9D913A5EF43F979BB773DAB8EACC9C4B927D1E271",
+        "blob": "d97cb3e63b6e8f300ee88984536e8fff5746787a"
+      }
+    ],
+    "note": "Five core and five GUI tests; exact config selection/readback, strict pinned BGE status/probe, cache never Ready, bounded child commands and UI generations. All historical wave sources retained. W212 remains unstaged and excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

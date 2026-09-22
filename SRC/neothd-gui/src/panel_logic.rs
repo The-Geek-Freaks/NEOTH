@@ -1303,6 +1303,354 @@ pub fn parse_local_models_snapshot(json: &str) -> Result<LocalModelsPresentation
         valid: true,
     })
 }
+
+// ── W211 local embedding models (separate from daemon/Ollama models) ─────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbeddingModelWire {
+    Qwen3Q8,
+    BgeM3,
+}
+
+impl EmbeddingModelWire {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Qwen3Q8 => "qwen3_q8",
+            Self::BgeM3 => "bge_m3",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbeddingArtifactStateWire {
+    Unavailable,
+    Installed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbeddingReadinessStateWire {
+    Unavailable,
+    Installed,
+    Probing,
+    Ready,
+    ReachableButUnready,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbeddingSnapshotSourceWire {
+    Status,
+    Probe,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmbeddingActionsWire {
+    pub probe: bool,
+    pub pull: bool,
+    pub repair: bool,
+    pub prune: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmbeddingModelStatusRowWire {
+    pub model: EmbeddingModelWire,
+    pub artifact_state: EmbeddingArtifactStateWire,
+    pub readiness_state: EmbeddingReadinessStateWire,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub repository: Option<String>,
+    #[serde(default)]
+    pub revision: Option<String>,
+    pub actions: EmbeddingActionsWire,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmbeddingModelsSnapshotWire {
+    pub schema_version: u64,
+    pub observed_at_unix_ms: u64,
+    pub source: EmbeddingSnapshotSourceWire,
+    pub selected_model: EmbeddingModelWire,
+    pub rows: Vec<EmbeddingModelStatusRowWire>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbeddingModelPresentationRow {
+    pub model: String,
+    pub artifact_state: String,
+    pub readiness: String,
+    pub detail: String,
+    pub can_probe: bool,
+    pub can_pull: bool,
+    pub can_repair: bool,
+    pub can_prune: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbeddingModelsPresentation {
+    pub selected_model: String,
+    pub observed_at_unix_ms: u64,
+    pub rows: Vec<EmbeddingModelPresentationRow>,
+    pub valid: bool,
+}
+
+/// Strictly parse the versioned core embedding envelope.  This deliberately
+/// does not share the Ollama DTO: cache status is not a daemon residency or a
+/// fresh adapter proof, and unknown fields/states fail closed.
+pub fn parse_embedding_models_snapshot(json: &str) -> Result<EmbeddingModelsPresentation, String> {
+    let snapshot: EmbeddingModelsSnapshotWire = serde_json::from_str(json)
+        .map_err(|error| format!("invalid embedding-model status JSON: {error}"))?;
+    if snapshot.schema_version != 1 {
+        return Err("unsupported embedding-model status schema".into());
+    }
+    if snapshot.rows.len() != 2
+        || snapshot.rows[0].model != EmbeddingModelWire::Qwen3Q8
+        || snapshot.rows[1].model != EmbeddingModelWire::BgeM3
+    {
+        return Err("embedding-model status must contain ordered qwen3_q8 and bge_m3 rows".into());
+    }
+    if !snapshot
+        .rows
+        .iter()
+        .any(|row| row.model == snapshot.selected_model)
+    {
+        return Err("embedding-model selected_model is absent from rows".into());
+    }
+    if snapshot.rows.iter().any(|row| {
+        let has_lifecycle_action = row.actions.probe
+            || row.actions.pull
+            || row.actions.repair
+            || row.actions.prune;
+        has_lifecycle_action
+            && (row.model != snapshot.selected_model
+                || row.model != EmbeddingModelWire::BgeM3)
+    }) {
+        return Err("embedding-model lifecycle actions are valid only for selected bge_m3".into());
+    }
+
+    if snapshot.rows.iter().any(|row| {
+        row.model != snapshot.selected_model
+            && row.readiness_state == EmbeddingReadinessStateWire::Ready
+    }) {
+        return Err("embedding-model status reports ready for an unselected model".into());
+    }
+    if snapshot.rows.iter().any(|row| {
+        row.model == EmbeddingModelWire::Qwen3Q8
+            && row.readiness_state == EmbeddingReadinessStateWire::Ready
+    }) {
+        return Err("qwen3_q8 has no verified local embedding lifecycle or ready state".into());
+    }
+
+    if snapshot.source == EmbeddingSnapshotSourceWire::Status
+        && snapshot
+            .rows
+            .iter()
+            .any(|row| row.readiness_state == EmbeddingReadinessStateWire::Ready)
+    {
+        return Err("cheap embedding-model status cannot claim ready; run an explicit probe".into());
+    }
+
+    let rows = snapshot
+        .rows
+        .iter()
+        .map(|row| {
+            let (pinned_repository, pinned_revision) =
+                neothd::providers::local_bge_m3::pinned_model_identity();
+            let bge_identity = match row.model {
+                EmbeddingModelWire::Qwen3Q8 => match (&row.repository, &row.revision) {
+                    (None, None) => None,
+                    _ => return Err("qwen3_q8 row must not carry BGE artifact identity"),
+                },
+                EmbeddingModelWire::BgeM3 => match (&row.repository, &row.revision) {
+                    (Some(repository), Some(revision))
+                        if repository == pinned_repository && revision == pinned_revision =>
+                    {
+                        Some(format!("{repository}@{revision}"))
+                    }
+                    _ => return Err("bge_m3 artifact identity does not match the core pin"),
+                },
+            };
+            let artifact_state = match row.artifact_state {
+                EmbeddingArtifactStateWire::Unavailable => "Unavailable",
+                EmbeddingArtifactStateWire::Installed => "Installed",
+            };
+            let readiness = match row.readiness_state {
+                EmbeddingReadinessStateWire::Unavailable => "Unavailable",
+                EmbeddingReadinessStateWire::Installed => "Installed (cache only)",
+                EmbeddingReadinessStateWire::Probing => "Probing",
+                EmbeddingReadinessStateWire::Ready => "Ready (fresh load verified)",
+                EmbeddingReadinessStateWire::ReachableButUnready => "Reachable but unready",
+            };
+            let detail = [row.reason.as_deref(), bge_identity.as_deref()]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" · ");
+            Ok(EmbeddingModelPresentationRow {
+                model: row.model.as_str().to_owned(),
+                artifact_state: artifact_state.to_owned(),
+                readiness: readiness.to_owned(),
+                detail,
+                // W211 has no Qwen lifecycle owner or verified read-only probe.
+                // Do not surface a control merely because a transitional core
+                // snapshot advertises one.
+                can_probe: row.model == EmbeddingModelWire::BgeM3 && row.actions.probe,
+                can_pull: row.model == EmbeddingModelWire::BgeM3 && row.actions.pull,
+                can_repair: row.model == EmbeddingModelWire::BgeM3 && row.actions.repair,
+                can_prune: row.model == EmbeddingModelWire::BgeM3 && row.actions.prune,
+            })
+        })
+        .collect::<Result<Vec<_>, &str>>()?;
+    Ok(EmbeddingModelsPresentation {
+        selected_model: snapshot.selected_model.as_str().to_owned(),
+        observed_at_unix_ms: snapshot.observed_at_unix_ms,
+        rows,
+        valid: true,
+    })
+}
+
+/// Gate Buddy success after an explicit action. A valid DTO and a successful
+/// CLI exit are insufficient: the sampled status must be newer than the action
+/// acknowledgement, select the exact requested model, and contain a fresh
+/// successful adapter load for that row.
+pub fn embedding_snapshot_is_fresh_ready_for(
+    snapshot: &EmbeddingModelsSnapshotWire,
+    expected_model: EmbeddingModelWire,
+    not_before_unix_ms: u64,
+) -> Result<(), String> {
+    if expected_model != EmbeddingModelWire::BgeM3 {
+        return Err("only bge_m3 has a verified local embedding probe".into());
+    }
+    if snapshot.observed_at_unix_ms < not_before_unix_ms {
+        return Err("embedding-model status readback predates the action acknowledgement".into());
+    }
+    if snapshot.selected_model != expected_model {
+        return Err("embedding-model status readback selected a different model".into());
+    }
+    let row = snapshot
+        .rows
+        .iter()
+        .find(|row| row.model == expected_model)
+        .ok_or_else(|| "embedding-model status omits the requested model".to_string())?;
+    if row.readiness_state != EmbeddingReadinessStateWire::Ready {
+        return Err("embedding-model status has no fresh ready proof".into());
+    }
+    if snapshot.source != EmbeddingSnapshotSourceWire::Probe {
+        return Err("embedding-model ready proof did not come from an explicit probe".into());
+    }
+    if expected_model == EmbeddingModelWire::BgeM3
+        && !matches!(
+            (&row.repository, &row.revision),
+            (Some(repository), Some(revision))
+                if (repository.as_str(), revision.as_str())
+                    == neothd::providers::local_bge_m3::pinned_model_identity()
+        )
+    {
+        return Err("fresh BGE-M3 ready proof lacks the exact core artifact identity".into());
+    }
+    Ok(())
+}
+
+/// Reject impossible clocks before a status sample can influence an action or
+/// Buddy. The small allowance covers normal scheduling/clock granularity; it
+/// is not a substitute for the action generation fence in `main.rs`.
+pub fn embedding_snapshot_observation_is_plausible(
+    snapshot: &EmbeddingModelsSnapshotWire,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    if snapshot.observed_at_unix_ms == 0 {
+        return Err("embedding-model status has no observation time".into());
+    }
+    if snapshot.observed_at_unix_ms > now_unix_ms.saturating_add(120_000) {
+        return Err("embedding-model status observation time is implausibly in the future".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod embedding_models_contract_tests {
+    use super::*;
+
+    fn ready_bge_snapshot(observed_at_unix_ms: u64) -> serde_json::Value {
+        let (repository, revision) = neothd::providers::local_bge_m3::pinned_model_identity();
+        serde_json::json!({
+            "schema_version": 1,
+            "observed_at_unix_ms": observed_at_unix_ms,
+            "source": "probe",
+            "selected_model": "bge_m3",
+            "rows": [
+                {"model": "qwen3_q8", "artifact_state": "unavailable",
+                 "readiness_state": "unavailable", "reason": "not selected",
+                 "actions": {"probe": false, "pull": false, "repair": false, "prune": false}},
+                {"model": "bge_m3", "artifact_state": "installed", "readiness_state": "ready",
+                 "repository": repository, "revision": revision,
+                 "actions": {"probe": true, "pull": true, "repair": true, "prune": true}}
+            ]
+        })
+    }
+
+    #[test]
+    fn embedding_snapshot_rejects_unknown_fields_and_bad_row_contract() {
+        let valid = ready_bge_snapshot(20);
+        assert!(parse_embedding_models_snapshot(&valid.to_string()).is_ok());
+        let mut unknown = valid.clone();
+        unknown["unexpected"] = serde_json::json!(true);
+        assert!(parse_embedding_models_snapshot(&unknown.to_string()).is_err());
+        let mut wrong_order = valid;
+        wrong_order["rows"].as_array_mut().unwrap().swap(0, 1);
+        assert!(parse_embedding_models_snapshot(&wrong_order.to_string()).is_err());
+    }
+
+    #[test]
+    fn only_fresh_exact_ready_bge_snapshot_passes_buddy_gate() {
+        let json = ready_bge_snapshot(20);
+        assert!(parse_embedding_models_snapshot(&json.to_string()).is_ok());
+        let snapshot: EmbeddingModelsSnapshotWire = serde_json::from_value(json).unwrap();
+        assert!(embedding_snapshot_is_fresh_ready_for(&snapshot, EmbeddingModelWire::BgeM3, 20).is_ok());
+        assert!(embedding_snapshot_is_fresh_ready_for(&snapshot, EmbeddingModelWire::BgeM3, 21).is_err());
+        assert!(embedding_snapshot_is_fresh_ready_for(&snapshot, EmbeddingModelWire::Qwen3Q8, 20).is_err());
+    }
+
+    #[test]
+    fn embedding_snapshot_rejects_actions_for_unselected_or_qwen_rows() {
+        let mut valid = ready_bge_snapshot(20);
+        valid["source"] = serde_json::json!("status");
+        valid["rows"][1]["readiness_state"] = serde_json::json!("installed");
+        assert!(parse_embedding_models_snapshot(&valid.to_string()).is_ok());
+        let mut unselected = valid.clone();
+        unselected["selected_model"] = serde_json::json!("qwen3_q8");
+        assert!(parse_embedding_models_snapshot(&unselected.to_string()).is_err());
+        valid["rows"][0]["actions"]["probe"] = serde_json::json!(true);
+        assert!(parse_embedding_models_snapshot(&valid.to_string()).is_err());
+    }
+
+    #[test]
+    fn buddy_gate_rejects_cache_source_even_with_ready_bge() {
+        let mut json = ready_bge_snapshot(20);
+        json["source"] = serde_json::json!("status");
+        assert!(parse_embedding_models_snapshot(&json.to_string()).is_err());
+        let snapshot: EmbeddingModelsSnapshotWire = serde_json::from_value(json).unwrap();
+        assert!(embedding_snapshot_is_fresh_ready_for(&snapshot, EmbeddingModelWire::BgeM3, 20).is_err());
+    }
+
+    #[test]
+    fn embedding_snapshot_rejects_wrong_pin_and_impossible_observation() {
+        let mut wrong_pin = ready_bge_snapshot(20);
+        wrong_pin["rows"][1]["revision"] = serde_json::json!("unverified-revision");
+        assert!(parse_embedding_models_snapshot(&wrong_pin.to_string()).is_err());
+        let snapshot: EmbeddingModelsSnapshotWire = serde_json::from_value(ready_bge_snapshot(20)).unwrap();
+        assert!(embedding_snapshot_observation_is_plausible(&snapshot, 20).is_ok());
+        let future: EmbeddingModelsSnapshotWire = serde_json::from_value(ready_bge_snapshot(u64::MAX)).unwrap();
+        assert!(embedding_snapshot_observation_is_plausible(&future, 20).is_err());
+    }
+}
+
 fn local_models_unready_reason(reason: LocalModelUnreadyReasonWire) -> &'static str {
     match reason {
         LocalModelUnreadyReasonWire::ProbeFailed => "probe failed",
@@ -14879,4 +15227,5 @@ mod tests {
                 .any(|character| character.is_control())
         );
     }
+
 }

@@ -709,7 +709,9 @@ pub enum Commands {
 
     /// Manage the local model caches under `~/.neoth/models/`.
     ///
-    /// `list` shows every known model + cache status; `pull <name>`
+    /// `list` shows every known model + cache status; `embedding --config PATH`
+    /// exposes the versioned local embedding selection and readiness surface.
+    /// `pull <name>`
     /// downloads artifacts for `clip` / `whisper`; `prune <name>`
     /// deletes a model directory. `bge-m3` exposes the separate immutable
     /// local embedding artifact lifecycle, with no repository override.
