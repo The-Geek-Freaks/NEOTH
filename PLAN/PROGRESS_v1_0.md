@@ -2,22 +2,22 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
-**Hosted checkpoint (2026-09-22, W205-W208):** the turn/channel repairs are
-published at `76769a27`, with exact-source Hosted formatting at `d6939d2e`.
-Preflight `35754236442`, Code Quality `35754235347` and Core test-target checks,
-public CLI build and export `35753813179` passed. Grouped171 `35752386943` on
-the earlier W208 source `0cf1a0ef` executed all 171 exact identities: 160 passed,
-five assertions failed and six processes aborted with stack overflow. Its W208
-slice passed 28/30: the real 41-to-42 migration lost SQL token spacing at a Rust
-line continuation, and a positive fixture inserted duplicate consent for one
-counterparty. Both are repaired without weakening migration or consent gates;
-independent staged review passed. The fresh Grouped171 `35753809069` has
-completed and its evidence is being evaluated. Inventory remains 516 sources,
-718 universal native identities and 87 GUI identities, with unchanged platform
-extras. The prior df9d CLI export was hash-verified byte-identical to the tracked
-reference. W209 sender-verified consent and recovery are uncommitted work.
-The Windows preview passed on `a68442cb` only. Road remains 1324 total /
-1015 checked / 307 open / 2 partial. No local executable validation ran.
+**Hosted checkpoint (2026-09-22, W205-W209):** Grouped171 `35753809069` on
+`76769a27` ran all 171 exact identities: 167 passed, four failed normally and
+none aborted from stack overflow. All source/matrix/lock bindings were verified.
+Core/CLI `35753813179` passed; source-bound formatting at `d6939d2e` passed
+Preflight `35754236442` and Code Quality `35754235347`. The remaining W208 SQL
+migration and same-counterparty fixture failures are repaired in `719178ee`;
+Grouped171 `35755005928` and Core/CLI `35755009718` are checking that source.
+The W207 visible-output fixture now checks the complete concatenated text,
+allowing canonical Markdown buffering while retaining its progress/deadline
+assertions. The delegated-channel code-map session failure remains unresolved;
+its original assertion is retained. Inventory remains 516 sources, 718 universal
+native identities and 87 GUI identities, with unchanged platform extras.
+W209 sender-verified consent, closed WAL receipts and durable recovery are
+uncommitted work undergoing integrated review and behavioral test completion.
+The older Windows preview is evidence for `a68442cb` only. Road remains 1324
+total / 1015 checked / 307 open / 2 partial. No local executable validation ran.
 
 **W208 origin/consumer source (2026-09-22):** local chat and authenticated
 channel RAW now have exact header/session-bound origin receipts. Unknown data

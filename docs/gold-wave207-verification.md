@@ -1,5 +1,12 @@
 # Wave 207 request-local chat silence watchdog
 
+**Hosted stack-repair result:** Grouped171 35753809069 on 76769a27 has no
+stack-overflow or SIGABRT failures. Its W207 timing, cancellation, silent-stream
+and post-reply paths now execute. The surviving normal output assertion assumed
+a raw provider chunk boundary at the Markdown-buffered output sink. It now joins
+all visible deltas and requires the exact text `first second done`, preserving
+the 119-second progress and real-turn completion assertions. Fresh Hosted proof
+of this final output assertion remains required.
 **Hosted behavior checkpoint:** df9d9d22 passed Core test-target checking and
 CLI build/export (35751196645). Grouped141 (35751191741) had 132 passes,
 three assertion failures and six stack-overflow aborts. All four new actual

@@ -838,7 +838,10 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!((version, retained_count), (store::SCHEMA_VERSION.to_string(), 1));
+        assert_eq!(
+            (version, retained_count),
+            (store::SCHEMA_VERSION.to_string(), 1)
+        );
     }
 
     #[test]

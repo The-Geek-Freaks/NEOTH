@@ -2456,10 +2456,16 @@ mod tests {
         assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 1);
         assert!(prepared.deferred_failure_output.is_none());
         assert!(prepared.deferred_terminal.is_some());
-        assert!(sink.events.iter().any(|event| matches!(
-            event,
-            ChatTurnEvent::Output(ChatOutput::ProviderDelta { text, .. }) if text == "first"
-        )));
+        // MarkdownBuffer may coalesce safe visible prefixes; assert the canonical output across chunks.
+        let visible_output = sink
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                ChatTurnEvent::Output(ChatOutput::ProviderDelta { text, .. }) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(visible_output, "first second done");
     }
 
     #[tokio::test(start_paused = true)]
