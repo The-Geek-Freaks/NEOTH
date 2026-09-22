@@ -290,9 +290,9 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         gui_nav: "catalog",
         gui_surface: "Chat regenerate picker",
         ui_callback: None,
-        rust_handler: Some("fn build_ui"),
+        rust_handler: Some("let provider_kind ="),
         dispatch_token: Some("[\"models\", \"catalog\", \"--output\", \"json\"]"),
-        receipt: Evidence::Untyped("fn build_ui", "run_neothd_probe"),
+        receipt: Evidence::Untyped("let provider_kind =", "run_neothd_probe"),
         readback: Evidence::Missing,
         state: OperationState::Partial(
             "the picker consumes a parsed catalog but has no typed operation receipt/readback",
@@ -733,6 +733,12 @@ fn live_leaf_operation_paths(capability: &str) -> Vec<String> {
         if children.peek().is_none() {
             paths.push(prefix.to_string());
             return;
+        }
+        // A command with an optional subcommand also has a real default
+        // operation at its own path. `backup` is the current example: it
+        // writes an archive when no `mirror` subcommand is selected.
+        if !command.is_subcommand_required_set() {
+            paths.push(prefix.to_string());
         }
         for child in children {
             let child_path = format!("{prefix} {}", child.get_name());

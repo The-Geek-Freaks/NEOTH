@@ -1,0 +1,6 @@
+# W195 CI behavior repair
+
+- **Failure source:** GitHub Actions Windows source generation `8b`, run `35713920675`; retained JUnit receipt: `windows-junit/junit.xml`.
+- **Stale GUI handler:** `models.catalog` cited `fn build_ui`, which no longer exists in `SRC/neothd-gui/src/main.rs`. The live startup catalog loader is the uniquely anchored `let provider_kind =` scope; that scope starts a worker and calls `run_neothd_probe(&["models", "catalog", "--output", "json"])`, then parses the result into `REGEN_MODELS` for the regenerate picker. The inventory now points to that real scope and retains its honest `Partial` state because the parsed probe has no typed receipt/readback.
+- **Stale CLI leaf rule:** `BackupArgs.action` is `Option<BackupAction>` and `run_backup` writes the archive when it is absent. `backup` is therefore a valid default operation in addition to `backup mirror status|run|repair`. The leaf enumerator now includes every command whose subcommand is optional, preserving the real GUI-backed `backup` operation instead of deleting it from parity coverage.
+- **Local validation:** no Cargo, Rustfmt, Clippy, fixture, GUI, or product execution was run because the active BSOD hold forbids local Rust execution. The local textual gate was `git diff --check`; GitHub-hosted CI remains the required executable evidence.
