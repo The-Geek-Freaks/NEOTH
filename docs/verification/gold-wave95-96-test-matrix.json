@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W205 Grouped200 exact PASS; W211 Hosted formatting applied, behavior/GUI running",
+  "status": "W211 Grouped205/Core success; narrow GUI compile repair pending hosted validation",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 90610,
-    "sha256": "F818A6559790821E3B3A4C3FDE6351DFDDF0D7F79774C8F88829A1BF7BBBF996"
+    "bytes": 90611,
+    "sha256": "EBDFD4AF28FF80F05EB0A7CD13136EA73F9E21E8E5841091DE0FF4D05192293C"
   },
   "sourceInputs": 524,
   "requiredNativeTests": [
@@ -5109,8 +5109,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2107890,
-      "sha256": "BFED81E414B8D68E7DA5E2C8ACDAF3156875336C0D68C46391F37EAC12AE646C"
+      "bytes": 2107924,
+      "sha256": "5D510260E6FEB931D7F30EA8CD7BCE7629BBCC9F467E5D29DDA7E01046C98353"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -13414,6 +13414,20 @@
       }
     ],
     "note": "Exact pre/postimage-verified rustfmt patch from preflight35763661180 on54c57b19; only3Rust paths. W212 preserved unstaged. ff9 Grouped200 200/200 actual tests source-bound PASS.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave211GuiCompileRepair": {
+    "base": "165a2dd53faec47629788017a98e5da42a0ffd24",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2107924,
+        "sha256": "5D510260E6FEB931D7F30EA8CD7BCE7629BBCC9F467E5D29DDA7E01046C98353",
+        "blob": "a36e15ddd0a1e424d6e3ec90b1a744a3ee0e0130"
+      }
+    ],
+    "note": "GitHub beta job106867839128 on54c57b19 proves misplaced callback generation and inferred unsizedstr. Narrow main.rs repair, exact54CLI export; W212 unstaged excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

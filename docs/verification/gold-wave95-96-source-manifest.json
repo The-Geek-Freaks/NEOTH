@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T17:59:32.9139182Z",
-  "validationStatus": "W205 Grouped200 exact PASS; W211 Hosted formatting applied, behavior/GUI running",
+  "capturedUtc": "2026-09-22T18:09:44.9923909Z",
+  "validationStatus": "W211 Grouped205/Core success; narrow GUI compile repair pending hosted validation",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -88,8 +88,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 235964,
-      "sha256": "FE3E760B69B4624D216AFB6A4672BE9D26F5EC0725856FD628FF86CF583EF01F"
+      "bytes": 236869,
+      "sha256": "D74370E169ED970BF46C9F0A792F2FA107A07FCB0503EE10D8F8475A6C3DC117"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -418,18 +418,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 51946,
-      "sha256": "B8584C1C219FBD2EA07D63D86E7C4D203957E91CDA517385D891C1F7AA364B13"
+      "bytes": 52542,
+      "sha256": "F49F5505C68BC68F6CAA5105883FD0C7C6D3F86878E2C54C251365F19C3456BB"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1054828,
-      "sha256": "B4E56491C9AE3C9005FF054BC1BBFA4299CD0ED491955FB8173AC3CE51EFB7EE"
+      "bytes": 1055424,
+      "sha256": "A2FEB1314FE43DCDD233B1FB5CF47EFF92AE215B5AAEFC72DC6DDC168239AC16"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1650275,
-      "sha256": "18E17628050ED2A3D6C4BE18315B47CF74575EB316D54FF4DA9C351856D3B800"
+      "bytes": 1650871,
+      "sha256": "3F45100A564FB27B00A933D17BA803FAAD4635F885DB181E49F7B64403BD91AE"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -633,8 +633,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2107890,
-      "sha256": "BFED81E414B8D68E7DA5E2C8ACDAF3156875336C0D68C46391F37EAC12AE646C"
+      "bytes": 2107924,
+      "sha256": "5D510260E6FEB931D7F30EA8CD7BCE7629BBCC9F467E5D29DDA7E01046C98353"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",

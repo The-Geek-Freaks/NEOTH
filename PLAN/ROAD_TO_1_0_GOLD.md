@@ -8,6 +8,15 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W211 Core pass / GUI compile repair (2026-09-22):** Grouped205
+`35763682082` and Core/CLI `35763685944` on `54c57b19` succeeded. The generated
+CLI reference is source/SHA-bound and imported. Native CI identified E0425
+(callback generation captured in the wrong timer) and E0277 (closure error
+inferred as unsized str) in the new GUI path. The minimal fixes are published
+with fresh source bindings; post-fix GUI validation remains required. Formatting
+from Hosted preflight is already imported as `165a2dd5`. W212 stays unstaged;
+Road counts remain 1324 / 1015 checked / 307 open / 2 partial.
+
 **W205 accepted / W211 Hosted formatting (2026-09-22):** Grouped200
 `35762299584` on `ff9fe8e2` passed all 200 actual tests; every test identity,
 46 source paths, matrix and Cargo.lock match the run. Core/CLI `35762303618`

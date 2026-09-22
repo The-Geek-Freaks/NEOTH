@@ -2395,6 +2395,42 @@ Show selected-model readiness plus the immutable BGE-M3 artifact pin
 
 H18 — dump the live provider-model catalog (the wizard's model select source, `~/.neoth/models_catalog.json`) as JSON for the GUI's regenerate-with-model picker. Read-only; never-fetched or stale providers surface their fetch error so consumers degrade honestly instead of guessing model ids
 
+### `neoth models embedding`
+
+Inspect or explicitly operate the selected local embedding model. `--config` binds this command to that exact instance home
+
+- `--config <PATH>`
+
+#### `neoth models embedding list`
+
+Cheap cache/config snapshot. It never reports a loaded runtime ready
+
+#### `neoth models embedding probe`
+
+Construct and validate only the explicitly selected local adapter
+
+#### `neoth models embedding prune`
+
+Prune the exact BGE-M3 cache, then return a fresh snapshot
+
+#### `neoth models embedding pull`
+
+Pull the exact pinned BGE-M3 artifacts, then return a fresh snapshot
+
+#### `neoth models embedding repair`
+
+Reconcile BGE-M3's exact lifecycle, then return a fresh snapshot
+
+#### `neoth models embedding select`
+
+Persist the closed embedding-model selection and return exact readback
+
+- `<MODEL>`
+
+#### `neoth models embedding status`
+
+Alias of list for GUI and operator status polling
+
 ### `neoth models fit`
 
 GOLD-ADAPT-ODY-13 — estimate decode throughput (tok/s) for a ladder of quantized local models on a GPU, ranked by VRAM-fit then speed. Complements `recommend` (which model) with "how fast". The estimate is memory-bandwidth-bound: `tok/s ≈ 0.55 × bandwidth / model_GB`

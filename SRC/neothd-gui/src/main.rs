@@ -11298,8 +11298,6 @@ fn main() -> Result<()> {
                     if in_flight.swap(true, std::sync::atomic::Ordering::AcqRel) {
                         return;
                     }
-                    let embedding_models_revision =
-                        EMBEDDING_MODELS_UI_REVISION.load(std::sync::atomic::Ordering::Acquire);
                     let weak = weak_kanban_tick.clone();
                     let mutex = mutex_tick.clone();
                     let done = in_flight.clone();
@@ -11410,6 +11408,8 @@ fn main() -> Result<()> {
                     }
                     let weak = weak_hw_tick.clone();
                     let done = in_flight.clone();
+                    let embedding_models_revision =
+                        EMBEDDING_MODELS_UI_REVISION.load(std::sync::atomic::Ordering::Acquire);
                     std::thread::spawn(move || {
                         let snap = fetch_hardware_snapshot();
                         // W185 polls the controller only while its Resources surface
@@ -25418,7 +25418,7 @@ fn start_embedding_model_action(
                 .as_millis()
                 .try_into()
                 .unwrap_or(u64::MAX);
-            let result = (|| {
+            let result = (|| -> std::result::Result<_, String> {
                 let (_, before) = fetch_embedding_models_status()?;
                 if before.selected_model != expected_model {
                     return Err(
