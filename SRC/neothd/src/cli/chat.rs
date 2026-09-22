@@ -10909,12 +10909,6 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
         // council dispatcher counts a budget unit against a doomed
         // provider only when the breaker says it's worth trying.
         let provider_name = self.provider.name();
-        let permit = match crate::providers::circuit_breaker::acquire_for(provider_name) {
-            Ok(p) => Some(p),
-            Err(berr) => {
-                return Err(format!("provider `{provider_name}`: {berr}"));
-            }
-        };
         let mut req = self.base_req.clone();
         req.prompt = prompt.to_string();
         let protected_system = req.system.clone();
@@ -10977,6 +10971,30 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                 "council leaf exceeded routed model cap; optional leaf context degraded"
             );
         }
+        let admit_role = || -> std::result::Result<(), String> {
+            self.authorizer
+                .resolve_role_dispatch(&model)
+                .map(|_| ())
+                .map_err(|violation| {
+                    warn!(
+                        role = violation.role.as_str(),
+                        provider = violation.provider.as_str(),
+                        model = %violation.model,
+                        reason = violation.reason.as_str(),
+                        policy = ?violation.policy,
+                        "Council role dispatch denied before provider attempt"
+                    );
+                    violation.to_string()
+                })
+        };
+        // Cheap advisory preflight after final wire-model resolution. It avoids
+        // consuming a circuit attempt for an already-denied Council role; the
+        // retained leaf decision and final-send fence remain authoritative.
+        admit_role()?;
+        let permit = match crate::providers::circuit_breaker::acquire_for(provider_name) {
+            Ok(p) => Some(p),
+            Err(berr) => return Err(format!("provider `{provider_name}`: {berr}")),
+        };
         let raw = crate::providers::cost_authorization::automated_usage_scope(
             self.provider
                 .complete_authorized(req, &self.authorizer, "council_leaf"),
@@ -11381,6 +11399,15 @@ fn council_recall_source_id(role: crate::config::inference::HemisphereRole) -> &
     }
 }
 
+fn role_provider_from_slot(
+    config: &FreedomConfig,
+    slot: &crate::config::inference::HemisphereSlot,
+) -> Result<crate::config::inference::InferenceProvider> {
+    slot.provider
+        .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
+        .ok_or_else(|| anyhow::anyhow!("Council hemisphere has no configured provider identity"))
+}
+
 /// Build a fresh `ProviderHemisphere` for `role` using the configured
 /// per-role provider (defaults collapse to single-mode in Single
 /// topology). Used by `run_council_debate` to build all three plus by
@@ -11398,6 +11425,13 @@ async fn build_hemisphere(
     authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
     session_canary: Option<std::sync::Arc<crate::security::injection_tracker::CanaryToken>>,
 ) -> Result<ProviderHemisphere> {
+    let role_provider = role_provider_from_slot(config, config.inference.slot_for(role))?;
+    let role_policy_config = std::sync::Arc::new(config.clone());
+    let authorizer = authorizer.with_role_dispatch(
+        role,
+        role_provider,
+        std::sync::Arc::clone(&role_policy_config),
+    );
     let provider = crate::providers::from_config_for_role_at(config, role, neoth_home).await?;
     let mut base_req = req.clone();
     // Council leaves are independent provider calls. Never inherit the chat
@@ -11461,6 +11495,8 @@ async fn build_hemisphere_with_config(
     allow_persistent_context: bool,
     session_canary: Option<std::sync::Arc<crate::security::injection_tracker::CanaryToken>>,
 ) -> Result<ProviderHemisphere> {
+    let role_provider = role_provider_from_slot(config.as_ref(), config.inference.slot_for(role))?;
+    let authorizer = authorizer.with_role_dispatch(role, role_provider, std::sync::Arc::clone(&config));
     let provider =
         crate::providers::from_config_for_role_at(config.as_ref(), role, neoth_home).await?;
     // GOLD-WIRE-04: outer-council hemisphere — voice from this role's slot,
@@ -11516,6 +11552,15 @@ async fn build_sub_hemisphere_with_config(
     allow_persistent_context: bool,
     session_canary: Option<std::sync::Arc<crate::security::injection_tracker::CanaryToken>>,
 ) -> Result<ProviderHemisphere> {
+    let role_provider = role_provider_from_slot(
+        config.as_ref(),
+        config.inference.slot_for_sub(outer_role, inner_role),
+    )?;
+    let authorizer = authorizer.with_role_dispatch(
+        inner_role,
+        role_provider,
+        std::sync::Arc::clone(&config),
+    );
     let provider = crate::providers::from_config_for_sub_role_at(
         config.as_ref(),
         outer_role,

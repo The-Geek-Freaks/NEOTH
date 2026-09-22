@@ -2813,6 +2813,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         config_for_handler.tokens.max_per_request,
                     )
                 }
+                // Only role-policy identity is live within this handler.
+                // Provider topology, budgets and channel authorization remain
+                // captured by `config_for_handler` above.
+                .with_role_policy_reload(Arc::clone(&reload_controller))
                 .with_usage_home(neoth_home.clone())
                 .with_audit_context(
                     crate::providers::cost_authorization::ProviderCallAuditContext::default()

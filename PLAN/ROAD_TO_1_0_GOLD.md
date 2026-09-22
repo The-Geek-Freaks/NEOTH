@@ -8,6 +8,29 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W213 Council role admission (2026-09-22):** optional closed provider/model
+rules now bind primary and recursive Council leaves. The retained policy
+identity reaches lifecycle audit and final complete/stream/event transport
+checks, including Claude internal retries. Daemon role-policy reload revokes
+older attempts without changing their topology/budget/channel authority; CLI
+commands retain fixed snapshots. Independent source review passed. Twelve new
+regressions bring the grouped lane to 248 and inventory to 529 source paths /
+795 universal native / 92 GUI identities, with platform extras unchanged.
+Hosted compile, behavior and full-CI results are pending. Normal dispatch,
+fallback, background/sub-agents and GUI controls remain P2-15 follow-ups.
+No Road box closes; see `docs/gold-wave213-verification.md`.
+
+**W212 Hosted acceptance (2026-09-22):** Grouped236 `35769179702` on
+`0d501bad` passed all 236 actual tests after the four fixture corrections.
+All 47 source paths, exact test identities, matrix and Cargo.lock match the
+run commit. This includes all 17 new generation tests and all 14 existing
+index/forget regressions. Core test-target type-check and CLI build already
+passed on `02a10972`; fresh full-CI/GUI/release acceptance remains open.
+W213 Council role policy is in final implementation and independent review,
+including role-only reload revocation and the real Claude internal retry fence.
+Road remains 1324 total / 1015 checked / 307 open / 2 partial. Local BSOD hold
+continues; all executable validation runs on GitHub-hosted runners.
+
 **W212 Hosted behavior and regression repair (2026-09-22):** Grouped236
 `35767413693` on `02a10972` executed all 236 selected cases: 232 passed and
 four failed; all 17 new generation tests passed. Source hashes for 47 paths,

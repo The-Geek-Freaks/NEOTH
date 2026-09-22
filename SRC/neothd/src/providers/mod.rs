@@ -1732,6 +1732,7 @@ pub struct ProviderDispatchPermit {
         std::sync::Mutex<Option<crate::security::provider_subject::ProviderSubjectIdentifier>>,
     audit: tokio::sync::Mutex<ProviderDispatchAuditState>,
     effect: std::sync::Mutex<Option<ProviderEffectContext>>,
+    role_dispatch: std::sync::Mutex<Option<crate::config::role_policy::RoleDispatchDecision>>,
     _private: (),
 }
 
@@ -1748,6 +1749,7 @@ impl ProviderDispatchPermit {
         provider_subject: Option<crate::security::provider_subject::ProviderSubjectIdentifier>,
         effect: Option<ProviderEffectContext>,
         effect_start_adapter: bool,
+        role_dispatch: Option<crate::config::role_policy::RoleDispatchDecision>,
     ) -> Self {
         let live_consent = ProviderLiveConsent {
             authorizer: authorizer.clone(),
@@ -1767,6 +1769,7 @@ impl ProviderDispatchPermit {
             provider_subject: std::sync::Mutex::new(provider_subject),
             audit: tokio::sync::Mutex::new(ProviderDispatchAuditState::Active(Box::new(audit))),
             effect: std::sync::Mutex::new(effect),
+            role_dispatch: std::sync::Mutex::new(role_dispatch),
             _private: (),
         }
     }
@@ -1776,6 +1779,7 @@ impl ProviderDispatchPermit {
         effect: Option<ProviderEffectContext>,
         live_consent: Option<ProviderLiveConsent>,
         effect_start_adapter: bool,
+        role_dispatch: Option<crate::config::role_policy::RoleDispatchDecision>,
     ) -> Self {
         Self {
             retry: None,
@@ -1784,8 +1788,37 @@ impl ProviderDispatchPermit {
             provider_subject: std::sync::Mutex::new(provider_subject),
             audit: tokio::sync::Mutex::new(ProviderDispatchAuditState::TransportOnly),
             effect: std::sync::Mutex::new(effect),
+            role_dispatch: std::sync::Mutex::new(role_dispatch),
             _private: (),
         }
+    }
+
+    /// Final role-policy fence immediately before raw transport. The retained
+    /// decision must still equal the current accepted policy resolution.
+    pub(crate) fn ensure_role_dispatch_before_send(&self, req: &Request) -> Result<()> {
+        let expected = self
+            .role_dispatch
+            .lock()
+            .map_err(|_| anyhow::anyhow!("role dispatch permit state is poisoned"))?
+            .clone();
+        let Some(expected) = expected else {
+            return Ok(());
+        };
+        let model = req.model.as_deref().ok_or_else(|| anyhow::anyhow!("role dispatch raw request has no final model"))?;
+        let authorizer = self
+            .retry
+            .as_ref()
+            .map(|retry| &retry.authorizer)
+            .or_else(|| self.live_consent.as_ref().map(|live| &live.authorizer))
+            .ok_or_else(|| anyhow::anyhow!("role dispatch permit has no authorizer"))?;
+        let current = authorizer
+            .resolve_role_dispatch(model)
+            .map_err(anyhow::Error::new)?
+            .ok_or_else(|| anyhow::anyhow!("role dispatch permit lost its Council binding"))?;
+        if current != expected {
+            anyhow::bail!("role dispatch policy changed after authorization; provider transport blocked");
+        }
+        Ok(())
     }
 
     /// Reserve exactly one real external-start handshake after the existing
@@ -1859,7 +1892,7 @@ impl ProviderDispatchPermit {
         }
     }
 
-    async fn failure(&self, error_kind: &'static str) -> Result<()> {
+    pub(crate) async fn failure(&self, error_kind: &'static str) -> Result<()> {
         let mut state = self.audit.lock().await;
         match &mut *state {
             ProviderDispatchAuditState::Active(audit) => {
@@ -1964,8 +1997,9 @@ impl ProviderDispatchPermit {
                 retry.call_scope,
                 false,
                 retry.output_token_ceiling,
-            )
+        )
             .await?;
+        let role_dispatch = authorized.take_role_dispatch();
         let provider_subject = authorized.take_provider_subject();
         let effect = authorized.effect_context();
         let gated_effect = effect.is_some();
@@ -1986,6 +2020,10 @@ impl ProviderDispatchPermit {
             .effect
             .lock()
             .map_err(|_| anyhow::anyhow!("provider effect retry state is poisoned"))? = effect;
+        *self
+            .role_dispatch
+            .lock()
+            .map_err(|_| anyhow::anyhow!("role dispatch retry state is poisoned"))? = role_dispatch;
         *state = ProviderDispatchAuditState::Active(Box::new(audit));
         drop(state);
         if gated_effect {
@@ -2253,6 +2291,7 @@ pub trait Provider: Send + Sync {
         let mut authorized = authorizer
             .authorize_leaf(self.name(), &req, call_scope, false, output_token_ceiling)
             .await?;
+        let role_dispatch = authorized.take_role_dispatch();
         let provider_subject = authorized.take_provider_subject();
         let effect = authorized.effect_context();
         let gated_effect = effect.is_some();
@@ -2268,6 +2307,7 @@ pub trait Provider: Send + Sync {
             provider_subject,
             effect,
             self.w41_effect_start_adapter(W41EffectStartProbe::new()),
+            role_dispatch,
         );
         if gated_effect {
             permit.require_composed_effect_start_adapter().await?;
@@ -2275,6 +2315,14 @@ pub trait Provider: Send + Sync {
             // Legacy CLI/test/raw paths have no concrete W41 reservation, so
             // keep their old immediately-before-transport live-consent check.
             permit.ensure_consent_before_send().await?;
+        }
+        if let Err(error) = permit.ensure_role_dispatch_before_send(&req) {
+            if let Err(audit_error) = permit.failure("role_dispatch_policy_changed").await {
+                return Err(anyhow::anyhow!(
+                    "role dispatch changed and terminal audit failed: {audit_error}; provider error: {error}"
+                ));
+            }
+            return Err(error);
         }
         match self.complete_raw(req, &permit).await {
             Ok(mut completion) => {
@@ -2319,6 +2367,7 @@ pub trait Provider: Send + Sync {
                 output_token_ceiling,
             )
             .await?;
+        let role_dispatch = authorized.take_role_dispatch();
         let provider_subject = authorized.take_provider_subject();
         let effect = authorized.effect_context();
         let gated_effect = effect.is_some();
@@ -2353,7 +2402,16 @@ pub trait Provider: Send + Sync {
                 consent_route: self.consent_route(),
             }),
             effect_start_adapter,
+            role_dispatch,
         );
+        if let Err(error) = permit.ensure_role_dispatch_before_send(&req) {
+            if let Err(audit_error) = audit.failure("role_dispatch_policy_changed").await {
+                return Err(anyhow::anyhow!(
+                    "role dispatch changed and terminal audit failed: {audit_error}; provider error: {error}"
+                ));
+            }
+            return Err(error);
+        }
         match self.stream_raw(req, &permit).await {
             Ok(stream) => Ok(audit.wrap_stream(stamp_stream_identity(
                 stream,
@@ -2397,6 +2455,7 @@ pub trait Provider: Send + Sync {
                 output_token_ceiling,
             )
             .await?;
+        let role_dispatch = authorized.take_role_dispatch();
         let provider_subject = authorized.take_provider_subject();
         let effect = authorized.effect_context();
         let gated_effect = effect.is_some();
@@ -2431,7 +2490,16 @@ pub trait Provider: Send + Sync {
                 consent_route: self.consent_route(),
             }),
             effect_start_adapter,
+            role_dispatch,
         );
+        if let Err(error) = permit.ensure_role_dispatch_before_send(&req) {
+            if let Err(audit_error) = audit.failure("role_dispatch_policy_changed").await {
+                return Err(anyhow::anyhow!(
+                    "role dispatch changed and terminal audit failed: {audit_error}; provider error: {error}"
+                ));
+            }
+            return Err(error);
+        }
         match self
             .stream_events_raw(req, &permit, reasoning_display)
             .await
@@ -2475,7 +2543,7 @@ pub trait Provider: Send + Sync {
             let mut req = req;
             self.validate_request_controls(&req)?;
             let identity = bind_wire_identity(self, &mut req)?;
-            let permit = ProviderDispatchPermit::transport_only(None, None, None, false);
+            let permit = ProviderDispatchPermit::transport_only(None, None, None, false, None);
             let mut completion = self.complete_raw(req, &permit).await?;
             stamp_completion_identity(&mut completion, &identity, false);
             return Ok(completion);
@@ -2571,7 +2639,7 @@ pub trait Provider: Send + Sync {
             let mut req = req;
             self.validate_request_controls(&req)?;
             let identity = bind_wire_identity(self, &mut req)?;
-            let permit = ProviderDispatchPermit::transport_only(None, None, None, false);
+            let permit = ProviderDispatchPermit::transport_only(None, None, None, false, None);
             let stream = self.stream_raw(req, &permit).await?;
             return Ok(stamp_stream_identity(stream, identity, false));
         }
@@ -2597,7 +2665,7 @@ pub trait Provider: Send + Sync {
             let mut req = req;
             self.validate_request_controls(&req)?;
             let identity = bind_wire_identity(self, &mut req)?;
-            let permit = ProviderDispatchPermit::transport_only(None, None, None, false);
+            let permit = ProviderDispatchPermit::transport_only(None, None, None, false, None);
             let stream = self
                 .stream_events_raw(req, &permit, reasoning_display)
                 .await?;
@@ -4546,6 +4614,56 @@ mod tests {
         );
     }
 
+    #[test]
+    fn role_dispatch_final_fence_rejects_model_mutated_after_permit_creation() {
+        let mut config = crate::config::FreedomConfig::default();
+        config.inference.role_policy = Some(crate::config::role_policy::RolePolicyConfig {
+            rules: vec![crate::config::role_policy::RolePolicyRule {
+                role: HemisphereRole::Left,
+                provider: InferenceProvider::LocalOllama,
+                model: Some("qwen-allowed".into()),
+            }],
+        });
+        let config = Arc::new(config);
+        let authorizer = cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .with_role_dispatch(
+            HemisphereRole::Left,
+            InferenceProvider::LocalOllama,
+            Arc::clone(&config),
+        );
+        let original = config
+            .inference
+            .resolve_role_dispatch(
+                HemisphereRole::Left,
+                InferenceProvider::LocalOllama,
+                "qwen-allowed",
+            )
+            .expect("fixture policy admits original request");
+        let permit = ProviderDispatchPermit::transport_only(
+            None,
+            None,
+            Some(ProviderLiveConsent {
+                authorizer,
+                consent_route: None,
+            }),
+            false,
+            Some(original),
+        );
+
+        // This stands in for an adapter changing the final wire model after
+        // the permit was minted; the fence must inspect that final request.
+        let req = Request {
+            model: Some("qwen-mutated-after-permit".into()),
+            ..Request::default()
+        };
+        let error = permit
+            .ensure_role_dispatch_before_send(&req)
+            .expect_err("mutated final model must not reach raw transport");
+        assert!(error.to_string().contains("model_not_allowed"), "{error:#}");
+    }
+
     #[tokio::test]
     async fn real_transport_only_permit_rechecks_outbox_after_intent_without_spending_allow_once() {
         let home = tempfile::tempdir().expect("live-consent fixture home");
@@ -4571,6 +4689,7 @@ mod tests {
                 consent_route: Some(route.clone()),
             }),
             true,
+            None,
         );
 
         // This is the production stream handoff shape: `TransportOnly` retains
@@ -4642,6 +4761,7 @@ mod tests {
                 consent_route: Some(route.clone()),
             }),
             true,
+            None,
         );
 
         assert!(

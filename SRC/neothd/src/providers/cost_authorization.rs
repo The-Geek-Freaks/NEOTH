@@ -425,6 +425,13 @@ enum ProviderPolicySource {
     Reload(Arc<crate::config::reload::ReloadController>),
 }
 
+#[derive(Clone)]
+struct RoleDispatchBinding {
+    role: crate::config::inference::HemisphereRole,
+    provider: crate::config::inference::InferenceProvider,
+    fixed_config: std::sync::Arc<crate::config::FreedomConfig>,
+}
+
 impl ProviderPolicySource {
     fn current(&self) -> ProviderLeafPolicy {
         match self {
@@ -612,6 +619,7 @@ struct ProviderCallAuditTicket {
     system_bytes: usize,
     prompt_bytes: usize,
     requested_max_output_tokens: Option<u32>,
+    role_dispatch: Option<crate::config::role_policy::RoleDispatchDecision>,
     context: ProviderCallAuditContext,
     usage_home: Option<PathBuf>,
     usage_automated: bool,
@@ -654,6 +662,15 @@ impl ProviderCallAuditTicket {
             ("ts_unix".into(), crate::time::now_unix_secs().into()),
         ]);
         add_audit_context(&mut payload, &self.context);
+        if let Some(decision) = &self.role_dispatch {
+            payload.insert("hemisphere_role".into(), decision.role.as_str().into());
+            payload.insert("hemisphere_provider".into(), decision.provider.as_str().into());
+            payload.insert("hemisphere_model".into(), decision.model.clone().into());
+            payload.insert(
+                "hemisphere_policy".into(),
+                serde_json::to_value(&decision.policy).expect("role policy identity serializes"),
+            );
+        }
         payload
     }
 
@@ -949,6 +966,7 @@ enum ProviderCallTerminal {
 /// permit is to durably convert this into a lifecycle guard (0x20 first).
 pub(crate) struct AuthorizedLeafCall {
     ticket: ProviderCallAuditTicket,
+    role_dispatch: Option<crate::config::role_policy::RoleDispatchDecision>,
     provider_subject: Option<ProviderSubjectIdentifier>,
     effect_gate: Option<Arc<dyn ChatTurnEffectGate>>,
     request_binding_sha256: String,
@@ -1180,6 +1198,11 @@ impl Drop for ProviderIntentLifecycle {
 }
 
 impl AuthorizedLeafCall {
+    pub(crate) fn take_role_dispatch(
+        &mut self,
+    ) -> Option<crate::config::role_policy::RoleDispatchDecision> {
+        self.role_dispatch.take()
+    }
     pub(crate) fn take_provider_subject(&mut self) -> Option<ProviderSubjectIdentifier> {
         self.provider_subject.take()
     }
@@ -1526,6 +1549,11 @@ impl Drop for ProviderCallAuditGuard {
 #[derive(Clone)]
 pub struct ProviderCallAuthorizer {
     policy_source: ProviderPolicySource,
+    role_dispatch: Option<RoleDispatchBinding>,
+    /// Daemon-only live identity source for role-policy revocation.  It is
+    /// deliberately separate from `policy_source`: topology, budget and
+    /// channel confirmation stay bound to the handler's accepted generation.
+    role_policy_reload: Option<Arc<crate::config::reload::ReloadController>>,
     /// Retained selected-skill cap. It is minted by the resolver, never from a
     /// provider request or manifest id, and intersects the live global policy
     /// immediately before a concrete provider leaf.
@@ -1689,6 +1717,91 @@ impl ProviderCallAuthorizer {
         self.policy_source.current().input_token_cap
     }
 
+    /// Bind a Council hemisphere's already-selected concrete provider to the
+    /// exact-leaf authorization boundary. The fixed config always supplies
+    /// the construction decision; an optional daemon role-policy controller
+    /// can only revoke it when its current identity differs.
+    pub(crate) fn with_role_dispatch(
+        mut self,
+        role: crate::config::inference::HemisphereRole,
+        provider: crate::config::inference::InferenceProvider,
+        fixed_config: std::sync::Arc<crate::config::FreedomConfig>,
+    ) -> Self {
+        self.role_dispatch = Some(RoleDispatchBinding {
+            role,
+            provider,
+            fixed_config,
+        });
+        self
+    }
+
+    /// Make only the role-policy identity live for a daemon authorizer.
+    /// Standalone CLI commands intentionally retain their fixed snapshot.
+    pub(crate) fn with_role_policy_reload(
+        mut self,
+        reload: Arc<crate::config::reload::ReloadController>,
+    ) -> Self {
+        self.role_policy_reload = Some(reload);
+        self
+    }
+
+    fn original_role_dispatch(
+        &self,
+        final_model: &str,
+    ) -> std::result::Result<
+        Option<crate::config::role_policy::RoleDispatchDecision>,
+        crate::config::role_policy::RoleDispatchViolation,
+    > {
+        let Some(binding) = &self.role_dispatch else {
+            return Ok(None);
+        };
+        binding
+            .fixed_config
+            .inference
+            .resolve_role_dispatch(binding.role, binding.provider, final_model)
+            .map(Some)
+    }
+
+    pub(crate) fn resolve_role_dispatch(
+        &self,
+        final_model: &str,
+    ) -> std::result::Result<
+        Option<crate::config::role_policy::RoleDispatchDecision>,
+        crate::config::role_policy::RoleDispatchViolation,
+    > {
+        let Some(binding) = &self.role_dispatch else {
+            // Ordinary non-Council dispatch remains unbound in this vertical.
+            return Ok(None);
+        };
+        let config = self
+            .role_policy_reload
+            .as_ref()
+            .map(|controller| controller.latest())
+            .unwrap_or_else(|| std::sync::Arc::clone(&binding.fixed_config));
+        config
+            .inference
+            .resolve_role_dispatch(binding.role, binding.provider, final_model)
+            .map(Some)
+    }
+
+    fn ensure_role_policy_identity_current(
+        &self,
+        original: &crate::config::role_policy::RoleDispatchDecision,
+    ) -> Result<()> {
+        let current = self
+            .resolve_role_dispatch(&original.model)
+            .map_err(anyhow::Error::new)?
+            .ok_or_else(|| anyhow::anyhow!(ProviderAuthorizationError(
+                "role dispatch lost its Council binding before authorization".into(),
+            )))?;
+        if current.policy != original.policy {
+            return Err(anyhow::anyhow!(ProviderAuthorizationError(
+                "role dispatch policy changed after handler construction; provider dispatch blocked".into(),
+            )));
+        }
+        Ok(())
+    }
+
     /// Re-read the durable marker for the exact concrete provider route. This
     /// is intentionally separate from startup/preflight consent: a marker
     /// deleted while a daemon or Claude retry loop is running must block the
@@ -1827,6 +1940,8 @@ impl ProviderCallAuthorizer {
                 autonomy: policy.into_provider_policy(),
                 input_token_cap: configured_input_token_cap,
             }),
+            role_dispatch: None,
+            role_policy_reload: None,
             skill_invocation_policy: None,
             writer,
             confirm: CostConfirm::Interactive,
@@ -1854,6 +1969,8 @@ impl ProviderCallAuthorizer {
                 autonomy: policy.into_provider_policy(),
                 input_token_cap: configured_input_token_cap,
             }),
+            role_dispatch: None,
+            role_policy_reload: None,
             skill_invocation_policy: None,
             writer,
             confirm: CostConfirm::FailClosed,
@@ -1885,6 +2002,8 @@ impl ProviderCallAuthorizer {
                 autonomy: policy.into_provider_policy(),
                 input_token_cap: configured_input_token_cap,
             }),
+            role_dispatch: None,
+            role_policy_reload: None,
             skill_invocation_policy: None,
             writer: Some(writer),
             confirm: CostConfirm::ExplicitRequestCapability { expires_unix },
@@ -1913,6 +2032,8 @@ impl ProviderCallAuthorizer {
                 autonomy: policy.into_provider_policy(),
                 input_token_cap: configured_input_token_cap,
             }),
+            role_dispatch: None,
+            role_policy_reload: None,
             skill_invocation_policy: None,
             writer,
             confirm: CostConfirm::Channel(asker),
@@ -1946,6 +2067,8 @@ impl ProviderCallAuthorizer {
     ) -> Self {
         Self {
             policy_source: ProviderPolicySource::Reload(reload),
+            role_dispatch: None,
+            role_policy_reload: None,
             skill_invocation_policy: None,
             writer,
             confirm: CostConfirm::FailClosed,
@@ -1975,6 +2098,8 @@ impl ProviderCallAuthorizer {
     ) -> Self {
         Self {
             policy_source: ProviderPolicySource::Reload(reload),
+            role_dispatch: None,
+            role_policy_reload: None,
             skill_invocation_policy: None,
             writer,
             confirm: CostConfirm::Channel(asker),
@@ -2003,6 +2128,8 @@ impl ProviderCallAuthorizer {
                 autonomy: AutonomyPolicySnapshot::test_level(autonomy),
                 input_token_cap: crate::config::TokensConfig::default_max_per_request(),
             }),
+            role_dispatch: None,
+            role_policy_reload: None,
             skill_invocation_policy: None,
             writer: None,
             confirm: CostConfirm::FailClosed,
@@ -2022,6 +2149,8 @@ impl ProviderCallAuthorizer {
     pub(crate) fn test_only_reload(reload: Arc<crate::config::reload::ReloadController>) -> Self {
         Self {
             policy_source: ProviderPolicySource::Reload(reload),
+            role_dispatch: None,
+            role_policy_reload: None,
             skill_invocation_policy: None,
             writer: None,
             confirm: CostConfirm::FailClosed,
@@ -2254,6 +2383,20 @@ impl ProviderCallAuthorizer {
                     "provider `{provider}` left its final model implicit"
                 )))
             })?;
+        // Council role admission retains the handler-construction decision
+        // and requires the optional live role-policy identity to match it;
+        // no configuration lock is held while subsequent authorization awaits.
+        let role_dispatch = if self.role_dispatch.is_some() {
+            let original = self
+                .original_role_dispatch(model)
+                .map_err(anyhow::Error::new)?;
+            if let Some(decision) = original.as_ref() {
+                self.ensure_role_policy_identity_current(decision)?;
+            }
+            original
+        } else {
+            None
+        };
         let configured_cap = leaf_policy.input_token_cap;
         let effective_cap = crate::tokens::budget::effective_cap(provider, model, configured_cap);
         let input_tokens = crate::providers::token_cap::request_token_upper_bound(req);
@@ -2368,6 +2511,7 @@ impl ProviderCallAuthorizer {
         };
         if super::is_local_provider(provider) {
             return Ok(AuthorizedLeafCall {
+                role_dispatch: role_dispatch.clone(),
                 provider_subject,
                 effect_gate,
                 request_binding_sha256: request_binding_sha256.clone(),
@@ -2385,6 +2529,7 @@ impl ProviderCallAuthorizer {
                     system_bytes: req.system.as_deref().map_or(0, str::len),
                     prompt_bytes: req.prompt.len(),
                     requested_max_output_tokens: req.max_output_tokens,
+                    role_dispatch: role_dispatch.clone(),
                     context: audit_context,
                     usage_home: self.usage_home.clone(),
                     usage_automated: current_usage_automated(self.usage_automated),
@@ -2563,6 +2708,7 @@ impl ProviderCallAuthorizer {
             )))
         })?;
         Ok(AuthorizedLeafCall {
+            role_dispatch: role_dispatch.clone(),
             provider_subject,
             effect_gate,
             request_binding_sha256: request_binding_sha256.clone(),
@@ -2580,6 +2726,7 @@ impl ProviderCallAuthorizer {
                 system_bytes: req.system.as_deref().map_or(0, str::len),
                 prompt_bytes: req.prompt.len(),
                 requested_max_output_tokens: req.max_output_tokens,
+                role_dispatch,
                 context: audit_context,
                 usage_home: self.usage_home.clone(),
                 usage_automated: current_usage_automated(self.usage_automated),
@@ -2986,6 +3133,10 @@ impl Provider for AuthorizedProvider {
         self.stream_events(req, reasoning_display).await
     }
 }
+
+#[cfg(test)]
+#[path = "role_dispatch_tests.rs"]
+mod role_dispatch_tests;
 
 #[cfg(test)]
 mod tests {

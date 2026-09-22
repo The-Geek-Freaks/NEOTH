@@ -2072,6 +2072,14 @@ async fn complete_tmux_uncached(
                 .begin_retry_attempt()
                 .await
                 .context("authorize exact claude_cli retry attempt")?;
+            if let Err(error) = permit.ensure_role_dispatch_before_send(&req) {
+                if let Err(audit_error) = permit.failure("role_dispatch_policy_changed").await {
+                    return Err(anyhow::anyhow!(
+                        "role dispatch changed and retry terminal audit failed: {audit_error}; provider error: {error}"
+                    ));
+                }
+                return Err(error);
+            }
             // No false-reset needed: the only setter is the transport-retry
             // arm below, which re-arms it before the next read.
         }

@@ -33,6 +33,9 @@ consolidation and model probing retain the exact accepted config path.
 
 ## Verification boundary
 
+Fresh run `35769179702` on `0d501bad39e58710a2fd1b277481f451c69094ef` is admitted: **236/236 passed**, no failed fixtures, all 47 source paths, exact test identities, matrix and Cargo.lock match the run. All 17 new W212 tests and all 14 existing index/forget cases passed. Receipt: `work/gold-20260906/wave212-embedding-generation/grouped236-0d/ADMISSION.json`. The historical failure and repair below are retained for provenance.
+
+
 Hosted run `35767413693` on `02a10972` executed all 236 selected cases:
 232 passed, four failed normally. All 17 new W212 tests passed. All 47 source
 paths, identities, matrix and lock matched the run. Core test type-check and

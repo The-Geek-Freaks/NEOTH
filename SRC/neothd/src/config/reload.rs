@@ -831,7 +831,15 @@ fn changed_provider_runtime_fields(old: &FreedomConfig, new: &FreedomConfig) -> 
     if old.provider_api_version != new.provider_api_version {
         changed.push("provider_api_version");
     }
-    if serialized_fragment_changed(&old.inference, &new.inference) {
+    // The daemon's provider graph captures inference topology, while
+    // `role_policy` is a closed authorization restriction rechecked by the
+    // leaf authorizer. Permit that one field to publish without rebuilding a
+    // provider Arc; every other inference change remains restart-bound.
+    let mut old_inference = old.inference.clone();
+    let mut new_inference = new.inference.clone();
+    old_inference.role_policy = None;
+    new_inference.role_policy = None;
+    if serialized_fragment_changed(&old_inference, &new_inference) {
         changed.push("inference");
     }
     if serialized_fragment_changed(&old.fallback, &new.fallback) {
@@ -939,6 +947,8 @@ mod tests {
 
     use super::*;
     use crate::cli::init::ProviderKind;
+    use crate::config::inference::{HemisphereRole, InferenceProvider};
+    use crate::config::role_policy::{RolePolicyConfig, RolePolicyRule};
     use crate::config::credentials::Credentials;
     use crate::secret::SecretString;
     use crate::transport::ssh_config::{SshAuth, SshEndpoint, SshTunnelConfig};
@@ -1389,6 +1399,40 @@ mod tests {
         }
         assert!(ctrl.latest().provider_endpoint.is_none());
         assert_eq!(*generation.borrow(), 0);
+    }
+
+    #[test]
+    fn try_reload_accepts_role_policy_only_change_but_keeps_other_inference_restart_bound() {
+        let dir = tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let initial = fresh_config();
+        let mut role_only = initial.clone();
+        role_only.inference.role_policy = Some(RolePolicyConfig {
+            rules: vec![RolePolicyRule {
+                role: HemisphereRole::Left,
+                provider: InferenceProvider::OpenAi,
+                model: Some("gpt-5.6".into()),
+            }],
+        });
+        write_yaml(&yaml_path, &serde_yaml::to_string(&role_only).unwrap());
+        let controller = ReloadController::new(initial, yaml_path.clone());
+        assert!(matches!(
+            controller.try_reload().expect("role policy reload is valid"),
+            ReloadResult::Reloaded { .. }
+        ));
+        assert_eq!(controller.latest().inference.role_policy, role_only.inference.role_policy);
+
+        let mut topology_change = role_only.clone();
+        topology_change.inference.left.provider = Some(InferenceProvider::AnthropicApi);
+        write_yaml(&yaml_path, &serde_yaml::to_string(&topology_change).unwrap());
+        match controller.try_reload().expect("inference validation succeeds") {
+            ReloadResult::Rejected { rejection } => {
+                assert_eq!(rejection.reason_codes(), ["provider_runtime_changed"]);
+                assert!(rejection.to_string().contains("inference"));
+            }
+            other => panic!("expected restart-bound inference rejection, got {other:?}"),
+        }
+        assert_eq!(controller.latest().inference.left.provider, role_only.inference.left.provider);
     }
 
     #[test]

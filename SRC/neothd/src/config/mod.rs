@@ -8,6 +8,7 @@ pub mod ops;
 pub mod policy;
 pub mod provider;
 pub mod reload;
+pub mod role_policy;
 pub mod rollback;
 pub mod tools;
 pub mod wal;

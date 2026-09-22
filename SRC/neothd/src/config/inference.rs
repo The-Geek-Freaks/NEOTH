@@ -527,6 +527,11 @@ pub struct InferenceTopology {
     /// Phase 3 only changes WHICH providers fire, not how many.
     #[serde(default)]
     pub hemisphere_sub_slots: BTreeMap<HemisphereRole, SubHemisphereSlots>,
+    /// Optional closed provider/model admission policy for Council hemisphere
+    /// dispatch. Its absence preserves legacy routing. Once present, a role
+    /// without an explicit rule is denied before provider transport.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_policy: Option<crate::config::role_policy::RolePolicyConfig>,
 }
 
 /// E-2 Phase 3 (Session 14) — one outer-role's inner-council triple.
@@ -1150,6 +1155,28 @@ impl TopologyMode {
 }
 
 impl InferenceTopology {
+    /// Resolve the role-policy admission for an already selected concrete
+    /// provider/model pair. This never selects a substitute route.
+    pub fn resolve_role_dispatch(
+        &self,
+        role: HemisphereRole,
+        provider: InferenceProvider,
+        final_model: &str,
+    ) -> Result<
+        crate::config::role_policy::RoleDispatchDecision,
+        crate::config::role_policy::RoleDispatchViolation,
+    > {
+        match &self.role_policy {
+            Some(policy) => policy.resolve(role, provider, final_model),
+            None => Ok(crate::config::role_policy::RoleDispatchDecision {
+                role,
+                provider,
+                model: final_model.to_owned(),
+                policy: crate::config::role_policy::RolePolicyIdentity::CompatibilityDefault,
+            }),
+        }
+    }
+
     /// Resolve the slot for a given hemisphere role. In `single` mode all
     /// roles return `default_slot`. In `triplet`/`custom` mode the explicit
     /// per-slot config wins; absent fields fall back to `default_slot`.
@@ -2215,5 +2242,22 @@ trigger:
             !InferenceProvider::RecursiveMas.is_local(),
             "a network-capable sidecar must not receive offline-provider semantics"
         );
+    }
+
+    #[test]
+    fn absent_role_policy_preserves_legacy_role_routing() {
+        let topology: InferenceTopology = serde_yaml::from_str("{}").unwrap();
+        assert!(topology.role_policy.is_none());
+
+        let decision = topology
+            .resolve_role_dispatch(HemisphereRole::Left, InferenceProvider::OpenAi, "gpt-5.6")
+            .unwrap();
+        assert_eq!(
+            decision.policy,
+            crate::config::role_policy::RolePolicyIdentity::CompatibilityDefault
+        );
+        assert_eq!(decision.role, HemisphereRole::Left);
+        assert_eq!(decision.provider, InferenceProvider::OpenAi);
+        assert_eq!(decision.model, "gpt-5.6");
     }
 }
