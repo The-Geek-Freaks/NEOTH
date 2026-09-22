@@ -670,9 +670,11 @@ impl CitationCache {
         now_secs: u64,
     ) -> Result<Option<CitationLookupResult>, CitationCacheError> {
         query.validate().map_err(validation_io_error)?;
-        self.ensure_private_directory()?;
-        let _guard = self.lock_mutation()?;
         let claim = normalize_claim(claim).map_err(validation_io_error)?;
+        if !self.ensure_private_directory_for_read()? {
+            return Ok(None);
+        }
+        let _guard = self.lock_mutation()?;
         let key = Self::cache_key(query);
         let path = self.entry_path(&key);
         let bytes = match self.read_cache_child(&path) {
@@ -787,6 +789,37 @@ impl CitationCache {
         ensure_no_redirected_ancestor(&self.dir)?;
         verify_private_cache_directory(&self.dir)?;
         Ok(())
+    }
+
+    /// A missing cache namespace is an ordinary cold-cache miss.  Reads must
+    /// not materialize it, while an existing namespace still receives the
+    /// exact private-directory checks used by cache writes.
+    fn ensure_private_directory_for_read(&self) -> Result<bool, CitationCacheError> {
+        ensure_no_redirected_ancestor(&self.dir)?;
+        match std::fs::symlink_metadata(&self.dir) {
+            Ok(_) => {
+                verify_private_cache_directory(&self.dir)?;
+                Ok(true)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                for ancestor in self.dir.ancestors().skip(1) {
+                    match std::fs::symlink_metadata(ancestor) {
+                        Ok(metadata) if metadata.file_type().is_dir() => {}
+                        Ok(_) => {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "citation cache namespace has a non-directory ancestor",
+                            )
+                            .into());
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+                Ok(false)
+            }
+            Err(error) => Err(error.into()),
+        }
     }
 
     fn lock_mutation(&self) -> Result<CitationCacheMutationGuard<'static>, CitationCacheError> {
@@ -1438,6 +1471,25 @@ mod tests {
             expired,
             CitationLookupResult::unavailable(q.provider, CitationLookupState::OfflineCacheMiss),
             "expired is an explicit offline cache miss"
+        );
+    }
+
+    #[test]
+    fn missing_cache_namespace_is_a_read_only_offline_miss() {
+        let tmp = tempfile::tempdir().unwrap();
+        let q = query(CitationProvider::Crossref, "10.1000/a");
+        let namespace = tmp
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("cache")
+            .join("citations");
+        let cache = CitationCache::new(namespace.clone(), 100, 8, 100_000).unwrap();
+
+        assert!(cache.get(&q, "claim", 10).unwrap().is_none());
+        assert!(
+            !namespace.exists(),
+            "offline cache reads must not materialize a cold namespace"
         );
     }
 

@@ -2161,15 +2161,12 @@ pub fn settle_yearly_synthesis(
 fn yearly_receipt_create_new_conflicted(
     error: &crate::skills::store::PrivateChildPreCommitError,
 ) -> bool {
-    let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(error);
-    while let Some(current) = cause {
-        if current
-            .downcast_ref::<std::io::Error>()
-            .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists)
-        {
-            return true;
-        }
-        cause = current.source();
+    if error
+        .root_cause()
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists)
+    {
+        return true;
     }
 
     #[cfg(windows)]

@@ -1277,9 +1277,11 @@ mod tests {
             .await
             .unwrap();
         assert!(output.status.success());
+        let observed = std::fs::canonicalize(std::fs::read_to_string(marker).unwrap()).unwrap();
+        let expected = std::fs::canonicalize(&moved).unwrap();
         assert_eq!(
-            std::fs::read_to_string(marker).unwrap(),
-            moved.to_string_lossy(),
+            observed,
+            expected,
             "the child must enter the retained directory object, not the stale name"
         );
     }

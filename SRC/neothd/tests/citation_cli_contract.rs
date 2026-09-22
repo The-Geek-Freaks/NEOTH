@@ -26,7 +26,15 @@ fn ordinary_and_gui_offline_lookups_emit_typed_receipts_before_nonzero_without_a
 
     for (label, gui_args) in cases {
         let temp = tempfile::tempdir().expect("isolated citation CLI fixture");
-        let home = temp.path().join(format!("private NEOTH_HOME {label}"));
+        // macOS may expose its temporary directory through the `/var` alias.
+        // The production cache correctly rejects redirected ancestors, so this
+        // fixture must pass the same canonical private directory an operator
+        // would configure as NEOTH_HOME.
+        let home = temp
+            .path()
+            .canonicalize()
+            .expect("canonical isolated temp root")
+            .join(format!("private NEOTH_HOME {label}"));
         std::fs::create_dir(&home).expect("create isolated NEOTH_HOME");
 
         let mut command = Command::new(env!("CARGO_BIN_EXE_neoth"));

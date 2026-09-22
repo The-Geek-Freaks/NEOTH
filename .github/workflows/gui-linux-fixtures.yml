@@ -68,6 +68,18 @@ jobs:
           restore-keys: |
             linux-1.91-cargo-
 
+      # This focused lane owns this target cache namespace. It may restore a
+      # compatible earlier focused run, but never writes into CI's shared
+      # cache family.
+      - name: Restore focused GUI compile cache
+        id: focused-gui-compile-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: SRC/target/
+          key: w228-linux-gui-fixtures-rust-1.91-lock-${{ hashFiles('SRC/Cargo.lock') }}-jobs1-incremental0-devdebug0-testdebug0-target-${{ github.sha }}
+          restore-keys: |
+            w228-linux-gui-fixtures-rust-1.91-lock-${{ hashFiles('SRC/Cargo.lock') }}-jobs1-incremental0-devdebug0-testdebug0-target-
+
       - name: Bind the complete declared GUI fixture closure
         shell: bash
         run: |
@@ -91,7 +103,7 @@ jobs:
           matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
           required_gui_class = matrix.get("requiredGuiClass")
           if required_gui_class != "neothd-gui::bin/neothd-gui":
-              raise SystemExit("requiredGuiClass must bind the neothd-gui binary harness")
+              raise SystemExit("requiredGuiClass must be the neothd-gui binary harness")
 
           def require_names(value, label, expected_count):
               if not isinstance(value, list) or len(value) != expected_count:
@@ -110,6 +122,34 @@ jobs:
           selected = universal + linux
           if len(selected) != 116 or len(selected) != len(set(selected)):
               raise SystemExit("GUI fixture selection must contain exactly 116 unique identities (94 universal + 22 Linux)")
+
+          supported_classes = {
+              "neothd-gui::bin/neothd-gui": {"kind": "bin", "selector": ["--bin", "neothd-gui"]},
+              "neothd-gui::gui_chat_bridge_public_api": {"kind": "integration", "selector": ["--test", "gui_chat_bridge_public_api"]},
+          }
+          classes_by_platform = matrix.get("requiredGuiClassesByPlatform")
+          if not isinstance(classes_by_platform, dict):
+              raise SystemExit("requiredGuiClassesByPlatform is missing or malformed")
+          if "Linux" not in classes_by_platform:
+              raise SystemExit("requiredGuiClassesByPlatform.Linux is missing")
+          linux_classes = classes_by_platform["Linux"]
+          if not isinstance(linux_classes, dict):
+              raise SystemExit("requiredGuiClassesByPlatform.Linux is missing or malformed")
+          unknown_class_names = sorted(set(linux_classes) - set(selected))
+          if unknown_class_names:
+              raise SystemExit(f"Linux GUI class override names are not selected fixtures: {unknown_class_names}")
+          fixture_plan = []
+          for name in selected:
+              harness_class = linux_classes.get(name, required_gui_class)
+              if name in linux_classes and harness_class != "neothd-gui::gui_chat_bridge_public_api":
+                  raise SystemExit(f"unsupported Linux GUI class override for {name}: {harness_class!r}")
+              if harness_class not in supported_classes:
+                  raise SystemExit(f"unsupported GUI harness class for {name}: {harness_class!r}")
+              fixture_plan.append({
+                  "name": name,
+                  "class": harness_class,
+                  **supported_classes[harness_class],
+              })
 
           bindings = matrix.get("guiSourceBindings")
           if not isinstance(bindings, list) or not bindings:
@@ -152,6 +192,24 @@ jobs:
           if len(manifest_payload) != source_manifest["bytes"] or manifest_hash != source_manifest["sha256"].upper():
               raise SystemExit("declared source manifest hash or byte count drifted")
 
+          try:
+              manifest_document = json.loads(manifest_payload)
+              manifest_files = manifest_document["files"]
+          except (json.JSONDecodeError, KeyError, TypeError) as error:
+              raise SystemExit(f"declared source manifest has no usable files array: {error}")
+          workflow_path = ".github/workflows/gui-linux-fixtures.yml"
+          workflow_entries = [entry for entry in manifest_files if isinstance(entry, dict) and entry.get("path") == workflow_path]
+          if len(workflow_entries) != 1 or set(workflow_entries[0]) != {"path", "bytes", "sha256"}:
+              raise SystemExit("source manifest must bind this exact GUI fixture workflow once")
+          workflow_binding = workflow_entries[0]
+          if (not isinstance(workflow_binding["bytes"], int) or workflow_binding["bytes"] < 0
+                  or not isinstance(workflow_binding["sha256"], str) or len(workflow_binding["sha256"]) != 64):
+              raise SystemExit("source manifest has an invalid GUI fixture workflow binding")
+          workflow_payload = (root / workflow_path).read_bytes()
+          workflow_hash = hashlib.sha256(workflow_payload).hexdigest().upper()
+          if len(workflow_payload) != workflow_binding["bytes"] or workflow_hash != workflow_binding["sha256"].upper():
+              raise SystemExit("executing GUI fixture workflow drifted from the declared source manifest")
+
           lock_path = root / "SRC/Cargo.lock"
           if not lock_path.is_file():
               raise SystemExit("SRC/Cargo.lock is missing")
@@ -160,27 +218,40 @@ jobs:
               "sourceManifest": {"path": manifest_path, "bytes": len(manifest_payload), "sha256": manifest_hash},
               "cargoLock": {"path": "SRC/Cargo.lock", "bytes": lock_path.stat().st_size, "sha256": hashlib.sha256(lock_path.read_bytes()).hexdigest().upper()},
               "guiCargoToml": {"path": "SRC/neothd-gui/Cargo.toml", "sha256": hashlib.sha256((root / "SRC/neothd-gui/Cargo.toml").read_bytes()).hexdigest().upper()},
+              "workflow": {"path": workflow_path, "bytes": len(workflow_payload), "sha256": workflow_hash},
           }
           (evidence_root / "source" / "selected-fixtures.json").write_text(json.dumps({
               "schema": "neoth-w228-linux-gui-fixtures/v1",
-              "requiredGuiClass": required_gui_class,
+              "defaultGuiClass": required_gui_class,
+              "platformGuiClassOverrides": linux_classes,
               "universal": universal,
               "linux": linux,
               "selected": selected,
+              "fixturePlan": fixture_plan,
               "counts": {"universal": len(universal), "linux": len(linux), "total": len(selected)},
           }, indent=2) + "\n", encoding="utf-8")
           (evidence_root / "source" / "gui-source-bindings.json").write_text(json.dumps(actual_bindings, indent=2) + "\n", encoding="utf-8")
           (evidence_root / "source" / "source-manifest.json").write_bytes(manifest_payload)
+          (evidence_root / "source" / "workflow-binding.json").write_text(json.dumps({
+              "head": os.environ.get("GITHUB_SHA"),
+              "manifest": {"path": manifest_path, "bytes": len(manifest_payload), "sha256": manifest_hash},
+              "workflow": inputs["workflow"],
+          }, indent=2) + "\n", encoding="utf-8")
           (evidence_root / "source" / "inputs.json").write_text(json.dumps(inputs, indent=2) + "\n", encoding="utf-8")
           (evidence_root / "source" / "fixture-names.txt").write_text("\n".join(selected) + "\n", encoding="utf-8")
+          (evidence_root / "source" / "fixture-plan.tsv").write_text(
+              "".join(f"{entry['name']}\t{entry['class']}\t{entry['kind']}\n" for entry in fixture_plan),
+              encoding="utf-8",
+          )
           PY
           printf '%s\n' 'binding-verified' > "$evidence_root/source/selection-status.txt"
           test "$(cat "$evidence_root/receipt/source-head.txt")" = "$GITHUB_SHA"
 
-      # The selected fixtures are tests in the neothd-gui binary harness. The
-      # real CLI is built once for callbacks that do not stage a test-local
-      # executable; fixtures which intentionally stage `neoth` keep their
-      # own PATH precedence. No `neoth --lib` test binary is requested.
+      # The selected fixtures declare their canonical harness in the source
+      # receipt. The real CLI is built once for callbacks that do not stage a
+      # test-local executable; fixtures which intentionally stage `neoth`
+      # keep their own PATH precedence. No `neoth --lib` test binary is
+      # requested.
       - name: Build and run each exact GUI fixture once
         id: gui-fixtures
         shell: bash
@@ -190,6 +261,7 @@ jobs:
           evidence_root="$RUNNER_TEMP/w228-linux-gui-fixtures"
           result="$evidence_root/receipt/result.json"
           names="$evidence_root/source/fixture-names.txt"
+          plan="$evidence_root/source/fixture-plan.tsv"
           failed="$evidence_root/receipt/failed-names.txt"
           executed="$evidence_root/receipt/executed-names.txt"
           started="$evidence_root/receipt/started-names.txt"
@@ -205,14 +277,31 @@ jobs:
           overall=0
           deadline_reached=false
           incomplete_reason=""
-          required_gui_class='neothd-gui::bin/neothd-gui'
           # Finish the runner-side protocol with time for receipt creation and
           # the always-uploaded artifacts before GitHub's 90-minute job limit.
           deadline_seconds=4500
           SECONDS=0
+          reserve_timeout() {
+            local cap_seconds="$1"
+            local label="$2"
+            local remaining_seconds=$((deadline_seconds - SECONDS))
+            if [[ "$remaining_seconds" -le 90 ]]; then
+              deadline_reached=true
+              incomplete_reason="deadline reserve reached before ${label}"
+              return 1
+            fi
+            command_timeout=$((remaining_seconds - 90))
+            if [[ "$command_timeout" -gt "$cap_seconds" ]]; then
+              command_timeout="$cap_seconds"
+            fi
+          }
 
-          timeout --preserve-status 25m cargo build -p neoth --bin neoth --locked 2>&1 | tee "$evidence_root/log/build-neoth-cli.log"
-          build_status=${PIPESTATUS[0]}
+          if reserve_timeout 1500 'CLI build'; then
+            timeout --preserve-status "$command_timeout" cargo build -p neoth --bin neoth --locked 2>&1 | tee "$evidence_root/log/build-neoth-cli.log"
+            build_status=${PIPESTATUS[0]}
+          else
+            build_status=124
+          fi
           if [[ "$build_status" -ne 0 ]]; then
             printf '%s\n' '__build_neoth_cli__' >> "$failed"
             overall=1
@@ -220,40 +309,72 @@ jobs:
 
           if [[ "$build_status" -eq 0 ]]; then
             export PATH="$PWD/target/debug:$PATH"
-            # Compile exactly this binary test harness once. Later discovery
-            # and exact runs only reuse this target directory; a cold compile
-            # failure is terminal and is never retried for every fixture.
-            timeout --preserve-status 45m cargo test -p neothd-gui --bin neothd-gui --locked --no-run 2>&1 | tee "$evidence_root/log/build-gui-test-harness.log"
-            gui_build_status=${PIPESTATUS[0]}
-            if [[ "$gui_build_status" -ne 0 ]]; then
-              printf '%s\n' '__build_neothd_gui_test_harness__' >> "$failed"
-              overall=1
-            fi
+            # Compile every exact harness selected by the canonical class
+            # mapping once. Later discovery and execution reuse this target
+            # directory; a cold compile failure is terminal and is never
+            # retried for every fixture.
+            mapfile -t harness_kinds < <(cut -f3 "$plan" | sort -u)
+            gui_build_status=0
+            for harness_kind in "${harness_kinds[@]}"; do
+              case "$harness_kind" in
+                bin)
+                  selector=(--bin neothd-gui)
+                  log_suffix=bin-neothd-gui
+                  ;;
+                integration)
+                  selector=(--test gui_chat_bridge_public_api)
+                  log_suffix=integration-gui-chat-bridge-public-api
+                  ;;
+                *)
+                  echo "unsupported GUI fixture harness kind: $harness_kind" >&2
+                  printf '%s\n' "__unsupported_gui_harness_${harness_kind}__" >> "$failed"
+                  gui_build_status=125
+                  overall=1
+                  continue
+                  ;;
+              esac
+              if reserve_timeout 1500 "GUI ${harness_kind} harness build"; then
+                timeout --preserve-status "$command_timeout" cargo test -p neothd-gui "${selector[@]}" --locked --no-run 2>&1 | tee "$evidence_root/log/build-gui-test-harness-${log_suffix}.log"
+                harness_build_status=${PIPESTATUS[0]}
+              else
+                harness_build_status=124
+              fi
+              if [[ "$harness_build_status" -ne 0 ]]; then
+                printf '%s\n' "__build_neothd_gui_${log_suffix}__" >> "$failed"
+                gui_build_status="$harness_build_status"
+                overall=1
+              fi
+            done
           else
             gui_build_status=125
           fi
 
           if [[ "$build_status" -eq 0 && "$gui_build_status" -eq 0 ]]; then
+            printf '%s\n' 'compile_ready=true' >> "$GITHUB_OUTPUT"
             mapfile -t tests < "$names"
-            for index in "${!tests[@]}"; do
-              test_name="${tests[$index]}"
-              remaining_seconds=$((deadline_seconds - SECONDS))
-              if [[ "$remaining_seconds" -le 90 ]]; then
-                deadline_reached=true
-                incomplete_reason="deadline reserve reached before fixture $((index + 1))"
-                break
-              fi
-              case_timeout=$((remaining_seconds - 90))
-              if [[ "$case_timeout" -gt 720 ]]; then
-                case_timeout=720
-              fi
-              log="$evidence_root/log/test-$(printf '%03d' "$((index + 1))").log"
-              execution_receipt="$evidence_root/receipt/test-$(printf '%03d' "$((index + 1))")-execution.txt"
+            index=0
+            while IFS=$'\t' read -r test_name required_gui_class harness_kind; do
+              index=$((index + 1))
+              case "$harness_kind" in
+                bin) selector=(--bin neothd-gui) ;;
+                integration) selector=(--test gui_chat_bridge_public_api) ;;
+                *)
+                  printf '%s\n' "$test_name" >> "$failed"
+                  overall=1
+                  continue
+                  ;;
+              esac
+              log="$evidence_root/log/test-$(printf '%03d' "$index").log"
+              execution_receipt="$evidence_root/receipt/test-$(printf '%03d' "$index")-execution.txt"
               printf '%s\n' "$test_name" >> "$started"
               run_fixture() {
-                echo "=== fixture $((index + 1))/${#tests[@]}: $test_name ==="
+                echo "=== fixture ${index}/${#tests[@]}: $test_name [$required_gui_class] ==="
                 echo "=== discovery ==="
-                listed="$(timeout --preserve-status "$case_timeout" cargo test -p neothd-gui --bin neothd-gui --locked "$test_name" -- --exact --list)"
+                if ! reserve_timeout 720 "fixture ${index} discovery"; then
+                  echo "deadline reserve reached before discovery: $test_name" >&2
+                  return 1
+                fi
+                listed="$(timeout --preserve-status "$command_timeout" cargo test -p neothd-gui "${selector[@]}" --locked "$test_name" -- --exact --list)"
                 list_status=$?
                 printf '%s\n' "$listed"
                 if [[ "$list_status" -ne 0 ]]; then
@@ -266,7 +387,11 @@ jobs:
                 fi
                 echo "=== execution ==="
                 printf '%s\n' "$test_name" >> "$executed"
-                xvfb-run --auto-servernum timeout --preserve-status "$case_timeout" cargo test -p neothd-gui --bin neothd-gui --locked "$test_name" -- --exact --test-threads=1 2>&1 | tee "$execution_receipt"
+                if ! reserve_timeout 720 "fixture ${index} execution"; then
+                  echo "deadline reserve reached before execution: $test_name" >&2
+                  return 1
+                fi
+                xvfb-run --auto-servernum timeout --preserve-status "$command_timeout" cargo test -p neothd-gui "${selector[@]}" --locked "$test_name" -- --exact --test-threads=1 2>&1 | tee "$execution_receipt"
                 run_status=${PIPESTATUS[0]}
                 if [[ "$run_status" -ne 0 ]]; then
                   echo "exact execution command failed: $run_status" >&2
@@ -287,7 +412,10 @@ jobs:
                 overall=1
               fi
               printf '%s\n' "$test_name" >> "$completed"
-            done
+              if [[ "$deadline_reached" == true ]]; then
+                break
+              fi
+            done < "$plan"
           fi
 
           mapfile -t expected_tests < "$names"
@@ -303,7 +431,7 @@ jobs:
           fi
 
           invariant_status="$evidence_root/receipt/proof-invariant-status.txt"
-          export RESULT_PATH="$result" INVARIANT_STATUS_PATH="$invariant_status" EXECUTED_PATH="$executed" STARTED_PATH="$started" COMPLETED_PATH="$completed" PASSED_PATH="$passed" FAILED_PATH="$failed" UNSTARTED_PATH="$unstarted" BUILD_STATUS="$build_status" GUI_BUILD_STATUS="$gui_build_status" EXPECTED_PATH="$names" DEADLINE_REACHED="$deadline_reached" INCOMPLETE_REASON="$incomplete_reason" DEADLINE_SECONDS="$deadline_seconds" REQUIRED_GUI_CLASS="$required_gui_class"
+          export RESULT_PATH="$result" INVARIANT_STATUS_PATH="$invariant_status" EXECUTED_PATH="$executed" STARTED_PATH="$started" COMPLETED_PATH="$completed" PASSED_PATH="$passed" FAILED_PATH="$failed" UNSTARTED_PATH="$unstarted" BUILD_STATUS="$build_status" GUI_BUILD_STATUS="$gui_build_status" EXPECTED_PATH="$names" FIXTURE_PLAN_PATH="$plan" DEADLINE_REACHED="$deadline_reached" INCOMPLETE_REASON="$incomplete_reason" DEADLINE_SECONDS="$deadline_seconds"
           python3 - <<'PY'
           import json
           import os
@@ -316,6 +444,23 @@ jobs:
           passed = Path(os.environ["PASSED_PATH"]).read_text(encoding="utf-8").splitlines()
           failed = Path(os.environ["FAILED_PATH"]).read_text(encoding="utf-8").splitlines()
           unstarted = Path(os.environ["UNSTARTED_PATH"]).read_text(encoding="utf-8").splitlines()
+          selectors = {
+              "bin": ["--bin", "neothd-gui"],
+              "integration": ["--test", "gui_chat_bridge_public_api"],
+          }
+          fixture_plan = []
+          for line in Path(os.environ["FIXTURE_PLAN_PATH"]).read_text(encoding="utf-8").splitlines():
+              name, harness_class, kind = line.split("\t")
+              if kind not in selectors:
+                  raise SystemExit(f"unsupported fixture harness kind in receipt: {kind}")
+              fixture_plan.append({
+                  "name": name,
+                  "class": harness_class,
+                  "kind": kind,
+                  "selector": selectors[kind],
+              })
+          if [entry["name"] for entry in fixture_plan] != expected:
+              raise SystemExit("fixture plan no longer binds the exact selected identities")
           coverage_complete = started == expected and completed == expected
           proof_complete = (
               started == expected
@@ -330,7 +475,7 @@ jobs:
               "status": status,
               "complete": proof_complete,
               "coverageComplete": coverage_complete,
-              "requiredGuiClass": os.environ["REQUIRED_GUI_CLASS"],
+              "fixturePlan": fixture_plan,
               "expectedCount": len(expected),
               "startedCount": len(started),
               "completedCount": len(completed),
@@ -359,6 +504,13 @@ jobs:
           fi
           test "$(wc -l < "$completed")" -eq "$(wc -l < "$names")" || overall=1
           exit "$overall"
+
+      - name: Save focused GUI compile cache after successful target builds
+        if: always() && steps.gui-fixtures.outputs.compile_ready == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: SRC/target/
+          key: w228-linux-gui-fixtures-rust-1.91-lock-${{ hashFiles('SRC/Cargo.lock') }}-jobs1-incremental0-devdebug0-testdebug0-target-${{ github.sha }}
 
       - name: Upload GUI fixture source bindings
         if: always()

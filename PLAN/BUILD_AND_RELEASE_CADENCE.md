@@ -3,6 +3,18 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W234 native/GUI recovery (2026-09-23):** Grouped340 and341 are admitted at
+340/340 and341/341, all71source hashes/matrix/lock/actualterminals verified.
+The latter proves W229's real RPC and revoke-first start behavior; Core35792359278
+also passed and its generated CLI reference matches exactly. FullCI743 compiled
+both native platforms; macOS17600passed/15failed/25skipped. Four reviewed core
+repairs address fixture schema, exact AlreadyExists recovery, canonical macOS
+paths and read-only cold citation cache. Focused selection becomes398 and
+native inventory843 (sources535,GUI94,platform extras unchanged). GUI116 onb1ef
+is source-bound105pass/8actualfail/3discoveryfail; the workflow now respects
+canonical harness classes and corrected test names. Callback repairs and W235
+cancellation remain separate work. Road remains1016checked/306open/2partial.
+See `docs/gold-wave234-native-and-gui-recovery.md`. Local BSOD hold unchanged.
 **W232 native-suite repairs (2026-09-23):** FullCI35782661515 completed actual
 Windows testing at17530passed/3failed/24skipped/1leaky, with no test timeouts.
 Three reviewed fixture repairs address watcher-registration timing, module-level

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T22:33:22.5442322Z",
-  "validationStatus": "W232 exact Hosted GUI formatter imported; actual native behavior still pending",
+  "capturedUtc": "2026-09-22T22:49:41.4493677Z",
+  "validationStatus": "W234 reviewed native path/receipt/cache repairs and exact class-aware GUI lane; Hosted behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -68,8 +68,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 12036,
-      "sha256": "9A2163C1F245F62D8011CD63A237AD6D1C53C4D5D219E6251A46F169E3482269"
+      "bytes": 12086,
+      "sha256": "CF889B1DBAD2BCC6552DD1B64CB87349419BC56B9C36C598575F05FD2903E419"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -433,18 +433,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 78321,
-      "sha256": "2203AFFDA1BD9D03FFB4DCAFF40928CD0171950F0666FB0D17BE779B1491B226"
+      "bytes": 79260,
+      "sha256": "94A1378685E26E7C9CD0B165098AB2A054C57516CB18D55637AD17A59DA8C1FE"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1081256,
-      "sha256": "6A5EAD3CA940B0EE0466576634B7FE01140FFBCD54407281E2B8C5B0B995D51C"
+      "bytes": 1082195,
+      "sha256": "643461BA83669F04FD44198D232ECC4DA3CFDBBB002BB81BBD8C4B752120CBD4"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1676824,
-      "sha256": "DAA325CB8AADEA3D3DF1ED2D6C9C3FC56819F0F158DD21CD91C987345BEF779B"
+      "bytes": 1677763,
+      "sha256": "CBE50E11DCB19D09770C35721B03A9B9D0D0F955CADA05B67EB52833904B8633"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -2038,8 +2038,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/store.rs",
-      "bytes": 199388,
-      "sha256": "18B5077473FD921FA220065C50D8543213B1CF49960F44826C46A7335F93DBAE"
+      "bytes": 199705,
+      "sha256": "9B7398EB76E7DDBF6259DF771AACB3241F0C506E72EF77F15F8103151BE9B238"
     },
     {
       "path": "SRC/neothd/src/memory/transcript_mining_provenance.rs",
@@ -2263,8 +2263,8 @@
     },
     {
       "path": "SRC/neothd/src/reflection/periodic.rs",
-      "bytes": 181824,
-      "sha256": "561BA17560BD02B9441B26AA0ADE19797DF78FA9817DD2F0CA9F7D0086D7431A"
+      "bytes": 181665,
+      "sha256": "D8058701AD5D7102CCED2D0ADC3DA20E45D1F362DC779200523E77266D1326F4"
     },
     {
       "path": "SRC/neothd/src/security/mirror_refusal_pipeline.rs",
@@ -2398,8 +2398,8 @@
     },
     {
       "path": "SRC/neothd/src/tools/citation_lookup.rs",
-      "bytes": 58244,
-      "sha256": "E9F5ABFBEE074BF53A58913D35EB06554FE0F5BD004AE715178164F770EF4226"
+      "bytes": 60374,
+      "sha256": "0EAE948E8F5BBDC05346D3DB7EE3962478C105F1E3752885BDE90ABBE4E21672"
     },
     {
       "path": "SRC/neothd/src/tools/deep_research.rs",
@@ -2448,8 +2448,8 @@
     },
     {
       "path": "SRC/neothd/src/updater/process_containment.rs",
-      "bytes": 52756,
-      "sha256": "4D0DCFEB0A282C189BE0C659B8617CBABBA0B93AD04F058EBE29C42FFEC21EAF"
+      "bytes": 52869,
+      "sha256": "5742ED3429C27DF3CB5E84F0DB45F2CEA25A0C1144D11C77C2EAD67559B1A436"
     },
     {
       "path": "SRC/neothd/src/updater/reconcile.rs",
@@ -2558,8 +2558,8 @@
     },
     {
       "path": "SRC/neothd/tests/citation_cli_contract.rs",
-      "bytes": 6372,
-      "sha256": "B61D31B066FA0990EF9146BB678B968FBEF90CAFC08419A6B5F5340769C4867C"
+      "bytes": 6756,
+      "sha256": "49449252E08869BB565A5EC5DCFE29BF01B2DA6B09BCBDF1B99E91780B7EE8CB"
     },
     {
       "path": "SRC/neothd/tests/cli_binary_contract.rs",
@@ -2678,8 +2678,8 @@
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
-      "bytes": 19898,
-      "sha256": "803623644E0EF621FC34B54A47F1349128CB0FEEC3A90B52ED76797E6FBA06C0"
+      "bytes": 28125,
+      "sha256": "E3693880AF0B28CA38354A6457EF3EA11E1EEBD201E6AAA5550C8A803865FB7B"
     }
   ]
 }

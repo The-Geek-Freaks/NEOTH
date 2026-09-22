@@ -3588,17 +3588,24 @@ mod tests {
         make_private_history_directory(&parent).unwrap();
         let history = parent.join("history.db");
         let legacy = open(&history).unwrap();
-        // A genuine v38 predecessor lacks the two v39 identity tables. Stamping
-        // the current Stage-3b schema as v36 would invent a downgrade and collide
-        // with the already-installed v38 triggers before the intended rebind.
+        // Model a genuine v42 predecessor.  It has every v38→v42 additive
+        // object, but neither W209 challenge table.  Stamping an older version
+        // on a current schema leaves later tables behind and makes migration
+        // fail before this test can exercise the final no-follow rebind.
+        if SCHEMA_VERSION >= 44 {
+            legacy
+                .execute_batch(
+                    "DROP INDEX idx_embedding_episode_generation;\
+                     ALTER TABLE idx_embedding DROP COLUMN generation;",
+                )
+                .unwrap();
+        }
         legacy
             .execute_batch(
-                "DROP TABLE idx_human_identity_aliases_v2;\
-                 DROP TABLE idx_human_identity_legacy_claims;",
+                "DROP TABLE idx_counterparty_consent_audit_terminal_v1;\
+                 DROP TABLE idx_counterparty_consent_challenge_v1;\
+                 UPDATE meta SET value='42' WHERE key='schema_version';",
             )
-            .unwrap();
-        legacy
-            .execute("UPDATE meta SET value='38' WHERE key='schema_version'", [])
             .unwrap();
         drop(legacy);
         let views = root.path().join("views.db");
