@@ -45,6 +45,8 @@ W210 source-bound results are confirmed: Grouped200 run `35759964957` on
 pull and both exact official-model/native-load and retained-Ready recovery tests.
 W205 was corrected at `ff9fe8e2` to query the actual full `leaf_delegated`
 identifier and establish injected context before WAL custody assertions.
+Run `35762299584` passed all 200 tests with exact source/identity admission;
+Core/CLI `35762303618` also passed. W211 remains under fresh Hosted checks.
 
 The applicable GUI source review uses `design-system/PRODUCT.md`, `DESIGN.md`,
 `lint_rules.md`, `AUDIT_CHECKLIST.md` and the component API. New visual values

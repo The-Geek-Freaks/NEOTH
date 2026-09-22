@@ -1423,13 +1423,10 @@ pub fn parse_embedding_models_snapshot(json: &str) -> Result<EmbeddingModelsPres
         return Err("embedding-model selected_model is absent from rows".into());
     }
     if snapshot.rows.iter().any(|row| {
-        let has_lifecycle_action = row.actions.probe
-            || row.actions.pull
-            || row.actions.repair
-            || row.actions.prune;
+        let has_lifecycle_action =
+            row.actions.probe || row.actions.pull || row.actions.repair || row.actions.prune;
         has_lifecycle_action
-            && (row.model != snapshot.selected_model
-                || row.model != EmbeddingModelWire::BgeM3)
+            && (row.model != snapshot.selected_model || row.model != EmbeddingModelWire::BgeM3)
     }) {
         return Err("embedding-model lifecycle actions are valid only for selected bge_m3".into());
     }
@@ -1453,7 +1450,9 @@ pub fn parse_embedding_models_snapshot(json: &str) -> Result<EmbeddingModelsPres
             .iter()
             .any(|row| row.readiness_state == EmbeddingReadinessStateWire::Ready)
     {
-        return Err("cheap embedding-model status cannot claim ready; run an explicit probe".into());
+        return Err(
+            "cheap embedding-model status cannot claim ready; run an explicit probe".into(),
+        );
     }
 
     let rows = snapshot
@@ -1612,9 +1611,17 @@ mod embedding_models_contract_tests {
         let json = ready_bge_snapshot(20);
         assert!(parse_embedding_models_snapshot(&json.to_string()).is_ok());
         let snapshot: EmbeddingModelsSnapshotWire = serde_json::from_value(json).unwrap();
-        assert!(embedding_snapshot_is_fresh_ready_for(&snapshot, EmbeddingModelWire::BgeM3, 20).is_ok());
-        assert!(embedding_snapshot_is_fresh_ready_for(&snapshot, EmbeddingModelWire::BgeM3, 21).is_err());
-        assert!(embedding_snapshot_is_fresh_ready_for(&snapshot, EmbeddingModelWire::Qwen3Q8, 20).is_err());
+        assert!(
+            embedding_snapshot_is_fresh_ready_for(&snapshot, EmbeddingModelWire::BgeM3, 20).is_ok()
+        );
+        assert!(
+            embedding_snapshot_is_fresh_ready_for(&snapshot, EmbeddingModelWire::BgeM3, 21)
+                .is_err()
+        );
+        assert!(
+            embedding_snapshot_is_fresh_ready_for(&snapshot, EmbeddingModelWire::Qwen3Q8, 20)
+                .is_err()
+        );
     }
 
     #[test]
@@ -1636,7 +1643,10 @@ mod embedding_models_contract_tests {
         json["source"] = serde_json::json!("status");
         assert!(parse_embedding_models_snapshot(&json.to_string()).is_err());
         let snapshot: EmbeddingModelsSnapshotWire = serde_json::from_value(json).unwrap();
-        assert!(embedding_snapshot_is_fresh_ready_for(&snapshot, EmbeddingModelWire::BgeM3, 20).is_err());
+        assert!(
+            embedding_snapshot_is_fresh_ready_for(&snapshot, EmbeddingModelWire::BgeM3, 20)
+                .is_err()
+        );
     }
 
     #[test]
@@ -1644,9 +1654,11 @@ mod embedding_models_contract_tests {
         let mut wrong_pin = ready_bge_snapshot(20);
         wrong_pin["rows"][1]["revision"] = serde_json::json!("unverified-revision");
         assert!(parse_embedding_models_snapshot(&wrong_pin.to_string()).is_err());
-        let snapshot: EmbeddingModelsSnapshotWire = serde_json::from_value(ready_bge_snapshot(20)).unwrap();
+        let snapshot: EmbeddingModelsSnapshotWire =
+            serde_json::from_value(ready_bge_snapshot(20)).unwrap();
         assert!(embedding_snapshot_observation_is_plausible(&snapshot, 20).is_ok());
-        let future: EmbeddingModelsSnapshotWire = serde_json::from_value(ready_bge_snapshot(u64::MAX)).unwrap();
+        let future: EmbeddingModelsSnapshotWire =
+            serde_json::from_value(ready_bge_snapshot(u64::MAX)).unwrap();
         assert!(embedding_snapshot_observation_is_plausible(&future, 20).is_err());
     }
 }
@@ -15227,5 +15239,4 @@ mod tests {
                 .any(|character| character.is_control())
         );
     }
-
 }

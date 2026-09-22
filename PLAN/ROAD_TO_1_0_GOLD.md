@@ -8,6 +8,15 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W205 accepted / W211 Hosted formatting (2026-09-22):** Grouped200
+`35762299584` on `ff9fe8e2` passed all 200 actual tests; every test identity,
+46 source paths, matrix and Cargo.lock match the run. Core/CLI `35762303618`
+also passed. W211 is published as `54c57b19`; Grouped205 `35763682082`,
+Core/CLI `35763685944` and consolidated native CI `35763722040` are running.
+Preflight found formatting only; its exact source/hash-bound patch for three
+Rust files is imported without executing a formatter locally. W212 remains
+separate uncommitted implementation. Road counts and release acceptance do not change.
+
 **W211 embedding operator surface (2026-09-22):** typed CLI and GUI now expose
 selection, cache status, fresh BGE verification and lifecycle actions against
 the exact config/home. Cache status never claims Ready; stale results and wrong

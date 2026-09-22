@@ -24970,7 +24970,11 @@ fn collect_embedding_command_output(
         .map_err(|error| format!("could not reap embedding-model command: {error}"))?;
     let stdout = stdout_task.join().unwrap_or_default();
     let stderr = stderr_task.join().unwrap_or_default();
-    Ok(std::process::Output { status, stdout, stderr })
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 /// Run a model command with bounded lifetime and concurrent capped pipe drains.
@@ -25008,7 +25012,9 @@ fn run_bounded_embedding_command(
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => return collect_embedding_command_output(&mut child, stdout_task, stderr_task),
+            Ok(Some(_)) => {
+                return collect_embedding_command_output(&mut child, stdout_task, stderr_task);
+            }
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
             Ok(None) => {
                 let _ = child.kill();
@@ -25038,14 +25044,13 @@ fn fetch_embedding_models_status() -> std::result::Result<
     let config_path = config_path
         .to_str()
         .ok_or_else(|| "embedding-model config path is not valid UTF-8".to_string())?;
-    let mut command = neothd_json_command(&[
-        "models",
-        "embedding",
-        "--config",
-        config_path,
-        "status",
-    ])?;
-    let output = run_bounded_embedding_command(&mut command, EMBEDDING_STATUS_TIMEOUT, "embedding-model status")?;
+    let mut command =
+        neothd_json_command(&["models", "embedding", "--config", config_path, "status"])?;
+    let output = run_bounded_embedding_command(
+        &mut command,
+        EMBEDDING_STATUS_TIMEOUT,
+        "embedding-model status",
+    )?;
     validate_neothd_probe_exit(
         "Embedding-model status",
         output.status.success(),
@@ -25086,9 +25091,9 @@ fn apply_embedding_models(
 fn mark_embedding_models_unverified(window: &MainWindow, error: &str) {
     use slint::{ModelRc, VecModel};
     tracing::warn!(error = %error, "embedding-model status was not accepted by the GUI boundary");
-    window.set_embedding_model_rows(ModelRc::new(VecModel::from(
-        Vec::<EmbeddingModelRow>::new(),
-    )));
+    window.set_embedding_model_rows(ModelRc::new(
+        VecModel::from(Vec::<EmbeddingModelRow>::new()),
+    ));
     window.set_embedding_model_status_valid(false);
     window.set_embedding_model_status_error(
         "Embedding-model status could not be verified. Refresh after the CLI is available.".into(),
@@ -25312,7 +25317,9 @@ fn register_local_model_callbacks(window: &MainWindow) {
     });
 }
 
-fn embedding_model_wire(value: &str) -> std::result::Result<panel_logic::EmbeddingModelWire, String> {
+fn embedding_model_wire(
+    value: &str,
+) -> std::result::Result<panel_logic::EmbeddingModelWire, String> {
     match value {
         "qwen3_q8" => Ok(panel_logic::EmbeddingModelWire::Qwen3Q8),
         "bge_m3" => Ok(panel_logic::EmbeddingModelWire::BgeM3),
@@ -25329,15 +25336,22 @@ fn embedding_action_timeout(action: &str) -> std::time::Duration {
     }
 }
 
-fn run_embedding_model_command(action: &str, selected: Option<&str>) -> std::result::Result<
-    (panel_logic::EmbeddingModelsPresentation, panel_logic::EmbeddingModelsSnapshotWire),
+fn run_embedding_model_command(
+    action: &str,
+    selected: Option<&str>,
+) -> std::result::Result<
+    (
+        panel_logic::EmbeddingModelsPresentation,
+        panel_logic::EmbeddingModelsSnapshotWire,
+    ),
     String,
 > {
     let config_path = default_neoth_home().join("freedom.yaml");
     let config_path = config_path
         .to_str()
         .ok_or_else(|| "embedding-model configuration is unavailable".to_string())?;
-    let mut command = neothd_json_command(&["models", "embedding", "--config", config_path, action])?;
+    let mut command =
+        neothd_json_command(&["models", "embedding", "--config", config_path, action])?;
     if let Some(selected) = selected {
         command.arg(selected);
     }
@@ -25370,7 +25384,12 @@ fn start_embedding_model_action(
         }
     };
     if expected_model != panel_logic::EmbeddingModelWire::BgeM3 {
-        push_toast(&weak, "warn", "Embedding models", "Only BGE-M3 has local lifecycle controls.");
+        push_toast(
+            &weak,
+            "warn",
+            "Embedding models",
+            "Only BGE-M3 has local lifecycle controls.",
+        );
         return;
     }
     if EMBEDDING_MODEL_ACTION_ACTIVE.swap(true, std::sync::atomic::Ordering::AcqRel) {
@@ -25402,7 +25421,9 @@ fn start_embedding_model_action(
             let result = (|| {
                 let (_, before) = fetch_embedding_models_status()?;
                 if before.selected_model != expected_model {
-                    return Err("The selected embedding model changed; refresh before acting.".into());
+                    return Err(
+                        "The selected embedding model changed; refresh before acting.".into(),
+                    );
                 }
                 let (presentation, snapshot) = run_embedding_model_command(action, None)?;
                 if snapshot.selected_model != expected_model {
@@ -25435,17 +25456,32 @@ fn start_embedding_model_action(
                     Ok((presentation, true)) => {
                         apply_embedding_models(&window, presentation);
                         buddy(&window, GuiActivity::LocalModelVerified);
-                        push_toast(&worker_weak, "success", "Embedding models", "Fresh local adapter verification completed.");
+                        push_toast(
+                            &worker_weak,
+                            "success",
+                            "Embedding models",
+                            "Fresh local adapter verification completed.",
+                        );
                     }
                     Ok((presentation, false)) => {
                         apply_embedding_models(&window, presentation);
                         buddy(&window, GuiActivity::Idle);
-                        push_toast(&worker_weak, "success", "Embedding models", "Action completed. Run Verify to establish fresh local readiness.");
+                        push_toast(
+                            &worker_weak,
+                            "success",
+                            "Embedding models",
+                            "Action completed. Run Verify to establish fresh local readiness.",
+                        );
                     }
                     Err(error) => {
                         buddy(&window, GuiActivity::Idle);
                         mark_embedding_models_unverified(&window, &error);
-                        push_toast(&worker_weak, "warn", "Embedding models", "Embedding-model action could not be verified.");
+                        push_toast(
+                            &worker_weak,
+                            "warn",
+                            "Embedding models",
+                            "Embedding-model action could not be verified.",
+                        );
                     }
                 }
             });
@@ -25458,7 +25494,10 @@ fn start_embedding_model_action(
         if let Some(window) = weak.upgrade() {
             window.set_embedding_model_in_flight(false);
             buddy(&window, GuiActivity::LocalModelFailed);
-            mark_embedding_models_unverified(&window, "could not start embedding-model action worker");
+            mark_embedding_models_unverified(
+                &window,
+                "could not start embedding-model action worker",
+            );
         }
     }
 }
@@ -25491,7 +25530,12 @@ fn register_embedding_model_callbacks(window: &MainWindow) {
             }
         };
         if EMBEDDING_MODEL_ACTION_ACTIVE.swap(true, std::sync::atomic::Ordering::AcqRel) {
-            push_toast(&weak, "info", "Embedding models", "Wait for the active embedding-model action.");
+            push_toast(
+                &weak,
+                "info",
+                "Embedding models",
+                "Wait for the active embedding-model action.",
+            );
             return;
         }
         let revision = EMBEDDING_MODELS_UI_REVISION
@@ -25504,34 +25548,47 @@ fn register_embedding_model_callbacks(window: &MainWindow) {
         let worker = std::thread::Builder::new()
             .name("neoth-embedding-model-select".into())
             .spawn(move || {
-            let result = run_embedding_model_command("select", Some(&requested)).and_then(
-                |(presentation, snapshot)| {
-                    if snapshot.selected_model != expected_model {
-                        Err("Core did not confirm the requested embedding-model selection.".into())
-                    } else {
-                        Ok(presentation)
+                let result = run_embedding_model_command("select", Some(&requested)).and_then(
+                    |(presentation, snapshot)| {
+                        if snapshot.selected_model != expected_model {
+                            Err(
+                                "Core did not confirm the requested embedding-model selection."
+                                    .into(),
+                            )
+                        } else {
+                            Ok(presentation)
+                        }
+                    },
+                );
+                let scheduled = slint::invoke_from_event_loop(move || {
+                    let _flight = EmbeddingModelActionFlight;
+                    let Some(window) = worker_weak.upgrade() else {
+                        return;
+                    };
+                    if EMBEDDING_MODELS_UI_REVISION.load(std::sync::atomic::Ordering::Acquire)
+                        != revision
+                    {
+                        return;
                     }
-                },
-            );
-            let scheduled = slint::invoke_from_event_loop(move || {
-                let _flight = EmbeddingModelActionFlight;
-                let Some(window) = worker_weak.upgrade() else { return; };
-                if EMBEDDING_MODELS_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision { return; }
-                window.set_embedding_model_in_flight(false);
-                match result {
-                    Ok(presentation) => apply_embedding_models(&window, presentation),
-                    Err(error) => mark_embedding_models_unverified(&window, &error),
+                    window.set_embedding_model_in_flight(false);
+                    match result {
+                        Ok(presentation) => apply_embedding_models(&window, presentation),
+                        Err(error) => mark_embedding_models_unverified(&window, &error),
+                    }
+                });
+                if scheduled.is_err() {
+                    EMBEDDING_MODEL_ACTION_ACTIVE
+                        .store(false, std::sync::atomic::Ordering::Release);
                 }
             });
-            if scheduled.is_err() {
-                EMBEDDING_MODEL_ACTION_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
-            }
-        });
         if worker.is_err() {
             EMBEDDING_MODEL_ACTION_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
             if let Some(window) = weak.upgrade() {
                 window.set_embedding_model_in_flight(false);
-                mark_embedding_models_unverified(&window, "could not start embedding-model selection worker");
+                mark_embedding_models_unverified(
+                    &window,
+                    "could not start embedding-model selection worker",
+                );
             }
         }
     });
