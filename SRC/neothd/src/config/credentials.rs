@@ -1191,7 +1191,7 @@ impl Credentials {
                     );
                     let opened_store = prepared
                         .keychain_mode
-                        .then(|| crate::config::keychain::open_store())
+                        .then(crate::config::keychain::open_store)
                         .transpose()
                         .context("open OS keychain for n8n adoption commit")?;
                     let store = opened_store.as_deref();
@@ -1272,6 +1272,7 @@ impl Credentials {
     /// Returns the exact durable publication state. If a crash occurred after
     /// the pair committed but before the sidecar phase flip, target equality
     /// still reports `Published`; mixed generations fail closed.
+    #[cfg(test)]
     pub(crate) fn inspect_n8n_adoption_custody_at(
         freedom_path: &Path,
         credentials_path: &Path,
@@ -1474,7 +1475,7 @@ impl Credentials {
                     let (fb, cb, fa, ca) = custody.snapshots()?;
                     let opened_store = custody
                         .keychain_mode
-                        .then(|| crate::config::keychain::open_store())
+                        .then(crate::config::keychain::open_store)
                         .transpose()
                         .context("open OS keychain for n8n adoption rollback")?;
                     let store = opened_store.as_deref();
@@ -1642,7 +1643,7 @@ impl Credentials {
                     );
                     let opened_store = custody
                         .keychain_mode
-                        .then(|| crate::config::keychain::open_store())
+                        .then(crate::config::keychain::open_store)
                         .transpose()
                         .context("open OS keychain for completed n8n custody cleanup")?;
                     let store = opened_store.as_deref();

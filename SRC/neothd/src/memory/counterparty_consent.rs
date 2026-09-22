@@ -182,6 +182,7 @@ struct WireOriginReceipt {
 /// Strictly parse a metadata-only local receipt and bind it to the actual WAL
 /// header that carried it. The canonical RawTextOrigin subtype is checked
 /// internally, so an arbitrary extended subtype cannot impersonate it.
+#[cfg(test)]
 pub(crate) fn parse_local_origin_receipt(
     payload: &[u8],
     origin_frame: OriginFrameWitness,
@@ -214,6 +215,7 @@ fn parse_local_wire_receipt(
 /// Strictly parse a channel receipt and bind its exact typed channel/account
 /// scope plus existing scoped sender digest.  `channel` display fields are not
 /// accepted at all, so they cannot become a consent key.
+#[cfg(test)]
 pub(crate) fn parse_channel_origin_receipt(
     payload: &[u8],
     origin_frame: OriginFrameWitness,

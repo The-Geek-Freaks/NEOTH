@@ -759,7 +759,7 @@ fn reserve(
                 "W209 grant echo is absent, expired, wrong-scope, or already consumed"
             );
             tx.commit()?;
-            return Ok(reservation);
+            Ok(reservation)
         }
         ReservationKind::Revoke => unreachable!("revoke commits fail-closed before audit"),
     }

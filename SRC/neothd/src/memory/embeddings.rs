@@ -86,6 +86,7 @@ pub struct SimilarHit {
 /// vectors never share the historical model-string-only media query path.
 #[derive(Clone, Copy)]
 pub(crate) enum VectorQueryScope<'a> {
+    #[cfg(test)]
     Episode(&'a crate::providers::LocalEmbeddingProvider),
     MediaModel {
         source_kind: Option<&'a str>,
@@ -108,6 +109,7 @@ struct SnapshotScope {
 impl SnapshotScope {
     fn from_query(scope: VectorQueryScope<'_>) -> Self {
         match scope {
+            #[cfg(test)]
             VectorQueryScope::Episode(provider) => {
                 let generation = provider.generation();
                 Self {
@@ -158,6 +160,7 @@ impl SnapshotScope {
 /// Exact scoped SQLite search.  Episode rows require the sealed active
 /// generation; legacy and another equally-sized generation are excluded in
 /// SQL before any cosine computation.
+#[cfg(test)]
 pub(crate) fn find_similar_scoped(
     conn: &Connection,
     query: &[f32],
@@ -191,6 +194,7 @@ fn find_similar_scoped_inner(
         return Ok(Vec::new());
     }
     let (kind, model, generation, dimension) = match scope {
+        #[cfg(test)]
         VectorQueryScope::Episode(provider) => {
             let generation = provider.generation();
             if query.len() != generation.dimension() {
@@ -440,6 +444,7 @@ pub(crate) fn find_similar_dispatch(
     top_k: usize,
     hnsw_path: Option<&Path>,
 ) -> Result<Vec<SimilarHit>> {
+    #[cfg(test)]
     if let VectorQueryScope::Episode(provider) = scope {
         return Ok(provider
             .with_current_config(|| {
@@ -1122,6 +1127,7 @@ pub(crate) fn rebuild_index(
     path: &Path,
     scope: VectorQueryScope<'_>,
 ) -> Result<usize> {
+    #[cfg(test)]
     if let VectorQueryScope::Episode(provider) = scope {
         return Ok(provider
             .with_current_config(|| rebuild_index_inner(conn, path, scope))?

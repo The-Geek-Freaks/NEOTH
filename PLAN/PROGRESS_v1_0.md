@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W223 slim-core Clippy corrections (2026-09-22):** the Linux quality job
+`106931734757` in full CI `35782661515` reported nine diagnostics. Four source
+files now use test-only gates for genuinely test-only wrappers, direct function
+references and an expression return; no lint level is relaxed. Fresh Hosted
+Clippy remains required. Windows/macOS native jobs continue on `74334d4b`.
+**Confirmed regression result:** Grouped272 `35782455869` on `35c410a8` is
+admitted at **272/272**, including the actual aggregate Skill rollback fix.
+All 56 source hashes, matrix, lock and individual result terminals match.
+W220/W222 run separately in Grouped274/275; W221 remains active. Inventory is
+532 sources / 817 native / 94 GUI plus existing platform selections; Road
+counts remain unchanged. See `docs/gold-wave223-verification.md`.
 **W222 direct CLI fallback registry coverage (2026-09-22):** a real
 `run_chat_with` regression records the primary request, publishes signed Skill
 and accepted config B, then takes the actual typed-quota fallback. Both reached
