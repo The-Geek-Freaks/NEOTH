@@ -1189,6 +1189,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     let terminal_model = completion.identity.wire_model.clone();
     let terminal_session_id = current_session_id.clone();
     let stream_control_token_ref = stream_control_token.as_ref().map(|token| token.as_str());
+    let is_stream = args.stream;
     cancellation.check_open("post-provider external starts")?;
     let mut feedback_eligible_agent_receipt = None;
     let post_reply = run_post_reply_pipelines(
@@ -1254,7 +1255,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         crate::cli::chat_turn_watchdog::TurnWatchdogPoll::SilenceExpired => {
             emit_chat_notice(
                 output,
-                args.stream,
+                is_stream,
                 "[neoth] response processing made no meaningful progress for 120 seconds; retry the turn",
             )
             .context("emit post-provider silence timeout diagnostic")?;

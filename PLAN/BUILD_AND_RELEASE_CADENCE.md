@@ -3,23 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
-**Hosted checkpoint (2026-09-22, continued):** main is `7e80402a` with
-Preflight `35746218451` and Code Quality `35746218488` successful. Source
-`0e6ca107` passed Core test-target checking, public CLI build and export
-(`35745831818`). Grouped121 `35745827466` executed all 121 exact identities:
-115 passed and six failed. Both wizard long-poll tests now pass. Remaining
-failures are the incomplete-home fixture permissions, the delegated-channel
-WAL-role integration, and four mirror operation-authorizer cases. The budget
-repair separates transport tokens from the billing reserve, uses minimal
-mirror requests and 128-token output ceilings, retaining the 4k/USD0.02 cap.
-The incomplete-home fixture now explicitly sets Unix 0700; the channel test
-retains all role assertions and adds content-free missing-role diagnostics.
-These changes require a fresh Hosted run. W207's request-local watchdog and
-typed terminal mapping are being completed with prepared-turn tests; W208
-origin/consent work remains uncommitted and is not accepted. The older Windows
-preview `35731976627` succeeded on `a68442cb`, not the current source. Road
-remains 1324 total / 1015 checked / 307 open / 2 partial. No local executable
-validation ran under the BSOD hold.
+**Hosted checkpoint (2026-09-22, W207):** W206 budget repair and W207 watchdog
+are published at `d630708d`, followed by source-bound hosted formatting at
+`bc63cc1e`. Current formatting Preflight `35750570446` and Code Quality
+`35750571713` passed. Grouped141 `35750204078` stopped before behavior execution
+on one E0382: the post-reply timeout notice read `args.stream` after moving
+`args`. The repair saves that boolean before the move; a fresh hosted run is
+required. The original W205 missing-WAL-role assertion remains intact. Previous
+source `0e6ca107` passed Core/CLI, but Grouped121 had 115 passes and six failures;
+those are not accepted without the fresh run. Inventory: 512 sources, 688
+universal native identities, 87 GUI identities, with unchanged platform extras.
+W208 provenance/consent work remains separately uncommitted. The older Windows
+preview passed on `a68442cb` only. Road remains 1324 total / 1015 checked / 307
+open / 2 partial. No local executable validation ran under the BSOD hold.
 **W207 source batch (2026-09-22):** one 120-second meaningful-progress
 watchdog now spans provider dispatch and post-reply work. The typed timeout
 crosses plain daemon RPC and GUI attach without a competing shorter deadline;

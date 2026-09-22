@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T15:53:16.5105652Z",
+  "capturedUtc": "2026-09-22T15:58:26.2665891Z",
   "validationStatus": "W206_BUDGET_REPAIR_W207_SOURCE_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -303,8 +303,8 @@
     },
     {
       "path": "docs/gold-wave207-verification.md",
-      "bytes": 3071,
-      "sha256": "04B3322352011E9FC16F822831107ED022F2A53507408993BF1A3EE78574B84C"
+      "bytes": 3297,
+      "sha256": "F04592225857D1F0762CF9D1E3A8F9A3A10C3A841B421433F60A9252F903C488"
     },
     {
       "path": "docs/install.md",
@@ -413,18 +413,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 45495,
-      "sha256": "5023663E7441573FAF7F6832C5949545C99EC934E3094F866D19D38BB783F3B6"
+      "bytes": 45261,
+      "sha256": "339AC605BD06B18D7C0971B8C3B7E6244703792E36D9906F6D6A0B94FCD2DD18"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1048377,
-      "sha256": "212476CABCCE904FAD2F1DCE790F4E4175B82AAA9D98034AD879BCEF1EF2C32F"
+      "bytes": 1048143,
+      "sha256": "BDA54F6B947522E83AE9F8E20C5A28B338EF66F61ABF763877DD42DEB3A21F45"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1643824,
-      "sha256": "72A03C37B11526ADEB751C1D8D2D7F7618FCA4B520BA47B24107C4D71DA7FEB6"
+      "bytes": 1643590,
+      "sha256": "7353BCF21411B07835881ECCAF7D4E6236C0C6FAC8B0C7D8D7E28E60C3B92A8A"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -988,8 +988,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "bytes": 162421,
-      "sha256": "15B378F6D6E1386E84303CDF48835E142C990A0577A2D1418FF51C067C4DF16E"
+      "bytes": 162452,
+      "sha256": "AD3462CE7374623743ED94A578B37B361FC98CC02934CD63AEF0C1FFF85EC7D5"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_watchdog.rs",

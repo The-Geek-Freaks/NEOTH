@@ -1,5 +1,9 @@
 # Wave 207 request-local chat silence watchdog
 
+**Hosted compile correction:** Grouped141 on d630708d stopped on E0382 before
+any behavior test ran. Save the stream boolean before moving ChatArgs into
+post-reply work; fresh hosted compilation and behavior remain required.
+
 W207 gives an admitted chat turn one 120-second meaningful-progress deadline.
 The same watchdog covers the actual provider dispatch and response-producing
 post-reply work. Non-empty visible/reasoning deltas and successful provider
