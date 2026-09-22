@@ -1,0 +1,229 @@
+name: W186 live-audio supply inputs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-and-record:
+    # workflow_dispatch can be selected from another ref in the UI.  The
+    # evidence is meaningful only for the source that will receive the import.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CARGO_BUILD_JOBS: "1"
+      CARGO_INCREMENTAL: "0"
+      CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+      SILERO_COMMIT: 60b7ffa243625ebdc1070275a29f18c87843786a
+      SILERO_BLOB_SHA1: 625ad8909b1abdba2292f3a9a10db6864fd5d561
+      SILERO_MODEL_BYTES: "1289603"
+    steps:
+      - name: Checkout main without credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Install Rust 1.91
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+
+      - name: Resolve isolated W186 Cargo inputs and fetch pinned model
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/main'
+
+          work_root="$RUNNER_TEMP/w186-live-audio"
+          work_src="$work_root/SRC"
+          evidence="$work_root/evidence"
+          mkdir -p "$evidence/input" "$evidence/output"
+          cp -a SRC "$work_src"
+
+          copy_manifests() {
+            local source="$1" target="$2" manifest relative
+            while IFS= read -r -d '' manifest; do
+              relative="${manifest#$source/}"
+              mkdir -p "$(dirname "$target/manifests/$relative")"
+              cp "$manifest" "$target/manifests/$relative"
+            done < <(find "$source" -name Cargo.toml -type f -print0 | sort -z)
+          }
+
+          git rev-parse HEAD > "$evidence/source-head.txt"
+          cp "$work_src/Cargo.toml" "$evidence/input/Cargo.toml"
+          cp "$work_src/Cargo.lock" "$evidence/input/Cargo.lock"
+          cp "$work_src/neothd/Cargo.toml" "$evidence/input/neothd-Cargo.toml"
+          copy_manifests "$work_src" "$evidence/input"
+          find "$work_src" -name Cargo.toml -type f -print0 | sort -z | xargs -0 sha256sum > "$evidence/input/cargo-manifests.sha256"
+          sha256sum "$work_src/Cargo.lock" > "$evidence/input/Cargo.lock.sha256"
+
+          WORK_SRC="$work_src" python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          manifest = Path(os.environ["WORK_SRC"]) / "neothd" / "Cargo.toml"
+          text = manifest.read_text(encoding="utf-8")
+          additions = (("cpal", "=0.18.2"), ("tract-onnx", "=0.23.8"))
+          for name, version in additions:
+              found = re.search(rf'(?m)^{re.escape(name)}\s*=\s*"([^"]+)"\s*$', text)
+              if found:
+                  if found.group(1) != version:
+                      raise SystemExit(f"{name} already exists with {found.group(1)!r}, expected {version!r}")
+                  continue
+              section = re.search(r"(?m)^\[dependencies\]\s*$", text)
+              if not section:
+                  raise SystemExit("neothd manifest has no [dependencies] section")
+              insertion = f'\n# W186 hosted supply-input resolution only; implementation lands separately.\n{name} = "{version}"\n'
+              text = text[:section.end()] + insertion + text[section.end():]
+          manifest.write_text(text, encoding="utf-8")
+          PY
+
+          # Cargo's ordinary resolver preserves a valid existing lock and adds
+          # only entries demanded by the temporary direct dependencies. It does
+          # not compile targets. Do not use `cargo generate-lockfile`, which
+          # would broadly refresh pins.
+          cargo metadata --manifest-path "$work_src/Cargo.toml" --format-version 1 > "$evidence/cargo-metadata.json"
+
+          # A resolver downgrade or changed pre-existing registry identity is
+          # a hard failure. New entries are allowed. Package dependency lists
+          # are not compared: neothd gains direct edges and Cargo can
+          # disambiguate dependency display strings without pin churn.
+          INPUT_LOCK="$evidence/input/Cargo.lock" OUTPUT_LOCK="$work_src/Cargo.lock" NEW_LOCK="$evidence/new-lock-packages.json" python3 - <<'PY'
+          import json
+          import os
+          import tomllib
+          from pathlib import Path
+
+          def entries(path):
+              packages = tomllib.loads(Path(path).read_text(encoding="utf-8"))["package"]
+              return {
+                  (pkg["name"], pkg["version"], pkg.get("source", "path")): pkg.get("checksum")
+                  for pkg in packages
+              }
+
+          before = entries(os.environ["INPUT_LOCK"])
+          after = entries(os.environ["OUTPUT_LOCK"])
+          missing = sorted(set(before) - set(after))
+          changed = sorted(key for key, checksum in before.items() if after.get(key) != checksum)
+          if missing or changed:
+              detail = missing + changed
+              raise SystemExit(
+                  "pre-existing Cargo.lock registry identity/checksum changed: "
+                  + ", ".join(f"{name} {version} ({source})" for name, version, source in detail)
+              )
+
+          required = {("cpal", "0.18.2"), ("tract-onnx", "0.23.8")}
+          resolved = {(name, version) for name, version, _source in after}
+          absent = sorted(required - resolved)
+          if absent:
+              raise SystemExit("required direct package versions absent from Cargo.lock: " + repr(absent))
+
+          new_packages = [
+              {"name": name, "version": version, "source": source}
+              for name, version, source in sorted(set(after) - set(before))
+          ]
+          Path(os.environ["NEW_LOCK"]).write_text(
+              json.dumps(new_packages, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          # Check every package newly added by W186. Existing optional packages
+          # can target newer release channels outside this dependency closure.
+          # A native selected-target build remains the full proof.
+          cargo metadata --manifest-path "$work_src/Cargo.toml" --locked --format-version 1 > "$evidence/cargo-metadata-locked.json"
+          METADATA="$evidence/cargo-metadata-locked.json" NEW_LOCK="$evidence/new-lock-packages.json" \
+            MSRV_EVIDENCE="$evidence/new-dependency-msrv.json" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          def version_tuple(value):
+              return tuple(int(part) for part in value.split("-", 1)[0].split("."))
+
+          minimum = (1, 91, 0)
+          metadata = json.loads(Path(os.environ["METADATA"]).read_text(encoding="utf-8"))
+          new_packages = {
+              (package["name"], package["version"], package["source"])
+              for package in json.loads(Path(os.environ["NEW_LOCK"]).read_text(encoding="utf-8"))
+          }
+          incompatible = []
+          checked = []
+          for package in metadata["packages"]:
+              identity = (package["name"], package["version"], package.get("source") or "path")
+              if identity not in new_packages:
+                  continue
+              rust_version = package.get("rust_version")
+              checked.append({
+                  "name": package["name"],
+                  "version": package["version"],
+                  "source": identity[2],
+                  "rust_version": rust_version,
+              })
+              if rust_version and version_tuple(rust_version) > minimum:
+                  incompatible.append(f"{package['name']} {package['version']} requires Rust {rust_version}")
+          Path(os.environ["MSRV_EVIDENCE"]).write_text(
+              json.dumps(sorted(checked, key=lambda item: (item["name"], item["version"], item["source"])), indent=2) + "\n",
+              encoding="utf-8",
+          )
+          if incompatible:
+              raise SystemExit("new W186 dependency Rust 1.91 incompatibility: " + "; ".join(incompatible))
+          PY
+
+          model_url="https://raw.githubusercontent.com/snakers4/silero-vad/${SILERO_COMMIT}/src/silero_vad/data/silero_vad_16k_op15.onnx"
+          license_url="https://raw.githubusercontent.com/snakers4/silero-vad/${SILERO_COMMIT}/LICENSE"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --output "$evidence/silero_vad_16k_op15.onnx" "$model_url"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --output "$evidence/LICENSE" "$license_url"
+          grep -Eq 'MIT License|The MIT License' "$evidence/LICENSE"
+
+          MODEL="$evidence/silero_vad_16k_op15.onnx" LICENSE="$evidence/LICENSE" \
+            SILERO_BLOB_SHA1="$SILERO_BLOB_SHA1" SILERO_MODEL_BYTES="$SILERO_MODEL_BYTES" \
+            SILERO_COMMIT="$SILERO_COMMIT" MODEL_URL="$model_url" LICENSE_URL="$license_url" \
+            python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          model = Path(os.environ["MODEL"]).read_bytes()
+          expected_size = int(os.environ["SILERO_MODEL_BYTES"])
+          if len(model) != expected_size:
+              raise SystemExit(f"Silero model size {len(model)} does not equal {expected_size}")
+          git_blob_sha1 = hashlib.sha1(f"blob {len(model)}\0".encode() + model).hexdigest()
+          if git_blob_sha1 != os.environ["SILERO_BLOB_SHA1"]:
+              raise SystemExit(f"Silero git blob SHA-1 {git_blob_sha1} does not equal pinned value")
+          license_bytes = Path(os.environ["LICENSE"]).read_bytes()
+          Path(os.environ["MODEL"]).with_name("ASSET-PROVENANCE.txt").write_text(
+              "source_repo=snakers4/silero-vad\n"
+              f"commit={os.environ['SILERO_COMMIT']}\n"
+              "path=src/silero_vad/data/silero_vad_16k_op15.onnx\n"
+              f"model_url={os.environ['MODEL_URL']}\n"
+              f"license_url={os.environ['LICENSE_URL']}\n"
+              f"git_blob_sha1={git_blob_sha1}\n"
+              f"bytes={len(model)}\n"
+              f"sha256={hashlib.sha256(model).hexdigest()}\n"
+              f"license_sha256={hashlib.sha256(license_bytes).hexdigest()}\n",
+              encoding="utf-8",
+          )
+          PY
+
+          cp "$work_src/Cargo.toml" "$evidence/output/Cargo.toml"
+          cp "$work_src/Cargo.lock" "$evidence/output/Cargo.lock"
+          cp "$work_src/neothd/Cargo.toml" "$evidence/output/neothd-Cargo.toml"
+          copy_manifests "$work_src" "$evidence/output"
+          find "$work_src" -name Cargo.toml -type f -print0 | sort -z | xargs -0 sha256sum > "$evidence/output/cargo-manifests.sha256"
+          sha256sum "$work_src/Cargo.lock" > "$evidence/output/Cargo.lock.sha256"
+          (cd "$evidence" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum) > "$evidence/SHA256SUMS"
+
+      - name: Upload W186 supply inputs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w186-live-audio-inputs-${{ github.sha }}
+          path: ${{ runner.temp }}/w186-live-audio/evidence
+          if-no-files-found: warn
+          retention-days: 14
