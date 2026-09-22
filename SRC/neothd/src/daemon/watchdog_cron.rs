@@ -454,18 +454,19 @@ mod tests {
 
     #[tokio::test]
     async fn n8n_http_503_is_not_healthy() {
-        assert!(!n8n_probe_with_response(Some(
-            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n",
-        ))
-        .await);
+        assert!(
+            !n8n_probe_with_response(Some(
+                b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n",
+            ))
+            .await
+        );
     }
 
     #[tokio::test]
     async fn n8n_successful_http_health_is_healthy() {
-        assert!(n8n_probe_with_response(Some(
-            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK",
-        ))
-        .await);
+        assert!(
+            n8n_probe_with_response(Some(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK",)).await
+        );
     }
 
     // Policy knobs reused across the cases.

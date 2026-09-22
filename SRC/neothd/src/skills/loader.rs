@@ -152,7 +152,10 @@ async fn load_authorized_with_mode_and_budget_override(
     authority_budget_override: Option<(usize, u64)>,
     installed_store_mode: InstalledStoreMode,
 ) -> Result<AuthorizedRuntimeSkillSnapshot> {
-    let materialize_bundled_resources = matches!(installed_store_mode, InstalledStoreMode::ReconcileForRuntime);
+    let materialize_bundled_resources = matches!(
+        installed_store_mode,
+        InstalledStoreMode::ReconcileForRuntime
+    );
     let installed_store_ready = match installed_store_mode {
         InstalledStoreMode::ReconcileForRuntime => {
             match super::mutation_lifecycle::reconcile_for_runtime(skills_dir).await {
@@ -428,8 +431,9 @@ fn load_trusted_bundled_with_policy(
         let is_drawio = skill.id() == "drawio_diagram";
         let runtime_skill = RuntimeSkill::from_trusted_bundled(skill)?;
         runtime.push(match (is_drawio, drawio_resource_path.as_ref()) {
-            (true, Some(path)) => runtime_skill
-                .with_verified_bundled_resource_path(path.clone())?,
+            (true, Some(path)) => {
+                runtime_skill.with_verified_bundled_resource_path(path.clone())?
+            }
             _ => runtime_skill,
         });
     }
@@ -1291,10 +1295,15 @@ mod tests {
                 None,
             )
             .await
-        else { panic!("runtime-produced Drawio must resolve") };
+        else {
+            panic!("runtime-produced Drawio must resolve")
+        };
         let prompt = route.system_prompt_layer().expect("selected Drawio prompt");
         let escaped: String = root.to_string_lossy().escape_default().collect();
-        assert!(prompt.contains(&escaped), "selected prompt omitted actual resource root: {prompt}");
+        assert!(
+            prompt.contains(&escaped),
+            "selected prompt omitted actual resource root: {prompt}"
+        );
     }
 
     #[test]
@@ -1340,14 +1349,19 @@ mod tests {
     #[test]
     fn w192_corrupt_materialized_cache_is_refused_without_overwrite() {
         let home = tempdir().unwrap();
-        let path = super::super::bundled_resources::materialize_skill(home.path(), "drawio_diagram")
-            .expect("first materialization")
-            .expect("drawio has resources");
+        let path =
+            super::super::bundled_resources::materialize_skill(home.path(), "drawio_diagram")
+                .expect("first materialization")
+                .expect("drawio has resources");
         std::fs::write(&path, b"corrupt operator-visible cache bytes").unwrap();
-        let error = super::super::bundled_resources::materialize_skill(home.path(), "drawio_diagram")
-            .expect_err("corrupt cache must fail closed");
+        let error =
+            super::super::bundled_resources::materialize_skill(home.path(), "drawio_diagram")
+                .expect_err("corrupt cache must fail closed");
         assert!(error.to_string().contains("cache"));
-        assert_eq!(std::fs::read(&path).unwrap(), b"corrupt operator-visible cache bytes");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"corrupt operator-visible cache bytes"
+        );
     }
 
     #[test]
@@ -1361,10 +1375,17 @@ mod tests {
         let linked = cache_parent.join("drawio_diagram");
         try_symlink_dir(outside.path(), &linked)
             .expect("the platform test setup must create a link-like namespace entry");
-        let error = super::super::bundled_resources::materialize_skill(home.path(), "drawio_diagram")
-            .expect_err("link-like cache namespace must fail closed");
-        assert!(!error.to_string().is_empty(), "link-like namespace must produce a refusal");
-        assert_eq!(std::fs::read(&sentinel).unwrap(), b"outside remains untouched");
+        let error =
+            super::super::bundled_resources::materialize_skill(home.path(), "drawio_diagram")
+                .expect_err("link-like cache namespace must fail closed");
+        assert!(
+            !error.to_string().is_empty(),
+            "link-like namespace must produce a refusal"
+        );
+        assert_eq!(
+            std::fs::read(&sentinel).unwrap(),
+            b"outside remains untouched"
+        );
     }
 
     #[test]
@@ -1380,9 +1401,14 @@ mod tests {
         let sentinel = stage.join("untrusted-partial");
         std::fs::write(&sentinel, b"interrupted bytes").unwrap();
 
-        let error = super::super::bundled_resources::materialize_skill(home.path(), "drawio_diagram")
-            .expect_err("interrupted stage must be refused before a new package is created");
-        assert!(error.to_string().contains("interrupted bundled resource stage"));
+        let error =
+            super::super::bundled_resources::materialize_skill(home.path(), "drawio_diagram")
+                .expect_err("interrupted stage must be refused before a new package is created");
+        assert!(
+            error
+                .to_string()
+                .contains("interrupted bundled resource stage")
+        );
         assert_eq!(std::fs::read(&sentinel).unwrap(), b"interrupted bytes");
         assert!(
             !stage.parent().unwrap().join(&digest).exists(),
@@ -1396,8 +1422,11 @@ mod tests {
         let home_path = home.path().to_path_buf();
         let (stage_ready, stage_observed) = std::sync::mpsc::channel();
         let (contention_ready, contention_observed) = std::sync::mpsc::channel();
-        let release = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
-        let skill_path = home_path.join("bundled-skill-resources").join("drawio_diagram");
+        let release =
+            std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let skill_path = home_path
+            .join("bundled-skill-resources")
+            .join("drawio_diagram");
         super::super::bundled_resources::set_stage_hook_for_test(Some((
             skill_path.clone(),
             stage_ready,
@@ -1411,7 +1440,10 @@ mod tests {
         let first = std::thread::spawn(move || {
             super::super::bundled_resources::materialize_skill(&first_home, "drawio_diagram")
         });
-        if stage_observed.recv_timeout(std::time::Duration::from_secs(10)).is_err() {
+        if stage_observed
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .is_err()
+        {
             super::super::bundled_resources::release_stage_hook_for_test(&release);
             let _ = first.join();
             super::super::bundled_resources::set_stage_hook_for_test(None);
@@ -1422,7 +1454,10 @@ mod tests {
         let second = std::thread::spawn(move || {
             super::super::bundled_resources::materialize_skill(&second_home, "drawio_diagram")
         });
-        if contention_observed.recv_timeout(std::time::Duration::from_secs(10)).is_err() {
+        if contention_observed
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .is_err()
+        {
             super::super::bundled_resources::release_stage_hook_for_test(&release);
             let _ = first.join();
             let _ = second.join();
@@ -1432,15 +1467,31 @@ mod tests {
         }
         super::super::bundled_resources::release_stage_hook_for_test(&release);
         let paths = vec![
-            first.join().expect("first materializer panic").expect("first locked materialization").expect("first Drawio root"),
-            second.join().expect("second materializer panic").expect("second waits and reuses").expect("second Drawio root"),
+            first
+                .join()
+                .expect("first materializer panic")
+                .expect("first locked materialization")
+                .expect("first Drawio root"),
+            second
+                .join()
+                .expect("second materializer panic")
+                .expect("second waits and reuses")
+                .expect("second Drawio root"),
         ];
         super::super::bundled_resources::set_stage_hook_for_test(None);
         super::super::bundled_resources::set_lock_contention_hook_for_test(None);
         assert_eq!(paths[0], paths[1]);
-        let package_parent = paths[0].parent().expect("package root").parent().expect("package parent");
+        let package_parent = paths[0]
+            .parent()
+            .expect("package root")
+            .parent()
+            .expect("package parent");
         assert!(std::fs::read_dir(package_parent).unwrap().all(|entry| {
-            !entry.unwrap().file_name().to_string_lossy().contains(".staging-")
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".staging-")
         }));
     }
 
@@ -1490,7 +1541,10 @@ mod tests {
 
         assert!(!cache.exists(), "read-only loader created resource cache");
         assert!(
-            snapshot.skills.iter().all(|skill| skill.id() != "drawio_diagram"),
+            snapshot
+                .skills
+                .iter()
+                .all(|skill| skill.id() != "drawio_diagram"),
             "read-only registry must not expose Drawio without its resources"
         );
     }
@@ -1510,9 +1564,11 @@ mod tests {
             .expect("runtime registry must carry materialized Drawio");
         assert!(drawio.is_trusted_bundled());
         assert!(drawio.path.starts_with(Path::new("<bundled>")));
-        assert!(drawio
-            .verified_bundled_resource_path()
-            .is_some_and(|path| path.join("scripts/validate.py").is_file()));
+        assert!(
+            drawio
+                .verified_bundled_resource_path()
+                .is_some_and(|path| path.join("scripts/validate.py").is_file())
+        );
     }
 
     #[tokio::test]

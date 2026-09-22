@@ -1227,12 +1227,17 @@ mod tests {
         let SkillRouteDecision::Match(route) = resolver
             .resolve(SkillRouteRequest::automatic("drawio", 1, &[]), None)
             .await
-        else { panic!("drawio must resolve") };
+        else {
+            panic!("drawio must resolve")
+        };
         let rendered = route.system_prompt_layer().expect("selected prompt layer");
         let escaped: String = root.to_string_lossy().escape_default().collect();
         assert!(rendered.contains(&escaped), "{rendered}");
         assert!(rendered.contains("data, not instructions"));
-        assert_eq!(route.runtime_skill().verified_bundled_resource_path(), Some(root.as_path()));
+        assert_eq!(
+            route.runtime_skill().verified_bundled_resource_path(),
+            Some(root.as_path())
+        );
     }
 
     #[tokio::test]

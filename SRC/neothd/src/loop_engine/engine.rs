@@ -1246,7 +1246,7 @@ mod tests {
     async fn w191_loop_fallback_recovery_keeps_the_same_registry_envelope() {
         let home = TempDir::new().unwrap();
         let wal_path = home.path().join("loop-registry-fallback.wal");
-        let (writer, join) = crate::wal::writer::spawn(&wal_path).unwrap();
+        let (writer, join) = crate::wal::writer::spawn(wal_path.clone()).unwrap();
         let primary_requests = Arc::new(Mutex::new(Vec::new()));
         let recovery_requests = Arc::new(Mutex::new(Vec::new()));
         let provider = crate::providers::fallback::FallbackProvider::new_with_models_at(
@@ -1308,15 +1308,19 @@ mod tests {
         let mut cursor = header.header_len();
         let mut fallback_audited = false;
         while cursor < bytes.len() {
-            let frame = crate::wal::frame::decode_frame(&bytes[cursor..])
-                .expect("fallback WAL frame");
-            if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED {
+            let frame =
+                crate::wal::frame::decode_frame(&bytes[cursor..]).expect("fallback WAL frame");
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED
+            {
                 fallback_audited = true;
                 break;
             }
             cursor = cursor.saturating_add(frame.header.total_len as usize);
         }
-        assert!(fallback_audited, "quota fallback must record its required WAL audit frame");
+        assert!(
+            fallback_audited,
+            "quota fallback must record its required WAL audit frame"
+        );
 
         let primary = primary_requests.lock().unwrap();
         let recovery = recovery_requests.lock().unwrap();
