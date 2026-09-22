@@ -45,3 +45,10 @@ zero foreign paths. Receipt `FORMAT-HOSTED-5FF.json` has SHA-256
 `7E6AFEA3D6D73F861383CDB712BB37CED68CF194AB7B16E5236791AFE4AFCE92`.
 The preceding W182 core test typecheck on `a2bd1b37` passed; its CLI build and
 the queued W183 check remain separate gates. No behavioral completion is claimed.
+
+W183 core check `35672664978` on `5ff3689b` found one E0277 in the archive
+future-tag guard: it compared `&str` with `String`. Both operands now use
+`as_str()`, preserving the intended date comparison. The same diagnostic
+affected the library and library-test targets; no behavior test ran.
+Preflight `35673066800` and Code Quality `35673066255` passed on the intervening
+format-only source `92ac013f`. A fresh core check is required after this repair.

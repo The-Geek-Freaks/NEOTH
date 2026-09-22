@@ -1633,7 +1633,7 @@ fn plan_daily_archive_retention(
     let mut records = BTreeMap::new();
     for name in bounded_retention_child_names(&archive.daily, MAX_DAILY_RETENTION_ENTRIES)? {
         let tag = archive_tag_from_retention_leaf(&name)?;
-        if tag.as_str() > current_tag {
+        if tag.as_str() > current_tag.as_str() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "daily retention archive contains a future tag",

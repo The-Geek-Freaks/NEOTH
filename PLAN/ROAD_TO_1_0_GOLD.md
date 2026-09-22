@@ -24,6 +24,11 @@ formatting hunks from Preflight35672664943 are imported in four files. W182's
 core test typecheck35672248518 on a2bd1b37 passed; W183 compilation and native
 behavior remain pending. No checkbox closes.
 
+W183 core check35672664978 found one String/str comparison error in the
+future-archive-date guard; both operands now use as_str with unchanged meaning.
+Preflight35673066800/Quality35673066255 passed on92ac013f. Fresh core compilation
+and behavior remain required after the narrow repair.
+
 **W182 follow-up (2026-09-22):** the Council fixture repair passed Preflight
 35671482151 and Code Quality35671481978. Core check35671482575 then exposed
 three missing Path borrows in W177 chat/export tests; all are repaired with

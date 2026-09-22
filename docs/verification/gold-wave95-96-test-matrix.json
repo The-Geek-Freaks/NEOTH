@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W183_HOSTED_FORMAT_IMPORTED_CORE_AND_NATIVE_PENDING",
-  "base": "5ff3689b7f292125787d6759f44136a6acf807ba",
+  "status": "W183_DATE_COMPARISON_COMPILE_REPAIR_HOSTED_PENDING",
+  "base": "92ac013fe5d4adac39a876d4718e8844b8e3f5e5",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 72437,
-    "sha256": "DADF0378D494D2A2495896C7CC9E537021C733E9C55C68EC7C2B4FBA96886922"
+    "bytes": 72420,
+    "sha256": "C4CCC036899916364712CDD206ADE6410FBCAAAB350CB7FC9E2E362F6C823439"
   },
   "sourceInputs": 420,
   "requiredNativeTests": [
@@ -2826,37 +2826,37 @@
     {
       "test": "reflection::periodic::tests::yearly_source_reader_uses_only_strict_daily_archive_records_in_tag_order",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "F70A44363141FA10796E288B100B5514F962B6A03B2C10575A18767118D695F4",
+      "sourceSha256": "088C27032C150B53F9E120D6D96BBA6CE026DA528F89B5EB0F0AB77761C7DEBA",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::yearly_synthesis_receipt_is_exactly_once_and_refuses_changed_sources",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "F70A44363141FA10796E288B100B5514F962B6A03B2C10575A18767118D695F4",
+      "sourceSha256": "088C27032C150B53F9E120D6D96BBA6CE026DA528F89B5EB0F0AB77761C7DEBA",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::concurrent_yearly_settlers_converge_to_one_atomic_receipt",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "F70A44363141FA10796E288B100B5514F962B6A03B2C10575A18767118D695F4",
+      "sourceSha256": "088C27032C150B53F9E120D6D96BBA6CE026DA528F89B5EB0F0AB77761C7DEBA",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::daily_retention_uses_archive_tags_and_defers_the_inclusive_ninety_day_boundary",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "F70A44363141FA10796E288B100B5514F962B6A03B2C10575A18767118D695F4",
+      "sourceSha256": "088C27032C150B53F9E120D6D96BBA6CE026DA528F89B5EB0F0AB77761C7DEBA",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::daily_retention_keeps_current_admission_archive_when_authority_is_absent",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "F70A44363141FA10796E288B100B5514F962B6A03B2C10575A18767118D695F4",
+      "sourceSha256": "088C27032C150B53F9E120D6D96BBA6CE026DA528F89B5EB0F0AB77761C7DEBA",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::admission_state_revision_change_cannot_enable_an_unsigned_retention_effect",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "F70A44363141FA10796E288B100B5514F962B6A03B2C10575A18767118D695F4",
+      "sourceSha256": "088C27032C150B53F9E120D6D96BBA6CE026DA528F89B5EB0F0AB77761C7DEBA",
       "junitClass": "neoth"
     },
     {
@@ -7109,6 +7109,15 @@
       "receipt": "work/gold-20260906/wave183-next-batch/FORMAT-HOSTED-5FF.json",
       "receiptSha256": "7E6AFEA3D6D73F861383CDB712BB37CED68CF194AB7B16E5236791AFE4AFCE92",
       "status": "Exact hunks imported; core and behavior pending"
+    },
+    "compileRepair": {
+      "run": 35672664978,
+      "source": "5ff3689b7f292125787d6759f44136a6acf807ba",
+      "diagnostic": "E0277: &str vs String in future-date guard",
+      "repair": "Both operands are &str",
+      "log": "work/gold-20260906/wave183-next-batch/core-5ff-failure.log",
+      "logSha256": "45940CF61F9A40F1719771D247CB53F5469118318634EEFF0F040EDE0A47A77C",
+      "status": "repaired, hosted pending"
     }
   }
 }

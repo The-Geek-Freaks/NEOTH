@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W183-yearly-period-synthesis",
-  "base": "5ff3689b7f292125787d6759f44136a6acf807ba",
-  "capturedUtc": "2026-09-22T00:40:50.5497653Z",
-  "validationStatus": "W183_HOSTED_FORMAT_IMPORTED_CORE_AND_NATIVE_PENDING",
-  "scopeNote": "23 exact Hosted formatting hunks across four W183 files plus three docs; W184 remains excluded.",
+  "base": "92ac013fe5d4adac39a876d4718e8844b8e3f5e5",
+  "capturedUtc": "2026-09-22T00:49:28.2726321Z",
+  "validationStatus": "W183_DATE_COMPARISON_COMPILE_REPAIR_HOSTED_PENDING",
+  "scopeNote": "One E0277 repair in yearly date guard plus three docs; W184 remains unadmitted.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -153,8 +153,8 @@
     },
     {
       "path": "docs/gold-wave183-verification.md",
-      "bytes": 2769,
-      "sha256": "AC604A195A1CFAB919C7D424FC1EE363A823709834D2277DC295F5EE3E405273"
+      "bytes": 3223,
+      "sha256": "9860B20348C5A13666804D735CE9A5C443C19B17A96F442C4FF207689D39B49E"
     },
     {
       "path": "docs/install.md",
@@ -243,13 +243,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1019656,
-      "sha256": "60799FCCCA54E8426DA9D5450EF2D090965B85E9866C2A8ADACD80E1BBC64E54"
+      "bytes": 1019945,
+      "sha256": "F1248CD7E9B719DBF8AC30C5EB8B9A7399DDB69F5C298F329C77713B07AFA74E"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1615103,
-      "sha256": "868B7B87DC9918D42BC2B2D74E404C48F56788A7342B4AB74D3B63891847890A"
+      "bytes": 1615392,
+      "sha256": "D5F9C916CD3FE06E34D1B80A666885A84510617F46EB04596BB09D5427B2AC83"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1758,8 +1758,8 @@
     },
     {
       "path": "SRC/neothd/src/reflection/periodic.rs",
-      "bytes": 180737,
-      "sha256": "F70A44363141FA10796E288B100B5514F962B6A03B2C10575A18767118D695F4"
+      "bytes": 180746,
+      "sha256": "088C27032C150B53F9E120D6D96BBA6CE026DA528F89B5EB0F0AB77761C7DEBA"
     },
     {
       "path": "SRC/neothd/src/security/prompt_envelope.rs",
