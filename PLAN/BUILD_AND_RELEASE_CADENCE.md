@@ -54,6 +54,17 @@ Windows/macOS video behavior or a paid provider call.
 
 ## Unreleased Windows preview
 
+W182 adds a 15-minute default-feature `cargo check -p neoth --tests --locked`
+step to the existing Hosted CLI-reference job before its 25-minute public CLI
+build. The job bound is 50 minutes, retaining nine minutes beyond the check,
+build and one-minute reference export for setup and artifact upload. It keeps
+one Cargo worker and detects shared test-code type failures without test-binary
+linking or execution before expensive native dispatch. The a72 source produced
+the same three library-test compiler errors in adapter, SSH and beta jobs,
+demonstrating this gap in the previous binary-only check. This step is not native
+behavior, optional-feature, GUI or release acceptance; those gates remain.
+It grants no local execution permission. Its first Hosted result is pending.
+
 `.github/workflows/preview-windows.yml` is a manual GitHub-hosted x64 build for
 portable CLI/GUI acceptance while local compilation is suspended. It uses one
 Cargo job and the locked desktop release feature profile on Rust 1.93.0, then

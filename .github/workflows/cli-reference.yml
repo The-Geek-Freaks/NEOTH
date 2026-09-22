@@ -19,7 +19,7 @@ jobs:
   generate:
     name: Export exact-source CLI reference
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 50
     steps:
       - name: Checkout requested source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -42,6 +42,14 @@ jobs:
           key: ${{ runner.os }}-gold-smoke-cargo-${{ hashFiles('SRC/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-gold-smoke-cargo-
+
+      # Catch shared test-code type errors before dispatching the expensive
+      # native matrix. This checks default-feature core tests without linking
+      # or executing them; it does not replace native behavior or GUI gates.
+      - name: Type-check core test targets before native validation
+        timeout-minutes: 15
+        working-directory: SRC
+        run: cargo check -p neoth --tests --locked
 
       - name: Build current public CLI
         timeout-minutes: 25

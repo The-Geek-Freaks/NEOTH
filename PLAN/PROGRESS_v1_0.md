@@ -2,6 +2,15 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W182 early Hosted core-test check (2026-09-22):** the existing CLI-reference
+job now checks default-feature core test targets before building the public CLI.
+This catches the shared cfg(test) type errors seen in the previous adapter/SSH/
+beta jobs before another expensive native dispatch. One worker remains; 15-minute
+check, 25-minute build and one-minute export fit in the reviewed 50-minute job.
+This is compilation only; native, GUI, optional-feature and release behavior
+gates remain. First Hosted result is pending. W177/W180 Preflight35670551761 and
+Quality35670550997 passed on97e2137a. See [W182](../docs/gold-wave182-verification.md).
+
 **W177 accepted training-set export and W180 portable diagnosis (2026-09-22):**
 W177 source and final independent review cover strict committed response receipts,
 post-drain capabilities, explicit Accepted in CLI/Main/Buddy, revision-CAS and

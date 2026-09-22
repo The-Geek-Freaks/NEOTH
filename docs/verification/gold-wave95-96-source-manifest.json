@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W177-W180-accepted-training-export-and-portable-diagnosis",
-  "base": "314a363760f9dfec9e4b9500eebf5e49bd73ef1c",
-  "capturedUtc": "2026-09-22T00:04:56.7314113Z",
-  "validationStatus": "W177_W180_HOSTED_FORMAT_AND_W179_ALIAS_SCOPE_REPAIRED_PENDING",
-  "scopeNote": "Exact56Hostedformat hunks10files + W179unchangedaliasmovedintoexistingimportscope.15explicit paths rehashed; no new tests; runtime remains pending.",
+  "item": "GOLD-W95-W182-early-hosted-core-test-check",
+  "base": "97e2137ae13c5e3cfd1cee7786be1bd15d725aed",
+  "capturedUtc": "2026-09-22T00:09:24.4463995Z",
+  "validationStatus": "W182_WORKFLOW_REVIEWED_FIRST_HOSTED_PENDING",
+  "scopeNote": "Five explicit workflow/cadence/doc paths only; W177/W180 source unchanged. Existing core-test typechecking precedes reference build; no new tests or behavioral closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -18,8 +18,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 2166,
-      "sha256": "5FC28BEF7823E3CB4B8D27E8354AD8DADB5C89621EB66473AB85FC7B71240561"
+      "bytes": 2576,
+      "sha256": "85CA0ABBEB811DEF4BBA927747AE78414A7DA9A36032286FD94CE94ADB0F238E"
     },
     {
       "path": ".github/workflows/openclaw-schema-inventory.yml",
@@ -127,6 +127,11 @@
       "sha256": "437BE11E0CBBBF01B3E8CC8AFB95CDBF20F151E6963482DF4430C8B071A42D3A"
     },
     {
+      "path": "docs/gold-wave177-verification.md",
+      "bytes": 4121,
+      "sha256": "04F78A39A576D764D90B244D91108263948C8B47A9A0943F91667B4E3124C188"
+    },
+    {
       "path": "docs/gold-wave178-verification.md",
       "bytes": 4302,
       "sha256": "27281799E29728ECA8E8469E05D5FD7A980E438A0277F43509383B166A4F7D2E"
@@ -137,6 +142,11 @@
       "sha256": "C94E4CD348D985C97E8DF07893706B6CAB5346E13A8745F8B844816C05B541F3"
     },
     {
+      "path": "docs/gold-wave180-verification.md",
+      "bytes": 2018,
+      "sha256": "88FA429D61B6EC508E577E6EB61B39817A208A4606F16B83089DB69A373F9B7D"
+    },
+    {
       "path": "docs/install.md",
       "bytes": 13637,
       "sha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625"
@@ -145,6 +155,11 @@
       "path": "docs/release-notes-v1.0.md",
       "bytes": 15092,
       "sha256": "2E800A053D2C74DAD9D8AA8904F75D5ABDFD437C6CC4FBA64DF0087742AA519F"
+    },
+    {
+      "path": "docs/training-set-export.md",
+      "bytes": 2904,
+      "sha256": "2697D4D7EDF26A0615929372BFB2FA5EBD35BA04245030262506A30BFAA7BFE1"
     },
     {
       "path": "docs/troubleshooting.md",
@@ -208,18 +223,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 21386,
-      "sha256": "70451A7CADB86FB58808DE570347DF02F7EBB76B2558AAB542CB490A02D2E6DE"
+      "bytes": 22166,
+      "sha256": "D4AE88BB71CEF595560AF057E251D94472A26A7093342FFB7A574C05C78056B8"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1016842,
-      "sha256": "A56EAF8A84BA44C1815F3094D14E3C26D243C51AB9F6492EE2C5CD820A927888"
+      "bytes": 1017491,
+      "sha256": "874DCB7C5AF1415658CACC0B59FD7AD7F80B53FF18972C0417F8186F1D629518"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1612289,
-      "sha256": "52662BD359AE5235E2AF4F4C5CA2DA741053419EF4242A320E3D7B0F5C2B1864"
+      "bytes": 1612938,
+      "sha256": "0F8B608AAD2A42F56094C81D1678F7C165FDFD77E36B61DA6576B596EAF667B4"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -772,6 +787,11 @@
       "sha256": "DD5611C3C341A1F645229AC3C130567A093D391ADC01774072E5CDCB39826F70"
     },
     {
+      "path": "SRC/neothd/src/cli/export.rs",
+      "bytes": 10483,
+      "sha256": "7C14D7DCFE0ACDE7E83D506582B5B2659D468EC499D6523FF635AEDC03D17DE7"
+    },
+    {
       "path": "SRC/neothd/src/cli/feedback.rs",
       "bytes": 22542,
       "sha256": "8DE938EC4D974B6FE491140A5850DA5BCAFDCECC67E8DFD1E6A4681D7DD140B3"
@@ -1267,6 +1287,11 @@
       "sha256": "538086DC510B98E8D6D458DE47BFE6576E0EEB1CE3C95AE1853E7708CB5118CB"
     },
     {
+      "path": "SRC/neothd/src/daemon/train_export.rs",
+      "bytes": 24592,
+      "sha256": "FEFA25BC8C93C91B25DB0A021A6FEF5259C1F14901C6ABE0A3ABF5AFA5EBFC76"
+    },
+    {
       "path": "SRC/neothd/src/daemon/updater_cron.rs",
       "bytes": 195890,
       "sha256": "C014E266E8D87FF9954972420A6FE77CB8B5D4B89554ED31BBE9AFC1F0233A72"
@@ -1520,6 +1545,11 @@
       "path": "SRC/neothd/src/memory/transcript_mining_store.rs",
       "sha256": "48086DDB70351C4F754D0A51A53E94122B941A3931DA459F7764C3BC7FABCDBB",
       "bytes": 58047
+    },
+    {
+      "path": "SRC/neothd/src/memory/transcript_store.rs",
+      "bytes": 46915,
+      "sha256": "2BDDBEF7A7E2736F8A3DD1C948F6514C3BA35132F2538444FEE956601EDECDD6"
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers.rs",
@@ -2037,34 +2067,9 @@
       "sha256": "4E77A7CC896F8B5EEDCEFB458199A0939522B9191F22939BE3EFD78C575D9CF7"
     },
     {
-      "path": "docs/gold-wave177-verification.md",
-      "bytes": 4121,
-      "sha256": "04F78A39A576D764D90B244D91108263948C8B47A9A0943F91667B4E3124C188"
-    },
-    {
-      "path": "SRC/neothd/src/memory/transcript_store.rs",
-      "bytes": 46915,
-      "sha256": "2BDDBEF7A7E2736F8A3DD1C948F6514C3BA35132F2538444FEE956601EDECDD6"
-    },
-    {
-      "path": "SRC/neothd/src/daemon/train_export.rs",
-      "bytes": 24592,
-      "sha256": "FEFA25BC8C93C91B25DB0A021A6FEF5259C1F14901C6ABE0A3ABF5AFA5EBFC76"
-    },
-    {
-      "path": "SRC/neothd/src/cli/export.rs",
-      "bytes": 10483,
-      "sha256": "7C14D7DCFE0ACDE7E83D506582B5B2659D468EC499D6523FF635AEDC03D17DE7"
-    },
-    {
-      "path": "docs/training-set-export.md",
-      "bytes": 2904,
-      "sha256": "2697D4D7EDF26A0615929372BFB2FA5EBD35BA04245030262506A30BFAA7BFE1"
-    },
-    {
-      "path": "docs/gold-wave180-verification.md",
-      "bytes": 2018,
-      "sha256": "88FA429D61B6EC508E577E6EB61B39817A208A4606F16B83089DB69A373F9B7D"
+      "path": "docs/gold-wave182-verification.md",
+      "bytes": 1387,
+      "sha256": "6036FA7161283562F0DC40715DCB5D25C39AF25DD76A863333C75E0F2F9D396E"
     }
   ]
 }
