@@ -56,11 +56,7 @@ pub(crate) fn bind_fan_out_left_authorizer(
     authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
     binding: &FanOutLeftRoleBinding,
 ) -> crate::providers::cost_authorization::ProviderCallAuthorizer {
-    authorizer.with_role_dispatch(
-        binding.role,
-        binding.provider,
-        Arc::clone(&binding.config),
-    )
+    authorizer.with_role_dispatch(binding.role, binding.provider, Arc::clone(&binding.config))
 }
 
 #[derive(Args, Debug, Clone)]

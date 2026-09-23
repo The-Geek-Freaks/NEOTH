@@ -1129,7 +1129,12 @@ fn coding_role_authorizer(
         .slot_for(role)
         .provider
         .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
-        .ok_or_else(|| anyhow::anyhow!("coding role `{}` has no configured provider identity", role.as_str()))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "coding role `{}` has no configured provider identity",
+                role.as_str()
+            )
+        })?;
     Ok(authorizer.with_role_dispatch(role, provider, std::sync::Arc::new(config.clone())))
 }
 
@@ -1570,7 +1575,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resume_worker_role_binding_allows_selected_right_and_denies_mismatch_before_transport() {
+    async fn resume_worker_role_binding_allows_selected_right_and_denies_mismatch_before_transport()
+    {
         let mut allowed_config = FreedomConfig::default();
         allowed_config.inference.right.provider = Some(InferenceProvider::LocalOllama);
         allowed_config.inference.role_policy = Some(RolePolicyConfig {
@@ -1584,7 +1590,9 @@ mod tests {
         let allowed = providers::cost_authorization::AuthorizedProvider::from_box(
             Box::new(RoleCountingProvider(Arc::clone(&allowed_calls))),
             coding_role_authorizer(
-                providers::cost_authorization::ProviderCallAuthorizer::test_only(AutonomyLevel::Full),
+                providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                    AutonomyLevel::Full,
+                ),
                 &allowed_config,
                 HemisphereRole::Right,
             )
@@ -1602,7 +1610,9 @@ mod tests {
         let denied = providers::cost_authorization::AuthorizedProvider::from_box(
             Box::new(RoleCountingProvider(Arc::clone(&denied_calls))),
             coding_role_authorizer(
-                providers::cost_authorization::ProviderCallAuthorizer::test_only(AutonomyLevel::Full),
+                providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                    AutonomyLevel::Full,
+                ),
                 &denied_config,
                 HemisphereRole::Right,
             )
@@ -1614,7 +1624,10 @@ mod tests {
             .complete(Request::default())
             .await
             .expect_err("configured Right mismatch must stop before transport");
-        assert!(error.to_string().contains("role dispatch denied"), "{error:#}");
+        assert!(
+            error.to_string().contains("role dispatch denied"),
+            "{error:#}"
+        );
         assert_eq!(denied_calls.load(Ordering::SeqCst), 0);
     }
 

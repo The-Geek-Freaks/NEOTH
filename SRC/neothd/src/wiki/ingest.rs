@@ -483,9 +483,10 @@ fn validate_graphify_receipt_shape(receipt: &GraphifyGenerationReceipt) -> Resul
             .context("Graphify ingest artifact byte total overflow")?;
     }
     ensure!(
-        total <= MAX_GRAPHIFY_REPORT_BYTES
-            + MAX_GRAPHIFY_TREE_BYTES
-            + MAX_GRAPHIFY_CODEGRAPH_WITNESS_BYTES,
+        total
+            <= MAX_GRAPHIFY_REPORT_BYTES
+                + MAX_GRAPHIFY_TREE_BYTES
+                + MAX_GRAPHIFY_CODEGRAPH_WITNESS_BYTES,
         "Graphify ingest artifact receipts exceed their aggregate byte limit"
     );
     ensure!(
@@ -1667,11 +1668,7 @@ mod tests {
             2_000,
         )
         .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("artifact manifest")
-        );
+        assert!(error.to_string().contains("artifact manifest"));
         assert_scope_preserved(&c, &scope, "Graph report");
     }
 
@@ -1699,11 +1696,7 @@ mod tests {
             2_000,
         )
         .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("artifact manifest")
-        );
+        assert!(error.to_string().contains("artifact manifest"));
         assert_scope_preserved(&c, &scope, "Graph report");
     }
 

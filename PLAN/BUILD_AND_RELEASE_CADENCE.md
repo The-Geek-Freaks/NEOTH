@@ -3,6 +3,11 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W296-W307 exact hosted formatting (2026-09-23):** Preflightc599
+run35828610460 requested formatting in14 touched Rust files. Its complete patch
+SHA256D224C9EE was verified against every Git preimage/postimage and imported.
+Corec599 run35828611235 and GUI128424 run35826461386 remain active. No local
+formatter ran; Group594 and native platform CI await core test-target readiness.
 **W296-W307 role callers, graph consumers and hosted repairs (2026-09-23):**
 The standalone agent fan-out, coding worker/decomposer, direct role/profile CLI,
 manual Cron/loop callers and fresh Council-dissent winner retain their actual

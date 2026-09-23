@@ -977,7 +977,10 @@ fn hemisphere_test_role_authorizer(
     cfg: &FreedomConfig,
     role: HemisphereRole,
 ) -> Result<crate::providers::cost_authorization::ProviderCallAuthorizer> {
-    let provider = cfg.inference.slot_for(role).provider
+    let provider = cfg
+        .inference
+        .slot_for(role)
+        .provider
         .or_else(|| cfg.provider_kind.map(|kind| kind.to_inference()))
         .context("selected hemisphere role has no configured provider identity")?;
     Ok(authorizer.with_role_dispatch(role, provider, Arc::new(cfg.clone())))
@@ -1155,10 +1158,12 @@ mod tests {
             None,
             "w301.hemispheres.denied",
         );
-        assert!(provider
-            .complete(crate::providers::Request::default())
-            .await
-            .is_err());
+        assert!(
+            provider
+                .complete(crate::providers::Request::default())
+                .await
+                .is_err()
+        );
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 

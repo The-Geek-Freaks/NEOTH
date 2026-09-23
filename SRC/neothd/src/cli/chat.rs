@@ -11518,11 +11518,7 @@ fn bind_council_dissent_winner_authorizer(
     winner_role: crate::config::inference::HemisphereRole,
 ) -> Result<crate::providers::cost_authorization::ProviderCallAuthorizer> {
     let provider = role_provider_from_slot(config, config.inference.slot_for(winner_role))?;
-    Ok(authorizer.with_role_dispatch(
-        winner_role,
-        provider,
-        std::sync::Arc::new(config.clone()),
-    ))
+    Ok(authorizer.with_role_dispatch(winner_role, provider, std::sync::Arc::new(config.clone())))
 }
 
 /// Build a fresh `ProviderHemisphere` for `role` using the configured
@@ -14465,11 +14461,8 @@ async fn dispatch_council_with_recovery_for_turn(
                 .as_ref()
                 .map(|guarded| guarded as &dyn crate::providers::Provider)
                 .unwrap_or_else(|| winner_provider.as_ref());
-            let winner_authorizer = bind_council_dissent_winner_authorizer(
-                authorizer.clone(),
-                config,
-                winner.role,
-            )?;
+            let winner_authorizer =
+                bind_council_dissent_winner_authorizer(authorizer.clone(), config, winner.role)?;
             match crate::loop_engine::engine::run_loop(
                 &loop_cfg,
                 winner_for_loop,
@@ -19612,9 +19605,8 @@ modes:
             .expect("grant W303 winner provider consent");
         let segment = canonical_test_wal(home.path(), "w303-dissent-winner-allowed");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("spawn W303 WAL");
-        let config = w303_dissent_winner_config(
-            crate::config::inference::InferenceProvider::ClaudeCli,
-        );
+        let config =
+            w303_dissent_winner_config(crate::config::inference::InferenceProvider::ClaudeCli);
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
         let raw_provider = CountingMockProvider {
             counter: std::sync::Arc::clone(&calls),
@@ -19671,9 +19663,8 @@ modes:
             .expect("grant W303 winner provider consent");
         let segment = canonical_test_wal(home.path(), "w303-dissent-winner-denied");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("spawn W303 WAL");
-        let config = w303_dissent_winner_config(
-            crate::config::inference::InferenceProvider::OpenAi,
-        );
+        let config =
+            w303_dissent_winner_config(crate::config::inference::InferenceProvider::OpenAi);
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
         let raw_provider = CountingMockProvider {
             counter: std::sync::Arc::clone(&calls),
@@ -20027,13 +20018,14 @@ modes:
                 }
             }
             let mut policy_enabled = reload.latest().as_ref().clone();
-            policy_enabled.inference.role_policy = Some(crate::config::role_policy::RolePolicyConfig {
-                rules: vec![crate::config::role_policy::RolePolicyRule {
-                    role: crate::config::inference::HemisphereRole::Left,
-                    provider: crate::config::inference::InferenceProvider::OpenAi,
-                    model: Some(W292_LEFT_MODEL.to_owned()),
-                }],
-            });
+            policy_enabled.inference.role_policy =
+                Some(crate::config::role_policy::RolePolicyConfig {
+                    rules: vec![crate::config::role_policy::RolePolicyRule {
+                        role: crate::config::inference::HemisphereRole::Left,
+                        provider: crate::config::inference::InferenceProvider::OpenAi,
+                        model: Some(W292_LEFT_MODEL.to_owned()),
+                    }],
+                });
             std::fs::write(
                 &config_path,
                 serde_yaml::to_string(&policy_enabled).expect("serialize W292 enabled policy"),
@@ -20046,9 +20038,9 @@ modes:
                 crate::config::reload::ReloadResult::Reloaded { .. }
             ));
             ack_gate.release();
-            let error = pending
-                .await
-                .expect_err("newly enabled mismatched Left policy blocks raw normal-chat transport");
+            let error = pending.await.expect_err(
+                "newly enabled mismatched Left policy blocks raw normal-chat transport",
+            );
             assert!(
                 error
                     .to_string()

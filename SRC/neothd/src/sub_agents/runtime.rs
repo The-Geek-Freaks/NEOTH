@@ -1490,7 +1490,10 @@ mod tests {
                     calls: Arc::clone(&fallback_calls),
                 }),
             ],
-            vec![Some("wire-model-v1".to_owned()), Some("wire-model-v1".to_owned())],
+            vec![
+                Some("wire-model-v1".to_owned()),
+                Some("wire-model-v1".to_owned()),
+            ],
             1,
             None,
             dir.path().join("quota.json"),

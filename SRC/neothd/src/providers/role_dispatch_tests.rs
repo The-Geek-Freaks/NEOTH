@@ -397,7 +397,9 @@ async fn w225_effect_start_role_rejection_closes_admitted_retry_with_denial_rece
 
     drop(permit);
     drop(writer);
-    join.await.expect("authenticated WAL writer joined").expect("authenticated WAL writer drained");
+    join.await
+        .expect("authenticated WAL writer joined")
+        .expect("authenticated WAL writer drained");
     let lifecycle = lifecycle_frames(&segment);
     assert_eq!(
         lifecycle
@@ -523,7 +525,9 @@ async fn w278_immediate_before_send_role_rejection_closes_admitted_retry_with_de
 
     drop(permit);
     drop(writer);
-    join.await.expect("authenticated WAL writer joined").expect("authenticated WAL writer drained");
+    join.await
+        .expect("authenticated WAL writer joined")
+        .expect("authenticated WAL writer drained");
     let lifecycle = lifecycle_frames(&segment);
     assert_eq!(
         lifecycle

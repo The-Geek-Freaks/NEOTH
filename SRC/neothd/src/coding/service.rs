@@ -522,12 +522,13 @@ async fn build_dispatch_plan(
                 let default_model =
                     crate::providers::provider_default_wire_model(provider.as_ref());
                 let model_name = default_model.clone().unwrap_or_default();
-                let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
-                    config.autonomy_policy(),
-                    writer.as_ref().map(|writer| writer.as_ref().clone()),
-                    config.tokens.max_per_request,
-                )
-                .with_usage_home(neoth_home.to_path_buf());
+                let authorizer =
+                    crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                        config.autonomy_policy(),
+                        writer.as_ref().map(|writer| writer.as_ref().clone()),
+                        config.tokens.max_per_request,
+                    )
+                    .with_usage_home(neoth_home.to_path_buf());
                 let authorizer = coding_role_authorizer(authorizer, config, role)?;
                 let provider = Arc::new(
                     crate::providers::cost_authorization::AuthorizedProvider::from_box(
@@ -1197,7 +1198,12 @@ fn coding_role_authorizer(
         .slot_for(role)
         .provider
         .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
-        .ok_or_else(|| anyhow::anyhow!("coding role `{}` has no configured provider identity", role.as_str()))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "coding role `{}` has no configured provider identity",
+                role.as_str()
+            )
+        })?;
     Ok(authorizer.with_role_dispatch(role, provider, Arc::new(config.clone())))
 }
 
@@ -2951,7 +2957,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cerebellum_decomposer_role_binding_allows_one_leaf_and_audits_then_denies_before_transport() {
+    async fn cerebellum_decomposer_role_binding_allows_one_leaf_and_audits_then_denies_before_transport()
+     {
         let dir = tempfile::tempdir().unwrap();
         let segment = dir.path().join("w300-cerebellum-role.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
@@ -2989,7 +2996,9 @@ mod tests {
         let denied_config = w300_role_config(InferenceProvider::OpenAi);
         let denied_calls = Arc::new(AtomicUsize::new(0));
         let denied_authorizer = coding_role_authorizer(
-            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(AutonomyLevel::Full),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                AutonomyLevel::Full,
+            ),
             &denied_config,
             HemisphereRole::Cerebellum,
         )
@@ -3006,7 +3015,10 @@ mod tests {
             .complete("plan")
             .await
             .expect_err("configured Cerebellum provider mismatch must stop before transport");
-        assert!(error.to_string().contains("role dispatch denied"), "{error:#}");
+        assert!(
+            error.to_string().contains("role dispatch denied"),
+            "{error:#}"
+        );
         assert_eq!(denied_calls.load(Ordering::SeqCst), 0);
     }
 

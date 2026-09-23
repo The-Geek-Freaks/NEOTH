@@ -16,8 +16,8 @@ use clap::{Args, Subcommand};
 use tracing::warn;
 
 use crate::cli::OutputFormat;
-use crate::config::inference::HemisphereRole;
 use crate::config::FreedomConfig;
+use crate::config::inference::HemisphereRole;
 use crate::loop_engine::{LoopAutonomyLevel, LoopRunRecord};
 
 #[derive(Args, Debug, Clone)]
@@ -263,7 +263,11 @@ fn standalone_loop_left_provider(
         .slot_for(HemisphereRole::Left)
         .provider
         .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
-        .ok_or_else(|| anyhow::anyhow!("standalone loop Left fallback chain has no configured provider identity"))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "standalone loop Left fallback chain has no configured provider identity"
+            )
+        })
 }
 
 fn bind_standalone_loop_left_authorizer(
@@ -513,9 +517,9 @@ fn truncate_id(id: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::loop_engine::engine::{LoopRound, StopReason};
     use crate::config::inference::InferenceProvider;
     use crate::config::role_policy::{RolePolicyConfig, RolePolicyRule};
+    use crate::loop_engine::engine::{LoopRound, StopReason};
     use crate::providers::cost_authorization::{AuthorizedProvider, ProviderCallAuthorizer};
     use crate::providers::{CompletionIdentity, ProviderDispatchPermit};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -884,7 +888,8 @@ mod tests {
     async fn w302_standalone_loop_retains_left_binding_for_every_round() {
         let home = tempfile::tempdir().expect("create W302 loop home");
         let segment = home.path().join("w302-loop-rounds.wal");
-        let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("spawn W302 loop WAL");
+        let (writer, join) =
+            crate::wal::writer::spawn(segment.clone()).expect("spawn W302 loop WAL");
         let config = w302_loop_config("w302-loop-allowed");
         let calls = Arc::new(AtomicUsize::new(0));
         let raw = Arc::new(W302LoopLeaf {
@@ -937,7 +942,8 @@ mod tests {
     async fn w302_standalone_loop_denies_primary_and_429_fallback_before_raw_leaf() {
         let home = tempfile::tempdir().expect("create W302 denied loop home");
         let segment = home.path().join("w302-loop-denied.wal");
-        let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("spawn W302 loop WAL");
+        let (writer, join) =
+            crate::wal::writer::spawn(segment.clone()).expect("spawn W302 loop WAL");
         let config = w302_loop_config("w302-loop-allowed");
 
         let denied_primary_calls = Arc::new(AtomicUsize::new(0));
@@ -957,7 +963,12 @@ mod tests {
             Some("w302-loop-allowed".to_owned()),
             "loop.w302.primary_denied",
         );
-        assert!(denied_primary.complete(crate::providers::Request::default()).await.is_err());
+        assert!(
+            denied_primary
+                .complete(crate::providers::Request::default())
+                .await
+                .is_err()
+        );
         assert_eq!(denied_primary_calls.load(Ordering::SeqCst), 0);
         drop(denied_primary);
 
@@ -994,7 +1005,12 @@ mod tests {
             Some("w302-loop-allowed".to_owned()),
             "loop.w302.fallback_denied",
         );
-        assert!(fallback.complete(crate::providers::Request::default()).await.is_err());
+        assert!(
+            fallback
+                .complete(crate::providers::Request::default())
+                .await
+                .is_err()
+        );
         assert_eq!(quota_calls.load(Ordering::SeqCst), 1);
         assert_eq!(fallback_calls.load(Ordering::SeqCst), 0);
         drop(fallback);

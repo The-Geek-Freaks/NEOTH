@@ -1246,7 +1246,8 @@ pub(crate) fn validate_codegraph_witness(
     );
     let witness: crate::code_map::snapshot::GraphifyCodeGraphWitness =
         serde_json::from_slice(bytes).context("parse Graphify CodeGraph witness")?;
-    let canonical = serde_json::to_vec(&witness).context("canonicalize Graphify CodeGraph witness")?;
+    let canonical =
+        serde_json::to_vec(&witness).context("canonicalize Graphify CodeGraph witness")?;
     ensure!(
         canonical == bytes,
         "Graphify CodeGraph witness is not canonical deterministic JSON"
@@ -1272,7 +1273,10 @@ pub(crate) fn validate_codegraph_witness(
         witness.type_endpoints.iter().cloned().collect(),
     )?;
     ensure!(
-        hierarchy.endpoints().iter().eq(witness.type_endpoints.iter())
+        hierarchy
+            .endpoints()
+            .iter()
+            .eq(witness.type_endpoints.iter())
             && hierarchy.edges() == witness.type_edges.as_slice(),
         "Graphify CodeGraph witness type hierarchy is not canonical"
     );
@@ -2585,7 +2589,11 @@ mod tests {
             "from helper import Helper\nclass PythonChild(Helper):\n    pass\n",
         )
         .unwrap();
-        fs::write(fixture.repo.path().join("helper.py"), "class Helper:\n    pass\n").unwrap();
+        fs::write(
+            fixture.repo.path().join("helper.py"),
+            "class Helper:\n    pass\n",
+        )
+        .unwrap();
         let snapshot = fixture.snapshot();
         let published = fixture
             .prepare(&snapshot, Some("Knowledge"))
@@ -2615,7 +2623,13 @@ mod tests {
             serde_json::from_slice(&witness).unwrap();
         assert_eq!(parsed.call_bfs.direction, "callees");
         assert_eq!(parsed.call_bfs.seed_symbol.as_deref(), Some("alpha"));
-        assert!(parsed.call_bfs.entries.iter().any(|entry| entry.name == "beta"));
+        assert!(
+            parsed
+                .call_bfs
+                .entries
+                .iter()
+                .any(|entry| entry.name == "beta")
+        );
         finish_without_ingest(published);
     }
 

@@ -1106,14 +1106,25 @@ pub fn architecture_findings_for_skill(
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
     )?;
     anyhow::ensure!(
-        complete && index_generation > 0 && index_generation == graph_generation && index_generation == import_generation && index_generation == type_generation,
+        complete
+            && index_generation > 0
+            && index_generation == graph_generation
+            && index_generation == import_generation
+            && index_generation == type_generation,
         "architecture evidence is not bound to one complete current index generation"
     );
     let (import_edges, import_truncated) = super::persist::load_import_edges_for_root_bounded(
-        &snapshot, root, ARCHITECTURE_IMPORT_WITNESS_LIMIT, ARCHITECTURE_EVIDENCE_TEXT_BYTE_LIMIT,
+        &snapshot,
+        root,
+        ARCHITECTURE_IMPORT_WITNESS_LIMIT,
+        ARCHITECTURE_EVIDENCE_TEXT_BYTE_LIMIT,
     )?;
     let (hierarchy, type_truncated) = super::persist::load_type_hierarchy_for_root_bounded(
-        &snapshot, root, ARCHITECTURE_TYPE_WITNESS_LIMIT, ARCHITECTURE_TYPE_WITNESS_LIMIT.saturating_mul(2), ARCHITECTURE_EVIDENCE_TEXT_BYTE_LIMIT,
+        &snapshot,
+        root,
+        ARCHITECTURE_TYPE_WITNESS_LIMIT,
+        ARCHITECTURE_TYPE_WITNESS_LIMIT.saturating_mul(2),
+        ARCHITECTURE_EVIDENCE_TEXT_BYTE_LIMIT,
     )?;
     let import_witnesses = import_edges;
     let type_witnesses = hierarchy.edges().to_vec();
@@ -1139,7 +1150,16 @@ pub fn architecture_findings_for_skill(
     let cycle_truncated = truncated;
     let evidence_truncated = import_truncated || type_truncated;
     truncated |= evidence_truncated;
-    let block = render_architecture_findings(&cycles, &import_witnesses, &type_witnesses, roots_scanned, edges_scanned, cycle_truncated, evidence_truncated, truncated);
+    let block = render_architecture_findings(
+        &cycles,
+        &import_witnesses,
+        &type_witnesses,
+        roots_scanned,
+        edges_scanned,
+        cycle_truncated,
+        evidence_truncated,
+        truncated,
+    );
     snapshot.commit()?;
     Ok(Some(ArchitectureFindings {
         cycles_injected: cycles.len(),
@@ -1183,9 +1203,27 @@ fn render_architecture_findings(
             out.push_str("  - additional cycles omitted by the context limit\n");
         }
     }
-    out.push_str(&format!("# import_witnesses={} type_witnesses={} evidence_truncated={evidence_truncated}\n", imports.len(), types.len()));
-    for edge in imports { out.push_str(&format!("  - import {} -> {} ({})\n", edge.from_file, edge.to_file, edge.language)); }
-    for edge in types { out.push_str(&format!("  - type {}::{} -> {}::{} ({})\n", edge.child.file_path, edge.child.symbol, edge.parent.file_path, edge.parent.symbol, edge.language)); }
+    out.push_str(&format!(
+        "# import_witnesses={} type_witnesses={} evidence_truncated={evidence_truncated}\n",
+        imports.len(),
+        types.len()
+    ));
+    for edge in imports {
+        out.push_str(&format!(
+            "  - import {} -> {} ({})\n",
+            edge.from_file, edge.to_file, edge.language
+        ));
+    }
+    for edge in types {
+        out.push_str(&format!(
+            "  - type {}::{} -> {}::{} ({})\n",
+            edge.child.file_path,
+            edge.child.symbol,
+            edge.parent.file_path,
+            edge.parent.symbol,
+            edge.language
+        ));
+    }
     crate::security::redact::sanitize_tool_output(&out)
 }
 
@@ -1206,27 +1244,70 @@ mod tests {
         let dir = tempdir().unwrap();
         let repo = dir.path().join("repo");
         std::fs::create_dir_all(repo.join("src")).unwrap();
-        std::fs::write(repo.join("src/a.rs"), "pub struct Base; pub struct Child;\n").unwrap();
+        std::fs::write(
+            repo.join("src/a.rs"),
+            "pub struct Base; pub struct Child;\n",
+        )
+        .unwrap();
         std::fs::write(repo.join("src/b.rs"), "pub fn b() {}\n").unwrap();
-        std::fs::write(repo.join("src/model.py"), "class Base: pass\nclass Child(Base): pass\n").unwrap();
-        let map = crate::code_map::walker::RepoMapBuilder::new(&repo).with_symbols(true).scan().unwrap();
+        std::fs::write(
+            repo.join("src/model.py"),
+            "class Base: pass\nclass Child(Base): pass\n",
+        )
+        .unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(&repo)
+            .with_symbols(true)
+            .scan()
+            .unwrap();
         let root = crate::code_map::root_identity::CanonicalRepoRoot::discover(&repo).unwrap();
         let root_display = root.display().to_owned();
         let mut conn = open(&dir.path().join("code_map.db")).unwrap();
         let edges = if with_cycle {
             vec![
-                CodeEdge { from_file: "src/a.rs".into(), from_symbol: "a".into(), to_name: "b".into(), target_file: None, kind: EdgeKind::Calls, confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE, confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred },
-                CodeEdge { from_file: "src/b.rs".into(), from_symbol: "b".into(), to_name: "a".into(), target_file: None, kind: EdgeKind::Calls, confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE, confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred },
+                CodeEdge {
+                    from_file: "src/a.rs".into(),
+                    from_symbol: "a".into(),
+                    to_name: "b".into(),
+                    target_file: None,
+                    kind: EdgeKind::Calls,
+                    confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                    confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
+                },
+                CodeEdge {
+                    from_file: "src/b.rs".into(),
+                    from_symbol: "b".into(),
+                    to_name: "a".into(),
+                    target_file: None,
+                    kind: EdgeKind::Calls,
+                    confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                    confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
+                },
             ]
-        } else { Vec::new() };
-        let imports = [crate::code_map::imports::ImportEdge { from_file: "src/a.rs".into(), to_file: "src/model.py".into(), language: "rust".into() }];
-        let child = crate::code_map::type_hierarchy::TypeEndpoint::new("src/model.py", "Child").unwrap();
-        let parent = crate::code_map::type_hierarchy::TypeEndpoint::new("src/model.py", "Base").unwrap();
+        } else {
+            Vec::new()
+        };
+        let imports = [crate::code_map::imports::ImportEdge {
+            from_file: "src/a.rs".into(),
+            to_file: "src/model.py".into(),
+            language: "rust".into(),
+        }];
+        let child =
+            crate::code_map::type_hierarchy::TypeEndpoint::new("src/model.py", "Child").unwrap();
+        let parent =
+            crate::code_map::type_hierarchy::TypeEndpoint::new("src/model.py", "Base").unwrap();
         let hierarchy = crate::code_map::type_hierarchy::TypeHierarchy::from_parts(
-            vec![crate::code_map::type_hierarchy::TypeHierarchyEdge { child: child.clone(), parent: parent.clone(), language: "python".into() }],
+            vec![crate::code_map::type_hierarchy::TypeHierarchyEdge {
+                child: child.clone(),
+                parent: parent.clone(),
+                language: "python".into(),
+            }],
             std::collections::BTreeSet::from([child, parent]),
-        ).unwrap();
-        crate::code_map::persist::persist_map_and_edges_bound(&mut conn, &map, &edges, &imports, &hierarchy, &root).unwrap();
+        )
+        .unwrap();
+        crate::code_map::persist::persist_map_and_edges_bound(
+            &mut conn, &map, &edges, &imports, &hierarchy, &root,
+        )
+        .unwrap();
         (dir, conn, root_display)
     }
 
@@ -2049,11 +2130,15 @@ mod tests {
         let secret = concat!("sk-", "FAKE_TEST_ARCH_MAP_AAAAAAAAAAAAAA");
         let colored = format!("sk-\x1b[36m{}\x1b[0m", &secret[3..]);
         let import = crate::code_map::imports::ImportEdge {
-            from_file: "src/lib.rs".into(), to_file: "src/model.py".into(), language: "rust".into(),
+            from_file: "src/lib.rs".into(),
+            to_file: "src/model.py".into(),
+            language: "rust".into(),
         };
         let ty = crate::code_map::type_hierarchy::TypeHierarchyEdge {
-            child: crate::code_map::type_hierarchy::TypeEndpoint::new("src/model.py", "Child").unwrap(),
-            parent: crate::code_map::type_hierarchy::TypeEndpoint::new("src/base.py", "Base").unwrap(),
+            child: crate::code_map::type_hierarchy::TypeEndpoint::new("src/model.py", "Child")
+                .unwrap(),
+            parent: crate::code_map::type_hierarchy::TypeEndpoint::new("src/base.py", "Base")
+                .unwrap(),
             language: "python".into(),
         };
         let block = render_architecture_findings(
@@ -2071,8 +2156,14 @@ mod tests {
         );
 
         assert!(block.contains("useful_a"), "{block}");
-        assert!(block.contains("import src/lib.rs -> src/model.py (rust)"), "{block}");
-        assert!(block.contains("type src/model.py::Child -> src/base.py::Base (python)"), "{block}");
+        assert!(
+            block.contains("import src/lib.rs -> src/model.py (rust)"),
+            "{block}"
+        );
+        assert!(
+            block.contains("type src/model.py::Child -> src/base.py::Base (python)"),
+            "{block}"
+        );
         assert!(block.contains("[REDACTED:openai_key]"), "{block}");
         assert_eq!(block.matches("[REDACTED:openai_key]").count(), 2, "{block}");
         assert!(!block.contains(secret), "{block}");
@@ -2135,8 +2226,16 @@ mod tests {
         assert!(findings.block.contains("a -> b -> a"));
         assert_eq!(findings.import_witnesses.len(), 1);
         assert_eq!(findings.type_witnesses.len(), 1);
-        assert!(findings.block.contains("import src/a.rs -> src/model.py (rust)"));
-        assert!(findings.block.contains("type src/model.py::Child -> src/model.py::Base (python)"));
+        assert!(
+            findings
+                .block
+                .contains("import src/a.rs -> src/model.py (rust)")
+        );
+        assert!(
+            findings
+                .block
+                .contains("type src/model.py::Child -> src/model.py::Base (python)")
+        );
         assert!(findings.block.contains("architecture-findings"));
     }
 
@@ -2173,22 +2272,41 @@ mod tests {
     #[test]
     fn architecture_evidence_refuses_mixed_partial_or_stale_generations_and_discloses_caps() {
         let (dir, conn, root) = complete_architecture_fixture(false);
-        conn.execute("UPDATE code_map_roots SET import_generation = import_generation + 1 WHERE root = ?1", [&root]).unwrap();
-        assert!(architecture_findings_for_skill(&conn, Some(ARCHITECTURE_SKILL_ID), &root, 20).is_err());
+        conn.execute(
+            "UPDATE code_map_roots SET import_generation = import_generation + 1 WHERE root = ?1",
+            [&root],
+        )
+        .unwrap();
+        assert!(
+            architecture_findings_for_skill(&conn, Some(ARCHITECTURE_SKILL_ID), &root, 20).is_err()
+        );
         conn.execute("UPDATE code_map_roots SET import_generation = index_generation, oversize_skipped = 1 WHERE root = ?1", [&root]).unwrap();
-        assert!(architecture_findings_for_skill(&conn, Some(ARCHITECTURE_SKILL_ID), &root, 20).is_err());
-        conn.execute("UPDATE code_map_roots SET oversize_skipped = 0 WHERE root = ?1", [&root]).unwrap();
-        std::fs::write(dir.path().join("repo/src/a.rs"), "pub struct Base; pub struct Changed;\n").unwrap();
-        assert!(architecture_findings_for_skill(&conn, Some(ARCHITECTURE_SKILL_ID), &root, 20).is_err());
+        assert!(
+            architecture_findings_for_skill(&conn, Some(ARCHITECTURE_SKILL_ID), &root, 20).is_err()
+        );
+        conn.execute(
+            "UPDATE code_map_roots SET oversize_skipped = 0 WHERE root = ?1",
+            [&root],
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("repo/src/a.rs"),
+            "pub struct Base; pub struct Changed;\n",
+        )
+        .unwrap();
+        assert!(
+            architecture_findings_for_skill(&conn, Some(ARCHITECTURE_SKILL_ID), &root, 20).is_err()
+        );
 
         let (_fresh_dir, fresh, fresh_root) = complete_architecture_fixture(false);
         fresh.execute(
             "INSERT INTO code_map_import_edges (root, from_file, to_file, language) VALUES (?1, 'src/b.rs', 'src/model.py', 'rust')",
             [&fresh_root],
         ).unwrap();
-        let capped = architecture_findings_for_skill(&fresh, Some(ARCHITECTURE_SKILL_ID), &fresh_root, 20)
-            .unwrap()
-            .expect("current snapshot still renders its bounded import witness");
+        let capped =
+            architecture_findings_for_skill(&fresh, Some(ARCHITECTURE_SKILL_ID), &fresh_root, 20)
+                .unwrap()
+                .expect("current snapshot still renders its bounded import witness");
         assert!(capped.truncated);
         assert!(capped.block.contains("evidence_truncated=true"));
         assert!(!capped.block.contains("additional cycles omitted"));

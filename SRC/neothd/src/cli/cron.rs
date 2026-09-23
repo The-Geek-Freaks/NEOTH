@@ -1145,7 +1145,9 @@ fn manual_cron_left_provider(config: &FreedomConfig) -> Result<InferenceProvider
         .slot_for(HemisphereRole::Left)
         .provider
         .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
-        .ok_or_else(|| anyhow::anyhow!("manual Cron Left fallback chain has no configured provider identity"))
+        .ok_or_else(|| {
+            anyhow::anyhow!("manual Cron Left fallback chain has no configured provider identity")
+        })
 }
 
 fn bind_manual_cron_left_authorizer(
@@ -1153,7 +1155,11 @@ fn bind_manual_cron_left_authorizer(
     config: &FreedomConfig,
     left_provider: InferenceProvider,
 ) -> crate::providers::cost_authorization::ProviderCallAuthorizer {
-    authorizer.with_role_dispatch(HemisphereRole::Left, left_provider, Arc::new(config.clone()))
+    authorizer.with_role_dispatch(
+        HemisphereRole::Left,
+        left_provider,
+        Arc::new(config.clone()),
+    )
 }
 
 /// `neoth cron status` — per-CronRole count summary. JV-PRO-05.
@@ -1234,7 +1240,9 @@ mod tests {
 
     use crate::config::role_policy::{RolePolicyConfig, RolePolicyRule};
     use crate::providers::cost_authorization::{AuthorizedProvider, ProviderCallAuthorizer};
-    use crate::providers::{Completion, CompletionIdentity, Provider, ProviderDispatchPermit, Request};
+    use crate::providers::{
+        Completion, CompletionIdentity, Provider, ProviderDispatchPermit, Request,
+    };
 
     struct W302CronLeaf {
         calls: Arc<AtomicUsize>,
@@ -1301,7 +1309,8 @@ mod tests {
         for (policy_model, expected_calls) in [("w302-cron-allowed", 1usize), ("denied", 0)] {
             let dir = tempfile::tempdir().expect("create W302 Cron home");
             let segment = dir.path().join(format!("{policy_model}.wal"));
-            let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("spawn W302 Cron WAL");
+            let (writer, join) =
+                crate::wal::writer::spawn(segment.clone()).expect("spawn W302 Cron WAL");
             let config = w302_cron_config(policy_model);
             let calls = Arc::new(AtomicUsize::new(0));
             let raw = Arc::new(W302CronLeaf {

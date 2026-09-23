@@ -256,7 +256,15 @@ pub(crate) fn attest_existing_persisted_snapshot(
         rusqlite::params![display, MAX_PERSISTED_RECOVERY_ROW_TEXT_BYTES],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
     ).optional().context("read persisted native generation for recovery")?;
-    let Some((stored_identity, index_generation, graph_generation, import_generation, type_generation, complete)) = row else {
+    let Some((
+        stored_identity,
+        index_generation,
+        graph_generation,
+        import_generation,
+        type_generation,
+        complete,
+    )) = row
+    else {
         let oversized: bool = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM code_map_roots WHERE root = ?1 AND root_identity IS NOT NULL AND length(CAST(root_identity AS BLOB)) > ?2)",
             rusqlite::params![display, MAX_PERSISTED_RECOVERY_ROW_TEXT_BYTES],
@@ -532,13 +540,26 @@ impl ScopedRebuildSnapshot {
             )
         })?;
         let root = self.snapshot.root.display();
-        let (index_generation, graph_generation, import_generation, type_generation, complete):
-            (i64, i64, i64, i64, bool) = connection.query_row(
+        let (index_generation, graph_generation, import_generation, type_generation, complete): (
+            i64,
+            i64,
+            i64,
+            i64,
+            bool,
+        ) = connection.query_row(
             "SELECT index_generation, graph_generation, import_generation, type_generation, \
                     oversize_skipped = 0 AND truncated_at IS NULL \
              FROM code_map_roots WHERE root = ?1",
             [root],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )?;
         ensure!(
             complete

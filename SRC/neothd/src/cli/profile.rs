@@ -3100,7 +3100,9 @@ async fn run_pipeline_cli_batch(
             .context("spawn home-bound profile-run WAL writer")?;
     let authorizer = profile_cli_left_role_authorizer(
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
-            config.autonomy_policy(), Some(writer.clone()), config.tokens.max_per_request,
+            config.autonomy_policy(),
+            Some(writer.clone()),
+            config.tokens.max_per_request,
         ),
         &config,
     )?;
@@ -3199,7 +3201,10 @@ fn profile_cli_left_role_authorizer(
     config: &FreedomConfig,
 ) -> Result<crate::providers::cost_authorization::ProviderCallAuthorizer> {
     let role = crate::config::inference::HemisphereRole::Left;
-    let provider = config.inference.slot_for(role).provider
+    let provider = config
+        .inference
+        .slot_for(role)
+        .provider
         .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
         .context("profile extraction Left role has no configured provider identity")?;
     Ok(authorizer.with_role_dispatch(role, provider, Arc::new(config.clone())))
@@ -3806,8 +3811,8 @@ fn render_knobs(rows: &[KnobRow], output: &OutputFormat) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
     use crate::providers::Provider as _;
+    use clap::Parser;
     use rusqlite::params;
 
     struct W301CountingProvider(std::sync::Arc<std::sync::atomic::AtomicUsize>);
@@ -3924,10 +3929,12 @@ mod tests {
             None,
             "w301.profile.denied",
         );
-        assert!(provider
-            .complete(crate::providers::Request::default())
-            .await
-            .is_err());
+        assert!(
+            provider
+                .complete(crate::providers::Request::default())
+                .await
+                .is_err()
+        );
         drop(provider);
         drop(writer);
         join.await.unwrap();
