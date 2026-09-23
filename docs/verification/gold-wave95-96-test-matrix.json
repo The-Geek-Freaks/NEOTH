@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W248 runner readiness/source review complete; actual Hosted capability and GUI124 pending",
+  "status": "W250 guardian-aligned identity-map probe and bounded diagnostics; Hosted execution pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 92861,
-    "sha256": "0A5205D0121C7A32ADA6333B4B87AFCD5F518B888477CA81D8197374EDB351EC"
+    "bytes": 92862,
+    "sha256": "7247A8A02726BFCC0512CA51EF42E4F37EEE41D6FF4D0AA79D572FB2464255EC"
   },
   "sourceInputs": 537,
   "requiredNativeTests": [
@@ -16603,6 +16603,13 @@
     "base": "09ac5d579820a78c201deff8c72856ffda297494",
     "sources": [],
     "note": "Real system-managed user@UID startup bounded30s plus5skill; no custom managers, standardbus, explicit failure propagation, bounded journals. W153/W164 actual notify guardians remain proof.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave250HostedUserNamespaceProbe": {
+    "base": "ea43839c701cf334d43d546eb9b3a7124b0dd43e",
+    "sources": [],
+    "note": "GUI124ea43 actual readiness failure0compile0tests admitted. Probe root-map mismatch corrected to current UID/GID; all probe commands propagate failure; no policy or containment change.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

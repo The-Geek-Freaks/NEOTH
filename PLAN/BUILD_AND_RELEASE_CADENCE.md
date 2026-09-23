@@ -3,6 +3,17 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W250 precise Hosted namespace diagnostics (2026-09-23):** GUI12435803340455
+on ea43839c binds the complete124-case plan and17GUI sources but ran zero
+compilations or fixtures: manager/bus readiness passed, then the probe could
+not write uid_map. The probe had requested a namespace-root identity that the
+real guardian does not use. It now requests the guardian's current UID/GID
+mapping, records both maps and checks supported util-linux flags. A failure
+remains fatal and captures bounded kernel/AppArmor diagnostics; no host policy,
+sysctl, product check or test assertion is weakened. The actual cause beyond
+uid_map EPERM and W153/W164 acceptance remain unproven until the next Hosted run.
+Counts remain537sources/861native/98GUI,Group424/GUI124; Road unchanged.
+See `docs/gold-wave250-hosted-userns.md`. Local BSOD hold remains in force.
 **W248 Hosted GUI containment prerequisites (2026-09-23):** source-bound GUI123
 on a7f3 executed123 cases:121passed/2failed, with W168 now passing. W153 exposed
 an unavailable user manager; W164 exposed a manager-owned unit dead before the
