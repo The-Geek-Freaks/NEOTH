@@ -1211,6 +1211,10 @@ pub struct FreedomConfig {
     /// connector and never grants a runtime capability by itself.
     #[serde(default)]
     pub context_connectors: crate::connectors::control_state::ConnectorControlConfig,
+    /// W333 — default-off policy only. This field neither acquires nor starts
+    /// a browser; a later typed rendered-fetch route consumes it.
+    #[serde(default)]
+    pub managed_browser: crate::tools::managed_browser::ManagedBrowserConfig,
     /// D003-KEYCHAIN-01 — secrets backend selection. Default `file`;
     /// set to `keychain` after running `neoth credential migrate --to keychain`.
     #[serde(default)]
@@ -3302,5 +3306,22 @@ mod skill_autonomy_config_tests {
             super::parse_public_freedom_yaml(Path::new("freedom.yaml"), b"autonomy: full\n")
                 .expect("legacy config without custom_autonomy must remain valid");
         assert!(config.custom_autonomy.skill_overrides.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod managed_browser_config_tests {
+    use super::FreedomConfig;
+
+    #[test]
+    fn managed_browser_defaults_disabled_and_roundtrips() {
+        let config: FreedomConfig = serde_yaml::from_str("operator_id: sam\n")
+            .expect("legacy freedom config must deserialize");
+        assert!(!config.managed_browser.enabled);
+        let configured: FreedomConfig = serde_yaml::from_str(
+            "managed_browser:\n  enabled: true\n",
+        )
+        .expect("typed managed browser config must deserialize");
+        assert!(configured.managed_browser.enabled);
     }
 }

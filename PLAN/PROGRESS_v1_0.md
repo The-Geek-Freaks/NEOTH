@@ -2,6 +2,25 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W333 managed-browser resolver and hosted acceptance (2026-09-23):**
+The default-off typed policy and explicit-home resolver now consume W330's
+reviewed four-target manifest. No-follow capabilities retain root, directory,
+marker and executable identities; hashing uses the bound file, and a future
+launcher must revalidate the retained identity. Exact CFT URLs and digests are
+checked. No acquisition, launch, CDP or external-rendered route is enabled by
+this slice; P2-13 remains open. Independent re-review passed. Seven universal
+and one Unix regression are selected: native1032+Windows19/Linux33/macOS32,
+Group695, inventory622. W331/W332 remain separate unpublished source work.
+
+GUI1291a17 run35837802269 is fully source-admitted129/129 with23source/input
+bindings and ordered actual terminals. W329 Cored6aa35840622919 passed all
+four gates with unchanged reference SHA256F7E3604A. W336-W338 Coredecb
+35842087666 passed lint and test-target readiness; Group687571b run35843153480
+is active. Its repairs and W329 behavior still require that run's results.
+Road1324=1025checked/297open/2partial; WS-LF18done/100open unchanged. Windows
+fullCI750 completed12488PASS/19FAIL/1timeout of12508executed; macOS continues.
+Local BSOD hold remains; no compiler/test/browser/archive execution ran here.
+
 **W336-W339 repairs and three parent acceptances (2026-09-23):**
 Group684 run35838862993 on b6090b1f is source-admitted679PASS/5FAIL:
 149source bindings, matrix/lock and every ordered terminal verified. P2-08

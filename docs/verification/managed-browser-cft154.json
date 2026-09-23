@@ -1,0 +1,45 @@
+{
+  "schema": "neoth.managed_browser.cft_manifest.v1",
+  "product": "chrome-headless-shell",
+  "version": "154.0.8037.57",
+  "revision": "1689415",
+  "provenance": {
+    "hosted_run": 35839698279,
+    "source_head": "a41946046158991115b0380af7beb873f93f8092",
+    "receipt_sha256": "eef1d3aa4ce66ed1d1fe5703c38feeabaa20f064b3105625807a3d41dcfb67e9"
+  },
+  "targets": [
+    {
+      "platform": "win64",
+      "archive_sha256": "bcc91b4d0f83a5457fc6ca7941fd65f2349775523d961be88526c6a66560dc75",
+      "expected_executable": "chrome-headless-shell-win64/chrome-headless-shell.exe",
+      "expected_executable_bytes": 212388352,
+      "expected_executable_sha256": "8f24342b969fed6b6c6712324f9ef655355aa618948a3dd63dccd030ed9ff15b",
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.57/win64/chrome-headless-shell-win64.zip"
+    },
+    {
+      "platform": "linux64",
+      "archive_sha256": "5a6979d0ab7cf952ea575d35164e7bdce4872b2ced8f8a215c8f8e8eda00ee09",
+      "expected_executable": "chrome-headless-shell-linux64/chrome-headless-shell",
+      "expected_executable_bytes": 197979464,
+      "expected_executable_sha256": "60c03e8882f4bb47459a905ede1074e1e746c5b765e437c288e460320540a8a3",
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.57/linux64/chrome-headless-shell-linux64.zip"
+    },
+    {
+      "platform": "mac-x64",
+      "archive_sha256": "b3f9551d90c9ff0f4c7c231a4dbf226b3c64faba8ced1ab61a5ef9d430d0e996",
+      "expected_executable": "chrome-headless-shell-mac-x64/chrome-headless-shell",
+      "expected_executable_bytes": 185455536,
+      "expected_executable_sha256": "220c430c7351d9ef499896c152e014a2c1b0c2dcddce8ade807693374962c337",
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.57/mac-x64/chrome-headless-shell-mac-x64.zip"
+    },
+    {
+      "platform": "mac-arm64",
+      "archive_sha256": "9ba4d8a9732bd7e431ce9009d1bbe1ccf7f8c5de2a9781054f500a9fe898124d",
+      "expected_executable": "chrome-headless-shell-mac-arm64/chrome-headless-shell",
+      "expected_executable_bytes": 170030896,
+      "expected_executable_sha256": "73c150f1e61a7398af80545c6483f24490166c1056c16353216d1ac425bb5a51",
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.57/mac-arm64/chrome-headless-shell-mac-arm64.zip"
+    }
+  ]
+}

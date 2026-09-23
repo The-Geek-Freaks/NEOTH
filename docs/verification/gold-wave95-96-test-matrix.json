@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "GUI129 source-admitted129PASS; W329 Core4step admitted; W336338 repairs hosted pending",
+  "status": "W333 resolver reviewed source PASS hosted pending; Group695; P213 open",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 107430,
-    "sha256": "EF31DF0018E7E1D81F9A3ED64E4DDC8CC2B23711C42FA2841C592B62BBB7FB52"
+    "bytes": 107949,
+    "sha256": "4CF00CA4069F6E4916484B53FE1D49606DDE8572B6C4849EAAD43E6DF14DF864"
   },
-  "sourceInputs": 619,
+  "sourceInputs": 622,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -306,7 +306,7 @@
     {
       "test": "config::code_map_config_tests::configured_mcp_read_path_selectors_are_exact_and_bounded",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "8D387FC3B0AFE1F7F2DA43EDC0978B7771779CB0A953614366061A681E868BC1",
+      "sourceSha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A",
       "junitClass": "neoth"
     },
     {
@@ -876,25 +876,25 @@
     {
       "test": "config::skill_autonomy_config_tests::public_config_load_rejects_invalid_skill_id",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "8D387FC3B0AFE1F7F2DA43EDC0978B7771779CB0A953614366061A681E868BC1",
+      "sourceSha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A",
       "junitClass": "neoth"
     },
     {
       "test": "config::skill_autonomy_config_tests::public_config_load_rejects_malformed_or_non_custom_skill_action_maps",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "8D387FC3B0AFE1F7F2DA43EDC0978B7771779CB0A953614366061A681E868BC1",
+      "sourceSha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A",
       "junitClass": "neoth"
     },
     {
       "test": "config::skill_autonomy_config_tests::public_config_load_rejects_more_than_128_skill_overrides",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "8D387FC3B0AFE1F7F2DA43EDC0978B7771779CB0A953614366061A681E868BC1",
+      "sourceSha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A",
       "junitClass": "neoth"
     },
     {
       "test": "config::skill_autonomy_config_tests::public_config_load_preserves_legacy_absence_of_skill_overrides",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "8D387FC3B0AFE1F7F2DA43EDC0978B7771779CB0A953614366061A681E868BC1",
+      "sourceSha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A",
       "junitClass": "neoth"
     },
     {
@@ -2874,13 +2874,13 @@
     {
       "test": "config::vault_mirror_config_boundary_tests::vault_mirror_defaults_roundtrip_through_public_config_boundary",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "8D387FC3B0AFE1F7F2DA43EDC0978B7771779CB0A953614366061A681E868BC1",
+      "sourceSha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A",
       "junitClass": "neoth"
     },
     {
       "test": "config::vault_mirror_config_boundary_tests::public_config_boundary_rejects_invalid_enabled_vault_mirror",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "8D387FC3B0AFE1F7F2DA43EDC0978B7771779CB0A953614366061A681E868BC1",
+      "sourceSha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A",
       "junitClass": "neoth"
     },
     {
@@ -6158,6 +6158,48 @@
       "sourcePath": "SRC/neothd/src/cli/research.rs",
       "sourceSha256": "A742E487B95E643F7458A5A19BA913E05FAC45F5EF0DC9EC2415B06EE5554710",
       "junitClass": "neoth"
+    },
+    {
+      "test": "tools::managed_browser::tests::config_defaults_disabled",
+      "sourcePath": "SRC/neothd/src/tools/managed_browser.rs",
+      "sourceSha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "tools::managed_browser::tests::forged_manifest_and_nonexact_target_url_are_rejected",
+      "sourcePath": "SRC/neothd/src/tools/managed_browser.rs",
+      "sourceSha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "tools::managed_browser::tests::disabled_policy_refuses_before_home_inspection",
+      "sourcePath": "SRC/neothd/src/tools/managed_browser.rs",
+      "sourceSha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "tools::managed_browser::tests::missing_generation_fails_closed_without_ambient_fallback",
+      "sourcePath": "SRC/neothd/src/tools/managed_browser.rs",
+      "sourceSha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "tools::managed_browser::tests::exact_marker_and_executable_resolve_and_revalidate",
+      "sourcePath": "SRC/neothd/src/tools/managed_browser.rs",
+      "sourceSha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "tools::managed_browser::tests::forged_marker_digest_and_path_are_rejected",
+      "sourcePath": "SRC/neothd/src/tools/managed_browser.rs",
+      "sourceSha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "config::managed_browser_config_tests::managed_browser_defaults_disabled_and_roundtrips",
+      "sourcePath": "SRC/neothd/src/config/mod.rs",
+      "sourceSha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A",
+      "junitClass": "neoth"
     }
   ],
   "requiredGuiTests": [
@@ -8043,6 +8085,12 @@
         "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
         "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
         "junitClass": "neoth"
+      },
+      {
+        "test": "tools::managed_browser::tests::retained_binding_detects_executable_replacement_and_symlink_parent",
+        "sourcePath": "SRC/neothd/src/tools/managed_browser.rs",
+        "sourceSha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D",
+        "junitClass": "neoth"
       }
     ],
     "macOS": [
@@ -8230,6 +8278,12 @@
         "test": "reflection::periodic::retention_v2_tests::v2_reserved_note_quarantine_symlink_is_inventory_error",
         "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
         "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
+        "junitClass": "neoth"
+      },
+      {
+        "test": "tools::managed_browser::tests::retained_binding_detects_executable_replacement_and_symlink_parent",
+        "sourcePath": "SRC/neothd/src/tools/managed_browser.rs",
+        "sourceSha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D",
         "junitClass": "neoth"
       }
     ]
@@ -20437,6 +20491,49 @@
       }
     ],
     "note": "Preflight35842087508 exact two-provider-file formatting imported after SHA256/pre-postimage verification. GUI35837802269 all129 ordered actual terminals and23bindings admitted. Core35840622919 all4steps bound reference unchanged. No local execution.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave333ManagedBrowserResolverAcceptance": {
+    "requiredTests": [
+      "tools::managed_browser::tests::config_defaults_disabled",
+      "tools::managed_browser::tests::forged_manifest_and_nonexact_target_url_are_rejected",
+      "tools::managed_browser::tests::disabled_policy_refuses_before_home_inspection",
+      "tools::managed_browser::tests::missing_generation_fails_closed_without_ambient_fallback",
+      "tools::managed_browser::tests::exact_marker_and_executable_resolve_and_revalidate",
+      "tools::managed_browser::tests::forged_marker_digest_and_path_are_rejected",
+      "config::managed_browser_config_tests::managed_browser_defaults_disabled_and_roundtrips",
+      "tools::managed_browser::tests::retained_binding_detects_executable_replacement_and_symlink_parent"
+    ],
+    "report": "docs/gold-wave333-managed-browser-resolver.md",
+    "review": "work/gold-20260906/W333-review.md",
+    "scope": "default-off explicit-home capability-bound resolver; no download launch or external rendered navigation",
+    "hosted": "pending",
+    "localValidationRan": false
+  },
+  "wave333ManagedBrowserResolverPublication": {
+    "base": "571b0e032b93081292293cbf4e2fa42afeee12b7",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/config/mod.rs",
+        "bytes": 150756,
+        "sha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A",
+        "blob": "9756631886644a900c905a5090b5e28cdfb7b8ad"
+      },
+      {
+        "path": "SRC/neothd/src/tools/managed_browser.rs",
+        "bytes": 24617,
+        "sha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D",
+        "blob": "e0b23fb3f0c9f6e86b50ac64e46b70e1dcb45212"
+      },
+      {
+        "path": "SRC/neothd/src/tools/mod.rs",
+        "bytes": 3500,
+        "sha256": "DC2613212A98689626432EF685C733C6C94F8738D9505312DEAFD50BEA1EB74F",
+        "blob": "6e04983d614f7c4ee014e6756edaebfe4159f067"
+      }
+    ],
+    "note": "W330 exact CFT manifest compiled in, default-off capability-bound pure resolver. Seven universal+oneUnix fixtures registered. W331/W332 excluded. GUI129 admitted129PASS, W329 Core admitted. No local execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -154,6 +154,7 @@ jobs:
               "wave318RetentionInventoryAcceptance": 3,
               "wave323CodegraphParentAcceptance": 25,
               "wave329ResearchCliAcceptance": 3,
+              "wave333ManagedBrowserResolverAcceptance": 8,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():
