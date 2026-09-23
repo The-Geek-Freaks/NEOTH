@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W542_HOSTED_GUI_CONTEXT_TRAIT_REPAIR_PENDING",
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 135123,
-    "sha256": "02119C68C3F955F415762F9195E41BF641A5E933A89716BE64E44406FC56DEC5"
+    "bytes": 135109,
+    "sha256": "B29C4D9586D2BECD6F38CA367EDBC7B055D8373167AA48970D9962F924587F9D"
   },
   "sourceInputs": 770,
   "requiredNativeTests": [
@@ -24862,6 +24862,38 @@
       }
     ],
     "note": "GUI35927366772d2f4 compiled production but testharnessE0599Contexttrait,0fixtures. Localhelperimport fixesobservederror;freshGUIpending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave543CliReferenceEvidence": {
+    "base": "6146f6a4becf780a035e087aa4ac4f15d07284bf",
+    "sources": [
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 246419,
+        "sha256": "62D831C420972E376C4551948D55D25DD5ADB7AAD94EA4A75C988F0D13A44032",
+        "blob": "e7337725b68fe368fa43d91f53485aa89c3faeab"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 195156,
+        "sha256": "9EBCE2B52375AE2FE2B5D50D0B53A737C943D8BCC07F2FC53FC1E48E7779E49E",
+        "blob": "9e088c655780a23cb8d3b403018f5e754a3f5a82"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1205480,
+        "sha256": "A7E35D3A39CC7BE9B5D2FF0C537B2E17EB3C061C8502972CC5CA561BD6E687A2",
+        "blob": "e145d6e5b155277e48818a2b9b8e62bc873a8e90"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1804113,
+        "sha256": "7CB5C539411E93C4918F7F5A9AED73627D45BCD7517649C6BEA4DEC2FCC4B4F2",
+        "blob": "1364494d2947dda3005a9792680434a6f8322936"
+      }
+    ],
+    "note": "CLI export35928759424 at96f86a92 admitted source/archive/reference SHA256; core testtarget and CLI build passed; no native behavior inferred",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

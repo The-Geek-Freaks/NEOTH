@@ -2,6 +2,12 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W543 hosted CLI reference (2026-09-24):**
+Core35928759424 at96f86a92 passed core test-target typechecking and CLI build.
+The source- and SHA256-bound export (artifact10780089697, reference62d831c4)
+is imported for paperless status; this admits no native behavior or Road closure.
+Inventory770/native1198/Group903 and Road1044checked/278open/2partial unchanged.
+
 **W542 GUI bootstrap test import (2026-09-24):**
 GUI148d2f4 run35927366772 compiled the production targets but its test harness
 failed E0599 on the P118 bootstrap helper's Context trait. The helper now

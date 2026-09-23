@@ -3064,7 +3064,7 @@ Verify the configured cache through the actual Q8 model loader
 
 ## `neoth paperless`
 
-Paperless OCR ingest + consult. Subcommands: `ingest`, `consult`. Operator surface for the SC-16/PL-02/PL-03 vertical slice
+Paperless authenticated API status, OCR ingest, consult and quarantine
 
 - `--vault <PATH>` — Override the vault root. Defaults to `~/Documents/NEOTH-Vault`
 - `--subdir <NAME>` — Override the subdir inside the vault. Defaults to `NEOTH`
@@ -3098,6 +3098,10 @@ List all pending quarantine items (uid, from, subject, timestamp, reason)
 Print the full quarantine item JSON for a specific uid
 
 - `<UID>` — The uid returned by `quarantine list`
+
+### `neoth paperless status`
+
+Check authenticated local API readiness using stored credentials. Artifact provenance and managed installation readiness remain separate
 
 ## `neoth permissions`
 
