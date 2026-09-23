@@ -929,10 +929,8 @@ mod tests {
         drop(writer);
         join.await.unwrap();
 
-        let quota_payloads = event_payloads(
-            &seg,
-            crate::wal::events::EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED,
-        );
+        let quota_payloads =
+            event_payloads(&seg, crate::wal::events::EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED);
         assert_eq!(quota_payloads.len(), 1);
         assert_eq!(quota_payloads[0]["provider"], "primary");
         assert_eq!(quota_payloads[0]["source"], "fallback_candidate");

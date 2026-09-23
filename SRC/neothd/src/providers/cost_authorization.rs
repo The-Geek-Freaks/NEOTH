@@ -8063,8 +8063,7 @@ mod tests {
             // `begin_dispatch`; the scan retains inline test blocks but
             // excludes the test module.
             [
-                "mod.rs", "mod.rs", "mod.rs", "mod.rs", "mod.rs", "mod.rs", "mod.rs",
-                "mod.rs",
+                "mod.rs", "mod.rs", "mod.rs", "mod.rs", "mod.rs", "mod.rs", "mod.rs", "mod.rs",
             ],
             "raw transport permits must only be minted inside the mandatory authorization boundary (plus cfg(test) compatibility paths)"
         );

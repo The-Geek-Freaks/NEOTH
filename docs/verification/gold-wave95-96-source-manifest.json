@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T09:15:50.5898584Z",
-  "validationStatus": "Group684 admitted679PASS5FAIL; P208/P211/P212 accepted; five repairs source PASS pending hosted",
+  "capturedUtc": "2026-09-23T09:22:42.7524446Z",
+  "validationStatus": "GUI129 source-admitted129PASS; W329 Core4step admitted; W336338 repairs hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2278,13 +2278,13 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "bytes": 333924,
-      "sha256": "73B36719B773B02DE8D2CCE2ED405F2427B33659CD378DF1CB81B50387094F51"
+      "bytes": 333908,
+      "sha256": "2DA14A467171B2E7A8993BDFCFBBFA8BCF1DF7AA15B441541344E8105DAB834B"
     },
     {
       "path": "SRC/neothd/src/providers/fallback.rs",
-      "bytes": 86471,
-      "sha256": "7A4DAAAF1F3D524C2C8E0D7EDADA2BA1A1983CF59B00FE6F37EF622F09840366"
+      "bytes": 86448,
+      "sha256": "65D3D2E6396960EEA74474B52045441C1FEA4A0C1DE96C9267EEC1CB40D1A140"
     },
     {
       "path": "SRC/neothd/src/providers/gemini_api.rs",
