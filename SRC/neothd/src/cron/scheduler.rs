@@ -396,6 +396,7 @@ pub async fn run_scheduler(
                 let job_id = job.id.clone();
                 let home_for_task = home.clone();
                 let default_provider_routes = Arc::clone(&default_provider_routes);
+                let role_policy_reload = Arc::clone(&reload_controller);
                 tokio::spawn(async move {
                     let _running_guard = RunningJobGuard {
                         job_id: job_id.clone(),
@@ -408,6 +409,7 @@ pub async fn run_scheduler(
                         provider_for_task.as_ref(),
                         &writer_for_task,
                         default_provider_routes.as_slice(),
+                        role_policy_reload,
                     )
                     .await
                     {

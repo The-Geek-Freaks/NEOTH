@@ -679,8 +679,14 @@ fn run_period_reflection_ticks_once(
     // composition cadence. `cfg` and `obs_ref` are immutable snapshots; the
     // v2 execution opt-in comes from that same validated snapshot; an absent
     // opt-in retains the inventory-only legacy behavior.
-    let retention = enforce_daily_retention_with_execution(home, now_unix, &cfg.daily_retention, &cfg.daily_retention_execution, obs_ref)
-        .map_err(|_| "daily retention enforcement failed".to_string());
+    let retention = enforce_daily_retention_with_execution(
+        home,
+        now_unix,
+        &cfg.daily_retention,
+        &cfg.daily_retention_execution,
+        obs_ref,
+    )
+    .map_err(|_| "daily retention enforcement failed".to_string());
     let yearly_tag = year_tag_from_unix(now_unix);
     let yearly = run_period_reflection_tick_once(
         home,

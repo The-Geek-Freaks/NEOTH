@@ -86,7 +86,9 @@ fn set_after_bound_rename_revalidation_for_test(hook: impl FnOnce() + 'static) {
 #[cfg(all(test, unix))]
 fn run_after_bound_rename_revalidation_for_test() {
     TEST_AFTER_BOUND_RENAME_REVALIDATION.with(|slot| {
-        if let Some(hook) = slot.borrow_mut().take() { hook(); }
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
     });
 }
 
@@ -2145,25 +2147,59 @@ pub(crate) fn rename_bound_child(
 ) -> Result<()> {
     validate_child_name(source_name)?;
     validate_child_name(target_name)?;
-    anyhow::ensure!(binding.matches_child(source_parent, source_name, source_display)?, "bound rename source changed before admission: {}", source_display.display());
+    anyhow::ensure!(
+        binding.matches_child(source_parent, source_name, source_display)?,
+        "bound rename source changed before admission: {}",
+        source_display.display()
+    );
     #[cfg(windows)]
     {
-        let handle = binding._handle.as_ref().context("bound rename has no retained mutation handle")?;
+        let handle = binding
+            ._handle
+            .as_ref()
+            .context("bound rename has no retained mutation handle")?;
         windows_rename_open_handle(handle, target_parent, target_name, false, target_display)?;
-        anyhow::ensure!(binding.matches_child(target_parent, target_name, target_display)?, "bound rename target identity changed after commit: {}", target_display.display());
+        anyhow::ensure!(
+            binding.matches_child(target_parent, target_name, target_display)?,
+            "bound rename target identity changed after commit: {}",
+            target_display.display()
+        );
         return Ok(());
     }
     #[cfg(unix)]
     {
         #[cfg(test)]
         run_after_bound_rename_revalidation_for_test();
-        rename_child(source_parent, source_name, target_parent, target_name, false, source_display, target_display)?;
-        if binding.matches_child(target_parent, target_name, target_display)? { return Ok(()); }
+        rename_child(
+            source_parent,
+            source_name,
+            target_parent,
+            target_name,
+            false,
+            source_display,
+            target_display,
+        )?;
+        if binding.matches_child(target_parent, target_name, target_display)? {
+            return Ok(());
+        }
         // The name was raced after the precheck. Restore only the quarantined
         // object with NOREPLACE; a source conflict preserves both objects and
         // deliberately leaves recovery evidence at the target name.
-        let restore = rename_child(target_parent, target_name, source_parent, source_name, false, target_display, source_display);
-        return Err(restore.err().unwrap_or_else(|| anyhow::anyhow!("bound rename identity mismatch; object restored for recovery: {}", source_display.display())));
+        let restore = rename_child(
+            target_parent,
+            target_name,
+            source_parent,
+            source_name,
+            false,
+            target_display,
+            source_display,
+        );
+        return Err(restore.err().unwrap_or_else(|| {
+            anyhow::anyhow!(
+                "bound rename identity mismatch; object restored for recovery: {}",
+                source_display.display()
+            )
+        }));
     }
 }
 
@@ -5668,11 +5704,24 @@ mod tests {
         let displaced = temp.path().join("original.json");
         let target = temp.path().join("target.json");
         std::fs::write(&source, b"same bytes").unwrap();
-        let root = open_bound_directory(temp.path(), false, "test store").unwrap().unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
         let binding = bind_child_object(&root.dir, OsStr::new("source.json"), &source).unwrap();
         std::fs::rename(&source, &displaced).unwrap();
         std::fs::write(&source, b"same bytes").unwrap();
-        assert!(rename_bound_child(&binding, &root.dir, OsStr::new("source.json"), &root.dir, OsStr::new("target.json"), &source, &target).is_err());
+        assert!(
+            rename_bound_child(
+                &binding,
+                &root.dir,
+                OsStr::new("source.json"),
+                &root.dir,
+                OsStr::new("target.json"),
+                &source,
+                &target
+            )
+            .is_err()
+        );
         assert_eq!(std::fs::read(&source).unwrap(), b"same bytes");
         assert_eq!(std::fs::read(&displaced).unwrap(), b"same bytes");
         assert!(!target.exists());
@@ -5686,17 +5735,34 @@ mod tests {
         let displaced = temp.path().join("original.json");
         let target = temp.path().join("target.json");
         std::fs::write(&source, b"same bytes").unwrap();
-        let root = open_bound_directory(temp.path(), false, "test store").unwrap().unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
         let binding = bind_child_object(&root.dir, OsStr::new("source.json"), &source).unwrap();
-        let hook_source = source.clone(); let hook_displaced = displaced.clone();
+        let hook_source = source.clone();
+        let hook_displaced = displaced.clone();
         set_after_bound_rename_revalidation_for_test(move || {
             std::fs::rename(&hook_source, &hook_displaced).unwrap();
             std::fs::write(&hook_source, b"same bytes").unwrap();
         });
-        assert!(rename_bound_child(&binding, &root.dir, OsStr::new("source.json"), &root.dir, OsStr::new("target.json"), &source, &target).is_err());
+        assert!(
+            rename_bound_child(
+                &binding,
+                &root.dir,
+                OsStr::new("source.json"),
+                &root.dir,
+                OsStr::new("target.json"),
+                &source,
+                &target
+            )
+            .is_err()
+        );
         assert_eq!(std::fs::read(&source).unwrap(), b"same bytes");
         assert_eq!(std::fs::read(&displaced).unwrap(), b"same bytes");
-        assert!(!target.exists(), "foreign replacement must be restored, never accepted at target");
+        assert!(
+            !target.exists(),
+            "foreign replacement must be restored, never accepted at target"
+        );
     }
 
     #[test]

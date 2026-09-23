@@ -669,6 +669,7 @@ fn build_execution(
     tools: Vec<String>,
 ) -> Result<ExecutionPolicy> {
     Ok(ExecutionPolicy {
+        hemisphere_role: None,
         provider: provider
             .as_deref()
             .map(|value| parse_provider(value, "primary"))
@@ -1405,6 +1406,7 @@ jobs:
         delivery.thread = Some("daily".into());
         delivery.best_effort = true;
         let execution = ExecutionPolicy {
+            hemisphere_role: None,
             provider: Some(InferenceProvider::LocalOllama),
             model: Some("qwen3:8b".into()),
             profile: Some("formal".into()),

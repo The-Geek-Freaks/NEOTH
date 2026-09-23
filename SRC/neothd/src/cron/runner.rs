@@ -117,7 +117,7 @@ pub async fn run_job_at(
     provider: &AuthorizedProvider,
     writer: &WalWriterHandle,
 ) -> Result<RunOutcome> {
-    run_job_at_inner(home, job, provider, writer, None).await
+    run_job_at_inner(home, job, provider, writer, None, None).await
 }
 
 /// Daemon-scheduler entrypoint. `default_provider_routes` is captured from the
@@ -130,8 +130,17 @@ pub(crate) async fn run_job_at_with_default_provider_routes(
     provider: &AuthorizedProvider,
     writer: &WalWriterHandle,
     default_provider_routes: &[crate::consent::ConsentRoute],
+    role_policy_reload: Arc<crate::config::reload::ReloadController>,
 ) -> Result<RunOutcome> {
-    run_job_at_inner(home, job, provider, writer, Some(default_provider_routes)).await
+    run_job_at_inner(
+        home,
+        job,
+        provider,
+        writer,
+        Some(default_provider_routes),
+        Some(role_policy_reload),
+    )
+    .await
 }
 
 async fn run_job_at_inner(
@@ -140,6 +149,7 @@ async fn run_job_at_inner(
     provider: &AuthorizedProvider,
     writer: &WalWriterHandle,
     default_provider_routes: Option<&[crate::consent::ConsentRoute]>,
+    role_policy_reload: Option<Arc<crate::config::reload::ReloadController>>,
 ) -> Result<RunOutcome> {
     let config_path = home.join("freedom.yaml");
     let runtime = crate::config::load_runtime_config_pair_from_path_or_default(&config_path)
@@ -163,7 +173,15 @@ async fn run_job_at_inner(
                 .with_context(|| format!("Cron job `{}` primary provider consent", job.id))?;
         }
     }
-    let provider = resolve_job_provider(home, job, provider, writer, &config).await?;
+    let provider = resolve_job_provider(
+        home,
+        job,
+        provider,
+        writer,
+        &config,
+        role_policy_reload,
+    )
+    .await?;
     if job.execution.thinking_budget.is_some()
         && !provider.get().request_controls().supports_thinking_budget()
     {
@@ -295,8 +313,9 @@ async fn resolve_job_provider<'a>(
     default_provider: &'a AuthorizedProvider,
     writer: &WalWriterHandle,
     config: &crate::config::FreedomConfig,
+    role_policy_reload: Option<Arc<crate::config::reload::ReloadController>>,
 ) -> Result<JobProvider<'a>> {
-    if job.execution.provider.is_none() && job.execution.fallback.is_empty() {
+    if !cron_has_job_provider_intent(job) {
         return Ok(JobProvider::Borrowed(default_provider));
     }
 
@@ -322,6 +341,22 @@ async fn resolve_job_provider<'a>(
         scoped.provider_api_version = primary_slot.api_version.clone();
         scoped.inference.mode = crate::config::inference::TopologyMode::Custom;
         scoped.inference.left = primary_slot;
+    } else if let Some(model) = job.execution.model.clone() {
+        // A model-only Cron override retains the configured provider topology
+        // but must build a job-local provider so the final leaf sees the
+        // requested model and its role authority. A concrete Left slot wins
+        // over top-level provider_model during provider construction, so carry
+        // the model into that selected slot as well.
+        scoped.provider_model = Some(model.clone());
+        let mut primary_slot = config
+            .inference
+            .slot_for(crate::config::inference::HemisphereRole::Left)
+            .clone();
+        if primary_slot.provider.is_some() {
+            primary_slot.model = Some(model);
+            scoped.inference.mode = crate::config::inference::TopologyMode::Custom;
+            scoped.inference.left = primary_slot;
+        }
     }
     if !job.execution.fallback.is_empty() {
         scoped.fallback.chain = job
@@ -340,23 +375,72 @@ async fn resolve_job_provider<'a>(
             .unwrap_or(u8::MAX)
             .max(1);
     }
+    let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+        scoped.autonomy_policy(),
+        Some(writer.clone()),
+        scoped.tokens.max_per_request,
+    )
+    .with_usage_home(home.to_path_buf())
+    .with_usage_automated(true);
+    let authorizer = cron_role_authorizer(authorizer, job, config)?;
+    let authorizer = match role_policy_reload {
+        Some(reload) => authorizer.with_role_policy_reload(reload),
+        None => authorizer,
+    };
     let raw = crate::providers::fallback_chain_from_config(&scoped, home, Some(writer.clone()))
         .await
         .with_context(|| format!("build provider policy for Cron job `{}`", job.id))?;
     let default_model = crate::providers::provider_default_wire_model(raw.as_ref());
     let authorized = AuthorizedProvider::from_box(
         raw,
-        crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
-            scoped.autonomy_policy(),
-            Some(writer.clone()),
-            scoped.tokens.max_per_request,
-        )
-        .with_usage_home(home.to_path_buf())
-        .with_usage_automated(true),
+        authorizer,
         default_model,
         "cron.job",
     );
     Ok(JobProvider::Owned(Box::new(authorized)))
+}
+
+/// Return whether job-local provider intent requires Cron to build and bind a
+/// fresh provider topology instead of borrowing the daemon default provider.
+/// A role-only job binds that actual default topology to its declared origin.
+fn cron_has_job_provider_intent(job: &Job) -> bool {
+    job.execution.provider.is_some()
+        || job.execution.model.is_some()
+        || !job.execution.fallback.is_empty()
+        || job.execution.hemisphere_role.is_some()
+}
+
+/// Bind job-local Cron provider intent to the operator-selected Hemisphere
+/// role when a configured role policy is active. The selected role remains the
+/// authority for every leaf in the already-built fallback chain; this helper
+/// never changes provider selection or fallback order.
+fn cron_role_authorizer(
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
+    job: &Job,
+    config: &crate::config::FreedomConfig,
+) -> Result<crate::providers::cost_authorization::ProviderCallAuthorizer> {
+    if config.inference.role_policy.is_none() || !cron_has_job_provider_intent(job) {
+        return Ok(authorizer);
+    }
+
+    let role = job.execution.hemisphere_role.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Cron job `{}` declares provider intent while role policy is configured; execution.hemisphere_role is required",
+            job.id
+        )
+    })?;
+    let provider = config
+        .inference
+        .slot_for(role)
+        .provider
+        .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
+        .ok_or_else(|| anyhow::anyhow!(
+            "Cron job `{}` role `{}` has no configured provider identity",
+            job.id,
+            role.as_str()
+        ))?;
+
+    Ok(authorizer.with_role_dispatch(role, provider, Arc::new(config.clone())))
 }
 
 /// Resolve credentials only from a slot that explicitly names `provider`.
@@ -1799,6 +1883,7 @@ channel_accounts:
             &default_provider,
             &writer,
             &crate::config::FreedomConfig::default(),
+            None,
         )
         .await
         {
@@ -1857,6 +1942,10 @@ channel_accounts:
             &provider,
             &writer,
             &startup_routes,
+            Arc::new(crate::config::reload::ReloadController::new(
+                startup_config,
+                home.path().join("freedom.yaml"),
+            )),
         )
         .await
         .expect_err("revoked fallback consent must stop the borrowed provider topology");
@@ -1972,6 +2061,401 @@ channel_accounts:
                 usage_measurements: None,
             })
         }
+    }
+
+    struct W289CountingProvider {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Provider for W289CountingProvider {
+        fn name(&self) -> &'static str {
+            "local_ollama"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("qwen-cron")
+        }
+
+        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+            Some(64)
+        }
+
+        async fn complete(&self, req: Request) -> Result<Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Completion {
+                termination: Default::default(),
+                text: "cron leaf response".to_owned(),
+                identity: Default::default(),
+                model: req.model.unwrap_or_default(),
+                latency: Duration::ZERO,
+                input_tokens: None,
+                output_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                usage_measurements: None,
+            })
+        }
+    }
+
+    fn w289_role_config(allowed_model: &str) -> crate::config::FreedomConfig {
+        let mut config = crate::config::FreedomConfig::default();
+        config.inference.default_slot.provider =
+            Some(crate::config::inference::InferenceProvider::LocalOllama);
+        config.inference.role_policy = Some(crate::config::role_policy::RolePolicyConfig {
+            rules: vec![crate::config::role_policy::RolePolicyRule {
+                role: crate::config::inference::HemisphereRole::Left,
+                provider: crate::config::inference::InferenceProvider::LocalOllama,
+                model: Some(allowed_model.to_owned()),
+            }],
+        });
+        config
+    }
+
+    fn w289_override_job(
+        hemisphere_role: Option<crate::config::inference::HemisphereRole>,
+    ) -> Job {
+        let mut job = briefing_job();
+        job.execution.provider =
+            Some(crate::config::inference::InferenceProvider::LocalOllama);
+        job.execution.model = Some("qwen-cron".to_owned());
+        job.execution.hemisphere_role = hemisphere_role;
+        job
+    }
+
+    fn w289_lifecycle_event_types(segment: &Path) -> Vec<u8> {
+        let bytes = std::fs::read(segment).expect("read W289 lifecycle WAL");
+        let header = crate::wal::segment_header::parse_segment_header(&bytes)
+            .expect("parse W289 lifecycle WAL header");
+        let mut cursor = header.header_len();
+        let mut events = Vec::new();
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..])
+                .expect("decode W289 lifecycle WAL frame");
+            if frame.header.event_type != crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
+                events.push(frame.header.event_type);
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        events
+    }
+
+    fn w289_request(model: &str) -> Request {
+        Request {
+            prompt: "run the Cron override".to_owned(),
+            model: Some(model.to_owned()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn w289_cron_provider_intent_selector_includes_model_and_role_only_jobs() {
+        let mut model_only = briefing_job();
+        model_only.execution.model = Some("qwen-cron".to_owned());
+        assert!(
+            cron_has_job_provider_intent(&model_only),
+            "the production selector must not borrow the default provider for model-only jobs"
+        );
+
+        let mut role_only = briefing_job();
+        role_only.execution.hemisphere_role =
+            Some(crate::config::inference::HemisphereRole::Left);
+        assert!(
+            cron_has_job_provider_intent(&role_only),
+            "the production selector must build and bind a role-only default topology"
+        );
+
+        assert!(
+            !cron_has_job_provider_intent(&briefing_job()),
+            "a job with no provider intent retains the borrowed default provider"
+        );
+    }
+
+    #[tokio::test]
+    async fn w289_cron_resolver_builds_owned_topology_for_model_and_role_only_intent() {
+        let home = tempdir().expect("temporary W289 resolver home");
+        let (writer, join) =
+            wal_spawn(home.path().join("w289-resolver-000001.wal")).expect("start W289 WAL writer");
+        let default_provider = authorized(CountingProvider {
+            calls: Arc::new(AtomicUsize::new(0)),
+        });
+        let config = w289_role_config("qwen-cron");
+
+        let mut model_only = briefing_job();
+        model_only.execution.model = Some("qwen-cron".to_owned());
+        model_only.execution.hemisphere_role =
+            Some(crate::config::inference::HemisphereRole::Left);
+        let model_provider = resolve_job_provider(
+            home.path(),
+            &model_only,
+            &default_provider,
+            &writer,
+            &config,
+            None,
+        )
+        .await
+        .expect("model-only intent constructs a bound Cron topology");
+        assert!(matches!(&model_provider, JobProvider::Owned(_)));
+
+        let mut role_only = briefing_job();
+        role_only.execution.hemisphere_role =
+            Some(crate::config::inference::HemisphereRole::Left);
+        let role_provider = resolve_job_provider(
+            home.path(),
+            &role_only,
+            &default_provider,
+            &writer,
+            &config,
+            None,
+        )
+        .await
+        .expect("role-only intent constructs a bound Cron topology");
+        assert!(matches!(&role_provider, JobProvider::Owned(_)));
+
+        drop(model_provider);
+        drop(role_provider);
+        drop(default_provider);
+        drop(writer);
+        join.await.expect("W289 WAL writer drained");
+    }
+
+    #[tokio::test]
+    async fn w289_cron_override_role_binding_admits_exact_leaf_once() {
+        let dir = tempdir().expect("temporary W289 WAL directory");
+        let segment = dir.path().join("w289-cron-allowed-000001.wal");
+        let (writer, join) =
+            wal_spawn(segment.clone()).expect("start W289 WAL writer");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let config = w289_role_config("qwen-cron");
+        let job = w289_override_job(Some(
+            crate::config::inference::HemisphereRole::Left,
+        ));
+        let authorizer = cron_role_authorizer(
+            crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+                crate::permissions::AutonomyLevel::Full,
+                Some(writer.clone()),
+                crate::config::TokensConfig::default_max_per_request(),
+            ),
+            &job,
+            &config,
+        )
+        .expect("configured Cron Left role");
+        let provider = AuthorizedProvider::from_box(
+            Box::new(W289CountingProvider {
+                calls: Arc::clone(&calls),
+            }),
+            authorizer,
+            Some("qwen-cron".to_owned()),
+            "cron.job",
+        );
+
+        provider
+            .complete(w289_request("qwen-cron"))
+            .await
+            .expect("admitted Cron leaf");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        drop(provider);
+        drop(writer);
+        join.await.expect("W289 WAL writer drained");
+        assert!(
+            w289_lifecycle_event_types(&segment)
+                .contains(&crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST)
+        );
+    }
+
+    #[tokio::test]
+    async fn w289_cron_override_role_binding_denies_disallowed_model_before_effect() {
+        let dir = tempdir().expect("temporary W289 WAL directory");
+        let segment = dir.path().join("w289-cron-denied-000001.wal");
+        let (writer, join) =
+            wal_spawn(segment.clone()).expect("start W289 WAL writer");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let config = w289_role_config("qwen-cron");
+        let job = w289_override_job(Some(
+            crate::config::inference::HemisphereRole::Left,
+        ));
+        let authorizer = cron_role_authorizer(
+            crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+                crate::permissions::AutonomyLevel::Full,
+                Some(writer.clone()),
+                crate::config::TokensConfig::default_max_per_request(),
+            ),
+            &job,
+            &config,
+        )
+        .expect("configured Cron Left role");
+        let provider = AuthorizedProvider::from_box(
+            Box::new(W289CountingProvider {
+                calls: Arc::clone(&calls),
+            }),
+            authorizer,
+            Some("qwen-cron".to_owned()),
+            "cron.job",
+        );
+
+        let error = provider
+            .complete(w289_request("qwen-disallowed"))
+            .await
+            .expect_err("Left policy must reject the final model before dispatch");
+        assert!(
+            error.to_string().contains("role dispatch denied"),
+            "{error:#}"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        drop(provider);
+        drop(writer);
+        join.await.expect("W289 WAL writer drained");
+        assert!(
+            !w289_lifecycle_event_types(&segment)
+                .contains(&crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST),
+            "a denied Cron role route must not open a provider effect"
+        );
+    }
+
+    #[tokio::test]
+    async fn w289_cron_role_binding_rejects_accepted_policy_reload_before_raw_send() {
+        let dir = tempdir().expect("temporary W289 reload directory");
+        let config_path = dir.path().join("freedom.yaml");
+        let initial = w289_role_config("qwen-cron");
+        std::fs::write(
+            &config_path,
+            initial.public_yaml().expect("serialize initial Cron role policy"),
+        )
+        .expect("write initial Cron role policy");
+        let reload = Arc::new(crate::config::reload::ReloadController::new(
+            initial.clone(),
+            config_path.clone(),
+        ));
+        let segment = dir.path().join("w289-cron-policy-reload-000001.wal");
+        let (writer, join) = wal_spawn(segment).expect("start W289 WAL writer");
+        let ack_gate =
+            crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST);
+        let writer = writer.with_test_ack_gate(ack_gate.clone());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let job = w289_override_job(Some(
+            crate::config::inference::HemisphereRole::Left,
+        ));
+        let authorizer = cron_role_authorizer(
+            crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+                crate::permissions::AutonomyLevel::Full,
+                Some(writer.clone()),
+                crate::config::TokensConfig::default_max_per_request(),
+            ),
+            &job,
+            &initial,
+        )
+        .expect("configured Cron Left role")
+        .with_role_policy_reload(Arc::clone(&reload));
+        let provider = AuthorizedProvider::from_box(
+            Box::new(W289CountingProvider {
+                calls: Arc::clone(&calls),
+            }),
+            authorizer,
+            Some("qwen-cron".to_owned()),
+            "cron.job",
+        );
+
+        let pending = provider.complete(w289_request("qwen-cron"));
+        tokio::pin!(pending);
+        tokio::select! {
+            result = &mut pending => panic!("raw transport completed before request lifecycle ack: {result:?}"),
+            result = tokio::time::timeout(Duration::from_secs(5), ack_gate.wait_until_durable()) => {
+                result.expect("Cron provider request did not become durable");
+            }
+        }
+
+        let mut reloaded = reload.latest().as_ref().clone();
+        reloaded
+            .inference
+            .role_policy
+            .as_mut()
+            .expect("initial Cron role policy")
+            .rules
+            .push(crate::config::role_policy::RolePolicyRule {
+                role: crate::config::inference::HemisphereRole::Right,
+                provider: crate::config::inference::InferenceProvider::OpenAi,
+                model: Some("gpt-5".to_owned()),
+            });
+        std::fs::write(
+            &config_path,
+            reloaded.public_yaml().expect("serialize reloaded Cron policy"),
+        )
+        .expect("write reloaded Cron policy");
+        assert!(matches!(
+            reload.try_reload().expect("reload Cron role-policy generation"),
+            crate::config::reload::ReloadResult::Reloaded { .. }
+        ));
+
+        ack_gate.release();
+        let error = pending
+            .await
+            .expect_err("accepted changed Cron role policy must block raw transport");
+        assert!(
+            error
+                .to_string()
+                .contains("role dispatch policy changed"),
+            "{error:#}"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        drop(provider);
+        drop(writer);
+        join.await.expect("W289 WAL writer drained");
+    }
+
+    #[test]
+    fn w289_cron_override_requires_explicit_origin_when_policy_active() {
+        let config = w289_role_config("qwen-cron");
+        let job = w289_override_job(None);
+        let error = match cron_role_authorizer(
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            &job,
+            &config,
+        ) {
+            Ok(_) => panic!(
+                "a policy-governed Cron override needs an explicit origin role"
+            ),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("execution.hemisphere_role is required"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn w289_cron_model_only_override_requires_explicit_origin_when_policy_active() {
+        let config = w289_role_config("qwen-cron");
+        let mut job = briefing_job();
+        job.execution.model = Some("qwen-cron".to_owned());
+        let error = match cron_role_authorizer(
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            &job,
+            &config,
+        ) {
+            Ok(_) => panic!("a model-only Cron override needs an explicit origin role"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("execution.hemisphere_role is required"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn w289_cron_override_without_role_policy_preserves_legacy_unbound_authorizer() {
+        let job = w289_override_job(None);
+        cron_role_authorizer(
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            &job,
+            &crate::config::FreedomConfig::default(),
+        )
+        .expect("legacy Cron override remains admissible without a role policy");
     }
 
     struct SequenceProvider {

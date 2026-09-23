@@ -185,6 +185,11 @@ pub struct ProviderTarget {
 /// required before the MCP dispatcher is enabled.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionPolicy {
+    /// Optional originating Hemisphere authority for this job-local provider
+    /// topology. Older jobs omit it; the runner preserves that compatibility
+    /// unless a configured role policy governs an overridden provider route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hemisphere_role: Option<crate::config::inference::HemisphereRole>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<crate::config::inference::InferenceProvider>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

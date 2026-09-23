@@ -2,6 +2,31 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W289 Cron role binding and W290 hosted retention repair (2026-09-23):**
+Cron now treats provider, model, fallback and explicit role as job-local provider
+intent. Active role policy requires an explicit origin; model-only and role-only
+jobs build a bound topology, and the daemon scheduler passes its accepted reload
+controller to the final provider authorizer. Eight actual resolver/provider/WAL
+fixtures cover admission, rejection and the policy reload before raw send.
+Independent source re-review passed. P2-15 remains open.
+
+Core86fef run35822418284 failed before behavior execution: one reference-depth
+comparison, two unconstrained record vectors and an unformatted independent-if
+lint. W290 repairs those exact diagnostics and preserves underlying NotFound
+through contextual retention reads, so existing missing-note recovery can run.
+The exact five-file hosted rustfmt patch from Preflight35822403521 is imported.
+W280/P2-04 remains unaccepted until hosted behavior passes.
+
+Inventory569 paths; universal native960; platform extras Windows19/Linux31/macOS30.
+Grouped selection564; GUI98+27Linux/26macOS unchanged. Road1324 =
+1021 checked/301 open/2 partial; WS-LF14 done/104 open.
+FullCIce0 attempt2 ended with runner shutdown/exit143 during Workspace Clippy,
+after about8m46s of its30-minute step budget. No Rust/Clippy diagnostic supports
+a source repair. GUI1256dae run35820987854 is still active.
+No local executable validation ran. The next gates are fresh hosted Core,
+then Group564 after test-target typechecking, followed by the full platform CI.
+
+
 **W280 retention implementation and W288 macOS budget (2026-09-23):**
 W280 introduces explicit default-off Daily retention execution v2. Settlement
 receipts bind owned notes to exact file objects; archives and notes quarantine

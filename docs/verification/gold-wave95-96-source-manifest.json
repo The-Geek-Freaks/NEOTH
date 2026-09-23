@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T05:24:23.2143331Z",
-  "validationStatus": "W280 explicit default-off retention v2 source/recovery reviewed,21new+30existing groupedcases await hosted; W288macOS budget150/190; W285 reviewedcallsite fingerprint rebound",
+  "capturedUtc": "2026-09-23T05:38:00.3742803Z",
+  "validationStatus": "W289 cron role source reviewed; W290 retention compiler/io-kind repair with exact hosted format; GitHub behavior pending; absolute local BSOD hold",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -73,8 +73,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 13211,
-      "sha256": "4F4E69B551B8F65DFBCD16C811CA14A701313D9B6D46DB350D1FA0B67B12E210"
+      "bytes": 13257,
+      "sha256": "49C663D27C45F7BC7D550F06639A72D3F2492D3AFCBB89DEF00143D88D5CDA4E"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -473,18 +473,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 126703,
-      "sha256": "EE18AF118BAA001AF156785814276C600F79FA1A3E8807F877C0BB1A3926EE3D"
+      "bytes": 128271,
+      "sha256": "E55375C1C41A36E94962E9EACBAA7812FB0A141933D5E50C97EACD05DE375A2E"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1129681,
-      "sha256": "62FE63CCCA339E971056E70EFED647CC738C571E91BCD6BC48D62645C206ACB6"
+      "bytes": 1131249,
+      "sha256": "3746B9D0FFFF23ADED4694F3586D8B8669BB1E18EC97A403B90AEAA13774EDA3"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1726244,
-      "sha256": "58BA3F23E5F6BA05BAFCF15C7848CE7D049A99AC5276734CE8D0E56E93F4B94D"
+      "bytes": 1727812,
+      "sha256": "406CE11C76731F224165D03AE5E852F6DA3BA21E8C86D6C906F2DFE2E617718A"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1623,8 +1623,8 @@
     },
     {
       "path": "SRC/neothd/src/cron/runner.rs",
-      "bytes": 140053,
-      "sha256": "14C6D8C21D5CE913369B3A87E89550A4E4D27C9312A35C7888EAB2B30D5B2DC2"
+      "bytes": 158480,
+      "sha256": "D384E889F354C4412CF6B04C1222578E5E7F1CDCC17A11E76D10B2D559E2B779"
     },
     {
       "path": "SRC/neothd/src/cron/state.rs",
@@ -1778,8 +1778,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/reflection_cron.rs",
-      "bytes": 81808,
-      "sha256": "025092157BD7B61E77F69632BBA97D8F7EF495F887469EBB65B054E5C142FAB2"
+      "bytes": 81851,
+      "sha256": "7C6870ADE2DACDA0B90A9149199C4BAE93F7A73AC0F5FEFD75288CA5FF132E3B"
     },
     {
       "path": "SRC/neothd/src/daemon/research_runs.rs",
@@ -2408,8 +2408,8 @@
     },
     {
       "path": "SRC/neothd/src/reflection/periodic.rs",
-      "bytes": 230835,
-      "sha256": "55870EEDA4D6FCD64698C4FECF4CF006F32062BC072153F93DC1C0E572E51190"
+      "bytes": 242024,
+      "sha256": "F11375DF465D4B1692555E34795C6FCA4A5D4065E21A948A70110E96A814A08D"
     },
     {
       "path": "SRC/neothd/src/security/mirror_refusal_pipeline.rs",
@@ -2503,8 +2503,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/store.rs",
-      "bytes": 238574,
-      "sha256": "435828015E40B1BF8B8BF592B2E1797C228BF8BB2C113257EEC8A0EB66EC95BB"
+      "bytes": 239405,
+      "sha256": "5A28A58F589CC9CD83CDCF002B15C87535AEBA8CB1CF7A47AC24A457906BE783"
     },
     {
       "path": "SRC/neothd/src/slash/schema.rs",
@@ -2823,13 +2823,13 @@
     },
     {
       "path": "SRC/neothd/src/reflection/retention_authority.rs",
-      "bytes": 11599,
-      "sha256": "D325F754D5787B0373E12E97283D058CA0E76698139C9CD66CA1679C51F6D3B6"
+      "bytes": 13274,
+      "sha256": "3FD6D12AE82612592C6FD273EF606DE66D6C7B675D426AD823574D3B16134594"
     },
     {
       "path": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "bytes": 24020,
-      "sha256": "8E7ED58D601D5FF44ECCCE88FC14872DBEBD1223E6F44518972B83F537FCB39A"
+      "bytes": 26207,
+      "sha256": "02B026C0CA3DB55D884F1D401B0026508955815E2AA3B6B1006E7CBA3086580E"
     },
     {
       "path": "docs/gold-wave280-daily-retention.md",
@@ -2840,6 +2840,16 @@
       "path": "docs/gold-wave288-macos-compile-budget.md",
       "bytes": 1056,
       "sha256": "03D56C01F05F197033EEC80A0F64B445F9A95910416BAE8D3D80C493D5336D0A"
+    },
+    {
+      "path": "docs/gold-wave289-cron-role-binding.md",
+      "bytes": 2398,
+      "sha256": "6F5F980AC2F4B31DA05FAD1CDBED510D80EFBCF92BFF85564E1BDC39EF708688"
+    },
+    {
+      "path": "docs/gold-wave290-retention-hosted-repair.md",
+      "bytes": 1190,
+      "sha256": "E1A579CB1E4DAFBFBF63E1515292A9F9E0C4FA30C5F1F337EABA652B48BC2842"
     }
   ]
 }

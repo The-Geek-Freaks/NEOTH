@@ -826,19 +826,26 @@ impl BoundObsidianDailyTarget {
     }
 
     fn retention_note_receipt(
-        &self, expected: &PeriodReflection, archive_sha256: String,
+        &self,
+        expected: &PeriodReflection,
+        archive_sha256: String,
     ) -> std::io::Result<crate::reflection::retention_authority::DailyNoteReceiptV1> {
         let vault = self.chain.first().expect("vault root is retained");
         let daily = self.chain.last().expect("Daily leaf is retained");
         let name = OsString::from(format!("{}.md", expected.tag));
-        let note = crate::skills::store::bind_child_object(&daily.dir, &name, &daily.path.join(&name))
-            .map_err(std::io::Error::other)?;
-        Ok(crate::reflection::retention_authority::DailyNoteReceiptV1::new(
-            expected.tag.clone(), archive_sha256,
-            hex::encode(Sha256::digest(expected.to_obsidian_md().as_bytes())),
-            note.identity_token().to_string(),
-            vault.binding.identity_token().to_string(), daily.binding.identity_token().to_string(),
-        ))
+        let note =
+            crate::skills::store::bind_child_object(&daily.dir, &name, &daily.path.join(&name))
+                .map_err(std::io::Error::other)?;
+        Ok(
+            crate::reflection::retention_authority::DailyNoteReceiptV1::new(
+                expected.tag.clone(),
+                archive_sha256,
+                hex::encode(Sha256::digest(expected.to_obsidian_md().as_bytes())),
+                note.identity_token().to_string(),
+                vault.binding.identity_token().to_string(),
+                daily.binding.identity_token().to_string(),
+            ),
+        )
     }
 
     /// Revalidate the settlement-only ownership receipt without deriving
@@ -861,26 +868,42 @@ impl BoundObsidianDailyTarget {
             || receipt.vault_root_identity != vault.binding.identity_token()
             || receipt.daily_leaf_identity != daily.binding.identity_token()
         {
-            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Daily note receipt changed"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Daily note receipt changed",
+            ));
         }
         self.revalidate()?;
         let name = OsString::from(&receipt.note_leaf);
         let path = daily.path.join(&name);
-        let bytes = match read_retention_file(&daily.dir, &name, &path, MAX_DAILY_RETENTION_NOTE_BYTES) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-            Err(error) => return Err(error),
-        };
+        let bytes =
+            match read_retention_file(&daily.dir, &name, &path, MAX_DAILY_RETENTION_NOTE_BYTES) {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(error) => return Err(error),
+            };
         let note = crate::skills::store::bind_child_object(&daily.dir, &name, &path)
             .map_err(std::io::Error::other)?;
         if note.identity_token() != receipt.note_object_identity {
-            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Daily note object changed"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Daily note object changed",
+            ));
         }
-        if !note.matches_child(&daily.dir, &name, &path).map_err(std::io::Error::other)? {
-            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Daily note changed during receipt validation"));
+        if !note
+            .matches_child(&daily.dir, &name, &path)
+            .map_err(std::io::Error::other)?
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Daily note changed during receipt validation",
+            ));
         }
         if hex::encode(Sha256::digest(&bytes)) != receipt.note_sha256 {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Daily note no longer matches receipt"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Daily note no longer matches receipt",
+            ));
         }
         Ok(true)
     }
@@ -892,10 +915,26 @@ impl BoundObsidianDailyTarget {
         let daily = self.chain.last().expect("Daily leaf is retained");
         self.revalidate()?;
         let root_path = daily.path.join(".neoth-retention-v2");
-        let root = crate::skills::store::open_or_create_private_child_dir(&daily.dir, OsStr::new(".neoth-retention-v2"), &root_path).map_err(std::io::Error::other)?;
+        let root = crate::skills::store::open_or_create_private_child_dir(
+            &daily.dir,
+            OsStr::new(".neoth-retention-v2"),
+            &root_path,
+        )
+        .map_err(std::io::Error::other)?;
         let run_path = root_path.join(run_id);
-        let run = crate::skills::store::open_or_create_private_child_dir(&root, OsStr::new(run_id), &run_path).map_err(std::io::Error::other)?;
-        let (_, binding) = crate::skills::store::bind_retained_real_child_dir(&root, OsStr::new(run_id), &run_path, run).map_err(std::io::Error::other)?;
+        let run = crate::skills::store::open_or_create_private_child_dir(
+            &root,
+            OsStr::new(run_id),
+            &run_path,
+        )
+        .map_err(std::io::Error::other)?;
+        let (_, binding) = crate::skills::store::bind_retained_real_child_dir(
+            &root,
+            OsStr::new(run_id),
+            &run_path,
+            run,
+        )
+        .map_err(std::io::Error::other)?;
         Ok(binding.identity_token().to_string())
     }
 
@@ -912,15 +951,24 @@ impl BoundObsidianDailyTarget {
         let daily = self.chain.last().expect("Daily leaf is retained");
         let quarantine_root_path = daily.path.join(".neoth-retention-v2");
         let quarantine_root = crate::skills::store::open_or_create_private_child_dir(
-            &daily.dir, OsStr::new(".neoth-retention-v2"), &quarantine_root_path,
-        ).map_err(std::io::Error::other)?;
+            &daily.dir,
+            OsStr::new(".neoth-retention-v2"),
+            &quarantine_root_path,
+        )
+        .map_err(std::io::Error::other)?;
         let run_path = quarantine_root_path.join(run_id);
         let run = crate::skills::store::open_or_create_private_child_dir(
-            &quarantine_root, OsStr::new(run_id), &run_path,
-        ).map_err(std::io::Error::other)?;
+            &quarantine_root,
+            OsStr::new(run_id),
+            &run_path,
+        )
+        .map_err(std::io::Error::other)?;
         // Repeat the complete receipt validation immediately before rename.
         if !self.verify_owned_retention_note(receipt, tag, archive_sha256)? {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Daily note disappeared during quarantine"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Daily note disappeared during quarantine",
+            ));
         }
         let name = OsString::from(&receipt.note_leaf);
         let source_path = daily.path.join(&name);
@@ -928,13 +976,27 @@ impl BoundObsidianDailyTarget {
         let source = crate::skills::store::bind_child_object(&daily.dir, &name, &source_path)
             .map_err(std::io::Error::other)?;
         if source.identity_token() != receipt.note_object_identity {
-            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Daily note object changed before rename"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Daily note object changed before rename",
+            ));
         }
-        crate::skills::store::rename_bound_child(&source, &daily.dir, &name, &run, &name, &source_path, &target_path)
-            .map_err(std::io::Error::other)?;
+        crate::skills::store::rename_bound_child(
+            &source,
+            &daily.dir,
+            &name,
+            &run,
+            &name,
+            &source_path,
+            &target_path,
+        )
+        .map_err(std::io::Error::other)?;
         let bytes = read_retention_file(&run, &name, &target_path, MAX_DAILY_RETENTION_NOTE_BYTES)?;
         if hex::encode(Sha256::digest(&bytes)) != receipt.note_sha256 {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Daily note quarantine digest changed"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Daily note quarantine digest changed",
+            ));
         }
         Ok(Some(run_id.to_string()))
     }
@@ -950,25 +1012,52 @@ impl BoundObsidianDailyTarget {
             || receipt.vault_root_identity != vault.binding.identity_token()
             || receipt.daily_leaf_identity != daily.binding.identity_token()
         {
-            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Daily note receipt changed"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Daily note receipt changed",
+            ));
         }
         self.revalidate()?;
         let root_path = daily.path.join(".neoth-retention-v2");
-        let Some(root) = crate::skills::store::open_real_child_dir_if_present(&daily.dir, OsStr::new(".neoth-retention-v2"), &root_path).map_err(std::io::Error::other)? else {
-            return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Daily note quarantine missing"));
+        let Some(root) = crate::skills::store::open_real_child_dir_if_present(
+            &daily.dir,
+            OsStr::new(".neoth-retention-v2"),
+            &root_path,
+        )
+        .map_err(std::io::Error::other)?
+        else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Daily note quarantine missing",
+            ));
         };
         let run_path = root_path.join(run_id);
-        let Some(run) = crate::skills::store::open_real_child_dir_if_present(&root, OsStr::new(run_id), &run_path).map_err(std::io::Error::other)? else {
-            return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Daily note quarantine run missing"));
+        let Some(run) = crate::skills::store::open_real_child_dir_if_present(
+            &root,
+            OsStr::new(run_id),
+            &run_path,
+        )
+        .map_err(std::io::Error::other)?
+        else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Daily note quarantine run missing",
+            ));
         };
         let name = OsString::from(&receipt.note_leaf);
         let path = run_path.join(&name);
         let bytes = read_retention_file(&run, &name, &path, MAX_DAILY_RETENTION_NOTE_BYTES)?;
         if hex::encode(Sha256::digest(&bytes)) != receipt.note_sha256 {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Daily note quarantine digest changed"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Daily note quarantine digest changed",
+            ));
         }
-        let binding = crate::skills::store::bind_child_object(&run, &name, &path).map_err(std::io::Error::other)?;
-        binding.remove_bound_file(&run, &name, &path).map_err(std::io::Error::other)
+        let binding = crate::skills::store::bind_child_object(&run, &name, &path)
+            .map_err(std::io::Error::other)?;
+        binding
+            .remove_bound_file(&run, &name, &path)
+            .map_err(std::io::Error::other)
     }
 
     fn quarantined_retention_note_matches(
@@ -979,30 +1068,74 @@ impl BoundObsidianDailyTarget {
         let daily = self.chain.last().expect("Daily leaf is retained");
         self.revalidate()?;
         let root_path = daily.path.join(".neoth-retention-v2");
-        let Some(root) = crate::skills::store::open_real_child_dir_if_present(&daily.dir, OsStr::new(".neoth-retention-v2"), &root_path).map_err(std::io::Error::other)? else { return Ok(false); };
+        let Some(root) = crate::skills::store::open_real_child_dir_if_present(
+            &daily.dir,
+            OsStr::new(".neoth-retention-v2"),
+            &root_path,
+        )
+        .map_err(std::io::Error::other)?
+        else {
+            return Ok(false);
+        };
         let run_path = root_path.join(run_id);
-        let Some(run) = crate::skills::store::open_real_child_dir_if_present(&root, OsStr::new(run_id), &run_path).map_err(std::io::Error::other)? else { return Ok(false); };
+        let Some(run) = crate::skills::store::open_real_child_dir_if_present(
+            &root,
+            OsStr::new(run_id),
+            &run_path,
+        )
+        .map_err(std::io::Error::other)?
+        else {
+            return Ok(false);
+        };
         let name = OsString::from(&receipt.note_leaf);
         let path = run_path.join(&name);
         match read_retention_file(&run, &name, &path, MAX_DAILY_RETENTION_NOTE_BYTES) {
             Ok(bytes) => {
-                let binding = crate::skills::store::bind_child_object(&run, &name, &path).map_err(std::io::Error::other)?;
+                let binding = crate::skills::store::bind_child_object(&run, &name, &path)
+                    .map_err(std::io::Error::other)?;
                 Ok(hex::encode(Sha256::digest(&bytes)) == receipt.note_sha256
                     && binding.identity_token() == receipt.note_object_identity
-                    && binding.matches_child(&run, &name, &path).map_err(std::io::Error::other)?)
+                    && binding
+                        .matches_child(&run, &name, &path)
+                        .map_err(std::io::Error::other)?)
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
             Err(error) => Err(error),
         }
     }
 
-    fn retention_note_quarantine_run_identity(&self, run_id: &str) -> std::io::Result<Option<String>> {
+    fn retention_note_quarantine_run_identity(
+        &self,
+        run_id: &str,
+    ) -> std::io::Result<Option<String>> {
         let daily = self.chain.last().expect("Daily leaf is retained");
         let root_path = daily.path.join(".neoth-retention-v2");
-        let Some(root) = crate::skills::store::open_real_child_dir_if_present(&daily.dir, OsStr::new(".neoth-retention-v2"), &root_path).map_err(std::io::Error::other)? else { return Ok(None); };
+        let Some(root) = crate::skills::store::open_real_child_dir_if_present(
+            &daily.dir,
+            OsStr::new(".neoth-retention-v2"),
+            &root_path,
+        )
+        .map_err(std::io::Error::other)?
+        else {
+            return Ok(None);
+        };
         let run_path = root_path.join(run_id);
-        let Some(run) = crate::skills::store::open_real_child_dir_if_present(&root, OsStr::new(run_id), &run_path).map_err(std::io::Error::other)? else { return Ok(None); };
-        let (_, binding) = crate::skills::store::bind_retained_real_child_dir(&root, OsStr::new(run_id), &run_path, run).map_err(std::io::Error::other)?;
+        let Some(run) = crate::skills::store::open_real_child_dir_if_present(
+            &root,
+            OsStr::new(run_id),
+            &run_path,
+        )
+        .map_err(std::io::Error::other)?
+        else {
+            return Ok(None);
+        };
+        let (_, binding) = crate::skills::store::bind_retained_real_child_dir(
+            &root,
+            OsStr::new(run_id),
+            &run_path,
+            run,
+        )
+        .map_err(std::io::Error::other)?;
         Ok(Some(binding.identity_token().to_string()))
     }
     fn write_exact(&self, expected: &PeriodReflection) -> std::io::Result<PeriodSyncOutcome> {
@@ -1471,13 +1604,26 @@ pub fn settle_daily_admission(
         }
     }
     if let Some(target) = obsidian_target.as_ref() {
-        let archive_sha256 = archive.load_record(&settled.tag)
-            .map_err(|_| DailySettlementError { reason: "receipt archive read failed" })?
-            .ok_or(DailySettlementError { reason: "receipt archive missing" })?.1;
+        let archive_sha256 = archive
+            .load_record(&settled.tag)
+            .map_err(|_| DailySettlementError {
+                reason: "receipt archive read failed",
+            })?
+            .ok_or(DailySettlementError {
+                reason: "receipt archive missing",
+            })?
+            .1;
         crate::reflection::retention_authority::save_daily_note_receipt(
-            home, &target.retention_note_receipt(&settled, archive_sha256)
-                .map_err(|_| DailySettlementError { reason: "note ownership receipt failed" })?,
-        ).map_err(|_| DailySettlementError { reason: "note ownership receipt failed" })?;
+            home,
+            &target
+                .retention_note_receipt(&settled, archive_sha256)
+                .map_err(|_| DailySettlementError {
+                    reason: "note ownership receipt failed",
+                })?,
+        )
+        .map_err(|_| DailySettlementError {
+            reason: "note ownership receipt failed",
+        })?;
     }
     Ok(outcome)
 }
@@ -1823,7 +1969,13 @@ fn read_retention_file(
     max_bytes: usize,
 ) -> std::io::Result<Vec<u8>> {
     crate::skills::store::read_regular_file_bounded(parent, name, path, max_bytes)
-        .map_err(std::io::Error::other)
+        .map_err(|error| {
+            let kind = error
+                .chain()
+                .find_map(|cause| cause.downcast_ref::<std::io::Error>().map(std::io::Error::kind))
+                .unwrap_or(std::io::ErrorKind::Other);
+            std::io::Error::new(kind, error)
+        })
 }
 
 fn plan_daily_archive_retention(
@@ -1834,7 +1986,9 @@ fn plan_daily_archive_retention(
 ) -> std::io::Result<RetentionArchivePlan> {
     let mut records = BTreeMap::new();
     for name in bounded_retention_child_names(&archive.daily, MAX_DAILY_RETENTION_ENTRIES)? {
-        if name == OsStr::new(".retention-v2") { continue; }
+        if name == OsStr::new(".retention-v2") {
+            continue;
+        }
         let tag = archive_tag_from_retention_leaf(&name)?;
         if tag.as_str() > current_tag {
             return Err(std::io::Error::new(
@@ -2061,13 +2215,25 @@ pub fn enforce_daily_retention(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum RetentionLeafState { Missing, Exact, Mismatch }
+enum RetentionLeafState {
+    Missing,
+    Exact,
+    Mismatch,
+}
 
-fn retention_leaf_matches(parent: &Dir, name: &OsStr, path: &Path, digest: &str, limit: usize) -> std::io::Result<RetentionLeafState> {
+fn retention_leaf_matches(
+    parent: &Dir,
+    name: &OsStr,
+    path: &Path,
+    digest: &str,
+    limit: usize,
+) -> std::io::Result<RetentionLeafState> {
     match read_retention_file(parent, name, path, limit) {
         Ok(bytes) if hex::encode(Sha256::digest(&bytes)) == digest => Ok(RetentionLeafState::Exact),
         Ok(_) => Ok(RetentionLeafState::Mismatch),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(RetentionLeafState::Missing),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(RetentionLeafState::Missing)
+        }
         Err(error) => Err(error),
     }
 }
@@ -2080,7 +2246,8 @@ fn retention_receipt_matches_journal(
         && receipt.tag == journal.tag
         && receipt.source_sha256 == journal.archive_sha256
         && receipt.quarantine_sha256 == journal.archive_sha256
-        && journal.archive_quarantine_identity.as_deref() == Some(receipt.archive_quarantine_identity.as_str())
+        && journal.archive_quarantine_identity.as_deref()
+            == Some(receipt.archive_quarantine_identity.as_str())
         && receipt.note_sha256 == journal.note_sha256
         && receipt.note_quarantine_run == journal.note_quarantine_run
         && receipt.note_quarantine_identity == journal.note_quarantine_identity
@@ -2099,126 +2266,299 @@ fn reconcile_retention_effect_journals(
     quarantine_root_path: &Path,
     note_target: Option<&BoundObsidianDailyTarget>,
 ) -> Result<(), DailyRetentionError> {
-    use crate::reflection::retention_authority::{RetentionEffectPhaseV2 as Phase, RetentionEffectReceiptV2};
-    for mut journal in crate::reflection::retention_authority::list_effect_journals(home)
-        .map_err(|_| DailyRetentionError { reason: "retention journal inventory unavailable" })? {
-        if matches!(journal.phase, Phase::Abandoned) { continue; }
+    use crate::reflection::retention_authority::{
+        RetentionEffectPhaseV2 as Phase, RetentionEffectReceiptV2,
+    };
+    for mut journal in
+        crate::reflection::retention_authority::list_effect_journals(home).map_err(|_| {
+            DailyRetentionError {
+                reason: "retention journal inventory unavailable",
+            }
+        })?
+    {
+        if matches!(journal.phase, Phase::Abandoned) {
+            continue;
+        }
         if matches!(journal.phase, Phase::Committed) {
             let receipts = crate::reflection::retention_authority::list_effect_receipts(home)
-                .map_err(|_| DailyRetentionError { reason: "retention receipt inventory unavailable" })?;
-            if receipts.iter().any(|receipt| retention_receipt_matches_journal(receipt, &journal)) { continue; }
+                .map_err(|_| DailyRetentionError {
+                    reason: "retention receipt inventory unavailable",
+                })?;
+            if receipts
+                .iter()
+                .any(|receipt| retention_receipt_matches_journal(receipt, &journal))
+            {
+                continue;
+            }
             if receipts.iter().any(|receipt| receipt.tag == journal.tag) {
-                return Err(DailyRetentionError { reason: "retention committed receipt conflicts" });
+                return Err(DailyRetentionError {
+                    reason: "retention committed receipt conflicts",
+                });
             }
         }
         let source_name = OsString::from(format!("{}.jsonl", journal.tag));
         let source_path = archive.daily_path.join(&source_name);
         let run_path = quarantine_root_path.join(&journal.archive_quarantine_run);
-        let Some(run) = crate::skills::store::open_real_child_dir_if_present(quarantine_root, OsStr::new(&journal.archive_quarantine_run), &run_path)
-            .map_err(|_| DailyRetentionError { reason: "retention effect recovery required" })? else {
-            return Err(DailyRetentionError { reason: "retention effect recovery required" });
+        let Some(run) = crate::skills::store::open_real_child_dir_if_present(
+            quarantine_root,
+            OsStr::new(&journal.archive_quarantine_run),
+            &run_path,
+        )
+        .map_err(|_| DailyRetentionError {
+            reason: "retention effect recovery required",
+        })?
+        else {
+            return Err(DailyRetentionError {
+                reason: "retention effect recovery required",
+            });
         };
-        let (_, run_binding) = crate::skills::store::bind_retained_real_child_dir(quarantine_root, OsStr::new(&journal.archive_quarantine_run), &run_path, run.try_clone().map_err(|_| DailyRetentionError { reason: "retention effect recovery required" })?)
-            .map_err(|_| DailyRetentionError { reason: "retention effect recovery required" })?;
-        if run_binding.identity_token() != journal.archive_quarantine_run_identity { return Err(DailyRetentionError { reason: "retention effect recovery required" }); }
+        let (_, run_binding) = crate::skills::store::bind_retained_real_child_dir(
+            quarantine_root,
+            OsStr::new(&journal.archive_quarantine_run),
+            &run_path,
+            run.try_clone().map_err(|_| DailyRetentionError {
+                reason: "retention effect recovery required",
+            })?,
+        )
+        .map_err(|_| DailyRetentionError {
+            reason: "retention effect recovery required",
+        })?;
+        if run_binding.identity_token() != journal.archive_quarantine_run_identity {
+            return Err(DailyRetentionError {
+                reason: "retention effect recovery required",
+            });
+        }
         let target_path = run_path.join(&source_name);
-        let source_state = retention_leaf_matches(&archive.daily, &source_name, &source_path, &journal.archive_sha256, MAX_DAILY_ADMISSION_ARCHIVE_BYTES)
-            .map_err(|_| DailyRetentionError { reason: "retention effect recovery required" })?;
-        let target_state = retention_leaf_matches(&run, &source_name, &target_path, &journal.archive_sha256, MAX_DAILY_ADMISSION_ARCHIVE_BYTES)
-            .map_err(|_| DailyRetentionError { reason: "retention effect recovery required" })?;
+        let source_state = retention_leaf_matches(
+            &archive.daily,
+            &source_name,
+            &source_path,
+            &journal.archive_sha256,
+            MAX_DAILY_ADMISSION_ARCHIVE_BYTES,
+        )
+        .map_err(|_| DailyRetentionError {
+            reason: "retention effect recovery required",
+        })?;
+        let target_state = retention_leaf_matches(
+            &run,
+            &source_name,
+            &target_path,
+            &journal.archive_sha256,
+            MAX_DAILY_ADMISSION_ARCHIVE_BYTES,
+        )
+        .map_err(|_| DailyRetentionError {
+            reason: "retention effect recovery required",
+        })?;
         if source_state == RetentionLeafState::Exact {
-            let identity = crate::skills::store::bind_child_object(&archive.daily, &source_name, &source_path)
-                .map_err(|_| DailyRetentionError { reason: "retention effect recovery required" })?;
-            if identity.identity_token() != journal.archive_source_identity { return Err(DailyRetentionError { reason: "retention effect recovery required" }); }
+            let identity =
+                crate::skills::store::bind_child_object(&archive.daily, &source_name, &source_path)
+                    .map_err(|_| DailyRetentionError {
+                        reason: "retention effect recovery required",
+                    })?;
+            if identity.identity_token() != journal.archive_source_identity {
+                return Err(DailyRetentionError {
+                    reason: "retention effect recovery required",
+                });
+            }
         }
         if target_state == RetentionLeafState::Exact {
-            let identity = crate::skills::store::bind_child_object(&run, &source_name, &target_path)
-                .map_err(|_| DailyRetentionError { reason: "retention effect recovery required" })?;
+            let identity =
+                crate::skills::store::bind_child_object(&run, &source_name, &target_path).map_err(
+                    |_| DailyRetentionError {
+                        reason: "retention effect recovery required",
+                    },
+                )?;
             match journal.archive_quarantine_identity.as_deref() {
-                Some(expected) if expected == identity.identity_token() && identity.identity_token() == journal.archive_source_identity => {}
+                Some(expected)
+                    if expected == identity.identity_token()
+                        && identity.identity_token() == journal.archive_source_identity => {}
                 // The exact run/name/digest was journalled before rename.  A
                 // crash can occur before the post-rename identity transition;
                 // bind that one deterministic destination now, never infer a
                 // different destination from archive bytes.
-                None if matches!(journal.phase, Phase::Prepared) && identity.identity_token() == journal.archive_source_identity => {
-                    journal.archive_quarantine_identity = Some(identity.identity_token().to_string());
+                None if matches!(journal.phase, Phase::Prepared)
+                    && identity.identity_token() == journal.archive_source_identity =>
+                {
+                    journal.archive_quarantine_identity =
+                        Some(identity.identity_token().to_string());
                     crate::reflection::retention_authority::save_effect_journal(home, &journal)
-                        .map_err(|_| DailyRetentionError { reason: "retention journal durability unavailable" })?;
+                        .map_err(|_| DailyRetentionError {
+                            reason: "retention journal durability unavailable",
+                        })?;
                 }
-                _ => return Err(DailyRetentionError { reason: "retention effect recovery required" }),
+                _ => {
+                    return Err(DailyRetentionError {
+                        reason: "retention effect recovery required",
+                    });
+                }
             }
         }
         match journal.phase {
-            Phase::Prepared if source_state == RetentionLeafState::Exact && target_state == RetentionLeafState::Missing => {
+            Phase::Prepared
+                if source_state == RetentionLeafState::Exact
+                    && target_state == RetentionLeafState::Missing =>
+            {
                 // Intent was durable but no namespace effect occurred.
                 journal.phase = Phase::Abandoned;
                 crate::reflection::retention_authority::save_effect_journal(home, &journal)
-                    .map_err(|_| DailyRetentionError { reason: "retention journal durability unavailable" })?;
+                    .map_err(|_| DailyRetentionError {
+                        reason: "retention journal durability unavailable",
+                    })?;
                 continue;
             }
-            Phase::Prepared if source_state == RetentionLeafState::Missing && target_state == RetentionLeafState::Exact => {
+            Phase::Prepared
+                if source_state == RetentionLeafState::Missing
+                    && target_state == RetentionLeafState::Exact =>
+            {
                 journal.phase = Phase::ArchiveQuarantined;
                 crate::reflection::retention_authority::save_effect_journal(home, &journal)
-                    .map_err(|_| DailyRetentionError { reason: "retention journal durability unavailable" })?;
+                    .map_err(|_| DailyRetentionError {
+                        reason: "retention journal durability unavailable",
+                    })?;
             }
-            Phase::ArchiveQuarantined | Phase::NoteQuarantined | Phase::Committed if source_state == RetentionLeafState::Missing && target_state == RetentionLeafState::Exact => {}
-            _ => return Err(DailyRetentionError { reason: "retention effect recovery required" }),
+            Phase::ArchiveQuarantined | Phase::NoteQuarantined | Phase::Committed
+                if source_state == RetentionLeafState::Missing
+                    && target_state == RetentionLeafState::Exact => {}
+            _ => {
+                return Err(DailyRetentionError {
+                    reason: "retention effect recovery required",
+                });
+            }
         }
         if let Some(note_digest) = journal.note_sha256.as_deref() {
-            let target = note_target.ok_or(DailyRetentionError { reason: "retention effect recovery required" })?;
-            let receipt = crate::reflection::retention_authority::load_daily_note_receipt(home, &journal.tag)
-                .map_err(|_| DailyRetentionError { reason: "retention effect recovery required" })?
-                .ok_or(DailyRetentionError { reason: "retention effect recovery required" })?;
-            if receipt.note_sha256 != note_digest || receipt.archive_sha256 != journal.archive_sha256 {
-                return Err(DailyRetentionError { reason: "retention effect recovery required" });
+            let target = note_target.ok_or(DailyRetentionError {
+                reason: "retention effect recovery required",
+            })?;
+            let receipt =
+                crate::reflection::retention_authority::load_daily_note_receipt(home, &journal.tag)
+                    .map_err(|_| DailyRetentionError {
+                        reason: "retention effect recovery required",
+                    })?
+                    .ok_or(DailyRetentionError {
+                        reason: "retention effect recovery required",
+                    })?;
+            if receipt.note_sha256 != note_digest
+                || receipt.archive_sha256 != journal.archive_sha256
+            {
+                return Err(DailyRetentionError {
+                    reason: "retention effect recovery required",
+                });
             }
             match journal.note_quarantine_run.as_deref() {
                 Some(run_id) => {
-                    if target.retention_note_quarantine_run_identity(run_id)
-                        .map_err(|_| DailyRetentionError { reason: "retention effect recovery required" })?
-                        .as_deref() != journal.note_quarantine_run_identity.as_deref() {
-                        return Err(DailyRetentionError { reason: "retention effect recovery required" });
+                    if target
+                        .retention_note_quarantine_run_identity(run_id)
+                        .map_err(|_| DailyRetentionError {
+                            reason: "retention effect recovery required",
+                        })?
+                        .as_deref()
+                        != journal.note_quarantine_run_identity.as_deref()
+                    {
+                        return Err(DailyRetentionError {
+                            reason: "retention effect recovery required",
+                        });
                     }
-                    let source = target.verify_owned_retention_note(&receipt, &journal.tag, &journal.archive_sha256)
-                        .map_err(|_| DailyRetentionError { reason: "retention effect recovery required" })?;
-                    let destination = target.quarantined_retention_note_matches(&receipt, run_id)
-                        .map_err(|_| DailyRetentionError { reason: "retention effect recovery required" })?;
+                    let source = target
+                        .verify_owned_retention_note(
+                            &receipt,
+                            &journal.tag,
+                            &journal.archive_sha256,
+                        )
+                        .map_err(|_| DailyRetentionError {
+                            reason: "retention effect recovery required",
+                        })?;
+                    let destination = target
+                        .quarantined_retention_note_matches(&receipt, run_id)
+                        .map_err(|_| DailyRetentionError {
+                            reason: "retention effect recovery required",
+                        })?;
                     match (source, destination) {
                         (true, false) => {
-                            target.quarantine_owned_retention_note(&receipt, &journal.tag, &journal.archive_sha256, run_id)
-                                .map_err(|_| DailyRetentionError { reason: "retention effect recovery required" })?;
+                            target
+                                .quarantine_owned_retention_note(
+                                    &receipt,
+                                    &journal.tag,
+                                    &journal.archive_sha256,
+                                    run_id,
+                                )
+                                .map_err(|_| DailyRetentionError {
+                                    reason: "retention effect recovery required",
+                                })?;
                             journal.note_quarantine_identity = journal.note_source_identity.clone();
                             journal.phase = Phase::NoteQuarantined;
-                            crate::reflection::retention_authority::save_effect_journal(home, &journal)
-                                .map_err(|_| DailyRetentionError { reason: "retention journal durability unavailable" })?;
+                            crate::reflection::retention_authority::save_effect_journal(
+                                home, &journal,
+                            )
+                            .map_err(|_| DailyRetentionError {
+                                reason: "retention journal durability unavailable",
+                            })?;
                         }
                         (false, true) => {}
                         // Both means an unsound duplicate; neither loses the
                         // exact receipt-owned leaf. Preserve both for repair.
-                        _ => return Err(DailyRetentionError { reason: "retention effect recovery required" }),
+                        _ => {
+                            return Err(DailyRetentionError {
+                                reason: "retention effect recovery required",
+                            });
+                        }
                     }
                 }
                 None => {
-                    journal.note_quarantine_run = target.quarantine_owned_retention_note(&receipt, &journal.tag, &journal.archive_sha256, &journal.archive_quarantine_run)
-                        .map_err(|_| DailyRetentionError { reason: "retention effect recovery required" })?;
-                    if journal.note_quarantine_run.is_none() { return Err(DailyRetentionError { reason: "retention effect recovery required" }); }
+                    journal.note_quarantine_run = target
+                        .quarantine_owned_retention_note(
+                            &receipt,
+                            &journal.tag,
+                            &journal.archive_sha256,
+                            &journal.archive_quarantine_run,
+                        )
+                        .map_err(|_| DailyRetentionError {
+                            reason: "retention effect recovery required",
+                        })?;
+                    if journal.note_quarantine_run.is_none() {
+                        return Err(DailyRetentionError {
+                            reason: "retention effect recovery required",
+                        });
+                    }
                     journal.phase = Phase::NoteQuarantined;
                     crate::reflection::retention_authority::save_effect_journal(home, &journal)
-                        .map_err(|_| DailyRetentionError { reason: "retention journal durability unavailable" })?;
+                        .map_err(|_| DailyRetentionError {
+                            reason: "retention journal durability unavailable",
+                        })?;
                 }
             }
         }
         let receipt = RetentionEffectReceiptV2 {
-            schema_version: 2, tag: journal.tag.clone(), source_sha256: journal.archive_sha256.clone(), quarantine_sha256: journal.archive_sha256.clone(), archive_quarantine_identity: journal.archive_quarantine_identity.clone().ok_or(DailyRetentionError { reason: "retention effect recovery required" })?,
-            note_sha256: journal.note_sha256.clone(), note_quarantine_run: journal.note_quarantine_run.clone(), note_quarantine_identity: journal.note_quarantine_identity.clone(), lease_sha256: journal.lease_sha256.clone(),
-            config_sha256: journal.config_sha256.clone(), period_input_sha256: journal.period_input_sha256.clone(), archive_quarantine_run: journal.archive_quarantine_run.clone(),
-            quarantined_at_unix: journal.quarantined_at_unix, recoverable_until_unix: journal.recoverable_until_unix, purged_at_unix: None,
+            schema_version: 2,
+            tag: journal.tag.clone(),
+            source_sha256: journal.archive_sha256.clone(),
+            quarantine_sha256: journal.archive_sha256.clone(),
+            archive_quarantine_identity: journal.archive_quarantine_identity.clone().ok_or(
+                DailyRetentionError {
+                    reason: "retention effect recovery required",
+                },
+            )?,
+            note_sha256: journal.note_sha256.clone(),
+            note_quarantine_run: journal.note_quarantine_run.clone(),
+            note_quarantine_identity: journal.note_quarantine_identity.clone(),
+            lease_sha256: journal.lease_sha256.clone(),
+            config_sha256: journal.config_sha256.clone(),
+            period_input_sha256: journal.period_input_sha256.clone(),
+            archive_quarantine_run: journal.archive_quarantine_run.clone(),
+            quarantined_at_unix: journal.quarantined_at_unix,
+            recoverable_until_unix: journal.recoverable_until_unix,
+            purged_at_unix: None,
         };
-        crate::reflection::retention_authority::save_effect_receipt(home, &receipt)
-            .map_err(|_| DailyRetentionError { reason: "retention receipt unavailable" })?;
+        crate::reflection::retention_authority::save_effect_receipt(home, &receipt).map_err(
+            |_| DailyRetentionError {
+                reason: "retention receipt unavailable",
+            },
+        )?;
         journal.phase = Phase::Committed;
-        crate::reflection::retention_authority::save_effect_journal(home, &journal)
-            .map_err(|_| DailyRetentionError { reason: "retention journal durability unavailable" })?;
+        crate::reflection::retention_authority::save_effect_journal(home, &journal).map_err(
+            |_| DailyRetentionError {
+                reason: "retention journal durability unavailable",
+            },
+        )?;
     }
     Ok(())
 }
@@ -2231,18 +2571,35 @@ fn reconcile_retention_purge_journals(
     note_target: Option<&BoundObsidianDailyTarget>,
 ) -> Result<(), DailyRetentionError> {
     use crate::reflection::retention_authority::RetentionPurgePhaseV2 as Phase;
-    for mut receipt in crate::reflection::retention_authority::list_effect_receipts(home)
-        .map_err(|_| DailyRetentionError { reason: "retention receipt inventory unavailable" })? {
-        let Some(mut journal) = crate::reflection::retention_authority::load_purge_journal(home, &receipt.tag)
-            .map_err(|_| DailyRetentionError { reason: "retention purge recovery required" })? else { continue; };
+    for mut receipt in
+        crate::reflection::retention_authority::list_effect_receipts(home).map_err(|_| {
+            DailyRetentionError {
+                reason: "retention receipt inventory unavailable",
+            }
+        })?
+    {
+        let Some(mut journal) =
+            crate::reflection::retention_authority::load_purge_journal(home, &receipt.tag)
+                .map_err(|_| DailyRetentionError {
+                    reason: "retention purge recovery required",
+                })?
+        else {
+            continue;
+        };
         // The purge intent binds the pre-purge receipt. Its completion timestamp
         // is mutable; every other field must still match, including on a later
         // tick that only aligns a completed purge's effect receipt.
         let mut admitted_receipt = receipt.clone();
         admitted_receipt.purged_at_unix = None;
-        let receipt_sha256 = hex::encode(Sha256::digest(serde_json::to_vec(&admitted_receipt).map_err(|_| DailyRetentionError { reason: "retention purge recovery required" })?));
+        let receipt_sha256 = hex::encode(Sha256::digest(
+            serde_json::to_vec(&admitted_receipt).map_err(|_| DailyRetentionError {
+                reason: "retention purge recovery required",
+            })?,
+        ));
         if journal.schema_version != 2 || journal.receipt_sha256 != receipt_sha256 {
-            return Err(DailyRetentionError { reason: "retention purge recovery required" });
+            return Err(DailyRetentionError {
+                reason: "retention purge recovery required",
+            });
         }
         if matches!(journal.phase, Phase::PurgedCompleted) {
             // Terminal unlink receipt was durable before the mutable effect
@@ -2251,56 +2608,123 @@ fn reconcile_retention_purge_journals(
             if receipt.purged_at_unix.is_none() {
                 receipt.purged_at_unix = Some(now_unix);
                 crate::reflection::retention_authority::save_effect_receipt(home, &receipt)
-                    .map_err(|_| DailyRetentionError { reason: "retention purge completion unavailable" })?;
+                    .map_err(|_| DailyRetentionError {
+                        reason: "retention purge completion unavailable",
+                    })?;
             }
             continue;
         }
         let run_path = quarantine_root_path.join(&receipt.archive_quarantine_run);
-        let Some(run) = crate::skills::store::open_real_child_dir_if_present(quarantine_root, OsStr::new(&receipt.archive_quarantine_run), &run_path)
-            .map_err(|_| DailyRetentionError { reason: "retention purge recovery required" })? else { return Err(DailyRetentionError { reason: "retention purge recovery required" }); };
+        let Some(run) = crate::skills::store::open_real_child_dir_if_present(
+            quarantine_root,
+            OsStr::new(&receipt.archive_quarantine_run),
+            &run_path,
+        )
+        .map_err(|_| DailyRetentionError {
+            reason: "retention purge recovery required",
+        })?
+        else {
+            return Err(DailyRetentionError {
+                reason: "retention purge recovery required",
+            });
+        };
         let name = OsString::from(format!("{}.jsonl", receipt.tag));
         let path = run_path.join(&name);
         if matches!(journal.phase, Phase::PurgePrepared) {
             journal.phase = Phase::UnlinkAttempted;
-            crate::reflection::retention_authority::save_purge_journal(home, &receipt.tag, &journal)
-                .map_err(|_| DailyRetentionError { reason: "retention purge recovery required" })?;
+            crate::reflection::retention_authority::save_purge_journal(
+                home,
+                &receipt.tag,
+                &journal,
+            )
+            .map_err(|_| DailyRetentionError {
+                reason: "retention purge recovery required",
+            })?;
         }
         let binding = match crate::skills::store::bind_child_object(&run, &name, &path) {
             Ok(binding) => Some(binding),
-            Err(error) if error.root_cause().downcast_ref::<std::io::Error>().is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) => None,
-            Err(_) => return Err(DailyRetentionError { reason: "retention purge recovery required" }),
+            Err(error)
+                if error
+                    .root_cause()
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                None
+            }
+            Err(_) => {
+                return Err(DailyRetentionError {
+                    reason: "retention purge recovery required",
+                });
+            }
         };
         if let Some(binding) = binding {
             let bytes = read_retention_file(&run, &name, &path, MAX_DAILY_ADMISSION_ARCHIVE_BYTES)
-                .map_err(|_| DailyRetentionError { reason: "retention purge recovery required" })?;
+                .map_err(|_| DailyRetentionError {
+                    reason: "retention purge recovery required",
+                })?;
             if hex::encode(Sha256::digest(&bytes)) != receipt.quarantine_sha256 {
-                return Err(DailyRetentionError { reason: "retention purge recovery required" });
+                return Err(DailyRetentionError {
+                    reason: "retention purge recovery required",
+                });
             }
             if binding.identity_token() != receipt.archive_quarantine_identity
-                || !binding.matches_child(&run, &name, &path).map_err(|_| DailyRetentionError { reason: "retention purge recovery required" })? {
-                return Err(DailyRetentionError { reason: "retention purge recovery required" });
+                || !binding
+                    .matches_child(&run, &name, &path)
+                    .map_err(|_| DailyRetentionError {
+                        reason: "retention purge recovery required",
+                    })?
+            {
+                return Err(DailyRetentionError {
+                    reason: "retention purge recovery required",
+                });
             }
-            binding.remove_bound_file(&run, &name, &path)
-                .map_err(|_| DailyRetentionError { reason: "retention purge recovery required" })?;
+            binding
+                .remove_bound_file(&run, &name, &path)
+                .map_err(|_| DailyRetentionError {
+                    reason: "retention purge recovery required",
+                })?;
         }
         if let Some(note_run) = receipt.note_quarantine_run.as_deref() {
-            let target = note_target.ok_or(DailyRetentionError { reason: "retention purge recovery required" })?;
-            let note_receipt = crate::reflection::retention_authority::load_daily_note_receipt(home, &receipt.tag)
-                .map_err(|_| DailyRetentionError { reason: "retention purge recovery required" })?
-                .ok_or(DailyRetentionError { reason: "retention purge recovery required" })?;
-            if receipt.note_sha256.as_deref() != Some(note_receipt.note_sha256.as_str()) { return Err(DailyRetentionError { reason: "retention purge recovery required" }); }
-            if target.quarantined_retention_note_matches(&note_receipt, note_run)
-                .map_err(|_| DailyRetentionError { reason: "retention purge recovery required" })? {
-                target.purge_quarantined_retention_note(&note_receipt, note_run)
-                    .map_err(|_| DailyRetentionError { reason: "retention purge recovery required" })?;
+            let target = note_target.ok_or(DailyRetentionError {
+                reason: "retention purge recovery required",
+            })?;
+            let note_receipt =
+                crate::reflection::retention_authority::load_daily_note_receipt(home, &receipt.tag)
+                    .map_err(|_| DailyRetentionError {
+                        reason: "retention purge recovery required",
+                    })?
+                    .ok_or(DailyRetentionError {
+                        reason: "retention purge recovery required",
+                    })?;
+            if receipt.note_sha256.as_deref() != Some(note_receipt.note_sha256.as_str()) {
+                return Err(DailyRetentionError {
+                    reason: "retention purge recovery required",
+                });
+            }
+            if target
+                .quarantined_retention_note_matches(&note_receipt, note_run)
+                .map_err(|_| DailyRetentionError {
+                    reason: "retention purge recovery required",
+                })?
+            {
+                target
+                    .purge_quarantined_retention_note(&note_receipt, note_run)
+                    .map_err(|_| DailyRetentionError {
+                        reason: "retention purge recovery required",
+                    })?;
             }
         }
         journal.phase = Phase::PurgedCompleted;
         crate::reflection::retention_authority::save_purge_journal(home, &receipt.tag, &journal)
-            .map_err(|_| DailyRetentionError { reason: "retention purge completion unavailable" })?;
+            .map_err(|_| DailyRetentionError {
+                reason: "retention purge completion unavailable",
+            })?;
         receipt.purged_at_unix = Some(now_unix);
-        crate::reflection::retention_authority::save_effect_receipt(home, &receipt)
-            .map_err(|_| DailyRetentionError { reason: "retention purge completion unavailable" })?;
+        crate::reflection::retention_authority::save_effect_receipt(home, &receipt).map_err(
+            |_| DailyRetentionError {
+                reason: "retention purge completion unavailable",
+            },
+        )?;
     }
     Ok(())
 }
@@ -2317,165 +2741,477 @@ pub fn enforce_daily_retention_with_execution(
     execution: &crate::reflection::retention_authority::DailyRetentionExecutionConfig,
     obsidian: Option<(&Path, &str)>,
 ) -> Result<DailyRetentionOutcome, DailyRetentionError> {
-    execution.validate().map_err(|_| DailyRetentionError { reason: "retention execution policy is invalid" })?;
-    if !execution.enabled { return enforce_daily_retention(home, now_unix, policy, obsidian); }
+    execution.validate().map_err(|_| DailyRetentionError {
+        reason: "retention execution policy is invalid",
+    })?;
+    if !execution.enabled {
+        return enforce_daily_retention(home, now_unix, policy, obsidian);
+    }
     // First retain all v1 inventory refusals, including legacy note debt.
     let inventory = enforce_daily_retention(home, now_unix, policy, obsidian)?;
-    let _gate = crate::reflection::hygiene_store::lock_daily_admission(home)
-        .map_err(|_| DailyRetentionError { reason: "daily retention gate unavailable" })?;
-    let Some(hygiene) = crate::reflection::hygiene_store::load_hygiene_state(home)
-        .map_err(|_| DailyRetentionError { reason: "retention period input unavailable" })? else {
-        return Err(DailyRetentionError { reason: "retention period input unavailable" });
+    let _gate = crate::reflection::hygiene_store::lock_daily_admission(home).map_err(|_| {
+        DailyRetentionError {
+            reason: "daily retention gate unavailable",
+        }
+    })?;
+    let Some(hygiene) =
+        crate::reflection::hygiene_store::load_hygiene_state(home).map_err(|_| {
+            DailyRetentionError {
+                reason: "retention period input unavailable",
+            }
+        })?
+    else {
+        return Err(DailyRetentionError {
+            reason: "retention period input unavailable",
+        });
     };
-    let (current_tag, expired_through_tag) = daily_retention_tags(now_unix, policy)
-        .map_err(|_| DailyRetentionError { reason: "clock unavailable" })?;
-    let archive = open_daily_archive_transaction(home)
-        .map_err(|_| DailyRetentionError { reason: "archive capability unavailable" })?;
-    let readonly = ReadOnlyDailyArchive { daily: archive.daily.try_clone().map_err(|_| DailyRetentionError { reason: "archive capability unavailable" })?, daily_path: archive.daily_path.clone() };
+    let (current_tag, expired_through_tag) =
+        daily_retention_tags(now_unix, policy).map_err(|_| DailyRetentionError {
+            reason: "clock unavailable",
+        })?;
+    let archive = open_daily_archive_transaction(home).map_err(|_| DailyRetentionError {
+        reason: "archive capability unavailable",
+    })?;
+    let readonly = ReadOnlyDailyArchive {
+        daily: archive.daily.try_clone().map_err(|_| DailyRetentionError {
+            reason: "archive capability unavailable",
+        })?,
+        daily_path: archive.daily_path.clone(),
+    };
     let mut total_bytes = 0usize;
-    let plan = plan_daily_archive_retention(&readonly, &current_tag, &expired_through_tag, &mut total_bytes)
-        .map_err(|_| DailyRetentionError { reason: "archive inventory is invalid" })?;
+    let plan = plan_daily_archive_retention(
+        &readonly,
+        &current_tag,
+        &expired_through_tag,
+        &mut total_bytes,
+    )
+    .map_err(|_| DailyRetentionError {
+        reason: "archive inventory is invalid",
+    })?;
     let quarantine_root_path = archive.daily_path.join(".retention-v2");
-    let quarantine_root = crate::skills::store::open_or_create_private_child_dir(&archive.daily, OsStr::new(".retention-v2"), &quarantine_root_path)
-        .map_err(|_| DailyRetentionError { reason: "archive quarantine unavailable" })?;
-    let config_sha256 = hex::encode(Sha256::digest(serde_json::to_vec(&(policy, execution)).map_err(|_| DailyRetentionError { reason: "retention configuration invalid" })?));
+    let quarantine_root = crate::skills::store::open_or_create_private_child_dir(
+        &archive.daily,
+        OsStr::new(".retention-v2"),
+        &quarantine_root_path,
+    )
+    .map_err(|_| DailyRetentionError {
+        reason: "archive quarantine unavailable",
+    })?;
+    let config_sha256 = hex::encode(Sha256::digest(
+        serde_json::to_vec(&(policy, execution)).map_err(|_| DailyRetentionError {
+            reason: "retention configuration invalid",
+        })?,
+    ));
     let run_id = format!("run-{now_unix}-{config_sha256:.16}");
     let run_path = quarantine_root_path.join(&run_id);
-    let run = crate::skills::store::open_or_create_private_child_dir(&quarantine_root, OsStr::new(&run_id), &run_path)
-        .map_err(|_| DailyRetentionError { reason: "archive quarantine unavailable" })?;
+    let run = crate::skills::store::open_or_create_private_child_dir(
+        &quarantine_root,
+        OsStr::new(&run_id),
+        &run_path,
+    )
+    .map_err(|_| DailyRetentionError {
+        reason: "archive quarantine unavailable",
+    })?;
     let (_, archive_run_binding) = crate::skills::store::bind_retained_real_child_dir(
-        &quarantine_root, OsStr::new(&run_id), &run_path, run.try_clone().map_err(|_| DailyRetentionError { reason: "archive quarantine unavailable" })?,
-    ).map_err(|_| DailyRetentionError { reason: "archive quarantine unavailable" })?;
+        &quarantine_root,
+        OsStr::new(&run_id),
+        &run_path,
+        run.try_clone().map_err(|_| DailyRetentionError {
+            reason: "archive quarantine unavailable",
+        })?,
+    )
+    .map_err(|_| DailyRetentionError {
+        reason: "archive quarantine unavailable",
+    })?;
     let note_target = obsidian
         .map(|(vault, subdir)| BoundObsidianDailyTarget::open(vault, subdir))
         .transpose()
-        .map_err(|_| DailyRetentionError { reason: "managed note target is unavailable" })?;
+        .map_err(|_| DailyRetentionError {
+            reason: "managed note target is unavailable",
+        })?;
     // Recovery precedes every purge or new candidate.  It uses the immutable
     // journal admission facts, so an expired current configuration cannot
     // veto reconciliation of an effect that was already admitted.
-    reconcile_retention_effect_journals(home, &archive, &quarantine_root, &quarantine_root_path, note_target.as_ref())?;
-    reconcile_retention_purge_journals(home, now_unix, &quarantine_root, &quarantine_root_path, note_target.as_ref())?;
+    reconcile_retention_effect_journals(
+        home,
+        &archive,
+        &quarantine_root,
+        &quarantine_root_path,
+        note_target.as_ref(),
+    )?;
+    reconcile_retention_purge_journals(
+        home,
+        now_unix,
+        &quarantine_root,
+        &quarantine_root_path,
+        note_target.as_ref(),
+    )?;
     let mut purged = 0usize;
-    for mut receipt in crate::reflection::retention_authority::list_effect_receipts(home)
-        .map_err(|_| DailyRetentionError { reason: "retention receipt inventory unavailable" })? {
-        if receipt.purged_at_unix.is_some() || receipt.recoverable_until_unix > now_unix { continue; }
+    for mut receipt in
+        crate::reflection::retention_authority::list_effect_receipts(home).map_err(|_| {
+            DailyRetentionError {
+                reason: "retention receipt inventory unavailable",
+            }
+        })?
+    {
+        if receipt.purged_at_unix.is_some() || receipt.recoverable_until_unix > now_unix {
+            continue;
+        }
         let run_path = quarantine_root_path.join(&receipt.archive_quarantine_run);
-        let Some(run) = crate::skills::store::open_real_child_dir_if_present(&quarantine_root, OsStr::new(&receipt.archive_quarantine_run), &run_path)
-            .map_err(|_| DailyRetentionError { reason: "retention purge recovery required" })? else { return Err(DailyRetentionError { reason: "retention purge recovery required" }); };
-        let name = OsString::from(format!("{}.jsonl", receipt.tag)); let path = run_path.join(&name);
-        let binding = crate::skills::store::bind_child_object(&run, &name, &path)
-            .map_err(|_| DailyRetentionError { reason: "retention purge binding unavailable" })?;
+        let Some(run) = crate::skills::store::open_real_child_dir_if_present(
+            &quarantine_root,
+            OsStr::new(&receipt.archive_quarantine_run),
+            &run_path,
+        )
+        .map_err(|_| DailyRetentionError {
+            reason: "retention purge recovery required",
+        })?
+        else {
+            return Err(DailyRetentionError {
+                reason: "retention purge recovery required",
+            });
+        };
+        let name = OsString::from(format!("{}.jsonl", receipt.tag));
+        let path = run_path.join(&name);
+        let binding =
+            crate::skills::store::bind_child_object(&run, &name, &path).map_err(|_| {
+                DailyRetentionError {
+                    reason: "retention purge binding unavailable",
+                }
+            })?;
         let bytes = read_retention_file(&run, &name, &path, MAX_DAILY_ADMISSION_ARCHIVE_BYTES)
-            .map_err(|_| DailyRetentionError { reason: "retention purge recovery required" })?;
+            .map_err(|_| DailyRetentionError {
+                reason: "retention purge recovery required",
+            })?;
         if hex::encode(Sha256::digest(&bytes)) != receipt.quarantine_sha256
             || binding.identity_token() != receipt.archive_quarantine_identity
-            || !binding.matches_child(&run, &name, &path).map_err(|_| DailyRetentionError { reason: "retention purge recovery required" })?
-        { return Err(DailyRetentionError { reason: "retention purge recovery required" }); }
-        let receipt_sha256 = hex::encode(Sha256::digest(serde_json::to_vec(&receipt).map_err(|_| DailyRetentionError { reason: "retention receipt invalid" })?));
-        let mut purge = crate::reflection::retention_authority::RetentionPurgeJournalV2 { schema_version: 2, receipt_sha256, phase: crate::reflection::retention_authority::RetentionPurgePhaseV2::PurgePrepared };
+            || !binding
+                .matches_child(&run, &name, &path)
+                .map_err(|_| DailyRetentionError {
+                    reason: "retention purge recovery required",
+                })?
+        {
+            return Err(DailyRetentionError {
+                reason: "retention purge recovery required",
+            });
+        }
+        let receipt_sha256 = hex::encode(Sha256::digest(serde_json::to_vec(&receipt).map_err(
+            |_| DailyRetentionError {
+                reason: "retention receipt invalid",
+            },
+        )?));
+        let mut purge = crate::reflection::retention_authority::RetentionPurgeJournalV2 {
+            schema_version: 2,
+            receipt_sha256,
+            phase: crate::reflection::retention_authority::RetentionPurgePhaseV2::PurgePrepared,
+        };
         crate::reflection::retention_authority::save_purge_journal(home, &receipt.tag, &purge)
-            .map_err(|_| DailyRetentionError { reason: "retention purge intent unavailable" })?;
-        purge.phase = crate::reflection::retention_authority::RetentionPurgePhaseV2::UnlinkAttempted;
+            .map_err(|_| DailyRetentionError {
+                reason: "retention purge intent unavailable",
+            })?;
+        purge.phase =
+            crate::reflection::retention_authority::RetentionPurgePhaseV2::UnlinkAttempted;
         crate::reflection::retention_authority::save_purge_journal(home, &receipt.tag, &purge)
-            .map_err(|_| DailyRetentionError { reason: "retention purge intent unavailable" })?;
-        binding.remove_bound_file(&run, &name, &path)
-            .map_err(|_| DailyRetentionError { reason: "retention purge recovery required" })?;
+            .map_err(|_| DailyRetentionError {
+                reason: "retention purge intent unavailable",
+            })?;
+        binding
+            .remove_bound_file(&run, &name, &path)
+            .map_err(|_| DailyRetentionError {
+                reason: "retention purge recovery required",
+            })?;
         // A paired note has its own same-filesystem quarantine.  Do not claim
         // the receipt purged until that second exact receipt-owned leaf has
         // also been removed; a crash between the two stays at
         // `unlink_attempted` for recovery rather than becoming a false
         // terminal success.
         if let Some(note_run) = receipt.note_quarantine_run.as_deref() {
-            let target = note_target.as_ref().ok_or(DailyRetentionError { reason: "retention purge recovery required" })?;
-            let note_receipt = crate::reflection::retention_authority::load_daily_note_receipt(home, &receipt.tag)
-                .map_err(|_| DailyRetentionError { reason: "retention purge recovery required" })?
-                .ok_or(DailyRetentionError { reason: "retention purge recovery required" })?;
+            let target = note_target.as_ref().ok_or(DailyRetentionError {
+                reason: "retention purge recovery required",
+            })?;
+            let note_receipt =
+                crate::reflection::retention_authority::load_daily_note_receipt(home, &receipt.tag)
+                    .map_err(|_| DailyRetentionError {
+                        reason: "retention purge recovery required",
+                    })?
+                    .ok_or(DailyRetentionError {
+                        reason: "retention purge recovery required",
+                    })?;
             if receipt.note_sha256.as_deref() != Some(note_receipt.note_sha256.as_str()) {
-                return Err(DailyRetentionError { reason: "retention purge recovery required" });
+                return Err(DailyRetentionError {
+                    reason: "retention purge recovery required",
+                });
             }
-            target.purge_quarantined_retention_note(&note_receipt, note_run)
-                .map_err(|_| DailyRetentionError { reason: "retention purge recovery required" })?;
+            target
+                .purge_quarantined_retention_note(&note_receipt, note_run)
+                .map_err(|_| DailyRetentionError {
+                    reason: "retention purge recovery required",
+                })?;
         }
-        purge.phase = crate::reflection::retention_authority::RetentionPurgePhaseV2::PurgedCompleted;
+        purge.phase =
+            crate::reflection::retention_authority::RetentionPurgePhaseV2::PurgedCompleted;
         crate::reflection::retention_authority::save_purge_journal(home, &receipt.tag, &purge)
-            .map_err(|_| DailyRetentionError { reason: "retention purge completion unavailable" })?;
+            .map_err(|_| DailyRetentionError {
+                reason: "retention purge completion unavailable",
+            })?;
         receipt.purged_at_unix = Some(now_unix);
-        crate::reflection::retention_authority::save_effect_receipt(home, &receipt)
-            .map_err(|_| DailyRetentionError { reason: "retention purge completion unavailable" })?;
+        crate::reflection::retention_authority::save_effect_receipt(home, &receipt).map_err(
+            |_| DailyRetentionError {
+                reason: "retention purge completion unavailable",
+            },
+        )?;
         purged = purged.saturating_add(1);
     }
     let mut quarantined = 0usize;
     let mut notes_quarantined = 0usize;
     for candidate in plan.selected {
-        let Some(record) = plan.records.get(&candidate.tag) else { return Err(DailyRetentionError { reason: "retention candidate changed" }); };
-        let matches = hygiene.period_reflections.iter().filter(|period| period.tag == candidate.tag && *period == record.reflection).count();
-        if matches != 1 { continue; }
-        let period_input_sha256 = hex::encode(Sha256::digest(serde_json::to_vec(&record.reflection).map_err(|_| DailyRetentionError { reason: "period input invalid" })?));
-        let lease_sha256 = hex::encode(Sha256::digest(format!("{config_sha256}:{current_tag}:{}:{}", candidate.tag, candidate.sha256).as_bytes()));
+        let Some(record) = plan.records.get(&candidate.tag) else {
+            return Err(DailyRetentionError {
+                reason: "retention candidate changed",
+            });
+        };
+        let matches = hygiene
+            .period_reflections
+            .iter()
+            .filter(|period| period.tag == candidate.tag && *period == &record.reflection)
+            .count();
+        if matches != 1 {
+            continue;
+        }
+        let period_input_sha256 = hex::encode(Sha256::digest(
+            serde_json::to_vec(&record.reflection).map_err(|_| DailyRetentionError {
+                reason: "period input invalid",
+            })?,
+        ));
+        let lease_sha256 = hex::encode(Sha256::digest(
+            format!(
+                "{config_sha256}:{current_tag}:{}:{}",
+                candidate.tag, candidate.sha256
+            )
+            .as_bytes(),
+        ));
         // A note can join only through the settlement receipt; a legacy file
         // with identical rendered bytes remains outside this protocol.
-        let note_receipt = note_target.as_ref().map(|_| {
-            crate::reflection::retention_authority::load_daily_note_receipt(home, &candidate.tag)
-        }).transpose().map_err(|_| DailyRetentionError { reason: "note receipt unavailable" })?.flatten();
-        let note_is_owned = if let (Some(target), Some(receipt)) = (note_target.as_ref(), note_receipt.as_ref()) {
-            target.verify_owned_retention_note(receipt, &candidate.tag, &candidate.sha256)
-                .map_err(|_| DailyRetentionError { reason: "managed note receipt no longer matches" })?
-        } else { false };
+        let note_receipt = note_target
+            .as_ref()
+            .map(|_| {
+                crate::reflection::retention_authority::load_daily_note_receipt(
+                    home,
+                    &candidate.tag,
+                )
+            })
+            .transpose()
+            .map_err(|_| DailyRetentionError {
+                reason: "note receipt unavailable",
+            })?
+            .flatten();
+        let note_is_owned =
+            if let (Some(target), Some(receipt)) = (note_target.as_ref(), note_receipt.as_ref()) {
+                target
+                    .verify_owned_retention_note(receipt, &candidate.tag, &candidate.sha256)
+                    .map_err(|_| DailyRetentionError {
+                        reason: "managed note receipt no longer matches",
+                    })?
+            } else {
+                false
+            };
         let source_name = OsString::from(format!("{}.jsonl", candidate.tag));
         let source_path = archive.daily_path.join(&source_name);
         let target_path = run_path.join(&source_name);
-        let source_binding = crate::skills::store::bind_child_object(&archive.daily, &source_name, &source_path)
-            .map_err(|_| DailyRetentionError { reason: "retention candidate changed" })?;
+        let source_binding =
+            crate::skills::store::bind_child_object(&archive.daily, &source_name, &source_path)
+                .map_err(|_| DailyRetentionError {
+                    reason: "retention candidate changed",
+                })?;
         let note_quarantine_run_identity = if note_is_owned {
-            Some(note_target.as_ref().expect("owned note requires target").prepare_retention_note_quarantine(&run_id)
-                .map_err(|_| DailyRetentionError { reason: "managed note quarantine unavailable" })?)
-        } else { None };
-        let recoverable_until_unix = now_unix.saturating_add(i64::from(execution.quarantine_grace_days) * 86_400);
-        let mut journal = crate::reflection::retention_authority::RetentionEffectJournalV2 { schema_version: 2, tag: candidate.tag.clone(), lease_sha256: lease_sha256.clone(), archive_sha256: candidate.sha256.clone(), note_sha256: note_receipt.as_ref().filter(|_| note_is_owned).map(|receipt| receipt.note_sha256.clone()), archive_quarantine_run: run_id.clone(), archive_quarantine_run_identity: archive_run_binding.identity_token().to_string(), archive_source_identity: source_binding.identity_token().to_string(), archive_quarantine_identity: None, note_quarantine_run: note_is_owned.then(|| run_id.clone()), note_quarantine_run_identity, note_source_identity: note_receipt.as_ref().filter(|_| note_is_owned).map(|receipt| receipt.note_object_identity.clone()), note_quarantine_identity: None, config_sha256: config_sha256.clone(), period_input_sha256: period_input_sha256.clone(), quarantined_at_unix: now_unix, recoverable_until_unix, phase: crate::reflection::retention_authority::RetentionEffectPhaseV2::Prepared };
-        crate::reflection::retention_authority::save_effect_journal(home, &journal)
-            .map_err(|_| DailyRetentionError { reason: "retention journal unavailable" })?;
+            Some(
+                note_target
+                    .as_ref()
+                    .expect("owned note requires target")
+                    .prepare_retention_note_quarantine(&run_id)
+                    .map_err(|_| DailyRetentionError {
+                        reason: "managed note quarantine unavailable",
+                    })?,
+            )
+        } else {
+            None
+        };
+        let recoverable_until_unix =
+            now_unix.saturating_add(i64::from(execution.quarantine_grace_days) * 86_400);
+        let mut journal = crate::reflection::retention_authority::RetentionEffectJournalV2 {
+            schema_version: 2,
+            tag: candidate.tag.clone(),
+            lease_sha256: lease_sha256.clone(),
+            archive_sha256: candidate.sha256.clone(),
+            note_sha256: note_receipt
+                .as_ref()
+                .filter(|_| note_is_owned)
+                .map(|receipt| receipt.note_sha256.clone()),
+            archive_quarantine_run: run_id.clone(),
+            archive_quarantine_run_identity: archive_run_binding.identity_token().to_string(),
+            archive_source_identity: source_binding.identity_token().to_string(),
+            archive_quarantine_identity: None,
+            note_quarantine_run: note_is_owned.then(|| run_id.clone()),
+            note_quarantine_run_identity,
+            note_source_identity: note_receipt
+                .as_ref()
+                .filter(|_| note_is_owned)
+                .map(|receipt| receipt.note_object_identity.clone()),
+            note_quarantine_identity: None,
+            config_sha256: config_sha256.clone(),
+            period_input_sha256: period_input_sha256.clone(),
+            quarantined_at_unix: now_unix,
+            recoverable_until_unix,
+            phase: crate::reflection::retention_authority::RetentionEffectPhaseV2::Prepared,
+        };
+        crate::reflection::retention_authority::save_effect_journal(home, &journal).map_err(
+            |_| DailyRetentionError {
+                reason: "retention journal unavailable",
+            },
+        )?;
         // Re-read immediately before the namespace mutation; a same-name
         // replacement cannot inherit the plan's digest.
-        let source_bytes = read_retention_file(&archive.daily, &source_name, &source_path, MAX_DAILY_ADMISSION_ARCHIVE_BYTES)
-            .map_err(|_| DailyRetentionError { reason: "retention candidate changed" })?;
-        if hex::encode(Sha256::digest(&source_bytes)) != candidate.sha256 { return Err(DailyRetentionError { reason: "retention candidate changed" }); }
-        crate::skills::store::rename_bound_child(&source_binding, &archive.daily, &source_name, &run, &source_name, &source_path, &target_path)
-            .map_err(|_| DailyRetentionError { reason: "archive quarantine rename failed" })?;
-        let moved = read_retention_file(&run, &source_name, &target_path, MAX_DAILY_ADMISSION_ARCHIVE_BYTES)
-            .map_err(|_| DailyRetentionError { reason: "archive quarantine verification failed" })?;
-        if hex::encode(Sha256::digest(&moved)) != candidate.sha256 { return Err(DailyRetentionError { reason: "archive quarantine verification failed" }); }
-        journal.archive_quarantine_identity = Some(crate::skills::store::bind_child_object(&run, &source_name, &target_path)
-            .map_err(|_| DailyRetentionError { reason: "archive quarantine verification failed" })?.identity_token().to_string());
-        journal.phase = crate::reflection::retention_authority::RetentionEffectPhaseV2::ArchiveQuarantined;
-        crate::reflection::retention_authority::save_effect_journal(home, &journal)
-            .map_err(|_| DailyRetentionError { reason: "retention journal durability unavailable" })?;
+        let source_bytes = read_retention_file(
+            &archive.daily,
+            &source_name,
+            &source_path,
+            MAX_DAILY_ADMISSION_ARCHIVE_BYTES,
+        )
+        .map_err(|_| DailyRetentionError {
+            reason: "retention candidate changed",
+        })?;
+        if hex::encode(Sha256::digest(&source_bytes)) != candidate.sha256 {
+            return Err(DailyRetentionError {
+                reason: "retention candidate changed",
+            });
+        }
+        crate::skills::store::rename_bound_child(
+            &source_binding,
+            &archive.daily,
+            &source_name,
+            &run,
+            &source_name,
+            &source_path,
+            &target_path,
+        )
+        .map_err(|_| DailyRetentionError {
+            reason: "archive quarantine rename failed",
+        })?;
+        let moved = read_retention_file(
+            &run,
+            &source_name,
+            &target_path,
+            MAX_DAILY_ADMISSION_ARCHIVE_BYTES,
+        )
+        .map_err(|_| DailyRetentionError {
+            reason: "archive quarantine verification failed",
+        })?;
+        if hex::encode(Sha256::digest(&moved)) != candidate.sha256 {
+            return Err(DailyRetentionError {
+                reason: "archive quarantine verification failed",
+            });
+        }
+        journal.archive_quarantine_identity = Some(
+            crate::skills::store::bind_child_object(&run, &source_name, &target_path)
+                .map_err(|_| DailyRetentionError {
+                    reason: "archive quarantine verification failed",
+                })?
+                .identity_token()
+                .to_string(),
+        );
+        journal.phase =
+            crate::reflection::retention_authority::RetentionEffectPhaseV2::ArchiveQuarantined;
+        crate::reflection::retention_authority::save_effect_journal(home, &journal).map_err(
+            |_| DailyRetentionError {
+                reason: "retention journal durability unavailable",
+            },
+        )?;
         if note_is_owned {
             let target = note_target.as_ref().expect("owned note requires target");
             let receipt = note_receipt.as_ref().expect("owned note requires receipt");
-            if target.retention_note_quarantine_run_identity(&run_id)
-                .map_err(|_| DailyRetentionError { reason: "managed note quarantine unavailable" })?
-                .as_deref() != journal.note_quarantine_run_identity.as_deref() {
-                return Err(DailyRetentionError { reason: "managed note quarantine changed" });
+            if target
+                .retention_note_quarantine_run_identity(&run_id)
+                .map_err(|_| DailyRetentionError {
+                    reason: "managed note quarantine unavailable",
+                })?
+                .as_deref()
+                != journal.note_quarantine_run_identity.as_deref()
+            {
+                return Err(DailyRetentionError {
+                    reason: "managed note quarantine changed",
+                });
             }
-            journal.note_quarantine_run = target.quarantine_owned_retention_note(receipt, &candidate.tag, &candidate.sha256, &run_id)
-                .map_err(|_| DailyRetentionError { reason: "managed note quarantine failed" })?;
+            journal.note_quarantine_run = target
+                .quarantine_owned_retention_note(
+                    receipt,
+                    &candidate.tag,
+                    &candidate.sha256,
+                    &run_id,
+                )
+                .map_err(|_| DailyRetentionError {
+                    reason: "managed note quarantine failed",
+                })?;
             if journal.note_quarantine_run.is_some() {
                 journal.note_quarantine_identity = journal.note_source_identity.clone();
-                journal.phase = crate::reflection::retention_authority::RetentionEffectPhaseV2::NoteQuarantined;
+                journal.phase =
+                    crate::reflection::retention_authority::RetentionEffectPhaseV2::NoteQuarantined;
                 crate::reflection::retention_authority::save_effect_journal(home, &journal)
-                    .map_err(|_| DailyRetentionError { reason: "retention journal durability unavailable" })?;
+                    .map_err(|_| DailyRetentionError {
+                        reason: "retention journal durability unavailable",
+                    })?;
                 notes_quarantined = notes_quarantined.saturating_add(1);
             }
         }
-        let receipt = crate::reflection::retention_authority::RetentionEffectReceiptV2 { schema_version: 2, tag: candidate.tag.clone(), source_sha256: candidate.sha256.clone(), quarantine_sha256: candidate.sha256, archive_quarantine_identity: journal.archive_quarantine_identity.clone().ok_or(DailyRetentionError { reason: "archive quarantine identity missing" })?, note_sha256: journal.note_sha256.clone(), note_quarantine_run: journal.note_quarantine_run.clone(), note_quarantine_identity: journal.note_quarantine_identity.clone(), lease_sha256, config_sha256: config_sha256.clone(), period_input_sha256, archive_quarantine_run: run_id.clone(), quarantined_at_unix: now_unix, recoverable_until_unix, purged_at_unix: None };
-        crate::reflection::retention_authority::save_effect_receipt(home, &receipt)
-            .map_err(|_| DailyRetentionError { reason: "retention receipt unavailable" })?;
+        let receipt = crate::reflection::retention_authority::RetentionEffectReceiptV2 {
+            schema_version: 2,
+            tag: candidate.tag.clone(),
+            source_sha256: candidate.sha256.clone(),
+            quarantine_sha256: candidate.sha256,
+            archive_quarantine_identity: journal.archive_quarantine_identity.clone().ok_or(
+                DailyRetentionError {
+                    reason: "archive quarantine identity missing",
+                },
+            )?,
+            note_sha256: journal.note_sha256.clone(),
+            note_quarantine_run: journal.note_quarantine_run.clone(),
+            note_quarantine_identity: journal.note_quarantine_identity.clone(),
+            lease_sha256,
+            config_sha256: config_sha256.clone(),
+            period_input_sha256,
+            archive_quarantine_run: run_id.clone(),
+            quarantined_at_unix: now_unix,
+            recoverable_until_unix,
+            purged_at_unix: None,
+        };
+        crate::reflection::retention_authority::save_effect_receipt(home, &receipt).map_err(
+            |_| DailyRetentionError {
+                reason: "retention receipt unavailable",
+            },
+        )?;
         journal.phase = crate::reflection::retention_authority::RetentionEffectPhaseV2::Committed;
-        crate::reflection::retention_authority::save_effect_journal(home, &journal)
-            .map_err(|_| DailyRetentionError { reason: "retention journal durability unavailable" })?;
+        crate::reflection::retention_authority::save_effect_journal(home, &journal).map_err(
+            |_| DailyRetentionError {
+                reason: "retention journal durability unavailable",
+            },
+        )?;
         quarantined = quarantined.saturating_add(1);
     }
-    Ok(DailyRetentionOutcome { execution: if quarantined == 0 { inventory.execution } else { DailyRetentionExecution::Quarantined }, policy: inventory.policy, archives_deleted: purged, archives_pending: inventory.archives_pending.saturating_sub(quarantined), unattested_note_debt: inventory.unattested_note_debt.saturating_sub(notes_quarantined), notes_deleted: notes_quarantined, note_temps_deleted: 0, daily_leaves_removed: 0 })
+    Ok(DailyRetentionOutcome {
+        execution: if quarantined == 0 {
+            inventory.execution
+        } else {
+            DailyRetentionExecution::Quarantined
+        },
+        policy: inventory.policy,
+        archives_deleted: purged,
+        archives_pending: inventory.archives_pending.saturating_sub(quarantined),
+        unattested_note_debt: inventory
+            .unattested_note_debt
+            .saturating_sub(notes_quarantined),
+        notes_deleted: notes_quarantined,
+        note_temps_deleted: 0,
+        daily_leaves_removed: 0,
+    })
 }
 /// Inspect the exact daily archive without accepting partial or ambiguous
 /// history.  The caller supplies the one expected record; a matching prior
@@ -2549,18 +3285,36 @@ pub fn load_daily_period_reflections_for_yearly(
     // archive-only migration reader below.
     let mut stored = BTreeMap::new();
     if let Some(state) = crate::reflection::hygiene_store::load_hygiene_state(home)
-        .map_err(|_| std::io::Error::other("yearly period input unavailable"))? {
+        .map_err(|_| std::io::Error::other("yearly period input unavailable"))?
+    {
         let current_tag = date_tag_from_unix(now_unix);
         for reflection in state.period_reflections {
             // Hygiene is shared by Daily and Yearly planners. A valid Yearly
             // record is unrelated to this Daily-source reader, not corruption.
-            if reflection.kind != "daily" { continue; }
+            if reflection.kind != "daily" {
+                continue;
+            }
             if reflection.tag > current_tag {
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "yearly period input is invalid"));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "yearly period input is invalid",
+                ));
             }
             let digest = canonical_daily_archive_sha256(&reflection)?;
-            if stored.insert(reflection.tag.clone(), YearlySynthesisSource { reflection, archive_sha256: digest }).is_some() {
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "yearly period input has duplicate tags"));
+            if stored
+                .insert(
+                    reflection.tag.clone(),
+                    YearlySynthesisSource {
+                        reflection,
+                        archive_sha256: digest,
+                    },
+                )
+                .is_some()
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "yearly period input has duplicate tags",
+                ));
             }
         }
     }
@@ -2571,7 +3325,9 @@ pub fn load_daily_period_reflections_for_yearly(
     let mut total_bytes = 0usize;
     let mut reflections = Vec::new();
     for name in bounded_retention_child_names(&archive.daily, MAX_DAILY_RETENTION_ENTRIES)? {
-        if name == OsStr::new(".retention-v2") { continue; }
+        if name == OsStr::new(".retention-v2") {
+            continue;
+        }
         let tag = archive_tag_from_retention_leaf(&name)?;
         if tag.as_str() > current_tag.as_str() {
             return Err(std::io::Error::new(
@@ -2588,10 +3344,20 @@ pub fn load_daily_period_reflections_for_yearly(
         )?;
         charge_retention_bytes(&mut total_bytes, bytes.len())?;
         let reflection = parse_daily_archive_record(&bytes, &tag)?;
-        let source = YearlySynthesisSource { reflection: reflection.clone(), archive_sha256: hex::encode(Sha256::digest(&bytes)) };
+        let source = YearlySynthesisSource {
+            reflection: reflection.clone(),
+            archive_sha256: hex::encode(Sha256::digest(&bytes)),
+        };
         if let Some(existing) = stored.get(&tag) {
-            if existing.reflection != reflection { return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "yearly archive and period input disagree")); }
-        } else { stored.insert(tag, source); }
+            if existing.reflection != reflection {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "yearly archive and period input disagree",
+                ));
+            }
+        } else {
+            stored.insert(tag, source);
+        }
     }
     reflections.extend(stored.into_values());
     reflections.sort_by(|left, right| left.reflection.tag.cmp(&right.reflection.tag));
