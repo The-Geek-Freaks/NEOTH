@@ -3,6 +3,20 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W381 core and browser CLI reference accepted (2026-09-23):**
+Core216 run35855695782 passed all4explicit gates: slim production Clippy,
+core test-target typecheck, CLI build and source-bound reference export.
+The imported B6D3EB56 reference adds only browser/status/install. Preflight216
+run35855667194 also passed. Group780 will now verify the committed reference.
+GUI13535856964423 and BGE235856967745 run on21612331 after test-target success;
+this documentation-only import preserves their relevant binary source.
+FullCI954 macOS executed17811tests:17797passed/14failed. Ten failures match
+the published repairs; W378 confirms two additional browser failures already
+have canonical-root fixes in216. W379 handles the two remaining GUI failures.
+Windows tests continue; Linux runner-shutdown143 awaits targeted retry.
+Inventory657;native1092+Windows19/Linux33/macOS32;Group780;GUI135Linux/131macOS.
+Road1027checked/295open/2partial;WS-LF20done/98open unchanged.
+No local executable validation ran; see docs/gold-wave381-core-and-reference.md.
 **W377 browser archive fixture lifetime repair (2026-09-23):**
 Corebb1 run35854299629 passed production slim Clippy, then found one E0505
 in the ZIP fixture: ZipWriter's Drop kept its mutable byte-vector borrow

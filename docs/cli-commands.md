@@ -223,6 +223,18 @@ Create a durable WAL-inclusive, credential-free Prepared archive receipt. It sta
 
 Read the current durable status without starting a Git process
 
+## `neoth browser`
+
+Inspect or explicitly install the reviewed managed-browser artifact. Status verifies local artifact integrity only; it never starts a browser
+
+### `neoth browser install`
+
+Install the compiled-in reviewed artifact for this platform. Requires `managed_browser.enabled: true`; never launches the installed browser
+
+### `neoth browser status`
+
+Verify the local reviewed artifact. This reports artifact integrity only; it does not report browser process or CDP runtime readiness
+
 ## `neoth buddy`
 
 GOLD-ADAPT-GUI-BUDDY — GUI Buddy-Config tab: read aggregator + two safe toggles. `status` reads six buddy-config fields from freedom.yaml; `self-activation --enable/--disable` toggles `self_activation.enabled`; `proactive --enable/--disable` toggles `proactive.enabled`. Sovereign and Smart-Approve are surfaced here but mutate only through their canonical `autonomy sovereign` and `security set` policy paths

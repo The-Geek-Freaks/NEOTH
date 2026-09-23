@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T11:36:05.7115422Z",
-  "validationStatus": "W377 ZIP fixture E0505 repair statically reviewed; hosted testtarget rerun pending",
+  "capturedUtc": "2026-09-23T11:53:00.4544725Z",
+  "validationStatus": "Core216 all4gates source-admitted; browser CLI reference imported; Group780/GUI135/BGE2 behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -103,8 +103,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 241281,
-      "sha256": "F7E3604A1789839F87DD6A574E3D4987A98E4F4E599CB71179DC32C7ED2D6CFA"
+      "bytes": 241777,
+      "sha256": "B6D3EB5644BC388C96E1E1F1BEAB281DD88F648BE1B9BFA9173CCFCE3559412F"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -808,18 +808,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 158290,
-      "sha256": "CA40AE8B7FB622E515E681A596B84CB8F9F76E7A0E30D20D4135A248B706BCF7"
+      "bytes": 159336,
+      "sha256": "3F4922C081D5989D8179AB233B59A6E99886CE49C4276F54DF432F1B6282B502"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1161449,
-      "sha256": "85BDDA5A177928A63577A2443ADDC2F932B50215A710ED290111C690823A257B"
+      "bytes": 1162495,
+      "sha256": "439C41B3393D0A4C6DB1FA9A2ED8ADDB86B25371BF2C241D4198994D5660E282"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1758898,
-      "sha256": "DB991D0E165756D45EFE3B03B8AF1BB03279374C2FB7F3FE35F41928F692AD48"
+      "bytes": 1759944,
+      "sha256": "AB358EE727C6BEF22913C06D03324D1991087487B1C889B89BDDE2E660BD722B"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -3280,6 +3280,16 @@
       "path": "docs/gold-wave377-browser-fixture-borrow.md",
       "bytes": 709,
       "sha256": "726D503716D4A15F08958722DD2846DFB3DEB9417E38587D4651CE9EBF3FB124"
+    },
+    {
+      "path": "docs/gold-wave378-macos-browser-fixtures.md",
+      "bytes": 2666,
+      "sha256": "B06854F55EF18B599B547D11312A54F1FAFFA1681BD135E8DD01168D728C0426"
+    },
+    {
+      "path": "docs/gold-wave381-core-and-reference.md",
+      "bytes": 1610,
+      "sha256": "15ACEDA66FEEB310667FCACB55C381593689029BFBE3348620E56FB69538200C"
     }
   ]
 }
