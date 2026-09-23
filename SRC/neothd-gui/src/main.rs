@@ -47414,7 +47414,8 @@ exit 0
         );
         assert!(
             !window.get_chat_live_messages().iter().any(|row| {
-                row.text.contains("W153 visible reply") || row.stream_phase.as_str() == "complete"
+                row.text.contains("W153 visible reply")
+                    || (row.role.as_str() == "assistant" && row.stream_phase.as_str() == "complete")
             }),
             "macOS containment refusal must not repaint a successful child result"
         );

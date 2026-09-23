@@ -20892,6 +20892,28 @@ modes:
         cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
         output: &mut dyn ChatTurnEventSink,
     ) -> Result<()> {
+        dispatch_reasoning_stream_fixture_with_ack_gate(
+            home,
+            segment,
+            provider,
+            cancellation,
+            output,
+            None,
+        )
+        .await
+    }
+
+    /// Test-only variant for proving a provider terminal is durable before its
+    /// acknowledgement releases the dispatch future. Existing fixtures keep
+    /// the ordinary writer path through [`dispatch_reasoning_stream_fixture`].
+    async fn dispatch_reasoning_stream_fixture_with_ack_gate(
+        home: &std::path::Path,
+        segment: std::path::PathBuf,
+        provider: &dyn Provider,
+        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+        output: &mut dyn ChatTurnEventSink,
+        ack_gate: Option<crate::wal::writer::TestAckGate>,
+    ) -> Result<()> {
         let quota_path = home.join("reasoning-stream-quota.json");
         let args = ChatArgs {
             message: Some("reasoning stream fixture".to_owned()),
@@ -20903,6 +20925,10 @@ modes:
         config.autonomy = crate::permissions::AutonomyLevel::Full;
         config.council.disabled = Some(true);
         let (writer, writer_join) = wal_spawn(segment).expect("spawn fixture WAL writer");
+        let writer = match ack_gate {
+            Some(gate) => writer.with_test_ack_gate(gate),
+            None => writer,
+        };
         let mcp_servers = crate::mcp::McpServers::default();
         let ephemeral_consent = crate::consent::EphemeralConsent::default();
         let canary = std::sync::Arc::new(
@@ -21153,14 +21179,16 @@ modes:
         };
         let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
         let close = cancellation.clone();
+        let gate = crate::wal::writer::TestAckGate::once(EVENT_TYPE_PROVIDER_ERROR);
         let mut sink = ReasoningRecordingSink::default();
         let result = {
-            let dispatch = dispatch_reasoning_stream_fixture(
+            let dispatch = dispatch_reasoning_stream_fixture_with_ack_gate(
                 home.path(),
                 segment.clone(),
                 &provider,
                 &cancellation,
                 &mut sink,
+                Some(gate.clone()),
             );
             tokio::pin!(dispatch);
             tokio::time::timeout(Duration::from_secs(10), async {
@@ -21173,9 +21201,26 @@ modes:
             })
             .await
             .expect("stream-open fixture must reach its pending provider operation");
-            tokio::time::timeout(Duration::from_millis(250), &mut dispatch)
+            tokio::select! {
+                result = &mut dispatch => panic!(
+                    "stream-open dispatch returned before its durable cancellation terminal acknowledgement: {result:?}"
+                ),
+                result = tokio::time::timeout(Duration::from_secs(5), gate.wait_until_durable()) => {
+                    result.expect("stream-open cancellation terminal must become durable")
+                }
+            }
+            assert!(
+                std::future::poll_fn(|cx| std::task::Poll::Ready(matches!(
+                    dispatch.as_mut().poll(cx),
+                    std::task::Poll::Pending
+                )))
+                .await,
+                "stream-open dispatch must remain pending while its durable terminal acknowledgement is withheld"
+            );
+            gate.release();
+            tokio::time::timeout(Duration::from_secs(10), &mut dispatch)
                 .await
-                .expect("stream-open cancellation must settle without a detached wait")
+                .expect("stream-open cancellation must settle after its durable terminal acknowledgement")
         };
         assert!(result.is_err());
         let reasoning_events = without_authenticated_throughput(&sink.0, "cancelled", "cancelled");
@@ -21202,6 +21247,18 @@ modes:
         assert_eq!(lifecycle[0].0, EVENT_TYPE_PROVIDER_REQUEST);
         assert_eq!(lifecycle[1].0, EVENT_TYPE_PROVIDER_ERROR);
         assert_eq!(lifecycle[1].1["error_kind"], "stream_cancelled");
+        let request_invocation_id = lifecycle[0].1["invocation_id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .expect("provider request lifecycle must carry a non-empty invocation id");
+        let terminal_invocation_id = lifecycle[1].1["invocation_id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .expect("provider cancellation terminal must carry a non-empty invocation id");
+        assert_eq!(
+            request_invocation_id, terminal_invocation_id,
+            "cancellation terminal must bind the admitted provider intent"
+        );
     }
 
     struct PendingNextReasoningProvider {
@@ -21259,14 +21316,16 @@ modes:
         };
         let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
         let close = cancellation.clone();
+        let gate = crate::wal::writer::TestAckGate::once(EVENT_TYPE_PROVIDER_ERROR);
         let mut sink = ReasoningRecordingSink::default();
         let result = {
-            let dispatch = dispatch_reasoning_stream_fixture(
+            let dispatch = dispatch_reasoning_stream_fixture_with_ack_gate(
                 home.path(),
                 segment.clone(),
                 &provider,
                 &cancellation,
                 &mut sink,
+                Some(gate.clone()),
             );
             tokio::pin!(dispatch);
             tokio::time::timeout(Duration::from_secs(10), async {
@@ -21279,9 +21338,26 @@ modes:
             })
             .await
             .expect("pending next-item fixture must reach its pending provider operation");
-            tokio::time::timeout(Duration::from_millis(250), &mut dispatch)
+            tokio::select! {
+                result = &mut dispatch => panic!(
+                    "pending next-item dispatch returned before its durable cancellation terminal acknowledgement: {result:?}"
+                ),
+                result = tokio::time::timeout(Duration::from_secs(5), gate.wait_until_durable()) => {
+                    result.expect("pending next-item cancellation terminal must become durable")
+                }
+            }
+            assert!(
+                std::future::poll_fn(|cx| std::task::Poll::Ready(matches!(
+                    dispatch.as_mut().poll(cx),
+                    std::task::Poll::Pending
+                )))
+                .await,
+                "pending next-item dispatch must remain pending while its durable terminal acknowledgement is withheld"
+            );
+            gate.release();
+            tokio::time::timeout(Duration::from_secs(10), &mut dispatch)
                 .await
-                .expect("pending next-item cancellation must settle without a detached wait")
+                .expect("pending next-item cancellation must settle after its durable terminal acknowledgement")
         };
         assert!(result.is_err());
         let reasoning_events = without_authenticated_throughput(&sink.0, "cancelled", "cancelled");
@@ -21318,6 +21394,18 @@ modes:
         assert_eq!(lifecycle[0].0, EVENT_TYPE_PROVIDER_REQUEST);
         assert_eq!(lifecycle[1].0, EVENT_TYPE_PROVIDER_ERROR);
         assert_eq!(lifecycle[1].1["error_kind"], "stream_cancelled");
+        let request_invocation_id = lifecycle[0].1["invocation_id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .expect("provider request lifecycle must carry a non-empty invocation id");
+        let terminal_invocation_id = lifecycle[1].1["invocation_id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .expect("provider cancellation terminal must carry a non-empty invocation id");
+        assert_eq!(
+            request_invocation_id, terminal_invocation_id,
+            "cancellation terminal must bind the admitted provider intent"
+        );
         assert!(
             !serde_json::to_string(&audits[0])
                 .unwrap()

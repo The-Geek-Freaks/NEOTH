@@ -8,6 +8,28 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W273/W274 deterministic platform fixtures (2026-09-23):** the two provider
+cancellation tests now use the existing one-shot provider-error acknowledgement
+gate. Each requires the real cancellation terminal to become durable, proves
+that dispatch is still pending while acknowledgement is withheld, then releases
+the gate and verifies full settlement plus matching nonempty invocation IDs.
+This replaces a250ms whole-disk-roundtrip assertion with explicit ordering;
+production cancellation, terminal durability and no-retry behavior are unchanged.
+
+W274 preserves the W153/W164 macOS fixture identities while exercising the
+explicit unsupported-containment refusal: no child start, no invocation, no
+success repaint and no feedback availability. Linux success checks remain.
+W155 waits for actual proof-bearing lookup execution and private stdin content,
+then terminal UI state, retaining exactly-once approval and no-proof negatives.
+These fixtures require fresh hosted execution; they do not claim macOS legacy
+child support. Source/test counts and Road1018/304/2 are unchanged.
+
+The W274 source was published early in a25658ea by the delegated reviewer;
+Root stopped further delegated Git changes and cancelled its duplicate GUI run
+35813705858. The intended GUI8f16run35813667946 remains active. Root rechecked
+and binds the published source in the canonical inventory here; no force push,
+source loss, local compiler, tests or runtime activity occurred.
+
 **W272 Linux production helper entry (2026-09-23):** the hosted containment
 fixtures now build and launch the real `neothd-gui` executable through its early
 internal-helper entry, before runtime/GUI threads. The former libtest helper
