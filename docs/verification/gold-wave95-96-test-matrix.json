@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "P1-21 accepted13native+1GUI actual terminals on unchanged scoped sources; overall release gates remain open",
+  "status": "W267 bounded test-only stderr capture bypasses UI truncation; fresh GUI124 pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 93235,
-    "sha256": "D2377248EC50B5B8DEDCCCFF550535BF93935BEA8308F3798445CDED5763146E"
+    "bytes": 93210,
+    "sha256": "C937B8CFB1C6DEDA726A28B528D649941C468D78F2AC8B69E36899D3DD55C74D"
   },
   "sourceInputs": 538,
   "requiredNativeTests": [
@@ -17231,6 +17231,20 @@
     "base": "0fb6c3076b35f94a0f8730ae046f051036a7c1cd",
     "sources": [],
     "note": "Eight Gitblob/SHA bindings unchanged through0fb; actual pipeline/meaningfulsignal/typedretry reviewed; P1-20 explicit allOS gate remains open.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave267GuiDiagnosticCapture": {
+    "base": "a1b6a5e6c1981e74c1ece14a3e0bd7e6d317e2ee",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
+        "bytes": 106339,
+        "sha256": "14A27068FE06645845E7013EC00B5A7AD64293BA9C3B7D2C92067E517F365AF4",
+        "blob": "6ac0961c00f0141174015ce63648c8f5a9321268"
+      }
+    ],
+    "note": "GUIa8 helper error suffix truncated in UI; emit bounded nonblocking diagnostic directly to fixture stderr, preserve original activation error. No production behavior changed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

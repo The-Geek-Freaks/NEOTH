@@ -3,6 +3,14 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W267 GUI diagnostic capture correction (2026-09-23):** GUI124a8 reached
+the same W153/W164 helper exit125 before provider startup. W260 appended the
+bounded helper stderr to a UI error that was then truncated, so the actual
+operation still was not observed. W267 writes the bounded diagnostic directly
+to Linux-test stderr and returns the original activation error unchanged.
+No production containment rule, timeout, provider launch or fixture requirement
+is weakened. Fresh hosted GUI evidence remains required; Road counts unchanged.
+
 **W265 silence-watchdog acceptance (2026-09-23):** P1-21 is accepted from
 13 actual native terminals plus one GUI timeout-presentation terminal. Root
 verified all seven native caller/consumer files and the GUI presentation source

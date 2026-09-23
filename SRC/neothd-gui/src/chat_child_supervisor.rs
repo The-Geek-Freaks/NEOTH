@@ -45,11 +45,8 @@ impl OwnedChatChild {
                 #[cfg(all(test, target_os = "linux"))]
                 {
                     let helper_stderr = read_test_linux_systemd_run_stderr(&mut child);
-                    return Err(format!(
-                        "{error}; test-only systemd-run stderr after failed activation: {helper_stderr}"
-                    ));
+                    eprintln!("test-only systemd-run stderr after failed activation: {helper_stderr}");
                 }
-                #[cfg(not(all(test, target_os = "linux")))]
                 return Err(error);
             }
         };
