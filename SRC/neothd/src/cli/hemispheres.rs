@@ -1076,8 +1076,6 @@ fn parse_role(s: &str) -> Result<HemisphereRole> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::Provider as _;
-
     struct RoleCountingProvider(std::sync::Arc<std::sync::atomic::AtomicUsize>);
 
     #[async_trait::async_trait]

@@ -759,6 +759,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+    use crate::config::FreedomConfig;
     use crate::config::inference::{HemisphereRole, InferenceProvider};
     use crate::config::role_policy::{RolePolicyConfig, RolePolicyRule};
     use crate::providers::cost_authorization::{AuthorizedProvider, ProviderCallAuthorizer};

@@ -160,7 +160,20 @@ pub async fn emit_egress_intent(
     message: &str,
     ts_unix: u64,
 ) -> Option<String> {
-    emit_egress_intent_inner(writer, channel, recipient, message, ts_unix, None).await
+    emit_egress_intent_in(writer, channel, recipient, message, ts_unix, None).await
+}
+
+/// Contextual variant for an already admitted turn. Callers without the
+/// capability keep the historical zero-header semantics through the wrapper.
+pub(crate) async fn emit_egress_intent_in(
+    writer: &crate::wal::writer::WalWriterHandle,
+    channel: &str,
+    recipient: &str,
+    message: &str,
+    ts_unix: u64,
+    wal_session: Option<crate::wal::WalSessionContext>,
+) -> Option<String> {
+    emit_egress_intent_inner(writer, channel, recipient, message, ts_unix, None, wal_session).await
 }
 
 /// Account-bound variant for the admitted nonlegacy Telegram map live path.
@@ -173,6 +186,21 @@ pub(crate) async fn emit_account_bound_egress_intent(
     message: &str,
     ts_unix: u64,
     provenance: &crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance,
+) -> Option<String> {
+    emit_account_bound_egress_intent_in(
+        writer, channel, recipient, message, ts_unix, provenance, None,
+    )
+    .await
+}
+
+pub(crate) async fn emit_account_bound_egress_intent_in(
+    writer: &crate::wal::writer::WalWriterHandle,
+    channel: &str,
+    recipient: &str,
+    message: &str,
+    ts_unix: u64,
+    provenance: &crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Option<String> {
     if provenance.channel_ref().channel_id != ChannelKind::Telegram
         || channel != ChannelKind::Telegram.as_str()
@@ -203,6 +231,7 @@ pub(crate) async fn emit_account_bound_egress_intent(
     let payload = serde_json::to_vec(&value).unwrap_or_default();
     let header = crate::wal::HeaderBuilder::new(0x00, &payload)
         .event_subtype(crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8)
+        .session_context(wal_session)
         .build();
     match writer.append_authenticated(header, payload).await {
         Ok(_) => Some(intent_id),
@@ -226,6 +255,21 @@ pub(crate) async fn emit_legacy_live_egress_intent(
     message: &str,
     ts_unix: u64,
     provenance: &crate::cli::serve_tasks::LegacyLiveEgressProvenance,
+) -> Option<String> {
+    emit_legacy_live_egress_intent_in(
+        writer, channel, recipient, message, ts_unix, provenance, None,
+    )
+    .await
+}
+
+pub(crate) async fn emit_legacy_live_egress_intent_in(
+    writer: &crate::wal::writer::WalWriterHandle,
+    channel: &str,
+    recipient: &str,
+    message: &str,
+    ts_unix: u64,
+    provenance: &crate::cli::serve_tasks::LegacyLiveEgressProvenance,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Option<String> {
     let channel_ref = provenance.channel_ref();
     if !matches!(
@@ -253,6 +297,7 @@ pub(crate) async fn emit_legacy_live_egress_intent(
     let payload = serde_json::to_vec(&value).ok()?;
     let header = crate::wal::HeaderBuilder::new(0x00, &payload)
         .event_subtype(crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8)
+        .session_context(wal_session)
         .build();
     writer
         .append_authenticated(header, payload)
@@ -268,6 +313,7 @@ async fn emit_egress_intent_inner(
     message: &str,
     ts_unix: u64,
     channel_ref: Option<&crate::channels::registry::ChannelRef>,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Option<String> {
     let intent_id = crate::wal::events::next_intent_id(
         b"channel-egress",
@@ -290,6 +336,7 @@ async fn emit_egress_intent_inner(
     let payload = serde_json::to_vec(&value).unwrap_or_default();
     let header = crate::wal::HeaderBuilder::new(0x00, &payload)
         .event_subtype(crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8)
+        .session_context(wal_session)
         .build();
     match writer.append(header, payload).await {
         Ok(_) => Some(intent_id),
@@ -314,6 +361,17 @@ pub async fn emit_egress_result(
     provider_message_id: Option<&str>,
     ts_unix: u64,
 ) {
+    emit_egress_result_in(writer, intent_id, outcome, provider_message_id, ts_unix, None).await;
+}
+
+pub(crate) async fn emit_egress_result_in(
+    writer: &crate::wal::writer::WalWriterHandle,
+    intent_id: &str,
+    outcome: &str,
+    provider_message_id: Option<&str>,
+    ts_unix: u64,
+    wal_session: Option<crate::wal::WalSessionContext>,
+) {
     let payload = serde_json::to_vec(&serde_json::json!({
         "intent_id": intent_id,
         "outcome": outcome,
@@ -323,6 +381,7 @@ pub async fn emit_egress_result(
     .unwrap_or_default();
     let header = crate::wal::HeaderBuilder::new(0x00, &payload)
         .event_subtype(crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8)
+        .session_context(wal_session)
         .build();
     if let Err(error) = writer.append(header, payload).await {
         tracing::warn!(error = %error, "WAL append CHANNEL_EGRESS_RESULT failed after egress");
@@ -341,6 +400,21 @@ pub(crate) async fn emit_account_bound_egress_result(
     ts_unix: u64,
     provenance: &crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance,
 ) -> std::result::Result<(), ()> {
+    emit_account_bound_egress_result_in(
+        writer, intent_id, outcome, provider_message_id, ts_unix, provenance, None,
+    )
+    .await
+}
+
+pub(crate) async fn emit_account_bound_egress_result_in(
+    writer: &crate::wal::writer::WalWriterHandle,
+    intent_id: &str,
+    outcome: &str,
+    provider_message_id: Option<&str>,
+    ts_unix: u64,
+    provenance: &crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance,
+    wal_session: Option<crate::wal::WalSessionContext>,
+) -> std::result::Result<(), ()> {
     if provenance.channel_ref().channel_id != ChannelKind::Telegram {
         tracing::warn!("refusing account-bound egress result with non-Telegram provenance");
         return Err(());
@@ -358,6 +432,7 @@ pub(crate) async fn emit_account_bound_egress_result(
     .unwrap_or_default();
     let header = crate::wal::HeaderBuilder::new(0x00, &payload)
         .event_subtype(crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8)
+        .session_context(wal_session)
         .build();
     writer
         .append_authenticated(header, payload)
@@ -379,6 +454,21 @@ pub(crate) async fn emit_legacy_live_egress_result(
     ts_unix: u64,
     provenance: &crate::cli::serve_tasks::LegacyLiveEgressProvenance,
 ) -> std::result::Result<(), ()> {
+    emit_legacy_live_egress_result_in(
+        writer, intent_id, outcome, provider_message_id, ts_unix, provenance, None,
+    )
+    .await
+}
+
+pub(crate) async fn emit_legacy_live_egress_result_in(
+    writer: &crate::wal::writer::WalWriterHandle,
+    intent_id: &str,
+    outcome: &str,
+    provider_message_id: Option<&str>,
+    ts_unix: u64,
+    provenance: &crate::cli::serve_tasks::LegacyLiveEgressProvenance,
+    wal_session: Option<crate::wal::WalSessionContext>,
+) -> std::result::Result<(), ()> {
     let channel_ref = provenance.channel_ref();
     if !matches!(
         channel_ref.channel_id,
@@ -395,6 +485,7 @@ pub(crate) async fn emit_legacy_live_egress_result(
     .map_err(|_| ())?;
     let header = crate::wal::HeaderBuilder::new(0x00, &payload)
         .event_subtype(crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8)
+        .session_context(wal_session)
         .build();
     writer
         .append_authenticated(header, payload)

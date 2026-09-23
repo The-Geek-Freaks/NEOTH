@@ -91,6 +91,9 @@ pub struct LiveDelivery {
     /// Present only when the authenticated nonlegacy Telegram map startup
     /// carried an opaque provenance capability into this delivery.
     live_egress: Option<LiveEgressProvenance>,
+    /// Turn-local attribution retained only when an admitted channel turn
+    /// supplies it. Standalone/proactive delivery deliberately remains None.
+    wal_session: Option<crate::wal::WalSessionContext>,
     config: LiveDeliveryConfig,
     /// `None` until the first `send_or_edit` succeeds; then the platform id of
     /// the live message every subsequent edit targets.
@@ -254,12 +257,23 @@ impl LiveDelivery {
             chat_id,
             kind,
             live_egress,
+            wal_session: None,
             config,
             sent_message_id: None,
             last_edit_ms: None,
             edit_count: 0,
             edit_unavailable: false,
         }
+    }
+
+    /// Attach the opaque capability already minted by the admitted channel
+    /// pipeline. This never derives identity from delivery metadata.
+    pub(crate) fn with_wal_session(
+        mut self,
+        wal_session: Option<crate::wal::WalSessionContext>,
+    ) -> Self {
+        self.wal_session = wal_session;
+        self
     }
 
     /// `true` once the first send has landed (a `MessageId` is held).
@@ -383,34 +397,37 @@ impl LiveDelivery {
         // prevent, and unlike a file write a send cannot be undone.
         let intent = match self.live_egress.as_ref() {
             Some(LiveEgressProvenance::MappedTelegram(provenance)) => {
-                crate::channels::send_gate::emit_account_bound_egress_intent(
+                crate::channels::send_gate::emit_account_bound_egress_intent_in(
                     writer,
                     self.kind.as_str(),
                     &self.chat_id,
                     text,
                     crate::time::now_unix_secs(),
                     provenance,
+                    self.wal_session,
                 )
                 .await
             }
             Some(LiveEgressProvenance::LegacySingleton(provenance)) => {
-                crate::channels::send_gate::emit_legacy_live_egress_intent(
+                crate::channels::send_gate::emit_legacy_live_egress_intent_in(
                     writer,
                     self.kind.as_str(),
                     &self.chat_id,
                     text,
                     crate::time::now_unix_secs(),
                     provenance,
+                    self.wal_session,
                 )
                 .await
             }
             None => {
-                crate::channels::send_gate::emit_egress_intent(
+                crate::channels::send_gate::emit_egress_intent_in(
                     writer,
                     self.kind.as_str(),
                     &self.chat_id,
                     text,
                     crate::time::now_unix_secs(),
+                    self.wal_session,
                 )
                 .await
             }
@@ -424,12 +441,13 @@ impl LiveDelivery {
         match self.channel.send_text(&self.chat_id, text).await {
             Ok(id) => {
                 if self.live_egress.is_none() {
-                    crate::channels::send_gate::emit_egress_result(
+                    crate::channels::send_gate::emit_egress_result_in(
                         writer,
                         &intent_id,
                         "delivered",
                         Some(&id.0),
                         crate::time::now_unix_secs(),
+                        self.wal_session,
                     )
                     .await;
                 }
@@ -442,8 +460,11 @@ impl LiveDelivery {
                     false,
                     crate::time::now_unix_secs(),
                 );
-                let header =
-                    crate::wal::make_header(crate::wal::events::EVENT_TYPE_CHANNEL_SEND, &payload);
+                let header = crate::wal::make_header_in(
+                    crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
+                    &payload,
+                    self.wal_session,
+                );
                 if let Err(error) = writer.append(header, payload).await {
                     tracing::warn!(
                         error = %error,
@@ -453,24 +474,26 @@ impl LiveDelivery {
                 if let Some(provenance) = self.live_egress.as_ref() {
                     let receipt = match provenance {
                         LiveEgressProvenance::MappedTelegram(value) => {
-                            crate::channels::send_gate::emit_account_bound_egress_result(
+                            crate::channels::send_gate::emit_account_bound_egress_result_in(
                                 writer,
                                 &intent_id,
                                 "delivered",
                                 Some(&id.0),
                                 crate::time::now_unix_secs(),
                                 value,
+                                self.wal_session,
                             )
                             .await
                         }
                         LiveEgressProvenance::LegacySingleton(value) => {
-                            crate::channels::send_gate::emit_legacy_live_egress_result(
+                            crate::channels::send_gate::emit_legacy_live_egress_result_in(
                                 writer,
                                 &intent_id,
                                 "delivered",
                                 Some(&id.0),
                                 crate::time::now_unix_secs(),
                                 value,
+                                self.wal_session,
                             )
                             .await
                         }
@@ -492,12 +515,13 @@ impl LiveDelivery {
                     ChannelError::Auth(_) => "auth",
                 };
                 if self.live_egress.is_none() {
-                    crate::channels::send_gate::emit_egress_result(
+                    crate::channels::send_gate::emit_egress_result_in(
                         writer,
                         &intent_id,
                         error_kind,
                         None,
                         crate::time::now_unix_secs(),
+                        self.wal_session,
                     )
                     .await;
                 }
@@ -507,8 +531,11 @@ impl LiveDelivery {
                     error_kind,
                     crate::time::now_unix_secs(),
                 );
-                let header =
-                    crate::wal::make_header(crate::wal::events::EVENT_TYPE_CHANNEL_SEND, &payload);
+                let header = crate::wal::make_header_in(
+                    crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
+                    &payload,
+                    self.wal_session,
+                );
                 if let Err(audit_error) = writer.append(header, payload).await {
                     tracing::warn!(
                         error = %audit_error,
@@ -518,24 +545,26 @@ impl LiveDelivery {
                 if let Some(provenance) = self.live_egress.as_ref() {
                     let receipt = match provenance {
                         LiveEgressProvenance::MappedTelegram(value) => {
-                            crate::channels::send_gate::emit_account_bound_egress_result(
+                            crate::channels::send_gate::emit_account_bound_egress_result_in(
                                 writer,
                                 &intent_id,
                                 error_kind,
                                 None,
                                 crate::time::now_unix_secs(),
                                 value,
+                                self.wal_session,
                             )
                             .await
                         }
                         LiveEgressProvenance::LegacySingleton(value) => {
-                            crate::channels::send_gate::emit_legacy_live_egress_result(
+                            crate::channels::send_gate::emit_legacy_live_egress_result_in(
                                 writer,
                                 &intent_id,
                                 error_kind,
                                 None,
                                 crate::time::now_unix_secs(),
                                 value,
+                                self.wal_session,
                             )
                             .await
                         }
@@ -571,8 +600,11 @@ impl LiveDelivery {
                 return;
             }
         };
-        let header =
-            crate::wal::make_header(crate::wal::events::EVENT_TYPE_CHANNEL_ERROR, &payload);
+        let header = crate::wal::make_header_in(
+            crate::wal::events::EVENT_TYPE_CHANNEL_ERROR,
+            &payload,
+            self.wal_session,
+        );
         if let Err(error) = writer.append(header, payload).await {
             tracing::warn!(error = %error, "WAL append live CHANNEL_ERROR failed");
         }
@@ -598,7 +630,11 @@ impl LiveDelivery {
                 return;
             }
         };
-        let header = crate::wal::make_header(crate::wal::events::EVENT_TYPE_CHANNEL_EDIT, &payload);
+        let header = crate::wal::make_header_in(
+            crate::wal::events::EVENT_TYPE_CHANNEL_EDIT,
+            &payload,
+            self.wal_session,
+        );
         if let Err(e) = writer.append(header, payload).await {
             tracing::warn!(error = %e, "WAL append outbound CHANNEL_EDIT (0x38) failed (non-fatal)");
         }
@@ -1313,7 +1349,7 @@ mod tests {
         let channel = Arc::new(FailingSendChannel {
             sends: AtomicUsize::new(0),
         });
-        let mut delivery = LiveDelivery::new_mapped_telegram(
+        let delivery = LiveDelivery::new_mapped_telegram(
             channel.clone(),
             "private-chat".into(),
             ChannelKind::Telegram,
@@ -1322,6 +1358,12 @@ mod tests {
         )
         .unwrap();
         let (home, writer, join) = authenticated_home_writer().await;
+        let session = crate::wal::WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"mapped-live-delivery-failure",
+        )
+        .expect("mint admitted mapped failure context");
+        let mut delivery = delivery.with_wal_session(Some(session));
         assert!(
             delivery
                 .send_or_edit(&writer, "private-body", false)
@@ -1346,6 +1388,8 @@ mod tests {
         let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
         let mut cursor = header.header_len();
         let mut relevant = Vec::new();
+        let mut intent = None;
+        let mut failed_send = None;
         let mut terminal = None;
         while cursor < bytes.len() {
             let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
@@ -1353,19 +1397,30 @@ mod tests {
                 == crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8
             {
                 relevant.push("intent");
+                assert_eq!(frame.header.session_id, session.header_id());
+                intent = Some(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
             } else if frame.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_SEND {
                 relevant.push("audit");
+                assert_eq!(frame.header.session_id, session.header_id());
+                failed_send = Some(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
             } else if frame.header.event_subtype
                 == crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8
             {
                 relevant.push("result");
+                assert_eq!(frame.header.session_id, session.header_id());
                 terminal =
                     Some(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
             }
             cursor += frame.header.total_len as usize;
         }
         assert_eq!(relevant, vec!["intent", "audit", "result"]);
-        assert_eq!(terminal.unwrap()["outcome"], "transport");
+        let intent = intent.expect("admitted mapped intent");
+        let failed_send = failed_send.expect("failed CHANNEL_SEND audit");
+        let terminal = terminal.expect("admitted mapped terminal");
+        assert_eq!(failed_send["delivered"], false);
+        assert_eq!(failed_send["error_kind"], "transport");
+        assert_eq!(terminal["intent_id"], intent["intent_id"]);
+        assert_eq!(terminal["outcome"], "transport");
         assert_eq!(channel.sends.load(Ordering::SeqCst), 1);
     }
 
@@ -1607,6 +1662,124 @@ mod tests {
         assert!(checked, "expected a 0x38 frame to inspect");
     }
 
+    #[tokio::test]
+    async fn admitted_live_deliveries_keep_wal_session_partitions_isolated() {
+        let (home, writer, join) = authenticated_home_writer().await;
+        let session_a = crate::wal::WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"live-delivery-fixture-a",
+        )
+        .expect("mint admitted A context");
+        let session_b = crate::wal::WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"live-delivery-fixture-b",
+        )
+        .expect("mint admitted B context");
+        let mut a = LiveDelivery::new(
+            Arc::new(MockChannel::new(false)),
+            "a".into(),
+            ChannelKind::Telegram,
+            fast_config(),
+        )
+        .with_wal_session(Some(session_a));
+        let mut b = LiveDelivery::new(
+            Arc::new(MockChannel::new(false)),
+            "b".into(),
+            ChannelKind::Telegram,
+            fast_config(),
+        )
+        .with_wal_session(Some(session_b));
+        let mut unbound = LiveDelivery::new(
+            Arc::new(MockChannel::new(false)),
+            "legacy".into(),
+            ChannelKind::Telegram,
+            fast_config(),
+        );
+        a.send_or_edit(&writer, "a", true).await.unwrap();
+        b.send_or_edit(&writer, "b", true).await.unwrap();
+        unbound.send_or_edit(&writer, "legacy", true).await.unwrap();
+        drop(writer);
+        join.await.unwrap().unwrap();
+
+        let bytes = std::fs::read(home.path().join("wal").join("000001.wal")).unwrap();
+        let segment = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let exact_a = crate::wal::SessionPartition::exact(session_a.header_id()).unwrap();
+        let exact_b = crate::wal::SessionPartition::exact(session_b.header_id()).unwrap();
+        let mut cursor = segment.header_len();
+        let hash = |value: &str| format!("{:016x}", xxhash_rust::xxh3::xxh3_64(value.as_bytes()));
+        let label_for_payload = |payload: &serde_json::Value| match (
+            payload["to_hash"].as_str(),
+            payload["message_hash"].as_str(),
+        ) {
+            (Some(to), Some(message)) if to == hash("a") && message == hash("a") => "a",
+            (Some(to), Some(message)) if to == hash("b") && message == hash("b") => "b",
+            (Some(to), Some(message)) if to == hash("legacy") && message == hash("legacy") => {
+                "unbound"
+            }
+            _ => panic!("unexpected live-delivery payload identity"),
+        };
+        let session_for_label = |label| match label {
+            "a" => session_a.header_id(),
+            "b" => session_b.header_id(),
+            "unbound" => crate::wal::SessionId::ZERO,
+            _ => unreachable!("label_for_payload only returns known labels"),
+        };
+        let mut intent_labels = std::collections::BTreeMap::new();
+        let mut a_frames = 0;
+        let mut b_frames = 0;
+        let mut unbound_frames = 0;
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            let label = if frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8
+            {
+                let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+                let label = label_for_payload(&payload);
+                intent_labels.insert(payload["intent_id"].as_str().unwrap().to_owned(), label);
+                Some(label)
+            } else if frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8
+            {
+                let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+                Some(*intent_labels.get(payload["intent_id"].as_str().unwrap()).expect(
+                    "every result must retain its preceding intent identity",
+                ))
+            } else if frame.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_SEND {
+                let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+                Some(label_for_payload(&payload))
+            } else {
+                None
+            };
+            if let Some(label) = label {
+                assert_eq!(
+                    frame.header.session_id,
+                    session_for_label(label),
+                    "{label} frame must retain its own admitted session"
+                );
+                match label {
+                    "a" => {
+                        assert!(exact_a.matches(frame.header.session_id));
+                        a_frames += 1;
+                    }
+                    "b" => {
+                        assert!(exact_b.matches(frame.header.session_id));
+                        b_frames += 1;
+                    }
+                    "unbound" => {
+                        assert!(crate::wal::SessionPartition::UNATTRIBUTED
+                            .matches(frame.header.session_id));
+                        unbound_frames += 1;
+                    }
+                    _ => unreachable!("known live-delivery label"),
+                }
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        assert_eq!(a_frames, 3, "A intent/result/send stay in exact A partition");
+        assert_eq!(b_frames, 3, "B intent/result/send stay in exact B partition");
+        assert_eq!(unbound_frames, 3, "unbound delivery remains legacy ZERO");
+    }
+
     fn chunk(delta: &str, done: bool) -> crate::providers::CompletionChunk {
         crate::providers::CompletionChunk {
             delta: delta.to_string(),
@@ -1702,17 +1875,24 @@ mod tests {
     #[tokio::test]
     async fn provider_stream_error_replaces_preview_and_wal_stays_metadata_only() {
         let ch = Arc::new(MockChannel::new(false));
+        let (home, writer, join) = authenticated_home_writer().await;
+        let session = crate::wal::WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"live-delivery-interruption",
+        )
+        .expect("mint admitted interruption context");
         let live = LiveDelivery::new(
             ch.clone(),
             "private-chat-id".into(),
             ChannelKind::Telegram,
             fast_config(),
-        );
+        )
+        .with_wal_session(Some(session));
         let stream: ChunkStream = Box::pin(futures_util::stream::iter(vec![
             Ok(chunk("partial secret", false)),
             Err(anyhow::anyhow!("upstream exposed detail")),
         ]));
-        let (writer, join, _dir, seg) = test_writer().await;
+        let seg = home.path().join("wal").join("000001.wal");
 
         let result = collect_provider_stream(stream, live, &writer, 1024)
             .await
@@ -1736,11 +1916,38 @@ mod tests {
         let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
         let mut cursor = header.header_len();
         let mut saw_interruption = false;
+        let mut saw_send = false;
+        let mut saw_edit = false;
+        let mut lifecycle_frames = 0;
         while cursor < bytes.len() {
             let decoded = match crate::wal::frame::decode_frame(&bytes[cursor..]) {
                 Ok(decoded) => decoded,
                 Err(_) => break,
             };
+            let relevant = decoded.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_SEND
+                || decoded.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_ERROR
+                || decoded.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_EDIT
+                || matches!(
+                    decoded.header.event_subtype,
+                    value if value == crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8
+                        || value == crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8
+                );
+            if relevant {
+                assert_eq!(decoded.header.session_id, session.header_id());
+            }
+            if decoded.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_SEND {
+                saw_send = true;
+            }
+            if decoded.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_EDIT {
+                saw_edit = true;
+            }
+            if matches!(
+                decoded.header.event_subtype,
+                value if value == crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8
+                    || value == crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8
+            ) {
+                lifecycle_frames += 1;
+            }
             if decoded.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_ERROR {
                 let payload: serde_json::Value = serde_json::from_slice(decoded.payload).unwrap();
                 assert_eq!(payload["reason"], "provider_error");
@@ -1755,6 +1962,9 @@ mod tests {
             cursor = cursor.saturating_add(decoded.header.total_len as usize);
         }
         assert!(saw_interruption);
+        assert!(saw_send, "preview delivery records CHANNEL_SEND");
+        assert!(saw_edit, "interruption notice records CHANNEL_EDIT");
+        assert_eq!(lifecycle_frames, 2, "interruption preserves intent/result pairing");
     }
 
     #[tokio::test]

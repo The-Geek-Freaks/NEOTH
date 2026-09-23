@@ -521,7 +521,7 @@ mod tests {
     use crate::config::role_policy::{RolePolicyConfig, RolePolicyRule};
     use crate::loop_engine::engine::{LoopRound, StopReason};
     use crate::providers::cost_authorization::{AuthorizedProvider, ProviderCallAuthorizer};
-    use crate::providers::{CompletionIdentity, ProviderDispatchPermit};
+    use crate::providers::{CompletionIdentity, Provider, ProviderDispatchPermit};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 

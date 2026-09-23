@@ -2,6 +2,28 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W310/W311/W312 source and hosted recovery (2026-09-23):**
+Accepted channel streams now retain their admission-minted WAL session through
+egress intent/result, send, edit and interruption. Three frame-level fixtures
+bind recipient/body metadata to the expected session, isolate exact A/B/zero
+partitions and cover mapped transport failure. Independent source review passed.
+W311 resets stale W153 provider markers and waits for the precise supervised
+child slot to clear in W153/W164; production containment remains unchanged.
+
+Core d2 run35829527494 passed production Clippy, then failed five test-target
+errors (missing FreedomConfig/Provider imports) and reported two own unused
+imports. W312 repairs these exact test imports. Preflight30f35829803010 passed.
+GUI128424 run35826461386 is fully source/terminal admitted:128executed,
+125PASS/3FAIL,0unstarted;18GUI sources and5inputs verified. Manager-stop127
+passed its real isolation checks. W153/W164 fixture repairs await rerun; the
+third crash-tree failure remains unresolved and is not claimed repaired.
+Admission SHA25663046D7504FDA6814B775EDCFAAF231AD3DD25DEB34C8E9246789D663133CDFA.
+
+Inventory597 paths;native995;Group599 plus2 separate BGE tests;GUI128Linux/
+125macOS unchanged. Road1324=1021checked/301open/2partial;WS-LF14done/104open.
+No parent checkbox closed and no local executable validation ran. Next: hosted
+Core and GUI rerun; Group599/full native CI after test-target readiness.
+
 **W308 exact hosted formatting (2026-09-23):** Preflightd2 run35829527664
 requested one runtime.rs format patch. SHA2565AB810E4 plus exact Git pre/postimage
 were verified before import. Cored2 run35829527494 and GUI128424 run35826461386

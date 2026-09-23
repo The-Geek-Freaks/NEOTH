@@ -1232,7 +1232,7 @@ mod tests {
     use super::*;
     use crate::code_map::graph::{CodeEdge, EdgeKind};
     use crate::code_map::persist::{
-        open, persist_edges, persist_map, persist_map_and_edges, root_index_generation,
+        open, persist_map, persist_map_and_edges, root_index_generation,
     };
     use crate::code_map::snapshot::{RebuildOptions, rebuild_snapshot_scoped};
     use crate::code_map::symbols::{Symbol, SymbolKind};

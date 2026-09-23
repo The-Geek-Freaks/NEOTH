@@ -4847,6 +4847,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             config_for_handler.live_delivery.clone(),
                         ),
                     };
+                    // Retain only the capability minted at accepted inbound
+                    // admission; delivery metadata never chooses a session.
+                    let delivery = delivery.with_wal_session(channel_wal_session);
                     // UTF-8 output is normally <= 4 bytes/token; use 8 as a
                     // conservative allowance for provider tokenisation drift,
                     // still hard-clamped by the accumulator to 1 MiB.

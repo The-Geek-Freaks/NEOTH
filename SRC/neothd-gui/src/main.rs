@@ -47391,6 +47391,18 @@ exit 0
         );
     }
 
+    #[cfg(not(windows))]
+    fn w153_wait_for_child_cleanup(
+        window: &MainWindow,
+        runtime: &LegacyChildChatTransportRuntime,
+        label: &str,
+    ) {
+        let child = runtime.chat_child.clone();
+        w153_pump_until(window, label, move |_| {
+            child.lock().is_ok_and(|slot| slot.is_none())
+        });
+    }
+
     #[cfg(all(target_os = "macos", feature = "macos-native-gui-test"))]
     fn w274_assert_macos_legacy_child_refusal(window: &MainWindow, fixture: &TempDir, label: &str) {
         w153_pump_until(window, label, |window| {
@@ -47538,6 +47550,14 @@ exit 0
             (ChatStreamSurface::Main, true, true, false),
             (ChatStreamSurface::Main, true, false, true),
         ] {
+            // Each case needs a fresh provider lifetime. In particular, a
+            // retained `release` marker would let the next case's provider
+            // exit between its READY notification and activation polling.
+            for marker in ["started", "release", "w153-stage", "envelope"] {
+                std::fs::remove_file(fixture.path().join(marker)).ok();
+            }
+            std::fs::write(fixture.path().join("calls"), b"")
+                .expect("reset W153 call log for isolated case");
             let mode = if forged {
                 "forged"
             } else if stop {
@@ -47679,6 +47699,11 @@ exit 0
                     "successful child settlement"
                 },
                 |window| !window.get_chat_send_in_flight(),
+            );
+            w153_wait_for_child_cleanup(
+                &window,
+                &runtime,
+                "W153 manager-owned child cleanup",
             );
             assert!(
                 runtime
@@ -48131,6 +48156,11 @@ exit 0
                         .upgrade()
                         .is_some_and(|overlay| overlay.get_response_feedback_available()),
                 },
+            );
+            w153_wait_for_child_cleanup(
+                &window,
+                &runtime,
+                "W164 manager-owned child cleanup",
             );
             match surface {
                 ChatStreamSurface::Main => {
