@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T00:32:15.6642213Z",
-  "validationStatus": "W246 independently reviewed passive citations; Group413 prior source passed, fresh Group418/GUI124 pending",
+  "capturedUtc": "2026-09-23T00:33:26.1054727Z",
+  "validationStatus": "W246 reviewed source published; W248 runner setup deferred pending independent validation",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -38,8 +38,8 @@
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
-      "bytes": 32615,
-      "sha256": "F2DC20EFEE9E55A15A880257EE861BEC65811D5F99279C9988CCB8714AB669B6"
+      "bytes": 28125,
+      "sha256": "4D6A70AD86B4318F1D49A99BC5403F884706949042729FB9BBFB75A9D9793486"
     },
     {
       "path": ".github/workflows/live-audio.yml",
