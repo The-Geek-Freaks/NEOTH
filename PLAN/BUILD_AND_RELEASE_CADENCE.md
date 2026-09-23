@@ -3,6 +3,22 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W515 Paperless readiness; W521/W523 hosted gate repairs (2026-09-24):**
+`neoth paperless status` now reaches a bounded authenticated local API probe
+through existing coherent file/keychain credentials. Unauthenticated profile
+access must fail before Token auth; profile/status schemas, redirects, body cap
+and a whole-sequence deadline are enforced. API-ready/version-unknown is distinct
+from artifact verification, which stays false; P2-20 remains open. The TCP-only
+scan cannot claim a running service. Eight HTTP cases, four CLI cases and the
+port-only regression join the hosted catalog. W523 imports the six existing
+production names needed by P118's nested GUI test module; GUI8003/Core8003 had
+15scope errors and0GUIexecution. W521 synchronizes the human WS-LF dashboard
+with37done/81open; the machine-readable Road summary was already corrected.
+Inventory751sources,1198native+Win25Linux33mac32,Group903;
+GUI148Linux144macOS,macNative33. Road1044checked/278open/2partial,
+280raw/279pre-tag;WS-LF37done/81open. Reviewed source; fresh hosted checks and
+CLI-reference export pending. No local executables or Slint edits.
+Evidence and operator usage:docs/paperless-readiness.md.
 **W518 reflection acceptance; W516/W519/W520 follow-up (2026-09-23):**
 P2-04 is accepted:55exact Linux and55macOS terminals plus7fresh Windows
 retention/quarantine/recovery cases; all24Windows cases passed at8003.

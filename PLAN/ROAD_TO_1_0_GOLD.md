@@ -8,6 +8,22 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W515 Paperless readiness; W521/W523 hosted gate repairs (2026-09-24):**
+`neoth paperless status` now reaches a bounded authenticated local API probe
+through existing coherent file/keychain credentials. Unauthenticated profile
+access must fail before Token auth; profile/status schemas, redirects, body cap
+and a whole-sequence deadline are enforced. API-ready/version-unknown is distinct
+from artifact verification, which stays false; P2-20 remains open. The TCP-only
+scan cannot claim a running service. Eight HTTP cases, four CLI cases and the
+port-only regression join the hosted catalog. W523 imports the six existing
+production names needed by P118's nested GUI test module; GUI8003/Core8003 had
+15scope errors and0GUIexecution. W521 synchronizes the human WS-LF dashboard
+with37done/81open; the machine-readable Road summary was already corrected.
+Inventory751sources,1198native+Win25Linux33mac32,Group903;
+GUI148Linux144macOS,macNative33. Road1044checked/278open/2partial,
+280raw/279pre-tag;WS-LF37done/81open. Reviewed source; fresh hosted checks and
+CLI-reference export pending. No local executables or Slint edits.
+Evidence and operator usage:docs/paperless-readiness.md.
 **W518 reflection acceptance; W516/W519/W520 follow-up (2026-09-23):**
 P2-04 is accepted:55exact Linux and55macOS terminals plus7fresh Windows
 retention/quarantine/recovery cases; all24Windows cases passed at8003.
@@ -4480,7 +4496,7 @@ already-gated release workflow itself.
 | WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE + 2026-06-17 DAU batch + 2026-06-17b batch-2 + 2026-06-18 batch-3 GRAPH/DRAW/PONY/HANDY/IMPR/TUDU/IGNIS/SPEAKR/TERMIX/REPOW/TRAIL/OMNI + GRAPH-04..07 self-knowledge + DESIGN-01..03 taste-skills + 2026-07-06 L6 vault preload + 2026-07-07 opthash spike) | 308 unique ids (370 raw entries) | 0 | **308 ✅ COMPLETE** |
 | WS-R3 Forensic Gold correction (2026-07-14, resumed 2026-07-22) | 19 | **6** | **13** |
 | WS-R4 Zero-friction install, GUI parity and public launch (2026-07-14) | 15 | **14** | **1** |
-| WS-LF Confirmed lost-feature recovery (2026-07-18) | 118 materialized (52 recovered source rows + 65 plan leaves + 1 inventory-integrity gate) | **85** | **33** |
+| WS-LF Confirmed lost-feature recovery (2026-07-18) | 118 materialized (52 recovered source rows + 65 plan leaves + 1 inventory-integrity gate) | **81** | **37** |
 | WS-NCT Cognitive Transport + selective Buzz/Prime coordination (2026-07-27; Prime decision 2026-08-10) | 30 (`GOLD-NCT-00..27` + `GOLD-ADOPT-BUZZ-01` + `GOLD-ADOPT-PRIME-01`) | **28** | **2** |
 | WS-ADOPT31 18-source forensic adoption wave + Wayfinder/ADW/Evidence-Gated pipeline (2026-07-31) | 67 (`ADOPT31-*`; lanes A7/B12/C10/D7/E2/F4/G7/H2/**W2+I7+V5**/X2) | **64** | **3** |
 | WS-CC Context Connectors & People Intelligence (2026-08-13) | 13 (`GOLD-CC-00..12`) | **12** | **1** |

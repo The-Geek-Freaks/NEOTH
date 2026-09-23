@@ -43565,6 +43565,9 @@ mod w58_gui_callback_runtime_tests {
 
     use crate::panel_logic;
 
+    #[cfg(not(windows))]
+    use crate::wizard_session_controller;
+
     use super::{
         CODE_MAP_ENRICHMENT_READINESS_PUBLICATION_COUNT, CODE_MAP_ENRICHMENT_READINESS_UI_REVISION,
         CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION, CODE_MAP_ROOT_SELECTION_REVISION, ChatLaunchGate,
@@ -43612,6 +43615,8 @@ mod w58_gui_callback_runtime_tests {
         project_chat_recall_chip_snapshot, project_chat_throughput_snapshot,
         provider_done_chat_recall_chip_projection, provider_done_chat_throughput_projection,
         register_citation_gui_callbacks, register_response_feedback_callbacks,
+        register_wizard_daemon_callbacks, spawn_neothd_plain, start_wizard_session_projection,
+        wizard_daemon_session, WIZARD_DAEMON_FROZEN,
     };
 
     static GUI_CALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());

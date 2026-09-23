@@ -594,8 +594,7 @@ pub enum Commands {
     /// Write a tar.gz backup of `~/.neoth/` state. Phase 33c BS-2.
     Backup(backup::BackupArgs),
 
-    /// Paperless OCR ingest + consult. Subcommands: `ingest`, `consult`.
-    /// Operator surface for the SC-16/PL-02/PL-03 vertical slice.
+    /// Paperless authenticated API status, OCR ingest, consult and quarantine.
     Paperless(paperless::PaperlessArgs),
 
     /// Proactive proposal management (OB-03). Subcommands: `list`,
@@ -1827,7 +1826,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             backup::run_backup(args).await?;
         }
         Commands::Paperless(args) => {
-            paperless::run_paperless(args)?;
+            paperless::run_paperless_command(args, global_output).await?;
         }
         Commands::Proactive(args) => {
             proactive::run_proactive(args)?;

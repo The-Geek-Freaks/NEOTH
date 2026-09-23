@@ -1,6 +1,10 @@
 //! `neoth paperless` — operator surface for the paperless vertical
 //! slice. Subcommands:
 //!
+//!   - `neoth paperless status`
+//!     Authenticated API readiness using the configured credential backend;
+//!     this does not attest a managed installation or its artifacts.
+//!
 //!   - `neoth paperless ingest <doc-id> --text <text> [--text-file <file>]
 //!                                 [--source <source>] [--vault <path>]
 //!                                 [--subdir <name>]`
@@ -29,6 +33,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
+use crate::cli::OutputFormat;
+use crate::installers::paperless_readiness::{PaperlessReadiness, probe_configured_paperless};
 use crate::paperless::{self, OcrSyncOutcome, consult::consult, quarantine};
 use crate::security::paperless_ingest::{IngestError, OcrSource, ingest_ocr_text};
 
@@ -49,6 +55,9 @@ pub struct PaperlessArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum PaperlessAction {
+    /// Check authenticated local API readiness using stored credentials.
+    /// Artifact provenance and managed installation readiness remain separate.
+    Status,
     /// Ingest one OCR document through the SC-16 sanitizer + write
     /// the Obsidian note under `<vault>/<subdir>/Paperless/<id>.md`.
     Ingest {
@@ -99,10 +108,46 @@ pub enum QuarantineAction {
     },
 }
 
+/// Async CLI entry; retain the synchronous local-document API for its callers.
+pub async fn run_paperless_command(args: PaperlessArgs, output: OutputFormat) -> Result<()> {
+    if matches!(args.action, PaperlessAction::Status) {
+        let status = paperless_status_at(&crate::config::FreedomConfig::default_neoth_home()).await?;
+        print!("{}", render_paperless_status(&status, output)?);
+        Ok(())
+    } else {
+        run_paperless(args)
+    }
+}
+
+async fn paperless_status_at(home: &std::path::Path) -> Result<PaperlessReadiness> {
+    let (_, credentials) =
+        crate::config::load_optional_runtime_config_pair_from_path(&home.join("freedom.yaml"))
+            .map_err(|_| anyhow::anyhow!("Paperless status could not read the configured credentials"))?;
+    Ok(probe_configured_paperless(&credentials).await)
+}
+
+fn render_paperless_status(status: &PaperlessReadiness, output: OutputFormat) -> Result<String> {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            Ok(format!("{}\n", serde_json::to_string(status)?))
+        }
+        OutputFormat::Table => Ok(format!(
+            "Paperless API: {}\nauthenticated API ready: {}\nreported version: {}\nartifact verified: {}\nManaged installation readiness requires separate artifact and lifecycle verification.\n",
+            status.status,
+            status.authenticated_api_ready,
+            status.version.as_deref().unwrap_or("unknown"),
+            status.artifact_verified,
+        )),
+    }
+}
+
 pub fn run_paperless(args: PaperlessArgs) -> Result<()> {
     let vault = args.vault.clone().unwrap_or_else(default_vault_path);
 
     match args.action {
+        PaperlessAction::Status => {
+            anyhow::bail!("Paperless status requires the asynchronous CLI entry")
+        }
         PaperlessAction::Quarantine { action } => {
             let neoth_home = neoth_home_path();
             match action {
@@ -284,6 +329,140 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct AbortOnDrop(Option<tokio::task::JoinHandle<()>>);
+
+    impl AbortOnDrop {
+        async fn finish(mut self) {
+            if let Some(handle) = self.0.as_mut() {
+                tokio::time::timeout(std::time::Duration::from_secs(6), handle)
+                    .await
+                    .expect("bounded Paperless CLI fixture")
+                    .unwrap();
+            }
+            self.0.take();
+        }
+    }
+
+    impl Drop for AbortOnDrop {
+        fn drop(&mut self) {
+            if let Some(handle) = self.0.take() {
+                handle.abort();
+            }
+        }
+    }
+
+    #[test]
+    fn paperless_status_cli_rejects_token_arguments() {
+        use clap::Parser;
+
+        let cli = crate::cli::Cli::try_parse_from(["neoth", "paperless", "status"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            crate::cli::Commands::Paperless(PaperlessArgs {
+                action: PaperlessAction::Status,
+                ..
+            })
+        ));
+        assert!(
+            crate::cli::Cli::try_parse_from([
+                "neoth",
+                "paperless",
+                "status",
+                "--token",
+                "do-not-accept-secret-argv",
+            ])
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn paperless_status_missing_credentials_never_claims_readiness() {
+        let home = tempfile::tempdir().unwrap();
+        let status = paperless_status_at(home.path()).await.unwrap();
+        assert!(!status.authenticated_api_ready);
+        assert!(!status.artifact_verified);
+        assert!(status.version.is_none());
+        let json: serde_json::Value =
+            serde_json::from_str(&render_paperless_status(&status, OutputFormat::Json).unwrap())
+                .unwrap();
+        assert_eq!(json["authenticated_api_ready"], false);
+        assert_eq!(json["artifact_verified"], false);
+        assert!(!home.path().join("credentials.yaml").exists());
+        assert!(!home.path().join("freedom.yaml").exists());
+    }
+
+    #[tokio::test]
+    async fn paperless_status_credential_parse_errors_are_redacted() {
+        const SECRET: &str = "paperless-status-private-marker";
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("credentials.yaml");
+        let bytes = format!("paperless_token: [{SECRET}\n");
+        std::fs::write(&path, &bytes).unwrap();
+        let error = paperless_status_at(home.path()).await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Paperless status could not read the configured credentials"
+        );
+        assert!(!format!("{error:#}").contains(SECRET));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), bytes);
+    }
+
+    #[tokio::test]
+    async fn paperless_status_uses_stored_token_for_authenticated_profile_denial_without_leaking() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        const TOKEN: &str = "Paperless-Stored-Credential-Fixture";
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let fixture = AbortOnDrop(Some(tokio::spawn(async move {
+            for (expect_auth, response) in [
+                (false, "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n"),
+                (true, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n"),
+            ] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    assert!(request.len() < 4096, "bounded fixture request headers");
+                    request.push(stream.read_u8().await.unwrap());
+                }
+                let request = String::from_utf8_lossy(&request);
+                assert!(request.starts_with("GET /api/profile/ HTTP/1.1\r\n"));
+                let has_exact_token = request.lines().any(|line| {
+                    line.split_once(':').is_some_and(|(name, value)| {
+                        name.eq_ignore_ascii_case("Authorization")
+                            && value.trim() == format!("Token {TOKEN}")
+                    })
+                });
+                assert_eq!(has_exact_token, expect_auth);
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        })));
+
+        let home = tempfile::tempdir().unwrap();
+        let credentials_path = home.path().join("credentials.yaml");
+        crate::config::Credentials {
+            paperless_url: Some(format!("http://127.0.0.1:{port}")),
+            paperless_token: Some(crate::secret::SecretString::from(TOKEN)),
+            ..Default::default()
+        }
+        .write(&credentials_path)
+        .unwrap();
+        let credential_bytes = std::fs::read(&credentials_path).unwrap();
+
+        let status = paperless_status_at(home.path()).await.unwrap();
+        assert_eq!(status.status, "unauthorized");
+        assert!(!status.authenticated_api_ready);
+        assert!(!status.artifact_verified);
+        assert!(status.version.is_none());
+        let json = render_paperless_status(&status, OutputFormat::Json).unwrap();
+        let table = render_paperless_status(&status, OutputFormat::Table).unwrap();
+        assert!(!json.contains(TOKEN));
+        assert!(!table.contains(TOKEN));
+        assert_eq!(std::fs::read(&credentials_path).unwrap(), credential_bytes);
+        fixture.finish().await;
+    }
 
     #[test]
     fn parse_source_accepts_all_four_variants() {

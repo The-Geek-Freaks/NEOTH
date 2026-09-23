@@ -167,11 +167,16 @@ pub async fn check_docker_compose_legacy_available() -> Option<String> {
     .await
 }
 
-/// Outcome of a live paperless-ngx HTTP probe.
+/// Outcome of a diagnostic TCP connection to the configured Paperless port.
+///
+/// This deliberately does not claim that Paperless is running. Use
+/// [`crate::installers::paperless_readiness::probe_configured_paperless`] for
+/// authenticated product proof.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PaperlessProbeOutcome {
-    /// TCP layer accepted the probe — paperless is up on the port.
-    Reachable,
+    /// TCP layer accepted the probe, but the process is not authenticated or
+    /// identified as Paperless.
+    PortOpenUnverified,
     /// TCP connect refused — paperless isn't running on the port.
     PortClosed,
     /// Probe didn't complete inside the timeout window.
@@ -181,25 +186,23 @@ pub enum PaperlessProbeOutcome {
 impl PaperlessProbeOutcome {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Reachable => "reachable",
+            Self::PortOpenUnverified => "port_open_unverified",
             Self::PortClosed => "port_closed",
             Self::Timeout => "timeout",
         }
     }
 }
 
-/// Probe the live paperless-ngx endpoint at `127.0.0.1:<port>`.
-/// TCP-only probe — distinguishing "real paperless vs other process
-/// on the port" would need a real HTTP GET which adds a reqwest
-/// dependency to the primitive. v0.1 stays TCP-only; the wizard
-/// asks the operator to confirm via browser when probe says
-/// `Reachable`.
+/// Probe the configured local port at `127.0.0.1:<port>`.
+///
+/// This is intentionally TCP-only and is retained solely as a diagnostic.
+/// A successful connection is `PortOpenUnverified`, never readiness.
 pub async fn probe_paperless_endpoint(port: u16) -> PaperlessProbeOutcome {
     use tokio::net::TcpStream;
     let addr = format!("127.0.0.1:{port}");
     let connect_timeout = Duration::from_secs(2);
     match tokio::time::timeout(connect_timeout, TcpStream::connect(&addr)).await {
-        Ok(Ok(_)) => PaperlessProbeOutcome::Reachable,
+        Ok(Ok(_)) => PaperlessProbeOutcome::PortOpenUnverified,
         Ok(Err(_)) => PaperlessProbeOutcome::PortClosed,
         Err(_) => PaperlessProbeOutcome::Timeout,
     }
@@ -217,10 +220,10 @@ pub struct PaperlessScan {
 }
 
 impl PaperlessScan {
-    /// True when paperless is already reachable — wizard skips the
-    /// install step + jumps straight to API-token entry.
+    /// TCP reachability alone never establishes an existing Paperless
+    /// instance. The authenticated readiness probe owns that decision.
     pub fn already_running(&self) -> bool {
-        self.probe == PaperlessProbeOutcome::Reachable
+        false
     }
 
     /// True when an install path exists. False = wizard renders the
@@ -343,7 +346,10 @@ mod tests {
 
     #[test]
     fn probe_outcome_as_str_pinned() {
-        assert_eq!(PaperlessProbeOutcome::Reachable.as_str(), "reachable");
+        assert_eq!(
+            PaperlessProbeOutcome::PortOpenUnverified.as_str(),
+            "port_open_unverified"
+        );
         assert_eq!(PaperlessProbeOutcome::PortClosed.as_str(), "port_closed");
         assert_eq!(PaperlessProbeOutcome::Timeout.as_str(), "timeout");
     }
@@ -359,15 +365,15 @@ mod tests {
     }
 
     #[test]
-    fn scan_struct_already_running_reflects_probe_reachable() {
+    fn scan_struct_does_not_treat_open_port_as_running() {
         let s = PaperlessScan {
             docker_version: Some("Docker version 25.0.0".into()),
             docker_compose_version: Some("Docker Compose version v2.24.0".into()),
             docker_compose_legacy_version: None,
-            probe: PaperlessProbeOutcome::Reachable,
+            probe: PaperlessProbeOutcome::PortOpenUnverified,
             recommended_strategy: Some(InstallStrategy::DockerCompose),
         };
-        assert!(s.already_running());
+        assert!(!s.already_running());
         assert!(s.can_install());
     }
 
