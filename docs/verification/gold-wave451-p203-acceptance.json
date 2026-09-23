@@ -1,0 +1,676 @@
+{
+  "schema": "neoth-p203-parent-functional-acceptance/v1",
+  "generatedAt": "2026-09-23",
+  "scope": "GOLD-LF-P2-03 NIGHTLY VAULT functional-parent acceptance only",
+  "verdict": "FUNCTIONAL_PARENT_CLOSURE_SUPPORTED_BY_CARRIED_EVIDENCE_NO_RELEASE_OR_EXACT_HEAD_EXECUTION_CLAIM",
+  "source": {
+    "currentHead": "5bace4f059f8179eee89cdce3050701107ba3f7f",
+    "directCarryFrom": "b1fd846663bde1e3f19cc0d57322354289ffc286",
+    "evidenceHead": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+    "evidenceHeadIsAncestor": true,
+    "selection": "work/gold-20260906/W376-P203-required.json",
+    "selectionSha256": "E52100AF295F2E27DDD2BD6DEBDDBB2647E8A6A9F18E2C43493CD36FABE24DE6",
+    "supersededBlocker": "W412 macOS retained_directory_cwd_survives_namespace_rename_before_spawn; now PASS in the macOS FullCIbc9 JUnit below",
+    "executionBoundary": "The retained executions are source-bound bc9 receipts. 5bace is supported by this reviewed blob carry; no test, compiler, runtime, parser, or formatter was run locally at 5bace."
+  },
+  "artifacts": [
+    {
+      "path": "work/gold-20260906/wave423-group841bc9/ADMISSION.json",
+      "sha256": "3AC7525692400DC39193809016DE86D2939F85C0AC18A845B9C037334DE19CE4",
+      "role": "admitted bc9 source and terminals; 834/841 PASS; its seven failures are named non-P2-03 cluster/audit tests"
+    },
+    {
+      "path": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "sha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8",
+      "role": "Windows exact required identities"
+    },
+    {
+      "path": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "sha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726",
+      "role": "macOS native and GUI exact required identities; run 35871801240, job 107217501987"
+    }
+  ],
+  "plainTextJUnitMatching": {
+    "xmlParserUsed": false,
+    "method": "For each selected full testcase name, match the complete <testcase name=\"EXACT\" classname=\"...\">...</testcase> boundary; PASS requires exactly one matching terminal (or the explicitly recorded three passing panel-logic class terminals) and no failure/error child.",
+    "macos": {
+      "uniqueRequiredIdentities": 31,
+      "pass": 31,
+      "fail": 0,
+      "missing": 0,
+      "extraPassingPanelLogicTerminals": 4,
+      "knownSuiteFailures": 7,
+      "knownSuiteFailuresAreP203": false
+    },
+    "windows": {
+      "uniqueRequiredIdentities": 29,
+      "pass": 29,
+      "fail": 0,
+      "missing": 0,
+      "requiredWindowsContainment": "updater::process_containment::tests::retained_directory_windows_accepts_canonical_path_and_refuses_distinct_capability"
+    }
+  },
+  "criteria": [
+    {
+      "id": "policy_and_credential_safety",
+      "status": "PASS",
+      "macosPass": 10,
+      "windowsPass": 10
+    },
+    {
+      "id": "nightly_commit_and_exact_verification",
+      "status": "PASS",
+      "macosPass": 3,
+      "windowsPass": 3
+    },
+    {
+      "id": "retention_and_nonreplay",
+      "status": "PASS",
+      "macosPass": 6,
+      "windowsPass": 6
+    },
+    {
+      "id": "cli_buddy_gui_status_and_repair",
+      "status": "PASS",
+      "macosPass": 8,
+      "windowsPass": 7
+    },
+    {
+      "id": "filesystem_and_process_containment",
+      "status": "PASS",
+      "macosPass": 2,
+      "windowsPass": 1
+    },
+    {
+      "id": "state_integrity_and_lock_lifecycle",
+      "status": "PASS",
+      "macosPass": 2,
+      "windowsPass": 2
+    }
+  ],
+  "dependencyBlobMap": [
+    {
+      "path": "SRC/neothd/src/daemon/vault_mirror.rs",
+      "bc9": "70cd99f99c65a66c1efbd202b93bc4a42bdececb",
+      "head": "70cd99f99c65a66c1efbd202b93bc4a42bdececb",
+      "carry": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/backup.rs",
+      "bc9": "248be9de608c5a44c2efc493bfef59352b8460d3",
+      "head": "248be9de608c5a44c2efc493bfef59352b8460d3",
+      "carry": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/updater/process_containment.rs",
+      "bc9": "963b2fdeff29711a02cde0542d3ba4b31d5a2a69",
+      "head": "963b2fdeff29711a02cde0542d3ba4b31d5a2a69",
+      "carry": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/config/automation.rs",
+      "bc9": "1a8c6d4ade7e2fc768d542baf125f1b1bdad8844",
+      "head": "1a8c6d4ade7e2fc768d542baf125f1b1bdad8844",
+      "carry": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "bc9": "4c30ba907566a8011a4f8efd35e718ffeef90e94",
+      "head": "8893eccc18d76b9edf2f604c71e8110ed60bf2d0",
+      "carry": "reviewed-unrelated BudgetRaft addition"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve.rs",
+      "bc9": "f507112be9203fd553d8bc688d64c3220a71d254",
+      "head": "2eec3736d022878cca1276c305f333e73b42d392",
+      "carry": "reviewed-unrelated AuditRpcInputs call-shape refactor"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_tasks.rs",
+      "bc9": "f0c7b7d095dce3caf68f8208b01167d5f76a6cf4",
+      "head": "c31784ad850437311effbaadea3cfc05bc78b3ca",
+      "carry": "reviewed-unrelated AuditRpcInputs parameter object refactor"
+    },
+    {
+      "path": "SRC/neothd/src/cli/backup.rs",
+      "bc9": "814d1d19ef06ff104680123e73eda19cf0ac8516",
+      "head": "814d1d19ef06ff104680123e73eda19cf0ac8516",
+      "carry": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/cli/buddy.rs",
+      "bc9": "19593f9eedd01ffaf870f97eac9d5d6f0cc82a09",
+      "head": "19593f9eedd01ffaf870f97eac9d5d6f0cc82a09",
+      "carry": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/mod.rs",
+      "bc9": "7bef6e2b283b77e110be494bb8e3a75f295073a1",
+      "head": "7bef6e2b283b77e110be494bb8e3a75f295073a1",
+      "carry": "exact"
+    },
+    {
+      "path": "SRC/neothd-gui/src/panel_logic.rs",
+      "bc9": "6bcd0468e6bcc5cf0014610ef68995d13ef7d495",
+      "head": "6bcd0468e6bcc5cf0014610ef68995d13ef7d495",
+      "carry": "exact"
+    },
+    {
+      "path": "SRC/neothd-gui/src/gui_action.rs",
+      "bc9": "88e61cd6c08893bcc8765e6f433f69a5ce93a838",
+      "head": "58cbc9cb5299d2cbca5bd9bdfc080db927279ebd",
+      "carry": "reviewed unrelated GUI Clippy field-use renames"
+    },
+    {
+      "path": "SRC/neothd-gui/src/main.rs",
+      "bc9": "0705853e795bb1a9a52693daa0449435e65aa306",
+      "head": "9edbdf21f38bf4c2b2d9ee3c8d73eee91948b73b",
+      "carry": "reviewed GUI Clippy/style changes; the vault repair error branch keeps the same Err-and-window guard, state reset, buddy failure, and toast"
+    },
+    {
+      "path": "SRC/neothd-gui/src/buddy_activity.rs",
+      "bc9": "926a3934f97433224ed79b159e81996bada5c63b",
+      "head": "926a3934f97433224ed79b159e81996bada5c63b",
+      "carry": "exact"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/buddyconfig.slint",
+      "bc9": "9dc7a9ba1ad03309e89ef7abbeef5dafa4022762",
+      "head": "9dc7a9ba1ad03309e89ef7abbeef5dafa4022762",
+      "carry": "exact"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/main.slint",
+      "bc9": "37622ca1054ae04bb35dd23bc3807f27a4570c86",
+      "head": "37622ca1054ae04bb35dd23bc3807f27a4570c86",
+      "carry": "exact"
+    },
+    {
+      "path": "packaging/tests/verify_macos_native_gui_fixture_discovery.py",
+      "bc9": "efb61d66f4df3d103d491592de859b3d5e0d9cd7",
+      "head": "efb61d66f4df3d103d491592de859b3d5e0d9cd7",
+      "carry": "exact"
+    }
+  ],
+  "carrySummary": {
+    "exactBlobPaths": 12,
+    "reviewedChangedPaths": 5,
+    "materialP203BehaviorChangeFound": false
+  },
+  "currentCarryCertificate": {
+    "from": "b1fd846663bde1e3f19cc0d57322354289ffc286",
+    "to": "5bace4f059f8179eee89cdce3050701107ba3f7f",
+    "ancestor": true,
+    "dependencyPaths": 17,
+    "exactBlobPaths": 16,
+    "changedPaths": [
+      {
+        "path": "SRC/neothd/src/config/mod.rs",
+        "from": "8893eccc18d76b9edf2f604c71e8110ed60bf2d0",
+        "to": "fdcdb54cb81d3e56add6aa77e4d90f20be645935",
+        "review": "rustfmt-only wrapping inside BudgetRaft validation; no vault-mirror config, policy, credential, schedule, retention, CLI, GUI, or containment behavior change"
+      }
+    ],
+    "otherCommitChanges": "The 5bace commit also changes hosted formatting/notices, BudgetRaft files, provider cost authorization, skills store, and plan/verification/license files. None is in the P2-03 dependency set.",
+    "materialP203BehaviorChangeFound": false,
+    "claim": "carry certificate only; not an exact-head execution claim"
+  },
+  "nonClaims": [
+    "No all-HEAD, full-workspace, installer, packaging, or release claim.",
+    "No new compiler, formatter, runtime, parser, or test execution was performed.",
+    "This does not edit PLAN, inventory, index, or source."
+  ],
+  "rootAdmission": {
+    "source": "5bace4f059f8179eee89cdce3050701107ba3f7f",
+    "verifiedUtc": "2026-09-23T16:10:43.8732581Z",
+    "artifactHashesVerified": true,
+    "originalSourceBlobsVerified": true,
+    "terminals": [
+      {
+        "platform": "macos",
+        "identities": 31,
+        "artifact": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+        "sha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726",
+        "terminals": [
+          {
+            "name": "config::vault_mirror_config_boundary_tests::vault_mirror_defaults_roundtrip_through_public_config_boundary",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "config::vault_mirror_config_boundary_tests::public_config_boundary_rejects_invalid_enabled_vault_mirror",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "config::automation::vault_mirror_config_tests::defaults_are_inert_and_secret_free",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "config::automation::vault_mirror_config_tests::accepts_https_and_ordinary_ssh_identities",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "config::automation::vault_mirror_config_tests::rejects_credential_urls_and_unsafe_branch_controls",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "config::automation::vault_mirror_config_tests::rejects_option_looking_and_local_path_remotes",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "config::automation::vault_mirror_config_tests::retention_count_fits_the_bounded_receipt_history",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "cli::serve_tasks::vault_mirror_scheduler_tests::vault_mirror_scheduler_requires_both_nightly_gates",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "cli::serve_tasks::vault_mirror_scheduler_tests::accepted_reload_revoking_nightly_push_stops_scheduler",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "cli::backup::tests::mirror_subcommands_do_not_change_ordinary_backup_defaults",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "cli::backup::tests::mirror_config_is_bound_to_the_selected_backup_home",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::backup::tests::write_backup_to_file_populates_retained_archive_without_credentials",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "cli::buddy::tests::vault_mirror_surface_parses_status_and_repair_without_a_bypass_flag",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "cli::buddy::tests::unresolved_vault_mirror_repair_ack_is_not_success",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::persisted_state_rejects_malformed_receipt_and_duplicate_history",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::persisted_cleanup_requires_unique_verified_owned_candidates",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::hosted_fixture_runs_backup_state_push_remote_and_repair_against_a_real_bare_remote",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::managed_retention_keeps_two_archive_receipts_and_only_removes_owned_manifests",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::repair_settles_an_already_pushed_retention_commit_without_creating_cleanup_history",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::prepared_nonpush_runs_never_touch_an_absent_remote_and_a_later_push_uses_a_new_run",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::active_push_uncertainty_blocks_replay_and_mismatched_repair_preserves_the_receipt",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::malformed_retention_prefix_is_rejected_before_it_can_enter_active_state",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::kernel_lock_can_be_reacquired_after_the_prior_owner_releases_it",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::nightly_entrypoint_default_off_and_without_permission_create_no_mirror_state",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::nightly_entrypoint_uses_durable_push_and_exact_head_verification",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "updater::process_containment::tests::retained_directory_cwd_survives_namespace_rename_before_spawn",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::fetched_owned_namespace_symlink_refuses_outside_archive_writes",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "panel_logic::tests::w184_vault_mirror_parser_rejects_forged_verified_receipt",
+            "classes": [
+              "neoth::gui_channel_status",
+              "neoth::gui_code_map_impact_controller",
+              "neothd-gui::bin/neothd-gui"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "panel_logic::tests::w184_vault_mirror_parser_keeps_indeterminate_repairable",
+            "classes": [
+              "neoth::gui_channel_status",
+              "neoth::gui_code_map_impact_controller",
+              "neothd-gui::bin/neothd-gui"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "vault_mirror_gui_tests::w184_repair_reducer_requires_fresh_matching_status",
+            "classes": [
+              "neothd-gui::bin/neothd-gui"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "w58_gui_callback_runtime_tests::w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback",
+            "classes": [
+              "neothd-gui::neothd-gui-macos-native"
+            ],
+            "status": "PASS"
+          }
+        ]
+      },
+      {
+        "platform": "windows",
+        "identities": 29,
+        "artifact": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+        "sha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8",
+        "terminals": [
+          {
+            "name": "config::vault_mirror_config_boundary_tests::vault_mirror_defaults_roundtrip_through_public_config_boundary",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "config::vault_mirror_config_boundary_tests::public_config_boundary_rejects_invalid_enabled_vault_mirror",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "config::automation::vault_mirror_config_tests::defaults_are_inert_and_secret_free",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "config::automation::vault_mirror_config_tests::accepts_https_and_ordinary_ssh_identities",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "config::automation::vault_mirror_config_tests::rejects_credential_urls_and_unsafe_branch_controls",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "config::automation::vault_mirror_config_tests::rejects_option_looking_and_local_path_remotes",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "config::automation::vault_mirror_config_tests::retention_count_fits_the_bounded_receipt_history",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "cli::serve_tasks::vault_mirror_scheduler_tests::vault_mirror_scheduler_requires_both_nightly_gates",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "cli::serve_tasks::vault_mirror_scheduler_tests::accepted_reload_revoking_nightly_push_stops_scheduler",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "cli::backup::tests::mirror_subcommands_do_not_change_ordinary_backup_defaults",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "cli::backup::tests::mirror_config_is_bound_to_the_selected_backup_home",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::backup::tests::write_backup_to_file_populates_retained_archive_without_credentials",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "cli::buddy::tests::vault_mirror_surface_parses_status_and_repair_without_a_bypass_flag",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "cli::buddy::tests::unresolved_vault_mirror_repair_ack_is_not_success",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::persisted_state_rejects_malformed_receipt_and_duplicate_history",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::persisted_cleanup_requires_unique_verified_owned_candidates",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::hosted_fixture_runs_backup_state_push_remote_and_repair_against_a_real_bare_remote",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::managed_retention_keeps_two_archive_receipts_and_only_removes_owned_manifests",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::repair_settles_an_already_pushed_retention_commit_without_creating_cleanup_history",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::prepared_nonpush_runs_never_touch_an_absent_remote_and_a_later_push_uses_a_new_run",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::active_push_uncertainty_blocks_replay_and_mismatched_repair_preserves_the_receipt",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::malformed_retention_prefix_is_rejected_before_it_can_enter_active_state",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::kernel_lock_can_be_reacquired_after_the_prior_owner_releases_it",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::nightly_entrypoint_default_off_and_without_permission_create_no_mirror_state",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "daemon::vault_mirror::tests::nightly_entrypoint_uses_durable_push_and_exact_head_verification",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "updater::process_containment::tests::retained_directory_windows_accepts_canonical_path_and_refuses_distinct_capability",
+            "classes": [
+              "neoth"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "panel_logic::tests::w184_vault_mirror_parser_rejects_forged_verified_receipt",
+            "classes": [
+              "neoth::gui_channel_status",
+              "neoth::gui_code_map_impact_controller",
+              "neothd-gui::bin/neothd-gui"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "panel_logic::tests::w184_vault_mirror_parser_keeps_indeterminate_repairable",
+            "classes": [
+              "neoth::gui_channel_status",
+              "neoth::gui_code_map_impact_controller",
+              "neothd-gui::bin/neothd-gui"
+            ],
+            "status": "PASS"
+          },
+          {
+            "name": "vault_mirror_gui_tests::w184_repair_reducer_requires_fresh_matching_status",
+            "classes": [
+              "neothd-gui::bin/neothd-gui"
+            ],
+            "status": "PASS"
+          }
+        ]
+      }
+    ],
+    "execution": "Retained actual FullCIbc9 terminals; reviewed relevant source carry, no local execution."
+  }
+}

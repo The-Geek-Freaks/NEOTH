@@ -3,6 +3,23 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W461 functional acceptance and Omniparser decision (2026-09-23):**
+P2-03 is accepted with31required macOS and29applicable Windows identities.
+P1-10 has17native+8GUIreducers+2native callbacks; P1-12 has50native and the
+real macOS citation callback. Root independently verified complete terminals,
+artifact hashes and relevant Gitblob carry to5bace4f0. These are functional
+acceptances; original tested commits and unrelated suite failures remain visible.
+Crossref/OpenAlex live records are bound; Semantic Scholar429 is noncoverage.
+P2-17 has a binding SKIP_FOR_V1_0_REOPEN_ON_EVIDENCE decision grounded in current
+upstream, product and Windows/resource evidence. No parser/model was installed.
+Preflight5bace35886291287 passed. Core35886288492 passed slim Clippy, then
+reported16library/19test-build diagnostics in the new quorum-budget integration;
+W459 repairs those actual errors. W448 Windows publication repair has passed
+static independent review; hosted behavior is pending. No local executables ran.
+Inventory728;native1173+Windows21/Linux33/macOS32;Group878;GUI143/139.
+Road1324=1038checked/284open/2partial;286raw/285pre-tag;WS-LF31done/87open.
+Evidence: docs/gold-wave451-452-functional-acceptance.md and W457 decision.
+
 **W453 hosted formatting and exact license import (2026-09-23):**
 W449 is published as b1fd8466. Its Preflight35885319917 exported formatting for
 19 source files; all complete before/after Git blobs, patch SHA256 and source

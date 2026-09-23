@@ -2,6 +2,23 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W461 functional acceptance and Omniparser decision (2026-09-23):**
+P2-03 is accepted with31required macOS and29applicable Windows identities.
+P1-10 has17native+8GUIreducers+2native callbacks; P1-12 has50native and the
+real macOS citation callback. Root independently verified complete terminals,
+artifact hashes and relevant Gitblob carry to5bace4f0. These are functional
+acceptances; original tested commits and unrelated suite failures remain visible.
+Crossref/OpenAlex live records are bound; Semantic Scholar429 is noncoverage.
+P2-17 has a binding SKIP_FOR_V1_0_REOPEN_ON_EVIDENCE decision grounded in current
+upstream, product and Windows/resource evidence. No parser/model was installed.
+Preflight5bace35886291287 passed. Core35886288492 passed slim Clippy, then
+reported16library/19test-build diagnostics in the new quorum-budget integration;
+W459 repairs those actual errors. W448 Windows publication repair has passed
+static independent review; hosted behavior is pending. No local executables ran.
+Inventory728;native1173+Windows21/Linux33/macOS32;Group878;GUI143/139.
+Road1324=1038checked/284open/2partial;286raw/285pre-tag;WS-LF31done/87open.
+Evidence: docs/gold-wave451-452-functional-acceptance.md and W457 decision.
+
 **W453 hosted formatting and exact license import (2026-09-23):**
 W449 is published as b1fd8466. Its Preflight35885319917 exported formatting for
 19 source files; all complete before/after Git blobs, patch SHA256 and source
@@ -5054,7 +5071,7 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay and P1-20 sidebar preview accepted: **27 done / 91
+> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay, P1-20 sidebar preview, P2-03 vault, P1-10 reasoning, P1-12 citation and P2-17 recorded skip decision accepted: **31 done / 87
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

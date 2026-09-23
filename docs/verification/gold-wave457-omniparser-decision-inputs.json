@@ -1,0 +1,30 @@
+{
+  "schema": "neoth-wave457-omniparser-decision-inputs/v1",
+  "generatedAt": "2026-09-23",
+  "sourceHead": "5bace4f059f8179eee89cdce3050701107ba3f7f",
+  "hostRead": {
+    "os": "Microsoft Windows 11 Pro 10.0.26200",
+    "physicalMemoryGiB": 255.84,
+    "freePhysicalMemoryMiB": 219586,
+    "note": "bounded system metadata only; no benchmark or model probe"
+  },
+  "upstreamGithub": {
+    "repository": "microsoft/OmniParser",
+    "repositoryLicenseApi": "CC-BY-4.0",
+    "latestRelease": {"tag":"v.2.0.1","publishedAt":"2025-09-12T20:34:05Z","assets":0},
+    "master": "354021201345a96178360b28733573e27269f2de",
+    "readmeClaims": [
+      "Python 3.12 Conda/pip installation",
+      "Hugging Face model acquisition and a current first-use detector download path",
+      "MIT-based YOLOv9 detector; older Ultralytics detector AGPL; caption models MIT"
+    ],
+    "requirementsObserved": ["torch","easyocr","torchvision","transformers","huggingface_hub","ultralytics","opencv-python","paddleocr","gradio","pyautogui"]
+  },
+  "existingProductFacts": {
+    "computerUseServer": "trycua cua-driver MCP over stdio",
+    "pinnedTools": ["screenshot","click","double_click","right_click","move","drag","scroll","type","key","get_windows","wait"],
+    "pc01": "partially shipped; window management and system audio remain open",
+    "pc02": "unchecked; Chrome DevTools MCP requires forced no-usage-statistics env var and licence confirmation",
+    "priorOmniParserConcern": "approximately 600 MB ONNX checkpoint; MCP-sidecar, not media/vision.rs"
+  }
+}

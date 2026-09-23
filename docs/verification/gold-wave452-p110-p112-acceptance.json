@@ -1,0 +1,262 @@
+{
+  "schema": "neoth-wave452-reasoning-citation/v1",
+  "currentHead": "5bace4f059f8179eee89cdce3050701107ba3f7f",
+  "mode": "read-only; BSOD hold; no compiler/parser/test/runtime",
+  "junitMethod": "plain-text complete-testcase-block regex; no XML parser",
+  "artifacts": {
+    "macosJunit": {
+      "path": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "sha256": "91842d99da6a83c1f2056a787f07e48a298b21e3bd7e787e8055197959386726",
+      "testedSource": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76"
+    },
+    "macosJunitArchive": {
+      "path": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248.zip",
+      "sha256": "b86f9a8d6ce0c8a8082c1f2207410ab5f3d838d5ea73588a50c73e61d94598c8"
+    },
+    "citationAdmission": {
+      "path": "work/gold-20260906/wave433-citation010d/ADMISSION.json",
+      "sha256": "718eff20231ff24c9ab107f56e7785040a5c727594433f29ea760654676e199b",
+      "testedSource": "010d535c84b3966270877ae9bb808b51c8ea35e5"
+    },
+    "citationLiveReceipt": {
+      "path": "work/gold-20260906/wave433-citation010d/w404-citation-acceptance-010d535c84b3966270877ae9bb808b51c8ea35e5/receipt/live-probes.json",
+      "sha256": "641d56866bd06b46405b8b91445094268476d49f05bdb5413b05915777f35807"
+    }
+  },
+  "reasoning": {
+    "macos": {
+      "run": 35871801240,
+      "artifact": 10761989248,
+      "sourceHead": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "w153Callbacks": "2 PASS"
+    },
+    "windows": {
+      "artifact": 10761104886,
+      "sourceHead": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "nativeReasoning": "PASS",
+      "macosCustomCallbacks": "not registered"
+    },
+    "actualPasses": {
+      "native": 17,
+      "universalReducers": 8,
+      "macosCallbacks": 2
+    },
+    "acceptedSource": "5bace4f059f8179eee89cdce3050701107ba3f7f",
+    "blobCarry": {
+      "providers/mod.rs": "780cd42ab9adf8ad012096635e771a9ad84459695e3432530b2178c11e5231c0",
+      "providers/claude_cli.rs": "8dd8e2fb7fa7b9285c5b5d59490c9fe2dc23588071b3a7cd850fa5ac69e6478f",
+      "cli/chat.rs": "df62321396e9a8b7db86ab01824d1d7ea25a4b3f56ae961c416e52e22c23d54c",
+      "wal/reasoning_audit.rs": "82a5a05881463c9cce8b2dabe54a77bdb1374c1d917b8cccc3ea790769e27462",
+      "daemon/gui_chat_protocol.rs": "167d90c2a9f3f5fd54375be5ad3431aad757e34e34205d0ed721c76dac4fe282",
+      "daemon/gui_chat_runtime.rs": "060659e18e5e37630c44a9705319d5976588e808ea8c6f37d795d91ac46776b1",
+      "gui/chat_stream_phase.rs": "e8c8cf44b5b222ffa3f1614357f99e2b5e8396ad436c6b29255f741d785148ba",
+      "gui/chat_reasoning.rs": "bb81476926a640c2a9876ea6d78168ec3a3afa8acda41758d00c98f565f3c12f"
+    },
+    "mainRs": {
+      "testedSha256": "85568f99a02cfb7ebbbf49f9541c37a30220adea6405f438bcd0a3e3d2ef9d5c",
+      "acceptedSha256": "b0e5772d45255915bf6dcc59fc39a1f352098fad8bd401fcefab15a68704a519",
+      "diffReason": "no reasoning callback/control/history change"
+    },
+    "selectedTerminalGroups": [
+      {
+        "sourcePath": "SRC/neothd/src/providers/mod.rs",
+        "testedGitBlob": "13a6618d7e705045a0c5b769a278ea61d2c12cc8",
+        "acceptedGitBlob": "13a6618d7e705045a0c5b769a278ea61d2c12cc8",
+        "junitClass": "neoth",
+        "passes": [
+          "providers::tests::event_normalizer_requires_reasoning_terminal_before_done",
+          "providers::tests::reasoning_contract_is_redacted_and_wire_closed"
+        ]
+      },
+      {
+        "sourcePath": "SRC/neothd/src/providers/claude_cli.rs",
+        "testedGitBlob": "b9ed6f31808d05afe2b29f0d533076e777562533",
+        "acceptedGitBlob": "b9ed6f31808d05afe2b29f0d533076e777562533",
+        "junitClass": "neoth",
+        "passes": [
+          "providers::claude_cli::tests::parse_stream_event_extracts_reasoning_alias_delta",
+          "providers::claude_cli::tests::parse_stream_event_recognises_redacted_cli_reasoning_block"
+        ]
+      },
+      {
+        "sourcePath": "SRC/neothd/src/wal/reasoning_audit.rs",
+        "testedGitBlob": "22fbd0ea74224af6a4f43625a2b525d7a8b0118d",
+        "acceptedGitBlob": "22fbd0ea74224af6a4f43625a2b525d7a8b0118d",
+        "junitClass": "neoth",
+        "passes": [
+          "wal::reasoning_audit::tests::v1_preserves_a_long_windows_local_wire_model_identity",
+          "wal::reasoning_audit::tests::v1_round_trips_through_the_bounded_serializer",
+          "wal::reasoning_audit::tests::v1_schema_has_only_metadata_fields",
+          "wal::reasoning_audit::tests::v1_unobserved_identity_is_closed_and_zero_accounted",
+          "wal::reasoning_audit::tests::v1_rejects_unknown_schema_unbounded_and_control_values"
+        ]
+      },
+      {
+        "sourcePath": "SRC/neothd/src/cli/chat.rs",
+        "testedGitBlob": "bb3f964e380e6558f1eefc8d9f4de150d34268c8",
+        "acceptedGitBlob": "bb3f964e380e6558f1eefc8d9f4de150d34268c8",
+        "junitClass": "neoth",
+        "passes": [
+          "cli::chat::tests::dispatch_native_reasoning_terminal_then_item_error_closes_redacted_once",
+          "cli::chat::tests::reasoning_control_frames_are_v3_bound_and_keep_visible_hashes_separate",
+          "cli::chat::tests::reasoning_lifecycle_closes_native_terminal_then_error_once_without_raw_audit_text"
+        ]
+      },
+      {
+        "sourcePath": "SRC/neothd/src/daemon/gui_chat_protocol.rs",
+        "testedGitBlob": "61eed62fee6896161f138d15e0f7d0a26eb721eb",
+        "acceptedGitBlob": "61eed62fee6896161f138d15e0f7d0a26eb721eb",
+        "junitClass": "neoth",
+        "passes": [
+          "daemon::gui_chat_protocol::tests::missing_reasoning_display_decodes_false_and_digest_commits_grant",
+          "daemon::gui_chat_protocol::tests::reasoning_wire_frames_are_bounded_and_text_free_state_is_valid"
+        ]
+      },
+      {
+        "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+        "testedGitBlob": "0dc7930134a767f1af2f0b3f69a8ed848e5d147c",
+        "acceptedGitBlob": "0dc7930134a767f1af2f0b3f69a8ed848e5d147c",
+        "junitClass": "neoth",
+        "passes": [
+          "daemon::gui_chat_runtime::lifecycle_tests::reasoning_live_delivery_is_leased_and_replay_is_checkpoint_only",
+          "daemon::gui_chat_runtime::lifecycle_tests::reasoning_overflow_keeps_counters_transactional_and_closes_live_delivery",
+          "daemon::gui_chat_runtime::lifecycle_tests::reasoning_terminal_revokes_live_queue_without_changing_live_cursor"
+        ]
+      },
+      {
+        "sourcePath": "SRC/neothd-gui/src/chat_stream_phase.rs",
+        "testedGitBlob": "c768af1745df268c2e45a4599ec7f423122c1bb5",
+        "acceptedGitBlob": "c768af1745df268c2e45a4599ec7f423122c1bb5",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "passes": [
+          "chat_stream_phase::daemon_chat_presentation_tests::reasoning_delta_state_and_checkpoint_are_rejected_after_provider_done",
+          "chat_stream_phase::daemon_chat_presentation_tests::reasoning_buffer_rejects_bytes_beyond_sixty_four_kib",
+          "chat_stream_phase::daemon_chat_presentation_tests::reasoning_is_bounded_zeroized_on_terminal_and_uses_an_independent_sequence",
+          "chat_stream_phase::daemon_chat_presentation_tests::reasoning_is_grant_bound_and_never_enters_visible_reply_or_preview",
+          "chat_subprocess_tests::reasoning_controls_are_parsed_as_private_compactable_records"
+        ]
+      },
+      {
+        "sourcePath": "SRC/neothd-gui/src/chat_reasoning.rs",
+        "testedGitBlob": "5e6666e5e317f29bbb94a58bb9006e176b2a17ce",
+        "acceptedGitBlob": "5e6666e5e317f29bbb94a58bb9006e176b2a17ce",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "passes": [
+          "chat_reasoning::tests::default_off_counts_controls_without_retaining_text",
+          "chat_reasoning::tests::duplicate_or_forged_frame_clears_the_exact_projection",
+          "chat_reasoning::tests::strict_sequence_limit_and_terminal_clear"
+        ]
+      },
+      {
+        "sourcePath": "SRC/neothd-gui/src/main.rs",
+        "testedGitBlob": "0705853e795bb1a9a52693daa0449435e65aa306",
+        "acceptedGitBlob": "9edbdf21f38bf4c2b2d9ee3c8d73eee91948b73b",
+        "junitClass": "neothd-gui::neothd-gui-macos-native",
+        "passes": [
+          "w58_gui_callback_runtime_tests::w153_legacy_child_callbacks_project_only_transient_reasoning",
+          "w58_gui_callback_runtime_tests::w153_reasoning_child_controls_are_transient_and_history_excluded",
+          "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts"
+        ],
+        "carryReason": "reviewed diff has no reasoning callback/control/history change; citation cancellation is equivalent nested-if to let-chain"
+      },
+      {
+        "sourcePath": "SRC/neothd-gui/src/citation_gui.rs",
+        "testedGitBlob": "ac527515b564b295637639b2e92686169692908c",
+        "acceptedGitBlob": "21d442f2483efb6e2c16543d9f92d4339303fd20",
+        "junitClass": "neothd-gui::neothd-gui-macos-native",
+        "passes": [
+          "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts"
+        ],
+        "carryReason": "reviewed ownership/boxing/unused/dead-wrapper cleanup; binding validation unchanged"
+      },
+      {
+        "sourcePath": "SRC/neothd-gui/ui/citation.slint",
+        "testedGitBlob": "e4093144ac60a950e555298eb2500592a5e0dfbd",
+        "acceptedGitBlob": "e4093144ac60a950e555298eb2500592a5e0dfbd",
+        "junitClass": "neothd-gui::neothd-gui-macos-native",
+        "passes": [
+          "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts"
+        ]
+      }
+    ]
+  },
+  "citation": {
+    "nativeAdmission": {
+      "run": 35874789863,
+      "sourceHead": "010d535c84b3966270877ae9bb808b51c8ea35e5",
+      "tests": "50/50 PASS",
+      "bindings": 9
+    },
+    "acceptedSource": "5bace4f059f8179eee89cdce3050701107ba3f7f",
+    "nativeBlobCarry": {
+      "citation_lookup": "a2377b20e05125f2453468d9ebacf612f094ad144b35edd2f0bffcf91a4499f5",
+      "citation_consent": "903912e9242a2dc8829278ee2426aa60a61972ad55deda16280e5c2f7b73e4fc",
+      "citation_http": "1da9251d24c2be070be52e06507c0e0190ddd5e5012aa92a666ef4ad9a583c02",
+      "external_http": "08d463c99188c49b3099c2f3fbb21fafcc89da722ac9d7e11224f3ab55dd72bd",
+      "cli_citation": "ff88915c80264c71e2236508899304f1b7389229247ae421c9d8bb43fea4f139",
+      "cli_contract": "4b6911e9d9f3c77fa8cebc2d0012e9351ee751cf5dc1159901230aa28e922f40"
+    },
+    "guiCarry": {
+      "citationGuiTestedSha256": "b31e545b8e455b2a042204f7217deace9184a19bdd61d833d1761aaa8fe320d6",
+      "citationGuiAcceptedSha256": "ed702c2f4f559f756aecd9294fccbb0f75c2ee2d1043b79b753290be06a2483e",
+      "diffReason": "ownership/boxing/unused/dead-wrapper cleanup; binding validation unchanged",
+      "mainRsAcceptedSha256": "b0e5772d45255915bf6dcc59fc39a1f352098fad8bd401fcefab15a68704a519",
+      "mainDiffReason": "equivalent citation cancellation let-chain formatting"
+    },
+    "macosCallback": {
+      "artifact": 10761989248,
+      "sourceHead": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "test": "w155_citation_callbacks_bind_cache_and_live_consent_receipts",
+      "status": "PASS"
+    },
+    "live": {
+      "crossref": "found_live",
+      "openalex": "found_live",
+      "semanticScholar": "unavailable:rate_limited; coverageEstablished=false; not a live-record success"
+    },
+    "functionalConclusion": "Road wording does not require all-three successful live records; actual tested terminals plus reviewed semantic carry meet criterion-specific admission",
+    "rootVerifiedNativeBindings": [
+      {
+        "path": "SRC/neothd/src/tools/citation_consent.rs",
+        "testedBlob": "6955387f1dd69d7689be91e0aeb059fa9c0d4105",
+        "acceptedBlob": "6955387f1dd69d7689be91e0aeb059fa9c0d4105"
+      },
+      {
+        "path": "SRC/neothd/src/tools/citation_lookup.rs",
+        "testedBlob": "91fc4a4d2bcb5078ff2f78c67a21ccd304e75ce2",
+        "acceptedBlob": "91fc4a4d2bcb5078ff2f78c67a21ccd304e75ce2"
+      },
+      {
+        "path": "SRC/neothd/src/cli/citation.rs",
+        "testedBlob": "abb79cc37ffaaf56ab971f984b6d0cb3f0eb483c",
+        "acceptedBlob": "abb79cc37ffaaf56ab971f984b6d0cb3f0eb483c"
+      },
+      {
+        "path": "SRC/neothd/src/tools/external_http.rs",
+        "testedBlob": "ddf03b37b9c27c38f2ad0a262107db417a90912d",
+        "acceptedBlob": "ddf03b37b9c27c38f2ad0a262107db417a90912d"
+      },
+      {
+        "path": "SRC/neothd/src/tools/citation_http.rs",
+        "testedBlob": "ed47ea98a586f26a98c83a918dd8d0e5afea2f0c",
+        "acceptedBlob": "ed47ea98a586f26a98c83a918dd8d0e5afea2f0c"
+      },
+      {
+        "path": "SRC/neothd/tests/citation_cli_contract.rs",
+        "testedBlob": "5d09aeae5d361f9ded81db27a3140bccea8ced48",
+        "acceptedBlob": "5d09aeae5d361f9ded81db27a3140bccea8ced48"
+      }
+    ]
+  },
+  "unrelatedMacosFailures": 7,
+  "unrelatedMacosFailureArea": "cluster membership/outbound",
+  "rootAdmission": {
+    "verifiedUtc": "2026-09-23T16:14:52.9399589Z",
+    "artifactHashesVerified": true,
+    "testedAndAcceptedBlobsVerified": true,
+    "sourceGroups": 11,
+    "passBindings": 30,
+    "uniqueMacosTerminals": 28,
+    "boundary": "Actual original-source full JUnit terminals, reviewed semantic carry for GUI. No exact-current-head execution claim."
+  }
+}

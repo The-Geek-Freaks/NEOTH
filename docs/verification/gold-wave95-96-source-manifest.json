@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T16:03:08.4670258Z",
-  "validationStatus": "W453 exact format+notices imported; W454 stable cfg-block repair; hosted rerun pending",
+  "capturedUtc": "2026-09-23T16:24:22.4504421Z",
+  "validationStatus": "W451/W452 functional acceptances carried to5bace; W457 binding skip decision; source compilation repairs pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -922,6 +922,16 @@
       "sha256": "EE1595D7B26DA29B4FA1236A0E9EB9DF8668A5D085B13E3C232C306D17F79CD2"
     },
     {
+      "path": "docs/gold-wave451-452-functional-acceptance.md",
+      "bytes": 3198,
+      "sha256": "36CB68AC9390EAC061FBBB42C22BBB6288FEAF5A0195B653DE6FCEDA17229888"
+    },
+    {
+      "path": "docs/gold-wave457-omniparser-decision.md",
+      "bytes": 8833,
+      "sha256": "9621ADB7E48CA29D1DFD4A97538A15C75D12E152E91311ABC72065DEBB7CE7F6"
+    },
+    {
       "path": "docs/install.md",
       "bytes": 13637,
       "sha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625"
@@ -1037,6 +1047,21 @@
       "sha256": "79F7618D1352F0AA357DB3CF2782F1D346BCA082A3404D192175B9C589848E7D"
     },
     {
+      "path": "docs/verification/gold-wave451-p203-acceptance.json",
+      "bytes": 24122,
+      "sha256": "00869AE576E5D427701AB680218D3DBE73D0D9A2BB9727E1567ADFB4AD48EBE1"
+    },
+    {
+      "path": "docs/verification/gold-wave452-p110-p112-acceptance.json",
+      "bytes": 13245,
+      "sha256": "6210EA444054D8008BC79648422415511C6C12CF73E51BFFE3951DD95C6A71B1"
+    },
+    {
+      "path": "docs/verification/gold-wave457-omniparser-decision-inputs.json",
+      "bytes": 1548,
+      "sha256": "3D4129F3611687D7073164DF983B225F2D16567604464D332C1C5E11B6C351DE"
+    },
+    {
       "path": "docs/verification/managed-browser-cft154.json",
       "bytes": 2497,
       "sha256": "80443D2F6E6A6E226F1617F7F5463017071D9D21130D1FCD116470F147455337"
@@ -1108,18 +1133,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 174088,
-      "sha256": "2BB7E67CDAB4D6976CC280BAC39BCB4632535C6724222DABD0BFF28E5EE32A14"
+      "bytes": 175322,
+      "sha256": "3DEE6780707CAA2B55FE2A3A400ADDAA230E099A07169F907A887C35895099FA"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1184199,
-      "sha256": "0839B94239169A029A6AD9A5414E5C5931A8736792F048ED6C248F42F70177DE"
+      "bytes": 1185509,
+      "sha256": "D16305F1BC81526AB665E52F7AEB395EF80D7B342E289B95FC964A62E02B5758"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1782000,
-      "sha256": "4BB0F1D1A8D9C676B894C279C071C5A21261D26FBE4080954C487304B7899155"
+      "bytes": 1783701,
+      "sha256": "A73759C8D0251372C2D639594F5F90D2D4B3E93D5429D86AA3C1FEF6FB438B68"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
