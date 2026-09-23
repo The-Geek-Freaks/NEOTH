@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T00:50:26.0314425Z",
-  "validationStatus": "W250 guardian-aligned identity-map probe and bounded diagnostics; Hosted execution pending",
+  "capturedUtc": "2026-09-23T01:05:54.6503482Z",
+  "validationStatus": "W251 reviewed synchronization correction; Group424 prior423pass1fail; fresh Hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -98,8 +98,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 238916,
-      "sha256": "52E3B920EA845E548B561B17FCC20936901CD6C1A59657A332B1B2D6202D07E0"
+      "bytes": 239338,
+      "sha256": "939568863B222BABEA784989C761D0388C3439C5A4436E2A79769C9AD4526D82"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -438,18 +438,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 90543,
-      "sha256": "6E4877A4BF3FA7190258F0FE13B7F232CF86A615932E194063A71A04844883D1"
+      "bytes": 91740,
+      "sha256": "B6A89A1E1176EB66D7521FDF3C48FE0A971FBCF687C3788C4486DB13CB32BDCA"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1093478,
-      "sha256": "4D65BFE7D17D6637342970241DB0908AFBD95C05AB6454361E3E6E1180E5887C"
+      "bytes": 1094675,
+      "sha256": "D44BA00F8169ACA3C9B8103E456AE053DD970D2C5DD79C697D4AC5E6C16929F0"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1689046,
-      "sha256": "546A12382B3AC598F6D3945225BA229E4826B46DFDB69D876A8A7029E5B07BD1"
+      "bytes": 1690243,
+      "sha256": "F2349589AEE87242865FE13D2DC18612BD246CECAF5D48271DAE12036EEDFA6E"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1528,8 +1528,8 @@
     },
     {
       "path": "SRC/neothd/src/connectors/control_plane.rs",
-      "bytes": 77402,
-      "sha256": "F3AA5C2C671AE2E4C85CE0C3D81DDA407676DCD3DC0B0412A570688BDD49C8DF"
+      "bytes": 77375,
+      "sha256": "06F279EC33EFFF63844E969C47EC8BA9460A21A5D447D799CB3AF08DE1AD4118"
     },
     {
       "path": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",

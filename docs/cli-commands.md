@@ -1035,12 +1035,26 @@ Consume exactly one plan confirmation and persist its Context Evidence
 - `<PLAN_ID>` — Opaque handle returned by `context import plan`
 - `<CONFIRMATION_NONCE>` — Opaque confirmation returned by `context import plan`
 
+#### `neoth context import pause`
+
+Durably pause Local Import after confirming the current policy and lifecycle revisions
+
+- `--policy-revision <POLICY_REVISION>`
+- `--lifecycle-revision <LIFECYCLE_REVISION>`
+
 #### `neoth context import plan`
 
 Validate one approved root and return a short-lived confirmation handle
 
 - `<ROOT>` — Absolute local directory presented for capability-bound approval
 - `<RELATIVE_PATH>` — Relative regular-file path below the approved root
+
+#### `neoth context import resume`
+
+Durably resume Local Import after confirming the current policy and lifecycle revisions
+
+- `--policy-revision <POLICY_REVISION>`
+- `--lifecycle-revision <LIFECYCLE_REVISION>`
 
 #### `neoth context import status`
 

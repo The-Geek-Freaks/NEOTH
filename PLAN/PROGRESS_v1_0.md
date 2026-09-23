@@ -2,6 +2,23 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W251 lifecycle fixture correction and W247 evidence (2026-09-23):**
+Group424 run `35803121923` on `09ac5d57` executed all 424 cases: **423 passed,
+1 failed**, bound to 91 source paths, the matrix, Cargo lock and exact individual
+terminals. The failed drain test observed new-lease admission, which returns
+`TransitionInProgress` before reaching the account gate. It now observes the
+already-issued authority's gate directly; no timeout or production behavior
+changes. Fresh Hosted execution is required before calling the repair passed.
+Core run `35803119928` passed slim Clippy, test-target typecheck and CLI build;
+its SHA-bound reference was imported with the pause/resume commands.
+GUI124 run `35803931022` on `3fc79d68` is bound but ran zero builds or fixtures:
+the kernel explicitly denied `sys_admin` under AppArmor `unprivileged_userns`
+during readiness. A narrowly scoped Hosted runner fix is being prepared.
+Inventory remains 537 sources / 861 universal native / 98 universal GUI,
+Group424 / GUI124. Road remains 1016 checked / 306 open / 2 partial.
+See `docs/gold-wave251-lifecycle-drain-test.md`. The absolute local BSOD hold
+remains active; no local executable validation was run.
+
 **W250 precise Hosted namespace diagnostics (2026-09-23):** GUI12435803340455
 on ea43839c binds the complete124-case plan and17GUI sources but ran zero
 compilations or fixtures: manager/bus readiness passed, then the probe could

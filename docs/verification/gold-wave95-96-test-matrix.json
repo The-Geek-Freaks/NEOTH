@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W250 guardian-aligned identity-map probe and bounded diagnostics; Hosted execution pending",
+  "status": "W251 reviewed synchronization correction; Group424 prior423pass1fail; fresh Hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 92862,
-    "sha256": "7247A8A02726BFCC0512CA51EF42E4F37EEE41D6FF4D0AA79D572FB2464255EC"
+    "sha256": "4FA31F42A1FEACEA8E0BD42F1565E7F139271F6DB9215BFB74A3CECDBA7F1F9D"
   },
   "sourceInputs": 537,
   "requiredNativeTests": [
@@ -5142,25 +5142,25 @@
     {
       "test": "connectors::control_plane::tests::authenticated_lifecycle_successor_is_revision_fenced_and_never_uses_import_admission",
       "sourcePath": "SRC/neothd/src/connectors/control_plane.rs",
-      "sourceSha256": "F3AA5C2C671AE2E4C85CE0C3D81DDA407676DCD3DC0B0412A570688BDD49C8DF",
+      "sourceSha256": "06F279EC33EFFF63844E969C47EC8BA9460A21A5D447D799CB3AF08DE1AD4118",
       "junitClass": "neoth"
     },
     {
       "test": "connectors::control_plane::tests::lifecycle_transition_cas_failure_reopens_the_unpublished_active_authority",
       "sourcePath": "SRC/neothd/src/connectors/control_plane.rs",
-      "sourceSha256": "F3AA5C2C671AE2E4C85CE0C3D81DDA407676DCD3DC0B0412A570688BDD49C8DF",
+      "sourceSha256": "06F279EC33EFFF63844E969C47EC8BA9460A21A5D447D799CB3AF08DE1AD4118",
       "junitClass": "neoth"
     },
     {
       "test": "connectors::control_plane::tests::lifecycle_drain_timeout_preserves_the_live_lease_and_prior_authority",
       "sourcePath": "SRC/neothd/src/connectors/control_plane.rs",
-      "sourceSha256": "F3AA5C2C671AE2E4C85CE0C3D81DDA407676DCD3DC0B0412A570688BDD49C8DF",
+      "sourceSha256": "06F279EC33EFFF63844E969C47EC8BA9460A21A5D447D799CB3AF08DE1AD4118",
       "junitClass": "neoth"
     },
     {
       "test": "connectors::control_plane::tests::lifecycle_drain_commits_after_the_held_lease_releases",
       "sourcePath": "SRC/neothd/src/connectors/control_plane.rs",
-      "sourceSha256": "F3AA5C2C671AE2E4C85CE0C3D81DDA407676DCD3DC0B0412A570688BDD49C8DF",
+      "sourceSha256": "06F279EC33EFFF63844E969C47EC8BA9460A21A5D447D799CB3AF08DE1AD4118",
       "junitClass": "neoth"
     },
     {
@@ -16610,6 +16610,20 @@
     "base": "ea43839c701cf334d43d546eb9b3a7124b0dd43e",
     "sources": [],
     "note": "GUI124ea43 actual readiness failure0compile0tests admitted. Probe root-map mismatch corrected to current UID/GID; all probe commands propagate failure; no policy or containment change.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave251LifecycleDrainRepair": {
+    "base": "3fc79d68dadca827da39cf26151f9d5f08d5e1db",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/connectors/control_plane.rs",
+        "bytes": 77375,
+        "sha256": "06F279EC33EFFF63844E969C47EC8BA9460A21A5D447D799CB3AF08DE1AD4118",
+        "blob": "dd57530bf29cb762edb39d1043e3ed26a868b6d6"
+      }
+    ],
+    "note": "Observe already-issued authority gate, unchanged timeout; import verified Core09ac pause/resume CLI reference; no local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

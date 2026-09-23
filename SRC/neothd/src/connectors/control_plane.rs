@@ -1579,7 +1579,7 @@ mod tests {
         started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         wait_until("lifecycle admission to close", || {
             matches!(
-                authority.acquire_context_import_operation_lease(),
+                authority.ensure_live(),
                 Err(ConnectorControlPlaneError::AuthorityRetired)
             )
         });
