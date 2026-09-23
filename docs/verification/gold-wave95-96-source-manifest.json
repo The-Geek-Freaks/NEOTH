@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T20:06:18.1892761Z",
-  "validationStatus": "W480 real producer-consumer regression, W484 compile-once grouped lane, W485 Buddy canonical assignment route, W486 Windows native rename fixture; inventory734/native1183/Group888/GUI146Linux142macOS; hosted pending",
+  "capturedUtc": "2026-09-23T20:10:43.7048406Z",
+  "validationStatus": "W487 verified2file hosted rustfmt import and restored exact upload-artifact pins after accidental count substitution; inventory734/native1183/Group888/GUI146Linux142macOS; Group888 redispatch required",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -89,7 +89,7 @@
     {
       "path": ".github/workflows/research-lifecycle.yml",
       "bytes": 20624,
-      "sha256": "BEF08CB023C2B1461D8A3693F199BCC2F3A706A0F74ECE66DD7A7E694A407CC8"
+      "sha256": "9255D92ADDF0DECC54B50C1C47BD10A231C3B24142523CD5FC02FF63B0522A37"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -1163,18 +1163,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 182483,
-      "sha256": "727FB83115F75BCE1ADB97F6AB31F7B81080E1DBF0D20C0E3F8EA480C97C0B30"
+      "bytes": 183323,
+      "sha256": "643190325298AC97DD5956319EEA36A48440F744ED645ED6D3C0F6A2A24B754A"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1192696,
-      "sha256": "D96191CACDF7C637DBF7D37FD5704F3F50FF7FE21CE2563D7F694CAE07FD4EA4"
+      "bytes": 1193536,
+      "sha256": "1493FCFBA50EB14A53707CCE5F52E73A59104AA5A8DE11EAC6EF79FE895C2FCB"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1791029,
-      "sha256": "F9BFEA440114858E296A0CAB7A3C5C0D1D951C75D8EF1802D7F72CE1CA459042"
+      "bytes": 1791869,
+      "sha256": "B8BA1FDED823955214D62004344A4145700A4F7A9EFD29928BEB85C98D98C382"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1383,8 +1383,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2200754,
-      "sha256": "BD331B19C227A57DEA0EF56C1DBAAA30287632B89BE07BA7C4B9F2E31EF806C6"
+      "bytes": 2201524,
+      "sha256": "B3AC6B0FAFA3D82C0BC32CA0288268FD953019FEB4DE640CB28975008E8028FE"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -2528,8 +2528,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "bytes": 160141,
-      "sha256": "15CD35A32804CBFFE7FA5983E007E4963F537B94AB04F24D59A038616CD72E04"
+      "bytes": 163054,
+      "sha256": "41170E650590E8C7C2E971638B6BBB45CCFD24197D427B5F4791AC1F97DC6D25"
     },
     {
       "path": "SRC/neothd/src/daemon/live_throughput.rs",

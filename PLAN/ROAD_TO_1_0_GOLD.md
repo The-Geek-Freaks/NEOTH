@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W487 hosted formatting and workflow pin repair (2026-09-23):**
+W480/W484-W486 is published as03456722. Preflight35913977425 exported two
+Rust formatting changes; artifact10773559802, both SHA256 entries and all
+complete before/after Gitblob pairs matched before import. Group88835914021236
+failed during runner action resolution before checkout or compilation: the
+count edit had accidentally changed three upload-artifact pin strings. The exact
+previous working pin is restored, and every workflow action reference was
+compared with580c29e5. This run supplies no behavior result. Core03435914028695,
+GUI14635914017454 and Windows1635914024705 continue; Group888 will be redispatched.
+Inventory734/native1183/Group888/GUI146Linux142macOS; Road and WS-LF unchanged.
+The local BSOD hold remains active; no local formatter or compiler ran.
+
 **W480/W484-W486 producer consumers, Buddy parity and hosted efficiency (2026-09-23):**
 Preflight 35911848078 passed at 580c29e5. Core9abb passed slim Clippy and
 core test-target compilation; workspace Clippy and Group886 continue. Windows

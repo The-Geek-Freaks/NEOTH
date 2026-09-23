@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W480 real producer-consumer regression, W484 compile-once grouped lane, W485 Buddy canonical assignment route, W486 Windows native rename fixture; inventory734/native1183/Group888/GUI146Linux142macOS; hosted pending",
+  "status": "W487 verified2file hosted rustfmt import and restored exact upload-artifact pins after accidental count substitution; inventory734/native1183/Group888/GUI146Linux142macOS; Group888 redispatch required",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 128081,
-    "sha256": "72D6C5841447B7E5CEC2909B89A267C72E02A55CE14F30689EF20E28024CC8C8"
+    "bytes": 128066,
+    "sha256": "6B2360EAC652C0B582D6A83B4A2AECB027284C9463900D809428F5BBBE02771D"
   },
   "sourceInputs": 734,
   "requiredNativeTests": [
@@ -1266,43 +1266,43 @@
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::reasoning_live_delivery_is_leased_and_replay_is_checkpoint_only",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "15CD35A32804CBFFE7FA5983E007E4963F537B94AB04F24D59A038616CD72E04",
+      "sourceSha256": "41170E650590E8C7C2E971638B6BBB45CCFD24197D427B5F4791AC1F97DC6D25",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::reasoning_terminal_revokes_live_queue_without_changing_live_cursor",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "15CD35A32804CBFFE7FA5983E007E4963F537B94AB04F24D59A038616CD72E04",
+      "sourceSha256": "41170E650590E8C7C2E971638B6BBB45CCFD24197D427B5F4791AC1F97DC6D25",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::reasoning_overflow_keeps_counters_transactional_and_closes_live_delivery",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "15CD35A32804CBFFE7FA5983E007E4963F537B94AB04F24D59A038616CD72E04",
+      "sourceSha256": "41170E650590E8C7C2E971638B6BBB45CCFD24197D427B5F4791AC1F97DC6D25",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::public_exchange_and_attach_handoff_has_one_turn_owner_and_checkpoint_replay",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "15CD35A32804CBFFE7FA5983E007E4963F537B94AB04F24D59A038616CD72E04",
+      "sourceSha256": "41170E650590E8C7C2E971638B6BBB45CCFD24197D427B5F4791AC1F97DC6D25",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::gui_cancel_after_real_intent_before_start_does_not_spend_allow_once",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "15CD35A32804CBFFE7FA5983E007E4963F537B94AB04F24D59A038616CD72E04",
+      "sourceSha256": "41170E650590E8C7C2E971638B6BBB45CCFD24197D427B5F4791AC1F97DC6D25",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::cancel_waits_for_held_real_handshake_terminal_ack_before_accepting",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "15CD35A32804CBFFE7FA5983E007E4963F537B94AB04F24D59A038616CD72E04",
+      "sourceSha256": "41170E650590E8C7C2E971638B6BBB45CCFD24197D427B5F4791AC1F97DC6D25",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::registered_blocked_worker_is_cancelled_and_joined_before_w39_drain",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "15CD35A32804CBFFE7FA5983E007E4963F537B94AB04F24D59A038616CD72E04",
+      "sourceSha256": "41170E650590E8C7C2E971638B6BBB45CCFD24197D427B5F4791AC1F97DC6D25",
       "junitClass": "neoth"
     },
     {
@@ -2334,7 +2334,7 @@
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::recall_chip_mapping_preserves_typed_same_query_rows",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "15CD35A32804CBFFE7FA5983E007E4963F537B94AB04F24D59A038616CD72E04",
+      "sourceSha256": "41170E650590E8C7C2E971638B6BBB45CCFD24197D427B5F4791AC1F97DC6D25",
       "junitClass": "neoth"
     },
     {
@@ -2352,7 +2352,7 @@
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::throughput_mapping_preserves_the_producer_state_without_rederivation",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "15CD35A32804CBFFE7FA5983E007E4963F537B94AB04F24D59A038616CD72E04",
+      "sourceSha256": "41170E650590E8C7C2E971638B6BBB45CCFD24197D427B5F4791AC1F97DC6D25",
       "junitClass": "neoth"
     },
     {
@@ -7086,7 +7086,7 @@
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::w458_real_producer_post_hook_is_visible_to_main_and_buddy_only_after_acceptance",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "15CD35A32804CBFFE7FA5983E007E4963F537B94AB04F24D59A038616CD72E04",
+      "sourceSha256": "41170E650590E8C7C2E971638B6BBB45CCFD24197D427B5F4791AC1F97DC6D25",
       "junitClass": "neoth"
     },
     {
@@ -7725,8 +7725,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2200754,
-      "sha256": "BD331B19C227A57DEA0EF56C1DBAAA30287632B89BE07BA7C4B9F2E31EF806C6"
+      "bytes": 2201524,
+      "sha256": "B3AC6B0FAFA3D82C0BC32CA0288268FD953019FEB4DE640CB28975008E8028FE"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -7785,8 +7785,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "bytes": 160141,
-      "sha256": "15CD35A32804CBFFE7FA5983E007E4963F537B94AB04F24D59A038616CD72E04"
+      "bytes": 163054,
+      "sha256": "41170E650590E8C7C2E971638B6BBB45CCFD24197D427B5F4791AC1F97DC6D25"
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_bridge.rs",
@@ -23858,6 +23858,50 @@
       }
     ],
     "note": "Independent W480/W485/W486 review PASS after replay cursor repair; root W484 pipeline-subshell repair review PASS; macOS verifier synced31. No new Road closure; no local executables",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave487HostedFormattingAndActionPinRepair": {
+    "base": "03456722f3629bea6ca24de22aa066e4317dfc25",
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 20624,
+        "sha256": "9255D92ADDF0DECC54B50C1C47BD10A231C3B24142523CD5FC02FF63B0522A37",
+        "blob": "6eb50e3919b31fb798f36af92ba8362a2cef5563"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 183323,
+        "sha256": "643190325298AC97DD5956319EEA36A48440F744ED645ED6D3C0F6A2A24B754A",
+        "blob": "c2801bf2d4626316f9aa2c50056002290f547674"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1193536,
+        "sha256": "1493FCFBA50EB14A53707CCE5F52E73A59104AA5A8DE11EAC6EF79FE895C2FCB",
+        "blob": "087857d804747294fd500ad9f76bd602c838444e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1791869,
+        "sha256": "B8BA1FDED823955214D62004344A4145700A4F7A9EFD29928BEB85C98D98C382",
+        "blob": "10567a5756ed7bdf66156f70bf2bef583582aed2"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2201524,
+        "sha256": "B3AC6B0FAFA3D82C0BC32CA0288268FD953019FEB4DE640CB28975008E8028FE",
+        "blob": "3a6faa9ad922bf0adae33856346a183b2aa2b7fb"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+        "bytes": 163054,
+        "sha256": "41170E650590E8C7C2E971638B6BBB45CCFD24197D427B5F4791AC1F97DC6D25",
+        "blob": "c580c5f18b42f612df910042f19568316ea529db"
+      }
+    ],
+    "note": "Preflight35913977425 artifact10773559802: both hashes and2full sourceGitblob pairs verified. Group35914021236 failed before checkout because an action pin changed; all action pins restored and compared to580c. No local executables",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -44076,20 +44076,29 @@ mod w58_gui_callback_runtime_tests {
                 || actual.surface != expected.surface
                 || actual.generation != expected.generation
             {
-                return Err(neothd::daemon::gui_chat_bridge::GuiChatBridgeError::invalid(
-                    "W480 replay received a foreign captured subscription",
-                ));
+                return Err(
+                    neothd::daemon::gui_chat_bridge::GuiChatBridgeError::invalid(
+                        "W480 replay received a foreign captured subscription",
+                    ),
+                );
             }
             let events = match actual.surface {
                 GuiChatSurface::Main => {
                     self.main_attach_started
                         .fetch_add(1, std::sync::atomic::Ordering::Release);
-                    std::mem::take(&mut *self.main_events.lock().expect("W480 Main captured events"))
+                    std::mem::take(
+                        &mut *self.main_events.lock().expect("W480 Main captured events"),
+                    )
                 }
                 GuiChatSurface::Buddy => {
                     self.buddy_attach_started
                         .fetch_add(1, std::sync::atomic::Ordering::Release);
-                    std::mem::take(&mut *self.buddy_events.lock().expect("W480 Buddy captured events"))
+                    std::mem::take(
+                        &mut *self
+                            .buddy_events
+                            .lock()
+                            .expect("W480 Buddy captured events"),
+                    )
                 }
             };
             for event in events {
@@ -49054,8 +49063,18 @@ exit 0
     #[cfg(not(windows))]
     fn w480_rendered_text(window: &MainWindow, overlay: &MiniOverlay) -> String {
         let mut text = vec![window.get_status_line().to_string()];
-        text.extend(window.get_chat_live_messages().iter().map(|row| row.text.to_string()));
-        text.extend(window.get_chat_messages().iter().map(|row| row.text.to_string()));
+        text.extend(
+            window
+                .get_chat_live_messages()
+                .iter()
+                .map(|row| row.text.to_string()),
+        );
+        text.extend(
+            window
+                .get_chat_messages()
+                .iter()
+                .map(|row| row.text.to_string()),
+        );
         text.extend(
             window
                 .get_chat_session_history()
@@ -49107,35 +49126,39 @@ exit 0
             GuiChatSurface::Buddy => overlay.invoke_send_clicked("W480 Buddy".into(), false),
         }
         let completed_overlay = overlay.as_weak();
-        w153_pump_until(&window, "W480 captured producer settlement", move |window| {
-            let terminal_observed = match expected_body {
-                Some(expected_body) => {
-                    let completed = window.get_chat_live_messages().iter().any(|row| {
-                        row.role.as_str() == "assistant"
-                            && row.stream_phase.as_str() == "complete"
-                            && row.text.as_str() == expected_body
-                    });
-                    let buddy_rendered = surface != GuiChatSurface::Buddy
-                        || completed_overlay.upgrade().is_some_and(|overlay| {
-                            overlay
-                                .get_recent_lines()
-                                .iter()
-                                .any(|line| line.contains(expected_body))
+        w153_pump_until(
+            &window,
+            "W480 captured producer settlement",
+            move |window| {
+                let terminal_observed = match expected_body {
+                    Some(expected_body) => {
+                        let completed = window.get_chat_live_messages().iter().any(|row| {
+                            row.role.as_str() == "assistant"
+                                && row.stream_phase.as_str() == "complete"
+                                && row.text.as_str() == expected_body
                         });
-                    completed && buddy_rendered
-                }
-                None => window.get_chat_live_messages().iter().any(|row| {
-                    row.role.as_str() == "error"
-                        || matches!(row.stream_phase.as_str(), "failed" | "cancelled")
-                }),
-            };
-            !window.get_chat_send_in_flight()
-                && completed_overlay.upgrade().is_some_and(|overlay| {
-                    !overlay.get_send_in_flight()
-                })
-                && replay_bridge.attach_started(surface) > 0
-                && terminal_observed
-        });
+                        let buddy_rendered = surface != GuiChatSurface::Buddy
+                            || completed_overlay.upgrade().is_some_and(|overlay| {
+                                overlay
+                                    .get_recent_lines()
+                                    .iter()
+                                    .any(|line| line.contains(expected_body))
+                            });
+                        completed && buddy_rendered
+                    }
+                    None => window.get_chat_live_messages().iter().any(|row| {
+                        row.role.as_str() == "error"
+                            || matches!(row.stream_phase.as_str(), "failed" | "cancelled")
+                    }),
+                };
+                !window.get_chat_send_in_flight()
+                    && completed_overlay
+                        .upgrade()
+                        .is_some_and(|overlay| !overlay.get_send_in_flight())
+                    && replay_bridge.attach_started(surface) > 0
+                    && terminal_observed
+            },
+        );
 
         let rendered = w480_rendered_text(&window, &overlay);
         assert!(
@@ -49150,7 +49173,11 @@ exit 0
                     .filter(|row| row.role.as_str() == "assistant")
                     .map(|row| row.text.to_string())
                     .collect::<Vec<_>>();
-                assert_eq!(assistant_rows, [expected_body], "W480 renders one accepted body");
+                assert_eq!(
+                    assistant_rows,
+                    [expected_body],
+                    "W480 renders one accepted body"
+                );
                 assert!(
                     window.get_chat_live_messages().iter().any(|row| {
                         row.role.as_str() == "assistant"
@@ -49181,8 +49208,7 @@ exit 0
             None => {
                 assert!(
                     !window.get_chat_live_messages().iter().any(|row| {
-                        row.role.as_str() == "assistant"
-                            && row.stream_phase.as_str() == "complete"
+                        row.role.as_str() == "assistant" && row.stream_phase.as_str() == "complete"
                     }),
                     "W480 Block cannot render Complete",
                 );
@@ -49207,7 +49233,8 @@ exit 0
     #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w480_real_producer_post_provider_outcomes_replay_through_main_and_buddy() {
         use gui_bridge_test_support::{
-            W458PostProviderScenario::{Block, Replace}, capture_w458_real_producer,
+            W458PostProviderScenario::{Block, Replace},
+            capture_w458_real_producer,
         };
 
         const SECRET: &str = "sk-w458-never-visible";
@@ -49219,17 +49246,27 @@ exit 0
             .enable_all()
             .build()
             .expect("construct W480 capture runtime");
-        let (block, replace) = runtime.block_on(async {
-            let block = capture_w458_real_producer(Block).await?;
-            let replace = capture_w458_real_producer(Replace).await?;
-            anyhow::Ok((block, replace))
-        })
-        .expect("capture actual W458 producer outcomes once each");
+        let (block, replace) = runtime
+            .block_on(async {
+                let block = capture_w458_real_producer(Block).await?;
+                let replace = capture_w458_real_producer(Replace).await?;
+                anyhow::Ok((block, replace))
+            })
+            .expect("capture actual W458 producer outcomes once each");
 
         for (name, capture) in [("Block", &block), ("Replace", &replace)] {
-            assert_eq!(capture.provider_invocations, 1, "W480 {name} provider opens once");
-            assert_eq!(capture.provider_chunks, 3, "W480 {name} consumes three chunks");
-            assert!(capture.post_provider_hook_observed, "W480 {name} observes its hook");
+            assert_eq!(
+                capture.provider_invocations, 1,
+                "W480 {name} provider opens once"
+            );
+            assert_eq!(
+                capture.provider_chunks, 3,
+                "W480 {name} consumes three chunks"
+            );
+            assert!(
+                capture.post_provider_hook_observed,
+                "W480 {name} observes its hook"
+            );
             assert!(
                 !format!("{:?}{:?}", capture.main_events, capture.buddy_events).contains(SECRET),
                 "W480 {name} capture cannot transport the source secret",

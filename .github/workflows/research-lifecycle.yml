@@ -425,7 +425,7 @@ jobs:
 
       - name: Upload grouped source identities
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4888f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: w190-research-lifecycle-source-${{ github.sha }}
           path: ${{ runner.temp }}/w190-research-lifecycle/source/
@@ -434,7 +434,7 @@ jobs:
 
       - name: Upload grouped Cargo log
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4888f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: w190-research-lifecycle-log-${{ github.sha }}
           path: ${{ runner.temp }}/w190-research-lifecycle/log/
@@ -443,7 +443,7 @@ jobs:
 
       - name: Upload grouped lifecycle receipt
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4888f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: w190-research-lifecycle-receipt-${{ github.sha }}
           path: ${{ runner.temp }}/w190-research-lifecycle/receipt/
