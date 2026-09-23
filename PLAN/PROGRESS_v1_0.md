@@ -2,6 +2,12 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W289/W290 hosted formatting follow-up (2026-09-23):** Preflight62244
+run35823362619 produced only Cron-runner and retention-read formatting changes.
+Both exact pre/postimage Gitblobs and the artifact SHA256 were verified before
+import. Core62244 run35823363544 and GUI1256dae remain active. Parent acceptance
+stays open; grouped564 and platform CI follow the Core test-target check.
+
 **W289 Cron role binding and W290 hosted retention repair (2026-09-23):**
 Cron now treats provider, model, fallback and explicit role as job-local provider
 intent. Active role policy requires an explicit origin; model-only and role-only

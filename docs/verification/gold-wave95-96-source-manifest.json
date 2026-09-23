@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T05:38:00.3742803Z",
-  "validationStatus": "W289 cron role source reviewed; W290 retention compiler/io-kind repair with exact hosted format; GitHub behavior pending; absolute local BSOD hold",
+  "capturedUtc": "2026-09-23T05:41:55.3350291Z",
+  "validationStatus": "Exact hosted two-file formatter patch imported; Core62244 active; Group564 and full CI pending core test-target; no local executable validation",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -473,18 +473,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 128271,
-      "sha256": "E55375C1C41A36E94962E9EACBAA7812FB0A141933D5E50C97EACD05DE375A2E"
+      "bytes": 128657,
+      "sha256": "89A9317BC065F4FD726E9A69BBE17ECA43C9295F8D5D5D9CD437C4CCD4BB9C30"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1131249,
-      "sha256": "3746B9D0FFFF23ADED4694F3586D8B8669BB1E18EC97A403B90AEAA13774EDA3"
+      "bytes": 1131635,
+      "sha256": "0D54AD3F7315EAEE48D247A0528FD6986FEF0CD8768C42A0A97C0E04E6291FF6"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1727812,
-      "sha256": "406CE11C76731F224165D03AE5E852F6DA3BA21E8C86D6C906F2DFE2E617718A"
+      "bytes": 1728198,
+      "sha256": "CAEFCD5C09E41E0014610A1FBF3AB7220E7DB2131C60D0F691569269D0CB54F9"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1623,8 +1623,8 @@
     },
     {
       "path": "SRC/neothd/src/cron/runner.rs",
-      "bytes": 158480,
-      "sha256": "D384E889F354C4412CF6B04C1222578E5E7F1CDCC17A11E76D10B2D559E2B779"
+      "bytes": 158379,
+      "sha256": "884D20E6CB2C17C48DE83B25BC3DED1C4B59F83DB8AA42EA6E3297455449518F"
     },
     {
       "path": "SRC/neothd/src/cron/state.rs",
@@ -2408,8 +2408,8 @@
     },
     {
       "path": "SRC/neothd/src/reflection/periodic.rs",
-      "bytes": 242024,
-      "sha256": "F11375DF465D4B1692555E34795C6FCA4A5D4065E21A948A70110E96A814A08D"
+      "bytes": 242120,
+      "sha256": "4E3D28894C9AC497564331D475A69159388B02FEAE1318BAA4D52A7163DCC0B1"
     },
     {
       "path": "SRC/neothd/src/security/mirror_refusal_pipeline.rs",

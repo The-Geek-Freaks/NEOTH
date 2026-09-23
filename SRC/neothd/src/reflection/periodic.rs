@@ -1968,14 +1968,19 @@ fn read_retention_file(
     path: &Path,
     max_bytes: usize,
 ) -> std::io::Result<Vec<u8>> {
-    crate::skills::store::read_regular_file_bounded(parent, name, path, max_bytes)
-        .map_err(|error| {
+    crate::skills::store::read_regular_file_bounded(parent, name, path, max_bytes).map_err(
+        |error| {
             let kind = error
                 .chain()
-                .find_map(|cause| cause.downcast_ref::<std::io::Error>().map(std::io::Error::kind))
+                .find_map(|cause| {
+                    cause
+                        .downcast_ref::<std::io::Error>()
+                        .map(std::io::Error::kind)
+                })
                 .unwrap_or(std::io::ErrorKind::Other);
             std::io::Error::new(kind, error)
-        })
+        },
+    )
 }
 
 fn plan_daily_archive_retention(

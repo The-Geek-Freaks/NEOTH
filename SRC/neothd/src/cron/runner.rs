@@ -173,15 +173,8 @@ async fn run_job_at_inner(
                 .with_context(|| format!("Cron job `{}` primary provider consent", job.id))?;
         }
     }
-    let provider = resolve_job_provider(
-        home,
-        job,
-        provider,
-        writer,
-        &config,
-        role_policy_reload,
-    )
-    .await?;
+    let provider =
+        resolve_job_provider(home, job, provider, writer, &config, role_policy_reload).await?;
     if job.execution.thinking_budget.is_some()
         && !provider.get().request_controls().supports_thinking_budget()
     {
@@ -391,12 +384,7 @@ async fn resolve_job_provider<'a>(
         .await
         .with_context(|| format!("build provider policy for Cron job `{}`", job.id))?;
     let default_model = crate::providers::provider_default_wire_model(raw.as_ref());
-    let authorized = AuthorizedProvider::from_box(
-        raw,
-        authorizer,
-        default_model,
-        "cron.job",
-    );
+    let authorized = AuthorizedProvider::from_box(raw, authorizer, default_model, "cron.job");
     Ok(JobProvider::Owned(Box::new(authorized)))
 }
 
@@ -434,11 +422,13 @@ fn cron_role_authorizer(
         .slot_for(role)
         .provider
         .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
-        .ok_or_else(|| anyhow::anyhow!(
-            "Cron job `{}` role `{}` has no configured provider identity",
-            job.id,
-            role.as_str()
-        ))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Cron job `{}` role `{}` has no configured provider identity",
+                job.id,
+                role.as_str()
+            )
+        })?;
 
     Ok(authorizer.with_role_dispatch(role, provider, Arc::new(config.clone())))
 }
@@ -2112,12 +2102,9 @@ channel_accounts:
         config
     }
 
-    fn w289_override_job(
-        hemisphere_role: Option<crate::config::inference::HemisphereRole>,
-    ) -> Job {
+    fn w289_override_job(hemisphere_role: Option<crate::config::inference::HemisphereRole>) -> Job {
         let mut job = briefing_job();
-        job.execution.provider =
-            Some(crate::config::inference::InferenceProvider::LocalOllama);
+        job.execution.provider = Some(crate::config::inference::InferenceProvider::LocalOllama);
         job.execution.model = Some("qwen-cron".to_owned());
         job.execution.hemisphere_role = hemisphere_role;
         job
@@ -2158,8 +2145,7 @@ channel_accounts:
         );
 
         let mut role_only = briefing_job();
-        role_only.execution.hemisphere_role =
-            Some(crate::config::inference::HemisphereRole::Left);
+        role_only.execution.hemisphere_role = Some(crate::config::inference::HemisphereRole::Left);
         assert!(
             cron_has_job_provider_intent(&role_only),
             "the production selector must build and bind a role-only default topology"
@@ -2183,8 +2169,7 @@ channel_accounts:
 
         let mut model_only = briefing_job();
         model_only.execution.model = Some("qwen-cron".to_owned());
-        model_only.execution.hemisphere_role =
-            Some(crate::config::inference::HemisphereRole::Left);
+        model_only.execution.hemisphere_role = Some(crate::config::inference::HemisphereRole::Left);
         let model_provider = resolve_job_provider(
             home.path(),
             &model_only,
@@ -2198,8 +2183,7 @@ channel_accounts:
         assert!(matches!(&model_provider, JobProvider::Owned(_)));
 
         let mut role_only = briefing_job();
-        role_only.execution.hemisphere_role =
-            Some(crate::config::inference::HemisphereRole::Left);
+        role_only.execution.hemisphere_role = Some(crate::config::inference::HemisphereRole::Left);
         let role_provider = resolve_job_provider(
             home.path(),
             &role_only,
@@ -2223,13 +2207,10 @@ channel_accounts:
     async fn w289_cron_override_role_binding_admits_exact_leaf_once() {
         let dir = tempdir().expect("temporary W289 WAL directory");
         let segment = dir.path().join("w289-cron-allowed-000001.wal");
-        let (writer, join) =
-            wal_spawn(segment.clone()).expect("start W289 WAL writer");
+        let (writer, join) = wal_spawn(segment.clone()).expect("start W289 WAL writer");
         let calls = Arc::new(AtomicUsize::new(0));
         let config = w289_role_config("qwen-cron");
-        let job = w289_override_job(Some(
-            crate::config::inference::HemisphereRole::Left,
-        ));
+        let job = w289_override_job(Some(crate::config::inference::HemisphereRole::Left));
         let authorizer = cron_role_authorizer(
             crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
                 crate::permissions::AutonomyLevel::Full,
@@ -2267,13 +2248,10 @@ channel_accounts:
     async fn w289_cron_override_role_binding_denies_disallowed_model_before_effect() {
         let dir = tempdir().expect("temporary W289 WAL directory");
         let segment = dir.path().join("w289-cron-denied-000001.wal");
-        let (writer, join) =
-            wal_spawn(segment.clone()).expect("start W289 WAL writer");
+        let (writer, join) = wal_spawn(segment.clone()).expect("start W289 WAL writer");
         let calls = Arc::new(AtomicUsize::new(0));
         let config = w289_role_config("qwen-cron");
-        let job = w289_override_job(Some(
-            crate::config::inference::HemisphereRole::Left,
-        ));
+        let job = w289_override_job(Some(crate::config::inference::HemisphereRole::Left));
         let authorizer = cron_role_authorizer(
             crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
                 crate::permissions::AutonomyLevel::Full,
@@ -2319,7 +2297,9 @@ channel_accounts:
         let initial = w289_role_config("qwen-cron");
         std::fs::write(
             &config_path,
-            initial.public_yaml().expect("serialize initial Cron role policy"),
+            initial
+                .public_yaml()
+                .expect("serialize initial Cron role policy"),
         )
         .expect("write initial Cron role policy");
         let reload = Arc::new(crate::config::reload::ReloadController::new(
@@ -2332,9 +2312,7 @@ channel_accounts:
             crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST);
         let writer = writer.with_test_ack_gate(ack_gate.clone());
         let calls = Arc::new(AtomicUsize::new(0));
-        let job = w289_override_job(Some(
-            crate::config::inference::HemisphereRole::Left,
-        ));
+        let job = w289_override_job(Some(crate::config::inference::HemisphereRole::Left));
         let authorizer = cron_role_authorizer(
             crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
                 crate::permissions::AutonomyLevel::Full,
@@ -2378,11 +2356,15 @@ channel_accounts:
             });
         std::fs::write(
             &config_path,
-            reloaded.public_yaml().expect("serialize reloaded Cron policy"),
+            reloaded
+                .public_yaml()
+                .expect("serialize reloaded Cron policy"),
         )
         .expect("write reloaded Cron policy");
         assert!(matches!(
-            reload.try_reload().expect("reload Cron role-policy generation"),
+            reload
+                .try_reload()
+                .expect("reload Cron role-policy generation"),
             crate::config::reload::ReloadResult::Reloaded { .. }
         ));
 
@@ -2391,9 +2373,7 @@ channel_accounts:
             .await
             .expect_err("accepted changed Cron role policy must block raw transport");
         assert!(
-            error
-                .to_string()
-                .contains("role dispatch policy changed"),
+            error.to_string().contains("role dispatch policy changed"),
             "{error:#}"
         );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -2413,13 +2393,13 @@ channel_accounts:
             &job,
             &config,
         ) {
-            Ok(_) => panic!(
-                "a policy-governed Cron override needs an explicit origin role"
-            ),
+            Ok(_) => panic!("a policy-governed Cron override needs an explicit origin role"),
             Err(error) => error,
         };
         assert!(
-            error.to_string().contains("execution.hemisphere_role is required"),
+            error
+                .to_string()
+                .contains("execution.hemisphere_role is required"),
             "{error:#}"
         );
     }
@@ -2440,7 +2420,9 @@ channel_accounts:
             Err(error) => error,
         };
         assert!(
-            error.to_string().contains("execution.hemisphere_role is required"),
+            error
+                .to_string()
+                .contains("execution.hemisphere_role is required"),
             "{error:#}"
         );
     }
