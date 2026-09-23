@@ -38,6 +38,9 @@ pub enum PreToolUseOrigin {
     /// admission. This has no provider/MCP provenance and cannot select a
     /// recursive or shell-backed search surface.
     DirectCliOsFileSearch,
+    /// An operator-selected bounded `neoth fs glob` directory enumeration.
+    /// This is distinct from file-read authority and never carries file bytes.
+    DirectCliOsDirectoryGlob,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

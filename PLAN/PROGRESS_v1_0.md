@@ -2,6 +2,23 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W279 native glob source batch (2026-09-23):**
+Native fs glob now enumerates bounded, sorted names through a separate
+OsDirectoryList permission and retained no-follow directory capabilities.
+Required audit and typed hooks precede enumeration; cancellation/deadline
+are checked through the final response. Optional indexed symbol sidecars
+revalidate root identity, complete snapshot and generations after SQL.
+Windows uses the retained HANDLE FileIdInfo identity; Unix uses dev/inode.
+Rooted or drive-prefixed glob patterns are refused on all platforms.
+
+The source review covered actual caller ordering, Windows API definitions,
+root replacement and freshness refusal. Thirteen hosted cases are selected:
+eleven new tests (ten universal, one Unix) plus existing exhaustive action
+and IFC mappings. Grouped selection502; universal native908; platform extras
+Windows19/Linux30/macOS29. GUI125 and Road1020/302/2 remain unchanged.
+Hosted formatting, compilation and behavior are pending; no local executable
+validation ran. W280 recurring Daily retention is a separate in-progress batch.
+
 **W277 Doctor accepted; W275/W276 hosted proof (2026-09-23):**
 Group484 run35815551129 passed all484 exact tests on2b0c6f30. Admission binds
 106 source paths, matrix/lock and every ordered test terminal. W275's actual

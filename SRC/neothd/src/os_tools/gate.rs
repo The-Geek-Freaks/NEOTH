@@ -73,6 +73,28 @@ pub struct AdmittedOsFileRead {
     file: std::fs::File,
 }
 
+/// An opaque admission for a directory-list operation. It owns a retained
+/// no-follow directory capability, deliberately separate from `OsFileRead`.
+#[derive(Debug)]
+pub struct AdmittedOsDirectoryList {
+    canonical: PathBuf,
+    directory: Dir,
+    identity: String,
+}
+
+impl AdmittedOsDirectoryList {
+    pub fn canonical_path(&self) -> &Path {
+        &self.canonical
+    }
+
+    /// Clone the retained directory capability for bounded child traversal.
+    /// Callers receive no ambient path operation or file-read authority.
+    pub fn directory(&self) -> std::io::Result<Dir> {
+        self.directory.try_clone()
+    }
+    pub fn identity(&self) -> &str { &self.identity }
+}
+
 impl AdmittedOsFileRead {
     pub fn canonical_path(&self) -> &Path {
         &self.canonical
@@ -212,6 +234,80 @@ pub async fn preflight_os_file_read<P: PolicyArgument>(
     now_unix: i64,
 ) -> Result<AdmittedOsFileRead, OsGateError> {
     preflight_os_file_read_with_before_open(target, cfg, policy, sink, now_unix, |_| {}).await
+}
+
+/// Admit an allowlisted directory enumeration and retain an opened,
+/// no-follow capability for its root. This does not open or read any files.
+pub async fn preflight_os_directory_list<P: PolicyArgument>(
+    target: &Path,
+    cfg: &OsToolsConfig,
+    policy: P,
+    sink: AuditSink<'_>,
+    now_unix: i64,
+) -> Result<AdmittedOsDirectoryList, OsGateError> {
+    let canonical = match resolve_within_allowlist(target, &cfg.allowed_paths) {
+        Ok(path) => path,
+        Err(error) => {
+            emit_denied(sink, &target.display().to_string(), &error.to_string(), now_unix).await;
+            return Err(error.into());
+        }
+    };
+    let action = Action::OsDirectoryList { path: canonical.clone() };
+    let policy_snapshot = policy.policy_snapshot();
+    let decision = evaluate(&action, policy);
+    emit_trust_decision(sink, &action, policy_snapshot.level(), &decision, now_unix).await;
+    match decision {
+        Decision::Allow => {}
+        Decision::Deny(reason) => {
+            emit_denied(sink, &canonical.display().to_string(), &reason, now_unix).await;
+            return Err(OsGateError::Denied(reason));
+        }
+        Decision::Confirm(reason) => {
+            emit_denied(sink, &canonical.display().to_string(), &format!("confirm-required: {reason}"), now_unix).await;
+            return Err(OsGateError::ConfirmRequired(reason));
+        }
+    }
+    let directory = open_absolute_directory_no_follow(&canonical).map_err(|error| {
+        OsGateError::ReadFailed(format!("open directory {}: {error}", canonical.display()))
+    })?;
+    let identity = directory_identity(&directory)?;
+    Ok(AdmittedOsDirectoryList { canonical, directory, identity })
+}
+
+fn directory_identity(directory: &Dir) -> Result<String, OsGateError> {
+    #[cfg(unix)]
+    {
+        let metadata = directory.dir_metadata().map_err(|error| OsGateError::ReadFailed(error.to_string()))?;
+        use cap_std::fs::MetadataExt as _;
+        Ok(format!("unix:{:016x}:{:016x}", metadata.dev(), metadata.ino()))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+        };
+        let mut info = std::mem::MaybeUninit::<FILE_ID_INFO>::uninit();
+        let size = u32::try_from(std::mem::size_of::<FILE_ID_INFO>()).map_err(|error| OsGateError::ReadFailed(error.to_string()))?;
+        // SAFETY: `directory` owns a live directory handle for this entire
+        // call; `info` is writable `FILE_ID_INFO` storage and `size` is its
+        // exact byte size, as required by FileIdInfo.
+        if unsafe { GetFileInformationByHandleEx(directory.as_raw_handle() as _, FileIdInfo, info.as_mut_ptr().cast(), size) } == 0 {
+            return Err(OsGateError::ReadFailed(std::io::Error::last_os_error().to_string()));
+        }
+        // SAFETY: a nonzero result above guarantees the complete FILE_ID_INFO
+        // buffer was initialized by the OS before it is read here.
+        let info = unsafe { info.assume_init() };
+        if info.FileId.Identifier.iter().all(|byte| *byte == 0) { return Err(OsGateError::ReadFailed("directory handle has no stable file identity".into())); }
+        Ok(format!("windows:{:08x}:{}", info.VolumeSerialNumber, info.FileId.Identifier.iter().map(|byte| format!("{byte:02x}")).collect::<String>()))
+    }
+    #[cfg(not(any(unix, windows)))]
+    { Err(OsGateError::ReadFailed("no directory identity primitive on this platform".into())) }
+}
+
+pub(crate) fn current_directory_identity_no_follow(path: &Path) -> Result<String, OsGateError> {
+    let directory = open_absolute_directory_no_follow(path).map_err(|error| OsGateError::ReadFailed(error.to_string()))?;
+    directory_identity(&directory)
 }
 
 async fn preflight_os_file_read_with_before_open<P: PolicyArgument>(
@@ -356,7 +452,7 @@ fn windows_read_capability_root(path: &Path) -> std::io::Result<PathBuf> {
     Ok(path.components().take(2).collect())
 }
 
-fn open_absolute_directory_no_follow(path: &Path) -> std::io::Result<Dir> {
+pub(crate) fn open_absolute_directory_no_follow(path: &Path) -> std::io::Result<Dir> {
     #[cfg(unix)]
     let mut current = Dir::open_ambient_dir(Path::new("/"), cap_std::ambient_authority())?;
     #[cfg(windows)]
@@ -444,6 +540,38 @@ fn cap_metadata_is_link_or_reparse(metadata: &Metadata) -> bool {
     {
         false
     }
+}
+
+/// Open one child directory from an already admitted capability without
+/// following a link/reparse point. This closes the check/open race that a
+/// `DirEntry::open_dir()` convenience call would otherwise leave to ambient
+/// platform semantics.
+pub fn open_child_directory_no_follow(parent: &Dir, child: &Path) -> std::io::Result<Dir> {
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
+            FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+        options.access_mode(FILE_GENERIC_READ).share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    #[cfg(not(any(unix, windows)))]
+    return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "no no-follow child directory primitive on this platform"));
+    let opened = parent.open_with(child, &options)?.into_std();
+    let metadata = opened.metadata()?;
+    if metadata_is_link_or_reparse(&metadata) || !metadata.is_dir() {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "child is a link, reparse point, or non-directory"));
+    }
+    Ok(Dir::from_std_file(opened))
 }
 
 /// Consume one successful preflight and perform the bounded same-fd read.

@@ -469,6 +469,7 @@ pub(crate) const fn clearance_for_action(action: ActionKind) -> InformationLabel
         ActionKind::SelfBinaryReplace => InformationLabel::Secret,
         ActionKind::ProactiveChannelSend => InformationLabel::Public,
         ActionKind::OsFileRead => InformationLabel::Secret,
+        ActionKind::OsDirectoryList => InformationLabel::Secret,
         ActionKind::OsFileWrite => InformationLabel::Public,
         ActionKind::OsAppLaunch => InformationLabel::Public,
         ActionKind::OsClipboardRead => InformationLabel::Secret,

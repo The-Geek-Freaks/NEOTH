@@ -206,6 +206,12 @@ pub enum Action {
         /// Canonical, allowlist-validated path being read.
         path: std::path::PathBuf,
     },
+    /// Enumerate an operator-allowlisted directory without obtaining a file
+    /// read capability. The path is canonicalized before policy evaluation.
+    OsDirectoryList {
+        /// Canonical, allowlist-validated directory root.
+        path: std::path::PathBuf,
+    },
     /// PC-01 (write slice): write a file on the operator's OS through the gated
     /// OS-tool surface. The `path` is the POST-resolution target — the
     /// write-allowlist gate (`os_tools`, canonical PARENT under
@@ -499,6 +505,7 @@ pub fn lease_scope_for(action: &Action) -> Option<lease::LeaseScope> {
         // An OS file read is a read capability — the operator can delegate it
         // to a subject (plugin / peer) under the Read lease scope.
         Action::OsFileRead { .. } => Some(LeaseScope::Read),
+        Action::OsDirectoryList { .. } => Some(LeaseScope::Read),
         Action::WriteNeothHome | Action::ObsidianPreloadWrite => {
             Some(LeaseScope::WriteNeothHome)
         }
@@ -649,6 +656,10 @@ fn evaluate_strict(action: &Action) -> Decision {
             "strict: OS file read of {} requires confirm",
             path.display()
         )),
+        Action::OsDirectoryList { path } => Decision::Confirm(format!(
+            "strict: OS directory listing of {} requires confirm",
+            path.display()
+        )),
         Action::ClusterTaskAccept => {
             Decision::Deny("strict: no unattended cluster-delegated task execution".into())
         }
@@ -777,7 +788,7 @@ fn evaluate_standard(action: &Action) -> Decision {
         )),
         // The allowlist (default deny-all) is the operator's explicit opt-in;
         // a path that reaches here already passed it, so Standard+ allows.
-        Action::OsFileRead { .. } => Decision::Allow,
+        Action::OsFileRead { .. } | Action::OsDirectoryList { .. } => Decision::Allow,
         // Confirm — so a standing ClusterTaskAccept lease for the peer upgrades
         // it to Allow (the SL-01a lease semantics), while a bare Standard node
         // with no lease stays fail-closed (no TTY ⇒ effectively suppressed).
@@ -917,7 +928,7 @@ fn evaluate_elevated(action: &Action) -> Decision {
         // behaviour — proactive outbound is allowed (the `proactive.enabled`
         // master switch is the operator's explicit opt-in upstream).
         Action::ProactiveChannelSend { .. } => Decision::Allow,
-        Action::OsFileRead { .. } => Decision::Allow,
+        Action::OsFileRead { .. } | Action::OsDirectoryList { .. } => Decision::Allow,
         // Elevated is the operator's autonomous-behaviour opt-in; a
         // paired+leased peer's delegated task runs. (is_paired + lease are
         // separate checkpoints in the cluster gate; this is the autonomy floor.)
@@ -1093,6 +1104,7 @@ fn evaluate_full(action: &Action) -> Decision {
         | Action::ExternalHttpRequest { .. }
         | Action::McpToolInvocation { .. }
         | Action::OsFileRead { .. }
+        | Action::OsDirectoryList { .. }
         | Action::OsFileWrite { .. }
         | Action::OsAppLaunch { .. }
         | Action::ClusterTaskAccept
@@ -1619,6 +1631,9 @@ mod tests {
             Action::OsFileRead {
                 path: PathBuf::from("/tmp/x"),
             },
+            Action::OsDirectoryList {
+                path: PathBuf::from("/tmp/d"),
+            },
             Action::OsFileWrite {
                 path: PathBuf::from("/tmp/x"),
             },
@@ -1729,6 +1744,19 @@ mod tests {
         assert!(evaluate(&a, AutonomyLevel::Full).is_allow());
         // Lease-coverable under the Read scope.
         assert_eq!(lease_scope_for(&a), Some(LeaseScope::Read));
+    }
+
+    #[test]
+    fn os_directory_list_gate_and_lease_scope() {
+        use lease::LeaseScope;
+        let action = Action::OsDirectoryList {
+            path: std::path::PathBuf::from("/x/d"),
+        };
+        assert!(matches!(evaluate(&action, AutonomyLevel::Strict), Decision::Confirm(_)));
+        assert!(evaluate(&action, AutonomyLevel::Standard).is_allow());
+        assert!(evaluate(&action, AutonomyLevel::Elevated).is_allow());
+        assert!(evaluate(&action, AutonomyLevel::Full).is_allow());
+        assert_eq!(lease_scope_for(&action), Some(LeaseScope::Read));
     }
 
     #[test]

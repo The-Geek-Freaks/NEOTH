@@ -78,6 +78,7 @@ pub enum ActionKind {
     SelfBinaryReplace,
     ProactiveChannelSend,
     OsFileRead,
+    OsDirectoryList,
     OsFileWrite,
     OsAppLaunch,
     OsClipboardRead,
@@ -91,7 +92,7 @@ pub enum ActionKind {
 }
 
 impl ActionKind {
-    pub const ALL: [Self; 27] = [
+    pub const ALL: [Self; 28] = [
         Self::Read,
         Self::WriteNeothHome,
         Self::WriteOutsideHome,
@@ -109,6 +110,7 @@ impl ActionKind {
         Self::SelfBinaryReplace,
         Self::ProactiveChannelSend,
         Self::OsFileRead,
+        Self::OsDirectoryList,
         Self::OsFileWrite,
         Self::OsAppLaunch,
         Self::OsClipboardRead,
@@ -140,6 +142,7 @@ impl ActionKind {
             Self::SelfBinaryReplace => "self_binary_replace",
             Self::ProactiveChannelSend => "proactive_channel_send",
             Self::OsFileRead => "os_file_read",
+            Self::OsDirectoryList => "os_directory_list",
             Self::OsFileWrite => "os_file_write",
             Self::OsAppLaunch => "os_app_launch",
             Self::OsClipboardRead => "os_clipboard_read",
@@ -197,6 +200,7 @@ impl Action {
             Self::SelfBinaryReplace { .. } => ActionKind::SelfBinaryReplace,
             Self::ProactiveChannelSend { .. } => ActionKind::ProactiveChannelSend,
             Self::OsFileRead { .. } => ActionKind::OsFileRead,
+            Self::OsDirectoryList { .. } => ActionKind::OsDirectoryList,
             Self::OsFileWrite { .. } => ActionKind::OsFileWrite,
             Self::OsAppLaunch { .. } => ActionKind::OsAppLaunch,
             Self::OsClipboardRead => ActionKind::OsClipboardRead,
@@ -268,6 +272,9 @@ impl Action {
             },
             ActionKind::OsFileRead => Self::OsFileRead {
                 path: std::path::PathBuf::from("example-read.txt"),
+            },
+            ActionKind::OsDirectoryList => Self::OsDirectoryList {
+                path: std::path::PathBuf::from("example-directory"),
             },
             ActionKind::OsFileWrite => Self::OsFileWrite {
                 path: std::path::PathBuf::from("example-write.txt"),
@@ -650,7 +657,7 @@ mod tests {
 
     #[test]
     fn action_kind_names_are_exhaustive_unique_and_round_trip() {
-        assert_eq!(ActionKind::ALL.len(), 27);
+        assert_eq!(ActionKind::ALL.len(), 28);
         let names: BTreeSet<_> = ActionKind::ALL
             .map(ActionKind::as_str)
             .into_iter()

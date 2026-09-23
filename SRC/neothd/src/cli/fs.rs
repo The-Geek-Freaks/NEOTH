@@ -8,6 +8,7 @@
 //! `0xA9`). Audit emit mirrors the HF-01 best-effort one-shot writer — skip if
 //! `neothd serve` owns the WAL, else append one frame.
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_GREP_RESULTS: usize = 20;
@@ -15,6 +16,11 @@ const MAX_GREP_RESULTS: usize = 64;
 const MAX_GREP_LITERAL_BYTES: usize = 256;
 const MAX_GREP_LINE_BYTES: usize = 512;
 const GREP_SNIPPET_PAYLOAD_BYTES: usize = MAX_GREP_LINE_BYTES - 6;
+const DEFAULT_GLOB_RESULTS: usize = 20;
+const MAX_GLOB_RESULTS: usize = 64;
+const DEFAULT_GLOB_DEPTH: usize = 8;
+const MAX_GLOB_DEPTH: usize = 16;
+const MAX_GLOB_ENTRIES: usize = 4096;
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
@@ -71,6 +77,26 @@ pub enum FsAction {
         #[arg(long, value_name = "ABSOLUTE_ROOT")]
         repository_root: Option<PathBuf>,
     },
+    /// Enumerate bounded matching files below an allowlisted directory. This
+    /// uses retained no-follow directory capabilities and never reads files.
+    Glob {
+        /// Absolute allowlisted directory root.
+        root: PathBuf,
+        /// UTF-8 root-relative glob pattern (`*`, `?`, `[]`, `**`).
+        pattern: String,
+        /// Maximum matches to return (1..=64).
+        #[arg(long, default_value_t = DEFAULT_GLOB_RESULTS, value_parser = parse_glob_max_results)]
+        max_results: usize,
+        /// Maximum directory depth to traverse (0..=16).
+        #[arg(long, default_value_t = DEFAULT_GLOB_DEPTH, value_parser = parse_glob_max_depth)]
+        max_depth: usize,
+        /// Add bounded indexed symbol summaries for returned paths.
+        #[arg(long, requires = "repository_root")]
+        codegraph_enrichment: bool,
+        /// Absolute indexed repository root required with codegraph enrichment.
+        #[arg(long, value_name = "ABSOLUTE_ROOT")]
+        repository_root: Option<PathBuf>,
+    },
     /// Write a file through the gated OS-tool surface (PC-01 write slice).
     /// Permitted only when the target's canonical PARENT is under
     /// `freedom.yaml::tools.os.allowed_write_paths` (SEPARATE from the read
@@ -95,6 +121,20 @@ fn parse_grep_max_results(raw: &str) -> std::result::Result<usize, String> {
         ));
     }
     Ok(value)
+}
+
+fn parse_glob_max_results(raw: &str) -> std::result::Result<usize, String> {
+    let value = raw.parse::<usize>().map_err(|_| format!("glob max-results must be an integer from 1 through {MAX_GLOB_RESULTS}"))?;
+    (1..=MAX_GLOB_RESULTS).contains(&value)
+        .then_some(value)
+        .ok_or_else(|| format!("glob max-results must be from 1 through {MAX_GLOB_RESULTS}"))
+}
+
+fn parse_glob_max_depth(raw: &str) -> std::result::Result<usize, String> {
+    let value = raw.parse::<usize>().map_err(|_| format!("glob max-depth must be an integer from 0 through {MAX_GLOB_DEPTH}"))?;
+    (0..=MAX_GLOB_DEPTH).contains(&value)
+        .then_some(value)
+        .ok_or_else(|| format!("glob max-depth must be from 0 through {MAX_GLOB_DEPTH}"))
 }
 
 pub async fn run_fs(args: FsArgs) -> Result<()> {
@@ -157,8 +197,163 @@ pub async fn run_fs(args: FsArgs) -> Result<()> {
             )
             .await
         }
+        FsAction::Glob { root, pattern, max_results, max_depth, codegraph_enrichment, repository_root } => {
+            validate_glob_pattern(pattern)?;
+            let enrichment_root = match (*codegraph_enrichment, repository_root.as_deref()) {
+                (false, None) => None,
+                (true, Some(root)) if root.is_absolute() => Some(root),
+                (true, Some(_)) => anyhow::bail!("--repository-root must be absolute when --codegraph-enrichment is set"),
+                (true, None) => anyhow::bail!("--codegraph-enrichment requires --repository-root <ABSOLUTE_ROOT>"),
+                (false, Some(_)) => anyhow::bail!("--repository-root requires --codegraph-enrichment"),
+            };
+            run_glob(root, pattern, *max_results, *max_depth, &cfg, args.output, enrichment_root).await
+        }
         FsAction::Write { path, content } => run_write(path, content, &cfg, args.output).await,
     }
+}
+
+fn validate_glob_pattern(pattern: &str) -> Result<()> {
+    anyhow::ensure!(!pattern.is_empty() && pattern.len() <= MAX_GREP_LITERAL_BYTES, "glob pattern must contain 1..={MAX_GREP_LITERAL_BYTES} UTF-8 bytes");
+    anyhow::ensure!(!Path::new(pattern).is_absolute() && !pattern.starts_with(['/', '\\']) && !(pattern.as_bytes().get(1) == Some(&b':') && pattern.as_bytes()[0].is_ascii_alphabetic()) && !pattern.contains('\0') && !pattern.starts_with('!') && !pattern.starts_with('#'), "glob pattern must be a non-negated relative path");
+    anyhow::ensure!(!pattern.split(['/', '\\']).any(|part| part == ".."), "glob pattern must not contain `..`");
+    Ok(())
+}
+
+async fn run_glob(root: &Path, pattern: &str, max_results: usize, max_depth: usize, cfg: &FreedomConfig, output: OutputFormat, repository_root: Option<&Path>) -> Result<()> {
+    anyhow::ensure!(root.is_absolute(), "glob root must be absolute");
+    anyhow::ensure!((1..=MAX_GLOB_RESULTS).contains(&max_results), "glob max-results must be from 1 through {MAX_GLOB_RESULTS}");
+    anyhow::ensure!(max_depth <= MAX_GLOB_DEPTH, "glob max-depth must be from 0 through {MAX_GLOB_DEPTH}");
+    let now = now_unix(); let home = FreedomConfig::default_neoth_home();
+    let daemon_live = crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid"))?.is_some();
+    crate::daemon::audit_rpc::enforce_required_audit(cfg.audit_rpc.required_for_oneshot_permission_events, daemon_live, &home)?;
+    let rendered = if daemon_live {
+        let status = crate::os_tools::AuditStatus::default();
+        let result = glob_with_pre_tool_use(root, pattern, max_results, max_depth, cfg, repository_root, AuditSink::TrackedDaemonRpc { home: &home, status: &status }, now, &home).await;
+        finish_glob_audit(&status, None, cfg.audit_rpc.required_for_oneshot_permission_events)?; result?
+    } else {
+        let wal_dir = home.join("wal");
+        match std::fs::create_dir_all(&wal_dir).map_err(crate::wal::error::WalError::Io).and_then(|()| crate::wal::writer::spawn_for_home_with_completion(crate::wal::writer::unique_standalone_segment_path(&wal_dir, "fs-glob"), home.clone())) {
+            Ok((writer, completion)) => {
+                let status = crate::os_tools::AuditStatus::default();
+                let result = glob_with_pre_tool_use(root, pattern, max_results, max_depth, cfg, repository_root, AuditSink::TrackedWriter { writer: &writer, status: &status }, now, &home).await;
+                drop(writer);
+                let finalization = completion.wait().await.err().map(|error| error.to_string());
+                finish_glob_audit(&status, finalization, cfg.audit_rpc.required_for_oneshot_permission_events)?; result?
+            }
+            Err(error) => {
+                if cfg.audit_rpc.required_for_oneshot_permission_events { anyhow::bail!("refusing fs glob un-audited: required-audit posture is set but one-shot WAL could not open ({error})"); }
+                tracing::warn!(error = %error, "fs glob proceeding WITHOUT WAL audit — could not open a one-shot WAL writer");
+                glob_with_pre_tool_use(root, pattern, max_results, max_depth, cfg, repository_root, AuditSink::None, now, &home).await?
+            }
+        }
+    };
+    match output { OutputFormat::Json | OutputFormat::Jsonl => println!("{rendered}"), OutputFormat::Table => for path in rendered["matches"].as_array().into_iter().flatten() { println!("{}", path.as_str().unwrap_or_default()); } }
+    Ok(())
+}
+
+fn finish_glob_audit(status: &crate::os_tools::AuditStatus, finalization: Option<String>, required: bool) -> Result<()> {
+    let dispatch = status.failure();
+    if required && (dispatch.is_some() || finalization.is_some()) { anyhow::bail!("refusing to report fs glob complete: required audit failed (dispatch={}, finalization={})", dispatch.as_deref().unwrap_or("ok"), finalization.as_deref().unwrap_or("ok")); }
+    if let Some(error) = dispatch { tracing::warn!(error = %error, "fs glob audit dispatch failed"); }
+    if let Some(error) = finalization { tracing::warn!(error = %error, "fs glob audit finalization failed"); }
+    Ok(())
+}
+
+async fn glob_with_pre_tool_use(root: &Path, pattern: &str, max_results: usize, max_depth: usize, cfg: &FreedomConfig, repository_root: Option<&Path>, sink: AuditSink<'_>, now: i64, home: &Path) -> Result<serde_json::Value> {
+    let admitted = crate::os_tools::preflight_os_directory_list(root, &cfg.tools.os, &cfg.autonomy_policy(), sink, now).await?;
+    let canonical_root = admitted.canonical_path().to_path_buf();
+    let repo = match repository_root { Some(path) => path.canonicalize().context("canonicalize glob repository root")?, None => canonical_root.clone() };
+    let arguments = serde_json::json!({"root": canonical_root.display().to_string(), "pattern": pattern, "max_results": max_results, "max_depth": max_depth, "repository_root": repository_root.map(|_| repo.display().to_string())});
+    let context = crate::hooks::PreToolUseContext::admitted(crate::hooks::PreToolUseOrigin::DirectCliOsDirectoryGlob, "native-os-directory-glob", "fs-glob", &arguments, &repo, &repo, crate::mcp::client::DEFAULT_REQUEST_TIMEOUT, crate::hooks::PreToolUseCancellation::unbound(), crate::hooks::PreToolUseReplay::direct_request())?;
+    let hooks = crate::hooks::load_all_strict(&home.join("hooks")).await?; let once = crate::hooks::SessionOnceGuard::new();
+    let hook_enrichment = match crate::hooks::run_pre_tool_use(&context, crate::hooks::PreToolUseHookPolicy::Configured(&hooks), &once) { crate::hooks::PreToolUseDisposition::Block { reason } => anyhow::bail!("fs glob stopped at typed PreToolUse: {reason}"), crate::hooks::PreToolUseDisposition::Enrich(value) => Some(value.as_str().to_owned()), crate::hooks::PreToolUseDisposition::Continue => None };
+    if context.is_cancelled() || context.deadline_elapsed() { anyhow::bail!("fs glob cancelled or deadline elapsed before enumeration"); }
+    let plan = if repository_root.is_some() && cfg.code_map.outline_enrichment { crate::mcp::codegraph_server::prepare_native_fs_glob_enrichment(home, &repo, &canonical_root, admitted.identity(), &context, true).ok().flatten() } else { None };
+    let discovered = discover_glob(admitted.directory()?, pattern, max_results, max_depth, &context)?;
+    anyhow::ensure!(
+        !context.is_cancelled() && !context.deadline_elapsed(),
+        "fs glob cancelled or deadline elapsed before output"
+    );
+    let empty = discovered.matches.is_empty();
+    let mut rendered = serde_json::json!({"root": canonical_root.display().to_string(), "pattern": pattern, "matches": discovered.matches, "empty": empty, "truncated": discovered.truncated});
+    if repository_root.is_some() {
+        if empty { rendered["codegraph_enrichment_status"] = serde_json::Value::String("no_matches".to_owned()); }
+        else if !cfg.code_map.outline_enrichment { rendered["codegraph_enrichment_status"] = serde_json::Value::String("master_disabled".to_owned()); }
+        else if let Some(plan) = plan {
+            let returned = rendered["matches"].as_array().into_iter().flatten().filter_map(serde_json::Value::as_str).map(str::to_owned).collect::<Vec<_>>();
+            match plan.freshness_after_glob(&returned) { crate::mcp::codegraph_server::NativeFsGlobFreshness::Fresh(value) => { rendered["codegraph_enrichment_status"] = serde_json::Value::String("applied".to_owned()); rendered["codegraph_enrichment"] = serde_json::Value::String(value.as_str().to_owned()); }, crate::mcp::codegraph_server::NativeFsGlobFreshness::Stale => rendered["codegraph_enrichment_status"] = serde_json::Value::String("stale".to_owned()), crate::mcp::codegraph_server::NativeFsGlobFreshness::Unavailable => rendered["codegraph_enrichment_status"] = serde_json::Value::String("unavailable".to_owned()) }
+        } else { rendered["codegraph_enrichment_status"] = serde_json::Value::String("unavailable".to_owned()); }
+    }
+    if !empty {
+        if let Some(enrichment) = hook_enrichment {
+            rendered["hook_enrichment"] = serde_json::Value::String(enrichment);
+        }
+    }
+    anyhow::ensure!(
+        !context.is_cancelled() && !context.deadline_elapsed(),
+        "fs glob cancelled or deadline elapsed before output"
+    );
+    Ok(rendered)
+}
+struct GlobDiscovery { matches: Vec<String>, truncated: bool }
+
+fn discover_glob(
+    root: cap_std::fs::Dir,
+    pattern: &str,
+    max_results: usize,
+    max_depth: usize,
+    context: &crate::hooks::PreToolUseContext,
+) -> Result<GlobDiscovery> {
+    let mut builder = ignore::gitignore::GitignoreBuilder::new("/");
+    builder.add_line(None, pattern).map_err(|error| anyhow::anyhow!("invalid glob pattern: {error}"))?;
+    let matcher = builder.build().map_err(|error| anyhow::anyhow!("invalid glob pattern: {error}"))?;
+    let mut queue = VecDeque::from([(root, String::new(), 0usize)]);
+    let mut matches = Vec::new(); let mut entries = 0usize; let mut truncated = false;
+    while let Some((directory, prefix, depth)) = queue.pop_front() {
+        for entry in directory.entries()? {
+            anyhow::ensure!(
+                !context.is_cancelled() && !context.deadline_elapsed(),
+                "fs glob cancelled or deadline elapsed during enumeration"
+            );
+            if entries == MAX_GLOB_ENTRIES {
+                // A filesystem iterator has no stable global ordering. Once
+                // the hard discovery budget is exhausted, publishing its
+                // partial prefix would claim deterministic selection when it
+                // is not. Return an explicit truncated-empty result instead.
+                matches.clear();
+                truncated = true;
+                break;
+            }
+            entries += 1;
+            let entry = match entry { Ok(entry) => entry, Err(_) => continue };
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else { continue };
+            let metadata = match entry.metadata() { Ok(metadata) => metadata, Err(_) => continue };
+            if metadata.is_symlink() || cap_metadata_is_link_or_reparse(&metadata) { continue; }
+            let relative = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+            if metadata.is_dir() {
+                if depth < max_depth {
+                    if let Ok(child) = crate::os_tools::gate::open_child_directory_no_follow(&directory, Path::new(&name)) {
+                        queue.push_back((child, relative, depth + 1));
+                    }
+                }
+            } else if metadata.is_file() && matcher.matched(Path::new(&relative), false).is_ignore() {
+                matches.push(relative);
+            }
+        }
+        if truncated { break; }
+    }
+    matches.sort();
+    if matches.len() > max_results {
+        matches.truncate(max_results);
+        truncated = true;
+    }
+    Ok(GlobDiscovery { matches, truncated })
+}
+
+fn cap_metadata_is_link_or_reparse(metadata: &cap_std::fs::Metadata) -> bool {
+    if metadata.is_symlink() { return true; }
+    #[cfg(windows)] { use cap_std::fs::MetadataExt as _; metadata.file_attributes() & 0x0000_0400 != 0 }
+    #[cfg(not(windows))] { false }
 }
 
 async fn run_write(
@@ -865,6 +1060,70 @@ mod tests {
         config
     }
 
+    fn w279_context(root: &Path, cancellation: crate::hooks::PreToolUseCancellation, timeout: std::time::Duration) -> crate::hooks::PreToolUseContext { crate::hooks::PreToolUseContext::admitted(crate::hooks::PreToolUseOrigin::DirectCliOsDirectoryGlob, "native-os-directory-glob", "fs-glob", &serde_json::json!({"root": root.display().to_string(), "pattern": "**/*.rs", "max_results": 20, "max_depth": 8}), root, root, timeout, cancellation, crate::hooks::PreToolUseReplay::direct_request()).unwrap() }
+
+    #[test]
+    fn w279_glob_cli_bounds_and_pattern_rejections() {
+        use clap::Parser as _;
+        assert!(crate::cli::Cli::try_parse_from(["neoth", "fs", "glob", "C:/root", "**/*.rs", "--max-results", "64", "--max-depth", "16"]).is_ok());
+        for invalid in ["0", "65"] { assert!(crate::cli::Cli::try_parse_from(["neoth", "fs", "glob", "C:/root", "*.rs", "--max-results", invalid]).is_err()); }
+        for pattern in ["/absolute", "\\absolute", "C:/absolute", "C:relative", "../escape", "!negated", "#comment"] { assert!(validate_glob_pattern(pattern).is_err(), "{pattern} must be refused"); }
+    }
+
+    #[test]
+    fn w279_discovery_is_sorted_bounded_and_no_content() {
+        let root = tempfile::tempdir().unwrap(); std::fs::write(root.path().join("z.rs"), "secret source").unwrap(); std::fs::write(root.path().join("a.rs"), "other source").unwrap();
+        let cap = crate::os_tools::gate::open_absolute_directory_no_follow(root.path()).unwrap(); let context = w279_context(root.path(), crate::hooks::PreToolUseCancellation::unbound(), std::time::Duration::from_secs(1));
+        let found = discover_glob(cap, "*.rs", 1, 0, &context).unwrap(); assert_eq!(found.matches, vec!["a.rs"]); assert!(found.truncated); assert!(!found.matches.iter().any(|item| item.contains("source")));
+    }
+
+    #[tokio::test]
+    async fn w279_actual_glob_hook_blocks_before_enumeration_and_runs_without_enrichment_opt_in() {
+        let home = tempfile::tempdir().unwrap(); let hooks = home.path().join("hooks"); std::fs::create_dir(&hooks).unwrap(); let root = tempfile::tempdir().unwrap(); std::fs::write(root.path().join("selected.rs"), "fn selected() {}").unwrap();
+        std::fs::write(hooks.join("block.toml"), "name = \"glob-block\"\nstage = \"pre_tool_use\"\n[matcher]\npattern = '\"max_results\":20'\n[action]\nkind = \"block\"\nreason = \"test block\"\n").unwrap();
+        let config = w239_config(root.path()); let blocked = glob_with_pre_tool_use(root.path(), "*.rs", 20, 0, &config, None, AuditSink::None, 0, home.path()).await; assert!(blocked.unwrap_err().to_string().contains("test block"));
+        std::fs::remove_file(hooks.join("block.toml")).unwrap(); std::fs::write(hooks.join("enrich.toml"), "name = \"glob-enrich\"\nstage = \"pre_tool_use\"\n[matcher]\npattern = '\"max_results\":20'\n[action]\nkind = \"replace\"\ntemplate = \"[glob-hook]\"\n").unwrap();
+        let output = glob_with_pre_tool_use(root.path(), "*.rs", 20, 0, &config, None, AuditSink::None, 0, home.path()).await.unwrap(); assert_eq!(output["matches"], serde_json::json!(["selected.rs"])); assert_eq!(output["hook_enrichment"], "[glob-hook]");
+        let nohit = glob_with_pre_tool_use(root.path(), "*.absent", 20, 0, &config, None, AuditSink::None, 0, home.path()).await.unwrap(); assert_eq!(nohit["matches"], serde_json::json!([])); assert!(nohit.get("hook_enrichment").is_none(), "a no-hit glob executes its hook boundary but attaches no sidecar");
+    }
+
+    #[tokio::test]
+    async fn w279_actual_glob_attaches_fresh_db_symbol_sidecar() {
+        let home = tempfile::tempdir().unwrap(); std::fs::create_dir(home.path().join("hooks")).unwrap(); let root = tempfile::tempdir().unwrap(); std::fs::write(root.path().join("selected.rs"), "fn selected() {}\n").unwrap();
+        w239_write_generated_descriptor(home.path(), root.path()); let mut config = w239_config(root.path()); config.code_map.outline_enrichment = true;
+        let output = glob_with_pre_tool_use(root.path(), "*.rs", 20, 0, &config, Some(root.path()), AuditSink::None, 0, home.path()).await.unwrap();
+        assert_eq!(output["codegraph_enrichment_status"], "applied"); assert!(output["codegraph_enrichment"].as_str().is_some_and(|sidecar| sidecar.contains("symbol: selected.rs :: selected"))); assert!(!output["codegraph_enrichment"].as_str().unwrap().contains("fn selected"));
+    }
+
+    #[test]
+    fn w279_empty_discovery_is_successful_and_not_truncated() {
+        let root = tempfile::tempdir().unwrap(); std::fs::write(root.path().join("only.txt"), "x").unwrap();
+        let cap = crate::os_tools::gate::open_absolute_directory_no_follow(root.path()).unwrap(); let context = w279_context(root.path(), crate::hooks::PreToolUseCancellation::unbound(), std::time::Duration::from_secs(1));
+        let found = discover_glob(cap, "*.rs", 20, 0, &context).unwrap(); assert!(found.matches.is_empty()); assert!(!found.truncated);
+    }
+
+    #[test]
+    fn w279_cancelled_or_expired_context_refuses_before_walk() {
+        let root = tempfile::tempdir().unwrap(); std::fs::write(root.path().join("x.rs"), "x").unwrap(); let cancelled = Arc::new(AtomicBool::new(false));
+        let cancelled_context = w279_context(root.path(), crate::hooks::PreToolUseCancellation::from_chat_turn(cancelled.clone()), std::time::Duration::from_secs(1)); cancelled.store(true, std::sync::atomic::Ordering::Release); let cap = crate::os_tools::gate::open_absolute_directory_no_follow(root.path()).unwrap(); assert!(discover_glob(cap, "*.rs", 20, 0, &cancelled_context).is_err());
+        let expired_context = w279_context(root.path(), crate::hooks::PreToolUseCancellation::unbound(), std::time::Duration::ZERO); let cap = crate::os_tools::gate::open_absolute_directory_no_follow(root.path()).unwrap(); assert!(discover_glob(cap, "*.rs", 20, 0, &expired_context).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn w279_symlink_entries_are_never_returned_or_traversed() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap(); let outside = tempfile::tempdir().unwrap(); std::fs::write(outside.path().join("secret.rs"), "secret").unwrap(); symlink(outside.path(), root.path().join("escape")).unwrap();
+        let cap = crate::os_tools::gate::open_absolute_directory_no_follow(root.path()).unwrap(); let context = w279_context(root.path(), crate::hooks::PreToolUseCancellation::unbound(), std::time::Duration::from_secs(1)); let found = discover_glob(cap, "**/*.rs", 20, 8, &context).unwrap(); assert!(found.matches.is_empty());
+    }
+    #[tokio::test]
+    async fn w279_required_audit_failure_refuses_glob_success() {
+        let home = tempfile::tempdir().unwrap(); std::fs::create_dir(home.path().join("hooks")).unwrap(); let root = tempfile::tempdir().unwrap(); std::fs::write(root.path().join("x.rs"), "x").unwrap();
+        let segment = home.path().join("failed.wal"); let (writer, join) = crate::wal::writer::spawn(segment).unwrap(); join.abort(); let _ = join.await;
+        let status = crate::os_tools::AuditStatus::default(); let config = w239_config(root.path());
+        let _ = glob_with_pre_tool_use(root.path(), "*.rs", 20, 0, &config, None, AuditSink::TrackedWriter { writer: &writer, status: &status }, 0, home.path()).await;
+        drop(writer); assert!(finish_glob_audit(&status, None, true).is_err());
+    }
     #[test]
     fn w269_enrichment_status_json_is_additive_and_bounded() {
         let mut rendered = serde_json::json!({"path": "selected.rs"});
