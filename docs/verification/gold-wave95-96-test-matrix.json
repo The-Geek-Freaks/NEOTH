@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W249 exact Hosted formatter imported; core execution pending",
+  "status": "W252 temporary exact-executable Hosted profiles reviewed; GUI124 acceptance pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 92832,
-    "sha256": "E284F04F0273E9FA7AD45F83264BD7B3622D19A82F0CB4EF56F676E891ABC5C3"
+    "bytes": 92855,
+    "sha256": "E15E30A6ADCFAD89E03F9781E22D846881C10F61A72360E37753095DE644068F"
   },
   "sourceInputs": 537,
   "requiredNativeTests": [
@@ -16778,6 +16778,13 @@
       }
     ],
     "note": "Only two paths from Hosted Preflight35805266961 sourceb47f1520; source/SHA/preimage/postimage verified, no local formatter.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave252HostedAppArmor": {
+    "base": "af8c7c82cf3e003cfe89d7f40c67ba9697a13918",
+    "sources": [],
+    "note": "Exact unshare and Cargo compiler-artifact helper profiles; YAML/cleanup review repairs; no global policy/sysctl or product changes; no local validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

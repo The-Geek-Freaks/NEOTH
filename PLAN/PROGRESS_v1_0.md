@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W252 scoped Hosted AppArmor prerequisites (2026-09-23):** the confirmed
+`unprivileged_userns`/`sys_admin` denial is addressed with temporary profiles
+attached only to `/usr/bin/unshare` and the exact Cargo-reported GUI harness
+executables. Explicit user-namespace permission preserves the production
+containment requirements; complain mode retains ordinary runner access for
+those exact executables. No global AppArmor/sysctl setting or product check
+changes. Profiles are registered for cleanup before receipt copy. Independent
+review passed after repairing YAML heredoc indentation and cleanup ordering.
+The actual GUI124/W153/W164 outcomes remain pending. W249's exact two-path
+Hosted formatting patch from Preflight `35805266961` was bound and imported in
+`af8c7c82`; its Core `35805267468` continues on `b47f1520`. FullCI and Group424
+continue on the earlier W251 milestone `49e58dfb`, without replacement dispatch.
+Inventory and Road counts are unchanged. See `docs/gold-wave252-hosted-apparmor.md`.
+The local BSOD hold remains absolute.
+
 **W249 Unix Context Import client (2026-09-23):** supported Unix/macOS clients
 now route status, plan, apply, pause and resume through the daemon's existing
 Connector-Control authority. Discovery files are checked and read through one

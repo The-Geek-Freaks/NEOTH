@@ -44,6 +44,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
+            apparmor-utils \
             dbus-user-session \
             libfontconfig1-dev \
             libx11-dev \
@@ -286,7 +287,33 @@ jobs:
           containment_readiness="$evidence_root/receipt/linux-contained-chat-readiness.txt"
           containment_diagnostics="$evidence_root/receipt/linux-contained-chat-diagnostics.txt"
           containment_userns_help="$evidence_root/receipt/linux-contained-chat-userns-help.txt"
+          containment_apparmor_dir="$RUNNER_TEMP/neoth-w252-apparmor"
+          containment_apparmor_profiles=()
           : > "$containment_diagnostics"
+          cleanup_containment_apparmor() {
+            local profile_file
+            for profile_file in "${containment_apparmor_profiles[@]}"; do
+              sudo timeout 10 apparmor_parser -R "$profile_file" >/dev/null 2>&1 || true
+            done
+          }
+          trap cleanup_containment_apparmor EXIT
+          install_containment_apparmor_profile() {
+            local profile_name="$1" executable="$2" profile_file
+            [[ -f "$executable" && -x "$executable" ]] || return 1
+            [[ "$executable" != *[$'\t\n '\"\#\{\}\*\?\[\]]* ]] || return 1
+            mkdir -p "$containment_apparmor_dir" || return 1
+            profile_file="$containment_apparmor_dir/${profile_name}.profile"
+            cat > "$profile_file" <<EOF
+          #include <tunables/global>
+          profile ${profile_name} ${executable} flags=(attach_disconnected,mediate_deleted,complain) {
+            capability sys_admin,
+            userns,
+          }
+          EOF
+            sudo timeout 10 apparmor_parser -r "$profile_file" || return 1
+            containment_apparmor_profiles=("$profile_file" "${containment_apparmor_profiles[@]}")
+            cp "$profile_file" "$evidence_root/receipt/${profile_name}.apparmor" || return 1
+          }
           containment_snapshot() {
             {
               echo '=== contained-chat manager snapshot ==='
@@ -349,6 +376,8 @@ jobs:
             [[ -S "$XDG_RUNTIME_DIR/bus" ]] || return 1
             runtime_stat="$(stat -c '%u:%g:%a:%F' "$XDG_RUNTIME_DIR")" || return 1
             [[ "$runtime_stat" == "$uid:$gid:700:directory" ]] || return 1
+            command -v apparmor_parser >/dev/null 2>&1 || return 1
+            install_containment_apparmor_profile neoth-w252-readiness-unshare /usr/bin/unshare || return 1
 
             {
               echo '=== contained-chat readiness ==='
@@ -433,7 +462,7 @@ jobs:
                   ;;
               esac
               if reserve_timeout 1500 "GUI ${harness_kind} harness build"; then
-                timeout --preserve-status "$command_timeout" cargo test -p neothd-gui "${selector[@]}" --locked --no-run 2>&1 | tee "$evidence_root/log/build-gui-test-harness-${log_suffix}.log"
+                timeout --preserve-status "$command_timeout" cargo test -p neothd-gui "${selector[@]}" --locked --no-run --message-format=json 2>&1 | tee "$evidence_root/log/build-gui-test-harness-${log_suffix}.log"
                 harness_build_status=${PIPESTATUS[0]}
               else
                 harness_build_status=124
@@ -442,6 +471,38 @@ jobs:
                 printf '%s\n' "__build_neothd_gui_${log_suffix}__" >> "$failed"
                 gui_build_status="$harness_build_status"
                 overall=1
+              else
+                helper_path="$evidence_root/receipt/contained-gui-helper-${harness_kind}.path"
+                python3 - "$evidence_root/log/build-gui-test-harness-${log_suffix}.log" "$harness_kind" > "$helper_path" <<'PY'
+          import json
+          import sys
+
+          log_path, harness_kind = sys.argv[1:]
+          expected_target = "neothd-gui" if harness_kind == "bin" else "gui_chat_bridge_public_api"
+          executables = []
+          for raw_line in open(log_path, encoding="utf-8", errors="replace"):
+              try:
+                  event = json.loads(raw_line)
+              except json.JSONDecodeError:
+                  continue
+              if not isinstance(event, dict):
+                  continue
+              target = event.get("target")
+              executable = event.get("executable")
+              if (event.get("reason") == "compiler-artifact" and isinstance(target, dict)
+                      and target.get("name") == expected_target and target.get("test") is True
+                      and isinstance(executable, str)):
+                  executables.append(executable)
+          if len(executables) != 1:
+              raise SystemExit(f"expected one {harness_kind} fixture executable, found {len(executables)}")
+          print(executables[0])
+          PY
+                helper_path_value="$(cat "$helper_path")" || { gui_build_status=125; overall=1; continue; }
+                if ! install_containment_apparmor_profile "neoth-w252-${harness_kind}" "$helper_path_value"; then
+                  printf '%s\n' "__apparmor_neothd_gui_${log_suffix}__" >> "$failed"
+                  gui_build_status=125
+                  overall=1
+                fi
               fi
             done
           else
