@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W248 Hosted GUI containment prerequisites (2026-09-23):** source-bound GUI123
+on a7f3 executed123 cases:121passed/2failed, with W168 now passing. W153 exposed
+an unavailable user manager; W164 exposed a manager-owned unit dead before the
+provider launched. The Linux runner now adopts or boundedly starts its regular
+systemd user service and standard runtime bus, then checks manager/namespace
+capability on the same XDG path used by the supervisor. Failed prerequisites
+cannot become a passing readiness receipt. Bounded manager/unit/journal output
+is retained for any remaining guardian failure. Actual W153/W164 behavior still
+requires GUI124 execution; no product containment check or fixture is relaxed.
+Inventory537sources/861native/98GUI and Road1016checked/306open/2partial unchanged.
+See `docs/gold-wave248-hosted-gui-containment.md`. Local BSOD hold stays absolute.
 **W247 durable Local Import pause/resume (2026-09-23):** authenticated Windows
 CLI requests bind both expected revisions and the fixed accountless Local Import
 instance. The daemon preserves the selected config path, prepares its exact

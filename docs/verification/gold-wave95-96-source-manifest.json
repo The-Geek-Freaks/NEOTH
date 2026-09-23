@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T00:38:52.0633096Z",
-  "validationStatus": "W247 reviewed source with exact Hosted formatting; runtime pending",
+  "capturedUtc": "2026-09-23T00:41:34.4424675Z",
+  "validationStatus": "W248 runner readiness/source review complete; actual Hosted capability and GUI124 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -38,8 +38,8 @@
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
-      "bytes": 28125,
-      "sha256": "4D6A70AD86B4318F1D49A99BC5403F884706949042729FB9BBFB75A9D9793486"
+      "bytes": 32401,
+      "sha256": "ED36C7973B27CD66B85901843570C1196FE34FD5007EA46533EFA18C7A47A3B5"
     },
     {
       "path": ".github/workflows/live-audio.yml",
@@ -438,18 +438,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 88819,
-      "sha256": "F2EF5437623035E75BFCAC23C94B88688BA4B3C7A2498F624897B6BAF4D8FC69"
+      "bytes": 89697,
+      "sha256": "ED58DDDDD46A31D0DF3F0F0A7CFA53CD7F5D412997EA38D3DF2E22762DE7DF03"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1091754,
-      "sha256": "59A62E019CB6261C5CDFB550DC8B3F072D76F503ABB22ED8025EB7F325A3F6C8"
+      "bytes": 1092632,
+      "sha256": "CBB6DB75CB8FF33D2EABFEDAAF012D1656ED604E02E24F05AD427EBDD90646B9"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1687322,
-      "sha256": "59BA8B6B564BF6A33B96B0167F07A539D69AE0AFA01E118AF29108E17EDE2E7D"
+      "bytes": 1688200,
+      "sha256": "631EC0B499E32727B01219AF4712DF1493754B5EEE4C04A92EAC0466433A8F29"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",

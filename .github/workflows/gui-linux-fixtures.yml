@@ -44,6 +44,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
+            dbus-user-session \
             libfontconfig1-dev \
             libx11-dev \
             libxcb1-dev \
@@ -277,6 +278,73 @@ jobs:
           overall=0
           deadline_reached=false
           incomplete_reason=""
+          # The GUI supervisor deletes DBUS_SESSION_BUS_ADDRESS before its
+          # systemd-run exec. Provision or adopt only the standard per-user
+          # runtime bus and user manager so that its production lookup path is
+          # what this hosted lane proves.
+          containment_runtime=""
+          containment_readiness="$evidence_root/receipt/linux-contained-chat-readiness.txt"
+          containment_diagnostics="$evidence_root/receipt/linux-contained-chat-diagnostics.txt"
+          : > "$containment_diagnostics"
+          containment_snapshot() {
+            {
+              echo '=== contained-chat manager snapshot ==='
+              printf 'uid=%s runtime=%s\n' "$(id -u)" "$XDG_RUNTIME_DIR"
+              stat -c 'runtime mode=%a uid=%u gid=%g type=%F' "$XDG_RUNTIME_DIR" || true
+              stat -c '%n mode=%a uid=%u gid=%g type=%F' /usr/bin/systemd-run /usr/bin/systemctl || true
+              timeout 10 /usr/bin/systemctl --user is-system-running || true
+              timeout 10 /usr/bin/systemctl --user --failed --no-legend || true
+              timeout 10 /usr/bin/systemctl --user list-units --all 'neoth-gui-chat-*' --no-legend || true
+              timeout 15 /usr/bin/journalctl --user --no-pager -o short-precise -n 160 || true
+            } >> "$containment_diagnostics" 2>&1
+          }
+          start_containment_session() {
+            local uid gid attempt runtime_stat
+            uid="$(id -u)" || return 1
+            gid="$(id -g)" || return 1
+            containment_runtime="/run/user/$uid"
+            export XDG_RUNTIME_DIR="$containment_runtime"
+            export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+
+            # Preserve a usable runner session. If it is absent, ask the
+            # system manager for the real user@UID service rather than running
+            # private dbus/systemd processes without its cgroup substrate.
+            if ! timeout 1 /usr/bin/systemctl --user show-environment >/dev/null 2>&1; then
+              sudo timeout --kill-after=5s 30s /usr/bin/systemctl start "user@${uid}.service" || return 1
+              for attempt in 1 2 3 4 5; do
+                if timeout 1 /usr/bin/systemctl --user show-environment >/dev/null 2>&1; then
+                  break
+                fi
+                sleep 1 || return 1
+              done
+              timeout 1 /usr/bin/systemctl --user show-environment >/dev/null 2>&1 || return 1
+            fi
+
+            [[ -S "$XDG_RUNTIME_DIR/bus" ]] || return 1
+            runtime_stat="$(stat -c '%u:%g:%a:%F' "$XDG_RUNTIME_DIR")" || return 1
+            [[ "$runtime_stat" == "$uid:$gid:700:directory" ]] || return 1
+
+            {
+              echo '=== contained-chat readiness ==='
+              printf 'uid=%s runtime=%s\n' "$uid" "$XDG_RUNTIME_DIR"
+              stat -c 'runtime mode=%a uid=%u gid=%g type=%F' "$XDG_RUNTIME_DIR" || return 1
+              stat -c '%n mode=%a uid=%u gid=%g type=%F' /usr/bin/systemd-run /usr/bin/systemctl || return 1
+              timeout 1 /usr/bin/systemctl --user show-environment >/dev/null || return 1
+              timeout 10 /usr/bin/systemctl --user is-system-running || true
+              # Match the production source after it removes the explicit
+              # DBUS address before starting its transient service. This is a
+              # manager/namespace capability probe; W153/W164 remain the
+              # notify-guardian acceptance proof.
+              env -u DBUS_SESSION_BUS_ADDRESS timeout 20 /usr/bin/systemd-run --user --quiet --wait --pipe --collect --service-type=exec --property=Delegate=no --property=KillMode=control-group --property=SendSIGKILL=yes --property=NoNewPrivileges=yes -- /usr/bin/unshare --user --map-root-user --cgroup --mount --pid --fork /usr/bin/true || return 1
+              echo 'contained-chat readiness passed'
+            } > "$containment_readiness" 2>&1 || return 1
+          }
+          if ! start_containment_session; then
+            containment_snapshot
+            cat "$containment_readiness" >&2 || true
+            exit 1
+          fi
+          export NEOTH_GUI_REQUIRE_SYSTEMD_CONTAINMENT_TESTS=1
           # Finish the runner-side protocol with time for receipt creation and
           # the always-uploaded artifacts before GitHub's 90-minute job limit.
           deadline_seconds=4500
@@ -408,6 +476,8 @@ jobs:
                 printf '%s\n' "$test_name" >> "$passed"
               else
                 test_status=$?
+                containment_snapshot
+                cat "$containment_diagnostics" >> "$log"
                 printf '%s\n' "$test_name" >> "$failed"
                 overall=1
               fi
