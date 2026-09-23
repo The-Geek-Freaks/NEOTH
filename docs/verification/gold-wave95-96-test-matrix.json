@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W539_OCI_METADATA_ADMITTED_RUNTIME_NOT_VERIFIED",
+  "status": "W542_HOSTED_GUI_CONTEXT_TRAIT_REPAIR_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 135126,
-    "sha256": "E5B378F08D5484065450CD3BD15AC2CC5D48358FD2741DECF7755548C74CF6BC"
+    "bytes": 135123,
+    "sha256": "02119C68C3F955F415762F9195E41BF641A5E933A89716BE64E44406FC56DEC5"
   },
   "sourceInputs": 770,
   "requiredNativeTests": [
@@ -7815,8 +7815,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2209193,
-      "sha256": "63130A2E81E124844D163FE0195274F3B88F0E1D9659B598D2A574D9CB2D8E4E"
+      "bytes": 2209228,
+      "sha256": "BA812F76CD7255F52B22AEBFF93B5EF212E5805C3DFDED81DFDAB877B484FB83"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -24830,6 +24830,38 @@
       }
     ],
     "note": "Run35928756605 8PASS,9raw manifests admitted+2sourcehashes+receiptchecksum+allindexeddescriptors. No image/layer/runtime acceptance; P220open.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave542Evidence": {
+    "base": "d996a91058d3ca20c7629ab46fadd6220a9f5628",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 194792,
+        "sha256": "36BCDED62AEB94E68BBF7D5818CF5A04C17C76ED2CD0B43785A1605061B75EAC",
+        "blob": "b98af31ffdaa8f85e6cd00cdb6920f07f4b53508"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1205116,
+        "sha256": "8BC4FA63F80CA690C060FED0E9BFA7CBFBDF1A75085C61039B87D31ADDE5CB73",
+        "blob": "ea4d2a207ccfe917ce23da59e0a54fc2ed813a6c"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1803749,
+        "sha256": "54BF988CB3F651A74A6B5C5B7736E05D50CD3A14FC1B7558EB5008B3C52C9B33",
+        "blob": "8a9ead3d89b9b673a0bb47d043c5efc9053a55a7"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2209228,
+        "sha256": "BA812F76CD7255F52B22AEBFF93B5EF212E5805C3DFDED81DFDAB877B484FB83",
+        "blob": "0954c32ba76f07e20962b2419758288c746c9518"
+      }
+    ],
+    "note": "GUI35927366772d2f4 compiled production but testharnessE0599Contexttrait,0fixtures. Localhelperimport fixesobservederror;freshGUIpending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

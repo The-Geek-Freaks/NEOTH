@@ -47638,6 +47638,8 @@ exit 0
         home: &Path,
         child: &P118WizardBootstrapChild,
     ) -> wizard_session_controller::WizardSessionController {
+        use anyhow::Context as _;
+
         let bin = which_neothd().expect("hosted P118 fixture requires the built neoth CLI on PATH");
         let child_slot = std::sync::Arc::clone(&child.0);
         wizard_session_controller::WizardSessionController::open_or_start(
