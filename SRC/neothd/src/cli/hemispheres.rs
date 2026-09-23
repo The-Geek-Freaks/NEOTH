@@ -859,10 +859,14 @@ async fn run_test(
             cfg.tokens.max_per_request,
         )
         .await?;
-    let provider_audit = hemisphere_test_role_authorizer(provider_audit, cfg, role)?;
+    let authorizer = hemisphere_test_role_authorizer(
+        provider_audit.authorizer_with_ephemeral_consent(ephemeral_consent),
+        cfg,
+        role,
+    )?;
     let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
         provider,
-        provider_audit.authorizer_with_ephemeral_consent(ephemeral_consent),
+        authorizer,
         default_model,
         "hemispheres.test",
     );

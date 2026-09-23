@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T06:51:35.7887983Z",
-  "validationStatus": "W296-W307 exact hosted formatting imported; Corec599 and GUI128424 active; Group594 native pending",
+  "capturedUtc": "2026-09-23T06:59:09.8930194Z",
+  "validationStatus": "Adversarial role fixtures source-reviewed and OneShot handle repaired; fresh hosted Core/Group596/native pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -73,8 +73,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 13666,
-      "sha256": "F4962F81C8B1C4955A145658443AD8F521A30A54FD3F95E66607D570477CD7E5"
+      "bytes": 13719,
+      "sha256": "E3705BA4D41BEA29112B5A47FA5C75EB969CBFC62F2C7AE1A3AAA412A7B8AC3E"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -473,18 +473,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 135413,
-      "sha256": "210685C11F1BE5C6EC761B8E4A17176AC71F25CAABD82D19397E2E83646C2588"
+      "bytes": 136158,
+      "sha256": "6635109D33956B862F64B0B55F87B1D3F5B4E9299F2D6ED2E6D66E3D89361434"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1138437,
-      "sha256": "94D288EAC2FA35938526F559F98BE9E4427498FB1A1B327250D6453CE70E112C"
+      "bytes": 1139182,
+      "sha256": "1110A9792706335A36392AC9BB3AC2F14572EC174ED87D678DA6E90EF12F2859"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1734969,
-      "sha256": "E688DB335F587051FC40D8DE82D2D6F4BCB87CBDE4562B04F87DB9332704D093"
+      "bytes": 1735714,
+      "sha256": "89BCDA1BAA586F4B7CB592E6946245F3970A3AC8BD0933E295F0AD3C383D43E1"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -2523,8 +2523,8 @@
     },
     {
       "path": "SRC/neothd/src/sub_agents/runtime.rs",
-      "bytes": 74530,
-      "sha256": "610ACC31641E1EF941B0C0A00DC3EC039AA32CE75D9226641B5A48E0F2F44921"
+      "bytes": 81672,
+      "sha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665"
     },
     {
       "path": "SRC/neothd/src/tokens/budget.rs",
@@ -2878,8 +2878,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/hemispheres.rs",
-      "bytes": 66511,
-      "sha256": "22AEC7CBE9BF7148BCB70A465A2A4AFC025B59F6366F7362E3D0976B43472D9E"
+      "bytes": 66534,
+      "sha256": "FB3CD5DFF7A9ED5993541D2D63A75A21D3CD9668FBBBD7B2F4FF8F96D53519A8"
     },
     {
       "path": "SRC/neothd/src/cli/cron.rs",
@@ -2965,6 +2965,16 @@
       "path": "docs/gold-wave299-graphify-codegraph-witness.md",
       "bytes": 3210,
       "sha256": "890587047565FDBCE6FF5932FAFB283BF155099F7783401FDB8C110DA98BC4FD"
+    },
+    {
+      "path": "docs/gold-wave308-adversarial-role-origin.md",
+      "bytes": 1180,
+      "sha256": "691C7CA9AAE753B49E829A07B05C271585143101FD4BDF5AA261CCC006605528"
+    },
+    {
+      "path": "docs/gold-wave309-hemisphere-one-shot-repair.md",
+      "bytes": 1003,
+      "sha256": "3D3F63401D37AD1F11548B6B8100C7B6303AFC02AC2FE3130282D6FB3A341A58"
     }
   ]
 }

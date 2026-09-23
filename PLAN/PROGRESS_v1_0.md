@@ -2,6 +2,16 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W308 adversarial role regression and W309 one-shot repair (2026-09-23):**
+Two real sub-agent fixtures prove hostile role/provider/delimiter text stays
+in typed data: admitted calls and WAL keep Left; allowed-Right text cannot
+bypass denied Left and yields zero raw/request effects. Source review passed.
+Corec599 run35828611235 failed three production type errors from one W301
+shadowed OneShot handle. W309 retains that handle for terminal audit completion
+and role-binds its derived consent authorizer. Preflightb10 run35828902575 passed.
+Inventory594 paths;native992;Group596;GUI128 unchanged. Group596/native CI not
+yet dispatched; GUI128424 continues. No local executable validation or parent
+acceptance. Road and WS-LF counts unchanged.
 **W296-W307 exact hosted formatting (2026-09-23):** Preflightc599
 run35828610460 requested formatting in14 touched Rust files. Its complete patch
 SHA256D224C9EE was verified against every Git preimage/postimage and imported.

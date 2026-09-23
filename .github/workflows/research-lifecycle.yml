@@ -147,6 +147,7 @@ jobs:
               "wave302CronLoopRoleAcceptance": 3,
               "wave303DissentRoleAcceptance": 2,
               "wave299GraphifyWitnessAcceptance": 4,
+              "wave308AdversarialRoleAcceptance": 2,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W296-W307 exact hosted formatting imported; Corec599 and GUI128424 active; Group594 native pending",
+  "status": "Adversarial role fixtures source-reviewed and OneShot handle repaired; fresh hosted Core/Group596/native pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 102552,
-    "sha256": "AD962A03C1A4A9EDF85A9AA0BF67CB7438A45D33FDA9147D5320477ED6304A15"
+    "bytes": 102927,
+    "sha256": "08DA7CFA2BD95567696C52AA6D5885AD2405FEE2A50B373020680233C2ED37A6"
   },
-  "sourceInputs": 592,
+  "sourceInputs": 594,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -234,7 +234,7 @@
     {
       "test": "sub_agents::runtime::tests::initial_qa_and_retry_keep_adversarial_values_inside_typed_fields",
       "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
-      "sourceSha256": "610ACC31641E1EF941B0C0A00DC3EC039AA32CE75D9226641B5A48E0F2F44921",
+      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
       "junitClass": "neoth"
     },
     {
@@ -4812,13 +4812,13 @@
     {
       "test": "sub_agents::runtime::tests::registry_envelope_is_identical_for_primary_qa_and_retry",
       "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
-      "sourceSha256": "610ACC31641E1EF941B0C0A00DC3EC039AA32CE75D9226641B5A48E0F2F44921",
+      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
       "junitClass": "neoth"
     },
     {
       "test": "sub_agents::runtime::tests::qa_registry_aggregate_overflow_rejects_before_any_provider_call",
       "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
-      "sourceSha256": "610ACC31641E1EF941B0C0A00DC3EC039AA32CE75D9226641B5A48E0F2F44921",
+      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
       "junitClass": "neoth"
     },
     {
@@ -5814,25 +5814,25 @@
     {
       "test": "sub_agents::runtime::tests::w296_left_policy_covers_primary_qa_and_retry_leaf_lifecycles",
       "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
-      "sourceSha256": "610ACC31641E1EF941B0C0A00DC3EC039AA32CE75D9226641B5A48E0F2F44921",
+      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
       "junitClass": "neoth"
     },
     {
       "test": "sub_agents::runtime::tests::w296_left_policy_denies_primary_provider_or_model_before_any_leaf_lifecycle",
       "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
-      "sourceSha256": "610ACC31641E1EF941B0C0A00DC3EC039AA32CE75D9226641B5A48E0F2F44921",
+      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
       "junitClass": "neoth"
     },
     {
       "test": "sub_agents::runtime::tests::w296_left_policy_covers_429_fallback_leaf_lifecycles",
       "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
-      "sourceSha256": "610ACC31641E1EF941B0C0A00DC3EC039AA32CE75D9226641B5A48E0F2F44921",
+      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
       "junitClass": "neoth"
     },
     {
       "test": "sub_agents::runtime::tests::w296_left_policy_allows_429_primary_then_denies_fallback_model_before_transport",
       "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
-      "sourceSha256": "610ACC31641E1EF941B0C0A00DC3EC039AA32CE75D9226641B5A48E0F2F44921",
+      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
       "junitClass": "neoth"
     },
     {
@@ -5874,13 +5874,13 @@
     {
       "test": "cli::hemispheres::tests::w301_hemispheres_right_binding_allows_selected_leaf_once",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "22AEC7CBE9BF7148BCB70A465A2A4AFC025B59F6366F7362E3D0976B43472D9E",
+      "sourceSha256": "FB3CD5DFF7A9ED5993541D2D63A75A21D3CD9668FBBBD7B2F4FF8F96D53519A8",
       "junitClass": "neoth"
     },
     {
       "test": "cli::hemispheres::tests::w301_hemispheres_right_model_denial_has_zero_raw_calls",
       "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
-      "sourceSha256": "22AEC7CBE9BF7148BCB70A465A2A4AFC025B59F6366F7362E3D0976B43472D9E",
+      "sourceSha256": "FB3CD5DFF7A9ED5993541D2D63A75A21D3CD9668FBBBD7B2F4FF8F96D53519A8",
       "junitClass": "neoth"
     },
     {
@@ -5947,6 +5947,18 @@
       "test": "wiki::ingest::tests::current_receipt_without_codegraph_witness_preserves_prior_scope",
       "sourcePath": "SRC/neothd/src/wiki/ingest.rs",
       "sourceSha256": "C3AAE352CFF73F0DA00B1929CD65E29666448D3C599136C1004A0E0646558962",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "sub_agents::runtime::tests::w308_adversarial_role_override_stays_typed_data_and_left_bound",
+      "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
+      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "sub_agents::runtime::tests::w308_adversarial_right_override_cannot_bypass_denied_left_policy",
+      "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
+      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
       "junitClass": "neoth"
     }
   ],
@@ -19437,6 +19449,36 @@
       }
     ],
     "note": "14 exact hosted rustfmt pre/postimages verified; no local formatter",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave308AdversarialRoleAcceptance": {
+    "requiredTests": [
+      "sub_agents::runtime::tests::w308_adversarial_role_override_stays_typed_data_and_left_bound",
+      "sub_agents::runtime::tests::w308_adversarial_right_override_cannot_bypass_denied_left_policy"
+    ],
+    "report": "docs/gold-wave308-adversarial-role-origin.md",
+    "localValidationRan": false,
+    "hosted": "pending",
+    "scope": "Real worker keeps hostile role override in typed data; actual Left allow and deny/WAL boundaries; no model semantic claim"
+  },
+  "wave308309SourcePublication": {
+    "base": "b10f0e332b8273d7d588ffda8d93423baa50a419",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/hemispheres.rs",
+        "bytes": 66534,
+        "sha256": "FB3CD5DFF7A9ED5993541D2D63A75A21D3CD9668FBBBD7B2F4FF8F96D53519A8",
+        "blob": "f420fcf6f490e8e205ed47e4a2ada7c35d601ca9"
+      },
+      {
+        "path": "SRC/neothd/src/sub_agents/runtime.rs",
+        "bytes": 81672,
+        "sha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
+        "blob": "ce23756c6ca72c27136e03bfb5049b91d3fe4e4f"
+      }
+    ],
+    "note": "Source594 native992 Group596; no local executable validation",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
