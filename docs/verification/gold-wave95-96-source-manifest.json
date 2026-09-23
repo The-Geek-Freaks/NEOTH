@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T12:32:44.6397837Z",
-  "validationStatus": "W373 sevenpath hosted-format import; Core8ac and Group810 behavior pending",
+  "capturedUtc": "2026-09-23T12:39:23.4900426Z",
+  "validationStatus": "Core648 all4gates admitted + scoped cluster CLI reference; W373 Core8ac pending; Linux serial frontend mitigation awaits hosted proof",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -28,8 +28,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "bytes": 39544,
-      "sha256": "0BAF2E9F97341D5AB3411C5843993011CA5153B12D454ECD9D7CF7613B85B4A0"
+      "bytes": 39645,
+      "sha256": "800249902F24B7A98E3AF12FF25B289753F9F803849C5062B70DBAA82E8D8AB7"
     },
     {
       "path": ".github/workflows/cli-reference.yml",
@@ -103,8 +103,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 241777,
-      "sha256": "B6D3EB5644BC388C96E1E1F1BEAB281DD88F648BE1B9BFA9173CCFCE3559412F"
+      "bytes": 242584,
+      "sha256": "54491B9543F7285A76CF73057C13CC7BFAA3F91941A92CB9AC67230FDC94BFDB"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -768,8 +768,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 44579,
-      "sha256": "4F8AF39A4BF74552045ACC09CF1A9D37B21D4BECD7AE8A43799DF51249FB61FB"
+      "bytes": 44665,
+      "sha256": "6C0637A1A51DBF4A1804C96E6CA9E3BDD11CB0B7850549CBF0ACA05F9563A654"
     },
     {
       "path": "packaging/tests/test_preview_windows_workflow_contract.py",
@@ -813,13 +813,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1167268,
-      "sha256": "17FFF98C7A1013C4AECBE245E63C2931F1D7EF27BEFCE3D654C44805F949EA22"
+      "bytes": 1168211,
+      "sha256": "E69C7EAD33B7EF81F7C04A6C585B04B2B063B189F7139FE1FC256ECD08E00BE4"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1764717,
-      "sha256": "A65110674C4762A1FB82A7DC64DF809A833F93BAA105A7F0C78B55A4D2D3D2B0"
+      "bytes": 1765660,
+      "sha256": "871EBFEB86A947A4D36B14DD9D3147137A37BC53BAC645B983929E8F336FF9D8"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -3345,6 +3345,11 @@
       "path": "docs/gold-wave389-browser-parity-triage.md",
       "bytes": 1015,
       "sha256": "8A45F41AAEB72DD9A42FF855519118D81B72A4272DD769D268A27262700ED766"
+    },
+    {
+      "path": "docs/gold-wave393-linux-hosted-memory-bound.md",
+      "bytes": 749,
+      "sha256": "04A81DBE8828E4F3CBAEC03DD368984BEB4FC6EE13A8368C404CC11305C67405"
     }
   ]
 }

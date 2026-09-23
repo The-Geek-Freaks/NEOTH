@@ -159,9 +159,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
-      # Warm caches otherwise compile all large workspace frontends together
-      # and can exceed the hosted runner's memory budget.
-      CARGO_BUILD_JOBS: 2
+      # FullCI954's original Linux job and its targeted retry both received a
+      # runner shutdown during workspace Clippy without a compiler diagnostic.
+      # Serialize frontend compilation until a hosted rerun establishes cause.
+      CARGO_BUILD_JOBS: 1
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

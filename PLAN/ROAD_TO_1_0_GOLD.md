@@ -8,6 +8,19 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W393 hosted Linux bound and accepted cluster CLI reference (2026-09-23):**
+Core64835859898574 passed all4gates: slim Clippy, core test-target checking,
+public CLI build and exact-source reference export. Imported54491B95 adds only
+scope-show/scope-set/scope-reset. Preflight50635861354043 passed.
+FullCI954 Linux attempt2 again received runner shutdown143 during workspace
+Clippy with2build jobs, without a compiler diagnostic. W393 sets that job to1
+and checks the job-level setting. This reduces concurrent compilation; cause
+and effectiveness remain unproven until a hosted rerun. Windows/macOS settings,
+Linux check/features and test watchdogs are unchanged.
+W373 Core8ac35861027738 is active; GUI13521635856964423 remains active.
+Inventory669;native1122+Windows19/Linux33/macOS32;Group810;GUI135Linux/131macOS.
+Road1027checked/295open/2partial;WS-LF20done/98open unchanged.
+No local executable validation or model archive download ran.
 **W391 hosted WAL formatting (2026-09-23):**
 Imported the exact7path rustfmt patch from Preflight8ac35861028535 after
 verifying source HEAD, artifact hashes and every before/after Git blob.

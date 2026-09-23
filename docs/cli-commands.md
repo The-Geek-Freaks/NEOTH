@@ -795,6 +795,36 @@ Inspect durable per-peer mesh cursors, pending exact replays, ACK high water mar
 
 Manage the exact-key operator assignment required for inbound `TaskDelegate` frames. Missing assignment is a deny
 
+#### `neoth cluster task-delegate scope-reset`
+
+CAS-reset an exact scoped authority to denied while retaining its revision tombstone; reset never re-opens a broad permission
+
+- `<PEER_KEY>`
+- `--skill <SKILL>`
+- `--channel <CHANNEL>`
+- `--account <ACCOUNT>`
+- `--expected-revision <EXPECTED_REVISION>`
+
+#### `neoth cluster task-delegate scope-set`
+
+CAS one exact scoped authority. Scoped requests default-deny unless this exact tuple is present and allowed
+
+- `<PEER_KEY>`
+- `--skill <SKILL>`
+- `--channel <CHANNEL>`
+- `--account <ACCOUNT>`
+- `--allowed <ALLOWED>`
+- `--expected-revision <EXPECTED_REVISION>`
+
+#### `neoth cluster task-delegate scope-show`
+
+Read one exact scoped skill/channel/account authority for a peer
+
+- `<PEER_KEY>`
+- `--skill <SKILL>`
+- `--channel <CHANNEL>`
+- `--account <ACCOUNT>`
+
 #### `neoth cluster task-delegate set`
 
 Compare-and-set one exact peer's delegation assignment. Use revision 0 for an as-yet unassigned active peer; read the returned revision before a later change or revocation

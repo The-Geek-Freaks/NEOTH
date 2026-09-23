@@ -605,6 +605,7 @@ class CiCadenceContractTests(unittest.TestCase):
 
     def test_linux_gui_runtime_keeps_xkbcommon_x11_and_xvfb(self) -> None:
         linux_quality = workflow_jobs(CI_TEXT)["linux-quality"]
+        self.assertIn("CARGO_BUILD_JOBS: 1", linux_quality.split("    steps:", 1)[0])
         steps = workflow_steps(linux_quality)
         dependencies = step_run_command(
             steps["Install Linux build deps (fontconfig + X11 + Xvfb)"]
