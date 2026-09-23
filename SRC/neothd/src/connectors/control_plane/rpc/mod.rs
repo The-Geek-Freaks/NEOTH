@@ -3198,13 +3198,13 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn bind_fixture_socket(endpoint: &Endpoint) {
+    fn bind_fixture_socket(endpoint: &Endpoint) -> std::os::unix::net::UnixListener {
         use std::os::unix::fs::PermissionsExt as _;
 
         let Endpoint::UnixSocket { path, .. } = endpoint;
         let listener = std::os::unix::net::UnixListener::bind(path).unwrap();
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
-        drop(listener);
+        listener
     }
 
     #[cfg(unix)]
@@ -3362,15 +3362,21 @@ mod tests {
         let home = crate::test_env::canonical_tempdir().unwrap();
         let endpoint = canonical_fixture(home.path(), &connector_nonce(&fresh_test_nonce()));
         let Endpoint::UnixSocket { path, .. } = &endpoint;
-        bind_fixture_socket(&endpoint);
+        // Keep the original bound after unlinking its leaf. Holding both
+        // listeners live forces the replacement to receive a distinct inode;
+        // dropping the helper listener first allowed the filesystem immediately
+        // reuse the same inode and made this identity assertion flaky.
+        let original_listener = bind_fixture_socket(&endpoint);
         let before = verify_unix_client_endpoint(&endpoint).unwrap();
         std::fs::remove_file(path).unwrap();
-        bind_fixture_socket(&endpoint);
+        let replacement_listener = bind_fixture_socket(&endpoint);
         let after = verify_unix_client_endpoint(&endpoint).unwrap();
         assert_ne!(
             before, after,
             "a replaced socket leaf must change the attested identity"
         );
+        drop(replacement_listener);
+        drop(original_listener);
     }
 
     #[cfg(unix)]

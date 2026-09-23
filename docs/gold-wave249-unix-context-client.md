@@ -41,11 +41,13 @@ The Unix-only focused cases are named
 `unix_client_endpoint_identity_detects_a_replaced_socket_leaf`, and
 `unix_client_fixture_home_is_canonical_under_the_inherited_temp_environment`.
 The first two intentionally bind no listener, so they prove discovery refusal
-before an accepted response. The identity case proves the before/after inode
-comparison used by the client; it does not claim a scheduler-controlled socket
-replacement during a live connect. The pre/post path snapshots detect persistent
-replacement, but do not claim to close a same-UID ABA swap that disappears
-between observations. The reader case covers no-follow opening, private mode,
+before an accepted response. The identity case retains its original and
+replacement fixture listeners through the assertion, so it proves a before/
+after comparison across distinct live inodes; it does not claim a
+scheduler-controlled socket replacement during a
+live connect. The pre/post path snapshots detect persistent replacement, but do
+not claim to close a same-UID ABA swap that disappears between observations.
+The reader case covers no-follow opening, private mode,
 and the size cap on the descriptor actually read. The test suite uses the
 shared environment lock and canonical temp-home helper, including macOS `/var`
 to `/private/var` normalization. No test claims a real different-UID peer or

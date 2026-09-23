@@ -2,6 +2,32 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W256 native search and W258 Unix fixture repair (2026-09-23):**
+`neoth fs grep` adds bounded literal search over one allowlisted UTF-8 file,
+using the existing retained-descriptor read admission. Results carry line
+numbers, explicit empty/truncated states and UTF-8-safe snippets capped at
+512 bytes including ellipses. Optional default-off codegraph enrichment is
+path-outline evidence only; no hit drops both sidecars. Five regressions include
+the actual caller context and its consumed once guard. CRG-05 remains open.
+W258 holds original and replacement Unix socket listeners through the identity
+assertion so immediate inode reuse cannot invalidate the fixture. Production
+identity checks are unchanged; same-EUID ABA protection is not claimed.
+Independent static review passed. Hosted execution of both changes is pending.
+Inventory: 538 source paths / 871 universal native / 98 universal GUI;
+Group441 / GUI124, platform-native extras Windows19/Linux29/macOS28 unchanged.
+
+Group432 `35806200712` on `d99d5c6c` is admitted at 430/432 passing with all
+92 source paths and exact terminals bound. Its failures are the Unix socket
+fixture repaired here and the actual status-envelope assertion already repaired
+in W257. GUI124 `35806202796` finished with failure; exact receipts are under
+review. Core `35807294240` on `af0e056f` passed slim Clippy and test-target
+checking; CLI export is pending. FullCI `35805037288` still runs its Windows
+and macOS tests; its Linux lint failure was repaired in `d99d5c6c`.
+No local compiler, formatter, parser, test or runtime ran. Road remains
+1324 leaves: 1016 checked / 306 open / 2 partial; no release claim.
+See `docs/gold-wave256-native-search-enrichment.md` and
+`docs/gold-wave258-unix-socket-fixture.md`.
+
 **W257 authenticated Context Import Doctor (2026-09-23):** Doctor now reads
 live daemon control-plane status through the existing authenticated Context
 client. It reports status availability, pause/revocation, missing accounts or

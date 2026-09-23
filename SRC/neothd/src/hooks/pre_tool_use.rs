@@ -34,6 +34,10 @@ pub enum PreToolUseOrigin {
     /// separate from both MCP variants: it neither came from a provider nor
     /// carries an MCP server/tool descriptor.
     DirectCliOsFileRead,
+    /// An operator-selected literal search over one `neoth fs grep` file
+    /// admission. This has no provider/MCP provenance and cannot select a
+    /// recursive or shell-backed search surface.
+    DirectCliOsFileSearch,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

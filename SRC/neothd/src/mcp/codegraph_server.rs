@@ -2467,7 +2467,7 @@ impl std::fmt::Debug for NativeFsReadEnrichmentPlan {
 
 /// Prepare bounded native `fs read` sidecar evidence.  The caller must have
 /// already passed the OS allowlist/autonomy preflight and delivered the one
-/// typed `DirectCliOsFileRead` context to PreToolUse.  A missing, lookalike,
+/// typed direct-CLI OS-file read or literal-search context to PreToolUse.  A missing, lookalike,
 /// stale, incomplete, or non-containing descriptor is simply ineligible; it
 /// neither authorizes the read nor changes the original file result.
 pub(crate) fn prepare_native_fs_read_enrichment(
@@ -2481,8 +2481,12 @@ pub(crate) fn prepare_native_fs_read_enrichment(
         return Ok(None);
     }
     anyhow::ensure!(
-        context.origin() == crate::hooks::PreToolUseOrigin::DirectCliOsFileRead,
-        "native fs enrichment requires the direct CLI OS-file-read origin"
+        matches!(
+            context.origin(),
+            crate::hooks::PreToolUseOrigin::DirectCliOsFileRead
+                | crate::hooks::PreToolUseOrigin::DirectCliOsFileSearch
+        ),
+        "native fs enrichment requires a direct CLI OS-file read or search origin"
     );
     anyhow::ensure!(
         !context.is_cancelled() && !context.deadline_elapsed(),
@@ -2561,6 +2565,7 @@ pub(crate) fn prepare_native_fs_read_enrichment(
             &impact,
             &gaps,
             context.call_id(),
+            context.origin(),
         ),
     }))
 }
@@ -2601,17 +2606,24 @@ fn render_native_fs_read_enrichment(
     impact: &crate::code_map::impact::ImpactResult,
     gaps: &crate::code_map::test_coverage::ImpactTestGapResult,
     call_id: crate::hooks::PreToolUseCallId,
+    origin: crate::hooks::PreToolUseOrigin,
 ) -> String {
     let mut rendered =
         render_outline_enrichment(root_identity, relative, impact, gaps, call_id, None);
     rendered = rendered.replacen(
         "[untrusted built-in codegraph_outline sidecar]",
-        "[untrusted native fs-read codegraph sidecar]",
+        match origin {
+            crate::hooks::PreToolUseOrigin::DirectCliOsFileSearch => "[untrusted native fs-grep codegraph sidecar]",
+            _ => "[untrusted native fs-read codegraph sidecar]",
+        },
         1,
     );
     rendered = rendered.replacen(
         "configured_mcp: built_in=neoth-codegraph/codegraph_outline",
-        "native_origin: direct_cli_os_file_read",
+        match origin {
+            crate::hooks::PreToolUseOrigin::DirectCliOsFileSearch => "native_origin: direct_cli_os_file_search",
+            _ => "native_origin: direct_cli_os_file_read",
+        },
         1,
     );
     rendered

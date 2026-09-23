@@ -124,6 +124,7 @@ jobs:
               "wave249UnixContextAcceptance": 7,
               "wave253ImportPreviewAcceptance": 1,
               "wave257ContextDoctorAcceptance": 4,
+              "wave256NativeSearchAcceptance": 5,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():
