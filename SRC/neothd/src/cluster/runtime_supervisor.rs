@@ -1868,6 +1868,7 @@ mod tests {
                 trusted_ssids: Vec::new(),
             },
             listen_port: crate::config::DEFAULT_CLUSTER_LISTEN_PORT,
+            budget_raft: BudgetRaftConfig::default(),
             network: NetworkFingerprint {
                 ssid: Some("test-network".to_string()),
                 primary_ip: Some(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),

@@ -15,6 +15,7 @@ use super::types::{
 };
 use crate::cluster::membership::{LocalNodeIdentity, StableNodeId, TransportIdentity};
 use async_trait::async_trait;
+use openraft::error::RaftError;
 use openraft::raft::{
     AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
     VoteRequest, VoteResponse,
@@ -308,7 +309,7 @@ impl BudgetRaftService {
         let members = self.config.raft_voters();
         match self.raft.initialize(members).await {
             Ok(()) => Ok(()),
-            Err(openraft::RaftError::APIError(openraft::error::InitializeError::NotAllowed(_))) => {
+            Err(RaftError::APIError(openraft::error::InitializeError::NotAllowed(_))) => {
                 Ok(())
             }
             Err(error) => Err(BudgetServiceError::Unavailable(format!(

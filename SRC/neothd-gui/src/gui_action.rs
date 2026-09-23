@@ -3678,6 +3678,55 @@ pub struct ClusterGossipAck {
     pub replay_budget_days: u32,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterBudgetRaftVoterAck {
+    pub stable_node_id: String,
+    pub peeroxide_key: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ClusterBudgetRaftAck {
+    pub enabled: bool,
+    pub cap_usd_nanos: u64,
+    pub utc_window: i64,
+    pub membership_epoch: u64,
+    pub voters: Vec<ClusterBudgetRaftVoterAck>,
+}
+
+impl ClusterBudgetRaftAck {
+    fn verify(&self) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if self.cap_usd_nanos == 0 || self.utc_window <= 0 || self.membership_epoch == 0 {
+            return Err("cluster.budget_raft acknowledgement has an invalid positive policy".into());
+        }
+        if self.voters.len() != 3 {
+            return Err("cluster.budget_raft acknowledgement must contain exactly three voters".into());
+        }
+        let mut stable_ids = std::collections::BTreeSet::new();
+        let mut peeroxide_keys = std::collections::BTreeSet::new();
+        for voter in &self.voters {
+            let canonical = |value: &str| {
+                value.len() == 64
+                    && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    && value == value.to_ascii_lowercase()
+            };
+            if !canonical(&voter.stable_node_id) || !canonical(&voter.peeroxide_key) {
+                return Err("cluster.budget_raft acknowledgement has a non-canonical voter".into());
+            }
+            if !stable_ids.insert(&voter.stable_node_id)
+                || !peeroxide_keys.insert(&voter.peeroxide_key)
+            {
+                return Err("cluster.budget_raft acknowledgement has duplicate voter identities".into());
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClusterSnapshotAck {
@@ -3688,6 +3737,8 @@ pub struct ClusterSnapshotAck {
     pub mdns: ClusterMdnsAck,
     pub policy: ClusterPolicyAck,
     pub gossip: ClusterGossipAck,
+    #[serde(default)]
+    pub budget_raft: ClusterBudgetRaftAck,
     pub listen_port: u16,
 }
 
@@ -3713,6 +3764,10 @@ pub struct ExpectedClusterConfig<'a> {
     pub trusted_ssids: &'a [String],
     pub replicate_raw_ingress: bool,
     pub replay_budget_days: u32,
+    /// The generic GUI Configure form does not submit budget policy. None
+    /// means the CLI preserves its current typed policy, but the receipt still
+    /// validates that returned policy before it is accepted.
+    pub budget_raft: Option<&'a ClusterBudgetRaftAck>,
     pub listen_port: u16,
     /// `Some(true)` when the submitted operation requires a usable secret;
     /// `None` when the GUI intentionally left the existing store untouched.
@@ -3733,6 +3788,7 @@ impl ClusterConfigureAck {
                     .to_string(),
             );
         }
+        self.cluster.budget_raft.verify()?;
         let checks = [
             (
                 self.cluster.name.as_deref() == expected.name,
@@ -3767,6 +3823,12 @@ impl ClusterConfigureAck {
             (
                 self.cluster.gossip.replay_budget_days == expected.replay_budget_days,
                 "cluster.gossip.replay_budget_days",
+            ),
+            (
+                expected
+                    .budget_raft
+                    .is_none_or(|budget| self.cluster.budget_raft == *budget),
+                "cluster.budget_raft",
             ),
             (
                 self.cluster.listen_port == expected.listen_port,
@@ -8017,10 +8079,51 @@ mod tests {
             trusted_ssids: &ssids,
             replicate_raw_ingress: true,
             replay_budget_days: 14,
+            budget_raft: None,
             listen_port: 49738,
             cluster_passphrase_set: Some(true),
         };
         ack.verify(&expected, &path).unwrap();
+
+        let budget_raw = raw.replacen(
+            "\"listen_port\":49738",
+            "\"budget_raft\":{\"enabled\":true,\"cap_usd_nanos\":99,\"utc_window\":20260923,\"membership_epoch\":7,\"voters\":[{\"stable_node_id\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"peeroxide_key\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"stable_node_id\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"peeroxide_key\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},{\"stable_node_id\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"peeroxide_key\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}]},\"listen_port\":49738",
+            1,
+        );
+        let budget_ack: ClusterConfigureAck = serde_json::from_str(&budget_raw).unwrap();
+        assert!(budget_ack.cluster.budget_raft.enabled);
+        budget_ack.verify(&expected, &path).unwrap();
+        let expected_budget = budget_ack.cluster.budget_raft.clone();
+        let expected_with_budget = ExpectedClusterConfig {
+            name: Some("studio"),
+            enabled: true,
+            transport: "peeroxide",
+            peers: &peers,
+            mdns_enabled: false,
+            announce_on_untrusted_wifi: false,
+            trusted_ssids: &ssids,
+            replicate_raw_ingress: true,
+            replay_budget_days: 14,
+            budget_raft: Some(&expected_budget),
+            listen_port: 49738,
+            cluster_passphrase_set: Some(true),
+        };
+        budget_ack.verify(&expected_with_budget, &path).unwrap();
+        let mut wrong_budget = expected_budget.clone();
+        wrong_budget.cap_usd_nanos += 1;
+        let wrong_budget_expected = ExpectedClusterConfig {
+            budget_raft: Some(&wrong_budget),
+            ..expected_with_budget
+        };
+        assert!(budget_ack.verify(&wrong_budget_expected, &path).is_err());
+        let invalid_budget = budget_raw.replacen("\"cap_usd_nanos\":99", "\"cap_usd_nanos\":0", 1);
+        assert!(
+            serde_json::from_str::<ClusterConfigureAck>(&invalid_budget)
+                .unwrap()
+                .verify(&expected, &path)
+                .is_err(),
+            "budget receipt with an invalid enabled policy must fail validation"
+        );
 
         let mut wrong = expected;
         wrong.listen_port = 49739;

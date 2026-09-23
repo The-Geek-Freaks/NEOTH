@@ -3,6 +3,23 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W462 compiler, Windows publication and producer regressions (2026-09-23):**
+W461 is published as efd5cb72; Preflight35888774668 passed all static contracts.
+W459 repairs the actual OpenRaft API, snapshot, authenticated-peer access,
+config initializer and frame-exhaustiveness diagnostics from Core35886288492.
+Generic cluster configure preserves the bound budget policy and rejects drift
+inside both real commit transactions; CLI/GUI strict snapshots retain that policy.
+W448 private Windows stages now use capability-relative FileRenameInformationEx
+without closing the bound target. Two regressions cover open-target replacement
+and an ambient-parent swap. W460 runs the16affected Windows storage/browser cases.
+W458 strengthens the real three-chunk producer regression with filesystem-loaded
+Block/Replace hooks and captured output/hash/finalization-receipt assertions.
+Its producer sink is real; end-to-end Main/Buddy delivery still needs evidence,
+so P2-26a stays open. The disconnected synthetic GUI test was removed.
+Independent static reviews passed; all executable gates remain hosted/pending.
+Inventory730;native1177+Windows23/Linux33/macOS32;Group882;GUI144Linux/140macOS.
+Road1038checked/284open/2partial;WS-LF31done/87open unchanged. BSOD hold remains.
+
 **W461 functional acceptance and Omniparser decision (2026-09-23):**
 P2-03 is accepted with31required macOS and29applicable Windows identities.
 P1-10 has17native+8GUIreducers+2native callbacks; P1-12 has50native and the

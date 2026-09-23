@@ -3699,6 +3699,7 @@ mod windows_private_atomic_stage {
     pub(super) struct Stage {
         file: File,
         volume: VolumeQualification,
+        private_dacl: bool,
     }
 
     pub(super) struct SyncedStage<'stage> {
@@ -3774,7 +3775,11 @@ mod windows_private_atomic_stage {
                 }));
             }
             let volume = qualify_exact_handle(&file);
-            Ok(Self { file, volume })
+            Ok(Self {
+                file,
+                volume,
+                private_dacl: protect_private_dacl_enabled,
+            })
         }
         pub(super) fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
             self.file.write_all(bytes)
@@ -3813,13 +3818,26 @@ mod windows_private_atomic_stage {
         ) -> Result<RenameCommit<'stage>> {
             #[cfg(test)]
             run_before_rename_for_test();
-            super::windows_rename_open_handle(
-                &self.stage.file,
-                parent,
-                target_name,
-                replace_existing,
-                display_path,
-            )?;
+            if self.stage.private_dacl {
+                // Preserve the already-bound destination capability while using
+                // FileRenameInformationEx: its POSIX semantics can replace a
+                // DELETE-sharing bound target without a close/reopen race.
+                super::windows_rename_open_handle_ex(
+                    &self.stage.file,
+                    parent,
+                    target_name,
+                    replace_existing,
+                    display_path,
+                )?;
+            } else {
+                super::windows_rename_open_handle(
+                    &self.stage.file,
+                    parent,
+                    target_name,
+                    replace_existing,
+                    display_path,
+                )?;
+            }
             on_commit();
             #[cfg(test)]
             run_after_rename_for_test();
@@ -4192,6 +4210,97 @@ fn windows_rename_open_handle(
             "atomically rename {} failed with NTSTATUS {status:#010x} / Win32 error {code:#010x}",
             display_path.display()
         );
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn windows_rename_open_handle_ex(
+    source: &File,
+    target_parent: &Dir,
+    target_name: &OsStr,
+    replace_existing: bool,
+    display_path: &Path,
+) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use std::os::windows::io::AsRawHandle as _;
+    use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS, HANDLE};
+    use windows_sys::Win32::Storage::FileSystem::{FILE_RENAME_INFO, FILE_RENAME_INFO_0};
+
+    let target_w: Vec<u16> = target_name.encode_wide().collect();
+    let file_name_bytes = target_w
+        .len()
+        .checked_mul(std::mem::size_of::<u16>())
+        .and_then(|length| u32::try_from(length).ok())
+        .context("skill replacement target name is too long")?;
+    let file_name_offset = u32::try_from(std::mem::offset_of!(FILE_RENAME_INFO, FileName))
+        .expect("FILE_RENAME_INFO offset fits in u32");
+    let buffer_size = file_name_offset
+        .checked_add(file_name_bytes)
+        .context("skill replacement target name is too long")?;
+    let machine_words = (buffer_size as usize).div_ceil(std::mem::size_of::<usize>());
+    let mut storage = vec![0usize; machine_words];
+    let rename_info = storage.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+
+    const FILE_RENAME_FLAG_REPLACE_IF_EXISTS: u32 = 0x1;
+    const FILE_RENAME_FLAG_POSIX_SEMANTICS: u32 = 0x2;
+    let flags = FILE_RENAME_FLAG_POSIX_SEMANTICS
+        | if replace_existing {
+            FILE_RENAME_FLAG_REPLACE_IF_EXISTS
+        } else {
+            0
+        };
+
+    // SAFETY: storage is aligned and sized through the variable-length UTF-16
+    // FileName field. Both handles stay alive for the system call; the target
+    // name is resolved relative to the already-bound parent handle.
+    unsafe {
+        std::ptr::addr_of_mut!((*rename_info).Anonymous).write(FILE_RENAME_INFO_0 { Flags: flags });
+        std::ptr::addr_of_mut!((*rename_info).RootDirectory)
+            .write(target_parent.as_raw_handle() as HANDLE);
+        std::ptr::addr_of_mut!((*rename_info).FileNameLength).write(file_name_bytes);
+        target_w.as_ptr().copy_to_nonoverlapping(
+            std::ptr::addr_of_mut!((*rename_info).FileName).cast::<u16>(),
+            target_w.len(),
+        );
+    }
+    let mut io_status = NtIoStatusBlock {
+        status_or_pointer: std::ptr::null_mut(),
+        information: 0,
+    };
+    const FILE_RENAME_INFORMATION_EX_CLASS: i32 = 65;
+    // SAFETY: both handles and rename_info remain live for the call; the
+    // variable-length buffer is initialized through FileNameLength.
+    // FileRenameInformationEx is the native extended information class for
+    // FILE_RENAME_INFO flags, while RootDirectory keeps resolution inside the
+    // already-bound parent namespace.
+    let status = unsafe {
+        NtSetInformationFile(
+            source.as_raw_handle() as HANDLE,
+            &mut io_status,
+            rename_info.cast::<std::ffi::c_void>(),
+            buffer_size,
+            FILE_RENAME_INFORMATION_EX_CLASS,
+        )
+    };
+    if status < 0 {
+        // SAFETY: RtlNtStatusToDosError is a pure status-code conversion and
+        // the immediately preceding NTSTATUS is preserved in status.
+        let code = unsafe { RtlNtStatusToDosError(status) };
+        let already_exists =
+            !replace_existing && (code == ERROR_ALREADY_EXISTS || code == ERROR_FILE_EXISTS);
+        let error = std::io::Error::from_raw_os_error(code as i32);
+        return Err(anyhow::Error::new(if already_exists {
+            std::io::Error::new(std::io::ErrorKind::AlreadyExists, error)
+        } else {
+            error
+        })
+        .context(format!(
+            "atomically rename {} with FileRenameInformationEx failed with NTSTATUS {:#010x} / Win32 error {:#010x}",
+            display_path.display(),
+            status,
+            code
+        )));
     }
     Ok(())
 }
@@ -6188,6 +6297,68 @@ mod reported_commit_tests {
                 .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists)
         );
         assert_eq!(std::fs::read(&target).unwrap(), b"private state");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_stage_replaces_a_delete_sharing_bound_target_without_closing_it() {
+        let _scope = windows_private_atomic_stage::qualified_local_ntfs_for_test();
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("state.json");
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+        atomic_write_private_child(&root.dir, OsStr::new("state.json"), &target, b"old")
+            .unwrap();
+        let (bound_target, _binding) = open_bound_regular_file_readwrite(
+            &root.dir,
+            OsStr::new("state.json"),
+            &target,
+        )
+        .unwrap();
+
+        atomic_write_private_child(&root.dir, OsStr::new("state.json"), &target, b"new")
+            .expect("private FileRenameInfoEx publish replaces a DELETE-sharing target");
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        drop(bound_target);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_stage_keeps_the_bound_parent_when_ambient_parent_is_swapped() {
+        let _scope = windows_private_atomic_stage::qualified_local_ntfs_for_test();
+        let temp = tempdir().unwrap();
+        let ambient_parent = temp.path().join("bound-parent");
+        let displaced_parent = temp.path().join("displaced-parent");
+        std::fs::create_dir(&ambient_parent).unwrap();
+        let target = ambient_parent.join("state.json");
+        let root = open_bound_directory(&ambient_parent, false, "test store")
+            .unwrap()
+            .unwrap();
+        atomic_write_private_child(&root.dir, OsStr::new("state.json"), &target, b"old")
+            .unwrap();
+
+        let hook_ambient_parent = ambient_parent.clone();
+        let hook_displaced_parent = displaced_parent.clone();
+        windows_private_atomic_stage::set_before_rename_for_test(move || {
+            std::fs::rename(&hook_ambient_parent, &hook_displaced_parent).unwrap();
+            std::fs::create_dir(&hook_ambient_parent).unwrap();
+            std::fs::write(hook_ambient_parent.join("state.json"), b"ambient replacement").unwrap();
+        });
+
+        atomic_write_private_child(&root.dir, OsStr::new("state.json"), &target, b"new")
+            .expect("private publish must resolve the target through the bound parent");
+
+        assert_eq!(
+            std::fs::read(displaced_parent.join("state.json")).unwrap(),
+            b"new",
+            "the bound directory object remains the publication destination"
+        );
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"ambient replacement",
+            "the swapped ambient parent is never used as the publication destination"
+        );
     }
 
     #[cfg(windows)]

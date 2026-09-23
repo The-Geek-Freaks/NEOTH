@@ -12222,6 +12222,7 @@ fn main() -> Result<()> {
                                     trusted_ssids: &trusted_ssids,
                                     replicate_raw_ingress,
                                     replay_budget_days,
+                                    budget_raft: None,
                                     listen_port,
                                     cluster_passphrase_set: (enabled || replaces_passphrase)
                                         .then_some(true),

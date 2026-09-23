@@ -1,0 +1,192 @@
+# =============================================================================
+# NEOTH — W460 hosted Windows storage regressions
+#
+# This manual lane compiles only the neoth library, then executes the exact
+# Windows regressions selected below. It does not build the workspace, GUI, or
+# release targets.
+# =============================================================================
+
+name: Windows storage regressions
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-storage-regressions-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  regressions:
+    name: Exact storage and managed-browser regressions
+    runs-on: windows-2022
+    timeout-minutes: 110
+    env:
+      CARGO_BUILD_JOBS: 1
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      RUST_TEST_THREADS: 1
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Rust 1.91
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+
+      - name: Restore Cargo registry and target cache
+        id: cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+            ${{ runner.os }}-1.91-cargo-
+
+      - name: Compile and run exact selected regressions
+        id: regression-run
+        shell: bash
+        working-directory: SRC
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/main'
+
+          evidence="$RUNNER_TEMP/windows-storage-regressions"
+          mkdir -p "$evidence/logs"
+          git rev-parse HEAD > "$evidence/SOURCE_HEAD"
+          test "$(cat "$evidence/SOURCE_HEAD")" = "$GITHUB_SHA"
+
+          cat > "$evidence/selection.tsv" <<'EOF'
+          tools::managed_browser::tests::controlled_install_publishes_marker_resolves_and_is_idempotent	neothd/src/tools/managed_browser.rs
+          tools::managed_browser::tests::controlled_zip_fixture_extracts_only_the_expected_root_and_executable	neothd/src/tools/managed_browser.rs
+          tools::managed_browser::tests::controlled_zip_fixture_rejects_escape_and_case_collision_before_write	neothd/src/tools/managed_browser.rs
+          tools::managed_browser::tests::controlled_zip_fixture_rejects_excessive_member_inventory	neothd/src/tools/managed_browser.rs
+          tools::managed_browser::tests::exact_marker_and_executable_resolve_and_revalidate	neothd/src/tools/managed_browser.rs
+          tools::managed_browser::tests::missing_generation_fails_closed_without_ambient_fallback	neothd/src/tools/managed_browser.rs
+          tools::managed_browser::tests::replaced_published_generation_fails_identity_confirmation_without_cleanup	neothd/src/tools/managed_browser.rs
+          tools::managed_browser::tests::replaced_stage_binding_refuses_cleanup_without_deleting_foreign_tree	neothd/src/tools/managed_browser.rs
+          skills::store::tests::windows_verbatim_local_disk_root_remains_capability_walkable	neothd/src/skills/store.rs
+          skills::store::tests::windows_unc_and_device_prefixes_remain_outside_local_capability_walks	neothd/src/skills/store.rs
+          cli::memory::tests::physical_redaction_authenticated_sealed_leaf_rebinds_and_receipts_without_generic_marker	neothd/src/cli/memory.rs
+          cli::memory::tests::physical_redaction_restart_delivers_published_leaf_without_reapplying_payload	neothd/src/cli/memory.rs
+          wal::redact::tests::stage_then_publish_authenticated_leaf_preserves_writer_marker_hmac	neothd/src/wal/redact.rs
+          wal::redact::tests::staged_leaf_in_independent_namespace_is_accepted_when_another_namespace_is_last	neothd/src/wal/redact.rs
+          skills::store::reported_commit_tests::private_stage_replaces_a_delete_sharing_bound_target_without_closing_it	neothd/src/skills/store.rs
+          skills::store::reported_commit_tests::private_stage_keeps_the_bound_parent_when_ambient_parent_is_swapped	neothd/src/skills/store.rs
+          EOF
+
+          : > "$evidence/source-bindings.tsv"
+          expected=0
+          selection_valid=1
+          while IFS=$'\t' read -r test_name source_path extra; do
+            if [[ -z "$test_name" || -z "$source_path" || -n "${extra:-}" || ! -f "$source_path" ]]; then
+              selection_valid=0
+              printf 'invalid-selection\t%s\t%s\n' "$test_name" "$source_path" >> "$evidence/source-bindings.tsv"
+              continue
+            fi
+            expected=$((expected + 1))
+            source_sha="$(sha256sum "$source_path" | awk '{print $1}')"
+            test -n "$source_sha"
+            printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
+          done < "$evidence/selection.tsv"
+          if [[ "$expected" -ne 16 ]]; then
+            selection_valid=0
+          fi
+          sha256sum Cargo.lock neothd/Cargo.toml "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
+
+          compile_status=0
+          if [[ "$selection_valid" -eq 1 ]]; then
+            cargo test -p neoth --lib --locked --no-run > "$evidence/compile.log" 2>&1 || compile_status=$?
+          else
+            compile_status=64
+            printf 'selection is not the required 16 readable exact test identities\n' > "$evidence/compile.log"
+          fi
+          total=0
+          listed=0
+          passed=0
+          failed=0
+          missing=0
+          : > "$evidence/results.tsv"
+
+          if [[ "$compile_status" -eq 0 ]]; then
+            index=0
+            while IFS=$'\t' read -r test_name source_path; do
+              index=$((index + 1))
+              total=$((total + 1))
+              log="$evidence/logs/$(printf '%02d' "$index").log"
+              list_status=0
+              cargo test -p neoth --lib --locked "$test_name" -- --exact --list > "$log" 2>&1 || list_status=$?
+              selected_count="$(grep -Fxc "$test_name: test" "$log" || true)"
+              if [[ "$list_status" -ne 0 || "$selected_count" -ne 1 ]]; then
+                missing=$((missing + 1))
+                printf '%02d\tmissing\t%s\t%s\n' "$index" "$test_name" "$source_path" >> "$evidence/results.tsv"
+                continue
+              fi
+              listed=$((listed + 1))
+              run_status=0
+              cargo test -p neoth --lib --locked "$test_name" -- --exact --test-threads=1 >> "$log" 2>&1 || run_status=$?
+              if [[ "$run_status" -eq 0 ]]; then
+                passed=$((passed + 1))
+                printf '%02d\tpassed\t%s\t%s\n' "$index" "$test_name" "$source_path" >> "$evidence/results.tsv"
+              else
+                failed=$((failed + 1))
+                printf '%02d\tfailed\t%s\t%s\n' "$index" "$test_name" "$source_path" >> "$evidence/results.tsv"
+              fi
+            done < "$evidence/selection.tsv"
+          fi
+
+          printf 'expected=%s\nselection_valid=%s\ncompile_status=%s\ntotal=%s\nlisted=%s\npassed=%s\nfailed=%s\nmissing=%s\n' \
+            "$expected" "$selection_valid" "$compile_status" "$total" "$listed" "$passed" "$failed" "$missing" > "$evidence/final-counts.txt"
+          sha256sum "$evidence/compile.log" > "$evidence/log-sha256sums.txt"
+          while IFS= read -r -d '' log; do
+            sha256sum "$log" >> "$evidence/log-sha256sums.txt"
+          done < <(find "$evidence/logs" -type f -name '*.log' -print0 | sort -z)
+          sha256sum "$evidence/SOURCE_HEAD" "$evidence/selection.tsv" "$evidence/source-bindings.tsv" "$evidence/input-sha256sums.txt" "$evidence/results.tsv" "$evidence/final-counts.txt" "$evidence/log-sha256sums.txt" > "$evidence/evidence-sha256sums.txt"
+          printf 'compile_status=%s\n' "$compile_status" >> "$GITHUB_OUTPUT"
+          if [[ "$selection_valid" -ne 1 || "$compile_status" -ne 0 || "$total" -ne "$expected" || "$listed" -ne "$expected" || "$failed" -ne 0 || "$missing" -ne 0 ]]; then
+            exit 1
+          fi
+
+      - name: Save completed Cargo registry and target cache
+        if: ${{ always() && !cancelled() && steps.regression-run.outputs.compile_status == '0' && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+      - name: Save interrupted Cargo registry and target cache
+        if: ${{ always() && !cancelled() && steps.regression-run.outputs.compile_status != '0' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Upload Windows regression evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-storage-regressions-${{ github.sha }}
+          path: ${{ runner.temp }}/windows-storage-regressions/
+          if-no-files-found: warn
+          retention-days: 14

@@ -372,7 +372,7 @@ impl PeerStreamRegistry {
             || grant.stable_node_id() != &route.stable_node_id
             || &stable_node_id != &route.stable_node_id
             || grant.transport_identity() != &route.transport_identity
-            || grant.membership_epoch() != config.membership_epoch
+            || grant.membership_epoch().get() != config.membership_epoch
             || config.voters.get(&route.stable_node_id) != Some(&route.transport_identity)
             || grant.revalidate(now).is_err()
         {

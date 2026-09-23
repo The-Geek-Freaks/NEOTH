@@ -6,7 +6,10 @@ use super::store::open;
 use super::types::{BudgetClusterConfig, BudgetCommand, BudgetGrantId, BudgetReply, ReserveBudget};
 use crate::cluster::membership::{StableNodeId, TransportIdentity};
 use openraft::storage::{RaftLogStorage, RaftStateMachine};
-use openraft::{CommittedLeaderId, Entry, EntryPayload, LogId, Membership, StoredMembership, Vote};
+use openraft::{
+    CommittedLeaderId, Entry, EntryPayload, LogId, Membership, RaftSnapshotBuilder,
+    StoredMembership, Vote,
+};
 use std::collections::BTreeMap;
 use std::io::SeekFrom;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};

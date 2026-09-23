@@ -1,7 +1,8 @@
-//! GOLD-LF-P2-26a — executable producer proof for the post-provider stream
-//! gate.  This exercises the real hook dispatcher and the exact framing seam
-//! used by `run_post_reply_pipelines`; it deliberately avoids source-text
-//! assertions and does not need a networked provider.
+//! GOLD-LF-P2-26a — authenticated framing contract for accepted post-provider
+//! bytes. The real multi-chunk producer and hook gate are covered by the
+//! hermetic `cli::chat` regression, where its event sink can be observed.
+//! This integration contract keeps the public framing helpers independently
+//! pinned without claiming that direct helper calls exercised that producer.
 
 use std::time::Duration;
 
@@ -79,9 +80,9 @@ fn post_provider_block_emits_zero_deltas_boundaries_or_success() {
 
     assert!(matches!(blocked, StageOutcome::Block { .. }));
 
-    // `run_post_reply_pipelines` bails on this real StageOutcome before it
-    // reaches the only deferred producer seam.  Keep the writer untouched to
-    // prove that no raw chunk, boundary, or terminal success is emitted.
+    // The real producer regression verifies this outcome short-circuits its
+    // captured sink. This contract pins the dispatch result itself and keeps
+    // this direct framing test honest: no producer was invoked here.
     let output = Vec::<u8>::new();
     assert!(output.is_empty());
     assert!(

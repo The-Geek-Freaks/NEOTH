@@ -21,8 +21,8 @@ use crate::cli::OutputFormat;
 use crate::cluster::{LeastLoaded, LocalOnly, OrchestratingPolicy, PeerLoad, RoutingDecision};
 use crate::config::credentials::Credentials;
 use crate::config::{
-    ClusterAnnouncePolicy, ClusterConfig, ClusterGossipPolicy, ClusterMdnsConfig, ClusterTransport,
-    FreedomConfig,
+    BudgetRaftConfig, ClusterAnnouncePolicy, ClusterConfig, ClusterGossipPolicy,
+    ClusterMdnsConfig, ClusterTransport, FreedomConfig,
 };
 use crate::secret::SecretString;
 
@@ -545,7 +545,7 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
             listen_port,
             passphrase_stdin,
         } => {
-            let desired = build_cluster_config(
+            let mut desired = build_cluster_config(
                 enabled,
                 name,
                 &transport,
@@ -557,6 +557,7 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
                 replay_budget_days,
                 listen_port,
             )?;
+            bind_existing_budget_raft_at(&FreedomConfig::default_neoth_home(), &mut desired)?;
             let passphrase = passphrase_stdin
                 .then(read_cluster_passphrase_from_stdin)
                 .transpose()?;
@@ -2157,6 +2158,8 @@ struct ClusterConfigureSnapshot {
     policy: ClusterConfigurePolicyReceipt,
     #[serde(default)]
     gossip: ClusterConfigureGossipReceipt,
+    #[serde(default)]
+    budget_raft: BudgetRaftConfig,
     listen_port: u16,
 }
 
@@ -2178,6 +2181,7 @@ impl From<&ClusterConfig> for ClusterConfigureSnapshot {
                 replicate_raw_ingress: config.gossip.replicate_raw_ingress,
                 replay_budget_days: config.gossip.replay_budget_days,
             },
+            budget_raft: config.budget_raft.clone(),
             listen_port: config.listen_port,
         }
     }
@@ -2675,10 +2679,22 @@ fn build_cluster_config(
             replicate_raw_ingress,
             replay_budget_days,
         },
+        budget_raft: BudgetRaftConfig::default(),
         listen_port,
     };
     validate_configure_cluster(&config)?;
     Ok(config)
+}
+
+/// Generic configure owns the legacy public transport fields but has no
+/// budget-Raft flags. Bind the current complete budget policy before applying
+/// that generic snapshot so ordinary peer or mDNS edits cannot disable, erase,
+/// or hide a separately configured fixed-voter authority.
+fn bind_existing_budget_raft_at(home: &Path, config: &mut ClusterConfig) -> Result<()> {
+    config.budget_raft = FreedomConfig::load_from_path(&home.join("freedom.yaml"))?
+        .cluster
+        .budget_raft;
+    validate_configure_cluster(config)
 }
 
 fn validate_configure_cluster(config: &ClusterConfig) -> Result<()> {
@@ -2808,6 +2824,7 @@ where
     let freedom_path = home.join("freedom.yaml");
     let credentials_path = home.join("credentials.yaml");
     let desired_snapshot = ClusterConfigureSnapshot::from(&desired);
+    let bound_budget_raft = desired.budget_raft.clone();
     let _runtime_state_lock = crate::util::locked_file::lock_file_blocking(
         &home.join(CLUSTER_RUNTIME_STATE_LOCK_NAME),
         "cluster runtime state",
@@ -2832,10 +2849,15 @@ where
         );
         write_cluster_runtime_state(home, &blocked)?;
         let desired_for_update = desired.clone();
+        let bound_budget_raft_for_update = bound_budget_raft.clone();
         let cluster_passphrase_set = match Credentials::update_with_freedom_at(
             &freedom_path,
             &credentials_path,
             move |config, credentials| {
+                anyhow::ensure!(
+                    config.cluster.budget_raft == bound_budget_raft_for_update,
+                    "cluster.budget_raft changed after generic configure bound its current policy; refusing to overwrite it"
+                );
                 config.cluster = desired_for_update;
                 credentials.cluster_passphrase = Some(passphrase);
                 ensure_enabled_cluster_identity(config, credentials)?;
@@ -2872,6 +2894,7 @@ where
         // cannot slip between those two operations.
         let desired_for_plan = desired.clone();
         let desired_snapshot_for_plan = desired_snapshot.clone();
+        let bound_budget_raft_for_plan = bound_budget_raft.clone();
         let freedom_path_for_plan = freedom_path.clone();
         let existing_runtime_state_for_plan = existing_runtime_state.clone();
         let update = crate::config::update_raw_freedom_with_effective_credentials_at(
@@ -2885,6 +2908,10 @@ where
                 let current: FreedomConfig = serde_yaml::from_str(source).with_context(|| {
                     format!("parse YAML at {}", freedom_path_for_plan.display())
                 })?;
+                anyhow::ensure!(
+                    current.cluster.budget_raft == bound_budget_raft_for_plan,
+                    "cluster.budget_raft changed after generic configure bound its current policy; refusing to overwrite it"
+                );
                 let public_config_changed =
                     ClusterConfigureSnapshot::from(&current.cluster) != desired_snapshot_for_plan;
 
@@ -4601,6 +4628,7 @@ mod tests {
                 trusted_ssids: vec!["Office, East".to_string()],
             },
             gossip: crate::config::ClusterGossipPolicy::default(),
+            budget_raft: BudgetRaftConfig::default(),
             listen_port: 51_234,
         };
         write_test_freedom(home, &config);
@@ -4618,6 +4646,111 @@ mod tests {
         assert_eq!(
             ClusterConfigureSnapshot::from(&disabled),
             ClusterConfigureSnapshot::from(&config.cluster)
+        );
+    }
+
+    #[test]
+    fn generic_configure_preserves_budget_policy_in_apply_and_readback_snapshot() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        let budget = BudgetRaftConfig {
+            enabled: false,
+            cap_usd_nanos: 99,
+            utc_window: 20_260_923,
+            membership_epoch: 7,
+            voters: vec![
+                crate::config::BudgetRaftVoterConfig {
+                    stable_node_id: "1".repeat(64),
+                    peeroxide_key: "a".repeat(64),
+                },
+                crate::config::BudgetRaftVoterConfig {
+                    stable_node_id: "2".repeat(64),
+                    peeroxide_key: "b".repeat(64),
+                },
+                crate::config::BudgetRaftVoterConfig {
+                    stable_node_id: "3".repeat(64),
+                    peeroxide_key: "c".repeat(64),
+                },
+            ],
+        };
+        let mut current = FreedomConfig::default();
+        current.cluster.budget_raft = budget.clone();
+        write_test_freedom(home, &current);
+
+        let mut desired = build_cluster_config(
+            false,
+            Some("ordinary-peer-edit".to_string()),
+            "peeroxide",
+            r#"["peer-a"]"#,
+            true,
+            false,
+            "[]",
+            false,
+            30,
+            crate::config::DEFAULT_CLUSTER_LISTEN_PORT,
+        )
+        .expect("build generic configure snapshot");
+        bind_existing_budget_raft_at(home, &mut desired)
+            .expect("bind existing budget policy to generic configure");
+        let receipt = configure_cluster_at_with_reload(home, desired, None, |_| Ok(()))
+            .expect("apply generic configure");
+
+        assert_eq!(receipt.cluster.budget_raft, budget);
+        assert_eq!(
+            FreedomConfig::load_from_path(&home.join("freedom.yaml"))
+                .expect("readback applied configuration")
+                .cluster
+                .budget_raft,
+            budget
+        );
+    }
+
+    #[test]
+    fn generic_configure_rejects_budget_drift_before_public_only_commit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        let mut current = FreedomConfig::default();
+        write_test_freedom(home, &current);
+
+        let mut desired = ClusterConfig::default();
+        bind_existing_budget_raft_at(home, &mut desired).expect("bind initial budget policy");
+        current.cluster.budget_raft.cap_usd_nanos = 1;
+        write_test_freedom(home, &current);
+        let before = std::fs::read(home.join("freedom.yaml")).expect("read drifted policy");
+
+        let error = configure_cluster_at_with_reload(home, desired, None, |_| Ok(()))
+            .expect_err("drifted budget policy must reject generic configure");
+        assert!(format!("{error:#}").contains("budget_raft changed"));
+        assert_eq!(
+            std::fs::read(home.join("freedom.yaml")).expect("read after rejected configure"),
+            before
+        );
+    }
+
+    #[test]
+    fn generic_configure_rejects_budget_drift_before_passphrase_commit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        let mut current = FreedomConfig::default();
+        write_test_freedom(home, &current);
+
+        let mut desired = ClusterConfig::default();
+        bind_existing_budget_raft_at(home, &mut desired).expect("bind initial budget policy");
+        current.cluster.budget_raft.membership_epoch = 1;
+        write_test_freedom(home, &current);
+        let before = std::fs::read(home.join("freedom.yaml")).expect("read drifted policy");
+
+        let error = configure_cluster_at_with_reload(
+            home,
+            desired,
+            Some(SecretString::new("replacement-passphrase".to_string())),
+            |_| Ok(()),
+        )
+        .expect_err("drifted budget policy must reject passphrase configure");
+        assert!(format!("{error:#}").contains("budget_raft changed"));
+        assert_eq!(
+            std::fs::read(home.join("freedom.yaml")).expect("read after rejected configure"),
+            before
         );
     }
 

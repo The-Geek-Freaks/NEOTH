@@ -8926,26 +8926,43 @@ pub(super) async fn run_post_reply_pipelines(
 }
 
 pub async fn run_chat_with(
+    args: ChatArgs,
+    config: FreedomConfig,
+    provider: &dyn crate::providers::Provider,
+) -> Result<()> {
+    let mut output = CliChatOutput;
+    run_chat_with_to(args, config, provider, &mut output).await
+}
+
+/// Run the direct chat producer through an injected presentation sink.
+///
+/// Production owns this sink through [`CliChatOutput`]. Keeping the body
+/// shared lets hermetic regressions observe the actual provider, hook, WAL
+/// drain, and deferred-terminal ordering without replacing the producer with
+/// hand-written frames.
+#[doc(hidden)]
+pub(crate) async fn run_chat_with_to(
     mut args: ChatArgs,
     config: FreedomConfig,
     provider: &dyn crate::providers::Provider,
+    output: &mut dyn ChatTurnEventSink,
 ) -> Result<()> {
     // Public alternate ingress: use the same terminal local-action dispatcher
     // before this helper can create a WAL writer or call the supplied provider.
     admit_incognito_turn_before_runtime(&mut args).await?;
-    let mut pre_runtime_output = CliChatOutput;
     if !args.incognito
-        && dispatch_pre_runtime_local_action(&mut args, &mut pre_runtime_output).await?
+        && dispatch_pre_runtime_local_action(&mut args, output).await?
     {
         return Ok(());
     }
-    run_chat_with_consent(
+    run_chat_with_consent_to(
         args,
         config,
         provider,
         crate::consent::EphemeralConsent::default(),
         None,
         crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
+        output,
     )
     .await
 }
@@ -8999,6 +9016,27 @@ async fn run_chat_with_consent(
     cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
 ) -> Result<()> {
     let mut output = CliChatOutput;
+    run_chat_with_consent_to(
+        args,
+        config,
+        provider,
+        ephemeral_consent,
+        stream_control_token,
+        cancellation,
+        &mut output,
+    )
+    .await
+}
+
+async fn run_chat_with_consent_to(
+    args: ChatArgs,
+    config: FreedomConfig,
+    provider: &dyn crate::providers::Provider,
+    ephemeral_consent: crate::consent::EphemeralConsent,
+    stream_control_token: Option<Zeroizing<String>>,
+    cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    output: &mut dyn ChatTurnEventSink,
+) -> Result<()> {
     let wal_segment = args.wal_segment.clone(); // direct CLI custody; never enters prepared engine
     let chat_turn_pipeline::ChatPreparationOutcome::Ready(mut prepared) = prepare_cli_chat_turn(
         args,
@@ -9007,7 +9045,7 @@ async fn run_chat_with_consent(
         ephemeral_consent,
         stream_control_token,
         cancellation,
-        &mut output,
+        output,
     )
     .await?
     else {
@@ -9030,7 +9068,7 @@ async fn run_chat_with_consent(
         provider,
         &writer,
         &segment_path,
-        &mut output,
+        output,
     )
     .await;
     prepared.preparation.cancellation.close();
@@ -9052,7 +9090,7 @@ async fn run_chat_with_consent(
         drained,
         &mut prepared.deferred_failure_output,
         &mut prepared.deferred_terminal,
-        &mut output,
+        output,
         &response_feedback_home,
         response_feedback_incognito,
         response_feedback_token,
@@ -21216,7 +21254,7 @@ modes:
             ) -> Result<ChunkStream> {
                 let chunks: Vec<Result<CompletionChunk>> = vec![
                     Ok(CompletionChunk {
-                        delta: "hello ".into(),
+                        delta: "first ordinary chunk; ".into(),
                         done: false,
                         termination: Default::default(),
                         identity: Default::default(),
@@ -21226,7 +21264,7 @@ modes:
                         cache_read_tokens: None,
                     }),
                     Ok(CompletionChunk {
-                        delta: "world".into(),
+                        delta: "sk-w458-never-visible".into(),
                         done: false,
                         termination: Default::default(),
                         identity: Default::default(),
@@ -21236,7 +21274,7 @@ modes:
                         cache_read_tokens: None,
                     }),
                     Ok(CompletionChunk {
-                        delta: String::new(),
+                        delta: "; third ordinary chunk".into(),
                         done: true,
                         termination: crate::providers::ProviderTermination::refused(
                             Some("content_filter".into()),
@@ -21256,8 +21294,23 @@ modes:
         }
 
         let dir = tempdir().unwrap();
-        let seg = canonical_test_wal(dir.path(), "chat-stream");
+        let blocked_seg = canonical_test_wal(dir.path(), "chat-stream-blocked");
+        let seg = canonical_test_wal(dir.path(), "chat-stream-replaced");
         crate::consent::grant(dir.path(), ProviderKind::ClaudeCli).unwrap();
+        std::fs::create_dir_all(dir.path().join("hooks")).unwrap();
+        std::fs::write(
+            dir.path().join("hooks").join("w458.toml"),
+            r#"
+name = "w458-post-provider-block"
+stage = "post_provider_call"
+[matcher]
+pattern = "sk-w458-never-visible"
+[action]
+kind = "block"
+reason = "synthetic secret"
+"#,
+        )
+        .unwrap();
         let config = FreedomConfig {
             operator_id: Some("alice".into()),
             language_primary: None,
@@ -21316,7 +21369,7 @@ modes:
             system: None,
             edit: false,
             config: Some(dir.path().join("freedom.yaml")),
-            wal_segment: Some(seg.clone()),
+            wal_segment: Some(blocked_seg),
             stream: true,
             show_reasoning: false,
             gui_consent_token_stdin: false,
@@ -21330,10 +21383,108 @@ modes:
             until: vec![],
         };
 
+        #[derive(Default)]
+        struct RecordingSink(Vec<ChatTurnEvent>);
+        impl ChatTurnEventSink for RecordingSink {
+            fn emit(&mut self, event: ChatTurnEvent) -> Result<()> {
+                self.0.push(event);
+                Ok(())
+            }
+        }
+
         RECOVERY_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
-        run_chat_with(args, config, &MockStreamProvider)
+        let mut blocked_output = RecordingSink::default();
+        let blocked = run_chat_with_consent_to(
+            args.clone(),
+            config.clone(),
+            &MockStreamProvider,
+            crate::consent::EphemeralConsent::default(),
+            Some(Zeroizing::new("w458-control-token".to_owned())),
+            crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
+            &mut blocked_output,
+        )
+        .await;
+        let blocked_error = blocked.expect_err("the real hook must block the buffered stream");
+        assert!(
+            format!("{blocked_error:#}").contains(
+                "hook `w458-post-provider-block` blocked the reply at post_provider_call: synthetic secret"
+            ),
+            "an unrelated preparation error is not post-provider block evidence"
+        );
+        assert!(
+            !blocked_output.0.iter().any(|event| matches!(event,
+                ChatTurnEvent::Output(ChatOutput::ProviderDelta { .. })
+                    | ChatTurnEvent::Output(ChatOutput::StreamDone { .. })
+                    | ChatTurnEvent::Terminal(_)
+            )),
+            "Block must expose no delta, boundary, or completion to the real sink"
+        );
+        assert!(
+            !format!("{:?}", blocked_output.0).contains("sk-w458-never-visible"),
+            "the synthetic secret may not reach the captured presentation sink"
+        );
+
+        std::fs::write(
+            dir.path().join("hooks").join("w458.toml"),
+            r#"
+name = "w458-post-provider-replace"
+stage = "post_provider_call"
+[matcher]
+pattern = "sk-w458-never-visible"
+[action]
+kind = "replace"
+template = "[REDACTED]"
+"#,
+        )
+        .unwrap();
+        let mut args = args;
+        args.wal_segment = Some(seg.clone());
+        let mut output = RecordingSink::default();
+        run_chat_with_consent_to(
+            args,
+            config,
+            &MockStreamProvider,
+            crate::consent::EphemeralConsent::default(),
+            Some(Zeroizing::new("w458-control-token".to_owned())),
+            crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
+            &mut output,
+        )
             .await
-            .expect("streaming run");
+            .expect("replacement streaming run");
+        let visible = output
+            .0
+            .iter()
+            .filter_map(|event| match event {
+                ChatTurnEvent::Output(ChatOutput::ProviderDelta { text, .. }) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(visible, ["first ordinary chunk; [REDACTED]; third ordinary chunk"]);
+        let done_lines = output
+            .0
+            .iter()
+            .filter_map(|event| match event {
+                ChatTurnEvent::Output(ChatOutput::StreamDone { line, .. }) => Some(line.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(done_lines.len(), 1, "Replace commits exactly one terminal receipt");
+        let done: serde_json::Value = serde_json::from_str(done_lines[0]).unwrap();
+        let expected_hash = stream_content_hash(visible[0]);
+        assert_eq!(done["count"], 1);
+        assert_eq!(done["content_hash"], expected_hash);
+        assert_eq!(
+            done["finalization_receipt"],
+            stream_finalization_receipt(done["request_id"].as_str().unwrap(), 1, &expected_hash)
+        );
+        assert!(matches!(
+            output.0.last(),
+            Some(ChatTurnEvent::Terminal(chat_turn_pipeline::ChatTurnTerminal::Complete { .. }))
+        ));
+        assert!(
+            !format!("{:?}", output.0).contains("sk-w458-never-visible"),
+            "Replace may expose only the accepted bytes to the real sink"
+        );
         assert_eq!(
             RECOVERY_CALLS.load(std::sync::atomic::Ordering::SeqCst),
             0,
@@ -21463,7 +21614,7 @@ modes:
         );
         assert!(permission_index.unwrap() < trust_index && trust_index < request_index.unwrap());
         assert!(request_index.unwrap() < response_index.unwrap());
-        assert_eq!(chunk_count, 2);
+        assert_eq!(chunk_count, 3);
         assert_eq!(
             reasoning_audits.len(),
             1,

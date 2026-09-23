@@ -595,8 +595,8 @@ pub async fn spawn_discovery_with_wal(
     reload_controller: Arc<crate::config::reload::ReloadController>,
     neoth_home: std::path::PathBuf,
     dispatch_tx: Option<tokio::sync::mpsc::Sender<ClusterTaskJob>>,
-    /// Recovered budget authority, if the runtime has enabled the fixed-voter
-    /// budget mode. `None` means budget frames are not accepted.
+    // Recovered budget authority, if the runtime has enabled the fixed-voter
+    // budget mode. `None` means budget frames are not accepted.
     budget_carrier: Option<Arc<BudgetPeerCarrier>>,
 ) -> Result<SwarmHandle> {
     let topic = derive_topic(cluster_name);
@@ -2498,9 +2498,10 @@ pub fn handle_inbound_frame(
         FrameBody::TaskDelegate(_)
         | FrameBody::TaskResult(_)
         | FrameBody::Gossip(_)
-        | FrameBody::GossipAck(_) => {
+        | FrameBody::GossipAck(_)
+        | FrameBody::BudgetRaft(_) => {
             anyhow::bail!(
-                "task/gossip frame reached sync handle_inbound_frame — must be intercepted in the session loop"
+                "task/gossip/budget frame reached sync handle_inbound_frame — must be intercepted in the session loop"
             );
         }
     }

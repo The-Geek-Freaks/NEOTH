@@ -131,13 +131,13 @@ impl BudgetMembershipValidator for DurableBudgetMembershipValidator {
             .map_err(inbound_unavailable)?;
         let expected_transport = expected
             .voters
-            .get(&peer.stable_node_id)
+            .get(peer.stable_node_id())
             .ok_or(BudgetInboundError::AuthenticationMismatch)?;
-        if peer.membership_epoch != expected.membership_epoch
-            || &peer.transport_identity != expected_transport
+        if peer.membership_epoch() != expected.membership_epoch
+            || peer.transport_identity() != expected_transport
             || !snapshot_has_current_binding(
                 &snapshot,
-                &peer.stable_node_id,
+                peer.stable_node_id(),
                 expected_transport,
                 crate::time::now_unix_i64(),
             )

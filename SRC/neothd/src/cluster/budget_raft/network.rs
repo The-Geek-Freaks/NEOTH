@@ -120,7 +120,7 @@ pub struct BudgetRaftNetwork {
     request_timeout: Duration,
 }
 
-#[async_trait]
+#[openraft::add_async_trait]
 impl RaftNetworkFactory<BudgetTypeConfig> for BudgetRaftNetworkFactory {
     type Network = BudgetRaftNetwork;
 
@@ -133,7 +133,7 @@ impl RaftNetworkFactory<BudgetTypeConfig> for BudgetRaftNetworkFactory {
     }
 }
 
-#[async_trait]
+#[openraft::add_async_trait]
 impl RaftNetwork<BudgetTypeConfig> for BudgetRaftNetwork {
     async fn append_entries(
         &mut self,

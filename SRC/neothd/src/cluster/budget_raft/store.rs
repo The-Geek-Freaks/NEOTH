@@ -11,7 +11,7 @@ use super::types::{BudgetClusterConfig, BudgetRejection, BudgetReply};
 use anyhow::{Context, Result, anyhow, bail};
 use openraft::storage::{LogFlushed, RaftLogStorage, RaftStateMachine, Snapshot};
 use openraft::{
-    Entry, EntryPayload, ErrorSubject, ErrorVerb, LogId, LogState, RaftLogReader,
+    AnyError, Entry, EntryPayload, ErrorSubject, ErrorVerb, LogId, LogState, RaftLogReader,
     RaftSnapshotBuilder, SnapshotMeta, StorageError, StorageIOError, StoredMembership, Vote,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -213,7 +213,7 @@ impl BudgetRaftStore {
         F: FnOnce(&mut Connection) -> Result<T> + Send + 'static,
     {
         self.blocking(f).await.map_err(|e| StorageError::IO {
-            source: StorageIOError::new(subject, verb, e),
+            source: StorageIOError::new(subject, verb, AnyError::new(&e)),
         })
     }
 }
@@ -610,7 +610,7 @@ impl RaftStateMachine<BudgetTypeConfig> for BudgetRaftStore {
         snapshot: Box<BudgetSnapshotData>,
     ) -> Result<(), StorageError<u64>> {
         let meta = meta.clone();
-        let bytes = snapshot.into_inner();
+        let bytes = (*snapshot).into_bytes();
         self.storage(ErrorSubject::Snapshot(Some(meta.signature())), ErrorVerb::Write, move |conn| {
             if bytes.len() > MAX_BUDGET_SNAPSHOT_BYTES { bail!("received budget raft snapshot exceeds byte bound"); }
             let (last, membership, ledger): (Option<LogId<u64>>, StoredMembership<u64, openraft::BasicNode>, BudgetLedger) = from_json(&bytes).context("decode budget raft snapshot")?;
