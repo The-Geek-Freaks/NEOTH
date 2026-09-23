@@ -359,12 +359,9 @@ fn resolve_from_manifest(
 
     let managed_root_name = OsString::from(MANAGED_BROWSER_DIR);
     let managed_root_display = home.physical_display_path.join(&managed_root_name);
-    let (managed_root, managed_root_binding) = open_bound_real_child_dir(
-        &home.dir,
-        &managed_root_name,
-        &managed_root_display,
-    )
-    .context("resolve managed-browser root beneath explicit home")?;
+    let (managed_root, managed_root_binding) =
+        open_bound_real_child_dir(&home.dir, &managed_root_name, &managed_root_display)
+            .context("resolve managed-browser root beneath explicit home")?;
 
     let generations_name = OsString::from(GENERATIONS_DIR);
     let generations_display = managed_root_display.join(&generations_name);

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T11:21:28.8548924Z",
-  "validationStatus": "Group721 admitted711/721; independently reviewed migration/research/browser/Dream fixes pending hosted rerun",
+  "capturedUtc": "2026-09-23T11:23:55.1068542Z",
+  "validationStatus": "W367-370 reviewed repairs; source/hash-bound hosted rustfmt imported; behavior rerun pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2948,8 +2948,8 @@
     },
     {
       "path": "SRC/neothd/src/tools/managed_browser.rs",
-      "bytes": 64759,
-      "sha256": "A16E2C5A79B1B5F5D87183DF7BA25541AFF98E0F1FC981A5C16CCD9ECDBD36B0"
+      "bytes": 64744,
+      "sha256": "4074A3FDA444320F8BB1978AF53D8EBFDB889F51CC233FE4BB63BBE2B9C66C82"
     },
     {
       "path": "SRC/neothd/src/tools/mod.rs",
@@ -3083,8 +3083,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",
-      "bytes": 430224,
-      "sha256": "007EA3B9FDB18D0866A333E7DC5DEC9A818B5BA318E6174C08364B11FB563E2C"
+      "bytes": 430268,
+      "sha256": "3BAE7D89A6504CD058818CCD25538D3545EEAAF27AB4FE99AB11FAC0E404FBCB"
     },
     {
       "path": "SRC/neothd/src/wiki/ingest.rs",

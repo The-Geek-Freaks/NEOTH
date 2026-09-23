@@ -5036,7 +5036,10 @@ async fn run_writer(
                 _ => false,
             };
             let expected_payload = once.expected.encode();
-            if !homes_match || !is_dream_audit_header(&req.header) || expected_payload != req.payload {
+            if !homes_match
+                || !is_dream_audit_header(&req.header)
+                || expected_payload != req.payload
+            {
                 once.finish(Err(
                     crate::wal::dream_receipts::DreamAuditOnceError::Indeterminate,
                 ));
