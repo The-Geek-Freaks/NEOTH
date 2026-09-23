@@ -2,6 +2,13 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W399 hosted format follow-up (2026-09-23):** The one-file rustfmt import
+from Preflight9fd35864805512 is verified against its exact source, artifact
+digest and both Git blobs. Only test-import order changes. Core9fd35864804945
+continues; new Preflight verifies this formatting and the BGE acceptance
+contracts. Inventory673;Road1028checked/294open/2partial;WS-LF21done/97open.
+No local executable validation ran.
+
 **W395 BGE acceptance and W399 WAL test-compile repair (2026-09-23):**
 P2-24 is accepted with25/25 required source-bound PASS terminals:16native in
 Group780e5,7GUI in GUI135216 and2official-model cases in BGE216. Independent

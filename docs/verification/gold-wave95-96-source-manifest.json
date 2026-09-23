@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T13:04:19.2012590Z",
-  "validationStatus": "P224 accepted25/25 functional cases; W399 test-only WAL compile repair static reviewed; hosted rerun pending",
+  "capturedUtc": "2026-09-23T13:07:53.7865615Z",
+  "validationStatus": "W399 exact-source hosted import order adopted; P224 accepted25cases; Core9fd and Group810 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -813,13 +813,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1170158,
-      "sha256": "ACFD49F6906122F50EEF0E87933067F0CB52A031BED911353C6FD4035D07B7A0"
+      "bytes": 1170574,
+      "sha256": "BAF2CA8922F708AF34CD238D3758606E3DB0EABDE8753BBBBC0C6618D6A91D94"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1767867,
-      "sha256": "905D8D0617E269EB8941CE859EF73E53A265EFBF2FEA75B024B1C690CCDA9387"
+      "bytes": 1768283,
+      "sha256": "05716ECCDB44C2E3B9A09B0719BD80FFEACB8F509DCE4C17A84DFE8BF287A04E"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -3368,8 +3368,8 @@
     },
     {
       "path": "docs/gold-wave399-leaf-fixture-compile.md",
-      "bytes": 946,
-      "sha256": "6CD128A0C4CAF25B0E9D13962BDB732905A7F4480BC663B444C0068B66AFF1F0"
+      "bytes": 1250,
+      "sha256": "A2FCB2B62972E8F34E9C394143FB7DDA231A53A2C8B71733C91491E18BBACED1"
     }
   ]
 }

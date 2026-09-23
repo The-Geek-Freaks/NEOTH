@@ -1494,11 +1494,11 @@ pub(crate) fn redaction_authorisation_message(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wal::{events, HeaderBuilder};
     use crate::wal::frame::{decode_frame, encode_frame};
     use crate::wal::hlc::Hlc;
     use crate::wal::segment_header::SegmentHeader;
     use crate::wal::types::{EventId, Importance, NodeId, SessionId};
+    use crate::wal::{HeaderBuilder, events};
 
     #[cfg(unix)]
     #[test]

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "P224 accepted25/25 functional cases; W399 test-only WAL compile repair static reviewed; hosted rerun pending",
+  "status": "W399 exact-source hosted import order adopted; P224 accepted25cases; Core9fd and Group810 pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 116995,
-    "sha256": "99D500A0B6036C930EB6C3DE9986AAF167A3BDC31A9C573D38E1EEDCE877A12C"
+    "bytes": 116985,
+    "sha256": "7327A0BA4EFDE152D07A9BFC0B5868E02BA0A49A55A5C9267E2A00B96D6E9D9B"
   },
   "sourceInputs": 673,
   "requiredNativeTests": [
@@ -6636,31 +6636,31 @@
     {
       "test": "wal::redact::tests::stage_then_publish_authenticated_leaf_preserves_writer_marker_hmac",
       "sourcePath": "SRC/neothd/src/wal/redact.rs",
-      "sourceSha256": "3792BCB0E5032296C83D483FB645EFAA3848FB1110C3C6559E7CEC2DAB477D6E",
+      "sourceSha256": "1D7B2369271ECC0A22AD45368037045F548445F072B27D179936CD0D5AA92085",
       "junitClass": "neoth"
     },
     {
       "test": "wal::redact::tests::staged_authenticated_leaf_refuses_a_replaced_target_without_overwriting_it",
       "sourcePath": "SRC/neothd/src/wal/redact.rs",
-      "sourceSha256": "3792BCB0E5032296C83D483FB645EFAA3848FB1110C3C6559E7CEC2DAB477D6E",
+      "sourceSha256": "1D7B2369271ECC0A22AD45368037045F548445F072B27D179936CD0D5AA92085",
       "junitClass": "neoth"
     },
     {
       "test": "wal::redact::tests::staged_authenticated_leaf_refuses_matched_structural_frame_byte_identically",
       "sourcePath": "SRC/neothd/src/wal/redact.rs",
-      "sourceSha256": "3792BCB0E5032296C83D483FB645EFAA3848FB1110C3C6559E7CEC2DAB477D6E",
+      "sourceSha256": "1D7B2369271ECC0A22AD45368037045F548445F072B27D179936CD0D5AA92085",
       "junitClass": "neoth"
     },
     {
       "test": "wal::redact::tests::staged_authenticated_predecessor_refuses_real_authenticated_rollover_successor",
       "sourcePath": "SRC/neothd/src/wal/redact.rs",
-      "sourceSha256": "3792BCB0E5032296C83D483FB645EFAA3848FB1110C3C6559E7CEC2DAB477D6E",
+      "sourceSha256": "1D7B2369271ECC0A22AD45368037045F548445F072B27D179936CD0D5AA92085",
       "junitClass": "neoth"
     },
     {
       "test": "wal::redact::tests::staged_leaf_in_independent_namespace_is_accepted_when_another_namespace_is_last",
       "sourcePath": "SRC/neothd/src/wal/redact.rs",
-      "sourceSha256": "3792BCB0E5032296C83D483FB645EFAA3848FB1110C3C6559E7CEC2DAB477D6E",
+      "sourceSha256": "1D7B2369271ECC0A22AD45368037045F548445F072B27D179936CD0D5AA92085",
       "junitClass": "neoth"
     },
     {
@@ -22163,6 +22163,20 @@
       }
     ],
     "note": "Core118 production Clippy passed/test-target8errors repaired. W394 hosted format1path hash/blob verified. P224 sources and individual terminals admitted, Road1028/294/2; no local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave399HostedFormat": {
+    "base": "9fdcefe7f67630c7b6b04be356854e72ec8c729c",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/wal/redact.rs",
+        "bytes": 123097,
+        "sha256": "1D7B2369271ECC0A22AD45368037045F548445F072B27D179936CD0D5AA92085",
+        "blob": "5d519f69baaa7c14e3ed1cdbb4c0bf7ca953e878"
+      }
+    ],
+    "note": "Preflight9fd35864805512 onepath verified source, SHA and both Git blobs; no local formatter or executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
