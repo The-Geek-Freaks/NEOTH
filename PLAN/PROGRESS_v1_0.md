@@ -2,6 +2,18 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W265 silence-watchdog acceptance (2026-09-23):** P1-21 is accepted from
+13 actual native terminals plus one GUI timeout-presentation terminal. Root
+verified all seven native caller/consumer files and the GUI presentation source
+are unchanged through0fb6c307; an independent review confirmed real pipeline
+progress wiring, 120-second silence semantics, cancellation races and visible
+typed retry guidance. No whole failed run or unrelated feature was accepted.
+P1-20 remains open under its explicit all-OS/current-candidate release gate.
+Current Road1324=1018checked/304open/2partial;WS-LF118=11done/107open;
+raw blockers306/release-tag blockers305. No local executable validation ran.
+See `docs/gold-wave265-watchdog-acceptance.md` and
+`docs/verification/gold-wave265-watchdog-acceptance.json`.
+
 **W262 Discord evidence / W264 actual paused-import refusal (2026-09-23):**
 The real default Discord Gateway reply sender now records an authenticated,
 account-bound intent before its adapter call and a terminal result afterward.
@@ -3930,7 +3942,7 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection and P2-29 live throughput accepted: **10 done / 108
+> closed with P2-10 registry injection, P2-29 throughput and P1-21 watchdog accepted: **11 done / 107
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

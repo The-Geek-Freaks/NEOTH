@@ -1,0 +1,55 @@
+{
+  "schema": "neoth-scoped-source-equivalence/v1",
+  "head": "0fb6c3076b35f94a0f8730ae046f051036a7c1cd",
+  "nativeBase": "85c87f57399f2b796dad4a127cb22cab562fa6ab",
+  "guiBase": "d99d5c6c2cb69eab0648364bf1ac158679a3ac21",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "gitBlob": "aa925462f5b33fde1a6ed1c608b1c1a0aa626377",
+      "sha256": "F5E984A23791E23CAB7CCAB8BE001DBD6C0655B19C1278E0FD1E8E4B81417032"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "gitBlob": "69481bdcd76ef6e2331cd7d2782b111821ef54d6",
+      "sha256": "6C1E0C6CB5E1D5A9B0B16F9C86F070B485F689A2BACD3C9CEADFA01B8591CB87"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
+      "gitBlob": "2ffcf34aa7502c3072979f05a32d74106caacee8",
+      "sha256": "09823D5CD5C173D108C15E54C87A5E00C762096384F144A0ECF97A95F0D50E75"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "gitBlob": "f2fab38a262e37332485ed6532ebea78dac38bf7",
+      "sha256": "FB50AC2FD7E3D2284C1C8F5004089EDA2AD528CB0302DBD66AD67E93EF4D5111"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_protocol.rs",
+      "gitBlob": "61eed62fee6896161f138d15e0f7d0a26eb721eb",
+      "sha256": "1BBA937022A88102837B547626621A3E9FB6BB7533B50C682BDB9ABCEBA608B3"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+      "gitBlob": "0dc7930134a767f1af2f0b3f69a8ed848e5d147c",
+      "sha256": "630BFAF6DD15B8DA0530B8A1EFEBC02C3D55C7F757CB7ED1C4CDC4EDC4D5AF6F"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat_turn_watchdog.rs",
+      "gitBlob": "eb45c7a3fbe88fc2bd138a8932c76dcef649d29e",
+      "sha256": "D70BB2E64A567FE1C9DC140D3F49AF89DCC49150E6CD3AF8509CFE5AC715685F"
+    },
+    {
+      "path": "SRC/neothd-gui/src/chat_stream_phase.rs",
+      "gitBlob": "c768af1745df268c2e45a4599ec7f423122c1bb5",
+      "sha256": "280F37D2500FE57CFA421F978D283ED749B52E9C72250B7119035C83BCEDA8F6"
+    }
+  ],
+  "unchanged": true,
+  "localExecutableValidationRan": false,
+  "nativeRun": 35808222289,
+  "guiRun": 35806202796,
+  "admittedNativeTerminals": 13,
+  "admittedGuiTerminals": 1,
+  "acceptance": "GOLD-LF-P1-21 only; unrelated failures retained; P1-20 allOS gate remains open"
+}

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T02:25:25.8412369Z",
-  "validationStatus": "W266 corrects actual strict private-interfaces error without widening startup authority; hosted rerun pending",
+  "capturedUtc": "2026-09-23T02:30:00.4284902Z",
+  "validationStatus": "P1-21 accepted13native+1GUI actual terminals on unchanged scoped sources; overall release gates remain open",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -438,18 +438,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 103160,
-      "sha256": "57CFCB8C4D681BBFBEEF3083591027CDCC40966D1AC7C007C6CEFF8CCDE81326"
+      "bytes": 103958,
+      "sha256": "766E0F6607C83BD058AF0E58101B8981CAE5BB9B6FF0C92982F38DE0A1A08BEF"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1106108,
-      "sha256": "4D3DEE564131D3246D715B4480E5CADADF103C5A7AED8662F4988740A9A3BD0B"
+      "bytes": 1106917,
+      "sha256": "17216FFA77E1BE60340788F424F39308893556714D3F7DD94734F15795BE228D"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1702038,
-      "sha256": "3680801E8D38450B443C795FC5F2734D699EDF1384CBBDF0E8BD1033026F2596"
+      "bytes": 1703137,
+      "sha256": "C93BCBB5446D16BA324F1B110EE35B913792EC3C90A32CD6976600DC74EEA637"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W266 corrects actual strict private-interfaces error without widening startup authority; hosted rerun pending",
+  "status": "P1-21 accepted13native+1GUI actual terminals on unchanged scoped sources; overall release gates remain open",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 93237,
-    "sha256": "6542C2D41DD9EABEFAA06061E48A49FBF94861976F44E7FA87312A7781DC93E1"
+    "bytes": 93235,
+    "sha256": "D2377248EC50B5B8DEDCCCFF550535BF93935BEA8308F3798445CDED5763146E"
   },
   "sourceInputs": 538,
   "requiredNativeTests": [
@@ -17224,6 +17224,13 @@
       }
     ],
     "note": "Core35809863646 fail private-interfaces; Discord new_inbound sole daemon caller now pub(crate), matching sealed provenance. No behavior/authority widening.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave265WatchdogAcceptance": {
+    "base": "0fb6c3076b35f94a0f8730ae046f051036a7c1cd",
+    "sources": [],
+    "note": "Eight Gitblob/SHA bindings unchanged through0fb; actual pipeline/meaningfulsignal/typedretry reviewed; P1-20 explicit allOS gate remains open.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

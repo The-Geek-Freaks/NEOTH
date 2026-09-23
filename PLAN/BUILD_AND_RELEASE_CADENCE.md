@@ -3,6 +3,18 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W265 silence-watchdog acceptance (2026-09-23):** P1-21 is accepted from
+13 actual native terminals plus one GUI timeout-presentation terminal. Root
+verified all seven native caller/consumer files and the GUI presentation source
+are unchanged through0fb6c307; an independent review confirmed real pipeline
+progress wiring, 120-second silence semantics, cancellation races and visible
+typed retry guidance. No whole failed run or unrelated feature was accepted.
+P1-20 remains open under its explicit all-OS/current-candidate release gate.
+Current Road1324=1018checked/304open/2partial;WS-LF118=11done/107open;
+raw blockers306/release-tag blockers305. No local executable validation ran.
+See `docs/gold-wave265-watchdog-acceptance.md` and
+`docs/verification/gold-wave265-watchdog-acceptance.json`.
+
 **W262 Discord evidence / W264 actual paused-import refusal (2026-09-23):**
 The real default Discord Gateway reply sender now records an authenticated,
 account-bound intent before its adapter call and a terminal result afterward.
