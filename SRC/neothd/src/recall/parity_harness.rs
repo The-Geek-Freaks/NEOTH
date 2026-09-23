@@ -588,10 +588,6 @@ impl RecallParityResumeStage {
 /// state, report, or provider request. A detached import receipt is optional so
 /// incomplete runs can be resumed; a ready result only authorizes the separate
 /// manual `attested-gate-report` transition.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "The status reader binds the same explicit inputs as every existing run reader"
-)]
 pub(crate) fn resume_status_with_context(
     run_dir: &Path,
     grader_config: &ValidatedGraderConfigFile,

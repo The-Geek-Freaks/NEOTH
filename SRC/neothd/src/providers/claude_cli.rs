@@ -599,6 +599,28 @@ async fn begin_effect_start_or_role_terminal(
     }
 }
 
+/// Recheck the live role policy at the immediate-before-send fence.  A retry
+/// has already minted its replacement request lifecycle at this point, so a
+/// revocation must close that admitted attempt through the bound retry receipt
+/// path rather than emitting an unbound generic failure.
+async fn ensure_role_dispatch_before_send_or_retry_terminal(
+    permit: &ProviderDispatchPermit,
+    req: &Request,
+) -> Result<()> {
+    if let Err(error) = permit.ensure_role_dispatch_before_send(req) {
+        if let Err(audit_error) = permit
+            .finish_retry_authorization_denied("role_dispatch_policy_changed")
+            .await
+        {
+            return Err(anyhow::anyhow!(
+                "role dispatch changed and send terminal audit failed: {audit_error}; provider error: {error}"
+            ));
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) async fn test_only_begin_effect_start_or_role_terminal(
     permit: &ProviderDispatchPermit,
@@ -606,6 +628,14 @@ pub(crate) async fn test_only_begin_effect_start_or_role_terminal(
     effect: super::PreparingEffect,
 ) -> Result<super::EffectStartLease> {
     begin_effect_start_or_role_terminal(permit, req, effect).await
+}
+
+#[cfg(test)]
+pub(crate) async fn test_only_ensure_role_dispatch_before_send_or_retry_terminal(
+    permit: &ProviderDispatchPermit,
+    req: &Request,
+) -> Result<()> {
+    ensure_role_dispatch_before_send_or_retry_terminal(permit, req).await
 }
 
 struct ManagedClaudeChild {
@@ -2117,14 +2147,7 @@ async fn complete_tmux_uncached(
         // Both the first and retry sends can wait for the tmux slot, cold
         // session creation and its initial prompt. Recheck only after that
         // work, immediately before reserving/sending the warm-pane effect.
-        if let Err(error) = permit.ensure_role_dispatch_before_send(&req) {
-            if let Err(audit_error) = permit.failure("role_dispatch_policy_changed").await {
-                return Err(anyhow::anyhow!(
-                    "role dispatch changed and send terminal audit failed: {audit_error}; provider error: {error}"
-                ));
-            }
-            return Err(error);
-        }
+        ensure_role_dispatch_before_send_or_retry_terminal(permit, &req).await?;
 
         let send_result = {
             let session = guard.as_ref().expect("session populated above");

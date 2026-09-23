@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Group4654162 admitted465/465; W275276 exactHostedformat imported; Core2b0/Group4842b0 pending",
+  "status": "W278 directretry rolefence reviewed; W276 unneededlintexpectation removed; Group489 selected pending; GUI8f16 122/124 actualcgrouproot EBUSY",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 96039,
-    "sha256": "93BEEAF7C6B549CDEB4F09DACBB5E4D3F72BAC2660292FCA4ADDC92D27002C63"
+    "bytes": 96260,
+    "sha256": "0ACD55E515E60D8DC758DF87D5CCE4F9E4AA4D45352C837393868AC75AD8E3DE"
   },
-  "sourceInputs": 555,
+  "sourceInputs": 556,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -1146,37 +1146,37 @@
     {
       "test": "providers::claude_cli::tests::parse_stream_event_extracts_cli_assistant_envelope",
       "sourcePath": "SRC/neothd/src/providers/claude_cli.rs",
-      "sourceSha256": "0150562E008A5AF562BC395AFAEEFF9FD22B33A3B4AD1DC047496F937702DAB3",
+      "sourceSha256": "DE388DBB05D896C6898037D4991EDD90315AAD3B789218FEF2AE36C197EB9629",
       "junitClass": "neoth"
     },
     {
       "test": "providers::claude_cli::tests::parse_stream_event_recognises_redacted_cli_reasoning_block",
       "sourcePath": "SRC/neothd/src/providers/claude_cli.rs",
-      "sourceSha256": "0150562E008A5AF562BC395AFAEEFF9FD22B33A3B4AD1DC047496F937702DAB3",
+      "sourceSha256": "DE388DBB05D896C6898037D4991EDD90315AAD3B789218FEF2AE36C197EB9629",
       "junitClass": "neoth"
     },
     {
       "test": "providers::claude_cli::tests::parsed_stream_json_strings_are_recursively_zeroized_after_extraction",
       "sourcePath": "SRC/neothd/src/providers/claude_cli.rs",
-      "sourceSha256": "0150562E008A5AF562BC395AFAEEFF9FD22B33A3B4AD1DC047496F937702DAB3",
+      "sourceSha256": "DE388DBB05D896C6898037D4991EDD90315AAD3B789218FEF2AE36C197EB9629",
       "junitClass": "neoth"
     },
     {
       "test": "providers::claude_cli::tests::cli_result_text_is_only_a_fallback_after_visible_assistant_content",
       "sourcePath": "SRC/neothd/src/providers/claude_cli.rs",
-      "sourceSha256": "0150562E008A5AF562BC395AFAEEFF9FD22B33A3B4AD1DC047496F937702DAB3",
+      "sourceSha256": "DE388DBB05D896C6898037D4991EDD90315AAD3B789218FEF2AE36C197EB9629",
       "junitClass": "neoth"
     },
     {
       "test": "providers::claude_cli::tests::parse_stream_event_extracts_native_thinking_delta_without_mixing_visible_text",
       "sourcePath": "SRC/neothd/src/providers/claude_cli.rs",
-      "sourceSha256": "0150562E008A5AF562BC395AFAEEFF9FD22B33A3B4AD1DC047496F937702DAB3",
+      "sourceSha256": "DE388DBB05D896C6898037D4991EDD90315AAD3B789218FEF2AE36C197EB9629",
       "junitClass": "neoth"
     },
     {
       "test": "providers::claude_cli::tests::parse_stream_event_extracts_reasoning_alias_delta",
       "sourcePath": "SRC/neothd/src/providers/claude_cli.rs",
-      "sourceSha256": "0150562E008A5AF562BC395AFAEEFF9FD22B33A3B4AD1DC047496F937702DAB3",
+      "sourceSha256": "DE388DBB05D896C6898037D4991EDD90315AAD3B789218FEF2AE36C197EB9629",
       "junitClass": "neoth"
     },
     {
@@ -4752,31 +4752,31 @@
     {
       "test": "providers::cost_authorization::role_dispatch_tests::configured_role_denial_blocks_raw_transport",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "390B11079EA9383DE47C451B5F59439CA66FD3A1DC538E5FC50FDF2FBCE23C41",
+      "sourceSha256": "76B710FFFE4F76F187A8E0E7359484F934EF18D0CD48EA408C84BEAEB6CF703E",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::role_dispatch_tests::allowed_council_leaf_returns_response_and_audits_typed_role_identity",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "390B11079EA9383DE47C451B5F59439CA66FD3A1DC538E5FC50FDF2FBCE23C41",
+      "sourceSha256": "76B710FFFE4F76F187A8E0E7359484F934EF18D0CD48EA408C84BEAEB6CF703E",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::role_dispatch_tests::resolved_leaf_model_outside_role_policy_is_denied_before_raw_transport",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "390B11079EA9383DE47C451B5F59439CA66FD3A1DC538E5FC50FDF2FBCE23C41",
+      "sourceSha256": "76B710FFFE4F76F187A8E0E7359484F934EF18D0CD48EA408C84BEAEB6CF703E",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::role_dispatch_tests::accepted_role_policy_reload_between_authorization_and_raw_send_is_blocked",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "390B11079EA9383DE47C451B5F59439CA66FD3A1DC538E5FC50FDF2FBCE23C41",
+      "sourceSha256": "76B710FFFE4F76F187A8E0E7359484F934EF18D0CD48EA408C84BEAEB6CF703E",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::role_dispatch_tests::non_council_leaf_ignores_a_closed_policy_without_role_binding",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "390B11079EA9383DE47C451B5F59439CA66FD3A1DC538E5FC50FDF2FBCE23C41",
+      "sourceSha256": "76B710FFFE4F76F187A8E0E7359484F934EF18D0CD48EA408C84BEAEB6CF703E",
       "junitClass": "neoth"
     },
     {
@@ -4926,7 +4926,7 @@
     {
       "test": "providers::cost_authorization::role_dispatch_tests::w225_effect_start_role_rejection_closes_admitted_retry_with_denial_receipt",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "390B11079EA9383DE47C451B5F59439CA66FD3A1DC538E5FC50FDF2FBCE23C41",
+      "sourceSha256": "76B710FFFE4F76F187A8E0E7359484F934EF18D0CD48EA408C84BEAEB6CF703E",
       "junitClass": "neoth"
     },
     {
@@ -5322,7 +5322,7 @@
     {
       "test": "recall::parity_harness::tests::local_anchor_revalidation_rejects_revoked_source_without_mutating_run",
       "sourcePath": "SRC/neothd/src/recall/parity_harness.rs",
-      "sourceSha256": "232ABB077EEBDB783592685ECBAB7B74FA4D779C634B40F507414041AFD65170",
+      "sourceSha256": "499257552F90781BF0F32E239753B842D33E34E5241605ADAE19072AB687A6DF",
       "junitClass": "neoth"
     },
     {
@@ -5377,6 +5377,12 @@
       "test": "cli::doctor::checks::providers::tests::account_transport_flapping_reader_error_is_fixed_unavailable_failure",
       "sourcePath": "SRC/neothd/src/cli/doctor/checks/providers.rs",
       "sourceSha256": "B89EE451B046E449B731E6CDF53FD6674F9115D768C58E96514A95D522A23BD7",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::cost_authorization::role_dispatch_tests::w278_immediate_before_send_role_rejection_closes_admitted_retry_with_denial_receipt",
+      "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+      "sourceSha256": "76B710FFFE4F76F187A8E0E7359484F934EF18D0CD48EA408C84BEAEB6CF703E",
       "junitClass": "neoth"
     }
   ],
@@ -17596,7 +17602,11 @@
       "self_improve::tests::w142_expected_evidence_digest_refuses_stale_gui_consent_before_mutation",
       "self_improve::tests::w142_re_evaluated_evidence_cannot_bypass_prior_expected_digest",
       "self_improve::tests::w142_stage_discards_imported_quality_evidence",
-      "cli::self_improve::tests::w275_cli_run_review_exact_digest_accept_readback_and_corpus_drift_refuses_before_mutation"
+      "cli::self_improve::tests::w275_cli_run_review_exact_digest_accept_readback_and_corpus_drift_refuses_before_mutation",
+      "self_improve::passive::tests::pending_or_malformed_stage_journal_is_unavailable_without_recovery_or_lock_creation",
+      "self_improve::passive::tests::final_recovery_probe_rejects_a_transition_observed_after_quality_projection",
+      "self_improve::passive::tests::strict_raw_proposals_preserve_exact_identity_and_shared_quality_readback",
+      "self_improve::passive::tests::altered_or_control_identity_makes_the_entire_snapshot_unavailable"
     ],
     "report": "docs/gold-wave275-self-improve-cli-acceptance.md",
     "localValidationRan": false,
@@ -17765,6 +17775,46 @@
       }
     ],
     "note": "Exact3path formatter receipt imported, methodology documents resume-status; Group4654162 everyterminal/103sourcebindings/matrixlock admitted.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave278RetryRoleReceiptAcceptance": {
+    "requiredTests": [
+      "providers::cost_authorization::role_dispatch_tests::w278_immediate_before_send_role_rejection_closes_admitted_retry_with_denial_receipt"
+    ],
+    "report": "docs/gold-wave278-retry-role-receipt.md",
+    "localValidationRan": false,
+    "hosted": "pending"
+  },
+  "wave278RetryAndW276LintSource": {
+    "base": "b16f90418cd44f0cc0f1db6208b69b1f1253cb23",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/providers/claude_cli.rs",
+        "bytes": 162805,
+        "sha256": "DE388DBB05D896C6898037D4991EDD90315AAD3B789218FEF2AE36C197EB9629",
+        "blob": "9d84773154120a593549b9d1853f55484db46077"
+      },
+      {
+        "path": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+        "bytes": 20622,
+        "sha256": "76B710FFFE4F76F187A8E0E7359484F934EF18D0CD48EA408C84BEAEB6CF703E",
+        "blob": "44ab5b13c35bfd25b14aacc7d8482eb7ff10015b"
+      },
+      {
+        "path": "SRC/neothd/src/recall/parity_harness.rs",
+        "bytes": 182150,
+        "sha256": "499257552F90781BF0F32E239753B842D33E34E5241605ADAE19072AB687A6DF",
+        "blob": "2b813fc7b7f57c9441e5da341156f441c4a0c9cb"
+      },
+      {
+        "path": "SRC/neothd/src/self_improve/passive.rs",
+        "bytes": 11032,
+        "sha256": "D85859B5CF97256737B7E97EF399BBD9C63FD4048F47FBA66C3194BB9EC6B41A",
+        "blob": "0c57204761a2514a051b59c5937ebed952bca834"
+      }
+    ],
+    "note": "W278 independentreviewPASS helper/lifecycle only; native896,Group489 including4existing passivequalitycases. Core2b0 Clippyfailure fixed by removing expectation below threshold8; no local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

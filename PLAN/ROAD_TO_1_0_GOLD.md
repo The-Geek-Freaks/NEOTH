@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W278 retry receipt and W276 lint repair (2026-09-23):** the Claude tmux
+immediate-before-send role recheck now retains the typed authorization-denied
+receipt for an admitted retry. The real helper/lifecycle fixture binds a
+nonempty chain, attempt, class, provider and wire model, with no extra terminal.
+Independent source review passed; tmux transport execution is not claimed.
+
+Core2b0 stopped at Clippy because an eight-argument function carried a lint
+expectation despite the repository threshold being eight. The unnecessary
+expectation is removed; no warning is suppressed. W275 also selects the four
+existing passive Buddy quality/provenance regressions. Grouped selection is
+489 and the universal native inventory is896; GUI124 and all Road counts are
+unchanged. Core and focused runtime validation of these changes remain hosted.
 **Hosted follow-up (2026-09-23):** Group4654162 run35813951622 passed all
 465 exact tests, including both W273 acknowledgement-gated cancellation cases.
 Admission verifies every terminal, all103 source paths and matrix/lock against

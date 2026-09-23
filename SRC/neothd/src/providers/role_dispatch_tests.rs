@@ -425,6 +425,137 @@ async fn w225_effect_start_role_rejection_closes_admitted_retry_with_denial_rece
 }
 
 #[tokio::test]
+async fn w278_immediate_before_send_role_rejection_closes_admitted_retry_with_denial_receipt() {
+    let home = tempfile::tempdir().expect("temporary authenticated home");
+    let config_path = home.path().join("freedom.yaml");
+    let initial = (*configured_role_policy(InferenceProvider::LocalOllama, "qwen-allowed")).clone();
+    std::fs::write(
+        &config_path,
+        serde_yaml::to_string(&initial).expect("serialize initial config"),
+    )
+    .expect("write initial config");
+    let reload = Arc::new(crate::config::reload::ReloadController::new(
+        initial.clone(),
+        config_path.clone(),
+    ));
+    let wal = home.path().join("wal");
+    std::fs::create_dir_all(&wal).expect("create home WAL directory");
+    let segment = wal.join("000001.wal");
+    let (writer, join, ready) =
+        crate::wal::writer::spawn_for_home_ready(segment.clone(), home.path().to_path_buf())
+            .expect("start authenticated WAL writer");
+    ready.wait().await.expect("ready authenticated WAL writer");
+
+    let authorizer = ProviderCallAuthorizer::fail_closed(
+        AutonomyLevel::Full,
+        Some(writer.clone()),
+        crate::config::TokensConfig::default_max_per_request(),
+    )
+    .with_usage_home(home.path())
+    .with_role_dispatch(
+        HemisphereRole::Left,
+        InferenceProvider::LocalOllama,
+        Arc::new(initial),
+    )
+    .with_role_policy_reload(reload.clone());
+    let req = Request {
+        model: Some("qwen-allowed".into()),
+        ..Request::default()
+    };
+    let mut authorized = authorizer
+        .authorize_leaf("local_ollama", &req, "w278.before_send", false, Some(128))
+        .await
+        .expect("admit initial retry-capable leaf");
+    let role_dispatch = authorized.take_role_dispatch();
+    let provider_subject = authorized.take_provider_subject();
+    let effect = authorized.effect_context();
+    let audit = authorized
+        .begin_dispatch()
+        .await
+        .expect("write initial lifecycle");
+    let permit = ProviderDispatchPermit::authorized(
+        audit,
+        authorizer,
+        "local_ollama",
+        None,
+        req.clone(),
+        "w278.before_send",
+        Some(128),
+        provider_subject,
+        effect,
+        true,
+        role_dispatch,
+    );
+    permit
+        .finish_attempt_for_retry(ProviderRetryReason::Transient)
+        .await
+        .expect("close first retry intent");
+    permit
+        .begin_retry_attempt()
+        .await
+        .expect("admit second retry lifecycle before the send fence");
+
+    let mut reloaded = reload.latest().as_ref().clone();
+    reloaded
+        .inference
+        .role_policy
+        .as_mut()
+        .expect("initial role policy")
+        .rules
+        .clear();
+    std::fs::write(
+        &config_path,
+        serde_yaml::to_string(&reloaded).expect("serialize changed config"),
+    )
+    .expect("write changed role policy");
+    assert!(matches!(
+        reload.try_reload().expect("reload changed role policy"),
+        crate::config::reload::ReloadResult::Reloaded { .. }
+    ));
+
+    let error = crate::providers::claude_cli::test_only_ensure_role_dispatch_before_send_or_retry_terminal(
+        &permit, &req,
+    )
+    .await
+    .expect_err("changed role policy must stop the admitted retry before raw send");
+    assert!(error.to_string().contains("role dispatch"), "{error:#}");
+
+    drop(permit);
+    drop(writer);
+    join.await.expect("authenticated WAL writer drained");
+    let lifecycle = lifecycle_frames(&segment);
+    assert_eq!(
+        lifecycle.iter().map(|(event, _)| *event).collect::<Vec<_>>(),
+        [
+            crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+            crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+            crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+            crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+        ],
+        "the direct role fence must close the admitted retry without a raw response or duplicate terminal"
+    );
+    let first = &lifecycle[1].1["retry_receipt"];
+    let denied = &lifecycle[3].1["retry_receipt"];
+    assert_eq!(first["disposition"], "retry_intent_closed");
+    assert_eq!(denied["disposition"], "authorization_denied");
+    assert_eq!(denied["class"], "transient");
+    assert_eq!(denied["attempt"], 2);
+    let first_chain = first["retry_chain_id"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .expect("the initial terminal must bind a nonempty retry chain");
+    let denied_chain = denied["retry_chain_id"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .expect("the denied retry must retain a nonempty retry chain");
+    assert_eq!(denied_chain, first_chain);
+    assert_eq!(denied["provider"], first["provider"]);
+    assert_eq!(denied["wire_model"], first["wire_model"]);
+    assert_eq!(denied["provider"], "local_ollama");
+    assert_eq!(denied["wire_model"], "qwen-allowed");
+}
+
+#[tokio::test]
 async fn non_council_leaf_ignores_a_closed_policy_without_role_binding() {
     let dir = tempfile::tempdir().expect("temporary compatibility config directory");
     let closed_config = (*configured_role_policy(InferenceProvider::OpenAi, "gpt-5")).clone();

@@ -130,9 +130,10 @@ jobs:
               "wave270HippocampusAcceptance": 11,
               "wave269NativeReadinessAcceptance": 2,
               "wave271DoctorCallerAcceptance": 1,
-              "wave275SelfImproveCliAcceptance": 9,
+              "wave275SelfImproveCliAcceptance": 13,
               "wave276RecallResumeAcceptance": 1,
               "wave277ChannelDoctorAcceptance": 9,
+              "wave278RetryRoleReceiptAcceptance": 1,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():

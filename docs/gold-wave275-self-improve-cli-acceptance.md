@@ -11,3 +11,5 @@ The drift leg stages and approves a separate proposal, changes one fixed-corpus 
 This is intentionally not a full CLI `Execute` test. `Execute` performs the same fixed-verifier evaluation and then requires configured provider-backed QA plus WAL finalization. W275 covers the actual CLI stage/review/accept/readback boundaries while exercising evaluator and approval as existing hermetic core paths; it makes no claim that CLI `Execute` provider QA was run.
 
 The test uses `crate::test_env::lock()` while it sets and restores `NEOTH_HOME`, so it is safe with other process-environment tests. The W142 fixed verifier has Windows `.cmd` and non-Windows `sh` variants, so the fixture is platform-configured through the existing helper.
+
+The focused selection also runs the four existing passive Buddy-quality tests from self_improve/passive.rs: exact shared quality/identity projection, malformed identity rejection, pending journal refusal without recovery/lock creation, and the final recovery probe. These exercise the actual passive reader used by Buddy; they do not claim a complete Buddy command or rendered GUI run.
