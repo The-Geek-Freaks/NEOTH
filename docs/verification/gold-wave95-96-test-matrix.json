@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W438 GUI Clippy and W439 metadata traversal source repair; hosted reruns pending",
+  "status": "W444 pinned OpenRaft inputs admitted from hosted probe; GUI syntax repair awaiting hosted preflight",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 122328,
-    "sha256": "005653A58AF828908C4C0A6883F75847ED322B9543249DC090E93FB083CE4BBE"
+    "bytes": 122347,
+    "sha256": "A1FA9845982C9F0026A77FE668CD46823ACF8D88939ACB04FF7B65E1D3DBE800"
   },
   "sourceInputs": 703,
   "requiredNativeTests": [
@@ -7441,8 +7441,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2177373,
-      "sha256": "A32EBE7AA5D47ABBC343AAD2B18897DD4C819A4439DE5F26CE73BE95F9BAB1CD"
+      "bytes": 2177335,
+      "sha256": "031DF0F79FCF56EDC65C2D811DF99974578B3AEE0B97DCAAFA89609C77CD2701"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -22638,6 +22638,32 @@
       }
     ],
     "note": "W438 repairs 24 GUI Clippy diagnostics, independent static review PASS. W439 fixes mutated roots alias without changing proof boundaries. W437 Preflight PASS35881647335. No local executable validation or Road closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave444PinnedRaftInputAdmission": {
+    "base": "4d4f59f542f6edf87afb60489a29eaea019b839b",
+    "sources": [
+      {
+        "path": "SRC/Cargo.lock",
+        "bytes": 385393,
+        "sha256": "722EE0446DBAC05B3E7D4EB9D44C7174E98E6E6FFF5B633B5A30993EDBCB61F0",
+        "blob": "a49b0e51cbc8d33d1f351352e856fc89961f02e1"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2177335,
+        "sha256": "031DF0F79FCF56EDC65C2D811DF99974578B3AEE0B97DCAAFA89609C77CD2701",
+        "blob": "c9a52edb28d922435a691e38aa4195f1c825ffde"
+      },
+      {
+        "path": "SRC/neothd/Cargo.toml",
+        "bytes": 46338,
+        "sha256": "1FF2970C3EDCA354098AD82D19511909BAA2F52C22866F82E1095F3E3DFB32E3",
+        "blob": "afad1152a93e6ebf361932d31d75caeff8d723fd"
+      }
+    ],
+    "note": "W43935882637851 PASS,26hash bindings+full before/after blobs verified,2Cargo files imported. Minimal120packages;19workspace-only/32feature differences uncompiled. ProductionRaftWIP. No local executable validation. GUI extra brace removed after hosted diagnostic.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

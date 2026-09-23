@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W444 pinned OpenRaft input admission and GUI syntax follow-up (2026-09-23):**
+W439 run35882637851 on4d4f59f5 passed: Rust1.91 compiled the pinned OpenRaft0.9.25
+minimal serde/storage-v2 probe. All26 artifact SHA256 bindings and both complete
+input/output Git blobs were verified before importing Cargo.toml/Cargo.lock.
+The probe covered120 identities, with zero missing/checksum-drift identities;
+19 workspace-only packages and32 shared-feature differences remain uncompiled
+by this standalone probe. Eight packages are new; production Raft integration
+is not yet compiled. Updated distribution notices need the hosted export.
+Preflight35882637605 correctly found one excess closing brace in W438 main.rs;
+the exact syntax repair removes it. Superseded Core35882647541 was cancelled.
+No local executable checks; Road and WS-LF counters remain unchanged.
+
 **W438 GUI Clippy repair and W439 Raft metadata traversal (2026-09-23):**
 W437 is published as dbdd81ca; Preflight35881647335 passed all static contracts.
 Core35876182651 passed slim Clippy and core test typechecking, then failed the

@@ -11455,7 +11455,6 @@ fn main() -> Result<()> {
                                                 mark_embedding_models_unverified(&w, &error)
                                             }
                                         }
-                                    }
                                 }
                                 apply_usage_meter(&w, usage);
                             }

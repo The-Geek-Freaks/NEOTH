@@ -152,8 +152,7 @@ browser-import = []
 # all compiled out; `ClusterConfig` stays as inert serde data so an existing
 # freedom.yaml with a `cluster:` block still parses. The `peeroxide` dep is
 # pulled in only by this feature.
-cluster = ["dep:peeroxide"]
-
+cluster = ["dep:peeroxide", "dep:openraft"]
 # iroh QUIC cluster transport (dial-by-key NodeId, NAT-traversal, relay
 # fallback) — an alternative to the peeroxide Hyperswarm transport. Default-OFF
 # for ordinary contributor and headless-server builds so they stay lean (iroh
@@ -244,6 +243,9 @@ recursive-mas = []
 hash-bench = ["dep:opthash"]
 
 [dependencies]
+# W417 hosted resolver qualification; production implementation lands separately.
+openraft = { version = "=0.9.25", default-features = false, features = ["serde", "storage-v2"], optional = true }
+
 # W186 hosted supply-input resolution only; implementation lands separately.
 tract-onnx = { version = "=0.23.8", optional = true }
 
