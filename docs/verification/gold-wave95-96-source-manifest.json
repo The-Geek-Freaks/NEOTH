@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T02:16:37.2088781Z",
-  "validationStatus": "W262 Discord default Gateway evidence and W264 paused Plan fixture reviewed; Group448/core pending",
+  "capturedUtc": "2026-09-23T02:19:05.6274704Z",
+  "validationStatus": "W262 Hosted formatting imported; Core70ef reference imported; Group448/Coree802 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -98,8 +98,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 239338,
-      "sha256": "939568863B222BABEA784989C761D0388C3439C5A4436E2A79769C9AD4526D82"
+      "bytes": 240005,
+      "sha256": "EC9A3A37A15240A5781882B8928753466C5AE46D0B26ADBFEA9928A561C883C0"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -438,18 +438,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 102820,
-      "sha256": "408F0EF6308E1BC291C84C1288134BEA2E6D4883A39D92F2ED333A124D0E2F03"
+      "bytes": 102967,
+      "sha256": "157A67ABBAB8E6C734836C8C81BBFD9D9BF028F71F4E56BCD4E3752A5054B39B"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1105768,
-      "sha256": "DACCED726E4C13AE267386402B899FAEE055759F5C22B6C40C5ABE47E16AF40B"
+      "bytes": 1105915,
+      "sha256": "6C6CC1CDE1B0D62E08E715AC3736EDCAC3F1D1EA262BC3353958F48CA83A46D1"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1701698,
-      "sha256": "9A2E3662155D0BA91B12EF1A5551B90EED8056F386A13FEB700E19FB986780B2"
+      "bytes": 1701845,
+      "sha256": "A86280EE11ABFF945FCF82B32A05D5624FB9C87345FA993460386D018DB8453E"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -968,8 +968,8 @@
     },
     {
       "path": "SRC/neothd/src/channels/send_gate.rs",
-      "bytes": 33895,
-      "sha256": "0B6FF80C919B9FAC14BE578AA8E4F08F221099434E1126B71F50C0CCCBBD0191"
+      "bytes": 33892,
+      "sha256": "10692D47888592760477AEE302A6844DA8540E3D8B0E5C0BD3D178C28397797E"
     },
     {
       "path": "SRC/neothd/src/channels/telegram.rs",
@@ -1278,8 +1278,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
-      "bytes": 528933,
-      "sha256": "D6862C4BBAA5246484C9184CC96C69238E82D2A1C688CDB3D16E3EFCD075C0A5"
+      "bytes": 528929,
+      "sha256": "798904298FF33F57209DE1B5AEFE82DEEF70988A430B0CF2D5BECA942A202313"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tests.rs",
@@ -2698,8 +2698,8 @@
     },
     {
       "path": "SRC/neothd/src/channels/discord.rs",
-      "bytes": 38507,
-      "sha256": "1CF3A47B52CA936144748D951EB17395280A21772C36798C22A1693633967966"
+      "bytes": 38705,
+      "sha256": "F4069C016CD6AF3AA9A359E83E392404CB5485060605082B6CC16D724F577E4F"
     }
   ]
 }

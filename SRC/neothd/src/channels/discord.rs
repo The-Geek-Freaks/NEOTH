@@ -77,7 +77,8 @@ type DiscordGatewayReplyPoster = std::sync::Arc<
     dyn Fn(
             String,
             String,
-        ) -> futures_util::future::BoxFuture<'static, std::result::Result<MessageId, ChannelError>>
+        )
+            -> futures_util::future::BoxFuture<'static, std::result::Result<MessageId, ChannelError>>
         + Send
         + Sync,
 >;
@@ -103,8 +104,11 @@ fn authenticated_gateway_reply_sender(
                 crate::time::now_unix_secs(),
                 &live_egress,
             )
-            .await else {
-                anyhow::bail!("mandatory authenticated Discord egress intent could not be recorded");
+            .await
+            else {
+                anyhow::bail!(
+                    "mandatory authenticated Discord egress intent could not be recorded"
+                );
             };
 
             match post(out.recipient_id, out.text).await {
@@ -118,9 +122,11 @@ fn authenticated_gateway_reply_sender(
                         &live_egress,
                     )
                     .await
-                    .map_err(|()| anyhow::anyhow!(
-                        "mandatory authenticated Discord egress receipt could not be recorded"
-                    ))?;
+                    .map_err(|()| {
+                        anyhow::anyhow!(
+                            "mandatory authenticated Discord egress receipt could not be recorded"
+                        )
+                    })?;
                     Ok(())
                 }
                 Err(error) => {
@@ -139,9 +145,11 @@ fn authenticated_gateway_reply_sender(
                         &live_egress,
                     )
                     .await
-                    .map_err(|()| anyhow::anyhow!(
-                        "mandatory authenticated Discord egress receipt could not be recorded"
-                    ))?;
+                    .map_err(|()| {
+                        anyhow::anyhow!(
+                            "mandatory authenticated Discord egress receipt could not be recorded"
+                        )
+                    })?;
                     Err(anyhow::anyhow!("discord reply send: {error}"))
                 }
             }
@@ -302,9 +310,7 @@ impl Channel for DiscordChannel {
             let post: DiscordGatewayReplyPoster = std::sync::Arc::new(move |recipient, text| {
                 let http = http.clone();
                 let token = std::sync::Arc::clone(&token);
-                Box::pin(async move {
-                    post_to_discord(&http, &token, &recipient, &text).await
-                })
+                Box::pin(async move { post_to_discord(&http, &token, &recipient, &text).await })
             });
             authenticated_gateway_reply_sender(
                 inbound_gate.writer.clone(),
@@ -650,7 +656,9 @@ mod tests {
             .expect("join gateway sender WAL writer")
             .expect("close gateway sender WAL writer");
 
-        let bytes = tokio::fs::read(segment).await.expect("read gateway sender WAL");
+        let bytes = tokio::fs::read(segment)
+            .await
+            .expect("read gateway sender WAL");
         let mut cursor = crate::wal::segment_header::SEGMENT_HEADER_LEN;
         let mut outcome = None;
         while cursor < bytes.len() {
@@ -669,8 +677,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gateway_reply_sender_records_delivery_and_leaves_one_effect_unsettled_when_receipt_writer_stops(
-    ) {
+    async fn gateway_reply_sender_records_delivery_and_leaves_one_effect_unsettled_when_receipt_writer_stops()
+     {
         let provenance = crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(
             crate::channels::ChannelKind::Discord,
         )
@@ -856,7 +864,10 @@ mod tests {
             cursor += frame.header.total_len as usize;
         }
         assert_eq!(intent_count, 1, "the accepted effect retains its intent");
-        assert_eq!(result_count, 0, "the stopped writer leaves the intent unsettled");
+        assert_eq!(
+            result_count, 0,
+            "the stopped writer leaves the intent unsettled"
+        );
     }
 
     #[test]

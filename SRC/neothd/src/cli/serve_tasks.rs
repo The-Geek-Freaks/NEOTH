@@ -5379,7 +5379,7 @@ pub(crate) fn legacy_live_egress_provenance_for_test(
         kind,
         ChannelKind::Telegram | ChannelKind::Slack | ChannelKind::Discord
     )
-        .then(|| legacy_live_egress_provenance(kind))
+    .then(|| legacy_live_egress_provenance(kind))
 }
 
 /// Opaque authenticated pairing admission.  It is formed only while the

@@ -26,7 +26,9 @@ fixture expectations while preserving production rejection and the subsequent
 Resume/reopen/shutdown assertions. Fresh execution remains required.
 Inventory539sources/878universal native/98GUI; Group448/GUI124. Native extras
 remain Windows19/Linux29/macOS28. Road1017checked/305open/2partial is unchanged.
-Core70ef passed slimClippy and is checking test targets; GUI124a8 still runs
+Core70ef `35808923302` passed slimClippy, test-target checking and CLI build/export.
+Its source/SHA-bound reference now documents `fs grep` and is imported; W262/W264
+Core/Group448 one802 remain pending. GUI124a8 still runs
 with bounded test-only helper diagnostics. No local executable validation ran.
 See `docs/gold-wave262-discord-channel-flapping.md` and
 `docs/gold-wave264-paused-import-fixture.md`.

@@ -622,10 +622,9 @@ mod intent_tests {
             .wait()
             .await
             .expect("initialize Discord live-evidence WAL writer");
-        let provenance = crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(
-            ChannelKind::Discord,
-        )
-        .expect("Discord belongs to the closed default live-evidence family");
+        let provenance =
+            crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(ChannelKind::Discord)
+                .expect("Discord belongs to the closed default live-evidence family");
         let intent_id = emit_legacy_live_egress_intent(
             &writer,
             "discord",

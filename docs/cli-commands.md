@@ -1558,6 +1558,16 @@ Fetch a URL + return its text content (A-21)
 
 `fs read <path>` — read a file through the PC-01 OS-tool gate: allowlist (`freedom.yaml::tools.os.allowed_paths`, default deny-all) + autonomy gate + WAL audit (`0xA8`/`0xA9`). The gated alternative to an ungated filesystem read
 
+### `neoth fs grep`
+
+Search one allowlisted UTF-8 file for a literal string. This is never recursive, never invokes a shell, and does not interpret regex syntax
+
+- `<PATH>` — File to search through the gated OS-file-read surface
+- `<LITERAL>` — Literal non-empty UTF-8 text to find
+- `--max-results <MAX_RESULTS>` — Maximum line matches to return (1..=64)
+- `--codegraph-enrichment` — Append a bounded, untrusted local codegraph sidecar after a successful search. It remains off unless the existing outline enrichment master switch is also enabled
+- `--repository-root <ABSOLUTE_ROOT>` — Absolute indexed repository root required with codegraph enrichment
+
 ### `neoth fs read`
 
 Read a file through the gated OS-tool surface. Permitted only when the path is under `freedom.yaml::tools.os.allowed_paths` (default deny-all) AND the autonomy level allows it (Strict confirms ⇒ blocked here, since this path has no interactive prompt). WAL-audited (`0xA8`/`0xA9`)
