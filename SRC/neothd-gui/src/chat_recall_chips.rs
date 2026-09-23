@@ -262,11 +262,13 @@ impl Projection {
         self.snapshot.clone()
     }
 
+    #[cfg(test)]
     pub const fn is_frozen(&self) -> bool {
         self.frozen
     }
 
     /// Replacement is the only operation that reopens sequence 1.
+    #[cfg(test)]
     pub fn replace_request(&mut self, request_id: String) {
         self.request_id = Zeroizing::new(request_id);
         self.next_sequence = 1;

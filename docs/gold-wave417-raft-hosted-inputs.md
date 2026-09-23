@@ -49,6 +49,12 @@ and its Rust-version report still cover the full resolved workspace closure. Thi
 lane qualifies the pinned minimal OpenRaft configuration only. Full workspace
 feature compilation belongs to the later integration slice and is not claimed here.
 
+W439 fixed the hosted parser failure in the graph receipt: its traversal stack
+previously aliased the selected `roots` list, drained it with `pop()`, then read
+`roots[0]` again for the root identity. The workflow now retains `root_id` and
+uses a distinct one-element pending list; it does not change the graph evidence
+or compile boundary.
+
 The artifact is uploaded even after a failure. It includes command logs, source
 and final hash manifests, upstream source copies and hashes, metadata, new package
 list, Rust-version report, probe inputs/logs, and `source-bound.patch`. The patch

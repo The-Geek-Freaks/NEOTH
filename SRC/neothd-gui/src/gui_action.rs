@@ -4565,7 +4565,8 @@ pub struct LocalModelActionAck {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LocalModelActionErrorAck {
-    pub code: LocalModelActionErrorCode,
+    #[serde(rename = "code")]
+    pub _code: LocalModelActionErrorCode,
     pub detail: String,
 }
 
@@ -4758,7 +4759,8 @@ pub struct ProposalMutationAck {
     pub id: String,
     pub status: String,
     #[serde(default)]
-    pub upstream_pr_available: Option<bool>,
+    #[serde(rename = "upstream_pr_available")]
+    pub _upstream_pr_available: Option<bool>,
 }
 
 impl ProposalMutationAck {

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T15:24:15.7191819Z",
-  "validationStatus": "W437 canonical progress repaired; hosted verification pending; no local executable validation",
+  "capturedUtc": "2026-09-23T15:32:15.9922156Z",
+  "validationStatus": "W438 GUI Clippy and W439 metadata traversal source repair; hosted reruns pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -808,18 +808,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 169619,
-      "sha256": "83749773851C05CFDDF9C9220EA8B8E9129AA746D975D39A1ECEF0C72D1CD5D1"
+      "bytes": 170558,
+      "sha256": "A7455F04A310C2E751812706D961FBCE121895B9C04F285AB6ECB47AE3BB4A08"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1179730,
-      "sha256": "8FA9CB8177A909E029FA9970FCCDF5F4112C57FEC851C7BE675504D50682CFCA"
+      "bytes": 1180669,
+      "sha256": "38D8BF6C097ADBB0FABA8A6CEAC756C516A3D9347C302ABA1645A58F363ABDEA"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1777531,
-      "sha256": "DE59A826B7A94E2AA051F7A8A7CE77C22E5F80050D723440B177D7A66BE048D4"
+      "bytes": 1778470,
+      "sha256": "CBC0D9599ADBC337FD35B86903E0D0A35EE977FE545D6FE3FE7298AAF9669491"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -968,8 +968,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_recall_chips.rs",
-      "bytes": 27393,
-      "sha256": "E34306F8EB09B5D20B6E5501C88A7D09DE3A2C9F76961E07C893A738A5BB9732"
+      "bytes": 27427,
+      "sha256": "2C3305883D086F621AF687640B7DDF98A94F3EFC4E26561B0F4C7A9E97184D06"
     },
     {
       "path": "SRC/neothd-gui/src/chat_response_feedback.rs",
@@ -983,13 +983,13 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_throughput.rs",
-      "bytes": 23632,
-      "sha256": "D528F75162A983D4FA979FAD2BDCCB9541AB193C1569E0E3F0E40700F025AB4F"
+      "bytes": 23666,
+      "sha256": "8BC31ADA3C7B1D27DC0AC8E6B87FF37FABDC678C6D8E58029170706265C0EB3E"
     },
     {
       "path": "SRC/neothd-gui/src/citation_gui.rs",
-      "bytes": 55603,
-      "sha256": "D6720CD3A6911399F59109C9877C5529313053E1ACC41AABF830F19F4B8C7C5E"
+      "bytes": 54750,
+      "sha256": "AD47F7CEE7EDF968E166AB859EE80D4C46CC47B31B086074AE330C5F5E36E558"
     },
     {
       "path": "SRC/neothd-gui/src/code_map_controller.rs",
@@ -1008,8 +1008,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/gui_action.rs",
-      "bytes": 343570,
-      "sha256": "D6D38BCA63B610E6BCE02F5C8B6B6954FE7D7378E37567FE16CFA9FA732E76E4"
+      "bytes": 343649,
+      "sha256": "4095AC18A51D334D2C77B9662091DC8C540D8B0B2EE6F3AD8C96E64E6F027265"
     },
     {
       "path": "SRC/neothd-gui/src/gui_action/ouro_q8.rs",
@@ -1028,8 +1028,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2177844,
-      "sha256": "FA5E2A251B872A03AEEED2AE53F00E579C3C040735C3BAA7069220C68728540D"
+      "bytes": 2177373,
+      "sha256": "A32EBE7AA5D47ABBC343AAD2B18897DD4C819A4439DE5F26CE73BE95F9BAB1CD"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -1058,8 +1058,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/wizard_session_controller.rs",
-      "bytes": 15732,
-      "sha256": "8C7A4C17C99B05F539D08903E86549A870F972C7B8A18D9F612BFE43CF54B20B"
+      "bytes": 15697,
+      "sha256": "EB234D53E1A2A7392162AEB358CBF59E8A7811CF659289CA2627009F1F41837E"
     },
     {
       "path": "SRC/neothd-gui/tests/gui_chat_bridge_public_api.rs",
@@ -3468,13 +3468,13 @@
     },
     {
       "path": ".github/workflows/raft-budget-inputs.yml",
-      "bytes": 19627,
-      "sha256": "2592ED0357BDFDE1FC3D3E75FAA946B5FA7AEE24667B4AAA62B11D85E56500A1"
+      "bytes": 19660,
+      "sha256": "BC64C52EF42C18187A32C2B605ACE86281E752020987CF64276E9A85F8DD8C2B"
     },
     {
       "path": "docs/gold-wave417-raft-hosted-inputs.md",
-      "bytes": 4071,
-      "sha256": "B1513FC951E7D72B41211BC0812F389A296CC548773191C45A281AD0DFFB469E"
+      "bytes": 4412,
+      "sha256": "E85F0CB43A281FD9C002A81CD6B92F23AD8FF124EB0E151295E876907F9C3800"
     },
     {
       "path": "docs/gold-wave421-citation-terminal-repair.md",

@@ -81,7 +81,7 @@ impl WizardSessionController {
         // bootstrap retry to replace that stale endpoint with a new boot.
         match WizardIpcClient::discover(home) {
             Ok(client) => match wizard_runtime()?.block_on(client.open_or_resume()) {
-                Ok(response) => return Self::bound(home, client, response),
+                Ok(response) => Self::bound(home, client, response),
                 Err(_) => {
                     if BOOTSTRAP_START_ATTEMPTED.swap(true, Ordering::AcqRel) {
                         bail!(
@@ -90,7 +90,7 @@ impl WizardSessionController {
                     }
                     spawn_bootstrap(neothd, home)?;
                     let (client, response) = discover_live_after_bootstrap(home)?;
-                    return Self::bound(home, client, response);
+                    Self::bound(home, client, response)
                 }
             },
             Err(discovery_error) => {
@@ -101,7 +101,7 @@ impl WizardSessionController {
                 }
                 spawn_bootstrap(neothd, home)?;
                 let (client, response) = discover_live_after_bootstrap(home)?;
-                return Self::bound(home, client, response);
+                Self::bound(home, client, response)
             }
         }
     }
@@ -256,10 +256,10 @@ pub fn prepared_config_sha256(path: &Path) -> Result<[u8; 32]> {
 fn discover_live_after_bootstrap(home: &Path) -> Result<(WizardIpcClient, WizardResponse)> {
     let deadline = Instant::now() + BOOTSTRAP_DISCOVERY_TIMEOUT;
     loop {
-        if let Ok(client) = WizardIpcClient::discover(home) {
-            if let Ok(response) = wizard_runtime()?.block_on(client.open_or_resume()) {
-                return Ok((client, response));
-            }
+        if let Ok(client) = WizardIpcClient::discover(home)
+            && let Ok(response) = wizard_runtime()?.block_on(client.open_or_resume())
+        {
+            return Ok((client, response));
         }
         if Instant::now() >= deadline {
             bail!("wizard bootstrap sidecar was not discovered before the bounded timeout");

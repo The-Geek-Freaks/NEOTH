@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W438 GUI Clippy repair and W439 Raft metadata traversal (2026-09-23):**
+W437 is published as dbdd81ca; Preflight35881647335 passed all static contracts.
+Core35876182651 passed slim Clippy and core test typechecking, then failed the
+strict workspace GUI pass with24 diagnostics. W438 repairs only the six affected
+GUI Rust files; independent static review passed. No Slint or vendor changes.
+W439 fixes the actual graph-report IndexError in35879202289: keep the selected
+root separate from the mutable traversal stack. Source, closure, feature and
+checksum gates remain unchanged. Both repairs need fresh hosted execution.
+Cluster-budget integration remains uncommitted and P2-19 remains open. The
+provider leaf now owns quorum admission; follower admission, final integration
+review and three-node behavioral checks are still in progress. BSOD hold remains.
+Inventory703; Road1034checked/288open/2partial; WS-LF27done/91open unchanged.
+
 **W437 canonical progress-counter repair and reboot recovery (2026-09-23):**
 Preflight6afba7c9 run35877975301 passed formatting and metadata, then correctly
 rejected the stale canonical PROGRESS WS-LF counter (25/93 versus ROAD27/91).

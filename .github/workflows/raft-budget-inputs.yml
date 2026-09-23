@@ -274,11 +274,12 @@ jobs:
               roots = [p["id"] for p in packages.values() if p["name"] == "openraft" and p["version"] == os.environ["OPENRAFT_VERSION"]]
               if len(roots) != 1:
                   raise SystemExit(f"expected one pinned OpenRaft in {label} metadata, found {len(roots)}")
-              root_features = set(nodes[roots[0]]["features"])
+              root_id = roots[0]
+              root_features = set(nodes[root_id]["features"])
               required_features = {"serde", "storage-v2"}
               if require_minimal_features and root_features != required_features:
                   raise SystemExit(f"{label} OpenRaft selected features are {sorted(root_features)!r}, expected {sorted(required_features)!r}")
-              seen, pending = set(), roots
+              seen, pending = set(), [root_id]
               while pending:
                   package_id = pending.pop()
                   if package_id not in seen:
@@ -286,7 +287,7 @@ jobs:
                       pending.extend(nodes[package_id]["dependencies"])
               identities = {(packages[i]["name"], packages[i]["version"], packages[i].get("source") or "path"): i for i in seen}
               features = {identity: sorted(nodes[package_id]["features"]) for identity, package_id in identities.items()}
-              root_identity = (packages[roots[0]]["name"], packages[roots[0]]["version"], packages[roots[0]].get("source") or "path")
+              root_identity = (packages[root_id]["name"], packages[root_id]["version"], packages[root_id].get("source") or "path")
               return identities, features, root_identity
 
           def checksums(path):

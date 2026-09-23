@@ -11442,11 +11442,11 @@ fn main() -> Result<()> {
                                         Err(error) => mark_local_models_unverified(&w, &error),
                                     }
                                 }
-                                if let Some(result) = embedding_models {
-                                    if EMBEDDING_MODELS_UI_REVISION
+                                if let Some(result) = embedding_models
+                                    && EMBEDDING_MODELS_UI_REVISION
                                         .load(std::sync::atomic::Ordering::Acquire)
                                         == embedding_models_revision
-                                    {
+                                {
                                         match result {
                                             Ok((presentation, _)) => {
                                                 apply_embedding_models(&w, presentation)
@@ -17162,6 +17162,7 @@ struct FinishReport {
     credentials_path: Option<PathBuf>,
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 enum GuiFinishOutcome {
     Completed {
@@ -17192,6 +17193,7 @@ enum WizardDaemonFinishResult {
     },
 }
 
+#[cfg(test)]
 fn validate_begin_and_prepare_gui_finish_with<Validate, Begin, Prepare, Transaction, Report>(
     validate: Validate,
     begin: Begin,
@@ -17211,6 +17213,7 @@ where
 /// Preserve the only valid GUI completion order: parity writes first, then the
 /// daemon-owned canonical marker. The UI may enter `Done` only for the typed
 /// `Completed` variant.
+#[cfg(test)]
 fn commit_gui_finish_with<WriteParity, Complete>(
     prepared_message: String,
     write_parity: WriteParity,
@@ -17234,17 +17237,6 @@ where
             ),
             error,
         },
-    }
-}
-
-impl FinishReport {
-    fn message(&self) -> String {
-        let mut s = format!("Configuration written to {}.", self.freedom_path.display());
-        if let Some(p) = &self.credentials_path {
-            s.push_str(&format!("\nSecrets stored in {} (mode 0600).", p.display()));
-        }
-        s.push_str("\nNEOTH is ready; you can keep using this window or open the CLI anytime.");
-        s
     }
 }
 
@@ -21498,18 +21490,18 @@ struct CitationGuiCallbackState {
 }
 
 fn cancel_citation_live_flow(flow: &CitationGuiLiveFlowSlot) {
-    if let Ok(mut flow) = flow.lock() {
-        if let Some(current) = flow.take() {
-            current.cancellation.cancel();
-        }
+    if let Ok(mut flow) = flow.lock()
+        && let Some(current) = flow.take()
+    {
+        current.cancellation.cancel();
     }
 }
 
 fn cancel_citation_child(cancellation: &CitationGuiChildCancellationSlot) {
-    if let Ok(mut cancellation) = cancellation.lock() {
-        if let Some(current) = cancellation.take() {
-            current.cancel();
-        }
+    if let Ok(mut cancellation) = cancellation.lock()
+        && let Some(current) = cancellation.take()
+    {
+        current.cancel();
     }
 }
 
@@ -22300,17 +22292,17 @@ fn start_vault_mirror_repair(weak: slint::Weak<MainWindow>) {
                 }
             });
         });
-    if let Err(error) = worker {
-        if let Some(window) = weak.upgrade() {
-            window.set_bc_vault_mirror_in_flight(false);
-            buddy(&window, GuiActivity::VaultMirrorFailed);
-            push_toast(
-                &weak,
-                "warn",
-                "Vault mirror repair unavailable",
-                &format!("Could not start repair worker: {error}"),
-            );
-        }
+    if let Err(error) = worker
+        && let Some(window) = weak.upgrade()
+    {
+        window.set_bc_vault_mirror_in_flight(false);
+        buddy(&window, GuiActivity::VaultMirrorFailed);
+        push_toast(
+            &weak,
+            "warn",
+            "Vault mirror repair unavailable",
+            &format!("Could not start repair worker: {error}"),
+        );
     }
 }
 
@@ -25319,7 +25311,7 @@ fn local_models_snapshot_binds_action(
         |id: &str, action_value: panel_logic::LocalModelActionKindWire, row_model: &str| {
             id == operation_id
                 && format!("{action_value:?}").eq_ignore_ascii_case(action)
-                && model.map_or(true, |expected| expected == row_model)
+                && model.is_none_or(|expected| expected == row_model)
         };
     if snapshot
         .active_operation
@@ -25472,15 +25464,15 @@ fn start_local_model_action(
                 }
             });
         });
-    if let Err(error) = worker {
-        if let Some(window) = weak.upgrade() {
-            window.set_local_model_in_flight(false);
-            buddy(&window, GuiActivity::LocalModelFailed);
-            mark_local_models_unverified(
-                &window,
-                &format!("Could not start local-model action worker: {error}"),
-            );
-        }
+    if let Err(error) = worker
+        && let Some(window) = weak.upgrade()
+    {
+        window.set_local_model_in_flight(false);
+        buddy(&window, GuiActivity::LocalModelFailed);
+        mark_local_models_unverified(
+            &window,
+            &format!("Could not start local-model action worker: {error}"),
+        );
     }
 }
 

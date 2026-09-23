@@ -70,8 +70,6 @@ pub enum CitationGuiProvider {
 }
 
 impl CitationGuiProvider {
-    pub const LABELS: [&str; 3] = ["Crossref", "OpenAlex", "Semantic Scholar"];
-
     pub fn from_index(index: i32) -> Result<Self, String> {
         match index {
             0 => Ok(Self::Crossref),
@@ -241,8 +239,8 @@ pub enum CitationGuiPreflight {
     Denied,
     ConfirmationRequired {
         challenge_token: zeroize::Zeroizing<String>,
-        expires_unix: u64,
-        request_key_sha256: String,
+        _expires_unix: u64,
+        _request_key_sha256: String,
     },
 }
 
@@ -343,8 +341,8 @@ pub fn parse_gui_preflight(
             }
             Ok(CitationGuiPreflight::ConfirmationRequired {
                 challenge_token: zeroize::Zeroizing::new(token),
-                expires_unix,
-                request_key_sha256: wire.request_key_sha256,
+                _expires_unix: expires_unix,
+                _request_key_sha256: wire.request_key_sha256,
             })
         }
         _ => {
@@ -445,7 +443,7 @@ pub struct CitationGuiDetail {
 pub enum CitationGuiOutcome {
     Found {
         chip: CitationGuiChip,
-        detail: CitationGuiDetail,
+        detail: Box<CitationGuiDetail>,
     },
     Unavailable {
         provider: String,
@@ -546,7 +544,7 @@ impl CitationGuiBindingStore {
         let outcome = receipt.verify_for(&request)?;
         match &outcome {
             CitationGuiOutcome::Found { .. } => {
-                let (result, display) = receipt.into_verified_core(&request)?;
+                let (result, display) = receipt.verified_core(&request)?;
                 self.active = Some(ActiveCitation {
                     request,
                     result,
@@ -591,23 +589,6 @@ impl CitationGuiBindingStore {
             return Err("citation detail binding no longer validates".into());
         }
         detail_from_display(&active.display)
-    }
-
-    /// Execute the already-authorized child command.  A found citation must
-    /// exit zero; the W153 CLI deliberately emits a structured unavailable
-    /// result with a non-zero exit, which is accepted only for that exact
-    /// typed outcome.  This prevents `gui_action::run_json`'s success-only
-    /// helper from discarding a useful offline miss while still refusing every
-    /// other non-zero child result.
-    pub fn run_child(
-        &mut self,
-        revision: u64,
-        request: CitationGuiRequest,
-        command: &mut Command,
-        cancellation: &CitationGuiChildCancellation,
-    ) -> Result<CitationGuiOutcome, String> {
-        let mut output = execute_citation_child(command, cancellation)?;
-        self.apply_child_output(revision, request, &mut output)
     }
 
     /// Applies an already-completed child.  Keeping process execution outside
@@ -1041,10 +1022,10 @@ impl CitationLookupReceipt {
         }
         match (&self.result, &self.display) {
             (CitationResultWire::Found { .. }, Some(_)) => {
-                let (_, display) = self.into_verified_core(request)?;
+                let (_, display) = self.verified_core(request)?;
                 Ok(CitationGuiOutcome::Found {
                     chip: chip_from_display(&display)?,
-                    detail: detail_from_display(&display)?,
+                    detail: Box::new(detail_from_display(&display)?),
                 })
             }
             (CitationResultWire::Found { .. }, None) => {
@@ -1065,7 +1046,7 @@ impl CitationLookupReceipt {
         }
     }
 
-    fn into_verified_core(
+    fn verified_core(
         &self,
         request: &CitationGuiRequest,
     ) -> Result<(CitationLookupResult, CitationDisplay), String> {
@@ -1119,7 +1100,7 @@ struct CitationAttemptWire {
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 enum CitationResultWire {
     Found {
-        record: CitationRecordWire,
+        record: Box<CitationRecordWire>,
         binding: ClaimCitationBindingWire,
         source: LookupSource,
     },
@@ -1519,7 +1500,7 @@ mod tests {
             store
                 .detail_for_click(revision, &chip.binding_sha256)
                 .unwrap(),
-            detail
+            *detail
         );
     }
 

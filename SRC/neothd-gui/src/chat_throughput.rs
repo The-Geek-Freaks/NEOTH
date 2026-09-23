@@ -172,11 +172,13 @@ impl Projection {
         }
     }
 
+    #[cfg(test)]
     pub fn snapshot(&self) -> Option<ThroughputSnapshot> {
         self.snapshot
     }
 
     /// Fence the old request before accepting sequence 1 for a distinct one.
+    #[cfg(test)]
     pub fn replace_request(&mut self, request_id: String) {
         self.request_id = request_id;
         self.next_sequence = 1;
