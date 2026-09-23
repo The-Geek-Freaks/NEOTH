@@ -139,6 +139,8 @@ async fn durable_trust_rpc_reconciles_once_and_rejects_generic_bypass() {
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -221,6 +223,8 @@ async fn durable_trust_rpc_is_authenticated_and_available_when_optional_audit_is
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: false,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -303,6 +307,8 @@ async fn durable_trust_rpc_reuses_receipt_after_response_is_not_consumed() {
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -682,6 +688,8 @@ async fn aborting_listener_aborts_idle_connection_before_wal_drain() {
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -725,6 +733,8 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -785,6 +795,8 @@ async fn w61_live_audit_rpc_accepts_only_durable_code_map_result_receipt() {
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -901,6 +913,8 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
         cooldown: Arc::new(AuthCooldown::new()),
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         membership: Some(Arc::clone(&controller)),
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: false,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -1141,6 +1155,190 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
     wal_join.await.ok();
 }
 
+#[cfg(feature = "cluster")]
+#[tokio::test]
+async fn outbound_task_delegate_rpc_requires_auth_reports_unavailable_and_queues_typed_receipt() {
+    use crate::cluster::heartbeat::{FrameBody, TaskDelegateScope};
+    use crate::cluster::membership::{
+        AuthEpoch, BootId, CarrierKind, LiveSessionRegistry, LocalNodeIdentity,
+        MembershipController, MembershipEpoch, MembershipStore, OutboundTaskDelegateState,
+        TaskDelegateOutboundAssignment, TransportIdentity,
+    };
+    use crate::cluster::runtime_supervisor::{
+        OutboundTaskDelegateController, OutboundTaskDelegateDispatchReceipt,
+        OutboundTaskDelegateDispatchRequest,
+    };
+
+    let home = tempdir().unwrap();
+    let peer_home = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
+    let segment = canonical_test_wal(home.path(), "audit-outbound-task-delegate");
+    let (writer, wal_join) =
+        crate::wal::spawn_for_home(segment, home.path().to_path_buf()).unwrap();
+    let store = MembershipStore::open(home.path()).unwrap();
+    let controller = Arc::new(MembershipController::new(
+        store.clone(),
+        Arc::new(LiveSessionRegistry::new()),
+    ));
+    let identity = LocalNodeIdentity::load_or_create(peer_home.path()).unwrap();
+    let transport = TransportIdentity::peeroxide(&identity.peeroxide_key_pair().public_key);
+    let now = crate::time::now_unix_i64();
+    let attestation = identity
+        .attest_endpoint(
+            CarrierKind::Peeroxide,
+            transport.clone(),
+            BootId::new(),
+            "audit-outbound-runtime".into(),
+            "127.0.0.1:31337".into(),
+            AuthEpoch::INITIAL,
+            MembershipEpoch::new(2).unwrap(),
+            Some("audit-outbound-invite".into()),
+            now + 60,
+        )
+        .unwrap();
+    store
+        .confirm_attestation(
+            &attestation,
+            CarrierKind::Peeroxide,
+            &transport,
+            "127.0.0.1:31337",
+            "audit-outbound-runtime",
+            now,
+        )
+        .unwrap();
+    let scope = TaskDelegateScope {
+        skill_id: "summarize".into(),
+        channel_id: Some("telegram".into()),
+        account_id: Some("primary".into()),
+    };
+    store
+        .set_task_delegate_outbound_assignment(
+            &TaskDelegateOutboundAssignment {
+                peer_key: transport.as_str().to_owned(),
+                skill_id: scope.skill_id.clone(),
+                channel_id: scope.channel_id.clone(),
+                account_id: scope.account_id.clone(),
+                allowed: true,
+                priority: 1,
+                revision: 0,
+            },
+            0,
+        )
+        .unwrap();
+    let grant = store
+        .admit(CarrierKind::Peeroxide, &transport, now)
+        .unwrap();
+    let streams = Arc::new(crate::cluster::peer_streams::PeerStreamRegistry::new());
+    let (_generation, mut receiver, _cancel) =
+        streams.register_authorized_session(transport.as_str(), &grant);
+    let dispatcher = Arc::new(
+        OutboundTaskDelegateController::new(home.path(), Arc::clone(&controller)).unwrap(),
+    );
+    dispatcher.install_peer_streams(Arc::clone(&streams));
+    let request = OutboundTaskDelegateDispatchRequest {
+        operation_id: "audit-outbound-operation".into(),
+        task_id: "audit-outbound-task".into(),
+        prompt: "summarize the authorized audit fixture".into(),
+        model_hint: Some("test-model".into()),
+        scope: scope.clone(),
+    };
+    let body = serde_json::to_string(&request).unwrap();
+
+    let state = AuditRpcState {
+        token: "outbound-task-token".into(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: Some(Arc::clone(&controller)),
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: Some(Arc::clone(&dispatcher)),
+        audit_routes_enabled: false,
+        chat_runtime: None,
+        gui_chat_runtime: None,
+    };
+    let (endpoint, listener) = bind_and_serve(home.path(), &endpoint_nonce, state).await.unwrap();
+
+    assert_eq!(
+        raw_post_path(&endpoint, "/membership/task-delegate/outbound", None, &body)
+            .await
+            .0,
+        401,
+        "unauthenticated callers must not reach outbound dispatch"
+    );
+    assert!(
+        receiver.try_recv().is_err(),
+        "authentication refusal must not queue a delegated frame"
+    );
+
+    let (status, response) = raw_post_path(
+        &endpoint,
+        "/membership/task-delegate/outbound",
+        Some("outbound-task-token"),
+        &body,
+    )
+    .await;
+    assert_eq!(status, 200, "{response}");
+    let receipt: OutboundTaskDelegateDispatchReceipt =
+        serde_json::from_str(&response).expect("typed outbound dispatch receipt");
+    assert_eq!(receipt.operation_id, request.operation_id);
+    assert_eq!(receipt.task_id, request.task_id);
+    assert_eq!(receipt.peer_key, transport.as_str());
+    assert_eq!(receipt.state, OutboundTaskDelegateState::Accepted);
+    let delivered = receiver.recv().await.expect("one authorized delegated frame");
+    match &delivered.body {
+        FrameBody::TaskDelegate(task) => {
+            assert_eq!(task.task_id, request.task_id);
+            assert_eq!(task.prompt, request.prompt);
+            assert_eq!(task.model_hint, request.model_hint);
+            assert_eq!(task.scope, Some(scope.clone()));
+        }
+        other => panic!("expected task delegation frame, got {other:?}"),
+    }
+    assert!(
+        receiver.try_recv().is_err(),
+        "one authenticated outbound request must queue exactly one frame"
+    );
+    listener.abort();
+    let _ = listener.await;
+
+    let unavailable_state = AuditRpcState {
+        token: "outbound-task-token".into(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: Some(Arc::clone(&controller)),
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
+        audit_routes_enabled: false,
+        chat_runtime: None,
+        gui_chat_runtime: None,
+    };
+    let unavailable_nonce = test_endpoint_nonce();
+    let (unavailable_endpoint, unavailable_listener) =
+        bind_and_serve(home.path(), &unavailable_nonce, unavailable_state).await.unwrap();
+    assert_eq!(
+        raw_post_path(
+            &unavailable_endpoint,
+            "/membership/task-delegate/outbound",
+            Some("outbound-task-token"),
+            &body,
+        )
+        .await
+        .0,
+        503,
+        "an authenticated request needs a configured outbound dispatcher"
+    );
+    unavailable_listener.abort();
+    let _ = unavailable_listener.await;
+
+    drop(dispatcher);
+    drop(controller);
+    drop(writer);
+    wal_join.await.ok();
+}
+
 #[tokio::test]
 async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
     let segdir = tempdir().unwrap();
@@ -1155,6 +1353,8 @@ async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -1224,6 +1424,8 @@ async fn internal_skill_mutation_route_stays_live_when_public_audit_routes_are_d
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: false,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -1293,6 +1495,8 @@ async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -1389,6 +1593,8 @@ async fn unauthenticated_authority_ingress_cannot_poison_unrelated_skill_scans()
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -1805,6 +2011,8 @@ async fn wrong_token_is_401_and_writes_no_frame() {
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -1847,6 +2055,8 @@ async fn valid_bearer_bypasses_and_resets_shared_ipc_cooldown() {
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -1882,6 +2092,8 @@ async fn blocked_event_type_is_422_and_emits_reject() {
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -1920,6 +2132,8 @@ async fn client_round_trips_against_a_live_listener() {
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -1968,6 +2182,8 @@ async fn jobs_run_token_client_is_request_bound_and_single_use() {
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -2028,6 +2244,8 @@ async fn jobs_run_token_mint_fails_when_its_mandatory_audit_writer_is_down() {
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -2062,6 +2280,8 @@ async fn subtype_client_round_trips_against_a_live_listener() {
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -2135,6 +2355,8 @@ async fn listener_serves_more_than_one_connection() {
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
@@ -2179,6 +2401,8 @@ async fn daemon_plain_chat_keeps_preauth_at_five_seconds_and_hands_off_only_afte
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         #[cfg(feature = "cluster")]
         membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,

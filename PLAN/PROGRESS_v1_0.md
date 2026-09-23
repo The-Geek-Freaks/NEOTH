@@ -2,6 +2,23 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W392 outbound cluster and W400 session-preview selection (2026-09-23):**
+The daemon-owned outbound dispatcher binds exact operator scopes to active
+authenticated peers, persists Prepared before enqueue, and permits candidate
+failover only after synchronous no-effect errors. Accepted/ambiguous delivery
+cannot replay; restart marks unresolved Prepared indeterminate. Results bind
+the selected Noise peer and task; late acceptance cannot overwrite Resulted.
+The live registry is removed before teardown under the same admission lock.
+Ten new cases cover v6-to-v7 migration, scope/CAS/order, restart/correlation,
+actual queue/RPC dispatch, authentication and concurrent stop. Final integrated
+independent static review passed. Hosted behavior remains pending; P2-18/P2-19
+and GUI/Buddy parity are not closed by this source slice.
+W400 selects4 existing native and8 existing GUI sidebar-preview cases; no
+product or Slint source is changed for it. P1-20 waits their exact terminals.
+Inventory676;native1136+Windows19/Linux33/macOS32;Group824;GUI143Linux/139macOS.
+Road1324=1028checked/294open/2partial;WS-LF21done/97open unchanged.
+No local executable validation or model archive download ran.
+
 **W399 hosted format follow-up (2026-09-23):** The one-file rustfmt import
 from Preflight9fd35864805512 is verified against its exact source, artifact
 digest and both Git blobs. Only test-import order changes. Core9fd35864804945

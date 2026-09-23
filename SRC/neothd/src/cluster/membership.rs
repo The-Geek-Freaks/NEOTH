@@ -16,7 +16,7 @@ use rusqlite::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-pub const AUTHORITY_SCHEMA_VERSION: i64 = 6;
+pub const AUTHORITY_SCHEMA_VERSION: i64 = 7;
 const REVOCATION_INTENTS_SCHEMA_VERSION: i64 = 4;
 pub const MEMBERSHIP_SNAPSHOT_VERSION: u16 = 1;
 pub const MEMBERSHIP_SNAPSHOT_WIRE_VERSION: u16 = 1;
@@ -2716,6 +2716,39 @@ pub struct TaskDelegateScopedAssignment {
     pub revision: u64,
 }
 
+/// Operator-owned outbound route for one exact requested task scope. The peer
+/// key is the authenticated Noise transport identity; advertised metadata does
+/// not participate in this authority decision.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskDelegateOutboundAssignment {
+    pub peer_key: String,
+    pub skill_id: String,
+    pub channel_id: Option<String>,
+    pub account_id: Option<String>,
+    pub allowed: bool,
+    pub priority: u64,
+    pub revision: u64,
+}
+
+/// Durable master-side lifecycle. `Prepared` is not replayed after restart:
+/// queue insertion may already have created an external transport effect.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutboundTaskDelegateState {
+    Prepared,
+    Accepted,
+    Resulted,
+    Indeterminate,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutboundTaskDelegateOperation {
+    pub operation_id: String,
+    pub task_id: String,
+    pub peer_key: String,
+    pub state: OutboundTaskDelegateState,
+}
+
 /// Strict authenticated daemon request for one operator-owned delegation CAS.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -3139,6 +3172,129 @@ impl MembershipStore {
             revision,
             ..assignment.clone()
         })
+    }
+
+    /// Resolve only exact, currently operator-allowed outbound routes.  Stable
+    /// ordering is part of the authority contract: equal priorities use the
+    /// authenticated transport key as the tie-breaker.
+    pub fn task_delegate_outbound_candidates(
+        &self,
+        scope: &crate::cluster::heartbeat::TaskDelegateScope,
+    ) -> Result<Vec<TaskDelegateOutboundAssignment>> {
+        let channel = scope.channel_id.as_deref().unwrap_or("");
+        let account = scope.account_id.as_deref().unwrap_or("");
+        let conn = self.connection()?;
+        let mut statement = conn.prepare(
+            "SELECT o.transport_identity,o.allowed,o.priority,o.revision
+             FROM task_delegate_outbound_assignments o
+             JOIN transport_bindings b ON b.carrier=o.carrier AND b.transport_identity=o.transport_identity
+             JOIN members m ON m.stable_node_id=b.stable_node_id
+             JOIN authority_meta a ON a.singleton=1
+             WHERE o.carrier='peeroxide' AND o.skill_id=?1 AND o.channel_id=?2 AND o.account_id=?3
+               AND o.allowed=1 AND m.state='active' AND b.auth_epoch=m.auth_epoch
+               AND b.membership_epoch=m.membership_epoch AND m.membership_epoch=a.membership_epoch
+               AND m.membership_epoch>=a.revocation_floor
+             ORDER BY priority ASC, transport_identity ASC",
+        )?;
+        statement
+            .query_map(params![scope.skill_id, channel, account], |row| {
+                Ok(TaskDelegateOutboundAssignment {
+                    peer_key: row.get(0)?, skill_id: scope.skill_id.clone(),
+                    channel_id: scope.channel_id.clone(), account_id: scope.account_id.clone(),
+                    allowed: row.get::<_, i64>(1)? == 1, priority: row.get(2)?, revision: row.get(3)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    pub fn task_delegate_outbound_assignment(&self, peer_key: &str, scope: &crate::cluster::heartbeat::TaskDelegateScope) -> Result<Option<TaskDelegateOutboundAssignment>> {
+        validate_peeroxide_transport_key(peer_key)?;
+        let conn = self.connection()?; let channel = scope.channel_id.as_deref().unwrap_or(""); let account = scope.account_id.as_deref().unwrap_or("");
+        conn.query_row("SELECT allowed,priority,revision FROM task_delegate_outbound_assignments WHERE carrier='peeroxide' AND transport_identity=?1 AND skill_id=?2 AND channel_id=?3 AND account_id=?4", params![peer_key, scope.skill_id, channel, account], |row| Ok(TaskDelegateOutboundAssignment { peer_key: peer_key.into(), skill_id: scope.skill_id.clone(), channel_id: scope.channel_id.clone(), account_id: scope.account_id.clone(), allowed: row.get::<_,i64>(0)? == 1, priority: row.get(1)?, revision: row.get(2)? })).optional().map_err(Into::into)
+    }
+
+    pub fn task_delegate_outbound_assignment_read_only(home: &Path, peer_key: &str, scope: &crate::cluster::heartbeat::TaskDelegateScope) -> Result<Option<TaskDelegateOutboundAssignment>> {
+        validate_peeroxide_transport_key(peer_key)?; let path = home.join(AUTHORITY_DB_FILE); if !path.exists() { return Ok(None); }
+        let conn = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let exists: i64 = conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_delegate_outbound_assignments')", [], |r| r.get(0))?;
+        if exists == 0 { return Ok(None); }
+        let channel=scope.channel_id.as_deref().unwrap_or(""); let account=scope.account_id.as_deref().unwrap_or("");
+        conn.query_row("SELECT allowed,priority,revision FROM task_delegate_outbound_assignments WHERE carrier='peeroxide' AND transport_identity=?1 AND skill_id=?2 AND channel_id=?3 AND account_id=?4",params![peer_key,scope.skill_id,channel,account],|row| Ok(TaskDelegateOutboundAssignment{peer_key:peer_key.into(),skill_id:scope.skill_id.clone(),channel_id:scope.channel_id.clone(),account_id:scope.account_id.clone(),allowed:row.get::<_,i64>(0)?==1,priority:row.get(1)?,revision:row.get(2)?})).optional().map_err(Into::into)
+    }
+
+    pub fn set_task_delegate_outbound_assignment(
+        &self, assignment: &TaskDelegateOutboundAssignment, expected_revision: u64,
+    ) -> Result<TaskDelegateOutboundAssignment> {
+        validate_peeroxide_transport_key(&assignment.peer_key)?;
+        let scope = crate::cluster::heartbeat::TaskDelegateScope { skill_id: assignment.skill_id.clone(), channel_id: assignment.channel_id.clone(), account_id: assignment.account_id.clone() };
+        crate::cluster::heartbeat::validate_task_delegate(&crate::cluster::heartbeat::TaskDelegateBody { task_id: "outbound-scope-validation".into(), prompt: "outbound-scope-validation".into(), model_hint: None, scope: Some(scope.clone()) })?;
+        let channel = scope.channel_id.as_deref().unwrap_or(""); let account = scope.account_id.as_deref().unwrap_or("");
+        let mut conn = self.connection()?; let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let active: i64 = tx.query_row("SELECT EXISTS(SELECT 1 FROM members m JOIN transport_bindings b ON b.stable_node_id=m.stable_node_id JOIN authority_meta a ON a.singleton=1 WHERE m.state='active' AND b.carrier='peeroxide' AND b.transport_identity=?1 AND b.auth_epoch=m.auth_epoch AND b.membership_epoch=m.membership_epoch AND m.membership_epoch=a.membership_epoch AND m.membership_epoch>=a.revocation_floor)", [&assignment.peer_key], |row| row.get(0))?;
+        anyhow::ensure!(active == 1, "outbound task delegate assignment requires an active exact peeroxide membership");
+        let current = tx.query_row("SELECT revision FROM task_delegate_outbound_assignments WHERE carrier='peeroxide' AND transport_identity=?1 AND skill_id=?2 AND channel_id=?3 AND account_id=?4", params![assignment.peer_key, scope.skill_id, channel, account], |row| row.get::<_,u64>(0)).optional()?.unwrap_or(0);
+        anyhow::ensure!(current == expected_revision, "outbound task delegate assignment revision conflict: expected {expected_revision}, current {current}");
+        let revision = current.checked_add(1).context("outbound task delegate assignment revision exhausted")?;
+        tx.execute("INSERT INTO task_delegate_outbound_assignments (carrier,transport_identity,skill_id,channel_id,account_id,allowed,priority,revision) VALUES ('peeroxide',?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(carrier,transport_identity,skill_id,channel_id,account_id) DO UPDATE SET allowed=excluded.allowed,priority=excluded.priority,revision=excluded.revision", params![assignment.peer_key, scope.skill_id, channel, account, i64::from(assignment.allowed), assignment.priority, revision])?;
+        tx.commit()?; Ok(TaskDelegateOutboundAssignment { revision, ..assignment.clone() })
+    }
+
+    /// Persist the chosen peer before a frame is offered to its queue.  A
+    /// duplicate operation/task is rejected so a caller retry cannot fan out.
+    pub fn prepare_task_delegate_outbound_operation(
+        &self, operation_id: &str, task_id: &str, peer_key: &str,
+        scope: &crate::cluster::heartbeat::TaskDelegateScope, now_unix: i64,
+    ) -> Result<OutboundTaskDelegateOperation> {
+        validate_peeroxide_transport_key(peer_key)?;
+        crate::cluster::heartbeat::validate_task_delegate(&crate::cluster::heartbeat::TaskDelegateBody {
+            task_id: task_id.into(), prompt: "outbound-operation-validation".into(), model_hint: None, scope: Some(scope.clone()),
+        })?;
+        anyhow::ensure!(!operation_id.is_empty() && operation_id.len() <= 64, "outbound task delegation operation id is invalid");
+        let mut conn = self.connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let channel = scope.channel_id.as_deref().unwrap_or("");
+        let account = scope.account_id.as_deref().unwrap_or("");
+        let allowed: Option<i64> = tx.query_row(
+            "SELECT allowed FROM task_delegate_outbound_assignments WHERE carrier='peeroxide' AND transport_identity=?1 AND skill_id=?2 AND channel_id=?3 AND account_id=?4",
+            params![peer_key, scope.skill_id, channel, account], |row| row.get(0)).optional()?;
+        anyhow::ensure!(allowed == Some(1), "outbound task delegation has no exact operator assignment");
+        tx.execute("INSERT INTO task_delegate_outbound_operations (operation_id,task_id,transport_identity,skill_id,channel_id,account_id,state,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,'prepared',?7,?7)", params![operation_id, task_id, peer_key, scope.skill_id, channel, account, now_unix])?;
+        tx.commit()?;
+        Ok(OutboundTaskDelegateOperation { operation_id: operation_id.into(), task_id: task_id.into(), peer_key: peer_key.into(), state: OutboundTaskDelegateState::Prepared })
+    }
+
+    /// Monotonic `prepared -> accepted`; a result racing the local queue
+    /// receipt wins and is never overwritten by this late acknowledgement.
+    pub fn accept_task_delegate_outbound_operation(&self, operation_id: &str, now_unix: i64) -> Result<OutboundTaskDelegateState> {
+        let conn = self.connection()?;
+        let changed = conn.execute("UPDATE task_delegate_outbound_operations SET state='accepted',updated_at=?2 WHERE operation_id=?1 AND state='prepared'", params![operation_id, now_unix])?;
+        if changed == 1 { return Ok(OutboundTaskDelegateState::Accepted); }
+        let state: String = conn.query_row("SELECT state FROM task_delegate_outbound_operations WHERE operation_id=?1", [operation_id], |row| row.get(0))?;
+        match state.as_str() { "resulted" => Ok(OutboundTaskDelegateState::Resulted), "indeterminate" => Ok(OutboundTaskDelegateState::Indeterminate), "accepted" => Ok(OutboundTaskDelegateState::Accepted), _ => anyhow::bail!("invalid outbound task delegation operation state") }
+    }
+
+    /// A synchronous `send_to` refusal has not accepted a frame. This is the
+    /// sole state in which retrying a different authorized peer is safe.
+    pub fn discard_prepared_task_delegate_outbound_operation(&self, operation_id: &str) -> Result<()> {
+        let conn = self.connection()?;
+        anyhow::ensure!(conn.execute("DELETE FROM task_delegate_outbound_operations WHERE operation_id=?1 AND state='prepared'", [operation_id])? == 1, "outbound task delegation prepared operation cannot be discarded");
+        Ok(())
+    }
+
+    /// Startup recovery refuses to guess whether a persisted Prepared frame
+    /// reached a live session before the prior process died. It is visible as
+    /// indeterminate and is never selected for automatic replay.
+    pub fn recover_prepared_task_delegate_outbound_operations(&self, now_unix: i64) -> Result<usize> {
+        let conn = self.connection()?;
+        Ok(conn.execute("UPDATE task_delegate_outbound_operations SET state='indeterminate',updated_at=?1 WHERE state='prepared'", [now_unix])?)
+    }
+
+    /// Only the authenticated selected peer may settle its task id.
+    pub fn result_task_delegate_outbound_operation(&self, peer_key: &str, task_id: &str, now_unix: i64) -> Result<bool> {
+        validate_peeroxide_transport_key(peer_key)?;
+        let conn = self.connection()?;
+        Ok(conn.execute("UPDATE task_delegate_outbound_operations SET state='resulted',updated_at=?3 WHERE transport_identity=?1 AND task_id=?2 AND state IN ('prepared','accepted')", params![peer_key, task_id, now_unix])? == 1)
     }
 
     pub fn latest_invitation_digest(
@@ -5147,6 +5303,35 @@ fn migrate(conn: &Connection) -> Result<()> {
          );
          PRAGMA user_version=6;",
     )?;
+    // Master-side delegation is separately operator-authorized.  An inbound
+    // grant on a remote node never authorizes this node to select it.
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS task_delegate_outbound_assignments (
+             carrier TEXT NOT NULL CHECK(carrier IN ('peeroxide')),
+             transport_identity TEXT NOT NULL,
+             skill_id TEXT NOT NULL,
+             channel_id TEXT NOT NULL,
+             account_id TEXT NOT NULL,
+             allowed INTEGER NOT NULL CHECK(allowed IN (0,1)),
+             priority INTEGER NOT NULL CHECK(priority >= 0),
+             revision INTEGER NOT NULL CHECK(revision > 0),
+             PRIMARY KEY(carrier,transport_identity,skill_id,channel_id,account_id)
+         );
+         CREATE TABLE IF NOT EXISTS task_delegate_outbound_operations (
+             operation_id TEXT PRIMARY KEY,
+             task_id TEXT NOT NULL UNIQUE,
+             transport_identity TEXT NOT NULL,
+             skill_id TEXT NOT NULL,
+             channel_id TEXT NOT NULL,
+             account_id TEXT NOT NULL,
+             state TEXT NOT NULL CHECK(state IN ('prepared','accepted','resulted','indeterminate')),
+             created_at INTEGER NOT NULL,
+             updated_at INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS task_delegate_outbound_operations_peer_task
+             ON task_delegate_outbound_operations(transport_identity,task_id);
+         PRAGMA user_version=7;",
+    )?;
     tx.commit()?;
     Ok(())
 }
@@ -5447,6 +5632,25 @@ mod tests {
                 .unwrap(),
             None
         );
+        migrated.integrity_check().unwrap();
+    }
+
+    #[test]
+    fn v6_to_v7_migration_preserves_scoped_assignment_and_keeps_outbound_empty() {
+        let home = tempfile::tempdir().unwrap(); let now = 1_700_000_000;
+        let (_, attestation, transport) = identity_and_attestation(home.path(), now);
+        let peer_key = transport.as_str().to_string(); let store = MembershipStore::open(home.path()).unwrap();
+        store.confirm_attestation(&attestation, CarrierKind::Peeroxide, &transport, "127.0.0.1:1234", "v6-migration", now).unwrap();
+        let scope = crate::cluster::heartbeat::TaskDelegateScope { skill_id: "summarize".into(), channel_id: Some("telegram".into()), account_id: Some("primary".into()) };
+        store.set_task_delegate_assignment(&peer_key, true, 0).unwrap();
+        let scoped = store.set_task_delegate_scoped_assignment(&TaskDelegateScopedAssignment { peer_key: peer_key.clone(), skill_id: scope.skill_id.clone(), channel_id: scope.channel_id.clone(), account_id: scope.account_id.clone(), allowed: true, revision: 0 }, 0).unwrap();
+        let path = store.path().to_path_buf(); drop(store);
+        let conn = Connection::open(&path).unwrap(); conn.execute_batch("DROP TABLE task_delegate_outbound_operations; DROP TABLE task_delegate_outbound_assignments; PRAGMA user_version=6;").unwrap(); drop(conn);
+        assert_eq!(MembershipStore::task_delegate_outbound_assignment_read_only(home.path(), &peer_key, &scope).unwrap(), None);
+        let conn = Connection::open(&path).unwrap(); assert_eq!(conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 6); drop(conn);
+        let migrated = MembershipStore::open_path(path, false).unwrap();
+        assert_eq!(migrated.task_delegate_scoped_assignment(&peer_key, &scope).unwrap(), Some(scoped));
+        assert!(migrated.task_delegate_outbound_candidates(&scope).unwrap().is_empty());
         migrated.integrity_check().unwrap();
     }
 

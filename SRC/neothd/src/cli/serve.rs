@@ -530,6 +530,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         ),
     );
     #[cfg(feature = "cluster")]
+    let outbound_task_delegate = std::sync::Arc::new(
+        crate::cluster::runtime_supervisor::OutboundTaskDelegateController::new(
+            &neoth_home,
+            std::sync::Arc::clone(&membership_controller),
+        )?,
+    );
+    #[cfg(feature = "cluster")]
     let startup_membership = std::sync::Arc::clone(&membership_controller);
     #[cfg(feature = "cluster")]
     tokio::task::spawn_blocking(move || {
@@ -581,6 +588,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         daemon_pid_guard,
         &audit_endpoint_nonce,
         std::sync::Arc::clone(&membership_controller),
+        std::sync::Arc::clone(&outbound_task_delegate),
     )
     .await
     .context("start daemon membership/audit RPC")?;
@@ -2498,6 +2506,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         std::sync::Arc::clone(&reload_controller),
         shared_provider.clone(),
         std::sync::Arc::clone(&cluster_live_sessions),
+        std::sync::Arc::clone(&outbound_task_delegate),
     )
     .await?;
 

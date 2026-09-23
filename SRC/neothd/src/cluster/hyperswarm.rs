@@ -1354,12 +1354,14 @@ async fn handle_peeroxide_connection(
         }
         if frame.kind == FrameKind::TaskResult {
             if let FrameBody::TaskResult(r) = &frame.body {
-                // Master-side: we delegated a task and got a reply. Full
-                // correlation (task_id → pending request) is the SL-01-master
-                // follow-up; today we audit-log receipt.
+                // Master-side: only the exact authenticated Noise peer chosen
+                // for this task id can settle its durable operation.
+                let correlated = super::membership::MembershipStore::open(&neoth_home)
+                    .and_then(|store| store.result_task_delegate_outbound_operation(&remote_pk_hex, &r.task_id, crate::time::now_unix_i64()));
                 info!(
                     peer_id = %peer_id,
                     task_id = %r.task_id,
+                    correlated = ?correlated,
                     "cluster: received TaskResult from peer"
                 );
             }

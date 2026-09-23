@@ -971,6 +971,13 @@ pub async fn membership_set_task_delegate_assignment(
 }
 
 #[cfg(feature = "cluster")]
+pub async fn dispatch_task_delegate_outbound(home: &Path, request: &crate::cluster::runtime_supervisor::OutboundTaskDelegateDispatchRequest) -> std::result::Result<crate::cluster::runtime_supervisor::OutboundTaskDelegateDispatchReceipt, AuditRpcClientError> {
+    let body = serde_json::to_string(request).map_err(|error| AuditRpcClientError::Unavailable(error.to_string()))?;
+    let (status, response) = post_rpc(home, "/membership/task-delegate/outbound", &body).await?;
+    response_json(status, &response)
+}
+
+#[cfg(feature = "cluster")]
 pub async fn membership_revoke(
     home: &Path,
     request: &crate::cluster::membership::MembershipRevokeRequest,

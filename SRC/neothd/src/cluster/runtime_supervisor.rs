@@ -24,6 +24,68 @@ use crate::config::{
 use crate::providers::Provider;
 use crate::wal::writer::WalWriterHandle;
 
+/// Daemon-owned request for exactly one outbound delegated task.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutboundTaskDelegateDispatchRequest {
+    pub operation_id: String,
+    pub task_id: String,
+    pub prompt: String,
+    pub model_hint: Option<String>,
+    pub scope: crate::cluster::heartbeat::TaskDelegateScope,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutboundTaskDelegateDispatchReceipt {
+    pub operation_id: String,
+    pub task_id: String,
+    pub peer_key: String,
+    pub state: crate::cluster::membership::OutboundTaskDelegateState,
+}
+
+/// The only owner that combines durable operator authority with live,
+/// authenticated peer sessions. A CLI/RPC caller never receives a sender.
+pub struct OutboundTaskDelegateController {
+    membership: Arc<crate::cluster::membership::MembershipController>,
+    streams: std::sync::Mutex<Option<Arc<crate::cluster::peer_streams::PeerStreamRegistry>>>,
+    local_peer_id: String,
+    #[cfg(test)]
+    admission_observer: std::sync::Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+}
+
+impl OutboundTaskDelegateController {
+    pub fn new(home: &std::path::Path, membership: Arc<crate::cluster::membership::MembershipController>) -> Result<Self> {
+        let local_peer_id = crate::cluster::membership::LocalNodeIdentity::load_or_create(home)?.stable_node_id().as_str().to_string();
+        membership.store().recover_prepared_task_delegate_outbound_operations(crate::time::now_unix_i64())?;
+        Ok(Self { membership, streams: std::sync::Mutex::new(None), local_peer_id, #[cfg(test)] admission_observer: std::sync::Mutex::new(None) })
+    }
+    pub fn install_peer_streams(&self, streams: Arc<crate::cluster::peer_streams::PeerStreamRegistry>) { *self.streams.lock().unwrap_or_else(|p| p.into_inner()) = Some(streams); }
+    pub fn clear_peer_streams(&self) { *self.streams.lock().unwrap_or_else(|p| p.into_inner()) = None; }
+    #[cfg(test)]
+    pub(crate) fn set_admission_observer(&self, observer: Option<Arc<dyn Fn() + Send + Sync>>) { *self.admission_observer.lock().unwrap_or_else(|p| p.into_inner()) = observer; }
+    pub fn dispatch(&self, request: &OutboundTaskDelegateDispatchRequest) -> Result<OutboundTaskDelegateDispatchReceipt> {
+        crate::cluster::heartbeat::validate_task_delegate(&crate::cluster::heartbeat::TaskDelegateBody { task_id: request.task_id.clone(), prompt: request.prompt.clone(), model_hint: request.model_hint.clone(), scope: Some(request.scope.clone()) })?;
+        // Hold this admission lock through prepare + try_send. Runtime teardown
+        // takes the same lock before returning, so it cannot report dispatch
+        // disabled while an earlier caller still holds a clone and can enqueue.
+        let streams_guard = self.streams.lock().unwrap_or_else(|p| p.into_inner());
+        #[cfg(test)]
+        if let Some(observer) = self.admission_observer.lock().unwrap_or_else(|p| p.into_inner()).as_ref().cloned() { observer(); }
+        let streams = streams_guard.as_ref().context("cluster outbound delegation unavailable: no live authenticated peer runtime")?;
+        for candidate in self.membership.store().task_delegate_outbound_candidates(&request.scope)? {
+            self.membership.store().prepare_task_delegate_outbound_operation(&request.operation_id, &request.task_id, &candidate.peer_key, &request.scope, crate::time::now_unix_i64())?;
+            let frame = crate::cluster::heartbeat::WireFrame { kind: crate::cluster::heartbeat::FrameKind::TaskDelegate, sequence: 0, sent_unix_ms: crate::time::now_unix_i64().max(0).unsigned_abs().saturating_mul(1000), peer_id: self.local_peer_id.clone(), body: crate::cluster::heartbeat::FrameBody::TaskDelegate(crate::cluster::heartbeat::TaskDelegateBody { task_id: request.task_id.clone(), prompt: request.prompt.clone(), model_hint: request.model_hint.clone(), scope: Some(request.scope.clone()) }) };
+            match streams.send_to(&candidate.peer_key, frame) {
+                Ok(()) => { let state = self.membership.store().accept_task_delegate_outbound_operation(&request.operation_id, crate::time::now_unix_i64())?; return Ok(OutboundTaskDelegateDispatchReceipt { operation_id: request.operation_id.clone(), task_id: request.task_id.clone(), peer_key: candidate.peer_key, state }); }
+                Err(crate::cluster::peer_streams::SendError::UnknownPeer | crate::cluster::peer_streams::SendError::QueueFull | crate::cluster::peer_streams::SendError::Closed | crate::cluster::peer_streams::SendError::MembershipRevoked) => { self.membership.store().discard_prepared_task_delegate_outbound_operation(&request.operation_id)?; }
+            }
+        }
+        anyhow::bail!("cluster outbound delegation has no live eligible peer")
+    }
+    pub fn receive_result(&self, peer_key: &str, task_id: &str) -> Result<bool> { self.membership.store().result_task_delegate_outbound_operation(peer_key, task_id, crate::time::now_unix_i64()) }
+}
+
 const CREDENTIAL_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const FAILED_SWITCH_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 const RUNTIME_START_TIMEOUT: Duration = Duration::from_secs(45);
@@ -333,6 +395,7 @@ struct RuntimeDeps {
     reload_controller: Arc<crate::config::reload::ReloadController>,
     shared_provider: Option<Arc<dyn Provider>>,
     live_sessions: Arc<crate::cluster::membership::LiveSessionRegistry>,
+    outbound_dispatch: Arc<OutboundTaskDelegateController>,
     boot_id: crate::cluster::membership::BootId,
     ack_in_flight: Arc<std::sync::atomic::AtomicBool>,
     ack_permitted: Arc<std::sync::atomic::AtomicBool>,
@@ -354,6 +417,7 @@ impl RuntimeFactory for ProductionFactory {
 struct LiveClusterRuntime {
     carrier: Option<CarrierRuntime>,
     mdns: Option<mdns_sd::ServiceDaemon>,
+    outbound_dispatch: Arc<OutboundTaskDelegateController>,
 }
 
 impl LiveClusterRuntime {
@@ -362,6 +426,7 @@ impl LiveClusterRuntime {
             return Ok(Self {
                 carrier: None,
                 mdns: None,
+                outbound_dispatch: Arc::clone(&deps.outbound_dispatch),
             });
         };
 
@@ -393,6 +458,7 @@ impl LiveClusterRuntime {
         Ok(Self {
             carrier: Some(carrier),
             mdns,
+            outbound_dispatch: Arc::clone(&deps.outbound_dispatch),
         })
     }
 }
@@ -410,6 +476,10 @@ impl RuntimeUnit for LiveClusterRuntime {
     }
 
     async fn shutdown(mut self) -> Result<()> {
+        // Stop accepting operator dispatch before this generation begins to
+        // tear down its sessions. A retained sender may otherwise accept a
+        // TaskDelegate during reload and execute it after shutdown started.
+        self.outbound_dispatch.clear_peer_streams();
         // Stop LAN advertisement before any slower carrier/session teardown.
         // A privacy-policy or network downgrade must become undiscoverable
         // first, even if a carrier worker later needs its full timeout.
@@ -549,6 +619,9 @@ impl CarrierRuntime {
                 .as_str()
                 .to_string(),
         );
+        // Publish only after swarm construction succeeded. Failed startup
+        // cannot leave a stale dispatchable registry behind.
+        deps.outbound_dispatch.install_peer_streams(Arc::clone(&peer_streams));
         let gossip = crate::cluster::wal_sync::spawn_gossip_tick(
             peer_streams,
             deps.segment_path.clone(),
@@ -1085,6 +1158,7 @@ pub(crate) async fn spawn_runtime_supervisor(
     reload_controller: Arc<crate::config::reload::ReloadController>,
     shared_provider: Option<Arc<dyn Provider>>,
     live_sessions: Arc<crate::cluster::membership::LiveSessionRegistry>,
+    outbound_dispatch: Arc<OutboundTaskDelegateController>,
 ) -> Result<ClusterRuntimeSupervisorHandle> {
     let mut generation = reload_controller.subscribe_generation();
     let (mut initial_config, mut initial_credentials, mut initial_observed) =
@@ -1100,6 +1174,7 @@ pub(crate) async fn spawn_runtime_supervisor(
         reload_controller,
         shared_provider,
         live_sessions,
+        outbound_dispatch,
         boot_id: crate::cluster::membership::BootId::new(),
         ack_in_flight: Arc::clone(&ack_in_flight),
         ack_permitted: Arc::clone(&ack_permitted),

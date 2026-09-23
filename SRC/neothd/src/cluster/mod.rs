@@ -35,6 +35,8 @@ pub mod iroh_transport;
 pub mod discovery;
 pub mod identity;
 pub mod membership;
+#[cfg(test)]
+mod outbound_tests;
 pub mod peer_auth;
 pub mod status_wire;
 

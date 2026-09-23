@@ -110,6 +110,69 @@ pub enum ClusterTaskDelegateAction {
         #[arg(long)]
         expected_revision: u64,
     },
+    /// Read one exact operator-owned outbound delegation route.
+    #[command(name = "outbound-show")]
+    OutboundShow {
+        peer_key: String,
+        #[arg(long)]
+        skill: String,
+        #[arg(long)]
+        channel: Option<String>,
+        #[arg(long)]
+        account: Option<String>,
+    },
+    /// CAS one exact outbound route. This changes only local durable
+    /// authority; daemon dispatch remains a separate live operation.
+    #[command(name = "outbound-set")]
+    OutboundSet {
+        peer_key: String,
+        #[arg(long)]
+        skill: String,
+        #[arg(long)]
+        channel: Option<String>,
+        #[arg(long)]
+        account: Option<String>,
+        #[arg(long, action = clap::ArgAction::Set)]
+        allowed: bool,
+        #[arg(long)]
+        priority: u64,
+        #[arg(long)]
+        expected_revision: u64,
+    },
+    /// CAS-reset one outbound route to a durable deny tombstone.
+    #[command(name = "outbound-reset")]
+    OutboundReset {
+        peer_key: String,
+        #[arg(long)]
+        skill: String,
+        #[arg(long)]
+        channel: Option<String>,
+        #[arg(long)]
+        account: Option<String>,
+        #[arg(long)]
+        priority: u64,
+        #[arg(long)]
+        expected_revision: u64,
+    },
+    /// Ask the live authenticated daemon to dispatch exactly one outbound
+    /// delegated task. There is intentionally no offline approximation.
+    #[command(name = "outbound-dispatch")]
+    OutboundDispatch {
+        #[arg(long)]
+        operation_id: String,
+        #[arg(long)]
+        task_id: String,
+        #[arg(long)]
+        prompt: String,
+        #[arg(long)]
+        model_hint: Option<String>,
+        #[arg(long)]
+        skill: String,
+        #[arg(long)]
+        channel: Option<String>,
+        #[arg(long)]
+        account: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1772,6 +1835,59 @@ async fn run_task_delegate_assignment(
                 OutputFormat::Table => print_scoped_assignment(&Some(assignment)),
             }
         }
+        ClusterTaskDelegateAction::OutboundShow { peer_key, skill, channel, account } => {
+            let scope = crate::cluster::heartbeat::TaskDelegateScope {
+                skill_id: skill, channel_id: channel, account_id: account,
+            };
+            let assignment = task_delegate_outbound_assignment_show_at(&home, &peer_key, &scope)?;
+            print_outbound_assignment(output, &assignment);
+        }
+        ClusterTaskDelegateAction::OutboundSet {
+            peer_key, skill, channel, account, allowed, priority, expected_revision,
+        } => {
+            let scope = crate::cluster::heartbeat::TaskDelegateScope {
+                skill_id: skill, channel_id: channel, account_id: account,
+            };
+            let assignment = task_delegate_outbound_assignment_set_at(
+                &home, &peer_key, &scope, allowed, priority, expected_revision,
+            )?;
+            print_outbound_assignment(output, &Some(assignment));
+        }
+        ClusterTaskDelegateAction::OutboundReset {
+            peer_key, skill, channel, account, priority, expected_revision,
+        } => {
+            let scope = crate::cluster::heartbeat::TaskDelegateScope {
+                skill_id: skill, channel_id: channel, account_id: account,
+            };
+            let assignment = task_delegate_outbound_assignment_set_at(
+                &home, &peer_key, &scope, false, priority, expected_revision,
+            )?;
+            print_outbound_assignment(output, &Some(assignment));
+        }
+        ClusterTaskDelegateAction::OutboundDispatch {
+            operation_id, task_id, prompt, model_hint, skill, channel, account,
+        } => {
+            let request = crate::cluster::runtime_supervisor::OutboundTaskDelegateDispatchRequest {
+                operation_id,
+                task_id,
+                prompt,
+                model_hint,
+                scope: crate::cluster::heartbeat::TaskDelegateScope {
+                    skill_id: skill, channel_id: channel, account_id: account,
+                },
+            };
+            let receipt = crate::daemon::audit_rpc::dispatch_task_delegate_outbound(&home, &request)
+                .await
+                .map_err(|error| anyhow::anyhow!(error))?;
+            match output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&receipt)?),
+                OutputFormat::Jsonl => println!("{}", serde_json::to_string(&receipt)?),
+                OutputFormat::Table => println!(
+                    "operation_id={} task_id={} peer_key={} state={:?}",
+                    receipt.operation_id, receipt.task_id, receipt.peer_key, receipt.state
+                ),
+            }
+        }
     }
     Ok(())
 }
@@ -1800,6 +1916,74 @@ fn task_delegate_scope_show_at(
     )?;
     crate::cluster::membership::MembershipStore::task_delegate_scoped_assignment_read_only(
         home, peer_key, scope,
+    )
+}
+
+fn task_delegate_outbound_assignment_show_at(
+    home: &Path,
+    peer_key: &str,
+    scope: &crate::cluster::heartbeat::TaskDelegateScope,
+) -> Result<Option<crate::cluster::membership::TaskDelegateOutboundAssignment>> {
+    validate_pub_key_hex(peer_key)?;
+    crate::cluster::heartbeat::validate_task_delegate(&crate::cluster::heartbeat::TaskDelegateBody {
+        task_id: "outbound-scope-show".into(),
+        prompt: "outbound-scope-show".into(),
+        model_hint: None,
+        scope: Some(scope.clone()),
+    })?;
+    crate::cluster::membership::MembershipStore::task_delegate_outbound_assignment_read_only(
+        home, peer_key, scope,
+    )
+}
+
+fn print_outbound_assignment(
+    output: &OutputFormat,
+    assignment: &Option<crate::cluster::membership::TaskDelegateOutboundAssignment>,
+) {
+    match output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(assignment).unwrap()),
+        OutputFormat::Jsonl => println!("{}", serde_json::to_string(assignment).unwrap()),
+        OutputFormat::Table => match assignment {
+            Some(value) => println!(
+                "peer_key={} skill={} channel={} account={} allowed={} priority={} revision={}",
+                value.peer_key,
+                value.skill_id,
+                value.channel_id.as_deref().unwrap_or(""),
+                value.account_id.as_deref().unwrap_or(""),
+                value.allowed,
+                value.priority,
+                value.revision,
+            ),
+            None => println!("outbound_task_delegate=false revision=0 (default deny)"),
+        },
+    }
+}
+
+fn task_delegate_outbound_assignment_set_at(
+    home: &Path,
+    peer_key: &str,
+    scope: &crate::cluster::heartbeat::TaskDelegateScope,
+    allowed: bool,
+    priority: u64,
+    expected_revision: u64,
+) -> Result<crate::cluster::membership::TaskDelegateOutboundAssignment> {
+    validate_pub_key_hex(peer_key)?;
+    anyhow::ensure!(
+        live_daemon_owner_pid(home)?.is_none(),
+        "stop the daemon before changing outbound task-delegate assignments; outbound assignment RPC is not available"
+    );
+    let _offline_authority_lock = acquire_offline_membership_guard(home)?;
+    crate::cluster::membership::MembershipStore::open(home)?.set_task_delegate_outbound_assignment(
+        &crate::cluster::membership::TaskDelegateOutboundAssignment {
+            peer_key: peer_key.into(),
+            skill_id: scope.skill_id.clone(),
+            channel_id: scope.channel_id.clone(),
+            account_id: scope.account_id.clone(),
+            allowed,
+            priority,
+            revision: 0,
+        },
+        expected_revision,
     )
 }
 
@@ -5514,6 +5698,26 @@ mod tests {
         assert_eq!(
             task_delegate_scope_show_at(home.path(), &peer_key, &scope).unwrap(),
             Some(reset)
+        );
+    }
+
+    #[test]
+    fn outbound_task_delegate_show_is_exact_and_read_only_when_absent() {
+        let home = tempfile::tempdir().unwrap();
+        let scope = crate::cluster::heartbeat::TaskDelegateScope {
+            skill_id: "summarize".into(),
+            channel_id: Some("telegram".into()),
+            account_id: Some("primary".into()),
+        };
+        assert_eq!(
+            task_delegate_outbound_assignment_show_at(home.path(), &"a".repeat(64), &scope)
+                .unwrap(),
+            None,
+        );
+        assert_eq!(
+            std::fs::read_dir(home.path()).unwrap().count(),
+            0,
+            "outbound show must not create authority state"
         );
     }
 
