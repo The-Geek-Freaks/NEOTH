@@ -1810,7 +1810,12 @@ template = "[native-search-hook]"
         );
         let canonical_file = file.canonicalize().unwrap().display().to_string();
         let expected_file_json = serde_json::to_string(&canonical_file).unwrap();
-        let canonical_repository = repository.path().canonicalize().unwrap().display().to_string();
+        let canonical_repository = repository
+            .path()
+            .canonicalize()
+            .unwrap()
+            .display()
+            .to_string();
         let expected_repository_json = serde_json::to_string(&canonical_repository).unwrap();
         let summary = context.arguments().summary();
         assert!(

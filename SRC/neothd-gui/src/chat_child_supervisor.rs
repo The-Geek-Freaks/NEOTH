@@ -1822,7 +1822,9 @@ fn linux_cgroup_mount_flags(operation: LinuxCgroupMountOperation) -> libc::c_ulo
 #[cfg(target_os = "linux")]
 fn linux_cgroup_mount_operation_stage(operation: LinuxCgroupMountOperation) -> &'static str {
     match operation {
-        LinuxCgroupMountOperation::UnmountInheritedNamespaceMount => "unmount inherited cgroup mount",
+        LinuxCgroupMountOperation::UnmountInheritedNamespaceMount => {
+            "unmount inherited cgroup mount"
+        }
         LinuxCgroupMountOperation::FreshNamespaceRoot => "mount cgroup namespace root",
         LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly => {
             "bind-remount cgroup namespace root read-only"

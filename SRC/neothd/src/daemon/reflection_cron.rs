@@ -654,7 +654,7 @@ fn run_period_reflection_ticks_once(
     config: &crate::config::FreedomConfig,
 ) -> Result<PeriodTickResults, String> {
     use crate::reflection::periodic::{
-        PeriodKind, date_tag_from_unix, enforce_daily_retention, year_tag_from_unix,
+        PeriodKind, date_tag_from_unix, enforce_daily_retention_with_execution, year_tag_from_unix,
     };
 
     let cfg = crate::cli::reflect::ReflectTopics::load_for_automation(home)
@@ -677,9 +677,9 @@ fn run_period_reflection_ticks_once(
     );
     // Daily retention inventory intentionally runs regardless of the opt-in
     // composition cadence. `cfg` and `obs_ref` are immutable snapshots; the
-    // pre-v2 implementation is read-only and returns deferred candidates.
-    // A later authority-backed executor must retain this immutable snapshot.
-    let retention = enforce_daily_retention(home, now_unix, &cfg.daily_retention, obs_ref)
+    // v2 execution opt-in comes from that same validated snapshot; an absent
+    // opt-in retains the inventory-only legacy behavior.
+    let retention = enforce_daily_retention_with_execution(home, now_unix, &cfg.daily_retention, &cfg.daily_retention_execution, obs_ref)
         .map_err(|_| "daily retention enforcement failed".to_string());
     let yearly_tag = year_tag_from_unix(now_unix);
     let yearly = run_period_reflection_tick_once(

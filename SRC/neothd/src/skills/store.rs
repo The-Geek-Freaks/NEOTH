@@ -39,6 +39,9 @@ thread_local! {
     static TEST_AFTER_BOUND_FILE_REVALIDATION:
         std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
+    static TEST_AFTER_BOUND_RENAME_REVALIDATION:
+        std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(all(test, windows))]
@@ -72,6 +75,18 @@ fn run_before_empty_directory_rename_for_test() {
         if let Some(hook) = slot.borrow_mut().take() {
             hook();
         }
+    });
+}
+
+#[cfg(all(test, unix))]
+fn set_after_bound_rename_revalidation_for_test(hook: impl FnOnce() + 'static) {
+    TEST_AFTER_BOUND_RENAME_REVALIDATION.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+#[cfg(all(test, unix))]
+fn run_after_bound_rename_revalidation_for_test() {
+    TEST_AFTER_BOUND_RENAME_REVALIDATION.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() { hook(); }
     });
 }
 
@@ -2110,6 +2125,46 @@ pub(crate) fn rename_child(
         )?;
     }
     Ok(())
+}
+
+/// Rename the exact child represented by `binding`, not merely the current
+/// occupant of `source_name`. Windows commits through the retained mutation
+/// handle. Unix cannot atomically combine an inode comparison with renameat;
+/// it therefore uses an exclusive target quarantine, verifies that the moved
+/// inode is the retained one, and restores a mismatch without replacement.
+/// A restore conflict is surfaced to the caller as an explicit recovery
+/// boundary; it is never silently treated as a successful rename.
+pub(crate) fn rename_bound_child(
+    binding: &BoundChildObject,
+    source_parent: &Dir,
+    source_name: &OsStr,
+    target_parent: &Dir,
+    target_name: &OsStr,
+    source_display: &Path,
+    target_display: &Path,
+) -> Result<()> {
+    validate_child_name(source_name)?;
+    validate_child_name(target_name)?;
+    anyhow::ensure!(binding.matches_child(source_parent, source_name, source_display)?, "bound rename source changed before admission: {}", source_display.display());
+    #[cfg(windows)]
+    {
+        let handle = binding._handle.as_ref().context("bound rename has no retained mutation handle")?;
+        windows_rename_open_handle(handle, target_parent, target_name, false, target_display)?;
+        anyhow::ensure!(binding.matches_child(target_parent, target_name, target_display)?, "bound rename target identity changed after commit: {}", target_display.display());
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        #[cfg(test)]
+        run_after_bound_rename_revalidation_for_test();
+        rename_child(source_parent, source_name, target_parent, target_name, false, source_display, target_display)?;
+        if binding.matches_child(target_parent, target_name, target_display)? { return Ok(()); }
+        // The name was raced after the precheck. Restore only the quarantined
+        // object with NOREPLACE; a source conflict preserves both objects and
+        // deliberately leaves recovery evidence at the target name.
+        let restore = rename_child(target_parent, target_name, source_parent, source_name, false, target_display, source_display);
+        return Err(restore.err().unwrap_or_else(|| anyhow::anyhow!("bound rename identity mismatch; object restored for recovery: {}", source_display.display())));
+    }
 }
 
 /// Publish an already-open regular-file stage and report the exact atomic
@@ -5604,6 +5659,44 @@ mod tests {
         assert!(!format!("{error:#}").is_empty());
         assert_eq!(std::fs::read(&source).unwrap(), b"source-generation");
         assert_eq!(std::fs::read(&target).unwrap(), b"target-sentinel");
+    }
+
+    #[test]
+    fn bound_rename_refuses_same_byte_source_replacement_before_namespace_effect() {
+        let temp = tempdir().unwrap();
+        let source = temp.path().join("source.json");
+        let displaced = temp.path().join("original.json");
+        let target = temp.path().join("target.json");
+        std::fs::write(&source, b"same bytes").unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store").unwrap().unwrap();
+        let binding = bind_child_object(&root.dir, OsStr::new("source.json"), &source).unwrap();
+        std::fs::rename(&source, &displaced).unwrap();
+        std::fs::write(&source, b"same bytes").unwrap();
+        assert!(rename_bound_child(&binding, &root.dir, OsStr::new("source.json"), &root.dir, OsStr::new("target.json"), &source, &target).is_err());
+        assert_eq!(std::fs::read(&source).unwrap(), b"same bytes");
+        assert_eq!(std::fs::read(&displaced).unwrap(), b"same bytes");
+        assert!(!target.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bound_rename_unix_race_restores_foreign_replacement_and_keeps_original() {
+        let temp = tempdir().unwrap();
+        let source = temp.path().join("source.json");
+        let displaced = temp.path().join("original.json");
+        let target = temp.path().join("target.json");
+        std::fs::write(&source, b"same bytes").unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store").unwrap().unwrap();
+        let binding = bind_child_object(&root.dir, OsStr::new("source.json"), &source).unwrap();
+        let hook_source = source.clone(); let hook_displaced = displaced.clone();
+        set_after_bound_rename_revalidation_for_test(move || {
+            std::fs::rename(&hook_source, &hook_displaced).unwrap();
+            std::fs::write(&hook_source, b"same bytes").unwrap();
+        });
+        assert!(rename_bound_child(&binding, &root.dir, OsStr::new("source.json"), &root.dir, OsStr::new("target.json"), &source, &target).is_err());
+        assert_eq!(std::fs::read(&source).unwrap(), b"same bytes");
+        assert_eq!(std::fs::read(&displaced).unwrap(), b"same bytes");
+        assert!(!target.exists(), "foreign replacement must be restored, never accepted at target");
     }
 
     #[test]

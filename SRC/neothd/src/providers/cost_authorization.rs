@@ -7887,7 +7887,9 @@ mod tests {
                 1,
                 // The detached worker constructs an AuthorizedProvider only
                 // after the job capability, live config, and consent checks.
-                "de7addacaed902c7078df7a36633b72ab19e964b6ba2325efce6ced9b8c57bd2",
+                // W285 also binds the originating Left role before dispatch;
+                // Group504 verified one unchanged authorized effect edge.
+                "84370681e9f69fe55ae83338fccdb4efbd463e9c9d7b378a9c349acc67c001f0",
             ),
             (
                 "cli/chat.rs",

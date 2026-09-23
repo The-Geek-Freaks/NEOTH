@@ -38,6 +38,9 @@ use rusqlite::Connection;
 /// archivable records + Obsidian daily-notes / yearly summaries.
 pub mod periodic;
 
+/// Daily-only v2 retention opt-in and private effect receipt schemas.
+pub mod retention_authority;
+
 /// Pure, versioned reflection-retention, topic-deduplication, and yearly-input
 /// planning. This module deliberately plans changes only; retention execution,
 /// persistence, and cron/CLI wiring remain separate follow-up work.

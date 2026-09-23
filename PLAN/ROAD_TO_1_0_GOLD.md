@@ -8,6 +8,39 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W280 retention implementation and W288 macOS budget (2026-09-23):**
+W280 introduces explicit default-off Daily retention execution v2. Settlement
+receipts bind owned notes to exact file objects; archives and notes quarantine
+on their own filesystem. Durable effect/purge journals reconcile the actual
+pre/post-rename and pre/post-unlink states. Committed receipt mismatches fail
+without rewriting evidence; terminal purge retries preserve their receipts.
+Yearly synthesis retains Daily period inputs, unions active archives, filters
+valid non-Daily records, and preserves canonical writer-generated JSONL digests.
+Independent source review and subsequent exact recovery corrections are recorded
+in docs/gold-wave280-daily-retention.md. This is implementation, not acceptance.
+
+The hosted selection adds51 exact cases:17 new v2 behavior/recovery/provenance
+tests,2 authority-schema tests,2 object-bound rename tests (one Unix), and30
+existing hygiene/Jaccard/synonym/migration/CLI/cron cases. The concurrent yearly
+fixture was already selected. Grouped count556; universal native952; platform
+extras Windows19/Linux31/macOS30; manifest567. GUI counts remain98+27/26.
+
+Group5048afd35820382140 is fully source-bound:504 executed,503 passed,1 failed;
+all109 source bindings, matrix/lock and ordered terminals match. All13 W279 cases
+and both actual W285 provider/WAL cases passed. The sole failure was the raw
+provider-callsite inventory fingerprint after the reviewed Left-role binding.
+It still finds one authorized background effect edge; the expected fingerprint
+is updated from that exact hosted diagnostic, without relaxing the invariant.
+Core8afd35820395597 passed Clippy, test-target typecheck, public CLI and export.
+
+FullCIce0 attempt1 macOS timed out after100 minutes while actively compiling;
+no Rust diagnostic was reported. W288 raises only macOS compile150/job190
+minutes, retaining one build job and the separate30-minute execution window.
+Only Linux's runner-communication failure was rerun as attempt2; preserve it.
+Preflight6dae's exact two-file formatting patch is imported and source-bound.
+Road remains1324=1021 checked/301 open/2 partial; WS-LF14/104. P2-04 remains
+open until the actual hosted behavior gates pass. No local executable ran.
+
 **W286/W287 hosted-platform repair and exact CLI export (2026-09-23):**
 GUI125b7ca is fully source-bound:125 executed,123 passed, W153/W164 failed.
 W286 replaces the inherited cgroup mount after private propagation, then mounts

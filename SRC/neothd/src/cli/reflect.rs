@@ -18,6 +18,7 @@ use crate::memory::store;
 use crate::reflection::{
     hygiene::{DailyAdmissionConfig, TopicSynonymMap},
     periodic::DailyRetentionConfig,
+    retention_authority::DailyRetentionExecutionConfig,
 };
 use crate::sources::hackernews::{self, GapFilter};
 
@@ -247,6 +248,9 @@ pub struct ReflectTopics {
     /// inventories/defer-reports candidates rather than claiming an effect.
     #[serde(default)]
     pub daily_retention: DailyRetentionConfig,
+    /// Explicit v2 execution authority. Absent historic configuration stays inventory-only.
+    #[serde(default)]
+    pub daily_retention_execution: DailyRetentionExecutionConfig,
 }
 
 impl ReflectTopics {
@@ -503,6 +507,10 @@ fn parse_reflect_topics_config(
         .daily_retention
         .validate()
         .map_err(|_| ReflectTopicsLoadError::InvalidConfig)?;
+    topics
+        .daily_retention_execution
+        .validate()
+        .map_err(|_| ReflectTopicsLoadError::InvalidConfig)?;
     if let Some(admission) = topics.daily_admission.as_ref() {
         let validation_topic = ["reflection-config-validation".to_string()];
         crate::reflection::hygiene::decide_daily_admission(&validation_topic, &[], admission)
@@ -671,13 +679,17 @@ pub(crate) fn digest_at(
                     cfg.obsidian_subdir.as_deref().unwrap_or("NEOTH"),
                 )
             });
-            periodic::enforce_daily_retention(
+            periodic::enforce_daily_retention_with_execution(
                 home,
                 now_unix,
                 &daily_admission
                     .as_ref()
                     .expect("Daily digest loaded the strict reflection topics config")
                     .daily_retention,
+                &daily_admission
+                    .as_ref()
+                    .expect("Daily digest loaded the strict reflection topics config")
+                    .daily_retention_execution,
                 obsidian,
             )
             .map_err(anyhow::Error::from)
@@ -715,16 +727,19 @@ pub(crate) fn digest_at(
         .map_err(anyhow::Error::from)
         .context("settle daily reflection")?;
         // The manual writer shares the daemon's bounded retention inventory
-        // cadence. The current pre-v2 pass only reports deferred candidates;
-        // its later authenticated executor must use this same strict config
-        // snapshot rather than silently defaulting malformed control input.
-        let retention = periodic::enforce_daily_retention(
+        // cadence. The v2 executor uses this strict configuration snapshot;
+        // the legacy horizon alone never grants quarantine or purge effects.
+        let retention = periodic::enforce_daily_retention_with_execution(
             home,
             now_unix,
             &daily_admission
                 .as_ref()
                 .expect("Daily digest loaded the strict reflection topics config")
                 .daily_retention,
+            &daily_admission
+                .as_ref()
+                .expect("Daily digest loaded the strict reflection topics config")
+                .daily_retention_execution,
             obsidian,
         )
         .map_err(anyhow::Error::from);
@@ -1040,6 +1055,7 @@ fn emit_topics(topics: &ReflectTopics, output: OutputFormat, headline: &str) {
                 "daily_notes": topics.daily_notes,
                 "yearly_summary": topics.yearly_summary,
                 "daily_retention": topics.daily_retention,
+                "daily_retention_execution": topics.daily_retention_execution,
             })
         );
         return;
@@ -1085,10 +1101,16 @@ fn emit_topics(topics: &ReflectTopics, output: OutputFormat, headline: &str) {
             "off — `neoth reflect yearly`"
         }
     );
-    let retention_status = "awaiting retention authority v2; not physically enforced";
+    let retention_status = topics.daily_retention_execution.status();
     println!(
         "  retention: {} days (policy v{}; {retention_status})",
         topics.daily_retention.retention_days, topics.daily_retention.version
+    );
+    println!(
+        "  retention execution: {} (v{}; grace {} days)",
+        topics.daily_retention_execution.status(),
+        topics.daily_retention_execution.version,
+        topics.daily_retention_execution.quarantine_grace_days
     );
 }
 
