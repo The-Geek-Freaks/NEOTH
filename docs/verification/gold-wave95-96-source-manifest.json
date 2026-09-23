@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T03:55:06.5830392Z",
-  "validationStatus": "W278 directretry rolefence reviewed; W276 unneededlintexpectation removed; Group489 selected pending; GUI8f16 122/124 actualcgrouproot EBUSY",
+  "capturedUtc": "2026-09-23T04:03:38.0267492Z",
+  "validationStatus": "W281 two-step privatecgroup readonlyrepair independently reviewed; GUI125 pending; W278 hostedformat imported",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -39,7 +39,7 @@
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
       "bytes": 39347,
-      "sha256": "D6ADC6E2760BF649D151798034437DD9CA4B6BCD8F958AF3F114663CB4B8E7AF"
+      "sha256": "664ACF76B9353239C553DFD8621C694B79DCB62F56F8C75ECBD7140E24711783"
     },
     {
       "path": ".github/workflows/live-audio.yml",
@@ -357,6 +357,11 @@
       "sha256": "C653A3FD0F3A1AC151C93D3938B2DE0B189F3F6E62377CC76ADEF0D51189AD4A"
     },
     {
+      "path": "docs/gold-wave281-cgroup-mount.md",
+      "bytes": 1727,
+      "sha256": "53FFABA7DDFD17B2E011241804840861EF6E21994128C049CDBA0E63CD52F884"
+    },
+    {
       "path": "docs/install.md",
       "bytes": 13637,
       "sha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625"
@@ -463,18 +468,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 115777,
-      "sha256": "78C11D2D7319EF00635BAC37C6AD4A974766B9E451F85C529B06E306F4FF0AB6"
+      "bytes": 116868,
+      "sha256": "3645439681273CF14A282449E6EF56543FC3BF564D636C8CEDF0BDEB592242D8"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1118755,
-      "sha256": "78700776098D5A2A34BC849CC1AAF92508E34C69F5FFD0802FD2FDF106ED73D8"
+      "bytes": 1119846,
+      "sha256": "D86CAF86F1EF08C696D94517042CDB7356177BD7C9DDB7173883A2419DC60BB0"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1715030,
-      "sha256": "7DA30161457E5F6033B2295D981BFF9D695808ADB7613E32042EB4A7461E7624"
+      "bytes": 1716121,
+      "sha256": "9E4D3D295AA284B2A6048DD141C788E12598FB5014A32C65C4D18AB54A3233AD"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -613,8 +618,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
-      "bytes": 106756,
-      "sha256": "74DB8CB13FF1CB14FBC3D66F9A5A432B2E53D62BCB93B27ED9E1EBFDE9012F55"
+      "bytes": 110474,
+      "sha256": "A8A10EC4AE2FE5EDCF1BFF98F289B0039468BC11AB594CB00059AED443879D59"
     },
     {
       "path": "SRC/neothd-gui/src/chat_reasoning.rs",
@@ -2313,8 +2318,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "bytes": 20622,
-      "sha256": "76B710FFFE4F76F187A8E0E7359484F934EF18D0CD48EA408C84BEAEB6CF703E"
+      "bytes": 20685,
+      "sha256": "44C872D682E1F4E149742B6ECE0F61BA1A8E3958403C0A2B0C2173B5D564A3F5"
     },
     {
       "path": "SRC/neothd/src/providers/tmux_session.rs",

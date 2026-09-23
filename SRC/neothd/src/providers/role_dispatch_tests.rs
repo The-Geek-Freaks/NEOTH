@@ -513,11 +513,12 @@ async fn w278_immediate_before_send_role_rejection_closes_admitted_retry_with_de
         crate::config::reload::ReloadResult::Reloaded { .. }
     ));
 
-    let error = crate::providers::claude_cli::test_only_ensure_role_dispatch_before_send_or_retry_terminal(
-        &permit, &req,
-    )
-    .await
-    .expect_err("changed role policy must stop the admitted retry before raw send");
+    let error =
+        crate::providers::claude_cli::test_only_ensure_role_dispatch_before_send_or_retry_terminal(
+            &permit, &req,
+        )
+        .await
+        .expect_err("changed role policy must stop the admitted retry before raw send");
     assert!(error.to_string().contains("role dispatch"), "{error:#}");
 
     drop(permit);
@@ -525,7 +526,10 @@ async fn w278_immediate_before_send_role_rejection_closes_admitted_retry_with_de
     join.await.expect("authenticated WAL writer drained");
     let lifecycle = lifecycle_frames(&segment);
     assert_eq!(
-        lifecycle.iter().map(|(event, _)| *event).collect::<Vec<_>>(),
+        lifecycle
+            .iter()
+            .map(|(event, _)| *event)
+            .collect::<Vec<_>>(),
         [
             crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
             crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,

@@ -1787,25 +1787,80 @@ fn make_linux_mounts_private() -> Result<(), String> {
 }
 
 #[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LinuxCgroupMountOperation {
+    FreshNamespaceRoot,
+    BindRemountNamespaceRootReadOnly,
+}
+
+#[cfg(target_os = "linux")]
+const LINUX_CGROUP_MOUNT_PLAN: [LinuxCgroupMountOperation; 2] = [
+    LinuxCgroupMountOperation::FreshNamespaceRoot,
+    LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly,
+];
+
+#[cfg(target_os = "linux")]
+fn linux_cgroup_mount_flags(operation: LinuxCgroupMountOperation) -> libc::c_ulong {
+    match operation {
+        LinuxCgroupMountOperation::FreshNamespaceRoot => {
+            (libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC) as libc::c_ulong
+        }
+        LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly => {
+            (libc::MS_BIND
+                | libc::MS_REMOUNT
+                | libc::MS_RDONLY
+                | libc::MS_NOSUID
+                | libc::MS_NODEV
+                | libc::MS_NOEXEC) as libc::c_ulong
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_cgroup_mount_operation_stage(operation: LinuxCgroupMountOperation) -> &'static str {
+    match operation {
+        LinuxCgroupMountOperation::FreshNamespaceRoot => "mount cgroup namespace root",
+        LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly => {
+            "bind-remount cgroup namespace root read-only"
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn remount_linux_cgroup_at_namespace_root() -> Result<(), String> {
     let target = std::ffi::CString::new("/sys/fs/cgroup").expect("static cgroup path");
     let source = std::ffi::CString::new("none").expect("static cgroup source");
     let filesystem = std::ffi::CString::new("cgroup2").expect("static cgroup filesystem");
-    let flags = libc::MS_RDONLY | libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC;
-    if unsafe {
-        libc::mount(
-            source.as_ptr(),
-            target.as_ptr(),
-            filesystem.as_ptr(),
-            flags as libc::c_ulong,
-            std::ptr::null(),
-        )
-    } != 0
-    {
-        return Err(format!(
-            "{LINUX_NAMESPACE_ERROR}: mount read-only cgroup namespace root: {}",
-            std::io::Error::last_os_error()
-        ));
+
+    for operation in LINUX_CGROUP_MOUNT_PLAN {
+        let result = unsafe {
+            match operation {
+                // A cgroup2 hierarchy already has a shared superblock. Keep it
+                // read-write while mounting the cgroup namespace root, then
+                // restrict only this namespace-private mount below.
+                LinuxCgroupMountOperation::FreshNamespaceRoot => libc::mount(
+                    source.as_ptr(),
+                    target.as_ptr(),
+                    filesystem.as_ptr(),
+                    linux_cgroup_mount_flags(operation),
+                    std::ptr::null(),
+                ),
+                LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly => libc::mount(
+                    std::ptr::null(),
+                    target.as_ptr(),
+                    std::ptr::null(),
+                    linux_cgroup_mount_flags(operation),
+                    std::ptr::null(),
+                ),
+            }
+        };
+        if result != 0 {
+            let stage = linux_cgroup_mount_operation_stage(operation);
+            return Err(format!(
+                "{LINUX_NAMESPACE_ERROR}: {stage}: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
     }
     Ok(())
 }
@@ -2510,6 +2565,48 @@ mod tests {
                 Some("/sys/fs/cgroup")
             )
             .is_ok_and(|security| !security.read_only && !security.nsdelegate)
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cgroup_namespace_root_mount_plan_keeps_superblock_rw_then_sets_private_ro() {
+        assert_eq!(
+            LINUX_CGROUP_MOUNT_PLAN,
+            [
+                LinuxCgroupMountOperation::FreshNamespaceRoot,
+                LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly,
+            ]
+        );
+        let fresh = linux_cgroup_mount_flags(LinuxCgroupMountOperation::FreshNamespaceRoot);
+        assert_eq!(
+            fresh,
+            (libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC) as libc::c_ulong
+        );
+        assert_eq!(fresh & (libc::MS_RDONLY as libc::c_ulong), 0);
+        assert_eq!(fresh & (libc::MS_BIND as libc::c_ulong), 0);
+        assert_eq!(fresh & (libc::MS_REMOUNT as libc::c_ulong), 0);
+        assert_eq!(
+            linux_cgroup_mount_operation_stage(LinuxCgroupMountOperation::FreshNamespaceRoot),
+            "mount cgroup namespace root"
+        );
+
+        let read_only =
+            linux_cgroup_mount_flags(LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly);
+        assert_eq!(
+            read_only,
+            (libc::MS_BIND
+                | libc::MS_REMOUNT
+                | libc::MS_RDONLY
+                | libc::MS_NOSUID
+                | libc::MS_NODEV
+                | libc::MS_NOEXEC) as libc::c_ulong
+        );
+        assert_eq!(
+            linux_cgroup_mount_operation_stage(
+                LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly
+            ),
+            "bind-remount cgroup namespace root read-only"
         );
     }
 

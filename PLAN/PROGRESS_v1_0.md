@@ -2,6 +2,22 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W281 actual Linux containment repair (2026-09-23):** GUI8f16 is fully
+admitted at122/124, with17 source bindings and all124 ordered terminals; no
+fixture was unstarted. The exact production helper receipt binds HEAD, path,
+542666952bytes and SHA91ef5a50. W153 reaches the fresh cgroup2 read-only mount
+and returns EBUSY; W164 reports inactive/dead with empty helper stderr, so no
+more specific W164 cause is asserted.
+
+The Linux helper now first mounts its namespace-root cgroup view without
+changing the shared superblock to read-only, then applies read-only at the
+private VFS mount with MS_BIND|MS_REMOUNT. Both operations fail closed before
+provider launch, and final root/ro/nsdelegate checks remain mandatory.
+Independent source review passed. One Linux-only flag/order fixture makes
+GUI125 =98universal+27Linux (macOS remains26 extras). W278's exact one-file
+hosted formatter receipt is also imported. Core3903 slim Clippy passed;
+its test-target check/export and fresh native/GUI behavior remain pending.
+Road and WS-LF checkbox counts are unchanged; no local executable work ran.
 **W278 retry receipt and W276 lint repair (2026-09-23):** the Claude tmux
 immediate-before-send role recheck now retains the typed authorization-denied
 receipt for an admitted retry. The real helper/lifecycle fixture binds a

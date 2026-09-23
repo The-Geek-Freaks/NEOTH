@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W278 directretry rolefence reviewed; W276 unneededlintexpectation removed; Group489 selected pending; GUI8f16 122/124 actualcgrouproot EBUSY",
+  "status": "W281 two-step privatecgroup readonlyrepair independently reviewed; GUI125 pending; W278 hostedformat imported",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 96260,
-    "sha256": "0ACD55E515E60D8DC758DF87D5CCE4F9E4AA4D45352C837393868AC75AD8E3DE"
+    "bytes": 96397,
+    "sha256": "FC79CB3D3A4B42492F9C8CD2ADAB9342BD77EB54233838D9EAFB6BBF2F67AC37"
   },
-  "sourceInputs": 556,
+  "sourceInputs": 557,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -4752,31 +4752,31 @@
     {
       "test": "providers::cost_authorization::role_dispatch_tests::configured_role_denial_blocks_raw_transport",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "76B710FFFE4F76F187A8E0E7359484F934EF18D0CD48EA408C84BEAEB6CF703E",
+      "sourceSha256": "44C872D682E1F4E149742B6ECE0F61BA1A8E3958403C0A2B0C2173B5D564A3F5",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::role_dispatch_tests::allowed_council_leaf_returns_response_and_audits_typed_role_identity",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "76B710FFFE4F76F187A8E0E7359484F934EF18D0CD48EA408C84BEAEB6CF703E",
+      "sourceSha256": "44C872D682E1F4E149742B6ECE0F61BA1A8E3958403C0A2B0C2173B5D564A3F5",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::role_dispatch_tests::resolved_leaf_model_outside_role_policy_is_denied_before_raw_transport",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "76B710FFFE4F76F187A8E0E7359484F934EF18D0CD48EA408C84BEAEB6CF703E",
+      "sourceSha256": "44C872D682E1F4E149742B6ECE0F61BA1A8E3958403C0A2B0C2173B5D564A3F5",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::role_dispatch_tests::accepted_role_policy_reload_between_authorization_and_raw_send_is_blocked",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "76B710FFFE4F76F187A8E0E7359484F934EF18D0CD48EA408C84BEAEB6CF703E",
+      "sourceSha256": "44C872D682E1F4E149742B6ECE0F61BA1A8E3958403C0A2B0C2173B5D564A3F5",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::role_dispatch_tests::non_council_leaf_ignores_a_closed_policy_without_role_binding",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "76B710FFFE4F76F187A8E0E7359484F934EF18D0CD48EA408C84BEAEB6CF703E",
+      "sourceSha256": "44C872D682E1F4E149742B6ECE0F61BA1A8E3958403C0A2B0C2173B5D564A3F5",
       "junitClass": "neoth"
     },
     {
@@ -4926,7 +4926,7 @@
     {
       "test": "providers::cost_authorization::role_dispatch_tests::w225_effect_start_role_rejection_closes_admitted_retry_with_denial_receipt",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "76B710FFFE4F76F187A8E0E7359484F934EF18D0CD48EA408C84BEAEB6CF703E",
+      "sourceSha256": "44C872D682E1F4E149742B6ECE0F61BA1A8E3958403C0A2B0C2173B5D564A3F5",
       "junitClass": "neoth"
     },
     {
@@ -5382,7 +5382,7 @@
     {
       "test": "providers::cost_authorization::role_dispatch_tests::w278_immediate_before_send_role_rejection_closes_admitted_retry_with_denial_receipt",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "76B710FFFE4F76F187A8E0E7359484F934EF18D0CD48EA408C84BEAEB6CF703E",
+      "sourceSha256": "44C872D682E1F4E149742B6ECE0F61BA1A8E3958403C0A2B0C2173B5D564A3F5",
       "junitClass": "neoth"
     }
   ],
@@ -6358,7 +6358,8 @@
       "w58_gui_callback_runtime_tests::w233_task_delegate_set_owns_busy_across_edits_and_fences_stale_completion",
       "w58_gui_callback_runtime_tests::w233_invalid_fresh_readback_keeps_committed_receipt_and_fences_mutation",
       "w58_gui_callback_runtime_tests::w233_task_delegate_callback_fixture_covers_conflict_receipt_and_newer_readback",
-      "w58_gui_callback_runtime_tests::w233_task_delegate_inspect_null_projects_effective_default_deny"
+      "w58_gui_callback_runtime_tests::w233_task_delegate_inspect_null_projects_effective_default_deny",
+      "chat_child_supervisor::tests::cgroup_namespace_root_mount_plan_keeps_superblock_rw_then_sets_private_ro"
     ],
     "macOS": [
       "w58_gui_callback_runtime_tests::w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt",
@@ -17815,6 +17816,36 @@
       }
     ],
     "note": "W278 independentreviewPASS helper/lifecycle only; native896,Group489 including4existing passivequalitycases. Core2b0 Clippyfailure fixed by removing expectation below threshold8; no local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave281CgroupMount": {
+    "requiredTests": [
+      "chat_child_supervisor::tests::cgroup_namespace_root_mount_plan_keeps_superblock_rw_then_sets_private_ro"
+    ],
+    "platform": "Linux",
+    "report": "docs/gold-wave281-cgroup-mount.md",
+    "localValidationRan": false,
+    "hosted": "pending",
+    "note": "Production two-step freshcgroup2 then per-mountreadonly. Finalnamespace/root/ro/nsdelegate checks unchanged. PriorGUI8f16 admitted122/124."
+  },
+  "wave281CgroupMountSource": {
+    "base": "3903c964fafef4e1c3c0f1af2307d3eeef682c18",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
+        "bytes": 110474,
+        "sha256": "A8A10EC4AE2FE5EDCF1BFF98F289B0039468BC11AB594CB00059AED443879D59",
+        "blob": "ec53a2381798f71fbf5bf8d8973b2b6be1c1fa31"
+      },
+      {
+        "path": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+        "bytes": 20685,
+        "sha256": "44C872D682E1F4E149742B6ECE0F61BA1A8E3958403C0A2B0C2173B5D564A3F5",
+        "blob": "ec76ca788e39b159165334c2a113620b8ec60bd1"
+      }
+    ],
+    "note": "Prior GUI8f16 fullyadmitted122/124. W153 cgroupfreshreadonlymount EBUSY; no stronger W164cause. Finalnamespace/root/ro/nsdelegate checks unchanged. Linuxonly newfixture, no local runtime.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
