@@ -24767,7 +24767,7 @@ modes:
     #[test]
     fn architecture_skill_appends_automatic_cycle_findings_without_repo_context_gate() {
         use crate::code_map::graph::{CodeEdge, EdgeKind};
-        use crate::code_map::persist::{open, persist_map_and_edges_bound};
+        use crate::code_map::persist::{open, persist_map, persist_map_and_edges_bound};
         use crate::code_map::walker::{RepoMap, ScanReport};
 
         let dir = tempdir().unwrap();

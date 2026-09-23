@@ -1,7 +1,8 @@
 //! Behavioral fixtures for the Daily-only v2 retention state machine.
 //!
 //! These deliberately build real private home/vault namespaces and use Daily
-//! settlement for every happy-path archive/note.  Journal fixtures model only
+//! settlement for every current-day happy-path archive/note. Historical batch
+//! fixtures write exact JSONL archives directly. Journal fixtures model only
 //! the crash boundary after that admitted effect has persisted its intent.
 
 use super::*;
@@ -64,6 +65,15 @@ fn enabled() -> DailyRetentionExecutionConfig {
 fn daily(age: i64, topic: &str) -> PeriodReflection {
     let tag = date_tag_from_unix(NOW - age * 86_400);
     build_reflection(PeriodKind::Daily, &tag, &[topic.into()], NOW - age * 86_400).unwrap()
+}
+
+/// Write an exact historical Daily archive fixture without invoking admission.
+fn write_daily_retention_archive_fixture(home: &Path, reflection: &PeriodReflection) -> Vec<u8> {
+    let path = jsonl_file(home, PeriodKind::Daily, &reflection.tag);
+    let mut bytes = serde_json::to_vec(reflection).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(path, &bytes).unwrap();
+    bytes
 }
 
 fn preserve_period_inputs(home: &std::path::Path, periods: Vec<PeriodReflection>) {

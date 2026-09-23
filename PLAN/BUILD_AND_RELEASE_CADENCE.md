@@ -3,6 +3,17 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W357 hosted test-fixture scope repair (2026-09-23):** Core3978
+run35848398917 passed production slim-core Clippy, then found two E0425
+errors in test code. The architecture fixture now imports its existing
+persist_map function; the v2 retention fixture has a byte-equivalent local
+Daily JSONL helper instead of calling a private sibling-test helper.
+Production behavior, assertions and watchdogs remain unchanged.
+Preflight3978 run35848398949 passed. Hosted test-target rerun is pending;
+Group721 and fullCI wait for that readiness. Inventory641; native1058 plus
+Windows19/Linux33/macOS32; Road1027checked/295open/2partial; WS-LF20done/98open.
+No local executable validation ran.
+
 **W354 hosted Dream lint repair (2026-09-23):** Core32bc run35847289447
 reached Clippy and reported four complex SQL row annotations plus three
 unused-API diagnostics. Private row aliases preserve SQL/field order; the
