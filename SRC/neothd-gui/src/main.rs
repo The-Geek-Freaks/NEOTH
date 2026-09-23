@@ -47391,6 +47391,106 @@ exit 0
         );
     }
 
+    #[cfg(all(target_os = "macos", feature = "macos-native-gui-test"))]
+    fn w274_assert_macos_legacy_child_refusal(
+        window: &MainWindow,
+        fixture: &TempDir,
+        label: &str,
+    ) {
+        w153_pump_until(window, label, |window| {
+            !window.get_chat_send_in_flight()
+                && window.get_chat_live_messages().iter().any(|row| {
+                    (row.role.as_str() == "error" || row.stream_phase.as_str() == "failed")
+                        && row.text.contains("NEOTH_GUI_CONTAINMENT_UNAVAILABLE")
+                })
+        });
+        assert!(
+            !fixture.path().join("started").exists(),
+            "macOS complete-tree containment refusal must not launch the staged child"
+        );
+        assert!(
+            w116_call_lines(&fixture.path().join("calls")).is_empty(),
+            "macOS complete-tree containment refusal must not invoke the staged child"
+        );
+        assert!(
+            !window.get_chat_live_messages().iter().any(|row| {
+                row.text.contains("W153 visible reply") || row.stream_phase.as_str() == "complete"
+            }),
+            "macOS containment refusal must not repaint a successful child result"
+        );
+    }
+
+    #[cfg(not(windows))]
+    fn w155_wait_for_approved_private_lookup(window: &MainWindow, fixture: &TempDir) {
+        let done = Rc::new(Cell::new(false));
+        let observed_done = Rc::clone(&done);
+        let ticks = Rc::new(Cell::new(0_u16));
+        let observed_ticks = Rc::clone(&ticks);
+        let weak = window.as_weak();
+        let lookup_stdin = fixture.path().join("lookup-stdin");
+        let calls_path = fixture.path().join("calls");
+        let observed_lookup_stdin = lookup_stdin.clone();
+        let observed_calls_path = calls_path.clone();
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                let Some(window) = weak.upgrade() else {
+                    let _ = slint::quit_event_loop();
+                    return;
+                };
+                let proof_written = std::fs::read_to_string(&observed_lookup_stdin)
+                    .is_ok_and(|proof| proof == "proof-test");
+                let calls = w116_call_lines(&observed_calls_path);
+                let one_proof_lookup = calls
+                    .iter()
+                    .filter(|line| {
+                        line.contains("citation lookup")
+                            && line.contains("--gui-approval-stdin")
+                    })
+                    .count()
+                    == 1;
+                if proof_written
+                    && one_proof_lookup
+                    && !window.get_chat_citation_lookup_running()
+                    && !window.get_chat_citation_consent_visible()
+                    && window.get_chat_citation_chips().row_count() == 1
+                {
+                    observed_done.set(true);
+                    let _ = slint::quit_event_loop();
+                    return;
+                }
+                let next = observed_ticks.get().saturating_add(1);
+                observed_ticks.set(next);
+                if next >= 700 {
+                    let _ = slint::quit_event_loop();
+                }
+            },
+        );
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().expect("pump W155 approved citation lookup");
+        drop(timer);
+        let calls = w116_call_lines(&calls_path);
+        let bounded_calls = calls
+            .iter()
+            .take(12)
+            .map(|line| line.chars().take(160).collect::<String>())
+            .collect::<Vec<_>>();
+        assert!(
+            done.get(),
+            "timed out waiting for W155 approved private lookup; lookup_stdin_exists={}; proof_lookup_count={}; calls={bounded_calls:?}",
+            lookup_stdin.exists(),
+            calls
+                .iter()
+                .filter(|line| {
+                    line.contains("citation lookup")
+                        && line.contains("--gui-approval-stdin")
+                })
+                .count(),
+        );
+    }
+
     #[cfg(not(windows))]
     #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w153_legacy_child_callbacks_project_only_transient_reasoning() {
@@ -47407,6 +47507,35 @@ exit 0
             std::fs::canonicalize(bin).expect("canonical W153 child"),
         );
 
+        #[cfg(all(target_os = "macos", feature = "macos-native-gui-test"))]
+        {
+            std::fs::write(fixture.path().join("mode"), "success")
+                .expect("select W153 macOS refusal mode");
+            let window = MainWindow::new().expect("construct W153 macOS MainWindow");
+            let overlay = MiniOverlay::new().expect("construct W153 macOS MiniOverlay");
+            let runtime = w153_legacy_child_runtime();
+            install_legacy_child_chat_transport_callbacks(&window, &overlay, runtime.clone());
+            let request_id = w153_prepare_approved_request(
+                &window,
+                &overlay,
+                &runtime,
+                ChatStreamSurface::Main,
+                true,
+            );
+            window.invoke_chat_send_approved(
+                request_id.as_wire().into(),
+                "W153 macOS containment request".into(),
+                "".into(),
+                false,
+            );
+            w274_assert_macos_legacy_child_refusal(
+                &window,
+                &fixture,
+                "W153 macOS containment refusal",
+            );
+        }
+
+        #[cfg(not(all(target_os = "macos", feature = "macos-native-gui-test")))]
         for (surface, display, stop, forged) in [
             (ChatStreamSurface::Main, true, false, false),
             (ChatStreamSurface::Buddy, true, false, false),
@@ -47925,6 +48054,41 @@ exit 0
         let _bin = w153_stage_fake_neoth(&fixture);
         std::fs::write(fixture.path().join("calls"), b"").expect("initialize W164 call log");
         let _path = PathGuard::install(fixture.path());
+        #[cfg(all(target_os = "macos", feature = "macos-native-gui-test"))]
+        {
+            std::fs::write(fixture.path().join("mode"), "success")
+                .expect("select W164 macOS refusal mode");
+            let window = MainWindow::new().expect("construct W164 macOS MainWindow");
+            let overlay = MiniOverlay::new().expect("construct W164 macOS MiniOverlay");
+            let runtime = w153_legacy_child_runtime();
+            install_legacy_child_chat_transport_callbacks(&window, &overlay, runtime.clone());
+            register_response_feedback_callbacks(
+                &window,
+                &overlay,
+                runtime.chat_response_feedback_projections.clone(),
+            );
+            let request_id = w153_prepare_approved_request(
+                &window,
+                &overlay,
+                &runtime,
+                ChatStreamSurface::Main,
+                false,
+            );
+            window.invoke_chat_send_approved(
+                request_id.as_wire().into(),
+                "W164 macOS containment request".into(),
+                "".into(),
+                false,
+            );
+            w274_assert_macos_legacy_child_refusal(
+                &window,
+                &fixture,
+                "W164 macOS containment refusal",
+            );
+            assert!(!window.get_chat_response_feedback_available());
+            assert!(!overlay.get_response_feedback_available());
+        }
+        #[cfg(not(all(target_os = "macos", feature = "macos-native-gui-test")))]
         for surface in [ChatStreamSurface::Main, ChatStreamSurface::Buddy] {
             std::fs::write(fixture.path().join("mode"), "success")
                 .expect("select W164 successful target mode");
@@ -49882,11 +50046,7 @@ exit 7
         .expect("write W155 approved live receipt");
         window.invoke_chat_citation_consent_approved();
         window.invoke_chat_citation_consent_approved();
-        w153_pump_until(&window, "approved citation final lookup", |w| {
-            !w.get_chat_citation_lookup_running()
-                && !w.get_chat_citation_consent_visible()
-                && w.get_chat_citation_chips().row_count() == 1
-        });
+        w155_wait_for_approved_private_lookup(&window, &fixture);
         assert_eq!(
             std::fs::read_to_string(fixture.path().join("decision-stdin"))
                 .expect("read private W155 challenge"),
@@ -49898,6 +50058,17 @@ exit 7
             "proof-test"
         );
         let approved_calls = w116_call_lines(&fixture.path().join("calls"));
+        assert_eq!(
+            approved_calls
+                .iter()
+                .filter(|line| {
+                    line.contains("citation lookup")
+                        && line.contains("--gui-approval-stdin")
+                })
+                .count(),
+            1,
+            "one approved citation lookup must carry the private proof over stdin"
+        );
         assert_eq!(
             approved_calls
                 .iter()
