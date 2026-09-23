@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T01:12:49.7238874Z",
-  "validationStatus": "W252 temporary exact-executable Hosted profiles reviewed; GUI124 acceptance pending",
+  "capturedUtc": "2026-09-23T01:17:35.5957768Z",
+  "validationStatus": "W249 Hosted compile repair for missing Unix trait import and unused mut; execution pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1533,8 +1533,8 @@
     },
     {
       "path": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-      "bytes": 136080,
-      "sha256": "80A3A7B4B0B49852BCDD8181C53A3B39ACEE3DFE15F38919487B79435ABBF440"
+      "bytes": 136076,
+      "sha256": "3A7DDB69C046A127158C349E77D86503493D86D511FD1BC9AC63998C763C35A2"
     },
     {
       "path": "SRC/neothd/src/context_graph/mod.rs",
@@ -1573,8 +1573,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
-      "bytes": 50485,
-      "sha256": "A95ADFEA222141165F6CCA22280A2C0D91812ECD4597B43F75B4CA68BAB92DD0"
+      "bytes": 50496,
+      "sha256": "59CF8E7FB25D4989CE5D0708C853F7FCE0DB55B4A9806D06BB75FDD16FC67DA9"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",

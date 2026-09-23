@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-#[cfg(windows)]
+#[cfg(any(unix, windows))]
 use anyhow::Context as _;
 use anyhow::Result;
 use base64::Engine;

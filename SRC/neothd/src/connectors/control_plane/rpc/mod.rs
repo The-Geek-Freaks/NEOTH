@@ -763,7 +763,7 @@ fn read_unix_private_regular_file_bounded(
     // retained directory capability with no-follow and O_NONBLOCK on Unix.
     // Classify and bound-read that same descriptor; never validate an ambient
     // path and then reopen its name.
-    let (mut file, _binding) =
+    let (file, _binding) =
         crate::skills::store::open_bound_regular_file(parent, name, display_path)?;
     let metadata = file.metadata().with_context(|| {
         format!(
