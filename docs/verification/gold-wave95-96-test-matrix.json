@@ -1,18 +1,18 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W268 hosted formatter imported; Group451 and Core cbae pending",
+  "status": "W269 opt-in readiness/W271 actualDoctor source reviewed; W270 Hippocampus11 selected; Group465 hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 93359,
-    "sha256": "9BBB2F3D5071B3E07D9A6C90122C7C2F32E6082B0104B43C439683E579B6D925"
+    "bytes": 93406,
+    "sha256": "015F09168E53F73203C99815A5C9122F51244B63428C31274A237F01FA169E0E"
   },
   "sourceInputs": 538,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
       "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "sourceSha256": "9A4FBB6E09B9D9F2366E698F3D63D92422CE4EFAEB7A11CBCAA9F52D5132E5E2",
+      "sourceSha256": "3A796E07E9E05BD9979F16B159610D86870F0D16704149A662CE3F59B410AAE8",
       "junitClass": "neoth"
     },
     {
@@ -378,7 +378,7 @@
     {
       "test": "mcp::codegraph_server::tests::w100_diagnostic_identity_accepts_expected_cli_and_rejects_gui_lookalike",
       "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "sourceSha256": "9A4FBB6E09B9D9F2366E698F3D63D92422CE4EFAEB7A11CBCAA9F52D5132E5E2",
+      "sourceSha256": "3A796E07E9E05BD9979F16B159610D86870F0D16704149A662CE3F59B410AAE8",
       "junitClass": "neoth"
     },
     {
@@ -696,13 +696,13 @@
     {
       "test": "mcp::codegraph_server::tests::dispatch_codegraph_imports_reads_current_root_local_snapshot",
       "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "sourceSha256": "9A4FBB6E09B9D9F2366E698F3D63D92422CE4EFAEB7A11CBCAA9F52D5132E5E2",
+      "sourceSha256": "3A796E07E9E05BD9979F16B159610D86870F0D16704149A662CE3F59B410AAE8",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::codegraph_server::tests::stdio_imports_call_has_bound_receipt_and_rejects_stale_generation",
       "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "sourceSha256": "9A4FBB6E09B9D9F2366E698F3D63D92422CE4EFAEB7A11CBCAA9F52D5132E5E2",
+      "sourceSha256": "3A796E07E9E05BD9979F16B159610D86870F0D16704149A662CE3F59B410AAE8",
       "junitClass": "neoth"
     },
     {
@@ -786,19 +786,19 @@
     {
       "test": "mcp::codegraph_server::tests::dispatch_codegraph_types_distinguishes_known_leaf_from_unknown_endpoint",
       "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "sourceSha256": "9A4FBB6E09B9D9F2366E698F3D63D92422CE4EFAEB7A11CBCAA9F52D5132E5E2",
+      "sourceSha256": "3A796E07E9E05BD9979F16B159610D86870F0D16704149A662CE3F59B410AAE8",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::codegraph_server::tests::dispatch_codegraph_types_rejects_source_mutation_and_bounded_query_overflow",
       "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "sourceSha256": "9A4FBB6E09B9D9F2366E698F3D63D92422CE4EFAEB7A11CBCAA9F52D5132E5E2",
+      "sourceSha256": "3A796E07E9E05BD9979F16B159610D86870F0D16704149A662CE3F59B410AAE8",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::codegraph_server::tests::stdio_types_call_has_bound_receipt_and_rejects_stale_type_generation",
       "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "sourceSha256": "9A4FBB6E09B9D9F2366E698F3D63D92422CE4EFAEB7A11CBCAA9F52D5132E5E2",
+      "sourceSha256": "3A796E07E9E05BD9979F16B159610D86870F0D16704149A662CE3F59B410AAE8",
       "junitClass": "neoth"
     },
     {
@@ -5082,31 +5082,31 @@
     {
       "test": "cli::fs::tests::w239_real_fs_caller_keeps_default_master_off_output_unenriched",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
+      "sourceSha256": "E167D40DB430A8D808E7851BC1D5789BC22C5309F5426EB310B82A796FE72E92",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w239_real_fs_caller_appends_native_sidecar_only_for_fresh_indexed_target",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
+      "sourceSha256": "E167D40DB430A8D808E7851BC1D5789BC22C5309F5426EB310B82A796FE72E92",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w239_real_fs_caller_denial_stops_before_typed_native_read",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
+      "sourceSha256": "E167D40DB430A8D808E7851BC1D5789BC22C5309F5426EB310B82A796FE72E92",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w239_real_fs_caller_cancellation_stops_before_native_read",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
+      "sourceSha256": "E167D40DB430A8D808E7851BC1D5789BC22C5309F5426EB310B82A796FE72E92",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w239_real_fs_caller_zero_deadline_drops_admission_without_consuming_bytes",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
+      "sourceSha256": "E167D40DB430A8D808E7851BC1D5789BC22C5309F5426EB310B82A796FE72E92",
       "junitClass": "neoth"
     },
     {
@@ -5118,7 +5118,7 @@
     {
       "test": "mcp::codegraph_server::tests::w239_native_fs_read_plan_uses_real_descriptor_and_drops_stale_sidecar",
       "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "sourceSha256": "9A4FBB6E09B9D9F2366E698F3D63D92422CE4EFAEB7A11CBCAA9F52D5132E5E2",
+      "sourceSha256": "3A796E07E9E05BD9979F16B159610D86870F0D16704149A662CE3F59B410AAE8",
       "junitClass": "neoth"
     },
     {
@@ -5208,31 +5208,31 @@
     {
       "test": "cli::fs::tests::w256_grep_cli_parses_default_and_maximum_and_rejects_out_of_range_results",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
+      "sourceSha256": "E167D40DB430A8D808E7851BC1D5789BC22C5309F5426EB310B82A796FE72E92",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w256_literal_search_reports_empty_line_numbers_and_bounded_truncation",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
+      "sourceSha256": "E167D40DB430A8D808E7851BC1D5789BC22C5309F5426EB310B82A796FE72E92",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w256_actual_grep_search_origin_hook_enrichment_and_once_guard",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
+      "sourceSha256": "E167D40DB430A8D808E7851BC1D5789BC22C5309F5426EB310B82A796FE72E92",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w256_actual_grep_no_hit_drops_codegraph_sidecar_after_retained_fd_scan",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
+      "sourceSha256": "E167D40DB430A8D808E7851BC1D5789BC22C5309F5426EB310B82A796FE72E92",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w256_actual_grep_denial_and_cancellation_stop_before_search_output",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
+      "sourceSha256": "E167D40DB430A8D808E7851BC1D5789BC22C5309F5426EB310B82A796FE72E92",
       "junitClass": "neoth"
     },
     {
@@ -5268,7 +5268,7 @@
     {
       "test": "cli::doctor::checks::providers::tests::account_transport_flapping_keeps_default_discord_separate_from_default_telegram",
       "sourcePath": "SRC/neothd/src/cli/doctor/checks/providers.rs",
-      "sourceSha256": "74E4CF1E5C1F5C51BC879D5C527B2A852820464C5F8AA9FA2CE85FCE40DDA5EC",
+      "sourceSha256": "988F99483937C00B2C63CCC85584F1D6ECA00248668B7563A73890E736B36A8D",
       "junitClass": "neoth"
     },
     {
@@ -5292,7 +5292,25 @@
     {
       "test": "cli::doctor::checks::providers::tests::account_transport_flapping_keeps_default_signal_separate_from_default_telegram",
       "sourcePath": "SRC/neothd/src/cli/doctor/checks/providers.rs",
-      "sourceSha256": "74E4CF1E5C1F5C51BC879D5C527B2A852820464C5F8AA9FA2CE85FCE40DDA5EC",
+      "sourceSha256": "988F99483937C00B2C63CCC85584F1D6ECA00248668B7563A73890E736B36A8D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::fs::tests::w269_enrichment_status_json_is_additive_and_bounded",
+      "sourcePath": "SRC/neothd/src/cli/fs.rs",
+      "sourceSha256": "E167D40DB430A8D808E7851BC1D5789BC22C5309F5426EB310B82A796FE72E92",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::fs::tests::w269_actual_requested_enrichment_without_descriptor_is_unavailable",
+      "sourcePath": "SRC/neothd/src/cli/fs.rs",
+      "sourceSha256": "E167D40DB430A8D808E7851BC1D5789BC22C5309F5426EB310B82A796FE72E92",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::doctor::checks::providers::tests::channel_transport_flapping_reads_authenticated_live_wal_and_warns_only_failed_channel",
+      "sourcePath": "SRC/neothd/src/cli/doctor/checks/providers.rs",
+      "sourceSha256": "988F99483937C00B2C63CCC85584F1D6ECA00248668B7563A73890E736B36A8D",
       "junitClass": "neoth"
     }
   ],
@@ -17344,6 +17362,79 @@
       }
     ],
     "note": "Source-head and SHA256SUMS checked; sole Signal path exact Gitblob pre/postimages verified. No local formatter.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave270HippocampusAcceptance": {
+    "requiredTests": [
+      "config::memory::tests::hippocampus_membership_is_default_off_and_parses_explicit_opt_in",
+      "memory::hippocampus::tests::selection_boundary_is_inclusive_and_idempotent",
+      "memory::hippocampus::tests::reconcile_removes_decayed_and_missing_membership_atomically",
+      "memory::hippocampus::tests::read_only_query_hides_stale_rows_and_uses_stable_order",
+      "memory::migrations::tests::v40_to_v41_adds_membership_without_rewriting_existing_importance",
+      "memory::migrations::tests::v40_to_v41_rolls_back_when_an_incompatible_existing_table_blocks_the_index",
+      "memory::consolidate::tests::hippocampus_membership_moves_with_retained_event_and_rolls_back_with_decay",
+      "memory::decay_task::tests::hippocampus_selection_is_default_off_and_custom_fail_closed",
+      "memory::decay_task::tests::rejected_reload_keeps_the_last_accepted_hippocampus_policy",
+      "memory::decay_task::tests::wal_indexed_importance_flows_through_accepted_tick_to_cli_hippocampus_view",
+      "cli::memory::tests::hippocampus_flag_accepts_an_omitted_or_explicit_query"
+    ],
+    "dependencyPaths": [
+      "SRC/neothd/src/config/memory.rs",
+      "SRC/neothd/src/config/reload.rs",
+      "SRC/neothd/src/memory/decay_task.rs",
+      "SRC/neothd/src/memory/consolidate.rs",
+      "SRC/neothd/src/memory/hippocampus.rs",
+      "SRC/neothd/src/memory/migrations/mod.rs",
+      "SRC/neothd/src/memory/store.rs",
+      "SRC/neothd/src/memory/indexer.rs",
+      "SRC/neothd/src/cli/serve.rs",
+      "SRC/neothd/src/cli/memory.rs"
+    ],
+    "report": "docs/gold-wave270-hippocampus-validation.md",
+    "localValidationRan": false,
+    "note": "Existing complete production implementation; 11 focused config/threshold/idempotency/reload/retention/CLI/migration cases selected. Runtime pass required before P2-02 closure."
+  },
+  "wave269NativeReadinessAcceptance": {
+    "requiredTests": [
+      "cli::fs::tests::w269_enrichment_status_json_is_additive_and_bounded",
+      "cli::fs::tests::w269_actual_requested_enrichment_without_descriptor_is_unavailable"
+    ],
+    "report": "docs/gold-wave269-native-enrichment-readiness.md",
+    "localValidationRan": false,
+    "note": "Explicit opt-in bounded readiness; existing W239/W256 actual caller fixtures strengthened; no authority change or CRG05 closure"
+  },
+  "wave271DoctorCallerAcceptance": {
+    "requiredTests": [
+      "cli::doctor::checks::providers::tests::channel_transport_flapping_reads_authenticated_live_wal_and_warns_only_failed_channel"
+    ],
+    "report": "docs/gold-wave271-doctor-transport-caller.md",
+    "localValidationRan": false,
+    "note": "Real sealed production emitters to authenticated WAL to actual Doctor caller. Five failing Signal/five healthy Discord references isolated, no external effects"
+  },
+  "wave269271Source": {
+    "base": "e97bd4cc0b7151711fca0541ad8db61f76c2fc8f",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/doctor/checks/providers.rs",
+        "bytes": 37894,
+        "sha256": "988F99483937C00B2C63CCC85584F1D6ECA00248668B7563A73890E736B36A8D",
+        "blob": "98df41ccf980a80b006531e78ed1bc488a4bac51"
+      },
+      {
+        "path": "SRC/neothd/src/cli/fs.rs",
+        "bytes": 49205,
+        "sha256": "E167D40DB430A8D808E7851BC1D5789BC22C5309F5426EB310B82A796FE72E92",
+        "blob": "e0b5784d099cc4112d5e9e9350ede2bbf0479abc"
+      },
+      {
+        "path": "SRC/neothd/src/mcp/codegraph_server.rs",
+        "bytes": 220105,
+        "sha256": "3A796E07E9E05BD9979F16B159610D86870F0D16704149A662CE3F59B410AAE8",
+        "blob": "64c5e1a39eb84cfb10b930e142b2b1f22a9cd020"
+      }
+    ],
+    "note": "Three reviewed slices; status does not alter read/admission; actualDoctor consumes authenticated channel evidence; existing Hippocampus production path independently reviewed. No local execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

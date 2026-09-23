@@ -3,6 +3,23 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W269/W270/W271 combined native batch (2026-09-23):** explicit native
+`fs read`/`fs grep` enrichment now exposes bounded optional readiness in JSON
+and Table output. Existing admission, retained-file reads and no-hit sidecar
+suppression stay intact. The post-read check distinguishes actual stale identity,
+generation/completeness/freshness evidence from unavailable optional data.
+CRG-05 remains open; source review passed and hosted validation is pending.
+
+W270 selects eleven existing Hippocampus tests for P2-02 after independent
+review confirmed the real WAL-index -> accepted task tick -> transaction -> CLI
+path. W271 adds the actual Doctor caller over one authenticated WAL containing
+failing Signal and healthy Discord records from sealed production emitters.
+Neither pending validation closes a Road item. The combined selection is now
+Group465, with 540 source paths, 884 universal native identities and GUI124;
+platform extras and Road1018checked/304open/2partial remain unchanged.
+The W268 hosted formatter receipt was verified and imported in e97bd4cc;
+Preflight35812376262 passed. All executable validation remains GitHub-hosted.
+
 **W268 Signal default reply evidence (2026-09-23):** the actual default Signal
 receive-to-reply path now records authenticated intent before its adapter call
 and terminal evidence afterward. Startup alone mints its sealed `signal/default`

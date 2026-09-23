@@ -362,12 +362,16 @@ async fn run_read(
                     if let Some(enrichment) = read.enrichment {
                         rendered["codegraph_enrichment"] = serde_json::Value::String(enrichment);
                     }
+                    render_enrichment_status(&mut rendered, read.enrichment_status);
                     println!("{}", rendered);
                 }
                 OutputFormat::Table => {
                     print!("{}", read.text);
                     if let Some(enrichment) = read.enrichment {
                         print!("\n{enrichment}");
+                    }
+                    if let Some(status) = read.enrichment_status {
+                        print!("\n[codegraph enrichment: {}]", status.as_str());
                     }
                 }
             }
@@ -474,6 +478,7 @@ async fn run_grep(
             if let Some(enrichment) = read.enrichment {
                 rendered["codegraph_enrichment"] = serde_json::Value::String(enrichment);
             }
+            render_enrichment_status(&mut rendered, read.enrichment_status);
             println!("{rendered}");
         }
         OutputFormat::Table => {
@@ -489,9 +494,43 @@ async fn run_grep(
             if let Some(enrichment) = read.enrichment {
                 print!("\n{enrichment}");
             }
+            if let Some(status) = read.enrichment_status {
+                print!("\n[codegraph enrichment: {}]", status.as_str());
+            }
         }
     }
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeEnrichmentStatus {
+    MasterDisabled,
+    Unavailable,
+    Stale,
+    Applied,
+    NoMatchingLines,
+}
+
+impl NativeEnrichmentStatus {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::MasterDisabled => "master_disabled",
+            Self::Unavailable => "unavailable",
+            Self::Stale => "stale",
+            Self::Applied => "applied",
+            Self::NoMatchingLines => "no_matching_lines",
+        }
+    }
+}
+
+fn render_enrichment_status(
+    rendered: &mut serde_json::Value,
+    status: Option<NativeEnrichmentStatus>,
+) {
+    if let Some(status) = status {
+        rendered["codegraph_enrichment_status"] =
+            serde_json::Value::String(status.as_str().to_owned());
+    }
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -568,6 +607,7 @@ impl std::fmt::Debug for TestPreToolUseOnceGuard {
 struct FsReadOutcome {
     text: String,
     enrichment: Option<String>,
+    enrichment_status: Option<NativeEnrichmentStatus>,
     search: Option<GrepMatches>,
     #[cfg(test)]
     pre_tool_use_context: Option<crate::hooks::PreToolUseContext>,
@@ -651,6 +691,7 @@ async fn read_with_optional_native_enrichment_with_cancellation(
                 .map(|(literal, max_results)| literal_matches(&text, literal, max_results)),
             text,
             enrichment: None,
+            enrichment_status: None,
             #[cfg(test)]
             pre_tool_use_context: None,
             #[cfg(test)]
@@ -723,17 +764,24 @@ async fn read_with_optional_native_enrichment_with_cancellation(
             Some(enrichment.as_str().to_owned())
         }
     };
-    let native_plan = crate::mcp::codegraph_server::prepare_native_fs_read_enrichment(
-        home,
-        &root,
-        admitted.canonical_path(),
-        &context,
-        cfg.code_map.outline_enrichment,
-    )
-    .unwrap_or_else(|error| {
-        tracing::debug!(error = %error, "native fs codegraph sidecar unavailable");
-        None
-    });
+    let (native_plan, mut enrichment_status) = if !cfg.code_map.outline_enrichment {
+        (None, Some(NativeEnrichmentStatus::MasterDisabled))
+    } else {
+        match crate::mcp::codegraph_server::prepare_native_fs_read_enrichment(
+            home,
+            &root,
+            admitted.canonical_path(),
+            &context,
+            true,
+        ) {
+            Ok(Some(plan)) => (Some(plan), None),
+            Ok(None) => (None, Some(NativeEnrichmentStatus::Unavailable)),
+            Err(error) => {
+                tracing::debug!(error = %error, "native fs codegraph sidecar unavailable");
+                (None, Some(NativeEnrichmentStatus::Unavailable))
+            }
+        }
+    };
     if context.is_cancelled() || context.deadline_elapsed() {
         return Err(OsGateError::PreToolUse(
             "cancelled or deadline elapsed before the native file read".to_owned(),
@@ -744,9 +792,32 @@ async fn read_with_optional_native_enrichment_with_cancellation(
     // retained-fd bytes before accepting any optional sidecar freshness result.
     let search_matches =
         search.map(|(literal, max_results)| literal_matches(&text, literal, max_results));
-    let native_enrichment = native_plan
-        .and_then(|plan| plan.still_fresh())
-        .map(|sidecar| sidecar.as_str().to_owned());
+    let no_matching_lines = search_matches
+        .as_ref()
+        .is_some_and(|matches| matches.rows.is_empty());
+    let native_enrichment = if no_matching_lines {
+        if enrichment_status.is_none() {
+            enrichment_status = Some(NativeEnrichmentStatus::NoMatchingLines);
+        }
+        None
+    } else if let Some(plan) = native_plan {
+        match plan.freshness_after_read() {
+            crate::mcp::codegraph_server::NativeFsReadFreshness::Fresh(sidecar) => {
+                enrichment_status = Some(NativeEnrichmentStatus::Applied);
+                Some(sidecar.as_str().to_owned())
+            }
+            crate::mcp::codegraph_server::NativeFsReadFreshness::Stale => {
+                enrichment_status = Some(NativeEnrichmentStatus::Stale);
+                None
+            }
+            crate::mcp::codegraph_server::NativeFsReadFreshness::Unavailable => {
+                enrichment_status = Some(NativeEnrichmentStatus::Unavailable);
+                None
+            }
+        }
+    } else {
+        None
+    };
     let enrichment = match (native_enrichment, hook_enrichment) {
         (Some(native), Some(hook)) if native == hook => Some(native),
         (Some(native), Some(hook)) => {
@@ -764,9 +835,7 @@ async fn read_with_optional_native_enrichment_with_cancellation(
         (None, Some(hook)) => Some(hook),
         (None, None) => None,
     };
-    let enrichment = if search_matches
-        .as_ref()
-        .is_some_and(|matches| matches.rows.is_empty())
+    let enrichment = if no_matching_lines
     {
         None
     } else {
@@ -775,6 +844,7 @@ async fn read_with_optional_native_enrichment_with_cancellation(
     Ok(FsReadOutcome {
         text,
         enrichment,
+        enrichment_status,
         search: search_matches,
         #[cfg(test)]
         pre_tool_use_context: Some(context),
@@ -800,6 +870,27 @@ mod tests {
         config
     }
 
+    #[test]
+    fn w269_enrichment_status_json_is_additive_and_bounded() {
+        let mut rendered = serde_json::json!({"path": "selected.rs"});
+        render_enrichment_status(
+            &mut rendered,
+            Some(NativeEnrichmentStatus::NoMatchingLines),
+        );
+        assert_eq!(rendered["path"], "selected.rs");
+        assert_eq!(
+            rendered["codegraph_enrichment_status"],
+            "no_matching_lines"
+        );
+        assert_eq!(NativeEnrichmentStatus::MasterDisabled.as_str(), "master_disabled");
+        assert_eq!(NativeEnrichmentStatus::Unavailable.as_str(), "unavailable");
+        assert_eq!(NativeEnrichmentStatus::Stale.as_str(), "stale");
+        assert_eq!(NativeEnrichmentStatus::Applied.as_str(), "applied");
+
+        let mut opt_out = serde_json::json!({"path": "selected.rs"});
+        render_enrichment_status(&mut opt_out, None);
+        assert!(opt_out.get("codegraph_enrichment_status").is_none());
+    }
     #[test]
     fn w256_grep_cli_parses_default_and_maximum_and_rejects_out_of_range_results() {
         use clap::Parser as _;
@@ -1024,8 +1115,40 @@ template = "[native-search-hook]"
             outcome.enrichment.is_none(),
             "zero-hit grep must not attach a sidecar"
         );
+        assert_eq!(
+            outcome.enrichment_status,
+            Some(NativeEnrichmentStatus::NoMatchingLines)
+        );
     }
 
+    #[tokio::test]
+    async fn w269_actual_requested_enrichment_without_descriptor_is_unavailable() {
+        let home = tempfile::tempdir().unwrap();
+        let repository = tempfile::tempdir().unwrap();
+        let file = repository.path().join("selected.rs");
+        std::fs::write(&file, "needle\n").unwrap();
+        let mut config = w239_config(repository.path());
+        config.code_map.outline_enrichment = true;
+
+        let outcome = search_with_optional_native_enrichment(
+            &file,
+            "needle",
+            20,
+            &config,
+            AuditSink::None,
+            0,
+            home.path(),
+            Some(repository.path()),
+        )
+        .await
+        .expect("a requested native grep remains usable without an eligible descriptor");
+        assert_eq!(outcome.search.as_ref().unwrap().rows.len(), 1);
+        assert!(outcome.enrichment.is_none());
+        assert_eq!(
+            outcome.enrichment_status,
+            Some(NativeEnrichmentStatus::Unavailable)
+        );
+    }
     #[tokio::test]
     async fn w256_actual_grep_denial_and_cancellation_stop_before_search_output() {
         let home = tempfile::tempdir().unwrap();
@@ -1136,6 +1259,10 @@ template = "[native-search-hook]"
         .expect("the real fs caller reads normally with the feature master off");
         assert_eq!(outcome.text, "fn plain() {}\n");
         assert!(outcome.enrichment.is_none());
+        assert_eq!(
+            outcome.enrichment_status,
+            Some(NativeEnrichmentStatus::MasterDisabled)
+        );
     }
 
     #[tokio::test]
@@ -1164,6 +1291,10 @@ template = "[native-search-hook]"
                 .enrichment
                 .as_deref()
                 .is_some_and(|sidecar| sidecar.contains("native_origin: direct_cli_os_file_read"))
+        );
+        assert_eq!(
+            outcome.enrichment_status,
+            Some(NativeEnrichmentStatus::Applied)
         );
     }
 

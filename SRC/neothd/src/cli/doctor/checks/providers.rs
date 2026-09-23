@@ -729,6 +729,85 @@ mod tests {
         assert!(!outcome.detail.contains("telegram/default"));
     }
 
+    #[tokio::test]
+    async fn channel_transport_flapping_reads_authenticated_live_wal_and_warns_only_failed_channel() {
+        let home = tempfile::tempdir().expect("create Doctor transport fixture home");
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).expect("create Doctor transport fixture WAL");
+        let segment = wal.join("000001.wal");
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment, home.path().to_path_buf())
+                .expect("spawn Doctor transport fixture WAL writer");
+        ready
+            .wait()
+            .await
+            .expect("initialize Doctor transport fixture WAL writer");
+        let signal = crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(
+            ChannelId::Signal,
+        )
+        .expect("Signal default live provenance");
+        let discord = crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(
+            ChannelId::Discord,
+        )
+        .expect("Discord default live provenance");
+        let now = crate::time::now_unix_secs();
+        for index in 0..FLAPPING_MIN_SAMPLES {
+            let ts = now.saturating_sub(10).saturating_add(index);
+            let signal_recipient = format!("signal-fixture-{index}");
+            let signal_intent = crate::channels::send_gate::emit_legacy_live_egress_intent(
+                &writer,
+                "signal",
+                &signal_recipient,
+                "fixture-reply",
+                ts,
+                &signal,
+            )
+            .await
+            .expect("authenticated failed Signal intent");
+            crate::channels::send_gate::emit_legacy_live_egress_result(
+                &writer,
+                &signal_intent,
+                "transport",
+                None,
+                ts,
+                &signal,
+            )
+            .await
+            .expect("authenticated failed Signal terminal");
+
+            let discord_recipient = format!("discord-fixture-{index}");
+            let discord_intent = crate::channels::send_gate::emit_legacy_live_egress_intent(
+                &writer,
+                "discord",
+                &discord_recipient,
+                "fixture-reply",
+                ts,
+                &discord,
+            )
+            .await
+            .expect("authenticated healthy Discord intent");
+            crate::channels::send_gate::emit_legacy_live_egress_result(
+                &writer,
+                &discord_intent,
+                "delivered",
+                Some("fixture-accepted"),
+                ts,
+                &discord,
+            )
+            .await
+            .expect("authenticated healthy Discord terminal");
+        }
+        drop(writer);
+        join.await
+            .expect("join Doctor transport fixture WAL writer")
+            .expect("close Doctor transport fixture WAL writer");
+
+        let outcome = check_channel_transport_flapping(home.path());
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("signal/default: 5/5 failed (100%)"));
+        assert!(!outcome.detail.contains("discord/default"));
+    }
+
     #[test]
     fn account_transport_flapping_passes_when_no_bound_attempts_exist() {
         let outcome = classify_channel_transport_evidence(Ok(BTreeMap::new()));

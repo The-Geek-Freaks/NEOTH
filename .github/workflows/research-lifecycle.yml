@@ -127,6 +127,9 @@ jobs:
               "wave256NativeSearchAcceptance": 5,
               "wave262DiscordEgressAcceptance": 7,
               "wave268SignalEgressAcceptance": 3,
+              "wave270HippocampusAcceptance": 11,
+              "wave269NativeReadinessAcceptance": 2,
+              "wave271DoctorCallerAcceptance": 1,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():

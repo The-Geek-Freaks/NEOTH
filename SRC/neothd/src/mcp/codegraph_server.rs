@@ -2570,33 +2570,51 @@ pub(crate) fn prepare_native_fs_read_enrichment(
     }))
 }
 
+pub(crate) enum NativeFsReadFreshness {
+    Fresh(crate::hooks::PreToolUseEnrichment),
+    Stale,
+    Unavailable,
+}
+
 impl NativeFsReadEnrichmentPlan {
     /// Recheck freshness only after the actual same-fd file read has
     /// succeeded.  The sidecar is untrusted, bounded supplemental output and
     /// is dropped rather than attached if the snapshot changed meanwhile.
-    pub(crate) fn still_fresh(&self) -> Option<crate::hooks::PreToolUseEnrichment> {
+    pub(crate) fn freshness_after_read(&self) -> NativeFsReadFreshness {
         if self.context.is_cancelled() || self.context.deadline_elapsed() {
-            return None;
+            return NativeFsReadFreshness::Unavailable;
         }
-        let conn = open_code_map_read_only(&self.database_path).ok()?;
-        let active = crate::code_map::recall::resolve_active_root_snapshot(
+        let Ok(conn) = open_code_map_read_only(&self.database_path) else {
+            return NativeFsReadFreshness::Unavailable;
+        };
+        let Ok(Some(active)) = crate::code_map::recall::resolve_active_root_snapshot(
             &conn,
             self.context.canonical_root(),
-        )
-        .ok()??;
-        let complete =
-            crate::code_map::persist::root_snapshot_complete(&conn, active.root.display()).ok()?;
-        let freshness =
-            crate::code_map::persist::index_freshness_receipt(&conn, active.root.display()).ok()?;
+        ) else {
+            return NativeFsReadFreshness::Unavailable;
+        };
+        let Ok(complete) =
+            crate::code_map::persist::root_snapshot_complete(&conn, active.root.display())
+        else {
+            return NativeFsReadFreshness::Unavailable;
+        };
+        let Ok(freshness) =
+            crate::code_map::persist::index_freshness_receipt(&conn, active.root.display())
+        else {
+            return NativeFsReadFreshness::Unavailable;
+        };
         if active.root.identity().as_str() != self.root_identity
             || active.index_generation != self.index_generation
             || active.graph_generation != self.graph_generation
             || !complete
             || freshness.stale
         {
-            return None;
+            return NativeFsReadFreshness::Stale;
         }
-        crate::hooks::PreToolUseEnrichment::new(self.sidecar.clone()).ok()
+        match crate::hooks::PreToolUseEnrichment::new(self.sidecar.clone()) {
+            Ok(sidecar) => NativeFsReadFreshness::Fresh(sidecar),
+            Err(_) => NativeFsReadFreshness::Unavailable,
+        }
     }
 }
 
@@ -5630,9 +5648,9 @@ fn root() { alpha(); beta(); }
         let plan = prepare_native_fs_read_enrichment(home.path(), &root, &target, &context, true)
             .unwrap()
             .expect("the actual generated descriptor and fresh indexed target are eligible");
-        let sidecar = plan
-            .still_fresh()
-            .expect("fresh sidecar after the successful read boundary");
+        let NativeFsReadFreshness::Fresh(sidecar) = plan.freshness_after_read() else {
+            panic!("fresh sidecar after the successful read boundary")
+        };
         assert!(
             sidecar
                 .as_str()
@@ -5641,8 +5659,15 @@ fn root() { alpha(); beta(); }
         assert!(!sidecar.as_str().contains("configured_mcp:"));
 
         std::fs::write(&target, "fn changed_after_plan() {}\n").unwrap();
+        assert!(matches!(
+            plan.freshness_after_read(),
+            NativeFsReadFreshness::Stale
+        ));
         assert!(
-            plan.still_fresh().is_none(),
+            !matches!(
+                plan.freshness_after_read(),
+                NativeFsReadFreshness::Fresh(_)
+            ),
             "a changed root cannot append native sidecar evidence after the file read"
         );
     }
