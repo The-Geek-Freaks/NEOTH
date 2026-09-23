@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T05:54:25.4598345Z",
-  "validationStatus": "Published Road counters reconciled with already accepted rows; GUI1256dae123/125 artifact-admitted; Core1d6active; Group564 pending",
+  "capturedUtc": "2026-09-23T05:57:51.6850797Z",
+  "validationStatus": "Canonical PROGRESS integrity section now14done/104open matching unchanged Road checkboxes; strictClippy1d6passed, typecheckactive",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -478,8 +478,8 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1133158,
-      "sha256": "2EE5DC025D021433E5522908D8A4F13E0CB04D2A45B18EA96CD6A638BFB71909"
+      "bytes": 1133204,
+      "sha256": "0B05C83DAA62265EBEE3EEC63A77ABB821F61251E080AD1F9910F6A4B4AD1C24"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
