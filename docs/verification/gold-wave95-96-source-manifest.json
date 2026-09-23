@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T08:50:55.3571063Z",
-  "validationStatus": "W325 reviewed engine decision; W330 SOURCE PASS hosted acquisition pending; browser remains unimplemented, P213 open",
+  "capturedUtc": "2026-09-23T09:00:53.7994425Z",
+  "validationStatus": "W329 reviewed research CLI/WAL fixtures pending hosted; W330 acquisition admitted; Group687",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -73,8 +73,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 13989,
-      "sha256": "696E176D9452FB5302E7FC41A795AA5E0A3DF799053A633F32A8293070003EE3"
+      "bytes": 14038,
+      "sha256": "C97A98E82D11ECD7555501BB5B152FE24FD22D76717D7268C3C0A300E0771268"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -473,18 +473,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 144705,
-      "sha256": "74F500009E0AC8AEE19FCE58A2B0FA2199BBEC098B8DB5EF2AE8BD21364BEBF4"
+      "bytes": 145764,
+      "sha256": "790988925E241519E3A4468318A13F2049D85C8F7B56BF71173EC0067AB6AA1B"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1147757,
-      "sha256": "A73F2E3D9F883067DA5DEB50134F3CD4F49F289FF994295E9808E91262519F41"
+      "bytes": 1148816,
+      "sha256": "31E548D722ECC6F0BCCC81F43D16518E6A9795278EE812D08C7E691B4A0AAAA1"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1744246,
-      "sha256": "525BE0A72869763FD7559084675FC4D72DB09736863084715C29EBF889819144"
+      "bytes": 1745305,
+      "sha256": "A07C4311826D5E7A1005CFFC3CB8CBF30DDA21FD5C80944852A1BC75713E4AD1"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1313,8 +1313,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/research.rs",
-      "bytes": 26588,
-      "sha256": "81E5A92742A0D58034831188C64790EC7EA1F484F868CCD6A2AAC9B9E2476D17"
+      "bytes": 45427,
+      "sha256": "5C5F1F95AF5DD75047DD1DBB245802CDAD9E2F6EFB868275E9E92D256B772261"
     },
     {
       "path": "SRC/neothd/src/cli/review.rs",
@@ -3060,6 +3060,11 @@
       "path": "docs/gold-wave330-browser-provenance-acquisition.md",
       "bytes": 1954,
       "sha256": "96D73672472CF9FB255D08F30FB2842295F69B9843A4776D12FD2203858E6F3C"
+    },
+    {
+      "path": "docs/gold-wave329-research-cli-acceptance.md",
+      "bytes": 3577,
+      "sha256": "5C5CE42DDAC04D059871F7B3DB9BE23320180C0D362AF511559C7865BC28016B"
     }
   ]
 }

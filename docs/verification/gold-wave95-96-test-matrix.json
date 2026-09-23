@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W325 reviewed engine decision; W330 SOURCE PASS hosted acquisition pending; browser remains unimplemented, P213 open",
+  "status": "W329 reviewed research CLI/WAL fixtures pending hosted; W330 acquisition admitted; Group687",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 106013,
-    "sha256": "993E5AF102843B79E51B04130844FCAF50C7C6B62400BB43FBF9CD7C50226E25"
+    "bytes": 106167,
+    "sha256": "63C042C670DBFA059BA90EE876D438FD8718174F12ABFEB2455BF62DB2E4A825"
   },
-  "sourceInputs": 611,
+  "sourceInputs": 612,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -3384,19 +3384,19 @@
     {
       "test": "cli::research::tests::provider_call_cap_rejects_next_call_without_inner_invocation",
       "sourcePath": "SRC/neothd/src/cli/research.rs",
-      "sourceSha256": "81E5A92742A0D58034831188C64790EC7EA1F484F868CCD6A2AAC9B9E2476D17",
+      "sourceSha256": "5C5F1F95AF5DD75047DD1DBB245802CDAD9E2F6EFB868275E9E92D256B772261",
       "junitClass": "neoth"
     },
     {
       "test": "cli::research::tests::research_parser_requires_revision_for_mutations_and_keeps_read_commands",
       "sourcePath": "SRC/neothd/src/cli/research.rs",
-      "sourceSha256": "81E5A92742A0D58034831188C64790EC7EA1F484F868CCD6A2AAC9B9E2476D17",
+      "sourceSha256": "5C5F1F95AF5DD75047DD1DBB245802CDAD9E2F6EFB868275E9E92D256B772261",
       "junitClass": "neoth"
     },
     {
       "test": "cli::research::tests::pre_effect_config_setup_failure_persists_failed_without_provider_or_http_effect",
       "sourcePath": "SRC/neothd/src/cli/research.rs",
-      "sourceSha256": "81E5A92742A0D58034831188C64790EC7EA1F484F868CCD6A2AAC9B9E2476D17",
+      "sourceSha256": "5C5F1F95AF5DD75047DD1DBB245802CDAD9E2F6EFB868275E9E92D256B772261",
       "junitClass": "neoth"
     },
     {
@@ -3456,7 +3456,7 @@
     {
       "test": "cli::research::tests::paused_or_cancelled_terminal_wal_failure_is_reported_without_mutation",
       "sourcePath": "SRC/neothd/src/cli/research.rs",
-      "sourceSha256": "81E5A92742A0D58034831188C64790EC7EA1F484F868CCD6A2AAC9B9E2476D17",
+      "sourceSha256": "5C5F1F95AF5DD75047DD1DBB245802CDAD9E2F6EFB868275E9E92D256B772261",
       "junitClass": "neoth"
     },
     {
@@ -6139,6 +6139,24 @@
       "test": "graphify_transaction::tests::recovery_inspection_uses_durable_intent_not_empty_scope_guesswork",
       "sourcePath": "SRC/neothd/src/graphify_transaction.rs",
       "sourceSha256": "87B0FBD7CCA9DBCB950BF2CA7B9DA37F0F74EDD66001379FB51F9DA904F839E8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::research::tests::operator_lifecycle_dispatches_create_approve_run_pause_resume_cancel_show_and_list_with_exact_revisions",
+      "sourcePath": "SRC/neothd/src/cli/research.rs",
+      "sourceSha256": "5C5F1F95AF5DD75047DD1DBB245802CDAD9E2F6EFB868275E9E92D256B772261",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::research::tests::successful_lifecycle_dispatches_real_authorized_producer_and_decodes_wal_terminals_without_replay",
+      "sourcePath": "SRC/neothd/src/cli/research.rs",
+      "sourceSha256": "5C5F1F95AF5DD75047DD1DBB245802CDAD9E2F6EFB868275E9E92D256B772261",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::research::tests::interrupted_lifecycle_decodes_started_wal_and_refuses_replay_after_terminal_failure",
+      "sourcePath": "SRC/neothd/src/cli/research.rs",
+      "sourceSha256": "5C5F1F95AF5DD75047DD1DBB245802CDAD9E2F6EFB868275E9E92D256B772261",
       "junitClass": "neoth"
     }
   ],
@@ -20321,6 +20339,32 @@
     "base": "b6090b1f71ce4ca2926494b9f77389c56ecdb7d9",
     "sources": [],
     "note": "Independent review accepted explicit contained launch+CDP client, browserwide egress boundary and provenance acquisition with four pinned platforms, UTC/GitHub identity, bounded ZIP and notice hashes; no local executable/download. Core1a17 admitted4steps.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave329ResearchCliAcceptance": {
+    "requiredTests": [
+      "cli::research::tests::operator_lifecycle_dispatches_create_approve_run_pause_resume_cancel_show_and_list_with_exact_revisions",
+      "cli::research::tests::successful_lifecycle_dispatches_real_authorized_producer_and_decodes_wal_terminals_without_replay",
+      "cli::research::tests::interrupted_lifecycle_decodes_started_wal_and_refuses_replay_after_terminal_failure"
+    ],
+    "report": "docs/gold-wave329-research-cli-acceptance.md",
+    "review": "work/gold-20260906/W329-review.md",
+    "scope": "real dispatch, actual authorized producer and authenticated topic-bound WAL terminals; isolated search; no replay",
+    "hosted": "pending",
+    "localValidationRan": false
+  },
+  "wave329SourcePublication": {
+    "base": "a41946046158991115b0380af7beb873f93f8092",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/research.rs",
+        "bytes": 45427,
+        "sha256": "5C5F1F95AF5DD75047DD1DBB245802CDAD9E2F6EFB868275E9E92D256B772261",
+        "blob": "a620dd8e1964e33b6947ef7b85aa5c3f89e7f44a"
+      }
+    ],
+    "note": "W329 three real-dispatch fixtures with hermetic search and topic-bound authenticated WAL; independent source PASS. W330 exact four targets acquisition admitted35839698279. P209/P213 remain open. BSOD hold no local execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

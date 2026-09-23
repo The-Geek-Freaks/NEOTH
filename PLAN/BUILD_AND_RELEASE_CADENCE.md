@@ -3,6 +3,22 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W329 research dispatch and W330 acquisition (2026-09-23):** Three new
+research fixtures drive the real command lifecycle and authorized producer with
+an isolated SearXNG fixture. They decode authenticated WAL payloads, bind the
+exact topic hash, check terminal order and forbid replay. Independent static
+review passed; hosted execution remains pending. Group684 expands to687,
+native1022 to1025; no parent checkbox is closed by source review.
+
+W330 run35839698279 on a4194604 passed. Root verified all receipt-file hashes,
+GitHub/source identity and four exact CFT154.0.8037.57/revision1689415 targets.
+Archive and executable hashes were acquired on GitHub; only JSON/notices and
+checksum text reached this workstation. This proves official-TLS acquisition,
+not vendor signatures, installation or browser execution. P2-13 remains open.
+W331 real Dream effects and W332 dedicated WAL audit are being implemented.
+Road1324=1022checked/300open/2partial; WS-LF15done/103open unchanged.
+Local executable validation remains prohibited after the reported BSODs.
+
 **W325/W330 managed-browser prerequisite (2026-09-23):** The reviewed
 engine decision selects chromiumoxide0.9.1 only as a CDP client after NEOTH's
 own contained launch. Externally rendered navigation still requires enforced

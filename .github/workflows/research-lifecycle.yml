@@ -153,6 +153,7 @@ jobs:
               "wave315DirectRetryAcceptance": 13,
               "wave318RetentionInventoryAcceptance": 3,
               "wave323CodegraphParentAcceptance": 25,
+              "wave329ResearchCliAcceptance": 3,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():
