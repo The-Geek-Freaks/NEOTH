@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T03:42:46.9129827Z",
-  "validationStatus": "W275 CLI handler acceptance and W276 read-only recall resume reviewed; W277 transport Doctor qualification selected; hosted484 pending",
+  "capturedUtc": "2026-09-23T03:49:10.0914210Z",
+  "validationStatus": "Group4654162 admitted465/465; W275276 exactHostedformat imported; Core2b0/Group4842b0 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -332,6 +332,11 @@
       "sha256": "675CC6C76BD0A040B5F300DD5BD5D1845252850805F72B993523AD389E074757"
     },
     {
+      "path": "docs/gold-wave273-cancellation-durability.md",
+      "bytes": 1795,
+      "sha256": "1556C2E1952FACCD5A23C9210B50CCECF5245CA3D410A8525807683D0D23A1F5"
+    },
+    {
       "path": "docs/gold-wave275-self-improve-cli-acceptance.md",
       "bytes": 1916,
       "sha256": "4588AFFABF74D56D867466272AB65CE2319AFB77A71A9F9D8BA492CBB3F7BB14"
@@ -453,18 +458,23 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 114415,
-      "sha256": "8BCAC45D217D82460B190100C70F201943F8206F7BB40E2EFC92CD19E125C838"
+      "bytes": 114936,
+      "sha256": "8C5A2E12F43F084836E2E9FE7131CDD5D05DEEFD7F090A8204594E1A77503B2A"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1117393,
-      "sha256": "D405DCAA0DE67A1645685A66D20F3C85C18DE07086D8126FD0D7381BA2246535"
+      "bytes": 1117914,
+      "sha256": "366A25698934C06AEBA490E159B20A4787C8D8E41E33AC7FB1BA68B340BC63E8"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1713668,
-      "sha256": "FBBEA04E38EAD8D9BCA259CB4DA6AD234CECF6D24D9673820E34945A568DFFA0"
+      "bytes": 1714189,
+      "sha256": "CC1A1A1D1158C7C28E31D60110EBF9FFE3FC59681364DAFFB9CCDA5AB4730CB2"
+    },
+    {
+      "path": "PLAN/SPEC_recall_parity_methodology.md",
+      "bytes": 25244,
+      "sha256": "A9B2FAC273C65F070FAE4C998316B90750F38288C6BB0DEA93DFB963115D49BB"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1268,8 +1278,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/recall_score.rs",
-      "bytes": 51707,
-      "sha256": "3E1B2A0A6C922DBF0D8FA27F9B1D20875402CA86DB583E966488A1EA81870FDD"
+      "bytes": 51754,
+      "sha256": "27A3CCE46A4A06916743A7462FB6DDDB695BA71A8BD08661713CC78BB37E3E58"
     },
     {
       "path": "SRC/neothd/src/cli/recall.rs",
@@ -1298,8 +1308,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/self_improve.rs",
-      "bytes": 62940,
-      "sha256": "7E91313264C5E200EEFE1F195E92E36B85456737FAD09FC50581D20DF8DC894B"
+      "bytes": 63053,
+      "sha256": "2675C1C0D46709EBE37F6B10FFD0D29122F15973F2B48E9D83CD6DC10FD80DAB"
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
@@ -2338,8 +2348,8 @@
     },
     {
       "path": "SRC/neothd/src/recall/parity_harness.rs",
-      "bytes": 182307,
-      "sha256": "D222B1A2C6E074AC09F5F26A8B4250B330EF587B5504BB8812D139E38CC30425"
+      "bytes": 182288,
+      "sha256": "232ABB077EEBDB783592685ECBAB7B74FA4D779C634B40F507414041AFD65170"
     },
     {
       "path": "SRC/neothd/src/recall/parity_import_receipt.rs",

@@ -1,7 +1,7 @@
 # SPEC -- Recall-Parity Methodology — NEOTH v1.1
 
 **Version:** 1.1
-**Last-Updated:** 2026-09-13
+**Last-Updated:** 2026-09-23
 **Implementation-Status:** PARTIAL — the deterministic scorer and P1-07
 versioned roster/coverage component are implemented. P1-07 was accepted on
 2026-09-13 after 36 focused configuration/matrix tests against `1f2860cd`; see
@@ -74,6 +74,27 @@ be accepted.
 
 ---
 
+## Read-only resume checkpoint — W276
+
+`neoth recall-parity-harness resume-status --run-dir <existing-run>
+--grader-config <config> --goldset <goldset>` inspects the retained workflow
+without creating a run, lockfile, label, batch, result or report. Supply
+`--local-evidence-home <existing-home>` when the selected run uses local
+transcript evidence. The existing run lock is mandatory; an active writer is
+a redacted unavailable result, never a reason to create another lock.
+
+The output reports ordered stage states, hashes and counts. It revalidates
+current local custody and all dependent artifact bindings. An optional
+`--import-receipt <receipt> --expected-receipt-pubkey <key>` additionally checks
+the external import receipt; final custody/artifact revalidation precedes
+`manual_gate_report_ready`. This flag means only that the separate manual
+`attested-gate-report` transition has valid inputs. It does not mean that
+parity passed, that providers were contacted, or that a report was published.
+Missing prerequisites and invalid/revoked/expired evidence leave dependent
+stages unready. See `docs/gold-wave276-parity-resume-status.md` for the exact
+source and test boundary; hosted validation remains pending for W276.
+
+---
 ## 1. Goldset Construction
 
 100 queries extracted from live Jarvis transcripts. Sources:

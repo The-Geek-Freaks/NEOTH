@@ -8,6 +8,13 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**Hosted follow-up (2026-09-23):** Group4654162 run35813951622 passed all
+465 exact tests, including both W273 acknowledgement-gated cancellation cases.
+Admission verifies every terminal, all103 source paths and matrix/lock against
+Git blobs at4162c45b. The three-path W275/W276 formatter receipt from run
+35815539018 on2b0c6f30 is imported after exact source/preimage/postimage/hash
+checks. Core2b0 and Group4842b0 continue on their original bound source. No
+local formatter, compiler, parser, test or runtime was used.
 **W275–W277 CLI acceptance, recall resume and Doctor qualification (2026-09-23):**
 W275 exercises real self-improve staging, review, exact-digest acceptance and
 accepted readback. Its separate corpus-drift leg calls review first and proves

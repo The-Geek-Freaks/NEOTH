@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W275 CLI handler acceptance and W276 read-only recall resume reviewed; W277 transport Doctor qualification selected; hosted484 pending",
+  "status": "Group4654162 admitted465/465; W275276 exactHostedformat imported; Core2b0/Group4842b0 pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 95727,
-    "sha256": "6E879E8F3E7C4277A2694918F2F8E1962ED22018120163FDB8BD66ED776F1E4D"
+    "bytes": 96039,
+    "sha256": "93BEEAF7C6B549CDEB4F09DACBB5E4D3F72BAC2660292FCA4ADDC92D27002C63"
   },
-  "sourceInputs": 553,
+  "sourceInputs": 555,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -222,13 +222,13 @@
     {
       "test": "cli::self_improve::tests::qa_candidate_preserves_hostile_data_without_inner_prompt_frames",
       "sourcePath": "SRC/neothd/src/cli/self_improve.rs",
-      "sourceSha256": "7E91313264C5E200EEFE1F195E92E36B85456737FAD09FC50581D20DF8DC894B",
+      "sourceSha256": "2675C1C0D46709EBE37F6B10FFD0D29122F15973F2B48E9D83CD6DC10FD80DAB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::self_improve::tests::qa_candidate_carries_the_exact_persisted_typed_analysis_as_json_data",
       "sourcePath": "SRC/neothd/src/cli/self_improve.rs",
-      "sourceSha256": "7E91313264C5E200EEFE1F195E92E36B85456737FAD09FC50581D20DF8DC894B",
+      "sourceSha256": "2675C1C0D46709EBE37F6B10FFD0D29122F15973F2B48E9D83CD6DC10FD80DAB",
       "junitClass": "neoth"
     },
     {
@@ -5316,13 +5316,13 @@
     {
       "test": "cli::self_improve::tests::w275_cli_run_review_exact_digest_accept_readback_and_corpus_drift_refuses_before_mutation",
       "sourcePath": "SRC/neothd/src/cli/self_improve.rs",
-      "sourceSha256": "7E91313264C5E200EEFE1F195E92E36B85456737FAD09FC50581D20DF8DC894B",
+      "sourceSha256": "2675C1C0D46709EBE37F6B10FFD0D29122F15973F2B48E9D83CD6DC10FD80DAB",
       "junitClass": "neoth"
     },
     {
       "test": "recall::parity_harness::tests::local_anchor_revalidation_rejects_revoked_source_without_mutating_run",
       "sourcePath": "SRC/neothd/src/recall/parity_harness.rs",
-      "sourceSha256": "D222B1A2C6E074AC09F5F26A8B4250B330EF587B5504BB8812D139E38CC30425",
+      "sourceSha256": "232ABB077EEBDB783592685ECBAB7B74FA4D779C634B40F507414041AFD65170",
       "junitClass": "neoth"
     },
     {
@@ -17739,6 +17739,32 @@
       }
     ],
     "note": "Independent W275 and W276 final source review PASS; nineteen additional grouped cases, eleven new universal identities; no local executable validation. FullCIce0 preserved.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave275276HostedFormatAndGroup465Admission": {
+    "base": "2b0c6f300b156954f8a634e58f097e2ec399f476",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/recall_score.rs",
+        "bytes": 51754,
+        "sha256": "27A3CCE46A4A06916743A7462FB6DDDB695BA71A8BD08661713CC78BB37E3E58",
+        "blob": "bf0006d84afe710497b7d8e19546ac71ab386c63"
+      },
+      {
+        "path": "SRC/neothd/src/cli/self_improve.rs",
+        "bytes": 63053,
+        "sha256": "2675C1C0D46709EBE37F6B10FFD0D29122F15973F2B48E9D83CD6DC10FD80DAB",
+        "blob": "525f616dea7e6bfb16143b620140c0fc0d42174d"
+      },
+      {
+        "path": "SRC/neothd/src/recall/parity_harness.rs",
+        "bytes": 182288,
+        "sha256": "232ABB077EEBDB783592685ECBAB7B74FA4D779C634B40F507414041AFD65170",
+        "blob": "e4757289d457942b590203a321bb3521e2b7e708"
+      }
+    ],
+    "note": "Exact3path formatter receipt imported, methodology documents resume-status; Group4654162 everyterminal/103sourcebindings/matrixlock admitted.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

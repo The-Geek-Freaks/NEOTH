@@ -1319,7 +1319,10 @@ mod tests {
         restore
     }
 
-    async fn w275_stage_and_approve(home: &Path, label: &str) -> (String, PathBuf, String, PathBuf) {
+    async fn w275_stage_and_approve(
+        home: &Path,
+        label: &str,
+    ) -> (String, PathBuf, String, PathBuf) {
         let skill = home.join(format!("{label}-skill.md"));
         let candidate = home.join(format!("{label}-candidate.md"));
         std::fs::write(&skill, "baseline CLI quality document\n").unwrap();
@@ -1352,7 +1355,9 @@ mod tests {
         let (evidence_sha256, corpus_case) =
             crate::self_improve::tests::w275_prepare_current_verified_approval(home, &id)
                 .await
-                .expect("W275 core fixture must mint current evidence and persist audited approval");
+                .expect(
+                    "W275 core fixture must mint current evidence and persist audited approval",
+                );
         (id, skill, evidence_sha256, corpus_case)
     }
 
@@ -1443,11 +1448,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn w275_cli_run_review_exact_digest_accept_readback_and_corpus_drift_refuses_before_mutation() {
+    async fn w275_cli_run_review_exact_digest_accept_readback_and_corpus_drift_refuses_before_mutation()
+     {
         let _env = crate::test_env::lock();
         let accepted_home = crate::test_env::canonical_tempdir().unwrap();
         let _restore = set_test_neoth_home(accepted_home.path());
-        let (id, skill, evidence_sha256, _) = w275_stage_and_approve(accepted_home.path(), "accept").await;
+        let (id, skill, evidence_sha256, _) =
+            w275_stage_and_approve(accepted_home.path(), "accept").await;
 
         // Invoke the real CLI JSON review route before selecting the receipt.
         run_self_improve(
@@ -1461,7 +1468,10 @@ mod tests {
         let reviewed = si::load_proposals(accepted_home.path()).unwrap().remove(0);
         let review = si::proposal_quality_readback(accepted_home.path(), &reviewed);
         assert_eq!(review.state, si::ProposalQualityState::Current);
-        assert_eq!(review.evidence_sha256.as_deref(), Some(evidence_sha256.as_str()));
+        assert_eq!(
+            review.evidence_sha256.as_deref(),
+            Some(evidence_sha256.as_str())
+        );
 
         run_self_improve(
             SelfImproveArgs {

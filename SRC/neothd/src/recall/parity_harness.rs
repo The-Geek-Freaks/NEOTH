@@ -622,19 +622,15 @@ pub(crate) fn resume_status_with_context(
         }
         Err(_) => return status,
     };
-    let manifest = match load_existing_run_manifest(
-        &run,
-        grader_config,
-        config_bytes,
-        goldset,
-        goldset_bytes,
-    ) {
-        Ok(manifest) => manifest,
-        Err(_) => {
-            status.run = RecallParityResumeStage::invalid("run_validation_failed");
-            return status;
-        }
-    };
+    let manifest =
+        match load_existing_run_manifest(&run, grader_config, config_bytes, goldset, goldset_bytes)
+        {
+            Ok(manifest) => manifest,
+            Err(_) => {
+                status.run = RecallParityResumeStage::invalid("run_validation_failed");
+                return status;
+            }
+        };
     let manifest_sha256 = match sha256_json(&manifest) {
         Ok(value) => value,
         Err(_) => {
@@ -767,8 +763,7 @@ pub(crate) fn resume_status_with_context(
         return status;
     }
     if anchor.revalidate(&run, context).is_err() || results.revalidate(&run).is_err() {
-        status.manual_gate_report =
-            RecallParityResumeStage::invalid("custody_or_artifact_changed");
+        status.manual_gate_report = RecallParityResumeStage::invalid("custody_or_artifact_changed");
         return status;
     }
     status.manual_gate_report = RecallParityResumeStage::valid(

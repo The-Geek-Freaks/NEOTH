@@ -40,8 +40,7 @@ use crate::recall::{
         build_attested_parity_gate_report_with_context, build_report_with_context,
         ingest_attested_four_grader_batch_results_with_context, ingest_offline_grades_with_context,
         ingest_operator_anchor_evidence_with_context, plan_four_grader_batch_with_context,
-        plan_run_with_context, read_offline_input,
-        resume_status_with_context,
+        plan_run_with_context, read_offline_input, resume_status_with_context,
         summarize_attested_four_grader_family_bias_with_context,
         validate_attested_four_grader_batch_results_with_context,
     },
@@ -322,14 +321,15 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
         render_harness_json(&report, &output)?;
         return Ok(());
     }
-    let context = CandidateEvidenceUseContext::open(args.local_evidence_home.as_deref())
-        .map_err(|error| {
+    let context = CandidateEvidenceUseContext::open(args.local_evidence_home.as_deref()).map_err(
+        |error| {
             if redact_resume_status_errors {
                 anyhow::anyhow!("open resume-status custody context")
             } else {
                 error
             }
-        })?;
+        },
+    )?;
     match &operation {
         RecallParityHarnessOperation::ListLocalCandidates { limit } => {
             let candidates = list_local_candidates(&context, *limit)?;
@@ -448,32 +448,31 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                 error
             }
         })?;
-    let goldset_bytes = read_offline_input(goldset, MAX_GOLDSET_BYTES, "goldset").map_err(|error| {
-        if redact_resume_status_errors {
-            anyhow::anyhow!("read resume-status goldset")
-        } else {
-            error
-        }
-    })?;
-    let config = crate::recall::goldset::load_grader_config_bytes(
-        &config_bytes,
-        "harness --grader-config",
-    )
-    .map_err(|error| {
-        if redact_resume_status_errors {
-            anyhow::anyhow!("validate resume-status grader configuration")
-        } else {
-            error
-        }
-    })?;
-    let entries = crate::recall::goldset::load_goldset_bytes(&goldset_bytes, "harness --goldset")
-        .map_err(|error| {
+    let goldset_bytes =
+        read_offline_input(goldset, MAX_GOLDSET_BYTES, "goldset").map_err(|error| {
             if redact_resume_status_errors {
-                anyhow::anyhow!("validate resume-status goldset")
+                anyhow::anyhow!("read resume-status goldset")
             } else {
                 error
             }
         })?;
+    let config =
+        crate::recall::goldset::load_grader_config_bytes(&config_bytes, "harness --grader-config")
+            .map_err(|error| {
+                if redact_resume_status_errors {
+                    anyhow::anyhow!("validate resume-status grader configuration")
+                } else {
+                    error
+                }
+            })?;
+    let entries = crate::recall::goldset::load_goldset_bytes(&goldset_bytes, "harness --goldset")
+        .map_err(|error| {
+        if redact_resume_status_errors {
+            anyhow::anyhow!("validate resume-status goldset")
+        } else {
+            error
+        }
+    })?;
     match operation {
         RecallParityHarnessOperation::Plan { run_dir, .. } => {
             let manifest = plan_run_with_context(

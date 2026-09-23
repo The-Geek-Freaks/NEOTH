@@ -19,3 +19,7 @@ This is test instrumentation only. Production cancellation continues to await
 its terminal provider audit before exposing the cancellation error. The fixture
 also verifies that the terminal and the original provider request have the same
 `invocation_id`, preventing a terminal from being attributed to another call.
+
+## Hosted Linux result — 2026-09-23
+
+Run [35813951622](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35813951622) on source4162c45bd4f619edd5dd684d6f3d54e4ef2f5d6a passed465/465 exact cases, including both acknowledgement-gated cancellation fixtures. The admission binds all103 source paths, matrix/lock and each actual terminal. Its SHA-256 is E461AE2716858B6895DA8EB40DAA89DBC41B80179AEE7F2D023A0C8BDB18A8D2. macOS evidence remains pending in the preserved FullCIce0 run; this Linux result is not a platform-wide claim.
