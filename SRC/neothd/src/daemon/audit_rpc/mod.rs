@@ -71,7 +71,7 @@ mod tests;
 pub(crate) use client::try_daemon_plain_chat_turn;
 pub(crate) use client::try_post_skill_mutation_frame;
 pub(crate) use client::try_post_trust_decision_once;
-#[cfg(windows)]
+#[cfg(any(unix, windows))]
 pub(crate) use client::verified_daemon_endpoint_nonce;
 pub use client::{
     AuditRpcClientError, consume_fullauto_token, consume_jobs_run_token, enforce_required_audit,
@@ -105,7 +105,7 @@ pub use token::{init_rpc_token, read_rpc_token, rpc_token_path};
 #[cfg(test)]
 pub(crate) use transport::AuditEndpointV2;
 pub(crate) use transport::AuditStream;
-#[cfg(all(test, windows))]
+#[cfg(test)]
 pub(crate) use transport::endpoint_for_home;
 pub(crate) use transport::homes_same_identity;
 

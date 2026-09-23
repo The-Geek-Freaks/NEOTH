@@ -3,6 +3,22 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W249 Unix Context Import client (2026-09-23):** supported Unix/macOS clients
+now route status, plan, apply, pause and resume through the daemon's existing
+Connector-Control authority. Discovery files are checked and read through one
+no-follow nonblocking descriptor; canonical endpoint reconstruction, kernel
+peer UID, private endpoint metadata and bounded unambiguous HTTP are enforced.
+Independent static review passed, including the descriptor race repair and
+accurately documented same-UID ABA limitation. Seven Unix cases join Linux and
+macOS native inventories; the real CLI/listener roundtrip includes persistence,
+pause/resume and shutdown. Execution remains pending. Inventory: 537 sources,
+861 universal native, platform extras Windows 19 / Linux 29 / macOS 28;
+98 universal GUI, Group431 / GUI124. CC-04 and Road counts stay unchanged.
+W251 is published on `49e58dfb`: Group424 `35805034886` and full CI `35805037288`
+are running on that exact milestone. Later source work does not replace its
+results or qualify a newer release HEAD. See `docs/gold-wave249-unix-context-client.md`.
+No local executable validation was run; the BSOD hold remains active.
+
 **W251 lifecycle fixture correction and W247 evidence (2026-09-23):**
 Group424 run `35803121923` on `09ac5d57` executed all 424 cases: **423 passed,
 1 failed**, bound to 91 source paths, the matrix, Cargo lock and exact individual

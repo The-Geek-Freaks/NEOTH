@@ -175,7 +175,7 @@ fn exact_daemon_owner(home: &Path, pid: u32, endpoint_nonce: &str) -> bool {
 /// Return the live daemon's PID-lock-bound endpoint nonce for a sibling local
 /// authority. This exposes no audit bearer and never accepts caller-supplied
 /// nonce material.
-#[cfg(windows)]
+#[cfg(any(unix, windows))]
 pub(crate) fn verified_daemon_endpoint_nonce(home: &Path) -> Result<String> {
     let sidecar = read_sidecar(home).context("read audit-RPC daemon discovery")?;
     anyhow::ensure!(

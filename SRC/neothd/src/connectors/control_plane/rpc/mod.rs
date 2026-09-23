@@ -77,8 +77,8 @@ const MAX_BODY_BYTES: usize = 4096;
 #[cfg(any(unix, windows))]
 const MAX_RESPONSE_BYTES: usize = 4096;
 /// Fixed HTTP status-line and header allowance around a bounded response body.
-#[cfg(windows)]
-const MAX_WINDOWS_RESPONSE_ENVELOPE_BYTES: usize = MAX_RESPONSE_BYTES + 1024;
+#[cfg(any(unix, windows))]
+const MAX_RESPONSE_ENVELOPE_BYTES: usize = MAX_RESPONSE_BYTES + 1024;
 #[cfg(any(unix, windows))]
 const MAX_CONCURRENT_CONNECTIONS: usize = 16;
 #[cfg(any(unix, windows))]
@@ -656,6 +656,366 @@ pub(crate) fn windows_client(home: &Path, audit_pid_nonce: &str) -> Result<Windo
     })
 }
 
+/// Unix discovery uses Connector-Control's own sidecar and bearer. The
+/// Audit-RPC nonce merely proves the live daemon PID lock; it is never reused
+/// as an audit endpoint, transport, or bearer.
+#[cfg(unix)]
+pub(crate) struct UnixClient {
+    endpoint: Endpoint,
+    token: String,
+}
+
+#[cfg(unix)]
+pub(crate) fn unix_client(home: &Path, audit_pid_nonce: &str) -> Result<UnixClient> {
+    validate_nonce(audit_pid_nonce)?;
+    let endpoint_nonce = connector_nonce(audit_pid_nonce);
+    let canonical_home = std::fs::canonicalize(home)
+        .with_context(|| format!("canonicalize NEOTH home {}", home.display()))?;
+    let bound = crate::skills::store::open_bound_directory(
+        home,
+        false,
+        "connector-control Unix client discovery directory",
+    )?
+    .context("connector-control home is absent")?;
+    let sidecar_path = bound.display_path.join(SIDECAR_FILE);
+    let sidecar_body = read_unix_private_regular_file_bounded(
+        &bound.dir,
+        OsStr::new(SIDECAR_FILE),
+        &sidecar_path,
+        MAX_RESPONSE_BYTES,
+    )?;
+    let sidecar: PersistedSidecar = serde_json::from_slice(&sidecar_body)
+        .context("parse connector-control Unix discovery sidecar")?;
+    ensure!(
+        sidecar.schema_version == SIDECAR_SCHEMA_VERSION && sidecar.daemon_pid != 0,
+        "connector-control Unix sidecar has an unsupported schema or daemon binding"
+    );
+    ensure!(
+        sidecar.endpoint_nonce == endpoint_nonce,
+        "connector-control Unix sidecar endpoint nonce is not bound to this daemon"
+    );
+    ensure!(
+        crate::daemon::pidfile::live_daemon_endpoint(
+            &canonical_home.join("neothd.pid"),
+            sidecar.daemon_pid,
+            audit_pid_nonce,
+        )?,
+        "connector-control Unix sidecar daemon PID does not own the exact audit endpoint"
+    );
+    let Endpoint::UnixSocket {
+        endpoint_nonce: sidecar_endpoint_nonce,
+        home_sha256,
+        runtime_nonce,
+        ..
+    } = &sidecar.endpoint;
+    ensure!(
+        sidecar_endpoint_nonce == &sidecar.endpoint_nonce,
+        "connector-control Unix sidecar endpoint nonce does not match its endpoint"
+    );
+    let expected = endpoint_for_home_with_runtime_nonce(
+        &canonical_home,
+        &sidecar.endpoint_nonce,
+        runtime_nonce,
+    )?;
+    ensure!(
+        sidecar.endpoint == expected,
+        "connector-control Unix sidecar endpoint is not bound to canonical home and nonce"
+    );
+    let Endpoint::UnixSocket {
+        home_sha256: expected_home_sha256,
+        ..
+    } = &expected;
+    ensure!(
+        home_sha256 == expected_home_sha256,
+        "connector-control Unix sidecar home hash is not bound to canonical home"
+    );
+    let token_path = bound.display_path.join(TOKEN_FILE);
+    let token_body = read_unix_private_regular_file_bounded(
+        &bound.dir,
+        OsStr::new(TOKEN_FILE),
+        &token_path,
+        MAX_RESPONSE_BYTES,
+    )?;
+    let token = String::from_utf8(crate::wal::compaction::maybe_unwrap_dpapi(
+        &token_body,
+        &token_path,
+    )?)?
+    .trim()
+    .to_owned();
+    ensure!(!token.is_empty(), "connector-control token is empty");
+    Ok(UnixClient {
+        endpoint: sidecar.endpoint,
+        token,
+    })
+}
+
+#[cfg(unix)]
+fn read_unix_private_regular_file_bounded(
+    parent: &cap_std::fs::Dir,
+    name: &OsStr,
+    display_path: &Path,
+    max_bytes: usize,
+) -> Result<Vec<u8>> {
+    use cap_std::fs::MetadataExt as _;
+    use std::io::Read as _;
+
+    // `open_bound_regular_file` opens this exact direct child through the
+    // retained directory capability with no-follow and O_NONBLOCK on Unix.
+    // Classify and bound-read that same descriptor; never validate an ambient
+    // path and then reopen its name.
+    let (mut file, _binding) = crate::skills::store::open_bound_regular_file(
+        parent,
+        name,
+        display_path,
+    )?;
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("inspect connector-control Unix file {}", display_path.display()))?;
+    ensure!(
+        metadata.is_file()
+            && metadata.uid() == unsafe { libc::geteuid() }
+            && metadata.mode() & 0o777 == 0o600,
+        "connector-control Unix discovery file is not an effective-user private regular file"
+    );
+    let sentinel = max_bytes
+        .checked_add(1)
+        .context("connector-control Unix discovery file cap overflow")?;
+    let mut body = Vec::with_capacity(max_bytes);
+    file.take(sentinel as u64)
+        .read_to_end(&mut body)
+        .with_context(|| format!("read connector-control Unix file {}", display_path.display()))?;
+    ensure!(
+        body.len() <= max_bytes,
+        "connector-control Unix discovery file exceeds cap"
+    );
+    Ok(body)
+}
+
+#[cfg(all(unix, test))]
+pub(crate) fn unix_client_with_token_for_test(
+    home: &Path,
+    audit_pid_nonce: &str,
+    token: String,
+) -> Result<UnixClient> {
+    let mut client = unix_client(home, audit_pid_nonce)?;
+    client.token = token;
+    Ok(client)
+}
+
+#[cfg(unix)]
+impl UnixClient {
+    pub(crate) async fn post(&self, route: &str, body: &[u8]) -> Result<Vec<u8>> {
+        ensure!(
+            body.len() <= MAX_BODY_BYTES,
+            "connector-control client body exceeds cap"
+        );
+        let request = format!(
+            "POST {route} HTTP/1.1\r\nAuthorization: Bearer {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            self.token,
+            body.len(),
+        );
+        let before = verify_unix_client_endpoint(&self.endpoint)?;
+        let response = tokio::time::timeout(CONNECTION_TIMEOUT, async {
+            let Endpoint::UnixSocket { path, .. } = &self.endpoint;
+            let mut stream = tokio::net::UnixStream::connect(path)
+                .await
+                .with_context(|| format!("connect connector-control Unix socket {}", path.display()))?;
+            ensure!(
+                same_effective_uid(&stream),
+                "connector-control Unix peer UID does not match the effective UID"
+            );
+            let after = verify_unix_client_endpoint(&self.endpoint)?;
+            ensure!(
+                before == after,
+                "connector-control Unix endpoint changed while connecting"
+            );
+            stream.write_all(request.as_bytes()).await?;
+            stream.write_all(body).await?;
+            stream.shutdown().await?;
+            read_bounded_unix_response(&mut stream).await
+        })
+        .await
+        .context("connector-control Unix client request deadline exceeded")??;
+        validate_unix_success_response(&response)?;
+        Ok(response)
+    }
+}
+
+#[cfg(unix)]
+#[derive(Debug, PartialEq, Eq)]
+struct UnixEndpointIdentity {
+    runtime_root: (u64, u64),
+    home_namespace: (u64, u64),
+    channel_namespace: (u64, u64),
+    socket: (u64, u64),
+}
+
+#[cfg(unix)]
+fn verify_unix_client_endpoint(endpoint: &Endpoint) -> Result<UnixEndpointIdentity> {
+    use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
+
+    let Endpoint::UnixSocket {
+        path,
+        endpoint_nonce,
+        home_sha256,
+        runtime_nonce,
+    } = endpoint;
+    let expected = endpoint_for_home_hash(home_sha256, endpoint_nonce, runtime_nonce)?;
+    ensure!(
+        endpoint == &expected,
+        "connector-control Unix client endpoint is not the exact derived endpoint"
+    );
+    let channel_namespace = path
+        .parent()
+        .context("connector-control Unix socket has no channel namespace")?;
+    let home_namespace = channel_namespace
+        .parent()
+        .context("connector-control Unix socket has no home namespace")?;
+    let runtime_root = home_namespace
+        .parent()
+        .context("connector-control Unix socket has no runtime root")?;
+    let runtime_parent = runtime_root
+        .parent()
+        .context("connector-control Unix runtime root has no parent")?;
+    validate_safe_fallback_parent(runtime_parent)?;
+    let runtime_root_identity = validate_private_runtime_directory_identity(
+        runtime_root,
+        "connector-control Unix client runtime root",
+    )?;
+    let home_namespace_identity = validate_private_runtime_directory_identity(
+        home_namespace,
+        "connector-control Unix client home namespace",
+    )?;
+    let channel_namespace_identity = validate_private_runtime_directory_identity(
+        channel_namespace,
+        "connector-control Unix client channel namespace",
+    )?;
+    let socket = std::fs::symlink_metadata(path)
+        .with_context(|| format!("inspect connector-control Unix socket {}", path.display()))?;
+    ensure!(
+        socket.file_type().is_socket()
+            && !socket.file_type().is_symlink()
+            && socket.uid() == unsafe { libc::geteuid() }
+            && socket.mode() & 0o777 == 0o600,
+        "connector-control Unix socket is not an effective-user private socket"
+    );
+    Ok(UnixEndpointIdentity {
+        runtime_root: runtime_root_identity,
+        home_namespace: home_namespace_identity,
+        channel_namespace: channel_namespace_identity,
+        socket: (socket.dev(), socket.ino()),
+    })
+}
+
+#[cfg(unix)]
+fn validate_private_runtime_directory_identity(path: &Path, label: &str) -> Result<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let metadata = std::fs::symlink_metadata(path)
+        .with_context(|| format!("inspect private {label} {}", path.display()))?;
+    ensure!(
+        private_directory_metadata_matches_owner(&metadata, unsafe { libc::geteuid() }),
+        "{label} is not current-user private"
+    );
+    Ok((metadata.dev(), metadata.ino()))
+}
+
+#[cfg(unix)]
+async fn read_bounded_unix_response(
+    stream: &mut (impl tokio::io::AsyncRead + Unpin),
+) -> Result<Vec<u8>> {
+    let sentinel_limit = MAX_RESPONSE_ENVELOPE_BYTES
+        .checked_add(1)
+        .context("connector-control Unix response cap overflow")?;
+    let mut response = Vec::with_capacity(MAX_RESPONSE_ENVELOPE_BYTES);
+    stream
+        .take(sentinel_limit as u64)
+        .read_to_end(&mut response)
+        .await
+        .context("read connector-control Unix response")?;
+    ensure!(
+        response.len() <= MAX_RESPONSE_ENVELOPE_BYTES,
+        "connector-control Unix response envelope exceeds cap"
+    );
+    Ok(response)
+}
+
+#[cfg(unix)]
+fn validate_unix_success_response(response: &[u8]) -> Result<()> {
+    let separator = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .context("connector-control Unix response has no header boundary")?;
+    let headers = std::str::from_utf8(&response[..separator])
+        .context("connector-control Unix response headers are not UTF-8")?;
+    let body = &response[separator + 4..];
+    let mut lines = headers.split("\r\n");
+    let status = lines
+        .next()
+        .context("connector-control Unix response has no status line")?;
+    ensure!(
+        status.starts_with("HTTP/1.1 ") && status.len() >= 12,
+        "connector-control Unix response status line is malformed"
+    );
+    let status_bytes = status.as_bytes();
+    ensure!(
+        status_bytes[9..12].iter().all(u8::is_ascii_digit),
+        "connector-control Unix response status code is malformed"
+    );
+    let status_code: u16 = std::str::from_utf8(&status_bytes[9..12])
+        .expect("ASCII status digits are valid UTF-8")
+        .parse()
+        .context("connector-control Unix response status code is malformed")?;
+    ensure!(
+        status.len() == 12 || status_bytes.get(12) == Some(&b' '),
+        "connector-control Unix response status line is malformed"
+    );
+    let mut content_length = None;
+    for line in lines {
+        ensure!(
+            !line.is_empty() && !line.starts_with(' ') && !line.starts_with('\t'),
+            "connector-control Unix response header is malformed"
+        );
+        let (name, value) = line
+            .split_once(':')
+            .context("connector-control Unix response header is malformed")?;
+        ensure!(
+            !name.is_empty(),
+            "connector-control Unix response header has no name"
+        );
+        if name.eq_ignore_ascii_case("transfer-encoding") {
+            bail!("connector-control Unix response uses unsupported transfer encoding");
+        }
+        if name.eq_ignore_ascii_case("content-length") {
+            ensure!(
+                content_length.is_none(),
+                "connector-control Unix response has duplicate Content-Length"
+            );
+            content_length = Some(
+                value
+                    .trim()
+                    .parse::<usize>()
+                    .context("connector-control Unix response Content-Length is malformed")?,
+            );
+        }
+    }
+    let content_length =
+        content_length.context("connector-control Unix response has no Content-Length")?;
+    ensure!(
+        content_length <= MAX_RESPONSE_BYTES,
+        "connector-control Unix response body exceeds cap"
+    );
+    ensure!(
+        body.len() == content_length,
+        "connector-control Unix response body is truncated or has trailing bytes"
+    );
+    ensure!(
+        status_code == 200,
+        "connector-control daemon rejected request with HTTP {status_code}"
+    );
+    Ok(())
+}
+
 #[cfg(all(windows, test))]
 pub(crate) fn windows_client_with_token_for_test(
     home: &Path,
@@ -704,17 +1064,17 @@ impl WindowsClient {
 async fn read_bounded_windows_response(
     stream: &mut (impl tokio::io::AsyncRead + Unpin),
 ) -> Result<Vec<u8>> {
-    let sentinel_limit = MAX_WINDOWS_RESPONSE_ENVELOPE_BYTES
+    let sentinel_limit = MAX_RESPONSE_ENVELOPE_BYTES
         .checked_add(1)
         .context("connector-control response cap overflow")?;
-    let mut response = Vec::with_capacity(MAX_WINDOWS_RESPONSE_ENVELOPE_BYTES);
+    let mut response = Vec::with_capacity(MAX_RESPONSE_ENVELOPE_BYTES);
     stream
         .take(sentinel_limit as u64)
         .read_to_end(&mut response)
         .await
         .context("read connector-control response")?;
     ensure!(
-        response.len() <= MAX_WINDOWS_RESPONSE_ENVELOPE_BYTES,
+        response.len() <= MAX_RESPONSE_ENVELOPE_BYTES,
         "connector-control client response envelope exceeds cap"
     );
     Ok(response)
@@ -2338,6 +2698,29 @@ mod tests {
         String::from_utf8(bytes).expect("hex test nonce remains UTF-8")
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn unix_client_response_parser_rejects_ambiguous_and_truncated_envelopes() {
+        assert!(validate_unix_success_response(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"
+        )
+        .is_ok());
+        for response in [
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n{}"
+                .as_slice(),
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 2\r\n\r\n{}"
+                .as_slice(),
+            b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\n{}".as_slice(),
+            b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n{}".as_slice(),
+            b"HTTP/1.1 200 OK\r\n\r\n{}".as_slice(),
+        ] {
+            assert!(
+                validate_unix_success_response(response).is_err(),
+                "ambiguous or incomplete connector-control response must fail closed"
+            );
+        }
+    }
+
     #[cfg(any(unix, windows))]
     #[test]
     fn connector_nonce_is_strict_and_domain_separated_from_pid_nonce() {
@@ -2431,7 +2814,7 @@ mod tests {
         let mut listener =
             crate::windows_private_ipc::Listener::bind(endpoint.clone(), MAX_REQUEST_BYTES as u32)
                 .expect("test listener must bind");
-        let oversized = vec![b'x'; MAX_WINDOWS_RESPONSE_ENVELOPE_BYTES + 1];
+        let oversized = vec![b'x'; MAX_RESPONSE_ENVELOPE_BYTES + 1];
         let server = tokio::spawn(async move {
             let mut stream = listener.accept().await?;
             let request = read_request(&mut stream)
@@ -2811,6 +3194,171 @@ mod tests {
     fn write_fixture_sidecar(home: &Path, endpoint: &Endpoint, nonce: &str) {
         write_sidecar(home, endpoint, nonce).unwrap();
         std::fs::write(home.join(TOKEN_FILE), b"stale-token").unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_client_discovery_rejects_wrong_cc_nonce_pid_lock_nonce_and_runtime_nonce_before_connect()
+    {
+        use crate::daemon::pidfile;
+
+        // A sidecar that names any CC endpoint other than the one derived
+        // from the live audit PID-lock nonce is rejected before token/socket
+        // access. No listener is bound in this fixture.
+        let home = crate::test_env::canonical_tempdir().unwrap();
+        let audit_nonce = fresh_test_nonce();
+        let cc_nonce = connector_nonce(&audit_nonce);
+        let endpoint = canonical_fixture(home.path(), &cc_nonce);
+        init_token(home.path()).unwrap();
+        let mut guard = pidfile::acquire(&home.path().join("neothd.pid")).unwrap();
+        guard.publish_endpoint_nonce(&audit_nonce).unwrap();
+        write_sidecar(home.path(), &endpoint, &different_test_nonce(&cc_nonce)).unwrap();
+        assert!(unix_client(home.path(), &audit_nonce).is_err());
+        drop(guard);
+
+        // A sidecar can carry the right derived CC nonce only while the exact
+        // audit nonce is committed in the current PID-file lock.
+        let home = crate::test_env::canonical_tempdir().unwrap();
+        let audit_nonce = fresh_test_nonce();
+        let cc_nonce = connector_nonce(&audit_nonce);
+        let endpoint = canonical_fixture(home.path(), &cc_nonce);
+        init_token(home.path()).unwrap();
+        let mut guard = pidfile::acquire(&home.path().join("neothd.pid")).unwrap();
+        guard
+            .publish_endpoint_nonce(&different_test_nonce(&audit_nonce))
+            .unwrap();
+        write_sidecar(home.path(), &endpoint, &cc_nonce).unwrap();
+        assert!(unix_client(home.path(), &audit_nonce).is_err());
+        drop(guard);
+
+        // The persisted runtime nonce is part of the endpoint derivation;
+        // changing it cannot redirect a client to a different socket tree.
+        let home = crate::test_env::canonical_tempdir().unwrap();
+        let audit_nonce = fresh_test_nonce();
+        let cc_nonce = connector_nonce(&audit_nonce);
+        let endpoint = canonical_fixture(home.path(), &cc_nonce);
+        let mut malformed = endpoint.clone();
+        let Endpoint::UnixSocket { runtime_nonce, .. } = &mut malformed;
+        *runtime_nonce = different_test_nonce(runtime_nonce);
+        init_token(home.path()).unwrap();
+        let mut guard = pidfile::acquire(&home.path().join("neothd.pid")).unwrap();
+        guard.publish_endpoint_nonce(&audit_nonce).unwrap();
+        write_sidecar(home.path(), &malformed, &cc_nonce).unwrap();
+        assert!(unix_client(home.path(), &audit_nonce).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_client_discovery_rejects_group_readable_and_symlinked_tokens_before_connect() {
+        use std::os::unix::fs::{PermissionsExt as _, symlink};
+
+        let home = crate::test_env::canonical_tempdir().unwrap();
+        let audit_nonce = fresh_test_nonce();
+        let cc_nonce = connector_nonce(&audit_nonce);
+        let endpoint = canonical_fixture(home.path(), &cc_nonce);
+        let mut guard = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid")).unwrap();
+        guard.publish_endpoint_nonce(&audit_nonce).unwrap();
+        write_sidecar(home.path(), &endpoint, &cc_nonce).unwrap();
+        let token = home.path().join(TOKEN_FILE);
+        std::fs::write(&token, b"test-token").unwrap();
+        std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(unix_client(home.path(), &audit_nonce).is_err());
+
+        std::fs::remove_file(&token).unwrap();
+        let target = home.path().join("token-target");
+        std::fs::write(&target, b"test-token").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+        symlink(&target, &token).unwrap();
+        assert!(unix_client(home.path(), &audit_nonce).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_private_discovery_reader_rejects_mode_symlink_and_oversize_on_the_opened_fd() {
+        use std::os::unix::fs::{PermissionsExt as _, symlink};
+
+        let home = crate::test_env::canonical_tempdir().unwrap();
+        let bound = crate::skills::store::open_bound_directory(
+            home.path(),
+            false,
+            "connector-control Unix reader test home",
+        )
+        .unwrap()
+        .unwrap();
+        let path = home.path().join("discovery");
+        std::fs::write(&path, b"ok").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            read_unix_private_regular_file_bounded(
+                &bound.dir,
+                OsStr::new("discovery"),
+                &path,
+                MAX_RESPONSE_BYTES,
+            )
+            .unwrap(),
+            b"ok"
+        );
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        assert!(read_unix_private_regular_file_bounded(
+            &bound.dir,
+            OsStr::new("discovery"),
+            &path,
+            MAX_RESPONSE_BYTES,
+        )
+        .is_err());
+
+        std::fs::remove_file(&path).unwrap();
+        let target = home.path().join("discovery-target");
+        std::fs::write(&target, b"ok").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+        symlink(&target, &path).unwrap();
+        assert!(read_unix_private_regular_file_bounded(
+            &bound.dir,
+            OsStr::new("discovery"),
+            &path,
+            MAX_RESPONSE_BYTES,
+        )
+        .is_err());
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, vec![b'x'; MAX_RESPONSE_BYTES + 1]).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(read_unix_private_regular_file_bounded(
+            &bound.dir,
+            OsStr::new("discovery"),
+            &path,
+            MAX_RESPONSE_BYTES,
+        )
+        .is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_client_endpoint_identity_detects_a_replaced_socket_leaf() {
+        let home = crate::test_env::canonical_tempdir().unwrap();
+        let endpoint = canonical_fixture(home.path(), &connector_nonce(&fresh_test_nonce()));
+        let Endpoint::UnixSocket { path, .. } = &endpoint;
+        bind_fixture_socket(&endpoint);
+        let before = verify_unix_client_endpoint(&endpoint).unwrap();
+        std::fs::remove_file(path).unwrap();
+        bind_fixture_socket(&endpoint);
+        let after = verify_unix_client_endpoint(&endpoint).unwrap();
+        assert_ne!(before, after, "a replaced socket leaf must change the attested identity");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_client_fixture_home_is_canonical_under_the_inherited_temp_environment() {
+        // Environment is process-global. Hold the shared guard so this test
+        // cannot race another fixture changing TMPDIR while macOS resolves
+        // `/var` through `/private/var`.
+        let _environment = crate::test_env::lock();
+        let inherited_temp = std::env::temp_dir();
+        let canonical_temp = std::fs::canonicalize(&inherited_temp).unwrap();
+        let home = crate::test_env::canonical_tempdir().unwrap();
+        assert_eq!(std::fs::canonicalize(home.path()).unwrap(), home.path());
+        assert_eq!(home.path().parent(), Some(canonical_temp.as_path()));
     }
 
     #[cfg(unix)]
