@@ -201,6 +201,16 @@ impl Provider for GeminiAdapter {
                     MAX_ERROR_BODY_BYTES,
                 )
                 .await;
+                if matches!(status.as_u16(), 401 | 403 | 408 | 500..=599) {
+                    return Err(anyhow::Error::new(super::ProviderHttpStatusError {
+                        provider: "gemini_api",
+                        status: status.as_u16(),
+                    })
+                    .context(format!(
+                        "gemini_api returned HTTP {} ({evidence})",
+                        status.as_u16()
+                    )));
+                }
                 anyhow::bail!("gemini_api returned HTTP {} ({evidence})", status.as_u16());
             }
 

@@ -195,6 +195,16 @@ impl Provider for OllamaAdapter {
                     MAX_ERROR_BODY_BYTES,
                 )
                 .await;
+                if matches!(status.as_u16(), 401 | 403 | 408 | 500..=599) {
+                    return Err(anyhow::Error::new(super::ProviderHttpStatusError {
+                        provider: provider_name,
+                        status: status.as_u16(),
+                    })
+                    .context(format!(
+                        "{provider_name} returned HTTP {} ({evidence})",
+                        status.as_u16()
+                    )));
+                }
                 anyhow::bail!(
                     "{provider_name} returned HTTP {} ({evidence})",
                     status.as_u16()

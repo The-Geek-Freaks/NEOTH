@@ -1,4 +1,5 @@
-//! B-6 Item 3h — 4-class retry classifier for the claude-cli backend.
+//! B-6 Item 3h — 4-class retry classifier shared by Claude CLI and the
+//! explicitly opted-in normal direct-provider route.
 //!
 //! Both the subprocess (`claude --print`) and tmux backends can fail
 //! in qualitatively distinct ways. Treating every failure the same
@@ -21,9 +22,12 @@
 //!   - **Auth** — token expired / OAuth challenge fired / permission
 //!     denied. NEVER retry; surface a "run `claude /login`" pointer.
 //!
-//! Inputs are operator-observable strings (stdout / stderr / error
-//! message). No regex dep — pure substring + lowercase scan so the
-//! classifier is allocation-light and fully deterministic.
+//! Claude CLI supplies operator-observable strings (stdout / stderr / error
+//! message). Other callers must supply only bounded, sanitized category
+//! markers; provider response bodies and arbitrary error text never belong in
+//! retry receipts or operator history. No regex dep — pure substring +
+//! lowercase scan so the classifier is allocation-light and fully
+//! deterministic.
 //!
 //! `claude_cli::plan_tmux_retry` consumes the classifier and turns each
 //! decision into the live tmux retry/reset plan.

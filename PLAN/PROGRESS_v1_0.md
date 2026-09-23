@@ -2,6 +2,33 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W315 direct-provider retry (2026-09-23):** Normal nonstream direct chat now
+uses the existing fresh-permit retry lifecycle. Typed HTTP401/403 are terminal,
+unknown errors remain terminal, known transients are bounded, and a short
+explicit Retry-After permits exactly one quota retry; absent/long/repeated
+quota signals stop. Consent, role, budget and effect authority are rechecked
+before the next raw call. Token cap, compaction, canary, configured fallback
+and Claude CLI retain their established behavior; nested authorization rejects.
+Recognized OpenAI policy/refusal handling precedes typed status fallback.
+
+Final independent source review passed. Thirteen selected fixtures cover seven
+lifecycle/cooldown outcomes, three wrappers and three actual HTTP401 adapters.
+Root also corrected nested test-module type qualification before publication.
+Inventory601 paths;native1008;Group656 plus2 separate BGE;GUI129Linux/125macOS.
+W315 hosted execution is pending. Group64375035833333444, fullCI75035833337095
+and GUI129d6da35831827281 continue on their frozen prior sources. No local
+executable validation or parent acceptance; Road/WS-LF counters unchanged.
+
+**Hosted milestone on750d162b (2026-09-23):** Core35832269246 is complete
+and source-bound: strict slim production Clippy, core test-target typecheck,
+CLI build and reference export all passed. The exported reference exactly
+matches committed F7E3604A1789839F87DD6A574E3D4987A98E4F4E599CB71179DC32C7ED2D6CFA.
+Group643 run35833333444 and full native CI35833337095 were dispatched on750
+only after test-target success; both are active. GUI129d6da35831827281 is active.
+P2-22's22 required consent/consumer identities are all selected in Group643.
+These are running behavior gates, not parent acceptance. No local executable
+validation ran; Road/WS-LF counts remain unchanged.
+
 **W316 complete session selection / W317 hosted lint repair (2026-09-23):**
 P2-08 now selects all48 original W159 emitter/migration/header/query regressions
 plus3W310 live-egress cases. Seven were already grouped;44 additional existing

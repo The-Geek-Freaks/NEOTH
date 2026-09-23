@@ -87,6 +87,21 @@ use crate::secret::SecretString;
 
 pub use termination::{ProviderRefusal, ProviderTermination, RefusalOrigin, Retryability};
 
+/// Sanitized status metadata from a concrete provider response. Adapters use
+/// this only for terminal HTTP status classification; response bodies remain
+/// outside the retry boundary.
+#[derive(Debug, thiserror::Error)]
+#[error("provider `{provider}` returned HTTP {status}")]
+pub(crate) struct ProviderHttpStatusError {
+    pub provider: &'static str,
+    pub status: u16,
+}
+
+/// A direct chat turn must never wait through the quota tracker's durable
+/// cooldown. A provider may opt into one short, explicit Retry-After retry;
+/// absent or longer values remain terminal for the normal quota recorder.
+const DIRECT_RETRY_MAX_QUOTA_DELAY: Duration = Duration::from_secs(30);
+
 /// Exact concrete identity of the provider invocation that produced a result.
 /// The paid-call boundary overwrites adapter-supplied/default values after the
 /// leaf gate succeeds, so consumers never have to reconstruct this from a
@@ -1493,6 +1508,17 @@ pub(crate) enum ProviderRetryReason {
 }
 
 impl ProviderRetryReason {
+    fn from_retry_class(class: claude_retry::RetryClass) -> Option<Self> {
+        match class {
+            claude_retry::RetryClass::EmptyStdout => Some(Self::EmptyStdout),
+            claude_retry::RetryClass::SessionCollision => Some(Self::SessionCollision),
+            claude_retry::RetryClass::Transient => Some(Self::Transient),
+            // Authentication failures are deliberately terminal; they must
+            // never mint another provider lifecycle.
+            claude_retry::RetryClass::Auth => None,
+        }
+    }
+
     fn terminal_kind(self) -> &'static str {
         match self {
             Self::EmptyStdout => "provider_retry_empty_stdout",
@@ -2549,6 +2575,170 @@ pub trait Provider: Send + Sync {
         }
     }
 
+    /// Explicit opt-in retry runner for the normal non-stream direct-chat
+    /// route. It keeps the ordinary [`Self::complete_authorized`] contract
+    /// unchanged: this runner is selected only by that route's authorization
+    /// decorator and owns every retry through the existing permit lifecycle.
+    ///
+    /// Classification intentionally consumes only fixed, typed categories;
+    /// raw provider errors never enter retry receipts, WAL payloads, or
+    /// operator history. Each retry closes the prior terminal before its
+    /// wait, then obtains fresh leaf authorization immediately before another
+    /// raw transport call.
+    async fn complete_authorized_direct_retry(
+        &self,
+        mut req: Request,
+        authorizer: &cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+    ) -> Result<Completion> {
+        self.validate_request_controls(&req)?;
+        let identity = bind_wire_identity(self, &mut req)?;
+        let output_token_ceiling = validated_output_token_ceiling(self, &req)?;
+        let mut authorized = authorizer
+            .authorize_leaf(self.name(), &req, call_scope, false, output_token_ceiling)
+            .await?;
+        let role_dispatch = authorized.take_role_dispatch();
+        let provider_subject = authorized.take_provider_subject();
+        let effect = authorized.effect_context();
+        let gated_effect = effect.is_some();
+        let audit = authorized.begin_dispatch().await?;
+        let permit = ProviderDispatchPermit::authorized(
+            audit,
+            authorizer.clone(),
+            self.name(),
+            self.consent_route(),
+            req.clone(),
+            call_scope,
+            output_token_ceiling,
+            provider_subject,
+            effect,
+            self.w41_effect_start_adapter(W41EffectStartProbe::new()),
+            role_dispatch,
+        );
+        if gated_effect {
+            permit.require_composed_effect_start_adapter().await?;
+        } else {
+            permit.ensure_consent_before_send().await?;
+        }
+        if let Err(error) = permit.ensure_role_dispatch_before_send(&req) {
+            if let Err(audit_error) = permit.failure("role_dispatch_policy_changed").await {
+                return Err(anyhow::anyhow!(
+                    "role dispatch changed and terminal audit failed: {audit_error}; provider error: {error}"
+                ));
+            }
+            return Err(error);
+        }
+
+        let mut retry_attempt = 0;
+        let mut quota_retry_scheduled = false;
+        loop {
+            match self.complete_raw(req.clone(), &permit).await {
+                Ok(mut completion) => {
+                    stamp_completion_identity(
+                        &mut completion,
+                        &identity,
+                        self.preserves_inner_response_identity(),
+                    );
+                    permit.complete_success(&completion).await?;
+                    return Ok(completion);
+                }
+                Err(error) => {
+                    let Some(class) = direct_retry_classification(&error) else {
+                        // An arbitrary anyhow chain may describe a permanent
+                        // provider rejection or an after-effect outcome. It
+                        // is intentionally terminal until an adapter exposes
+                        // a typed, sanitized retry category.
+                        if let Err(audit_error) = permit.failure("provider_call_failed").await {
+                            return Err(anyhow::anyhow!(
+                                "provider call failed and terminal audit failed: {audit_error}; provider error: {error}"
+                            ));
+                        }
+                        return Err(error);
+                    };
+                    let quota_delay = direct_quota_retry_delay(&error);
+                    if error.downcast_ref::<quota::QuotaError>().is_some()
+                        && (quota_delay.is_none() || quota_retry_scheduled)
+                    {
+                        if let Err(audit_error) = permit
+                            .finish_attempt_without_retry(
+                                class,
+                                claude_retry::RetryDisposition::Exhausted,
+                            )
+                            .await
+                        {
+                            return Err(anyhow::anyhow!(
+                                "provider quota terminal and audit failed: {audit_error}; provider error: {error}"
+                            ));
+                        }
+                        return Err(error);
+                    }
+                    let decision = claude_retry::retry_decision(class);
+                    let Some(reason) = ProviderRetryReason::from_retry_class(class) else {
+                        if let Err(audit_error) = permit
+                            .finish_attempt_without_retry(
+                                class,
+                                claude_retry::RetryDisposition::AuthNonRetryable,
+                            )
+                            .await
+                        {
+                            return Err(anyhow::anyhow!(
+                                "provider auth failure and terminal audit failed: {audit_error}; provider error: {error}"
+                            ));
+                        }
+                        return Err(error);
+                    };
+                    if retry_attempt >= decision.max_attempts {
+                        if let Err(audit_error) = permit
+                            .finish_attempt_without_retry(
+                                class,
+                                claude_retry::RetryDisposition::Exhausted,
+                            )
+                            .await
+                        {
+                            return Err(anyhow::anyhow!(
+                                "provider retry exhaustion and terminal audit failed: {audit_error}; provider error: {error}"
+                            ));
+                        }
+                        return Err(error);
+                    }
+                    if let Err(audit_error) = permit.finish_attempt_for_retry(reason).await {
+                        return Err(anyhow::anyhow!(
+                            "provider retry terminal audit failed: {audit_error}; provider error: {error}"
+                        ));
+                    }
+                    let backoff = quota_delay.unwrap_or_else(|| {
+                        claude_retry::backoff_for_attempt(&decision, retry_attempt)
+                    });
+                    quota_retry_scheduled |= quota_delay.is_some();
+                    tokio::time::sleep(backoff).await;
+                    retry_attempt = retry_attempt.saturating_add(1);
+                    if let Err(retry_error) = permit.begin_retry_attempt().await {
+                        if let Err(audit_error) = permit
+                            .finish_retry_authorization_denied("provider_retry_authorization_denied")
+                            .await
+                        {
+                            return Err(anyhow::anyhow!(
+                                "provider retry authorization failed and terminal audit failed: {audit_error}; authorization error: {retry_error}"
+                            ));
+                        }
+                        return Err(retry_error);
+                    }
+                    if let Err(retry_error) = permit.ensure_role_dispatch_before_send(&req) {
+                        if let Err(audit_error) = permit
+                            .finish_retry_authorization_denied("role_dispatch_policy_changed")
+                            .await
+                        {
+                            return Err(anyhow::anyhow!(
+                                "role dispatch changed and terminal audit failed: {audit_error}; provider error: {retry_error}"
+                            ));
+                        }
+                        return Err(retry_error);
+                    }
+                }
+            }
+        }
+    }
+
     /// Chat-only authorized completion with an explicitly observed
     /// cancellation terminal. This is used by cancellation-aware middleware
     /// such as history compaction before it opens the final event stream.
@@ -3037,6 +3227,39 @@ pub trait Provider: Send + Sync {
             )
         }
     }
+}
+
+/// Classify only typed direct-provider transport facts. Arbitrary anyhow
+/// display text and bounded upstream-body evidence are deliberately not a
+/// retry signal: an unknown error can be permanent or can follow an ambiguous
+/// external effect, so it remains terminal.
+fn direct_retry_classification(error: &anyhow::Error) -> Option<claude_retry::RetryClass> {
+    if error.downcast_ref::<quota::QuotaError>().is_some() {
+        return Some(claude_retry::RetryClass::Transient);
+    }
+    if let Some(status) = error.downcast_ref::<ProviderHttpStatusError>() {
+        return match status.status {
+            401 | 403 => Some(claude_retry::RetryClass::Auth),
+            408 | 429 | 500..=599 => Some(claude_retry::RetryClass::Transient),
+            _ => None,
+        };
+    }
+    let transport = error.downcast_ref::<reqwest::Error>()?;
+    if let Some(status) = transport.status() {
+        return match status.as_u16() {
+            401 | 403 => Some(claude_retry::RetryClass::Auth),
+            408 | 429 | 500..=599 => Some(claude_retry::RetryClass::Transient),
+            _ => None,
+        };
+    }
+    (transport.is_timeout() || transport.is_connect()).then_some(claude_retry::RetryClass::Transient)
+}
+
+fn direct_quota_retry_delay(error: &anyhow::Error) -> Option<Duration> {
+    error
+        .downcast_ref::<quota::QuotaError>()
+        .and_then(|quota| quota.retry_after)
+        .filter(|delay| *delay <= DIRECT_RETRY_MAX_QUOTA_DELAY)
 }
 
 /// Derive the output ceiling used at the authorization boundary and reject a

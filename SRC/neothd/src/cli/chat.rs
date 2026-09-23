@@ -1203,6 +1203,22 @@ impl Provider for CanaryGuardedProvider<'_> {
         self.guard(completion)
     }
 
+    async fn complete_authorized_direct_retry(
+        &self,
+        req: Request,
+        authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+    ) -> Result<crate::providers::Completion> {
+        let completion = self
+            .inner
+            .complete_authorized_direct_retry(req, authorizer, call_scope)
+            .await
+            .map_err(|error| {
+                sanitize_chat_post_mint_provider_error("guarded_complete_authorized_direct_retry", &error)
+            })?;
+        self.guard(completion)
+    }
+
     async fn complete_authorized_pinned(
         &self,
         req: Request,
@@ -7094,7 +7110,11 @@ pub(super) async fn dispatch_provider(
                         ));
                     }
                 };
-                let result = provider.complete(req).await;
+                // W315: the normal non-stream direct route owns the one
+                // explicit generic retry runner. Streaming, MCP, fallback,
+                // council and every other provider path continue through
+                // their existing dispatch contracts.
+                let result = authorized_provider.complete_direct_retry(req).await;
                 match result {
                     Ok(completion) => {
                         if !completion.identity.is_bound() {

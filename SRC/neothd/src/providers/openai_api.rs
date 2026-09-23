@@ -567,6 +567,18 @@ impl Provider for OpenAiAdapter {
                         usage_measurements: None,
                     });
                 }
+                if matches!(status.as_u16(), 401 | 403 | 408 | 500..=599) {
+                    return Err(anyhow::Error::new(super::ProviderHttpStatusError {
+                        provider: self.name,
+                        status: status.as_u16(),
+                    })
+                    .context(format!(
+                        "{} returned HTTP {} ({})",
+                        self.name,
+                        status.as_u16(),
+                        bounded.evidence
+                    )));
+                }
                 anyhow::bail!(
                     "{} returned HTTP {} ({})",
                     self.name,
@@ -2870,6 +2882,11 @@ mod tests {
             .await
             .expect_err("401 must surface as error");
         let msg = err.to_string();
+        let typed = err
+            .downcast_ref::<crate::providers::ProviderHttpStatusError>()
+            .expect("actual 401 response must retain sanitized typed status");
+        assert_eq!(typed.status, 401);
+        assert_eq!(typed.provider, "openai_api");
         assert!(msg.contains("401"), "error must name status; got: {msg}");
         assert!(
             msg.contains("openai_api"),

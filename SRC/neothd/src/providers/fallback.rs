@@ -526,6 +526,19 @@ impl Provider for FallbackProvider {
             .await
     }
 
+    /// W315 deliberately does not retry a fallback chain as one outer
+    /// provider call. Preserve the existing per-candidate authorization,
+    /// quota-backoff and failover semantics instead of inheriting the leaf
+    /// retry runner's `complete_raw` default.
+    async fn complete_authorized_direct_retry(
+        &self,
+        req: Request,
+        authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+    ) -> Result<Completion> {
+        self.complete_authorized(req, authorizer, call_scope).await
+    }
+
     async fn complete_authorized_cancellable(
         &self,
         req: Request,
@@ -875,6 +888,30 @@ mod tests {
             crate::wal::events::EVENT_TYPE_PROVIDER_ERROR
         );
         assert_eq!(lifecycle[1].1["error_kind"], "stream_cancelled");
+    }
+
+    #[tokio::test]
+    async fn direct_retry_entrypoint_preserves_configured_fallback_hops() {
+        let dir = tempfile::tempdir().unwrap();
+        let fallback = fallback_at(
+            dir.path(),
+            vec![mock("primary", Behavior::Quota), mock("secondary", Behavior::Ok)],
+            1,
+            None,
+        );
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        );
+        let completion = fallback
+            .complete_authorized_direct_retry(
+                Request::default(),
+                &authorizer,
+                "test.direct_retry_fallback",
+            )
+            .await
+            .expect("fallback route must retain its quota hop semantics");
+        assert_eq!(completion.identity.provider, "secondary");
+        assert_eq!(completion.identity.dispatch_route, vec![1]);
     }
 
     #[tokio::test]

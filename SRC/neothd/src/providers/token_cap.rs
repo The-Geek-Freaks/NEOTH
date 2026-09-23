@@ -127,6 +127,18 @@ impl Provider for TokenCappedProvider<'_> {
             .await
     }
 
+    async fn complete_authorized_direct_retry(
+        &self,
+        req: Request,
+        authorizer: &ProviderCallAuthorizer,
+        call_scope: &'static str,
+    ) -> Result<Completion> {
+        ensure_request_fits(&req, self.cap)?;
+        self.inner
+            .complete_authorized_direct_retry(req, authorizer, call_scope)
+            .await
+    }
+
     async fn complete_authorized_cancellable(
         &self,
         req: Request,
@@ -271,6 +283,29 @@ mod tests {
             .complete_authorized_pinned(request, &expected, &authorizer, "test.pinned_cap")
             .await
             .expect_err("longer pinned model must be counted before dispatch");
+        assert!(error.to_string().contains("above the effective cap"));
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn direct_retry_rechecks_the_token_cap_before_any_leaf_authorization() {
+        let inner = CountingProvider {
+            calls: AtomicUsize::new(0),
+        };
+        let request = Request {
+            prompt: "payload".into(),
+            model: Some("m".into()),
+            ..Request::default()
+        };
+        let cap = request_token_upper_bound(&request).saturating_sub(1);
+        let provider = TokenCappedProvider::new(&inner, cap);
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        );
+        let error = provider
+            .complete_authorized_direct_retry(request, &authorizer, "test.direct_retry_cap")
+            .await
+            .expect_err("direct retry must retain the final token cap");
         assert!(error.to_string().contains("above the effective cap"));
         assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
     }

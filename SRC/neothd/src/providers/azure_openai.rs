@@ -339,12 +339,14 @@ impl Provider for AzureOpenAiAdapter {
                         usage_measurements: None,
                     });
                 }
-                return Err(map_azure_error(
-                    status,
-                    &body_text,
-                    &deployment,
-                    &bounded.evidence,
-                ));
+                let error = map_azure_error(status, &body_text, &deployment, &bounded.evidence);
+                if matches!(status.as_u16(), 401 | 403 | 408 | 500..=599) {
+                    return Err(error.context(super::ProviderHttpStatusError {
+                        provider: "azure_openai",
+                        status: status.as_u16(),
+                    }));
+                }
+                return Err(error);
             }
 
             let parsed: ChatResponse = response_bounds::decode_json(

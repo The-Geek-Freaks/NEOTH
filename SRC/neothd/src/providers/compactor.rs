@@ -706,6 +706,20 @@ impl Provider for CompactingProvider {
             .await
     }
 
+    async fn complete_authorized_direct_retry(
+        &self,
+        req: Request,
+        authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+    ) -> Result<Completion> {
+        let req = self
+            .maybe_compact(req, Some((authorizer, call_scope)), None, None)
+            .await?;
+        self.inner
+            .complete_authorized_direct_retry(req, authorizer, call_scope)
+            .await
+    }
+
     async fn complete_authorized_cancellable(
         &self,
         req: Request,
@@ -1492,6 +1506,39 @@ mod tests {
             forwarded.ends_with(live),
             "live zone missing from compacted prompt"
         );
+    }
+
+    #[tokio::test]
+    async fn direct_retry_entrypoint_compacts_before_forwarding_to_the_leaf() {
+        let prompt = long_prompt(500);
+        let (inner, inner_calls) = StubProvider::new("inner_reply");
+        let (utility, utility_calls) = StubProvider::new("SUMMARY_TEXT");
+        let cp = CompactingProvider::new(
+            Box::new(inner),
+            Some(Box::new(utility)),
+            100,
+            0.8,
+            50,
+            None,
+        );
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        );
+        cp.complete_authorized_direct_retry(
+            Request {
+                prompt: prompt.clone(),
+                ..Request::default()
+            },
+            &authorizer,
+            "test.direct_retry_compaction",
+        )
+        .await
+        .expect("direct retry must preserve authorized compaction");
+        assert_eq!(utility_calls.lock().unwrap().len(), 1);
+        let calls = inner_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].starts_with("[CONTEXT SUMMARY:"));
+        assert!(calls[0].ends_with(&prompt[prompt.len() - 50..]));
     }
 
     #[tokio::test]

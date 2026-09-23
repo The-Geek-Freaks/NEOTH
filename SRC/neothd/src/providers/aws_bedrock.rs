@@ -349,12 +349,19 @@ impl Provider for AwsBedrockAdapter {
                     MAX_ERROR_BODY_BYTES,
                 )
                 .await;
-                return Err(map_bedrock_error(
+                let error = map_bedrock_error(
                     status,
                     &bounded.classification_text,
                     &self.region,
                     &bounded.evidence,
-                ));
+                );
+                if matches!(status.as_u16(), 401 | 403 | 408 | 500..=599) {
+                    return Err(error.context(super::ProviderHttpStatusError {
+                        provider: "aws_bedrock",
+                        status: status.as_u16(),
+                    }));
+                }
+                return Err(error);
             }
 
             let parsed: ConverseResponse = response_bounds::decode_json(

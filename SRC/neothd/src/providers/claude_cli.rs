@@ -1148,6 +1148,19 @@ impl Provider for ClaudeCliAdapter {
         true
     }
 
+    /// The Claude CLI tmux adapter already owns its retry permit lifecycle
+    /// inside `complete_raw`. Do not wrap it in W315's generic leaf runner:
+    /// that would interpret its already-closed retry terminal as another raw
+    /// failure and could schedule a duplicate outer retry.
+    async fn complete_authorized_direct_retry(
+        &self,
+        req: Request,
+        authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+    ) -> Result<Completion> {
+        self.complete_authorized(req, authorizer, call_scope).await
+    }
+
     async fn complete_raw(
         &self,
         mut req: Request,

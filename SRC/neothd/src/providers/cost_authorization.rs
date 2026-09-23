@@ -2924,6 +2924,22 @@ impl<'a> CostAuthorizingProvider<'a> {
         }
     }
 
+    /// Narrow W315 entrypoint for the ordinary, non-stream direct-chat
+    /// dispatch. Other callers retain [`Provider::complete`] semantics and
+    /// therefore cannot accidentally opt into a second transport attempt.
+    pub(crate) async fn complete_direct_retry(&self, mut req: Request) -> Result<Completion> {
+        self.bind_model(&mut req);
+        if req.model.is_none() {
+            anyhow::bail!(
+                "provider `{}` has no explicit request model or declared default",
+                self.inner.name()
+            );
+        }
+        self.inner
+            .complete_authorized_direct_retry(req, &self.authorizer, self.call_scope)
+            .await
+    }
+
     pub(crate) async fn stream_events_cancellable(
         &self,
         mut req: Request,
@@ -3016,6 +3032,18 @@ impl Provider for CostAuthorizingProvider<'_> {
     }
 
     async fn complete_authorized(
+        &self,
+        req: Request,
+        _outer_authorizer: &ProviderCallAuthorizer,
+        _outer_call_scope: &'static str,
+    ) -> Result<Completion> {
+        let _ = req;
+        anyhow::bail!(
+            "nested provider authorization boundaries are forbidden; dispatch through the canonical inner boundary"
+        )
+    }
+
+    async fn complete_authorized_direct_retry(
         &self,
         req: Request,
         _outer_authorizer: &ProviderCallAuthorizer,
@@ -3244,6 +3272,18 @@ impl Provider for AuthorizedProvider {
     }
 
     async fn complete_authorized(
+        &self,
+        req: Request,
+        _outer_authorizer: &ProviderCallAuthorizer,
+        _outer_call_scope: &'static str,
+    ) -> Result<Completion> {
+        let _ = req;
+        anyhow::bail!(
+            "nested provider authorization boundaries are forbidden; dispatch through the canonical inner boundary"
+        )
+    }
+
+    async fn complete_authorized_direct_retry(
         &self,
         req: Request,
         _outer_authorizer: &ProviderCallAuthorizer,
@@ -4113,6 +4153,118 @@ mod tests {
         }
     }
 
+    /// W315 fixture: raw transport fails without touching the permit. The
+    /// direct-route runner, rather than a provider adapter, must own retry.
+    struct DirectRetryProvider {
+        failures_before_success: usize,
+        retryable_failure: bool,
+        typed_http_auth_failure: bool,
+        attempts: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for DirectRetryProvider {
+        fn name(&self) -> &'static str {
+            "local_ollama"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("qwen-direct-retry-test")
+        }
+
+        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+            Some(128)
+        }
+
+        async fn complete_raw(
+            &self,
+            _req: Request,
+            _permit: &ProviderDispatchPermit,
+        ) -> Result<Completion> {
+            let attempt = self.attempts.fetch_add(1, Ordering::SeqCst);
+            if self.typed_http_auth_failure {
+                return Err(anyhow::Error::new(crate::providers::ProviderHttpStatusError {
+                    provider: self.name(),
+                    status: 401,
+                }));
+            }
+            if attempt < self.failures_before_success && self.retryable_failure {
+                return Err(anyhow::Error::new(crate::providers::ProviderHttpStatusError {
+                    provider: self.name(),
+                    status: 500,
+                })
+                .context("untrusted fixture upstream body: retry marker"));
+            }
+            if attempt < self.failures_before_success {
+                anyhow::bail!("untyped fixture provider failure");
+            }
+            Ok(Completion {
+                termination: Default::default(),
+                text: "direct retry succeeded".into(),
+                ..Completion::default()
+            })
+        }
+    }
+
+    struct DirectRetryConsentRevokingProvider {
+        home: PathBuf,
+        attempts: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for DirectRetryConsentRevokingProvider {
+        fn name(&self) -> &'static str {
+            "openai_api"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("gpt-5")
+        }
+
+        async fn complete_raw(
+            &self,
+            _req: Request,
+            _permit: &ProviderDispatchPermit,
+        ) -> Result<Completion> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            crate::consent::revoke(&self.home, crate::cli::init::ProviderKind::OpenaiApi)?;
+            Err(anyhow::Error::new(crate::providers::quota::QuotaError {
+                provider: self.name(),
+                retry_after: Some(Duration::from_millis(1)),
+                body: "fixture quota response".to_owned(),
+            }))
+        }
+    }
+
+    struct DirectRetryLongQuotaProvider {
+        attempts: AtomicUsize,
+        retry_after: Duration,
+    }
+
+    #[async_trait]
+    impl Provider for DirectRetryLongQuotaProvider {
+        fn name(&self) -> &'static str {
+            "local_ollama"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("qwen-direct-long-quota-test")
+        }
+
+        async fn complete_raw(
+            &self,
+            _req: Request,
+            _permit: &ProviderDispatchPermit,
+        ) -> Result<Completion> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            Err(anyhow::Error::new(crate::providers::quota::QuotaError {
+                provider: self.name(),
+                retry_after: Some(self.retry_after),
+                body: "fixture quota response".to_owned(),
+            }))
+        }
+    }
+
     struct BackoffCancellationProvider {
         attempts: AtomicUsize,
         attempt_closed: tokio::sync::Notify,
@@ -4293,6 +4445,258 @@ mod tests {
         drop(writer);
         join.await.unwrap();
         (result, attempts, budget, wal_frames(&segment))
+    }
+
+    async fn run_direct_retry(
+        failures_before_success: usize,
+        retryable_failure: bool,
+        typed_http_auth_failure: bool,
+        cap: u32,
+    ) -> (
+        Result<Completion>,
+        usize,
+        crate::council::BudgetToken,
+        Vec<(u8, serde_json::Value)>,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("direct-retry-000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let inner = DirectRetryProvider {
+            failures_before_success,
+            retryable_failure,
+            typed_http_auth_failure,
+            attempts: AtomicUsize::new(0),
+        };
+        let provider = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Strict,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            ),
+            None,
+            "test.direct_retry",
+        );
+        let budget = crate::council::BudgetToken::new(cap);
+        budget.charge().expect("caller pre-charges the first leaf");
+        let result = precharged_council_attempt_scope(
+            budget.clone(),
+            provider.complete_direct_retry(Request::default()),
+        )
+        .await;
+        let attempts = inner.attempts.load(Ordering::SeqCst);
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+        (result, attempts, budget, wal_frames(&segment))
+    }
+
+    #[tokio::test]
+    async fn direct_retry_closes_first_terminal_then_reauthorizes_before_success() {
+        let (result, attempts, budget, frames) = run_direct_retry(1, true, false, 2).await;
+        result.unwrap();
+        assert_eq!(attempts, 2);
+        assert_eq!(budget.used(), 2);
+        assert_eq!(
+            frames.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE,
+            ]
+        );
+        assert_eq!(frames[1].1["error_kind"], "provider_retry_transient");
+        assert_eq!(frames[1].1["retry_receipt"]["disposition"], "retry_intent_closed");
+        assert_eq!(frames[2].1["retry_attempt"], 2);
+        assert_eq!(
+            frames[2].1["retry_chain_id"], frames[1].1["retry_receipt"]["retry_chain_id"]
+        );
+        assert!(
+            !frames.iter().any(|frame| frame.1.to_string().contains("untrusted fixture upstream body")),
+            "the raw provider error must never enter lifecycle payloads"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_retry_untyped_failure_is_terminal_without_a_second_raw_call() {
+        let (result, attempts, _budget, frames) = run_direct_retry(usize::MAX, false, false, 1).await;
+        assert!(result.is_err());
+        assert_eq!(attempts, 1);
+        assert_eq!(
+            frames.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+            ]
+        );
+        assert!(frames[1].1.get("retry_receipt").is_none());
+        assert_eq!(frames[1].1["error_kind"], "provider_call_failed");
+    }
+
+    #[tokio::test]
+    async fn direct_retry_typed_http_auth_is_terminal_without_a_second_raw_call() {
+        let (result, attempts, _budget, frames) = run_direct_retry(0, false, true, 1).await;
+        assert!(result.is_err());
+        assert_eq!(attempts, 1);
+        assert_eq!(
+            frames.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+            ]
+        );
+        assert_eq!(frames[1].1["retry_receipt"]["class"], "auth");
+        assert_eq!(frames[1].1["retry_receipt"]["disposition"], "auth_non_retryable");
+    }
+
+    #[tokio::test]
+    async fn direct_retry_stops_at_the_shared_transient_bound() {
+        let (result, attempts, budget, frames) = run_direct_retry(usize::MAX, true, false, 4).await;
+        assert!(result.is_err());
+        assert_eq!(attempts, 4, "original call plus the three bounded retries");
+        assert_eq!(budget.used(), 4);
+        assert_eq!(frames.len(), 8);
+        assert_eq!(frames[7].1["retry_receipt"]["class"], "transient");
+        assert_eq!(frames[7].1["retry_receipt"]["disposition"], "exhausted");
+    }
+
+    #[tokio::test]
+    async fn direct_retry_consent_revocation_blocks_the_second_raw_call() {
+        let home = tempfile::tempdir().unwrap();
+        crate::consent::grant(home.path(), crate::cli::init::ProviderKind::OpenaiApi).unwrap();
+        let segment = home.path().join("direct-retry-consent-revoked-000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let inner = DirectRetryConsentRevokingProvider {
+            home: home.path().to_path_buf(),
+            attempts: AtomicUsize::new(0),
+        };
+        let provider = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Full,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            )
+            .with_usage_home(home.path()),
+            None,
+            "test.direct_retry_consent_revoked",
+        );
+        let error = provider
+            .complete_direct_retry(Request::default())
+            .await
+            .expect_err("revoked consent must block before a second raw call");
+        assert!(error.to_string().contains("consent"));
+        assert_eq!(inner.attempts.load(Ordering::SeqCst), 1);
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+        let lifecycle = wal_frames(&segment)
+            .into_iter()
+            .filter(|frame| {
+                matches!(
+                    frame.0,
+                    crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST
+                        | crate::wal::events::EVENT_TYPE_PROVIDER_ERROR
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lifecycle.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+            ]
+        );
+        assert_eq!(lifecycle[3].1["retry_receipt"]["disposition"], "authorization_denied");
+    }
+
+    #[tokio::test]
+    async fn direct_retry_does_not_send_early_during_a_durable_quota_cooldown() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("direct-retry-long-quota-000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let inner = DirectRetryLongQuotaProvider {
+            attempts: AtomicUsize::new(0),
+            retry_after: Duration::from_secs(3_600),
+        };
+        let provider = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Strict,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            ),
+            None,
+            "test.direct_retry_long_quota",
+        );
+        let budget = crate::council::BudgetToken::new(2);
+        budget.charge().expect("caller pre-charges the first leaf");
+        let result = precharged_council_attempt_scope(
+            budget,
+            provider.complete_direct_retry(Request::default()),
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(inner.attempts.load(Ordering::SeqCst), 1);
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+        let lifecycle = wal_frames(&segment);
+        assert_eq!(
+            lifecycle.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+            ]
+        );
+        assert_eq!(lifecycle[1].1["retry_receipt"]["disposition"], "exhausted");
+    }
+
+    #[tokio::test]
+    async fn direct_retry_honours_one_short_quota_retry_and_stops() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("direct-retry-short-quota-000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let inner = DirectRetryLongQuotaProvider {
+            attempts: AtomicUsize::new(0),
+            retry_after: Duration::from_millis(1),
+        };
+        let provider = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Strict,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            ),
+            None,
+            "test.direct_retry_short_quota",
+        );
+        let budget = crate::council::BudgetToken::new(3);
+        budget.charge().expect("caller pre-charges the first leaf");
+        let result = precharged_council_attempt_scope(
+            budget,
+            provider.complete_direct_retry(Request::default()),
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(inner.attempts.load(Ordering::SeqCst), 2);
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+        let lifecycle = wal_frames(&segment);
+        assert_eq!(
+            lifecycle.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+            ]
+        );
+        assert_eq!(lifecycle[3].1["retry_receipt"]["disposition"], "exhausted");
     }
 
     #[tokio::test]
@@ -7893,13 +8297,14 @@ mod tests {
             ),
             (
                 "cli/chat.rs",
-                5,
-                // CanaryGuardedProvider forwards complete and pinned complete
-                // to the same authorized inner handle. The remaining direct,
-                // session-naming, and MCP-driver sites respectively use the
-                // canonical chat boundary, a fresh CostAuthorizingProvider,
-                // and the already guarded orchestration boundary.
-                "f1781c7d4549fb3d78cde4941ff957e1b45dbcfd7f0dc49b8ecbf88f52e7c00a",
+                4,
+                // The normal direct route now uses the explicit W315 retry
+                // entrypoint, which is intentionally outside this legacy
+                // `.complete`/`.stream` inventory. Canary forwards complete
+                // and pinned completion to the same authorized inner handle;
+                // session-naming and MCP-driver sites retain their reviewed
+                // canonical boundaries.
+                "ab3cfd28bed16e2c8057fbe474277a9c4a59fe6f6af4c2b212fded747caa0015",
             ),
             (
                 "cli/clarify_chat.rs",
