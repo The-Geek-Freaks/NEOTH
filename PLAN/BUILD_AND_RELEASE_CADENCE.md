@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W340 response-feedback acceptance (2026-09-23):** P2-28 is accepted with
+26/26 native feedback cases from admitted Group684 run35838862993 and5/5
+GUI/Main/Buddy cases from admitted GUI129 run35837802269. Required source
+blobs are unchanged through fed9196d. Set/replace/remove CAS, exact terminal
+targets, privacy-preserving proposal consumption and CLI/Main/Buddy parity
+are covered. See docs/gold-wave340-response-feedback-acceptance.md and its
+source-bound acceptance JSON. Broader platform and release gates remain open.
+Road1324=1026checked/296open/2partial;298raw/297pre-tag blockers;
+WS-LF19done/99open. FullCI750 completed: Windows12488PASS/19FAIL/1timeout,
+macOS12586PASS/21FAIL. W345/W346 diagnose retained failures; reviewed W342
+repairs remain unpublished. Corec454 and Group687 continue on GitHub.
+Local BSOD hold remains; no local executable validation ran.
+
 **W333 managed-browser resolver and hosted acceptance (2026-09-23):**
 The default-off typed policy and explicit-home resolver now consume W330's
 reviewed four-target manifest. No-follow capabilities retain root, directory,

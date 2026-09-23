@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W333 exact hosted formatting imported; Corec454 pending; Coredecb and GUI129 admitted",
+  "status": "W340 P228 accepted26native+5GUI with exact source identity; Corec454 Group687 pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 107964,
-    "sha256": "49653408FC696CD9AEF494010FF7C47E3745C2F989A48DD4A6CE44ED7B7D53F1"
+    "bytes": 108334,
+    "sha256": "FB4D46D900ECC4AE6447ED0C3E6288E8914AD13C66B28D913BF38F859FB9B080"
   },
-  "sourceInputs": 622,
+  "sourceInputs": 624,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -20560,6 +20560,13 @@
       }
     ],
     "note": "Preflight35843800726 exact3file patch SHA/pre-postimage verified. Coredecb35842087666 all4steps admitted; Group687571b35843153480 pending. No local formatter or execution.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave340FeedbackParentAcceptance": {
+    "base": "fed9196d0e5845ce476ff0233cff86dc5f6afd9a",
+    "sources": [],
+    "note": "Close only P228; retain platform/release gates and BSOD hold",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

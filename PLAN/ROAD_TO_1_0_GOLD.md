@@ -8,6 +8,19 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W340 response-feedback acceptance (2026-09-23):** P2-28 is accepted with
+26/26 native feedback cases from admitted Group684 run35838862993 and5/5
+GUI/Main/Buddy cases from admitted GUI129 run35837802269. Required source
+blobs are unchanged through fed9196d. Set/replace/remove CAS, exact terminal
+targets, privacy-preserving proposal consumption and CLI/Main/Buddy parity
+are covered. See docs/gold-wave340-response-feedback-acceptance.md and its
+source-bound acceptance JSON. Broader platform and release gates remain open.
+Road1324=1026checked/296open/2partial;298raw/297pre-tag blockers;
+WS-LF19done/99open. FullCI750 completed: Windows12488PASS/19FAIL/1timeout,
+macOS12586PASS/21FAIL. W345/W346 diagnose retained failures; reviewed W342
+repairs remain unpublished. Corec454 and Group687 continue on GitHub.
+Local BSOD hold remains; no local executable validation ran.
+
 **W333 managed-browser resolver and hosted acceptance (2026-09-23):**
 The default-off typed policy and explicit-home resolver now consume W330's
 reviewed four-target manifest. No-follow capabilities retain root, directory,
@@ -3796,7 +3809,7 @@ already-gated release workflow itself.
 | WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE + 2026-06-17 DAU batch + 2026-06-17b batch-2 + 2026-06-18 batch-3 GRAPH/DRAW/PONY/HANDY/IMPR/TUDU/IGNIS/SPEAKR/TERMIX/REPOW/TRAIL/OMNI + GRAPH-04..07 self-knowledge + DESIGN-01..03 taste-skills + 2026-07-06 L6 vault preload + 2026-07-07 opthash spike) | 308 unique ids (370 raw entries) | 0 | **308 ✅ COMPLETE** |
 | WS-R3 Forensic Gold correction (2026-07-14, resumed 2026-07-22) | 19 | **6** | **13** |
 | WS-R4 Zero-friction install, GUI parity and public launch (2026-07-14) | 15 | **14** | **1** |
-| WS-LF Confirmed lost-feature recovery (2026-07-18) | 118 materialized (52 recovered source rows + 65 plan leaves + 1 inventory-integrity gate) | **100** | **18** |
+| WS-LF Confirmed lost-feature recovery (2026-07-18) | 118 materialized (52 recovered source rows + 65 plan leaves + 1 inventory-integrity gate) | **99** | **19** |
 | WS-NCT Cognitive Transport + selective Buzz/Prime coordination (2026-07-27; Prime decision 2026-08-10) | 30 (`GOLD-NCT-00..27` + `GOLD-ADOPT-BUZZ-01` + `GOLD-ADOPT-PRIME-01`) | **28** | **2** |
 | WS-ADOPT31 18-source forensic adoption wave + Wayfinder/ADW/Evidence-Gated pipeline (2026-07-31) | 67 (`ADOPT31-*`; lanes A7/B12/C10/D7/E2/F4/G7/H2/**W2+I7+V5**/X2) | **64** | **3** |
 | WS-CC Context Connectors & People Intelligence (2026-08-13) | 13 (`GOLD-CC-00..12`) | **12** | **1** |
@@ -3806,15 +3819,15 @@ already-gated release workflow itself.
 inside their already-open parent rollups and therefore are not added a second
 time to the WS-R4 top-level total.
 
-**Current count semantics (reconciled 2026-09-23 after W339 P2-08/P2-11/P2-12 acceptance):**
-the dashboard tracks broad/workstream rollups; its OPEN column sums to **232**
-(`1 + 6 + 14 + 100 + 28 + 64 + 12 + 7`). The release workflow uses a different
+**Current count semantics (reconciled 2026-09-23 after W340 P2-28 acceptance):**
+the dashboard tracks broad/workstream rollups; its OPEN column sums to **231**
+(`1 + 6 + 14 + 99 + 28 + 64 + 12 + 7`). The release workflow uses a different
 and stricter contract: `packaging/roadmap_release_gate.py` counts every Markdown
 task outside fenced code, including mandatory child contracts. The whole-file
-result is **1,324 total / 1,025 done / 297 open / 2 partial = 299 raw blockers**.
-A release tag has **298 pre-tag blockers**, because only the single
+result is **1,324 total / 1,026 done / 296 open / 2 partial = 298 raw blockers**.
+A release tag has **297 pre-tag blockers**, because only the single
 `GOLD-RELEASE-ARTIFACTS` task may remain open while that workflow creates its
-evidence. The values 232, 299 and 298 answer different questions and must not be
+evidence. The values 231, 298 and 297 answer different questions and must not be
 substituted for one another in release-readiness claims. The two partials still
 block release; notably A6 has a tested VAD primitive but no live Playback-Cancel
 consumer until A2/A7 exist. `ADOPT31-C3` retains the canonical open state.
@@ -8860,7 +8873,7 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
     Cargo/Slint runtime gates remain deferred to the consolidated integration
     wave.
 - [ ] **GOLD-LF-P2-27 — Recall citation chips:** render bound source/provenance and WarmHit score from typed recall results, with keyboard/screen-reader behavior and stale/missing-source handling. Source: GUI-Polish recovery row.
-- [ ] **GOLD-LF-P2-28 — Non-star response quality signal:** add a privacy-preserving per-response feedback contract that feeds the intended evaluation/self-improve path, supports correction/removal and has CLI/GUI/Buddy parity. Source: FEATURE_EVAL.md C-18.
+- [x] **GOLD-LF-P2-28 — Non-star response quality signal:** accepted 2026-09-23 (W340). Privacy-preserving per-response feedback feeds the evaluation/proposal consumer, supports set/replace/remove with exact terminal-target CAS and CLI/GUI/Buddy parity. All 26 native identities and five GUI identities passed in source-admitted Group684/GUI129; relevant published source remains unchanged through fed9196d. Evidence: `docs/gold-wave340-response-feedback-acceptance.md` and `docs/verification/gold-wave340-p228-acceptance.json`. Platform-wide and release gates remain open. Source: FEATURE_EVAL.md C-18.
 - [x] **GOLD-LF-P2-29 — Live TPS meter:** accepted 2026-09-23 (W261). A stable one-second rolling meter displays actual visible stream events/s, resets across messages/providers and preserves explicit unavailable/paused/error states; final token totals never become invented live token rates. All 12 native/CLI/daemon and seven GUI/Main/Buddy acceptance identities passed on `d99d5c6c`, with source, matrix, lock and exact terminals bound. Group432 and GUI124 retain their unrelated failures, including W164; P2-28 and release gates remain open. Evidence: `docs/gold-wave261-live-throughput-acceptance.md`. Source: GUI-Polish R-03.
 
 ### Plan 001 — OpenClaw channel migration parity leaves (19)

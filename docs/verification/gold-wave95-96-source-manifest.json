@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T09:35:39.6277289Z",
-  "validationStatus": "W333 exact hosted formatting imported; Corec454 pending; Coredecb and GUI129 admitted",
+  "capturedUtc": "2026-09-23T09:47:25.4151589Z",
+  "validationStatus": "W340 P228 accepted26native+5GUI with exact source identity; Corec454 Group687 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -473,18 +473,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 148196,
-      "sha256": "116E7F6CC8CB2028747C86D73B9F942C89C90A86C001CA0BBEC65381D4542DE9"
+      "bytes": 149071,
+      "sha256": "7813F76E86823AA840E4DBC4795C4C684EE087D30C0A583B022FBCAD1D2A8E65"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1151307,
-      "sha256": "16044C4EFE8D279EFAAC940DF1F7B23DE5FC7F017FEC76533CF64D7462786CE5"
+      "bytes": 1152206,
+      "sha256": "F75499D793CB2101829D426C855B65C4002D0775BAE25994D653B4E1EC3286FF"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1748133,
-      "sha256": "807064EBA23B4EF1BBFCE8684F3871373CA3FB2C661E09AE0DE7E300109F5A34"
+      "bytes": 1749340,
+      "sha256": "1FBD73D2C65A125E5FB72AED16651B1535CB3A74FD4687EB9ECD576BC48239F8"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -3115,6 +3115,16 @@
       "path": "docs/gold-wave333-managed-browser-resolver.md",
       "bytes": 3839,
       "sha256": "5E666E466D71BA44381450BEF525CBFAD5729C801BCF36C4E0701AEF414F62B1"
+    },
+    {
+      "path": "docs/gold-wave340-response-feedback-acceptance.md",
+      "bytes": 1338,
+      "sha256": "5323791EB6C1F5498EC9427A1E2D598D5B5B9BFFEBC70412AAECE97A899D3C9E"
+    },
+    {
+      "path": "docs/verification/gold-wave340-p228-acceptance.json",
+      "bytes": 8886,
+      "sha256": "8325E9D04B27745ECEF52D20FC1401425118F237CFD0B0E00D352B97B01F87C1"
     }
   ]
 }

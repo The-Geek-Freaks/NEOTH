@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W340 response-feedback acceptance (2026-09-23):** P2-28 is accepted with
+26/26 native feedback cases from admitted Group684 run35838862993 and5/5
+GUI/Main/Buddy cases from admitted GUI129 run35837802269. Required source
+blobs are unchanged through fed9196d. Set/replace/remove CAS, exact terminal
+targets, privacy-preserving proposal consumption and CLI/Main/Buddy parity
+are covered. See docs/gold-wave340-response-feedback-acceptance.md and its
+source-bound acceptance JSON. Broader platform and release gates remain open.
+Road1324=1026checked/296open/2partial;298raw/297pre-tag blockers;
+WS-LF19done/99open. FullCI750 completed: Windows12488PASS/19FAIL/1timeout,
+macOS12586PASS/21FAIL. W345/W346 diagnose retained failures; reviewed W342
+repairs remain unpublished. Corec454 and Group687 continue on GitHub.
+Local BSOD hold remains; no local executable validation ran.
+
 **W333 managed-browser resolver and hosted acceptance (2026-09-23):**
 The default-off typed policy and explicit-home resolver now consume W330's
 reviewed four-target manifest. No-follow capabilities retain root, directory,
@@ -4594,7 +4607,7 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph and P2-12 skill autonomy accepted: **18 done / 100
+> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy and P2-28 response feedback accepted: **19 done / 99
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable
