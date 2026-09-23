@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W540 native Paperless preparation; W544 hosted format (2026-09-24):**
+Paperless prepare stages deterministic OCI-pinned Compose and a secret-free
+example, preserves operator env/state, refuses foreign or symlink paths, and
+reports preparation separately from authenticated API readiness. No Docker,
+image verification or lifecycle completion is claimed; P2-20 remains open.
+Seven new portable cases, one Unix case and six existing cases enter Group929.
+Inventory773/native1213+Win25Linux34mac33; GUI148Linux144macOS unchanged.
+W535's exact3-file hosted format patch was hash/blob-verified and imported
+from35930665319. Independent review complete; new executable checks pending.
+Road1044checked/278open/2partial remains unchanged. See docs/paperless-readiness.md.
+
 **W535 connection-bound durable delivery (2026-09-24):**
 Opaque one-shot live permits now bind v6 Claim/Intent/Armed/Result/history to
 the exact ChannelRef, generation and fingerprint. Expired Armed recovery

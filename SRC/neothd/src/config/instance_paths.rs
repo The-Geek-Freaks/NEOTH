@@ -20,6 +20,8 @@ pub(crate) struct InstancePaths {
     /// local: selecting `--config` must never cross-read another profile.
     pub(crate) context_db: PathBuf,
     pub(crate) profile_extensions: PathBuf,
+    /// Paperless Compose preparation owned by this instance, never by CWD.
+    pub(crate) paperless_root: PathBuf,
 }
 
 impl InstancePaths {
@@ -36,6 +38,7 @@ impl InstancePaths {
             code_map: home.join("code_map.db"),
             context_db: home.join("context.db"),
             profile_extensions: home.join("profile_extensions.toml"),
+            paperless_root: home.join("paperless"),
             home,
         }
     }
@@ -66,6 +69,7 @@ mod tests {
         assert_eq!(paths.archive, home.join("archive"));
         assert_eq!(paths.code_map, home.join("code_map.db"));
         assert_eq!(paths.context_db, home.join("context.db"));
+        assert_eq!(paths.paperless_root, home.join("paperless"));
         assert_eq!(
             paths.profile_extensions,
             home.join("profile_extensions.toml")
@@ -88,6 +92,7 @@ mod tests {
                 &paths.code_map,
                 &paths.context_db,
                 &paths.profile_extensions,
+                &paths.paperless_root,
             ]
             .into_iter()
             .all(|path| path.starts_with(&home))

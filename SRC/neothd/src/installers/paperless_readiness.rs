@@ -2,7 +2,7 @@
 //! API contract inspected at paperless-ngx c63afb47b27951cb6c61e68b6d77a5fd0eedd686.
 //! A reported version is not evidence of an OCI digest or managed installation.
 
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 use futures_util::StreamExt;
 use reqwest::{Client, Response, StatusCode, header};
@@ -21,6 +21,8 @@ pub struct PaperlessReadiness {
     pub authenticated_api_ready: bool,
     pub version: Option<String>,
     pub artifact_verified: bool,
+    /// Native prepared-directory observation, separate from API and OCI proof.
+    pub staging: &'static str,
 }
 
 impl PaperlessReadiness {
@@ -30,6 +32,7 @@ impl PaperlessReadiness {
             authenticated_api_ready: false,
             version: None,
             artifact_verified: false,
+            staging: "not_checked",
         }
     }
 }
@@ -37,6 +40,25 @@ impl PaperlessReadiness {
 /// Uses stored credentials only; one deadline bounds the complete observation.
 pub async fn probe_configured_paperless(credentials: &Credentials) -> PaperlessReadiness {
     probe_with_timeout(credentials, PROBE_TIMEOUT).await
+}
+
+/// Probe API readiness and the fixed instance-owned preparation separately.
+pub async fn probe_configured_paperless_at(
+    home: &Path,
+    credentials: &Credentials,
+) -> PaperlessReadiness {
+    let mut readiness = probe_with_timeout(credentials, PROBE_TIMEOUT).await;
+    readiness.staging = match crate::installers::paperless_staging::inspect_at(
+        &crate::config::InstancePaths::for_home(home).paperless_root,
+    )
+    .status {
+        crate::installers::paperless_staging::PaperlessStagingStatus::NotPrepared => "not_prepared",
+        crate::installers::paperless_staging::PaperlessStagingStatus::PreparedPinned => "prepared_pinned",
+        crate::installers::paperless_staging::PaperlessStagingStatus::AlreadyPrepared => "already_prepared",
+        crate::installers::paperless_staging::PaperlessStagingStatus::UnownedOrMismatch => "unowned_or_mismatch",
+    };
+    readiness.artifact_verified = false;
+    readiness
 }
 
 async fn probe_with_timeout(credentials: &Credentials, timeout: Duration) -> PaperlessReadiness {
@@ -119,6 +141,7 @@ async fn probe(
             authenticated_api_ready: true,
             version: None,
             artifact_verified: false,
+            staging: "not_checked",
         });
     }
     require_success(&status)?;
@@ -141,6 +164,7 @@ async fn probe(
         authenticated_api_ready: true,
         version: Some(version),
         artifact_verified: false,
+        staging: "not_checked",
     })
 }
 

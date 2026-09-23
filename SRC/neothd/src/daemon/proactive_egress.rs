@@ -770,9 +770,7 @@ impl ProactiveDeliveryRecord {
     }
 
     #[cfg(test)]
-    pub(crate) fn connection_binding_identity_for_test(
-        &self,
-    ) -> Option<(&ChannelRef, u64, u64)> {
+    pub(crate) fn connection_binding_identity_for_test(&self) -> Option<(&ChannelRef, u64, u64)> {
         self.connection_binding.as_ref().map(|binding| {
             (
                 &binding.channel_ref,
@@ -1251,7 +1249,9 @@ fn validate_wal_evidence_relationships(evidence: &WalEvidence) -> Result<()> {
         );
         if matches!(
             intent.proactive_binding_version,
-            ACCOUNT_BOUND_WAL_BINDING_VERSION | INCARNATION_BOUND_WAL_BINDING_VERSION | CONNECTION_BOUND_WAL_BINDING_VERSION
+            ACCOUNT_BOUND_WAL_BINDING_VERSION
+                | INCARNATION_BOUND_WAL_BINDING_VERSION
+                | CONNECTION_BOUND_WAL_BINDING_VERSION
         ) {
             anyhow::ensure!(
                 armed.proactive_binding_version == intent.proactive_binding_version,
@@ -1280,7 +1280,9 @@ fn validate_wal_evidence_relationships(evidence: &WalEvidence) -> Result<()> {
         );
         if matches!(
             intent.proactive_binding_version,
-            ACCOUNT_BOUND_WAL_BINDING_VERSION | INCARNATION_BOUND_WAL_BINDING_VERSION | CONNECTION_BOUND_WAL_BINDING_VERSION
+            ACCOUNT_BOUND_WAL_BINDING_VERSION
+                | INCARNATION_BOUND_WAL_BINDING_VERSION
+                | CONNECTION_BOUND_WAL_BINDING_VERSION
         ) {
             anyhow::ensure!(
                 result.proactive_binding_version == intent.proactive_binding_version,
@@ -1515,15 +1517,20 @@ fn validate_connection_bound_binding(
     item: &ProactiveItem,
 ) -> Result<()> {
     anyhow::ensure!(
-        matches!(binding.channel_ref.channel_id, ChannelId::Irc | ChannelId::Twitch | ChannelId::Nostr)
-            && binding.channel_ref.channel_id.as_str() == target_channel,
+        matches!(
+            binding.channel_ref.channel_id,
+            ChannelId::Irc | ChannelId::Twitch | ChannelId::Nostr
+        ) && binding.channel_ref.channel_id.as_str() == target_channel,
         "v6 proactive binding must name its exact connection-owned route"
     );
     anyhow::ensure!(
         item.account_id.as_ref() == Some(&binding.channel_ref.account_id),
         "v6 proactive binding conflicts with queued account"
     );
-    anyhow::ensure!(binding.generation != 0, "v6 proactive binding has no live generation");
+    anyhow::ensure!(
+        binding.generation != 0,
+        "v6 proactive binding has no live generation"
+    );
     Ok(())
 }
 
@@ -1534,7 +1541,10 @@ fn validate_connection_bound_frame_binding(
 ) -> Result<()> {
     anyhow::ensure!(
         &binding.channel_ref == channel_ref
-            && matches!(channel_ref.channel_id, ChannelId::Irc | ChannelId::Twitch | ChannelId::Nostr)
+            && matches!(
+                channel_ref.channel_id,
+                ChannelId::Irc | ChannelId::Twitch | ChannelId::Nostr
+            )
             && channel_ref.channel_id.as_str() == target_channel
             && binding.generation != 0,
         "v6 proactive frame has an invalid connection binding"
@@ -1765,23 +1775,32 @@ fn validate_claim(claim: &ProactiveEgressClaim, file_name: &str) -> Result<()> {
             let deadline = claim
                 .attempt_deadline_unix
                 .context("v6 proactive claim is missing its attempt deadline")?;
-            anyhow::ensure!(deadline > claim.created_at_unix, "proactive attempt deadline must be after claim creation");
+            anyhow::ensure!(
+                deadline > claim.created_at_unix,
+                "proactive attempt deadline must be after claim creation"
+            );
             let binding = claim
                 .connection_binding
                 .as_ref()
                 .context("v6 proactive claim is missing its connection binding")?;
             validate_connection_bound_binding(binding, &claim.target_channel, &claim.item)?;
             anyhow::ensure!(
-                claim.channel_ref.as_ref() == Some(&binding.channel_ref) && claim.account_binding.is_none(),
+                claim.channel_ref.as_ref() == Some(&binding.channel_ref)
+                    && claim.account_binding.is_none(),
                 "v6 proactive claim has conflicting route authority"
             );
             match (&claim.trust_admission, claim.trust_admission_state) {
                 (None, TrustAdmissionState::NeverSubmitted) => {}
                 (Some(descriptor), TrustAdmissionState::AwaitingAuthenticatedReceipt)
-                | (Some(descriptor), TrustAdmissionState::ReceiptObserved) => descriptor.validate()
+                | (Some(descriptor), TrustAdmissionState::ReceiptObserved) => descriptor
+                    .validate()
                     .context("validate proactive durable trust admission")?,
-                (None, _) => anyhow::bail!("v6 proactive admission state requires an immutable descriptor"),
-                (Some(_), TrustAdmissionState::NeverSubmitted) => anyhow::bail!("v6 proactive NeverSubmitted claim unexpectedly carries a descriptor"),
+                (None, _) => {
+                    anyhow::bail!("v6 proactive admission state requires an immutable descriptor")
+                }
+                (Some(_), TrustAdmissionState::NeverSubmitted) => anyhow::bail!(
+                    "v6 proactive NeverSubmitted claim unexpectedly carries a descriptor"
+                ),
             }
             if let Some(descriptor) = claim.trust_admission.as_ref() {
                 validate_claim_trust_admission_binding(claim, descriptor)?;
@@ -2358,7 +2377,9 @@ fn validate_intent_frame(intent: &ProactiveIntentFrame) -> Result<()> {
             anyhow::bail!("v5 proactive intent is missing its incarnation binding")
         }
         (CONNECTION_BOUND_WAL_BINDING_VERSION, Some(channel_ref), None) => {
-            let binding = intent.connection_binding.as_ref()
+            let binding = intent
+                .connection_binding
+                .as_ref()
                 .context("v6 proactive intent is missing its connection binding")?;
             validate_connection_bound_frame_binding(binding, &intent.target_channel, channel_ref)?;
         }
@@ -2369,7 +2390,10 @@ fn validate_intent_frame(intent: &ProactiveIntentFrame) -> Result<()> {
         _ => anyhow::bail!("pre-v4 proactive intent unexpectedly carries an account binding"),
     }
     if intent.proactive_binding_version != CONNECTION_BOUND_WAL_BINDING_VERSION {
-        anyhow::ensure!(intent.connection_binding.is_none(), "pre-v6 proactive intent carries a connection binding");
+        anyhow::ensure!(
+            intent.connection_binding.is_none(),
+            "pre-v6 proactive intent carries a connection binding"
+        );
     }
     validate_uuid_v7(&intent.intent_id)?;
     anyhow::ensure!(
@@ -2502,7 +2526,9 @@ fn validate_result_frame(result: &ProactiveResultFrame) -> Result<()> {
             anyhow::bail!("v5 proactive result is missing its incarnation binding")
         }
         (CONNECTION_BOUND_WAL_BINDING_VERSION, Some(channel_ref), None) => {
-            let binding = result.connection_binding.as_ref()
+            let binding = result
+                .connection_binding
+                .as_ref()
                 .context("v6 proactive result is missing its connection binding")?;
             validate_connection_bound_frame_binding(binding, &result.target_channel, channel_ref)?;
         }
@@ -2513,7 +2539,10 @@ fn validate_result_frame(result: &ProactiveResultFrame) -> Result<()> {
         _ => anyhow::bail!("pre-v4 proactive result unexpectedly carries an account binding"),
     }
     if result.proactive_binding_version != CONNECTION_BOUND_WAL_BINDING_VERSION {
-        anyhow::ensure!(result.connection_binding.is_none(), "pre-v6 proactive result carries a connection binding");
+        anyhow::ensure!(
+            result.connection_binding.is_none(),
+            "pre-v6 proactive result carries a connection binding"
+        );
     }
     anyhow::ensure!(
         is_sha256_hex(&result.recipient_sha256),
@@ -2777,7 +2806,10 @@ async fn append_intent(
 ) -> Result<()> {
     if matches!(
         claim.version,
-        CLAIM_VERSION | ACCOUNT_BOUND_CLAIM_VERSION | INCARNATION_BOUND_CLAIM_VERSION | CONNECTION_BOUND_CLAIM_VERSION
+        CLAIM_VERSION
+            | ACCOUNT_BOUND_CLAIM_VERSION
+            | INCARNATION_BOUND_CLAIM_VERSION
+            | CONNECTION_BOUND_CLAIM_VERSION
     ) {
         anyhow::ensure!(
             claim.trust_admission_state == TrustAdmissionState::ReceiptObserved
@@ -2804,7 +2836,10 @@ async fn append_armed(
 ) -> Result<()> {
     if matches!(
         claim.version,
-        CLAIM_VERSION | ACCOUNT_BOUND_CLAIM_VERSION | INCARNATION_BOUND_CLAIM_VERSION | CONNECTION_BOUND_CLAIM_VERSION
+        CLAIM_VERSION
+            | ACCOUNT_BOUND_CLAIM_VERSION
+            | INCARNATION_BOUND_CLAIM_VERSION
+            | CONNECTION_BOUND_CLAIM_VERSION
     ) {
         anyhow::ensure!(
             claim.trust_admission_state == TrustAdmissionState::ReceiptObserved
@@ -3044,7 +3079,11 @@ fn delivery_record(
         None
     };
     let record = ProactiveDeliveryRecord {
-        version: if claim.connection_binding.is_some() { 2 } else { 1 },
+        version: if claim.connection_binding.is_some() {
+            2
+        } else {
+            1
+        },
         intent_id: claim.intent_id.clone(),
         wal_chain_base: wal_chain_base.to_string(),
         binding_sha256: claim.binding_sha256.clone(),
@@ -3214,7 +3253,8 @@ fn validate_delivery_record(record: &ProactiveDeliveryRecord) -> Result<()> {
     if let Some(binding) = record.connection_binding.as_ref() {
         validate_connection_bound_binding(binding, &record.target_channel, &record.item)?;
         anyhow::ensure!(
-            record.channel_ref.as_ref() == Some(&binding.channel_ref) && record.account_binding.is_none(),
+            record.channel_ref.as_ref() == Some(&binding.channel_ref)
+                && record.account_binding.is_none(),
             "proactive history connection binding conflicts with its route"
         );
     } else if let Some(channel_ref) = record.channel_ref.as_ref() {
@@ -4399,7 +4439,10 @@ fn trust_request_binding_sha256(claim: &ProactiveEgressClaim) -> String {
 
     if claim.version == CONNECTION_BOUND_CLAIM_VERSION {
         let Some(binding) = claim.connection_binding.as_ref() else {
-            return effect_hash(b"proactive-trust-binding-v6-invalid", b"missing-connection-binding");
+            return effect_hash(
+                b"proactive-trust-binding-v6-invalid",
+                b"missing-connection-binding",
+            );
         };
         let mut bytes = Vec::with_capacity(704);
         let generation = binding.generation.to_be_bytes();
@@ -4455,7 +4498,10 @@ async fn ensure_trust_admission_receipt(
     anyhow::ensure!(
         matches!(
             claim.version,
-            CLAIM_VERSION | ACCOUNT_BOUND_CLAIM_VERSION | INCARNATION_BOUND_CLAIM_VERSION | CONNECTION_BOUND_CLAIM_VERSION
+            CLAIM_VERSION
+                | ACCOUNT_BOUND_CLAIM_VERSION
+                | INCARNATION_BOUND_CLAIM_VERSION
+                | CONNECTION_BOUND_CLAIM_VERSION
         ),
         "durable trust admission requires a v3, v4, or v5 proactive claim"
     );
@@ -4561,7 +4607,10 @@ async fn reconcile_persisted_trust_admission(
     anyhow::ensure!(
         matches!(
             claim.version,
-            CLAIM_VERSION | ACCOUNT_BOUND_CLAIM_VERSION | INCARNATION_BOUND_CLAIM_VERSION | CONNECTION_BOUND_CLAIM_VERSION
+            CLAIM_VERSION
+                | ACCOUNT_BOUND_CLAIM_VERSION
+                | INCARNATION_BOUND_CLAIM_VERSION
+                | CONNECTION_BOUND_CLAIM_VERSION
         ) && matches!(
             claim.trust_admission_state,
             TrustAdmissionState::AwaitingAuthenticatedReceipt
@@ -4734,7 +4783,10 @@ async fn recover_pending_claims_locked(
         // later as a brand-new v3 operation; it is never silently resent.
         if matches!(
             claim.version,
-            CLAIM_VERSION | ACCOUNT_BOUND_CLAIM_VERSION | INCARNATION_BOUND_CLAIM_VERSION | CONNECTION_BOUND_CLAIM_VERSION
+            CLAIM_VERSION
+                | ACCOUNT_BOUND_CLAIM_VERSION
+                | INCARNATION_BOUND_CLAIM_VERSION
+                | CONNECTION_BOUND_CLAIM_VERSION
         ) && claim.phase == ProactiveEgressPhase::Prepared
             && intent.is_none()
             && matches!(
@@ -5598,92 +5650,95 @@ where
                 )
             }
             None => match channel_ref.as_ref() {
-            Some(channel_ref) => {
-                validate_account_bound_channel_ref(channel_ref, target_channel)
-                    .map_err(|error| format!("validate account-bound route: {error:#}"))?;
-                if item.account_id.as_ref() != Some(&channel_ref.account_id) {
-                    return Err("account-bound route conflicts with queued account".to_string());
-                }
-                if let Some(account_binding) = account_binding.as_ref() {
-                    validate_incarnation_bound_account(account_binding, target_channel)
-                        .map_err(|error| format!("validate account incarnation: {error:#}"))?;
-                    if account_binding.channel_ref() != channel_ref
-                        || item.account_binding.as_ref() != Some(account_binding)
-                    {
+                Some(channel_ref) => {
+                    validate_account_bound_channel_ref(channel_ref, target_channel)
+                        .map_err(|error| format!("validate account-bound route: {error:#}"))?;
+                    if item.account_id.as_ref() != Some(&channel_ref.account_id) {
+                        return Err("account-bound route conflicts with queued account".to_string());
+                    }
+                    if let Some(account_binding) = account_binding.as_ref() {
+                        validate_incarnation_bound_account(account_binding, target_channel)
+                            .map_err(|error| format!("validate account incarnation: {error:#}"))?;
+                        if account_binding.channel_ref() != channel_ref
+                            || item.account_binding.as_ref() != Some(account_binding)
+                        {
+                            return Err(
+                                "account-bound route conflicts with queued incarnation".to_string()
+                            );
+                        }
+                    } else if item.account_binding.is_some() {
                         return Err(
-                            "account-bound route conflicts with queued incarnation".to_string()
+                            "historic account-bound route unexpectedly carries an incarnation"
+                                .to_string(),
                         );
                     }
-                } else if item.account_binding.is_some() {
-                    return Err(
-                        "historic account-bound route unexpectedly carries an incarnation"
-                            .to_string(),
-                    );
-                }
-                let config_source_path = config_source_path.ok_or_else(|| {
-                    "account-bound delivery is missing its config source path".to_string()
-                })?;
-                let config_source_path = config_source_path.to_path_buf();
-                let accepted_config = context.accepted_config().config().as_ref().clone();
-                let binding_for_read = account_binding.clone();
-                let channel_ref_for_read = channel_ref.clone();
-                let fresh = tokio::task::spawn_blocking(move || match binding_for_read.as_ref() {
-                    Some(binding) => {
-                        fresh_bound_telegram_account(&config_source_path, &accepted_config, binding)
-                    }
-                    None => fresh_historic_bound_telegram_account(
-                        &config_source_path,
-                        &accepted_config,
-                        &channel_ref_for_read,
-                    ),
-                })
-                .await
-                .map_err(|error| format!("join account-bound pair admission: {error}"))?;
-                match fresh {
-                    Ok((token, allowed_user_id)) => {
-                        let channel = build_channel
-                            .take()
-                            .expect("account-bound channel factory is consumed once")(
-                            token,
-                            allowed_user_id,
-                        );
-                        (allowed_user_id.to_string(), Some(channel), None)
-                    }
-                    Err(FreshBoundAccountRefusal::AcceptedConfigMismatch) => {
-                        drop(delivery_lock);
-                        return record_without_transport_once(
-                            context,
-                            item,
-                            queue_generation,
-                            target_channel,
-                            ProactiveEgressOutcome::PolicySuppressed,
-                            Some(channel_ref.clone()),
-                        )
-                        .await;
-                    }
-                    Err(FreshBoundAccountRefusal::AccountUnavailable) => {
-                        drop(delivery_lock);
-                        return settle_claimed_once_account_bound_configuration_error(
-                            context,
-                            item,
-                            queue_generation,
-                            target_channel,
-                            channel_ref.clone(),
-                        )
-                        .await;
+                    let config_source_path = config_source_path.ok_or_else(|| {
+                        "account-bound delivery is missing its config source path".to_string()
+                    })?;
+                    let config_source_path = config_source_path.to_path_buf();
+                    let accepted_config = context.accepted_config().config().as_ref().clone();
+                    let binding_for_read = account_binding.clone();
+                    let channel_ref_for_read = channel_ref.clone();
+                    let fresh =
+                        tokio::task::spawn_blocking(move || match binding_for_read.as_ref() {
+                            Some(binding) => fresh_bound_telegram_account(
+                                &config_source_path,
+                                &accepted_config,
+                                binding,
+                            ),
+                            None => fresh_historic_bound_telegram_account(
+                                &config_source_path,
+                                &accepted_config,
+                                &channel_ref_for_read,
+                            ),
+                        })
+                        .await
+                        .map_err(|error| format!("join account-bound pair admission: {error}"))?;
+                    match fresh {
+                        Ok((token, allowed_user_id)) => {
+                            let channel = build_channel
+                                .take()
+                                .expect("account-bound channel factory is consumed once")(
+                                token,
+                                allowed_user_id,
+                            );
+                            (allowed_user_id.to_string(), Some(channel), None)
+                        }
+                        Err(FreshBoundAccountRefusal::AcceptedConfigMismatch) => {
+                            drop(delivery_lock);
+                            return record_without_transport_once(
+                                context,
+                                item,
+                                queue_generation,
+                                target_channel,
+                                ProactiveEgressOutcome::PolicySuppressed,
+                                Some(channel_ref.clone()),
+                            )
+                            .await;
+                        }
+                        Err(FreshBoundAccountRefusal::AccountUnavailable) => {
+                            drop(delivery_lock);
+                            return settle_claimed_once_account_bound_configuration_error(
+                                context,
+                                item,
+                                queue_generation,
+                                target_channel,
+                                channel_ref.clone(),
+                            )
+                            .await;
+                        }
                     }
                 }
-            }
-            None => (
-                prebuilt_recipient.clone().ok_or_else(|| {
-                    "unbound proactive delivery is missing a transport recipient".to_string()
-                })?,
-                Some(prebuilt_channel.clone().ok_or_else(|| {
-                    "unbound proactive delivery is missing its channel".to_string()
-                })?),
-                None,
-            ),
-        },
+                None => (
+                    prebuilt_recipient.clone().ok_or_else(|| {
+                        "unbound proactive delivery is missing a transport recipient".to_string()
+                    })?,
+                    Some(prebuilt_channel.clone().ok_or_else(|| {
+                        "unbound proactive delivery is missing its channel".to_string()
+                    })?),
+                    None,
+                ),
+            },
         };
         // Sample both clocks once at admission. The original monotonic budget
         // prevents a later wall-clock rollback from extending live I/O; the
@@ -8697,8 +8752,11 @@ mod tests {
         tampered.connection_binding.as_mut().unwrap().fingerprint = 92;
         assert!(validate_claim(&tampered, &claim_name(&tampered)).is_err());
         let mut mismatched_ref = intent_frame(&claim);
-        mismatched_ref.connection_binding.as_mut().unwrap().channel_ref =
-            ChannelRef::default_account(ChannelId::Twitch);
+        mismatched_ref
+            .connection_binding
+            .as_mut()
+            .unwrap()
+            .channel_ref = ChannelRef::default_account(ChannelId::Twitch);
         assert!(
             validate_intent_frame(&mismatched_ref).is_err(),
             "a v6 sealed binding must name its displayed ChannelRef exactly"
@@ -9771,7 +9829,9 @@ mod tests {
             .unwrap(),
             crate::permissions::trust_ledger::TrustOutcome::Allowed
         );
-        append_intent(&delivery_lock, &writer, &prepared).await.unwrap();
+        append_intent(&delivery_lock, &writer, &prepared)
+            .await
+            .unwrap();
         let armed = claim_in_phase(&prepared, ProactiveEgressPhase::Armed);
         persist_armed_claim(&delivery_lock, &claim_file, &armed)
             .await

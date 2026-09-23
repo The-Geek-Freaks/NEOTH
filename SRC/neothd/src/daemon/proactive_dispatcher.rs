@@ -531,16 +531,18 @@ async fn deliver_live_route(
                 .map_err(LiveRouteError::Durability);
             };
             match live.live_channels.acquire(&channel_ref, fingerprint).await {
-                Some(permit) => crate::daemon::proactive_egress::execute_claimed_once_connection_bound(
-                    egress,
-                    item,
-                    queue_generation,
-                    target_channel,
-                    recipient,
-                    permit,
-                )
-                .await
-                .map_err(LiveRouteError::Durability),
+                Some(permit) => {
+                    crate::daemon::proactive_egress::execute_claimed_once_connection_bound(
+                        egress,
+                        item,
+                        queue_generation,
+                        target_channel,
+                        recipient,
+                        permit,
+                    )
+                    .await
+                    .map_err(LiveRouteError::Durability)
+                }
                 None => crate::daemon::proactive_egress::record_sidecar_only_once(
                     egress,
                     item,
@@ -2010,7 +2012,11 @@ mod tests {
             Some((irc_ref.clone(), 1, irc_fingerprint)),
             "authenticated Intent and Result must agree with the history identity"
         );
-        assert_eq!(irc.sends(), 1, "repeated tick must not reach the live adapter");
+        assert_eq!(
+            irc.sends(),
+            1,
+            "repeated tick must not reach the live adapter"
+        );
     }
 
     #[tokio::test]

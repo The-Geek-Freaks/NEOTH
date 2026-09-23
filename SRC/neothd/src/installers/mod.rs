@@ -51,6 +51,7 @@ pub mod ollama;
 pub mod omi;
 pub mod paperless;
 pub mod paperless_readiness;
+pub mod paperless_staging;
 pub mod probe;
 pub mod qwen_weights;
 pub mod tailscale;

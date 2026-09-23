@@ -34,7 +34,10 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
-use crate::installers::paperless_readiness::{PaperlessReadiness, probe_configured_paperless};
+use crate::installers::{
+    paperless_readiness::{PaperlessReadiness, probe_configured_paperless_at},
+    paperless_staging::{PaperlessStagingView, prepare_at},
+};
 use crate::paperless::{self, OcrSyncOutcome, consult::consult, quarantine};
 use crate::security::paperless_ingest::{IngestError, OcrSource, ingest_ocr_text};
 
@@ -55,6 +58,12 @@ pub struct PaperlessArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum PaperlessAction {
+    /// Prepare a pinned, local Compose directory. This does not pull or start Docker.
+    Prepare {
+        /// Exact destination; without it NEOTH uses the selected instance home.
+        #[arg(long, value_name = "PATH")]
+        directory: Option<PathBuf>,
+    },
     /// Check authenticated local API readiness using stored credentials.
     /// Artifact provenance and managed installation readiness remain separate.
     Status,
@@ -110,7 +119,14 @@ pub enum QuarantineAction {
 
 /// Async CLI entry; retain the synchronous local-document API for its callers.
 pub async fn run_paperless_command(args: PaperlessArgs, output: OutputFormat) -> Result<()> {
-    if matches!(args.action, PaperlessAction::Status) {
+    if let PaperlessAction::Prepare { directory } = &args.action {
+        let staging = paperless_prepare_at(
+            &crate::config::FreedomConfig::default_neoth_home(),
+            directory.as_deref(),
+        )?;
+        print!("{}", render_paperless_staging(&staging, output)?);
+        Ok(())
+    } else if matches!(args.action, PaperlessAction::Status) {
         let status =
             paperless_status_at(&crate::config::FreedomConfig::default_neoth_home()).await?;
         print!("{}", render_paperless_status(&status, output)?);
@@ -120,13 +136,23 @@ pub async fn run_paperless_command(args: PaperlessArgs, output: OutputFormat) ->
     }
 }
 
+fn paperless_prepare_at(
+    home: &std::path::Path,
+    directory: Option<&std::path::Path>,
+) -> Result<PaperlessStagingView> {
+    let root = directory
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| crate::config::InstancePaths::for_home(home).paperless_root);
+    prepare_at(&root).map_err(|error| anyhow::anyhow!(error))
+}
+
 async fn paperless_status_at(home: &std::path::Path) -> Result<PaperlessReadiness> {
     let (_, credentials) =
         crate::config::load_optional_runtime_config_pair_from_path(&home.join("freedom.yaml"))
             .map_err(|_| {
                 anyhow::anyhow!("Paperless status could not read the configured credentials")
             })?;
-    Ok(probe_configured_paperless(&credentials).await)
+    Ok(probe_configured_paperless_at(home, &credentials).await)
 }
 
 fn render_paperless_status(status: &PaperlessReadiness, output: OutputFormat) -> Result<String> {
@@ -135,11 +161,22 @@ fn render_paperless_status(status: &PaperlessReadiness, output: OutputFormat) ->
             Ok(format!("{}\n", serde_json::to_string(status)?))
         }
         OutputFormat::Table => Ok(format!(
-            "Paperless API: {}\nauthenticated API ready: {}\nreported version: {}\nartifact verified: {}\nManaged installation readiness requires separate artifact and lifecycle verification.\n",
+            "Paperless API: {}\nauthenticated API ready: {}\nreported version: {}\nartifact verified: {}\nstaging: {}\nManaged installation readiness requires separate artifact and lifecycle verification.\n",
             status.status,
             status.authenticated_api_ready,
             status.version.as_deref().unwrap_or("unknown"),
             status.artifact_verified,
+            status.staging,
+        )),
+    }
+}
+
+fn render_paperless_staging(staging: &PaperlessStagingView, output: OutputFormat) -> Result<String> {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => Ok(format!("{}\n", serde_json::to_string(staging)?)),
+        OutputFormat::Table => Ok(format!(
+            "Paperless preparation: {:?}\nprepared: {}\nartifact verified: false\nDocker was not executed.\n",
+            staging.status, staging.prepared
         )),
     }
 }
@@ -150,6 +187,9 @@ pub fn run_paperless(args: PaperlessArgs) -> Result<()> {
     match args.action {
         PaperlessAction::Status => {
             anyhow::bail!("Paperless status requires the asynchronous CLI entry")
+        }
+        PaperlessAction::Prepare { .. } => {
+            anyhow::bail!("Paperless prepare requires the asynchronous CLI entry")
         }
         PaperlessAction::Quarantine { action } => {
             let neoth_home = neoth_home_path();
@@ -379,6 +419,57 @@ mod tests {
         );
     }
 
+    #[test]
+    fn paperless_prepare_cli_preserves_explicit_directory() {
+        use clap::Parser;
+
+        let cli = crate::cli::Cli::try_parse_from([
+            "neoth", "paperless", "prepare", "--directory", "D:/operator/paperless",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            crate::cli::Commands::Paperless(PaperlessArgs {
+                action: PaperlessAction::Prepare { directory: Some(path) },
+                ..
+            }) if path == PathBuf::from("D:/operator/paperless")
+        ));
+    }
+
+    #[test]
+    fn preparation_output_is_secret_free_and_never_claims_artifact_proof() {
+        let view = PaperlessStagingView {
+            status: crate::installers::paperless_staging::PaperlessStagingStatus::PreparedPinned,
+            receipt_id: "receipt-only",
+            prepared: true,
+        };
+        let json = render_paperless_staging(&view, OutputFormat::Json).unwrap();
+        assert!(json.contains("prepared_pinned"));
+        assert!(!json.contains("PAPERLESS_SECRET_KEY"));
+        assert!(!json.contains("operator-secret"));
+        assert!(render_paperless_staging(&view, OutputFormat::Table)
+            .unwrap()
+            .contains("artifact verified: false"));
+    }
+
+    #[tokio::test]
+    async fn prepare_helper_then_status_reports_instance_scoped_staging() {
+        let home = tempfile::tempdir().unwrap();
+        let prepared = paperless_prepare_at(home.path(), None).unwrap();
+        assert!(prepared.prepared);
+        assert!(home.path().join("paperless").is_dir());
+        let status = paperless_status_at(home.path()).await.unwrap();
+        assert_eq!(status.staging, "already_prepared");
+        assert!(!status.artifact_verified);
+
+        let explicit = tempfile::tempdir().unwrap();
+        let explicit_root = explicit.path().join("exact-directory");
+        let explicit_prepared = paperless_prepare_at(home.path(), Some(&explicit_root)).unwrap();
+        assert!(explicit_prepared.prepared);
+        assert!(explicit_root.is_dir());
+        assert!(home.path().join("paperless").is_dir());
+    }
+
     #[tokio::test]
     async fn paperless_status_missing_credentials_never_claims_readiness() {
         let home = tempfile::tempdir().unwrap();
@@ -391,6 +482,7 @@ mod tests {
                 .unwrap();
         assert_eq!(json["authenticated_api_ready"], false);
         assert_eq!(json["artifact_verified"], false);
+        assert!(json["staging"].is_string());
         assert!(!home.path().join("credentials.yaml").exists());
         assert!(!home.path().join("freedom.yaml").exists());
     }

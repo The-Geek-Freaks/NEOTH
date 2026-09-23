@@ -1,5 +1,25 @@
 # Paperless API status
 
+`neoth paperless prepare` creates the selected instance home's `paperless`
+directory. Use `neoth paperless prepare --directory PATH` for an exact explicit
+destination whose parent already exists. Preparation writes only `ownership.json`,
+`compose.yaml` and `paperless.env.example` through a sibling staging directory.
+An existing matching preparation is reused; foreign files, modified owned files,
+symlinks and reparse points are refused. Operator `paperless.env` and `state/`
+are preserved. Preparation does not download images or run Docker.
+
+The Compose file pins Paperless 3.2.1, Valkey and PostgreSQL by the OCI index
+digests admitted in `docs/verification/paperless-oci-v3.2.1/`. It binds the web
+service to loopback and requires operator-supplied credentials and a port via
+`paperless.env`; the example contains no generated or default secrets. The
+PostgreSQL 18 state mount uses `/var/lib/postgresql`. Modern and standalone
+Compose command previews render only validation with `config`.
+
+Status reports the default instance's staging observation separately from API
+readiness. Preparing an explicit alternative directory does not change that
+default. `artifact_verified` remains false: admitted registry metadata and a
+prepared directory do not establish running-image identity or lifecycle jobs.
+
 Run `neoth paperless status` to check the configured local Paperless API.
 For a machine-readable result, use `neoth --output json paperless status`
 or `neoth --output jsonl paperless status`.
@@ -43,7 +63,14 @@ now reports `port_open_unverified` and cannot mark Paperless as already running.
 W515 source review covers the actual async CLI entry, the shared stored-credential
 loader, the bounded authenticated HTTP probe, eight HTTP cases, four CLI cases
 and the legacy port-only false-positive regression. The13selected cases are
-registered in the903-case hosted lane; execution is pending at publication.
+registered in the hosted lane; execution is pending at publication.
 The tests include a real stored-credential/HTTP path and verify that profile
 `auth_token` and personal fields never enter the public readiness result.
 No local executable validation ran under the workstation BSOD hold.
+
+W540 adds seven new portable preparation/CLI regressions, one Unix symlink
+regression, and selects six existing installer/instance-path tests. The CLI
+integration exercises preparation followed by actual instance-scoped status;
+the file tests verify byte-preservation of operator environment and state.
+Independent static review is complete; hosted execution is pending at source
+publication. P2-20 remains open.

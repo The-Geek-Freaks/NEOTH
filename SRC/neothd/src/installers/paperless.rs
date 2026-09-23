@@ -9,7 +9,8 @@
 //!   1. Probe Docker via [`check_docker_available`].
 //!   2. Probe docker-compose via [`check_docker_compose_available`]
 //!      (modern Docker bundles `docker compose`; older standalone
-//!      `docker-compose` also works — we accept either).
+//!      standalone `docker-compose` renders the equivalent non-executed
+//!      validation command).
 //!   3. Recommend an install strategy via [`InstallStrategy::recommend`].
 //!   4. Render the install command sequence as `Vec<String>` so the
 //!      wizard SHOWS it to the operator before running anything.
@@ -38,22 +39,16 @@ pub const DEFAULT_PAPERLESS_PORT: u16 = 8000;
 /// link (one source of truth — broken-link audits stay simple).
 pub const PAPERLESS_UPSTREAM_DOCS_URL: &str = "https://docs.paperless-ngx.com/setup/#installation";
 
-/// Canonical compose-file URL operators curl to bootstrap. Pinned
-/// so a wizard re-render survives upstream-docs URL changes.
-pub const PAPERLESS_COMPOSE_BOOTSTRAP_URL: &str = "https://raw.githubusercontent.com/paperless-ngx/paperless-ngx/main/docker/compose/docker-compose.postgres.yml";
-
 /// One of the install paths paperless-ngx supports. Pinned
 /// exhaustively — adding a third path needs wizard UX.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum InstallStrategy {
-    /// `docker compose -f docker-compose.postgres.yml up -d` after
-    /// curling the upstream compose file. Recommended when Docker +
-    /// compose are available — upstream-supported, easy upgrades
-    /// via `docker compose pull && docker compose up -d`.
+    /// Modern Docker Compose can validate the fixed, locally prepared
+    /// `compose.yaml`. Starting or pulling containers remains outside this
+    /// preparation primitive.
     DockerCompose,
-    /// `docker-compose -f ... up -d` for older Docker installs that
-    /// shipped the standalone `docker-compose` binary instead of
-    /// `docker compose` subcommand. Same behaviour, different CLI.
+    /// Detected standalone `docker-compose` binary. It renders the same
+    /// non-executed prepared-contract validation shape.
     DockerComposeLegacy,
 }
 
@@ -71,14 +66,15 @@ impl InstallStrategy {
                 "Run paperless-ngx via `docker compose` (recommended: modern Docker)"
             }
             Self::DockerComposeLegacy => {
-                "Run paperless-ngx via legacy `docker-compose` binary (older Docker installs)"
+                "Validate prepared Paperless Compose via legacy docker-compose"
             }
         }
     }
 
     /// Decide which strategy to recommend given probe outcomes.
     /// Modern `docker compose` wins when available; legacy is the
-    /// fallback. `None` means neither is available — wizard renders
+    /// fallback. Both variants only render a later validation command; neither
+    /// downloads, pulls, or starts a service. `None` means the wizard renders
     /// [`PAPERLESS_UPSTREAM_DOCS_URL`] and stops.
     pub fn recommend(docker_compose: bool, docker_compose_legacy: bool) -> Option<Self> {
         if docker_compose {
@@ -90,46 +86,21 @@ impl InstallStrategy {
         }
     }
 
-    /// Build the install command sequence. Three steps: download
-    /// compose file via curl, then `up -d`, then operator-facing
-    /// success line. The wizard renders each line + asks GO/STOP
-    /// between download and `up`.
+    /// Render a non-executed validation command for a prepared directory.
+    /// Preparation is native and deterministic; this never downloads, pulls,
+    /// starts, or changes containers.
     pub fn install_commands(self, work_dir: &str) -> Vec<Vec<String>> {
-        let compose_file = format!("{work_dir}/docker-compose.yml");
+        let compose_file = format!("{work_dir}/compose.yaml");
+        let env_file = format!("{work_dir}/paperless.env");
         match self {
-            Self::DockerCompose => vec![
-                vec![
-                    "curl".into(),
-                    "-fsSL".into(),
-                    PAPERLESS_COMPOSE_BOOTSTRAP_URL.into(),
-                    "-o".into(),
-                    compose_file.clone(),
-                ],
-                vec![
-                    "docker".into(),
-                    "compose".into(),
-                    "-f".into(),
-                    compose_file,
-                    "up".into(),
-                    "-d".into(),
-                ],
-            ],
-            Self::DockerComposeLegacy => vec![
-                vec![
-                    "curl".into(),
-                    "-fsSL".into(),
-                    PAPERLESS_COMPOSE_BOOTSTRAP_URL.into(),
-                    "-o".into(),
-                    compose_file.clone(),
-                ],
-                vec![
-                    "docker-compose".into(),
-                    "-f".into(),
-                    compose_file,
-                    "up".into(),
-                    "-d".into(),
-                ],
-            ],
+            Self::DockerCompose => vec![vec![
+                "docker".into(), "compose".into(), "--env-file".into(), env_file,
+                "-f".into(), compose_file, "config".into(),
+            ]],
+            Self::DockerComposeLegacy => vec![vec![
+                "docker-compose".into(), "--env-file".into(), env_file,
+                "-f".into(), compose_file, "config".into(),
+            ]],
         }
     }
 }
@@ -270,12 +241,6 @@ mod tests {
     }
 
     #[test]
-    fn compose_bootstrap_url_is_https_and_yml() {
-        assert!(PAPERLESS_COMPOSE_BOOTSTRAP_URL.starts_with("https://"));
-        assert!(PAPERLESS_COMPOSE_BOOTSTRAP_URL.ends_with(".yml"));
-    }
-
-    #[test]
     fn strategy_as_str_pinned_for_audit() {
         assert_eq!(InstallStrategy::DockerCompose.as_str(), "docker_compose");
         assert_eq!(
@@ -297,11 +262,8 @@ mod tests {
     }
 
     #[test]
-    fn recommend_falls_back_to_legacy_when_modern_absent() {
-        assert_eq!(
-            InstallStrategy::recommend(false, true),
-            Some(InstallStrategy::DockerComposeLegacy)
-        );
+    fn recommend_uses_legacy_when_modern_absent() {
+        assert_eq!(InstallStrategy::recommend(false, true), Some(InstallStrategy::DockerComposeLegacy));
     }
 
     #[test]
@@ -310,23 +272,21 @@ mod tests {
     }
 
     #[test]
-    fn install_commands_modern_curls_then_compose_up() {
+    fn install_commands_modern_only_renders_compose_config() {
         let cmds = InstallStrategy::DockerCompose.install_commands("/tmp/paperless");
-        assert_eq!(cmds.len(), 2);
-        assert_eq!(cmds[0][0], "curl");
-        assert!(cmds[0].contains(&PAPERLESS_COMPOSE_BOOTSTRAP_URL.to_string()));
-        assert_eq!(cmds[1][0], "docker");
-        assert_eq!(cmds[1][1], "compose");
-        assert!(cmds[1].iter().any(|a| a == "up"));
-        assert!(cmds[1].iter().any(|a| a == "-d"));
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0][0], "docker");
+        assert!(cmds[0].iter().any(|a| a == "config"));
+        assert!(cmds[0].iter().any(|a| a == "/tmp/paperless/paperless.env"));
+        assert!(!cmds[0].iter().any(|a| a == "up" || a == "pull" || a == "curl"));
     }
 
     #[test]
-    fn install_commands_legacy_uses_hyphenated_binary() {
+    fn install_commands_legacy_only_renders_compose_config() {
         let cmds = InstallStrategy::DockerComposeLegacy.install_commands("/tmp/paperless");
-        assert_eq!(cmds.len(), 2);
-        assert_eq!(cmds[1][0], "docker-compose");
-        assert!(cmds[1].iter().any(|a| a == "up"));
+        assert_eq!(cmds[0][0], "docker-compose");
+        assert!(cmds[0].iter().any(|arg| arg == "config"));
+        assert!(!cmds[0].iter().any(|arg| arg == "up" || arg == "pull" || arg == "curl"));
     }
 
     #[test]
@@ -335,12 +295,7 @@ mod tests {
         assert!(
             cmds[0]
                 .iter()
-                .any(|a| a == "/custom/paperless-dir/docker-compose.yml")
-        );
-        assert!(
-            cmds[1]
-                .iter()
-                .any(|a| a == "/custom/paperless-dir/docker-compose.yml")
+                .any(|a| a == "/custom/paperless-dir/compose.yaml")
         );
     }
 

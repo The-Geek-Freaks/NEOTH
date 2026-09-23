@@ -303,12 +303,11 @@ impl Drop for ConnectionBoundProactivePermit {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use crate::channels::{ChannelKind, MessageId, PipelineHandler};
+    use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct CountingChannel(AtomicUsize);
@@ -481,12 +480,11 @@ mod tests {
         assert!(registry.publish(&lease, channel.clone()).await);
         let acquired = registry.acquire(&irc_ref(), 41).await.unwrap();
         let entered = channel.entered.notified();
-        let sending =
-            tokio::spawn(async move {
-                acquired
-                    .send_once("#ops".to_string(), "in flight".to_string())
-                    .await
-            });
+        let sending = tokio::spawn(async move {
+            acquired
+                .send_once("#ops".to_string(), "in flight".to_string())
+                .await
+        });
         entered.await;
 
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
