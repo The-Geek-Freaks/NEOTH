@@ -39,10 +39,11 @@
 //!     non-redactable. Their authenticated payloads are live authorization
 //!     inputs, not memory content; erasing one would silently invalidate the
 //!     installed runtime authority chain.
-//!   - Segments containing authenticated chain-structural frames
-//!     (`COMPACTION_MARKER`, `SEGMENT_ROLLOVER`, or `REDACTION_MARKER`) are not
-//!     physically rewritten. Their offsets and authenticated links require a
-//!     dedicated transaction that can replace the chain evidence atomically.
+//!   - Generic physical redaction refuses segments containing authenticated
+//!     chain-structural frames (`COMPACTION_MARKER`, `SEGMENT_ROLLOVER`, or
+//!     `REDACTION_MARKER`). The separate authenticated sealed-leaf transaction
+//!     may rebind ordinary compaction markers, but still refuses a matched
+//!     structural frame and every interior segment.
 //!   - Every original frame CRC validates before predicates or redaction run;
 //!     the eraser never converts pre-existing corruption into a newly valid
 //!     redacted frame.
@@ -65,6 +66,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _};
 use cap_std::fs::OpenOptions as CapOpenOptions;
+use sha2::{Digest as _, Sha256};
 
 use super::header::{CRC_LEN, EventHeaderV2, HEADER_BODY_LEN, MAGIC, PREAMBLE_LEN};
 use super::segment_header::{SEGMENT_HEADER_LEN, SEGMENT_HEADER_V3_LEN, parse_segment_header};
@@ -252,6 +254,91 @@ pub struct RedactReport {
     pub frames_skipped: u32,
 }
 
+/// Immutable receipt binding returned only after a successful authenticated
+/// sealed-leaf replacement.  It deliberately carries hashes, never erased
+/// payloads or path text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AuthenticatedLeafRewrite {
+    pub report: RedactReport,
+    pub old_sha256: [u8; 32],
+    pub new_sha256: [u8; 32],
+    pub target_identity_sha256: [u8; 32],
+    pub old_len: u64,
+    pub new_len: u64,
+}
+
+/// A complete, authenticated sealed-leaf rewrite which is deliberately still
+/// private.  Holding the target rewrite lease across journal persistence and
+/// [`Self::publish`] prevents a writer or a second redactor from changing the
+/// proven leaf between those two transaction phases.
+pub(crate) struct PreparedAuthenticatedLeafRewrite {
+    _target_rewrite_guard: std::fs::File,
+    wal_root: crate::skills::store::BoundDirectory,
+    target_binding: crate::skills::store::BoundChildObject,
+    target_name: std::ffi::OsString,
+    target: PathBuf,
+    header_bytes: Vec<u8>,
+    rewritten_body: Vec<u8>,
+    old_sha256: [u8; 32],
+    new_sha256: [u8; 32],
+    target_identity_sha256: [u8; 32],
+    old_len: u64,
+    new_len: u64,
+    report: RedactReport,
+}
+
+impl PreparedAuthenticatedLeafRewrite {
+    pub(crate) fn rewrite(&self) -> AuthenticatedLeafRewrite {
+        AuthenticatedLeafRewrite {
+            report: self.report.clone(), old_sha256: self.old_sha256,
+            new_sha256: self.new_sha256, target_identity_sha256: self.target_identity_sha256,
+            old_len: self.old_len, new_len: self.new_len,
+        }
+    }
+
+    /// Publish only the exact bytes that were bound during staging.  A changed
+    /// target is never overwritten: recovery can compare its old/new hashes to
+    /// decide whether to retry delivery or refuse an indeterminate third state.
+    pub(crate) fn publish(self) -> Result<AuthenticatedLeafRewrite> {
+        anyhow::ensure!(self.target_binding.matches_regular_file_child_readonly(
+            &self.wal_root.dir, &self.target_name, &self.target,
+        )?, "authenticated leaf namespace changed after staging; refusing stale replacement");
+        let (mut current_file, current_binding) = crate::skills::store::open_bound_regular_file_readwrite(
+            &self.wal_root.dir, &self.target_name, &self.target,
+        )?;
+        anyhow::ensure!(current_binding.identity_token() == self.target_binding.identity_token(),
+            "authenticated leaf identity changed after staging; refusing stale replacement");
+        let mut current = Vec::new();
+        let cap = crate::wal::scan::supported_home_scan_limits().max_segment_physical_bytes;
+        (&mut current_file).take((cap as u64).saturating_add(1)).read_to_end(&mut current)
+            .with_context(|| format!("read bound staged sealed leaf {}", self.target.display()))?;
+        anyhow::ensure!(current.len() <= cap, "authenticated leaf grew above physical-byte limit after staging");
+        let current_sha256: [u8; 32] = Sha256::digest(&current).into();
+        anyhow::ensure!(current.len() as u64 == self.old_len
+            && current_sha256 == self.old_sha256,
+            "authenticated leaf changed after staging; refusing stale replacement");
+        let mut published = Vec::with_capacity(self.header_bytes.len() + self.rewritten_body.len());
+        published.extend_from_slice(&self.header_bytes);
+        published.extend_from_slice(&self.rewritten_body);
+        crate::skills::store::atomic_write_private_child(
+            &self.wal_root.dir, &self.target_name, &self.target, &published,
+        ).with_context(|| format!("capability-publish staged sealed leaf {}", self.target.display()))?;
+        let (mut published_file, published_binding) = crate::skills::store::open_bound_regular_file_readwrite(
+            &self.wal_root.dir, &self.target_name, &self.target,
+        )?;
+        let mut observed = Vec::new();
+        (&mut published_file).take((cap as u64).saturating_add(1)).read_to_end(&mut observed)
+            .with_context(|| format!("read back bound published sealed leaf {}", self.target.display()))?;
+        anyhow::ensure!(observed.len() <= cap, "published authenticated leaf exceeds physical-byte limit");
+        let published_sha256: [u8; 32] = Sha256::digest(&observed).into();
+        anyhow::ensure!(published_binding.identity_token() != self.target_binding.identity_token()
+            && observed.len() as u64 == self.new_len
+            && published_sha256 == self.new_sha256,
+            "authenticated leaf replacement did not retain its exact staged identity");
+        Ok(self.rewrite())
+    }
+}
+
 impl RedactReport {
     pub fn frames_redacted_count(&self) -> usize {
         self.frames_redacted.len()
@@ -379,7 +466,7 @@ where
     // verify` reconstruct it identically.
     if sealed_compressed {
         drop(file);
-        return redact_sealed_compressed_segment(segment_path, header_len as usize, predicate);
+        return redact_sealed_compressed_segment(segment_path, header_len as usize, predicate, None);
     }
 
     // Live (uncompressed) segment — crash-consistent whole-segment rewrite.
@@ -588,10 +675,135 @@ fn durable_replace(staged: &Path, target: &Path) -> std::io::Result<()> {
 /// [`crate::wal::compaction::logical_segment_bytes`]. That alignment is what
 /// lets an operator-signed `0xF3 REDACTION_MARKER` reclassify the resulting
 /// compaction-marker HMAC mismatch as authorised instead of a bogus FAIL.
+/// Stage, but do not publish, an authenticated sealed compressed leaf rewrite.
+/// The returned lease is the transaction boundary used by the signed journal:
+/// callers persist their Prepared record first, then call `publish` while the
+/// same leaf lock remains held.  Encrypted sealed bodies intentionally refuse
+/// here until their nonce/key recovery is included in that journal binding.
+pub(crate) fn stage_authenticated_sealed_leaf<F>(
+    home: &Path,
+    segment_path: &Path,
+    mut predicate: F,
+) -> Result<Option<PreparedAuthenticatedLeafRewrite>>
+where
+    F: FnMut(&[u8]) -> bool,
+{
+    use super::compress::{compress_frames, decompress_frames};
+    let wal_path = home.join("wal");
+    anyhow::ensure!(segment_path.parent() == Some(wal_path.as_path()),
+        "authenticated leaf rewrite target is not a direct child of this home's WAL directory");
+    let wal_root = crate::skills::store::open_bound_directory(
+        &wal_path, false, "authenticated sealed-leaf WAL directory",
+    )?.context("authenticated sealed-leaf WAL directory is missing")?;
+    let target_name = segment_path.file_name()
+        .context("authenticated sealed leaf has no direct child name")?.to_os_string();
+    let (mut original_file, target_binding) = crate::skills::store::open_bound_regular_file_readwrite(
+        &wal_root.dir, &target_name, segment_path,
+    )?;
+    let limits = crate::wal::scan::supported_home_scan_limits();
+    let physical_len = original_file.metadata()
+        .context("inspect bound authenticated sealed leaf")?.len();
+    anyhow::ensure!(physical_len <= limits.max_segment_physical_bytes as u64,
+        "authenticated sealed leaf exceeds the supported physical-byte limit");
+    // The direct-child capability is established before the lock namespace is
+    // touched.  Revalidate it after locking, then prove the full home chain.
+    let guard = lock_segment_for_rewrite(segment_path)?;
+    anyhow::ensure!(target_binding.matches_regular_file_child_readonly(
+        &wal_root.dir, &target_name, segment_path,
+    )?, "authenticated sealed leaf namespace changed before chain proof");
+    let mut original = Vec::new();
+    (&mut original_file).take((limits.max_segment_physical_bytes as u64).saturating_add(1)).read_to_end(&mut original)
+        .with_context(|| format!("read bound authenticated sealed leaf {}", segment_path.display()))?;
+    anyhow::ensure!(original.len() <= limits.max_segment_physical_bytes,
+        "authenticated sealed leaf grew above the supported physical-byte limit while reading");
+    let header = parse_segment_header(&original)
+        .context("authenticated leaf redaction requires a parseable segment header")?;
+    ensure_authenticated_chain_leaf(home, segment_path, &header)?;
+    anyhow::ensure!(header.is_sealed() && header.is_compressed(),
+        "authenticated leaf redaction requires a sealed compressed segment");
+    let header_len = header.header_len();
+    anyhow::ensure!(header_len <= original.len(), "sealed leaf header exceeds its bytes");
+    let header_bytes = original[..header_len].to_vec();
+    let blob = &original[header_len..];
+    anyhow::ensure!(!super::crypto::is_encrypted(blob),
+        "authenticated sealed-leaf rewrite refuses encrypted segments until journal-bound encryption recovery is available");
+    let key = super::compaction::load_existing_home_key_sibling(home, &home.join("wal/hmac.key"))?;
+    let mut frames = decompress_frames(blob)
+        .with_context(|| format!("decompress authenticated sealed leaf {}", segment_path.display()))?;
+    validate_marker_hmacs(&frames, header_len, &key)?;
+    let staged = redact_frames_in_buffer(&mut frames, &mut predicate, header_len as u64,
+        segment_path, false)?;
+    anyhow::ensure!(!staged.matched_authenticated_chain_structure,
+        "authenticated leaf redaction refuses a matched chain-structural frame");
+    if staged.report.frames_redacted.is_empty() { return Ok(None); }
+    super::compaction::rebind_marker_hmacs(&mut frames, header_len, &key)?;
+    let rewritten_body = compress_frames(&frames)
+        .with_context(|| format!("recompress staged sealed leaf {}", segment_path.display()))?;
+    let mut rewritten = Vec::with_capacity(header_bytes.len() + rewritten_body.len());
+    rewritten.extend_from_slice(&header_bytes);
+    rewritten.extend_from_slice(&rewritten_body);
+    anyhow::ensure!(rewritten.len() <= limits.max_segment_physical_bytes,
+        "staged authenticated leaf rewrite exceeds the supported physical-byte limit");
+    let canonical_name = segment_path.file_name().context("leaf segment has no file name")?
+        .to_str().context("authenticated sealed leaf name is not UTF-8")?;
+    let target_identity_sha256 = crate::wal::redaction_rewrite_receipts::derive_target_identity_sha256(
+        canonical_name, header.generation(), header.segment_seq(), header.segment_start_ts_ns(), header.node_id(),
+    );
+    Ok(Some(PreparedAuthenticatedLeafRewrite {
+        _target_rewrite_guard: guard, wal_root, target_binding, target_name,
+        target: segment_path.to_path_buf(), header_bytes, rewritten_body,
+        old_sha256: Sha256::digest(&original).into(), new_sha256: Sha256::digest(&rewritten).into(),
+        target_identity_sha256, old_len: original.len() as u64,
+        new_len: rewritten.len() as u64, report: staged.report,
+    }))
+}
+
+/// The target lock is deliberately acquired before this complete authenticated
+/// scan. Writer rotation needs that same predecessor lock before it can publish
+/// a successor link, so a successor cannot appear between leaf proof and
+/// replacement.  The scan itself validates all HMAC windows and cross-segment
+/// SHA bindings; filename ordering alone is never authority.
+fn ensure_authenticated_chain_leaf(
+    home: &Path,
+    segment_path: &Path,
+    target_header: &super::segment_header::ParsedSegmentHeader,
+) -> Result<()> {
+    let name = segment_path.file_name().context("leaf segment has no file name")?
+        .to_string_lossy().into_owned();
+    let mut successor_found = false;
+    let scan = crate::wal::scan::for_each_authenticated_prefix_frame_at_home(
+        home,
+        crate::wal::scan::supported_home_scan_limits(),
+        |_, frame| {
+            if frame.header.event_type == super::events::EVENT_TYPE_SEGMENT_ROLLOVER {
+                let value: serde_json::Value = serde_json::from_slice(frame.payload)
+                    .context("decode authenticated rollover link while proving leaf")?;
+                let closed_node = value.get("closed_node_id")
+                    .cloned()
+                    .and_then(|value| serde_json::from_value::<[u8; 16]>(value).ok());
+                let same = value.get("closed_segment_name").and_then(|v| v.as_str()) == Some(name.as_str())
+                    && value.get("closed_generation").and_then(|v| v.as_u64()) == Some(target_header.generation() as u64)
+                    && value.get("closed_seq").and_then(|v| v.as_u64()) == Some(target_header.segment_seq())
+                    && value.get("closed_start_ts_ns").and_then(|v| v.as_u64()) == Some(target_header.segment_start_ts_ns())
+                    && closed_node == Some(target_header.node_id());
+                successor_found |= same;
+            }
+            Ok(())
+        },
+    ).context("authenticate WAL chain before leaf rewrite")?;
+    anyhow::ensure!(scan.complete, "authenticated leaf rewrite refuses an incomplete WAL chain");
+    anyhow::ensure!(scan.boundaries.iter().any(|boundary| boundary.segment_name == name),
+        "authenticated leaf rewrite target is absent from the complete authenticated WAL scan");
+    anyhow::ensure!(!successor_found,
+        "authenticated leaf rewrite refuses a segment with an authenticated successor");
+    Ok(())
+}
+
 fn redact_sealed_compressed_segment<F>(
     segment_path: &Path,
     header_len: usize,
     mut predicate: F,
+    rebind_key: Option<&[u8]>,
 ) -> Result<RedactReport>
 where
     F: FnMut(&[u8]) -> bool,
@@ -625,6 +837,11 @@ where
     let mut frames = decompress_frames(&compressed_blob)
         .with_context(|| format!("decompress sealed WAL segment {}", segment_path.display()))?;
 
+    // Validate every existing marker before mutation.  A rewrite must never
+    // bless a pre-existing forged marker by merely calculating a fresh tag.
+    if let Some(key) = rebind_key {
+        validate_marker_hmacs(&frames, header_len, key)?;
+    }
     let staged = redact_frames_in_buffer(
         &mut frames,
         &mut predicate,
@@ -632,13 +849,24 @@ where
         segment_path,
         /* allow_torn_tail = */ false,
     )?;
-    refuse_chain_structural_rewrite(segment_path, &staged)?;
+    if rebind_key.is_none() {
+        refuse_chain_structural_rewrite(segment_path, &staged)?;
+    } else {
+        anyhow::ensure!(
+            !staged.matched_authenticated_chain_structure,
+            "authenticated leaf redaction refuses a matched chain-structural frame"
+        );
+    }
     let report = staged.report;
 
     // No predicate match ⇒ leave the file byte-identical (no needless recompress
     // /rename). Frames skipped or already-redacted both land here.
     if report.frames_redacted.is_empty() {
         return Ok(report);
+    }
+
+    if let Some(key) = rebind_key {
+        super::compaction::rebind_marker_hmacs(&mut frames, header_len, key)?;
     }
 
     let recompressed = compress_frames(&frames)
@@ -833,6 +1061,51 @@ where
     }
 
     Ok(staged)
+}
+
+fn validate_marker_hmacs(frames: &[u8], header_len: usize, key: &[u8]) -> Result<()> {
+    use super::frame::decode_frame;
+    let mut cursor = 0usize;
+    let mut expected_window_start = 0usize;
+    let mut expected_frame_count = 0u32;
+    let mut logical = Vec::with_capacity(header_len + frames.len());
+    logical.resize(header_len, 0);
+    logical.extend_from_slice(frames);
+    while cursor < frames.len() {
+        let decoded = decode_frame(&frames[cursor..])
+            .with_context(|| format!("decode sealed frame at logical offset {}", header_len + cursor))?;
+        let end = cursor.checked_add(decoded.header.total_len as usize)
+            .context("sealed marker offset overflow")?;
+        anyhow::ensure!(end <= frames.len(), "sealed marker frame exceeds logical body");
+        if decoded.header.event_type == super::events::EVENT_TYPE_COMPACTION_MARKER {
+            let marker: super::compaction::MarkerPayload = serde_json::from_slice(decoded.payload)
+                .context("decode sealed compaction marker")?;
+            let marker_from = usize::try_from(marker.from_offset)
+                .context("sealed compaction marker from offset exceeds platform range")?;
+            let marker_to = usize::try_from(marker.to_offset)
+                .context("sealed compaction marker to offset exceeds platform range")?;
+            let expected_from = header_len.checked_add(expected_window_start)
+                .context("sealed compaction marker expected from overflow")?;
+            let expected_to = header_len.checked_add(cursor)
+                .context("sealed compaction marker expected to overflow")?;
+            anyhow::ensure!(
+                marker_from == expected_from
+                    && marker_to == expected_to
+                    && marker_to > marker_from
+                    && marker.frame_count == expected_frame_count,
+                "sealed compaction marker has a non-adjacent or malformed window"
+            );
+            super::compaction::verify_marker_bytes(&logical, key, &marker)?;
+            expected_window_start = end;
+            expected_frame_count = 0;
+        } else {
+            expected_frame_count = expected_frame_count
+                .checked_add(1)
+                .context("sealed compaction marker frame count overflow")?;
+        }
+        cursor = end;
+    }
+    Ok(())
 }
 
 /// Idempotent low-level primitive: take an open r/w file positioned
@@ -1539,6 +1812,150 @@ mod tests {
         bytes.extend_from_slice(&blob);
         std::fs::write(&path, &bytes).unwrap();
         (dir, path, offsets)
+    }
+
+    fn write_authenticated_leaf_with_writer_marker_type(home: &std::path::Path, event_type: u8, payload: &[u8]) -> std::path::PathBuf {
+        use crate::wal::compaction::CompactionState;
+        use crate::wal::compress::compress_frames;
+        use crate::wal::segment_header::{SEGMENT_FLAG_COMPRESSED, SEGMENT_FLAG_SEALED, SegmentHeaderV2, SEGMENT_HEADER_V2_LEN};
+        let wal = home.join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let key = [7u8; 32];
+        std::fs::write(wal.join("hmac.key"), key).unwrap();
+        let path = wal.join("000001.wal");
+        let mut data_header = make_header(payload.len() as u32, 1);
+        data_header.event_type = event_type;
+        let data = encode_frame(&data_header, payload);
+        let mut state = CompactionState::new(&key, SEGMENT_HEADER_V2_LEN as u64);
+        state.update(&data);
+        let marker = state.finalise_marker(&key, SEGMENT_HEADER_V2_LEN as u64 + data.len() as u64);
+        // Match writer.rs: the persisted marker carries ts_ns in addition to
+        // MarkerPayload's typed core fields.
+        let marker_payload = serde_json::to_vec(&serde_json::json!({
+            "from_offset": marker.from_offset, "to_offset": marker.to_offset,
+            "frame_count": marker.frame_count, "hmac_hex": marker.hmac_hex,
+            "compaction_epoch": 0, "ts_ns": 1,
+        })).unwrap();
+        let marker_header = HeaderBuilder::new(super::events::EVENT_TYPE_COMPACTION_MARKER, &marker_payload)
+            .flags(EventFlags::SYNTHETIC).build();
+        let mut logical = data;
+        logical.extend_from_slice(&encode_frame(&marker_header, &marker_payload));
+        let mut bytes = SegmentHeaderV2::new(1, 1, 0, 0, [0; 16], SEGMENT_FLAG_COMPRESSED | SEGMENT_FLAG_SEALED)
+            .to_le_bytes().to_vec();
+        bytes.extend_from_slice(&compress_frames(&logical).unwrap());
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    fn write_authenticated_leaf_with_writer_marker(home: &std::path::Path, payload: &[u8]) -> std::path::PathBuf {
+        write_authenticated_leaf_with_writer_marker_type(home, 0x01, payload)
+    }
+
+    #[test]
+    fn stage_then_publish_authenticated_leaf_preserves_writer_marker_hmac() {
+        let home = tempfile::tempdir().unwrap();
+        let path = write_authenticated_leaf_with_writer_marker(home.path(), b"AcmeCorp retained row");
+        let before = std::fs::read(&path).unwrap();
+        let prepared = stage_authenticated_sealed_leaf(home.path(), &path, payload_contains_topic("acmecorp"))
+            .unwrap().expect("matched leaf stages");
+        assert_eq!(std::fs::read(&path).unwrap(), before, "stage must not publish");
+        let rewrite = prepared.publish().unwrap();
+        assert_eq!(rewrite.report.frames_redacted_count(), 1);
+        let logical = crate::wal::compaction::logical_segment_bytes(&std::fs::read(&path).unwrap()).unwrap().1;
+        let header_len = crate::wal::segment_header::SEGMENT_HEADER_V2_LEN;
+        let frame = decode_frame(&logical[header_len..]).unwrap();
+        let marker_offset = header_len + frame.header.total_len as usize;
+        let marker_frame = decode_frame(&logical[marker_offset..]).unwrap();
+        let marker: crate::wal::compaction::MarkerPayload = serde_json::from_slice(marker_frame.payload).unwrap();
+        crate::wal::compaction::verify_marker_bytes(&logical, &[7; 32], &marker).unwrap();
+    }
+
+    #[test]
+    fn staged_authenticated_leaf_refuses_a_replaced_target_without_overwriting_it() {
+        let home = tempfile::tempdir().unwrap();
+        let path = write_authenticated_leaf_with_writer_marker(home.path(), b"AcmeCorp retained row");
+        let prepared = stage_authenticated_sealed_leaf(home.path(), &path, payload_contains_topic("acmecorp"))
+            .unwrap().expect("matched leaf stages");
+        // This is a real namespace replacement after the retained no-follow
+        // stage binding, not a mocked identity comparison.
+        let replacement = path.with_extension("replacement");
+        std::fs::write(&replacement, b"unrelated replacement bytes").unwrap();
+        std::fs::rename(&replacement, &path).unwrap();
+        let preserved = std::fs::read(&path).unwrap();
+        let error = prepared.publish().expect_err("replaced target must refuse publication");
+        assert!(format!("{error:#}").contains("changed") || format!("{error:#}").contains("identity"));
+        assert_eq!(std::fs::read(&path).unwrap(), preserved, "replacement must survive refusal");
+    }
+
+    #[test]
+    fn staged_authenticated_leaf_refuses_matched_structural_frame_byte_identically() {
+        let home = tempfile::tempdir().unwrap();
+        let path = write_authenticated_leaf_with_writer_marker_type(
+            home.path(), super::events::EVENT_TYPE_SEGMENT_ROLLOVER, b"AcmeCorp structural link",
+        );
+        let before = std::fs::read(&path).unwrap();
+        let error = stage_authenticated_sealed_leaf(home.path(), &path, payload_contains_topic("acmecorp"))
+            .err().expect("matched authenticated structural frame must refuse");
+        assert!(format!("{error:#}").contains("chain-structural"));
+        assert_eq!(std::fs::read(&path).unwrap(), before, "refusal must not publish a staged rewrite");
+    }
+
+    #[test]
+    fn staged_authenticated_predecessor_refuses_real_authenticated_rollover_successor() {
+        use crate::wal::compaction::CompactionState;
+        use crate::wal::segment_header::SegmentHeaderV2;
+        let home = tempfile::tempdir().unwrap();
+        let predecessor = write_authenticated_leaf_with_writer_marker(home.path(), b"AcmeCorp predecessor");
+        let predecessor_bytes = std::fs::read(&predecessor).unwrap();
+        let wal = home.path().join("wal");
+        let successor_name = "000002.wal";
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "link_domain":"neoth.wal.cross-segment.v1", "link_version":1,
+            "closed_segment_name":"000001.wal", "closed_generation":1, "closed_seq":1,
+            "closed_bytes": predecessor_bytes.len(), "closed_start_ts_ns":0, "closed_node_id":([0_u8;16]),
+            "closed_physical_bytes": predecessor_bytes.len(), "closed_sha256_hex":hex::encode(Sha256::digest(&predecessor_bytes)),
+            "opened_segment_name":successor_name, "opened_generation":1, "opened_seq":2,
+            "opened_start_ts_ns":0, "opened_node_id":([0_u8;16]), "reason":"size", "ts_ns":1,
+        })).unwrap();
+        let link_header = HeaderBuilder::new(super::events::EVENT_TYPE_SEGMENT_ROLLOVER, &payload)
+            .flags(EventFlags::SYNTHETIC).build();
+        let link = encode_frame(&link_header, &payload);
+        let mut successor = SegmentHeaderV2::new(1, 2, 0, 0, [0;16], 0).to_le_bytes().to_vec();
+        let mut state = CompactionState::new(&[7;32], successor.len() as u64);
+        state.update(&link);
+        successor.extend_from_slice(&link);
+        let marker = state.finalise_marker(&[7;32], successor.len() as u64);
+        let marker_payload = serde_json::to_vec(&marker).unwrap();
+        let marker_header = HeaderBuilder::new(super::events::EVENT_TYPE_COMPACTION_MARKER, &marker_payload)
+            .flags(EventFlags::SYNTHETIC).build();
+        successor.extend_from_slice(&encode_frame(&marker_header, &marker_payload));
+        std::fs::write(wal.join(successor_name), successor).unwrap();
+        let before = std::fs::read(&predecessor).unwrap();
+        let error = stage_authenticated_sealed_leaf(home.path(), &predecessor, payload_contains_topic("acmecorp"))
+            .err().expect("authenticated predecessor must refuse");
+        assert!(format!("{error:#}").contains("successor"));
+        assert_eq!(std::fs::read(&predecessor).unwrap(), before);
+    }
+
+    #[test]
+    fn staged_leaf_in_independent_namespace_is_accepted_when_another_namespace_is_last() {
+        let home = tempfile::tempdir().unwrap();
+        let wal = home.path().join("wal");
+        let first = write_authenticated_leaf_with_writer_marker(home.path(), b"AcmeCorp alpha leaf");
+        let alpha = wal.join("alpha-000001.wal");
+        std::fs::rename(&first, &alpha).unwrap();
+        let second = write_authenticated_leaf_with_writer_marker(home.path(), b"unrelated beta leaf");
+        let beta = wal.join("beta-000001.wal");
+        std::fs::rename(&second, &beta).unwrap();
+        let beta_before = std::fs::read(&beta).unwrap();
+
+        let prepared = stage_authenticated_sealed_leaf(home.path(), &alpha, payload_contains_topic("acmecorp"))
+            .expect("independent alpha namespace must authenticate")
+            .expect("alpha match must stage even though beta is globally later");
+        prepared.publish().expect("alpha namespace leaf publishes");
+
+        assert_eq!(std::fs::read(&beta).unwrap(), beta_before,
+            "unrelated namespace leaf must remain byte-identical");
     }
 
     /// Decompress a sealed segment's body back to raw frame bytes for assertions.

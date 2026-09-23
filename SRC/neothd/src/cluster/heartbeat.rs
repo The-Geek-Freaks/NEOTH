@@ -371,8 +371,16 @@ pub fn validate_task_delegate(body: &TaskDelegateBody) -> Result<()> {
 
 fn validate_task_scope_id(label: &str, value: &str) -> Result<()> {
     anyhow::ensure!(!value.is_empty(), "task_delegate: {label} is empty");
-    anyhow::ensure!(value.len() <= MAX_TASK_SCOPE_ID_BYTES, "task_delegate: {label} exceeds cap");
-    anyhow::ensure!(value.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':')), "task_delegate: {label} contains non canonical characters");
+    anyhow::ensure!(
+        value.len() <= MAX_TASK_SCOPE_ID_BYTES,
+        "task_delegate: {label} exceeds cap"
+    );
+    anyhow::ensure!(
+        value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':')),
+        "task_delegate: {label} contains non canonical characters"
+    );
     Ok(())
 }
 
@@ -741,17 +749,31 @@ mod tests {
         };
         assert!(validate_task_delegate(&ok).is_ok());
         let scoped = TaskDelegateBody {
-            task_id: "scope".into(), prompt: "p".into(), model_hint: None,
-            scope: Some(TaskDelegateScope { skill_id: "summarize".into(), channel_id: Some("telegram".into()), account_id: Some("primary".into()) }),
+            task_id: "scope".into(),
+            prompt: "p".into(),
+            model_hint: None,
+            scope: Some(TaskDelegateScope {
+                skill_id: "summarize".into(),
+                channel_id: Some("telegram".into()),
+                account_id: Some("primary".into()),
+            }),
         };
         assert!(validate_task_delegate(&scoped).is_ok());
         let invalid_scope = TaskDelegateBody {
-            scope: Some(TaskDelegateScope { skill_id: "not valid".into(), channel_id: None, account_id: None }),
+            scope: Some(TaskDelegateScope {
+                skill_id: "not valid".into(),
+                channel_id: None,
+                account_id: None,
+            }),
             ..scoped.clone()
         };
         assert!(validate_task_delegate(&invalid_scope).is_err());
         let oversized_scope = TaskDelegateBody {
-            scope: Some(TaskDelegateScope { skill_id: "x".repeat(MAX_TASK_SCOPE_ID_BYTES + 1), channel_id: None, account_id: None }),
+            scope: Some(TaskDelegateScope {
+                skill_id: "x".repeat(MAX_TASK_SCOPE_ID_BYTES + 1),
+                channel_id: None,
+                account_id: None,
+            }),
             ..scoped
         };
         assert!(validate_task_delegate(&oversized_scope).is_err());

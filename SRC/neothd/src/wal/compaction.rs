@@ -1166,6 +1166,110 @@ pub fn verify_marker_bytes(segment_bytes: &[u8], key: &[u8], marker: &MarkerPayl
     Ok(())
 }
 
+/// Rebind every persisted compaction marker after an authorised, fixed-layout
+/// rewrite of a *closed* logical segment.  This is deliberately narrower than
+/// a general repair primitive: callers must have already proved that the
+/// segment is a chain leaf and that the rewrite did not change frame offsets.
+///
+/// The marker payload is patched in place (only its 64-byte hex tag changes),
+/// so marker frame lengths and every later logical offset remain stable.
+pub(crate) fn rebind_marker_hmacs(
+    logical: &mut [u8],
+    header_len: usize,
+    key: &[u8],
+) -> Result<usize> {
+    use super::events::EVENT_TYPE_COMPACTION_MARKER;
+    use super::frame::decode_frame;
+    use super::header::{CRC_LEN, HEADER_BODY_LEN, PREAMBLE_LEN};
+
+    let mut cursor = 0usize;
+    // Marker windows are an authenticated partition of the ordinary frames
+    // preceding each marker.  Keep the expected start and count while walking
+    // the *entire* logical body: accepting a marker that merely has an in-range
+    // `from`/`to` pair would let a malformed adjacency or frame-count claim be
+    // re-signed during an otherwise authorised leaf rewrite.
+    let mut expected_window_start = 0usize;
+    let mut expected_frame_count = 0u32;
+    let mut rebound = 0usize;
+    while cursor < logical.len() {
+        let decoded = decode_frame(&logical[cursor..])
+            .with_context(|| format!("decode frame at logical offset {cursor}"))?;
+        let total = decoded.header.total_len as usize;
+        let end = cursor.checked_add(total).context("marker frame offset overflow")?;
+        if end > logical.len() {
+            anyhow::bail!("marker frame at {cursor} runs beyond logical segment");
+        }
+        if decoded.header.event_type == EVENT_TYPE_COMPACTION_MARKER {
+            let mut marker_value: serde_json::Value = serde_json::from_slice(decoded.payload)
+                .with_context(|| format!("decode compaction marker JSON at {cursor}"))?;
+            let marker: MarkerPayload = serde_json::from_value(marker_value.clone())
+                .with_context(|| format!("decode compaction marker at {cursor}"))?;
+            let expected_from = header_len
+                .checked_add(expected_window_start)
+                .context("compaction marker expected from overflow")?;
+            let expected_to = header_len
+                .checked_add(cursor)
+                .context("compaction marker expected to overflow")?;
+            let marker_from = usize::try_from(marker.from_offset)
+                .context("compaction marker from offset exceeds platform range")?;
+            let marker_to = usize::try_from(marker.to_offset)
+                .context("compaction marker to offset exceeds platform range")?;
+            if marker_from != expected_from
+                || marker_to != expected_to
+                || marker_to <= marker_from
+                || marker.frame_count != expected_frame_count
+            {
+                anyhow::bail!("compaction marker at {cursor} has an invalid fixed-layout window");
+            }
+            let mut mac = HmacSha256::new_from_slice(key).expect("HMAC-SHA256 accepts any key length");
+            mac.update(&logical[expected_window_start..cursor]);
+            let tag = mac.finalize().into_bytes();
+            let hmac_hex: String = tag.iter().map(|b| format!("{b:02x}")).collect();
+            let payload_start = cursor + PREAMBLE_LEN + HEADER_BODY_LEN + decoded.header.reserved_len as usize;
+            let payload_end = payload_start + decoded.header.payload_len as usize;
+            if marker.hmac_hex.len() != 64 {
+                anyhow::bail!("compaction marker at {cursor} has non-canonical HMAC length");
+            }
+            let object = marker_value.as_object_mut()
+                .context("compaction marker must be a JSON object")?;
+            let Some(value) = object.get_mut("hmac_hex") else {
+                anyhow::bail!("compaction marker at {cursor} has no typed hmac_hex field");
+            };
+            anyhow::ensure!(value.as_str() == Some(marker.hmac_hex.as_str()),
+                "compaction marker at {cursor} has a non-string hmac_hex field");
+            *value = serde_json::Value::String(hmac_hex);
+            let rebound_payload = serde_json::to_vec(&marker_value)
+                .context("encode rebound compaction marker")?;
+            if rebound_payload.len() != decoded.payload.len() {
+                anyhow::bail!("compaction marker at {cursor} cannot be patched without changing layout");
+            }
+            // Re-serialize the complete, typed JSON marker.  Do not search for
+            // the old hex text: an attacker could place it in an unknown field
+            // and cause us to patch the wrong bytes.
+            logical[payload_start..payload_end].copy_from_slice(&rebound_payload);
+            let payload_hash_offset = cursor + PREAMBLE_LEN + 85;
+            let payload_hash = xxhash_rust::xxh3::xxh3_64(&rebound_payload);
+            logical[payload_hash_offset..payload_hash_offset + 8]
+                .copy_from_slice(&payload_hash.to_le_bytes());
+            let crc_offset = end - CRC_LEN;
+            let crc = crc32c::crc32c(&logical[cursor..crc_offset]);
+            logical[crc_offset..end].copy_from_slice(&crc.to_le_bytes());
+            rebound += 1;
+            // The next writer window starts *after* this marker frame.  The
+            // marker itself authenticated the preceding window and is never
+            // fed into the next rolling MAC.
+            expected_window_start = end;
+            expected_frame_count = 0;
+        } else {
+            expected_frame_count = expected_frame_count
+                .checked_add(1)
+                .context("compaction marker frame count overflow")?;
+        }
+        cursor = end;
+    }
+    Ok(rebound)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

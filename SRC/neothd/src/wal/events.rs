@@ -294,6 +294,9 @@ pub enum ExtendedSubtype {
     CounterpartyConsentRevoked = 0x31,
     /// W331 — authenticated, content-free receipt for one completed Dream phase.
     DreamPhaseAudit = 0x32,
+    /// W373 — authenticated terminal receipt for one physical sealed-leaf WAL
+    /// rewrite. The fixed descriptor binds only operation and digest metadata.
+    RedactionRewriteReceipt = 0x33,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -398,6 +401,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::CounterpartyConsentGrant => "counterparty_consent_grant",
             ExtendedSubtype::CounterpartyConsentRevoked => "counterparty_consent_revoked",
             ExtendedSubtype::DreamPhaseAudit => "dream_phase_audit",
+            ExtendedSubtype::RedactionRewriteReceipt => "redaction_rewrite_receipt",
         }
     }
 
@@ -454,6 +458,7 @@ impl ExtendedSubtype {
             0x30 => Some(ExtendedSubtype::CounterpartyConsentGrant),
             0x31 => Some(ExtendedSubtype::CounterpartyConsentRevoked),
             0x32 => Some(ExtendedSubtype::DreamPhaseAudit),
+            0x33 => Some(ExtendedSubtype::RedactionRewriteReceipt),
             _ => None,
         }
     }
@@ -512,6 +517,7 @@ impl ExtendedSubtype {
             Self::CounterpartyConsentGrant,
             Self::CounterpartyConsentRevoked,
             Self::DreamPhaseAudit,
+            Self::RedactionRewriteReceipt,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))

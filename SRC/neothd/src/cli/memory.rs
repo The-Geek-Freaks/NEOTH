@@ -11,11 +11,13 @@
 //!   `--tier <hot|warm|cold>`  filter recall by memory tier (R-22)
 //!   `--archive <YYYY-MM-DD>`  list session MD files for one day (R-22)
 
-use std::path::PathBuf;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde::Serialize;
+use sha2::{Digest as _, Sha256};
 use tracing::info;
 
 use crate::cli::OutputFormat;
@@ -1312,12 +1314,10 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
     Ok(())
 }
 
-/// C-15 helper: walk every `.wal` segment under `wal_dir` + call
-/// `wal::redact::scan_and_redact` with a topic-substring predicate.
-/// After each segment that actually had frames redacted, emits a
-/// `REDACTION_MARKER` (0xF3) WAL frame so future integrity verifiers
-/// treat the HMAC mismatch on the redacted offsets as operator-
-/// authorised rather than adversarial tampering.
+/// Walk every `.wal` segment with a topic-substring predicate. Raw and legacy
+/// paths retain their `REDACTION_MARKER` audit frame. A sealed authenticated
+/// leaf instead uses the journaled rewrite transaction and closed receipt;
+/// its compaction HMACs are rebound, so it must never receive generic 0xF3.
 ///
 /// Aggregates per-segment reports into one operator-readable summary.
 ///
@@ -1335,6 +1335,7 @@ async fn run_physical_redaction(
     now_unix: i64,
 ) -> Result<PhysicalRedactSummary> {
     use crate::wal::redact;
+    use crate::wal::redaction_rewrite_journal as rewrite_journal;
 
     let wal_dir = home.join("wal");
     let mut summary = PhysicalRedactSummary::default();
@@ -1357,19 +1358,21 @@ async fn run_physical_redaction(
         }
     };
 
-    // Open a dedicated audit-only segment for the REDACTION_MARKER
-    // frames. Same pattern as the TOMBSTONE_REQUESTED segment.
+    // A retained authenticated-leaf journal is recovered before any new
+    // scan.  Its exact descriptor is self-contained, so recovery never needs
+    // the erased input again and never re-applies the physical rewrite.
+    let journal_authority = rewrite_journal::acquire(home)
+        .context("acquire authenticated leaf rewrite journal authority")?;
+    if recover_authenticated_leaf_rewrite(home, &journal_authority).await?.is_some() {
+        anyhow::bail!(
+            "recovered a prior authenticated leaf rewrite; its journal intentionally retains no erased topic, so rerun physical redaction for the current topic"
+        );
+    }
+
+    // Do not create a generic audit segment before proving/staging an
+    // authenticated leaf: that write would become the target's successor.
     std::fs::create_dir_all(&wal_dir).context("create WAL dir for redaction audit")?;
-    // Concurrent invocations can share the same `now_unix` second. A
-    // deterministic name let their audit writers target one segment, which is
-    // both a lock collision and an audit-integrity failure. Reuse the writer's
-    // UUIDv7 standalone namespace; rotation remains namespace-safe.
-    let audit_segment = physical_redaction_audit_segment_path(&wal_dir);
-    let (audit_writer, audit_completion) = crate::wal::writer::spawn_for_home_with_completion(
-        audit_segment.clone(),
-        home.to_path_buf(),
-    )
-    .context("spawn home-bound WAL writer for redaction audit")?;
+    let mut pending_markers = Vec::new();
 
     for entry in entries {
         let entry = match entry {
@@ -1388,45 +1391,56 @@ async fn run_physical_redaction(
         if path.extension().and_then(|s| s.to_str()) != Some("wal") {
             continue;
         }
-        // Skip the audit segment itself so we don't redact our own
-        // marker frames on a re-run.
-        if path == audit_segment {
-            continue;
-        }
         let pred = redact::payload_contains_topic(topic);
-        match redact::scan_and_redact(&path, pred) {
-            Ok(report) => {
+        let target_basename = match path.file_name().and_then(|name| name.to_str()) {
+            Some(name) => name,
+            None => {
+                summary.errors += 1;
+                continue;
+            }
+        };
+        let sealed = match bound_authenticated_leaf_image(home, target_basename) {
+            Ok((_, _, sealed)) => sealed,
+            Err(error) => {
+                tracing::warn!(segment = %path.display(), error = %error,
+                    "WAL segment header could not be read through its bounded no-follow binding");
+                summary.errors += 1;
+                continue;
+            }
+        };
+        let result: Result<(redact::RedactReport, bool)> = if sealed {
+            redact_authenticated_leaf_with_journal(
+                home,
+                &path,
+                topic,
+                &journal_authority,
+                pred,
+            )
+            .await
+            .map(|report| (report, false))
+        } else {
+            redact::scan_and_redact(&path, pred).map(|report| (report, true))
+        };
+        match result {
+            Ok((report, emit_generic_marker)) => {
                 summary.segments_touched += 1;
                 summary.frames_redacted += report.frames_redacted_count() as u64;
                 summary.bytes_redacted += report.bytes_redacted;
                 summary.already_redacted_skipped += report.already_redacted as u64;
-                // Emit one REDACTION_MARKER per segment that had >=1
-                // frame redacted. Segments with zero matches stay
-                // silent — no audit clutter.
-                if !report.frames_redacted.is_empty() {
-                    if let Err(e) = redact::emit_redaction_marker(
-                        &audit_writer,
-                        &path,
-                        &report.frames_redacted,
-                        report.bytes_redacted,
-                        topic,
-                        "cli",
-                        now_unix,
-                    )
-                    .await
-                    {
-                        tracing::warn!(
-                            segment = %path.display(),
-                            error = %e,
-                            "REDACTION_MARKER emission failed; segment is redacted but audit is incomplete"
-                        );
-                        summary.errors += 1;
-                    } else {
-                        summary.markers_emitted += 1;
-                    }
+                // Authenticated leaf rewrites use their closed rewrite receipt
+                // as the sole audit evidence.  The generic 0xF3 marker remains
+                // for legacy/raw paths only.
+                if emit_generic_marker && !report.frames_redacted.is_empty() {
+                    pending_markers.push((path, report));
                 }
             }
             Err(e) => {
+                if sealed {
+                    return Err(e).with_context(|| format!(
+                        "authenticated leaf rewrite for {} left or encountered recoverable transaction state; stop before mutating another segment",
+                        path.display()
+                    ));
+                }
                 tracing::warn!(
                     segment = %path.display(),
                     error = %e,
@@ -1437,6 +1451,24 @@ async fn run_physical_redaction(
         }
     }
 
+    if pending_markers.is_empty() {
+        return Ok(summary);
+    }
+    let audit_segment = physical_redaction_audit_segment_path(&wal_dir);
+    let (audit_writer, audit_completion) = crate::wal::writer::spawn_for_home_with_completion(
+        audit_segment.clone(), home.to_path_buf(),
+    ).context("spawn home-bound WAL writer for redaction audit")?;
+    for (path, report) in pending_markers {
+        if let Err(e) = redact::emit_redaction_marker(
+            &audit_writer, &path, &report.frames_redacted, report.bytes_redacted, topic, "cli", now_unix,
+        ).await {
+            tracing::warn!(segment = %path.display(), error = %e,
+                "REDACTION_MARKER emission failed; segment is redacted but audit is incomplete");
+            summary.errors += 1;
+        } else {
+            summary.markers_emitted += 1;
+        }
+    }
     drop(audit_writer);
     if let Err(e) = audit_completion.wait().await {
         tracing::warn!(
@@ -1448,6 +1480,205 @@ async fn run_physical_redaction(
     }
     summary.audit_segment = Some(audit_segment.display().to_string());
     Ok(summary)
+}
+
+fn authenticated_leaf_receipt_descriptor(
+    home: &Path,
+    topic: &str,
+    rewrite: &crate::wal::redact::AuthenticatedLeafRewrite,
+) -> Result<crate::wal::RedactionRewriteReceiptDescriptor> {
+    let home_binding = crate::wal::redaction_rewrite_receipts::derive_home_binding_sha256(home)
+        .context("derive authenticated leaf rewrite home binding")?;
+    let mut offsets = Sha256::new();
+    offsets.update(b"neoth/redaction-rewrite-offsets/v1\0");
+    for offset in &rewrite.report.frames_redacted {
+        offsets.update(offset.to_be_bytes());
+    }
+    let mut operation = Sha256::new();
+    operation.update(b"neoth/redaction-rewrite-operation/v1\0");
+    operation.update((topic.len() as u64).to_be_bytes());
+    operation.update(topic.as_bytes());
+    operation.update(rewrite.target_identity_sha256);
+    operation.update(rewrite.old_sha256);
+    operation.update(rewrite.new_sha256);
+    crate::wal::RedactionRewriteReceiptDescriptor::new(
+        operation.finalize().into(), home_binding, rewrite.target_identity_sha256,
+        rewrite.old_sha256, rewrite.new_sha256, offsets.finalize().into(),
+        rewrite.report.frames_redacted_count() as u64, rewrite.old_len, rewrite.new_len,
+    ).map_err(|error| anyhow::anyhow!("build authenticated leaf redaction receipt: {error}"))
+}
+
+async fn redact_authenticated_leaf_with_journal<F>(
+    home: &Path,
+    target: &Path,
+    topic: &str,
+    authority: &crate::wal::redaction_rewrite_journal::RewriteJournalAuthority,
+    predicate: F,
+) -> Result<crate::wal::redact::RedactReport>
+where
+    F: FnMut(&[u8]) -> bool,
+{
+    use crate::wal::redaction_rewrite_journal::{self as journal, TargetImage};
+
+    let Some(staged) = crate::wal::redact::stage_authenticated_sealed_leaf(home, target, predicate)? else {
+        return Ok(crate::wal::redact::RedactReport::default());
+    };
+    let prepublish = staged.rewrite();
+    let descriptor = authenticated_leaf_receipt_descriptor(home, topic, &prepublish)?;
+    let target_basename = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("authenticated leaf rewrite target has no UTF-8 basename")?;
+    journal::prepare(
+        authority,
+        target_basename,
+        &descriptor,
+        prepublish.target_identity_sha256,
+        TargetImage::new(prepublish.old_sha256, prepublish.old_len),
+    )?;
+
+    // The target lease remains held from staging through this atomic publish.
+    // A failed publish leaves the prepared journal behind; recovery can only
+    // abandon it after a no-follow read proves the retained old image.
+    let rewrite = staged.publish()?;
+    let receipt_proof = append_authenticated_leaf_rewrite_receipt(home, descriptor).await?;
+    journal::mark_delivered(authority, &descriptor, receipt_proof)?;
+    let (current, derived_identity, _) = bound_authenticated_leaf_image(home, target_basename)?;
+    journal::finalize_delivered(
+        authority,
+        &descriptor,
+        derived_identity,
+        current,
+        receipt_proof,
+    )?;
+    Ok(rewrite.report)
+}
+
+async fn recover_authenticated_leaf_rewrite(
+    home: &Path,
+    authority: &crate::wal::redaction_rewrite_journal::RewriteJournalAuthority,
+) -> Result<Option<String>> {
+    use crate::wal::redaction_rewrite_journal::{self as journal, RecoveryDecision};
+
+    let Some(pending) = journal::load_pending(authority)? else {
+        return Ok(None);
+    };
+    let (current, derived_identity, _) = bound_authenticated_leaf_image(home, &pending.target_basename)?;
+    journal::validate_target_identity(&pending.descriptor, derived_identity)?;
+    match journal::recover(authority, current)? {
+        Some(RecoveryDecision::OldUnchanged) => {
+            journal::abandon_old_unchanged(authority, current)?;
+            Ok(None)
+        }
+        Some(RecoveryDecision::NewPublished { descriptor }) => {
+            let receipt_proof = append_authenticated_leaf_rewrite_receipt(home, descriptor).await?;
+            journal::mark_delivered(authority, &descriptor, receipt_proof)?;
+            let (current, derived_identity, _) =
+                bound_authenticated_leaf_image(home, &pending.target_basename)?;
+            journal::finalize_delivered(
+                authority,
+                &descriptor,
+                derived_identity,
+                current,
+                receipt_proof,
+            )?;
+            Ok(Some(pending.target_basename))
+        }
+        Some(RecoveryDecision::Delivered { descriptor, receipt_proof_sha256 }) => {
+            let (current, derived_identity, _) =
+                bound_authenticated_leaf_image(home, &pending.target_basename)?;
+            let exact = crate::wal::redaction_rewrite_receipts::lookup_exact_at_home(home, &descriptor);
+            let observed = match exact {
+                crate::wal::redaction_rewrite_receipts::Lookup::Exact(receipt) => receipt.frame_sha256(),
+                _ => anyhow::bail!("delivered authenticated leaf rewrite lacks an exact recoverable WAL receipt"),
+            };
+            anyhow::ensure!(observed == receipt_proof_sha256,
+                "delivered authenticated leaf rewrite receipt proof differs from its journal");
+            journal::finalize_delivered(
+                authority,
+                &descriptor,
+                derived_identity,
+                current,
+                receipt_proof_sha256,
+            )?;
+            Ok(Some(pending.target_basename))
+        }
+        Some(RecoveryDecision::Conflict) => anyhow::bail!(
+            "authenticated leaf rewrite journal target is neither its prepared old image nor its published new image"
+        ),
+        None => Ok(None),
+    }
+}
+
+async fn append_authenticated_leaf_rewrite_receipt(
+    home: &Path,
+    descriptor: crate::wal::RedactionRewriteReceiptDescriptor,
+) -> Result<[u8; 32]> {
+    let wal_dir = home.join("wal");
+    let audit_segment = physical_redaction_audit_segment_path(&wal_dir);
+    let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(
+        audit_segment,
+        home.to_path_buf(),
+    ).context("spawn authenticated leaf rewrite receipt writer")?;
+    let append = writer.append_redaction_rewrite_once(home, descriptor).await;
+    drop(writer);
+    let completion = completion.wait().await;
+    let outcome = append.context("append exact authenticated leaf rewrite receipt")?;
+    completion.context("finalize authenticated leaf rewrite receipt writer")?;
+    match outcome {
+        crate::wal::RedactionRewriteOnceOutcome::AppendedExact(receipt)
+        | crate::wal::RedactionRewriteOnceOutcome::ExistingExact(receipt) => Ok(receipt.frame_sha256()),
+    }
+}
+
+/// Read one journal-named direct child through a no-follow capability and bind
+/// both its retained bytes and immutable segment-header identity.  Recovery
+/// uses this before every decision; it never trusts the stored basename alone.
+fn bound_authenticated_leaf_image(
+    home: &Path,
+    target_basename: &str,
+) -> Result<(crate::wal::redaction_rewrite_journal::TargetImage, [u8; 32], bool)> {
+    let wal_path = home.join("wal");
+    let wal = crate::skills::store::open_bound_directory(
+        &wal_path,
+        false,
+        "authenticated leaf rewrite recovery WAL directory",
+    )?.context("authenticated leaf rewrite recovery WAL directory is missing")?;
+    let target = wal.display_path.join(target_basename);
+    let (mut file, binding) = crate::skills::store::open_bound_regular_file_readwrite(
+        &wal.dir,
+        std::ffi::OsStr::new(target_basename),
+        &target,
+    )?;
+    let limit = crate::wal::scan::supported_home_scan_limits().max_segment_physical_bytes as u64;
+    let length = file.metadata().context("inspect journal recovery target")?.len();
+    anyhow::ensure!(length <= limit, "authenticated leaf rewrite recovery target exceeds physical-byte limit");
+    let max_read = limit.checked_add(1).context("authenticated leaf rewrite recovery read limit overflow")?;
+    let mut bytes = Vec::with_capacity(usize::try_from(length).context("journal recovery target length exceeds platform range")?);
+    (&mut file).take(max_read)
+        .read_to_end(&mut bytes)
+        .context("bounded read no-follow authenticated leaf rewrite recovery target")?;
+    let final_length = file.metadata().context("reinspect journal recovery target")?.len();
+    anyhow::ensure!(bytes.len() as u64 <= limit
+        && bytes.len() as u64 == length
+        && final_length == length
+        && binding.matches_regular_file_child_readonly(&wal.dir, std::ffi::OsStr::new(target_basename), &target)?,
+        "authenticated leaf rewrite recovery target changed while being read");
+    let header = crate::wal::segment_header::parse_segment_header(&bytes)
+        .context("parse authenticated leaf rewrite recovery target header")?;
+    let name = target_basename;
+    let identity = crate::wal::redaction_rewrite_receipts::derive_target_identity_sha256(
+        name,
+        header.generation(),
+        header.segment_seq(),
+        header.segment_start_ts_ns(),
+        header.node_id(),
+    );
+    Ok((
+        crate::wal::redaction_rewrite_journal::TargetImage::new(Sha256::digest(&bytes).into(), length),
+        identity,
+        header.is_sealed() && header.is_compressed(),
+    ))
 }
 
 /// Operator-readable summary of a `--physical` redaction pass.
@@ -1468,9 +1699,9 @@ struct PhysicalRedactSummary {
 }
 
 /// GR-008 — a `--physical` erasure is only a CONFIRMED success when no segment
-/// errored. Any `errors > 0` means a segment refused redaction (including an
-/// authenticated chain whose signed rewrite transaction is not implemented)
-/// or a redaction-marker audit emit failed, so the GDPR-grade wipe is not
+/// errored. Any `errors > 0` means a segment refused redaction, its bounded
+/// transaction/recovery state is unresolved, or a legacy redaction-marker
+/// audit emit failed, so the GDPR-grade wipe is not
 /// provably complete. The CLI must NOT print an affirmative
 /// "sufficient / GDPR-grade erasure" message and must fail loud in that case.
 fn physical_erasure_incomplete(summary: &PhysicalRedactSummary) -> bool {
@@ -2434,6 +2665,71 @@ mod tests {
         wal_dir
     }
 
+    /// Writer-shaped sealed leaf fixture: an ordinary matching frame followed
+    /// by its authenticated marker, including the writer's `ts_ns` property.
+    /// This exercises the CLI transaction rather than the old 0xF3 exemption.
+    fn write_authenticated_sealed_leaf(home: &Path, payload: &[u8]) -> PathBuf {
+        use crate::wal::compaction::CompactionState;
+        use crate::wal::frame::encode_frame;
+        use crate::wal::segment_header::{
+            SEGMENT_FLAG_COMPRESSED, SEGMENT_FLAG_SEALED, SegmentHeaderV2,
+        };
+
+        let wal = seed_wal_identity(home);
+        crate::wal::signing::load_or_init_signing_key(&wal.join("signing.key")).unwrap();
+        let target = wal.join("000001.wal");
+        let header = SegmentHeaderV2::new(
+            1,
+            1,
+            0,
+            11,
+            [4; 16],
+            SEGMENT_FLAG_COMPRESSED | SEGMENT_FLAG_SEALED,
+        );
+        let header_bytes = header.to_le_bytes();
+        let ordinary_header = crate::wal::HeaderBuilder::new(0x01, payload).build();
+        let ordinary = encode_frame(&ordinary_header, payload);
+        let mut mac = CompactionState::new(&[7; 32], header_bytes.len() as u64);
+        mac.update(&ordinary);
+        let marker = mac.finalise_marker(&[7; 32], (header_bytes.len() + ordinary.len()) as u64);
+        let marker_payload = serde_json::to_vec(&serde_json::json!({
+            "from_offset": marker.from_offset,
+            "to_offset": marker.to_offset,
+            "frame_count": marker.frame_count,
+            "hmac_hex": marker.hmac_hex,
+            "compaction_epoch": 0,
+            "ts_ns": 17,
+        }))
+        .unwrap();
+        let marker_header = crate::wal::HeaderBuilder::new(
+            crate::wal::events::EVENT_TYPE_COMPACTION_MARKER,
+            &marker_payload,
+        )
+        .flags(crate::wal::EventFlags::SYNTHETIC)
+        .build();
+        let marker_frame = encode_frame(&marker_header, &marker_payload);
+        let mut logical = ordinary;
+        logical.extend_from_slice(&marker_frame);
+        let mut bytes = header_bytes.to_vec();
+        bytes.extend_from_slice(&crate::wal::compress::compress_frames(&logical).unwrap());
+        std::fs::write(&target, bytes).unwrap();
+        target
+    }
+
+    fn write_legacy_compressed_segment(home: &Path, payload: &[u8]) -> PathBuf {
+        use crate::wal::frame::encode_frame;
+        use crate::wal::segment_header::{SEGMENT_FLAG_COMPRESSED, SegmentHeaderV2};
+
+        let wal = seed_wal_identity(home);
+        let target = wal.join("legacy-compressed.wal");
+        let header = SegmentHeaderV2::new(1, 7, 0, 19, [5; 16], SEGMENT_FLAG_COMPRESSED);
+        let frame = encode_frame(&crate::wal::HeaderBuilder::new(0x01, payload).build(), payload);
+        let mut bytes = header.to_le_bytes().to_vec();
+        bytes.extend_from_slice(&crate::wal::compress::compress_frames(&frame).unwrap());
+        std::fs::write(&target, bytes).unwrap();
+        target
+    }
+
     #[tokio::test]
     async fn physical_redaction_returns_zero_when_wal_dir_absent() {
         // Fresh install: WAL dir hasn't been created yet. Redaction
@@ -2562,6 +2858,134 @@ mod tests {
             wal_dir.join("hmac.key").is_file(),
             "spawn_for_home must keep the audit key inside the supplied home"
         );
+    }
+
+    #[tokio::test]
+    async fn physical_redaction_authenticated_sealed_leaf_rebinds_and_receipts_without_generic_marker() {
+        let home = tempdir().unwrap();
+        let target = write_authenticated_sealed_leaf(home.path(), b"private Acme retention");
+
+        let summary = run_physical_redaction(home.path(), "acme", 1703).await.unwrap();
+        assert_eq!(summary.frames_redacted, 1);
+        assert_eq!(summary.errors, 0);
+        assert_eq!(summary.markers_emitted, 0, "authenticated rewrite must not emit generic 0xF3");
+
+        let rewritten = std::fs::read(&target).unwrap();
+        let parsed = crate::wal::segment_header::parse_segment_header(&rewritten).unwrap();
+        let logical = crate::wal::compress::decompress_frames(&rewritten[parsed.header_len()..]).unwrap();
+        let first = crate::wal::frame::decode_frame(&logical).unwrap();
+        assert!(first.header.flags.contains(crate::wal::EventFlags::REDACTED));
+        assert!(first.payload.iter().all(|byte| *byte == 0));
+
+        let mut rewrite_receipts = 0usize;
+        let mut generic_markers = 0usize;
+        let scan = crate::wal::scan::for_each_authenticated_prefix_frame_at_home(
+            home.path(),
+            crate::wal::scan::supported_home_scan_limits(),
+            |_, frame| {
+                rewrite_receipts += usize::from(
+                    frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                        && frame.header.event_subtype
+                            == crate::wal::events::ExtendedSubtype::RedactionRewriteReceipt as u8,
+                );
+                generic_markers += usize::from(
+                    frame.header.event_type == crate::wal::events::EVENT_TYPE_REDACTION_MARKER,
+                );
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(scan.complete);
+        assert_eq!(rewrite_receipts, 1);
+        assert_eq!(generic_markers, 0);
+        assert!(!home.path().join("wal/.redaction-rewrite-journal.json").exists());
+    }
+
+    #[tokio::test]
+    async fn physical_redaction_legacy_compressed_segment_keeps_generic_marker_path() {
+        let home = tempdir().unwrap();
+        let target = write_legacy_compressed_segment(home.path(), b"legacy Acme payload");
+        let summary = run_physical_redaction(home.path(), "acme", 17031).await.unwrap();
+        assert_eq!(summary.frames_redacted, 1);
+        assert_eq!(summary.markers_emitted, 1);
+        let bytes = std::fs::read(&target).unwrap();
+        let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let logical = crate::wal::compress::decompress_frames(&bytes[header.header_len()..]).unwrap();
+        let frame = crate::wal::frame::decode_frame(&logical).unwrap();
+        assert!(frame.header.flags.contains(crate::wal::EventFlags::REDACTED));
+        assert!(frame.payload.iter().all(|byte| *byte == 0));
+    }
+
+    #[tokio::test]
+    async fn physical_redaction_restart_delivers_published_leaf_without_reapplying_payload() {
+        use crate::wal::redaction_rewrite_journal::{self as journal, TargetImage};
+
+        let home = tempdir().unwrap();
+        let target = write_authenticated_sealed_leaf(home.path(), b"crash-window Acme retention");
+        let authority = journal::acquire(home.path()).unwrap();
+        let staged = crate::wal::redact::stage_authenticated_sealed_leaf(
+            home.path(),
+            &target,
+            crate::wal::redact::payload_contains_topic("acme"),
+        )
+        .unwrap()
+        .expect("matching authenticated leaf stages");
+        let before_publish = staged.rewrite();
+        let descriptor = authenticated_leaf_receipt_descriptor(home.path(), "acme", &before_publish).unwrap();
+        journal::prepare(
+            &authority,
+            "000001.wal",
+            &descriptor,
+            before_publish.target_identity_sha256,
+            TargetImage::new(before_publish.old_sha256, before_publish.old_len),
+        )
+        .unwrap();
+        staged.publish().unwrap(); // crash seam: publish reached disk, receipt did not.
+        drop(authority);
+
+        let error = run_physical_redaction(home.path(), "different-topic", 1704)
+            .await
+            .expect_err("recovery must finish prior delivery and refuse to claim a different topic");
+        assert!(format!("{error:#}").contains("rerun physical redaction"));
+        assert!(matches!(
+            crate::wal::redaction_rewrite_receipts::lookup_exact_at_home(home.path(), &descriptor),
+            crate::wal::redaction_rewrite_receipts::Lookup::Exact(_)
+        ));
+        assert!(!home.path().join("wal/.redaction-rewrite-journal.json").exists());
+    }
+
+    #[tokio::test]
+    async fn physical_redaction_refuses_journal_target_that_is_not_the_bound_leaf() {
+        use crate::wal::redaction_rewrite_journal::{self as journal, TargetImage};
+
+        let home = tempdir().unwrap();
+        let target = write_authenticated_sealed_leaf(home.path(), b"Acme target binding");
+        let authority = journal::acquire(home.path()).unwrap();
+        let staged = crate::wal::redact::stage_authenticated_sealed_leaf(
+            home.path(),
+            &target,
+            crate::wal::redact::payload_contains_topic("acme"),
+        )
+        .unwrap()
+        .unwrap();
+        let rewrite = staged.rewrite();
+        let descriptor = authenticated_leaf_receipt_descriptor(home.path(), "acme", &rewrite).unwrap();
+        journal::prepare(
+            &authority,
+            "missing-leaf.wal",
+            &descriptor,
+            rewrite.target_identity_sha256,
+            TargetImage::new(rewrite.old_sha256, rewrite.old_len),
+        )
+        .unwrap();
+        drop(staged);
+        drop(authority);
+
+        let error = run_physical_redaction(home.path(), "acme", 1705)
+            .await
+            .expect_err("journal target must be rebound through a real direct child");
+        assert!(format!("{error:#}").contains("authenticated leaf rewrite recovery target"));
+        assert!(home.path().join("wal/.redaction-rewrite-journal.json").exists());
     }
 
     #[test]

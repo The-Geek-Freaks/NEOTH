@@ -1024,8 +1024,15 @@ mod tests {
             .expect("load completed research lifecycle");
         assert_eq!(completed.state, research_runs::ResearchRunState::Completed);
         assert!(
-            completed.effect_started,
-            "successful run crosses the durable effect boundary"
+            !completed.effect_started,
+            "terminal completion settles the active effect flag"
+        );
+        assert!(
+            completed
+                .audit
+                .iter()
+                .any(|entry| entry.event == "effect_started"),
+            "the durable audit proves the producer crossed the effect boundary before terminal settlement"
         );
         assert!(
             completed

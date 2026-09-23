@@ -35,6 +35,7 @@ const TRUST_DECISION_AUTHORITY_SENTINEL: &str = ".trust-decision-authority";
 const TRANSCRIPT_MINING_AUTHORITY_SENTINEL: &str = ".transcript-mining-authority";
 const COUNTERPARTY_CONSENT_AUTHORITY_SENTINEL: &str = ".counterparty-consent-authority";
 const DREAM_AUDIT_AUTHORITY_SENTINEL: &str = ".dream-audit-authority";
+const REDACTION_REWRITE_AUTHORITY_SENTINEL: &str = ".redaction-rewrite-authority";
 #[cfg(test)]
 const TRUST_DECISION_AUTHORITY_ATTEMPT_ENV: &str = "NEOTH_TRUST_DECISION_AUTHORITY_ATTEMPT_FILE";
 // Keep the in-process side of the receipt authority deliberately bounded: one
@@ -60,6 +61,9 @@ static COUNTERPARTY_CONSENT_PROCESS_AUTHORITY: std::sync::LazyLock<
 > = std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
 static DREAM_AUDIT_PROCESS_AUTHORITY: std::sync::LazyLock<std::sync::Arc<tokio::sync::Mutex<()>>> =
     std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
+static REDACTION_REWRITE_PROCESS_AUTHORITY: std::sync::LazyLock<
+    std::sync::Arc<tokio::sync::Mutex<()>>,
+> = std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
 // Marker JSON uses only bounded integers plus a fixed 64-byte HMAC hex tag.
 // Keep a conservative envelope so operator-frame admission can reserve the
 // mandatory authentication record before acknowledging the operator frame.
@@ -139,6 +143,22 @@ fn refuse_generic_transcript_mining_proof(header: &EventHeaderV2) -> Result<(), 
 fn is_dream_audit_header(header: &EventHeaderV2) -> bool {
     header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
         && header.event_subtype == crate::wal::events::ExtendedSubtype::DreamPhaseAudit as u8
+}
+
+fn is_redaction_rewrite_receipt_header(header: &EventHeaderV2) -> bool {
+    header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+        && header.event_subtype
+            == crate::wal::events::ExtendedSubtype::RedactionRewriteReceipt as u8
+}
+
+fn refuse_generic_redaction_rewrite_receipt(header: &EventHeaderV2) -> Result<(), WalError> {
+    if is_redaction_rewrite_receipt_header(header) {
+        return Err(WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Redaction rewrite receipts require the writer-owned append-once API",
+        )));
+    }
+    Ok(())
 }
 
 fn refuse_generic_dream_audit(header: &EventHeaderV2) -> Result<(), WalError> {
@@ -528,6 +548,8 @@ pub struct WriteRequest {
     counterparty_consent_once: Option<CounterpartyConsentOnce>,
     /// Closed W331 Dream phase audit append, with authenticated replay/readback.
     dream_audit_once: Option<DreamAuditOnce>,
+    /// Closed authenticated LEAF redaction rewrite receipt append/recovery.
+    redaction_rewrite_once: Option<RedactionRewriteOnce>,
     /// Generic WAL admission ownership. It remains pending from the successful
     /// pre-write quota decision until this request reaches a writer-terminal
     /// state, so an unrelated home-directory growth cannot consume it during a
@@ -643,6 +665,19 @@ struct DreamAuditOnce {
     >,
 }
 
+struct RedactionRewriteOnce {
+    home: PathBuf,
+    expected: crate::wal::redaction_rewrite_receipts::RedactionRewriteReceiptDescriptor,
+    reply: Option<
+        oneshot::Sender<
+            std::result::Result<
+                crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceOutcome,
+                crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError,
+            >,
+        >,
+    >,
+}
+
 impl DreamAuditOnce {
     fn finish(
         mut self,
@@ -661,6 +696,30 @@ impl Drop for DreamAuditOnce {
         if let Some(reply) = self.reply.take() {
             let _ = reply.send(Err(
                 crate::wal::dream_receipts::DreamAuditOnceError::Indeterminate,
+            ));
+        }
+    }
+}
+
+impl RedactionRewriteOnce {
+    fn finish(
+        mut self,
+        outcome: std::result::Result<
+            crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceOutcome,
+            crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError,
+        >,
+    ) {
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(outcome);
+        }
+    }
+}
+
+impl Drop for RedactionRewriteOnce {
+    fn drop(&mut self) {
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(Err(
+                crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError::Indeterminate,
             ));
         }
     }
@@ -1576,6 +1635,7 @@ impl WalWriterHandle {
         refuse_generic_transcript_mining_proof(&header)?;
         refuse_generic_counterparty_consent_receipt(&header)?;
         refuse_generic_dream_audit(&header)?;
+        refuse_generic_redaction_rewrite_receipt(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -1596,6 +1656,7 @@ impl WalWriterHandle {
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
+            redaction_rewrite_once: None,
             quota_admission,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1624,6 +1685,7 @@ impl WalWriterHandle {
         refuse_generic_transcript_mining_proof(&header)?;
         refuse_generic_counterparty_consent_receipt(&header)?;
         refuse_generic_dream_audit(&header)?;
+        refuse_generic_redaction_rewrite_receipt(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -1644,6 +1706,7 @@ impl WalWriterHandle {
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
+            redaction_rewrite_once: None,
             quota_admission,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1727,6 +1790,7 @@ impl WalWriterHandle {
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
+            redaction_rewrite_once: None,
             quota_admission: None,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1900,6 +1964,7 @@ impl WalWriterHandle {
                 expected,
                 reply: Some(reply_tx),
             }),
+            redaction_rewrite_once: None,
             quota_admission: None,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1917,6 +1982,77 @@ impl WalWriterHandle {
         reply_rx
             .blocking_recv()
             .unwrap_or(Err(DreamAuditOnceError::Indeterminate))
+    }
+
+    /// Append or authenticated-recover one completed LEAF redaction rewrite receipt.  A lost reply is indeterminate; callers retain their SQLite outbox row and retry the same descriptor.
+    pub(crate) async fn append_redaction_rewrite_once(
+        &self,
+        home: &Path,
+        expected: crate::wal::redaction_rewrite_receipts::RedactionRewriteReceiptDescriptor,
+    ) -> std::result::Result<
+        crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceOutcome,
+        crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError,
+    > {
+        let writer = self.clone();
+        let home = home.to_path_buf();
+        match tokio::task::spawn_blocking(move || {
+            writer.append_redaction_rewrite_once_blocking(&home, expected)
+        })
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(_) => Err(crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError::Indeterminate),
+        }
+    }
+
+    fn append_redaction_rewrite_once_blocking(
+        &self,
+        home: &Path,
+        expected: crate::wal::redaction_rewrite_receipts::RedactionRewriteReceiptDescriptor,
+    ) -> std::result::Result<
+        crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceOutcome,
+        crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError,
+    > {
+        use crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError;
+        if !self.authentication_markers_enabled {
+            return Err(RedactionRewriteOnceError::Indeterminate);
+        }
+        let header = expected.header();
+        let payload = expected.encode();
+        let (ack_tx, _ack_rx_drop) = oneshot::channel();
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let request = WriteRequest {
+            header,
+            payload,
+            ack: ack_tx,
+            force_authentication_marker: true,
+            context_evidence_receipt_once: None,
+            trust_decision_once: None,
+            transcript_mining_once: None,
+            counterparty_consent_once: None,
+            dream_audit_once: None,
+            redaction_rewrite_once: Some(RedactionRewriteOnce {
+                home: home.to_path_buf(),
+                expected,
+                reply: Some(reply_tx),
+            }),
+            quota_admission: None,
+            #[cfg(test)]
+            test_ack_gate: self.test_ack_gate.clone(),
+            #[cfg(test)]
+            test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
+        };
+        if let Err(error) = self
+            .tx
+            .blocking_send(WriterRequest::Append(Box::new(request)))
+            && let WriterRequest::Append(mut request) = error.0
+            && let Some(once) = request.redaction_rewrite_once.take()
+        {
+            once.finish(Err(RedactionRewriteOnceError::Indeterminate));
+        }
+        reply_rx
+            .blocking_recv()
+            .unwrap_or(Err(RedactionRewriteOnceError::Indeterminate))
     }
 
     /// Append or authenticated-recover one sealed W209 ceremony input. The
@@ -2022,6 +2158,7 @@ impl WalWriterHandle {
             trust_decision_once: None,
             transcript_mining_once: None,
             dream_audit_once: None,
+            redaction_rewrite_once: None,
             counterparty_consent_once: Some(CounterpartyConsentOnce {
                 home: home.to_path_buf(),
                 expected,
@@ -2097,6 +2234,7 @@ impl WalWriterHandle {
             }),
             counterparty_consent_once: None,
             dream_audit_once: None,
+            redaction_rewrite_once: None,
             quota_admission: None,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -2162,6 +2300,7 @@ impl WalWriterHandle {
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
+            redaction_rewrite_once: None,
             quota_admission: None,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -2245,6 +2384,7 @@ impl WalWriterHandle {
         refuse_generic_transcript_mining_proof(&header)?;
         refuse_generic_counterparty_consent_receipt(&header)?;
         refuse_generic_dream_audit(&header)?;
+        refuse_generic_redaction_rewrite_receipt(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -2267,6 +2407,7 @@ impl WalWriterHandle {
                 transcript_mining_once: None,
                 counterparty_consent_once: None,
                 dream_audit_once: None,
+            redaction_rewrite_once: None,
                 quota_admission,
                 #[cfg(test)]
                 test_ack_gate: self.test_ack_gate.clone(),
@@ -2297,6 +2438,7 @@ impl WalWriterHandle {
         refuse_generic_transcript_mining_proof(&header)?;
         refuse_generic_counterparty_consent_receipt(&header)?;
         refuse_generic_dream_audit(&header)?;
+        refuse_generic_redaction_rewrite_receipt(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -2321,6 +2463,7 @@ impl WalWriterHandle {
             transcript_mining_once: None,
             counterparty_consent_once: None,
             dream_audit_once: None,
+            redaction_rewrite_once: None,
             quota_admission,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -3845,6 +3988,41 @@ struct DreamAuditAuthority {
     _file_guard: std::fs::File,
 }
 
+fn redaction_rewrite_authority_sentinel(home: &Path) -> PathBuf {
+    home.join("wal").join(REDACTION_REWRITE_AUTHORITY_SENTINEL)
+}
+
+async fn acquire_redaction_rewrite_authority(home: &Path) -> Result<RedactionRewriteAuthority, WalError> {
+    let process_authority = std::sync::Arc::clone(&*REDACTION_REWRITE_PROCESS_AUTHORITY);
+    let process_guard = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        process_authority.lock_owned(),
+    )
+    .await
+    .map_err(|_| compaction_recovery_error("RedactionRewrite process authority remained busy for >5s"))?;
+    let sentinel = redaction_rewrite_authority_sentinel(home);
+    let file_guard =
+        tokio::task::spawn_blocking(move || super::redact::lock_segment_for_rewrite(&sentinel))
+            .await
+            .map_err(|error| {
+                compaction_recovery_error(format!("RedactionRewrite authority task failed: {error}"))
+            })?
+            .map_err(|error| {
+                compaction_recovery_error(format!(
+                    "acquire capability-bound RedactionRewrite authority: {error:#}"
+                ))
+            })?;
+    Ok(RedactionRewriteAuthority {
+        _process_guard: process_guard,
+        _file_guard: file_guard,
+    })
+}
+
+struct RedactionRewriteAuthority {
+    _process_guard: tokio::sync::OwnedMutexGuard<()>,
+    _file_guard: std::fs::File,
+}
+
 fn canonical_home_matches(expected: &Path, authoritative: &Path) -> Result<bool, WalError> {
     let expected = std::fs::canonicalize(expected).map_err(WalError::Io)?;
     let authoritative = std::fs::canonicalize(authoritative).map_err(WalError::Io)?;
@@ -4865,7 +5043,9 @@ async fn run_writer(
         let mut transcript_mining_once = req.transcript_mining_once.take();
         let mut counterparty_consent_once = req.counterparty_consent_once.take();
         let mut dream_audit_once = req.dream_audit_once.take();
+        let mut redaction_rewrite_once = req.redaction_rewrite_once.take();
         let is_dream_audit = is_dream_audit_header(&req.header);
+        let is_redaction_rewrite = is_redaction_rewrite_receipt_header(&req.header);
         let is_transcript_mining_proof = is_transcript_mining_proof_header(&req.header);
         let is_counterparty_consent = is_counterparty_consent_header(&req.header);
         let is_durable_trust_decision = if is_trust_decision_header(&req.header) {
@@ -4906,6 +5086,8 @@ async fn run_writer(
             || (transcript_mining_once.is_some() && !req.force_authentication_marker)
             || is_dream_audit != dream_audit_once.is_some()
             || (dream_audit_once.is_some() && !req.force_authentication_marker)
+            || is_redaction_rewrite != redaction_rewrite_once.is_some()
+            || (redaction_rewrite_once.is_some() && !req.force_authentication_marker)
             || is_counterparty_consent != counterparty_consent_once.is_some()
             || (counterparty_consent_once.is_some() && !req.force_authentication_marker)
         {
@@ -4921,6 +5103,7 @@ async fn run_writer(
         let mut transcript_mining_authority = None;
         let mut counterparty_consent_authority = None;
         let mut dream_audit_authority = None;
+        let mut redaction_rewrite_authority = None;
         if let Some(once) = transcript_mining_once.take() {
             let requested_home = once.home.clone();
             let authoritative_home = hmac_home.clone();
@@ -5111,6 +5294,100 @@ async fn run_writer(
                 _ => {
                     once.finish(Err(
                         crate::wal::dream_receipts::DreamAuditOnceError::Indeterminate,
+                    ));
+                    drop(authority);
+                    continue;
+                }
+            }
+        }
+
+        if let Some(once) = redaction_rewrite_once.take() {
+            let requested_home = once.home.clone();
+            let authoritative_home = hmac_home.clone();
+            let homes_match = match tokio::task::spawn_blocking(move || {
+                canonical_home_matches(&requested_home, &authoritative_home)
+            })
+            .await
+            {
+                Ok(Ok(value)) => value,
+                _ => false,
+            };
+            let expected_payload = once.expected.encode();
+            if !homes_match
+                || !is_redaction_rewrite_receipt_header(&req.header)
+                || expected_payload != req.payload
+            {
+                once.finish(Err(
+                    crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError::Indeterminate,
+                ));
+                continue;
+            }
+            let authority = match acquire_redaction_rewrite_authority(&hmac_home).await {
+                Ok(authority) => authority,
+                Err(_) => {
+                    once.finish(Err(
+                        crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError::Indeterminate,
+                    ));
+                    continue;
+                }
+            };
+            let (Some(compaction_state), Some(key)) = (compaction_state.as_mut(), hmac_key) else {
+                once.finish(Err(
+                    crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError::Indeterminate,
+                ));
+                drop(authority);
+                continue;
+            };
+            validate_hmac_writer_authority(hmac_authority.as_ref())?;
+            if compaction_state.frames() > 0
+                && emit_compaction_marker(&mut state, compaction_state, key, None)
+                    .await
+                    .is_err()
+            {
+                once.finish(Err(
+                    crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError::Indeterminate,
+                ));
+                drop(authority);
+                return Err(compaction_recovery_error(
+                    "RedactionRewrite authority could not close owned HMAC tail",
+                ));
+            }
+            pending_unsynced = false;
+            let lookup_home = hmac_home.clone();
+            let lookup_expected = once.expected;
+            match tokio::task::spawn_blocking(move || {
+                crate::wal::redaction_rewrite_receipts::lookup_exact_at_home(&lookup_home, &lookup_expected)
+            })
+            .await
+            {
+                Ok(crate::wal::redaction_rewrite_receipts::Lookup::Exact(receipt)) => {
+                    once.finish(Ok(
+                        crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceOutcome::ExistingExact(receipt),
+                    ));
+                    drop(authority);
+                    continue;
+                }
+                Ok(crate::wal::redaction_rewrite_receipts::Lookup::Conflict) => {
+                    once.finish(Err(
+                        crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError::Conflict,
+                    ));
+                    drop(authority);
+                    continue;
+                }
+                Ok(crate::wal::redaction_rewrite_receipts::Lookup::Duplicate) => {
+                    once.finish(Err(
+                        crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError::Duplicate,
+                    ));
+                    drop(authority);
+                    continue;
+                }
+                Ok(crate::wal::redaction_rewrite_receipts::Lookup::AbsentComplete) => {
+                    req.redaction_rewrite_once = Some(once);
+                    redaction_rewrite_authority = Some(authority);
+                }
+                _ => {
+                    once.finish(Err(
+                        crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError::Indeterminate,
                     ));
                     drop(authority);
                     continue;
@@ -5648,6 +5925,32 @@ async fn run_writer(
                     };
                     once.finish(outcome);
                 }
+                if let Some(once) = req.redaction_rewrite_once.take() {
+                    let lookup_home = hmac_home.clone();
+                    let lookup_expected = once.expected;
+                    let outcome = match tokio::task::spawn_blocking(move || {
+                        crate::wal::redaction_rewrite_receipts::lookup_exact_at_home(
+                            &lookup_home,
+                            &lookup_expected,
+                        )
+                    })
+                    .await
+                    {
+                        Ok(crate::wal::redaction_rewrite_receipts::Lookup::Exact(receipt)) => Ok(
+                            crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceOutcome::AppendedExact(
+                                receipt,
+                            ),
+                        ),
+                        Ok(crate::wal::redaction_rewrite_receipts::Lookup::Conflict) => {
+                            Err(crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError::Conflict)
+                        }
+                        Ok(crate::wal::redaction_rewrite_receipts::Lookup::Duplicate) => {
+                            Err(crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError::Duplicate)
+                        }
+                        _ => Err(crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError::Indeterminate),
+                    };
+                    once.finish(outcome);
+                }
                 if let Some(once) = req.counterparty_consent_once.take() {
                     let lookup_home = hmac_home.clone();
                     let lookup_expected = once.expected.clone();
@@ -5674,6 +5977,7 @@ async fn run_writer(
                 drop(transcript_mining_authority);
                 drop(counterparty_consent_authority);
                 drop(dream_audit_authority);
+                drop(redaction_rewrite_authority);
             }
             Err(e) => {
                 error!(error = %e, "WAL frame write failed");
@@ -5697,6 +6001,7 @@ async fn run_writer(
                 drop(transcript_mining_authority);
                 drop(counterparty_consent_authority);
                 drop(dream_audit_authority);
+                drop(redaction_rewrite_authority);
                 // Continue; next caller may still succeed (e.g. transient ENOSPC clears).
             }
         }
@@ -6008,6 +6313,53 @@ mod tests {
         .expect("bounded Dream audit descriptor")
     }
 
+    fn redaction_rewrite_descriptor(
+        replacement_digest: u8,
+    ) -> crate::wal::RedactionRewriteReceiptDescriptor {
+        crate::wal::RedactionRewriteReceiptDescriptor::new(
+            [21; 32],
+            [22; 32],
+            crate::wal::redaction_rewrite_receipts::derive_target_identity_sha256(
+                "leaf-redaction-target-000001.wal",
+                3,
+                7,
+                11,
+                [13; 16],
+            ),
+            [24; 32],
+            [replacement_digest; 32],
+            [26; 32],
+            2,
+            4096,
+            4000,
+        )
+        .expect("bounded completed redaction rewrite descriptor")
+    }
+
+    fn authenticated_redaction_rewrite_receipt_count(
+        home: &Path,
+        expected: crate::wal::RedactionRewriteReceiptDescriptor,
+    ) -> usize {
+        let mut count = 0usize;
+        crate::wal::scan::for_each_authenticated_prefix_frame_at_home(
+            home,
+            crate::wal::scan::supported_home_scan_limits(),
+            |_, frame| {
+                if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                    && frame.header.event_subtype
+                        == crate::wal::events::ExtendedSubtype::RedactionRewriteReceipt as u8
+                    && crate::wal::RedactionRewriteReceiptDescriptor::decode_canonical(frame.payload)?
+                        == expected
+                {
+                    count = count.saturating_add(1);
+                }
+                Ok(())
+            },
+        )
+        .expect("scan authenticated redaction rewrite receipts");
+        count
+    }
+
     #[test]
     fn dream_audit_subtype_refuses_generic_writer_entry() {
         let descriptor = dream_audit_descriptor(9);
@@ -6054,6 +6406,194 @@ mod tests {
         );
         drop(writer);
         join.await.unwrap();
+    }
+
+    #[test]
+    fn redaction_rewrite_subtype_refuses_generic_writer_entry() {
+        let descriptor = redaction_rewrite_descriptor(25);
+        assert!(refuse_generic_redaction_rewrite_receipt(&descriptor.header()).is_err());
+    }
+
+    #[tokio::test]
+    async fn redaction_rewrite_once_returns_existing_exact_and_conflict_without_second_append() {
+        use crate::wal::{RedactionRewriteOnceError, RedactionRewriteOnceOutcome};
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("redaction-rewrite-once-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        let first = writer
+            .append_redaction_rewrite_once(home.path(), redaction_rewrite_descriptor(25))
+            .await
+            .unwrap();
+        let frame_sha = match first {
+            RedactionRewriteOnceOutcome::AppendedExact(receipt) => receipt.frame_sha256(),
+            RedactionRewriteOnceOutcome::ExistingExact(_) => panic!("first rewrite receipt must append"),
+        };
+        match writer
+            .append_redaction_rewrite_once(home.path(), redaction_rewrite_descriptor(25))
+            .await
+            .unwrap()
+        {
+            RedactionRewriteOnceOutcome::ExistingExact(receipt) => {
+                assert_eq!(receipt.frame_sha256(), frame_sha)
+            }
+            RedactionRewriteOnceOutcome::AppendedExact(_) => panic!("duplicate rewrite receipt appended"),
+        }
+        assert_eq!(
+            writer
+                .append_redaction_rewrite_once(home.path(), redaction_rewrite_descriptor(27))
+                .await,
+            Err(RedactionRewriteOnceError::Conflict)
+        );
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn redaction_rewrite_reserved_subtype_rejects_all_real_generic_handle_entrypoints() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("redaction-rewrite-bypass-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        let descriptor = redaction_rewrite_descriptor(25);
+        let header = descriptor.header();
+        let payload = descriptor.encode();
+        assert!(writer.append(header, payload.clone()).await.is_err());
+        assert!(writer.append_authenticated(header, payload.clone()).await.is_err());
+        assert!(writer.try_append_sync(header, payload.clone()).is_err());
+        assert!(writer.append_no_ack(header, payload).await.is_err());
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn redaction_rewrite_durable_before_ack_loss_recovers_exactly_once_after_restart() {
+        use crate::wal::RedactionRewriteOnceOutcome;
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let segment = wal.join("redaction-rewrite-ack-loss-000001.wal");
+        let (writer, join) = spawn_test_writer_at_home(
+            segment.clone(),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        let gate = TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+        let writer = writer.with_test_ack_gate(gate.clone());
+        let descriptor = redaction_rewrite_descriptor(25);
+        let caller_writer = writer.clone();
+        let caller_home = home.path().to_path_buf();
+        let caller = tokio::spawn(async move {
+            caller_writer
+                .append_redaction_rewrite_once(&caller_home, descriptor)
+                .await
+        });
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            gate.wait_until_durable(),
+        )
+        .await
+        .expect("redaction rewrite reached durable-before-ack");
+        caller.abort();
+        gate.release();
+        drop(writer);
+        join.await.unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            segment,
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        assert!(matches!(
+            writer
+                .append_redaction_rewrite_once(home.path(), redaction_rewrite_descriptor(25))
+                .await,
+            Ok(RedactionRewriteOnceOutcome::ExistingExact(_))
+        ));
+        assert_eq!(
+            authenticated_redaction_rewrite_receipt_count(
+                home.path(),
+                redaction_rewrite_descriptor(25),
+            ),
+            1,
+        );
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn redaction_rewrite_rejects_different_home_and_incomplete_authenticated_scan_without_append() {
+        use crate::wal::RedactionRewriteOnceError;
+        let home = tempdir().unwrap();
+        let other = tempdir().unwrap();
+        std::fs::create_dir(other.path().join("wal")).unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("redaction-rewrite-home-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        assert_eq!(
+            writer
+                .append_redaction_rewrite_once(other.path(), redaction_rewrite_descriptor(25))
+                .await,
+            Err(RedactionRewriteOnceError::Indeterminate)
+        );
+        drop(writer);
+        join.await.unwrap();
+        let (foreign, foreign_join) = spawn_test_writer_at_home(
+            wal.join("redaction-rewrite-foreign-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("redaction-rewrite-owned-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        foreign
+            .append(batchable_header_for(1, 992), vec![b"x"[0]])
+            .await
+            .unwrap();
+        assert_eq!(
+            writer
+                .append_redaction_rewrite_once(home.path(), redaction_rewrite_descriptor(25))
+                .await,
+            Err(RedactionRewriteOnceError::Indeterminate)
+        );
+        assert_eq!(
+            authenticated_redaction_rewrite_receipt_count(
+                home.path(),
+                redaction_rewrite_descriptor(25),
+            ),
+            0,
+        );
+        drop(writer);
+        drop(foreign);
+        join.await.unwrap();
+        foreign_join.await.unwrap();
     }
 
     #[tokio::test]
@@ -8581,6 +9121,7 @@ mod tests {
                 transcript_mining_once: None,
                 counterparty_consent_once: None,
                 dream_audit_once: None,
+            redaction_rewrite_once: None,
                 quota_admission: Some(quota_admission),
                 test_ack_gate: None,
                 test_receipt_decision_gate: None,

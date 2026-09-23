@@ -2752,7 +2752,9 @@ pub trait Provider: Send + Sync {
                     tokio::time::sleep(backoff).await;
                     retry_attempt = retry_attempt.saturating_add(1);
                     let retry_req = direct_retry_request_with_context(&original_req, &context);
-                    if let Err(retry_error) = permit.begin_retry_attempt_for_request(&retry_req).await {
+                    if let Err(retry_error) =
+                        permit.begin_retry_attempt_for_request(&retry_req).await
+                    {
                         if let Err(audit_error) = permit
                             .finish_retry_authorization_denied(
                                 "provider_retry_authorization_denied",
@@ -3333,9 +3335,8 @@ fn direct_retry_error_context(error: &anyhow::Error) -> Option<DirectRetryErrorC
             return None;
         }
     };
-    (detail.len() <= DIRECT_RETRY_ERROR_CONTEXT_MAX_BYTES).then_some(DirectRetryErrorContext {
-        detail,
-    })
+    (detail.len() <= DIRECT_RETRY_ERROR_CONTEXT_MAX_BYTES)
+        .then_some(DirectRetryErrorContext { detail })
 }
 
 /// Produce the single correction attempt from the unmodified user request.
@@ -3356,7 +3357,10 @@ fn direct_retry_request_with_context(
         ),
         context.detail,
     );
-    debug_assert!(correction.len() <= 512, "retry correction context must stay bounded");
+    debug_assert!(
+        correction.len() <= 512,
+        "retry correction context must stay bounded"
+    );
     match retry.system.as_mut() {
         Some(system) => system.push_str(&format!("\n\n{correction}")),
         None => retry.system = Some(correction),

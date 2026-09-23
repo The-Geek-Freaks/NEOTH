@@ -45,6 +45,9 @@ pub mod proof_bundle;
 pub mod reasoning_audit;
 pub mod recovery;
 pub mod redact;
+/// W373 crash-recoverable intent/delivery journal for authenticated leaf rewrites.
+pub(crate) mod redaction_rewrite_journal;
+pub(crate) mod redaction_rewrite_receipts;
 pub mod scan;
 pub mod segment_header;
 /// KF-03 — operator proof-bundle signing key (ed25519, DAU-safe auto-managed).
@@ -78,6 +81,10 @@ pub use builder::{HeaderBuilder, make_header};
 pub(crate) use transcript_mining_once::{
     ExpiredMiningFrameReceipt, PlannedMiningOutboxDescriptor, PlannedRawTextDescriptor,
     TranscriptMiningFrameReceipt, TranscriptMiningOnceError,
+};
+pub(crate) use redaction_rewrite_receipts::{
+    RedactionRewriteFrameReceipt, RedactionRewriteOnceError, RedactionRewriteOnceOutcome,
+    RedactionRewriteReceiptDescriptor,
 };
 pub use types::EventFlags;
 #[cfg(test)]

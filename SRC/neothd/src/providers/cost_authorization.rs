@@ -4506,7 +4506,13 @@ mod tests {
             .lock()
             .expect("direct retry request capture is not poisoned")
             .clone();
-        (result, attempts, budget, wal_frames(&segment), observed_systems)
+        (
+            result,
+            attempts,
+            budget,
+            wal_frames(&segment),
+            observed_systems,
+        )
     }
 
     #[tokio::test]
@@ -4578,7 +4584,11 @@ mod tests {
         )
         .await
         .expect("typed 500 must reach one reauthorized correction attempt");
-        assert_eq!(budget.used(), 2, "correction request needs a second admission");
+        assert_eq!(
+            budget.used(),
+            2,
+            "correction request needs a second admission"
+        );
         assert_eq!(inner.attempts.load(Ordering::SeqCst), 2);
         let observed = observed_systems
             .lock()
@@ -4596,10 +4606,9 @@ mod tests {
         drop(writer);
         join.await.unwrap();
         assert!(
-            !wal_frames(&segment).iter().any(|frame| frame
-                .1
-                .to_string()
-                .contains("retry-correction-context")),
+            !wal_frames(&segment)
+                .iter()
+                .any(|frame| frame.1.to_string().contains("retry-correction-context")),
             "correction context must not enter lifecycle receipts or WAL payloads"
         );
     }
@@ -4643,7 +4652,11 @@ mod tests {
         .expect_err("the augmented correction request must be rejected at the input cap");
         assert!(error.to_string().contains("above the effective cap"));
         assert_eq!(inner.attempts.load(Ordering::SeqCst), 1);
-        assert_eq!(budget.used(), 1, "denied retry must not charge a second Council leaf");
+        assert_eq!(
+            budget.used(),
+            1,
+            "denied retry must not charge a second Council leaf"
+        );
         assert_eq!(
             observed_systems
                 .lock()
@@ -4664,8 +4677,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            lifecycle[1].1["retry_receipt"]["disposition"],
-            "retry_intent_closed",
+            lifecycle[1].1["retry_receipt"]["disposition"], "retry_intent_closed",
             "the closed first attempt remains the durable truthful terminal"
         );
     }

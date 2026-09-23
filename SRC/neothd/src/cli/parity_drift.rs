@@ -1301,6 +1301,12 @@ const INVENTORY: &[(&str, Surface)] = &[
     ("tour", CliOnly("onboarding tour")),
     ("groundtruth", Gui("groundtruth")),
     ("citation", Gui("chat")),
+    (
+        "browser",
+        CliOnly(
+            "managed reviewed-browser artifact install/status; no GUI control or CDP/runtime surface (P2-13 remains open)",
+        ),
+    ),
     ("import", CliOnly("data import pipe")),
     ("telemetry", Gui("privacy")),
     ("adr", Gui("adr-browser")),

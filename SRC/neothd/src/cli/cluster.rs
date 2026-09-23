@@ -71,15 +71,45 @@ pub enum ClusterTaskDelegateAction {
     },
     /// Read one exact scoped skill/channel/account authority for a peer.
     #[command(name = "scope-show")]
-    ScopeShow { peer_key: String, #[arg(long)] skill: String, #[arg(long)] channel: Option<String>, #[arg(long)] account: Option<String> },
+    ScopeShow {
+        peer_key: String,
+        #[arg(long)]
+        skill: String,
+        #[arg(long)]
+        channel: Option<String>,
+        #[arg(long)]
+        account: Option<String>,
+    },
     /// CAS one exact scoped authority. Scoped requests default-deny unless
     /// this exact tuple is present and allowed.
     #[command(name = "scope-set")]
-    ScopeSet { peer_key: String, #[arg(long)] skill: String, #[arg(long)] channel: Option<String>, #[arg(long)] account: Option<String>, #[arg(long, action = clap::ArgAction::Set)] allowed: bool, #[arg(long)] expected_revision: u64 },
+    ScopeSet {
+        peer_key: String,
+        #[arg(long)]
+        skill: String,
+        #[arg(long)]
+        channel: Option<String>,
+        #[arg(long)]
+        account: Option<String>,
+        #[arg(long, action = clap::ArgAction::Set)]
+        allowed: bool,
+        #[arg(long)]
+        expected_revision: u64,
+    },
     /// CAS-reset an exact scoped authority to denied while retaining its
     /// revision tombstone; reset never re-opens a broad permission.
     #[command(name = "scope-reset")]
-    ScopeReset { peer_key: String, #[arg(long)] skill: String, #[arg(long)] channel: Option<String>, #[arg(long)] account: Option<String>, #[arg(long)] expected_revision: u64 },
+    ScopeReset {
+        peer_key: String,
+        #[arg(long)]
+        skill: String,
+        #[arg(long)]
+        channel: Option<String>,
+        #[arg(long)]
+        account: Option<String>,
+        #[arg(long)]
+        expected_revision: u64,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1683,20 +1713,64 @@ async fn run_task_delegate_assignment(
                 ),
             }
         }
-        ClusterTaskDelegateAction::ScopeShow { peer_key, skill, channel, account } => {
-            let scope = crate::cluster::heartbeat::TaskDelegateScope { skill_id: skill, channel_id: channel, account_id: account };
+        ClusterTaskDelegateAction::ScopeShow {
+            peer_key,
+            skill,
+            channel,
+            account,
+        } => {
+            let scope = crate::cluster::heartbeat::TaskDelegateScope {
+                skill_id: skill,
+                channel_id: channel,
+                account_id: account,
+            };
             let assignment = task_delegate_scope_show_at(&home, &peer_key, &scope)?;
-            match output { OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&assignment)?), OutputFormat::Jsonl => println!("{}", serde_json::to_string(&assignment)?), OutputFormat::Table => print_scoped_assignment(&assignment) }
+            match output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&assignment)?),
+                OutputFormat::Jsonl => println!("{}", serde_json::to_string(&assignment)?),
+                OutputFormat::Table => print_scoped_assignment(&assignment),
+            }
         }
-        ClusterTaskDelegateAction::ScopeSet { peer_key, skill, channel, account, allowed, expected_revision } => {
-            let scope = crate::cluster::heartbeat::TaskDelegateScope { skill_id: skill, channel_id: channel, account_id: account };
-            let assignment = task_delegate_scope_set_at(&home, &peer_key, &scope, allowed, expected_revision)?;
-            match output { OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&assignment)?), OutputFormat::Jsonl => println!("{}", serde_json::to_string(&assignment)?), OutputFormat::Table => print_scoped_assignment(&Some(assignment)) }
+        ClusterTaskDelegateAction::ScopeSet {
+            peer_key,
+            skill,
+            channel,
+            account,
+            allowed,
+            expected_revision,
+        } => {
+            let scope = crate::cluster::heartbeat::TaskDelegateScope {
+                skill_id: skill,
+                channel_id: channel,
+                account_id: account,
+            };
+            let assignment =
+                task_delegate_scope_set_at(&home, &peer_key, &scope, allowed, expected_revision)?;
+            match output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&assignment)?),
+                OutputFormat::Jsonl => println!("{}", serde_json::to_string(&assignment)?),
+                OutputFormat::Table => print_scoped_assignment(&Some(assignment)),
+            }
         }
-        ClusterTaskDelegateAction::ScopeReset { peer_key, skill, channel, account, expected_revision } => {
-            let scope = crate::cluster::heartbeat::TaskDelegateScope { skill_id: skill, channel_id: channel, account_id: account };
-            let assignment = task_delegate_scope_set_at(&home, &peer_key, &scope, false, expected_revision)?;
-            match output { OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&assignment)?), OutputFormat::Jsonl => println!("{}", serde_json::to_string(&assignment)?), OutputFormat::Table => print_scoped_assignment(&Some(assignment)) }
+        ClusterTaskDelegateAction::ScopeReset {
+            peer_key,
+            skill,
+            channel,
+            account,
+            expected_revision,
+        } => {
+            let scope = crate::cluster::heartbeat::TaskDelegateScope {
+                skill_id: skill,
+                channel_id: channel,
+                account_id: account,
+            };
+            let assignment =
+                task_delegate_scope_set_at(&home, &peer_key, &scope, false, expected_revision)?;
+            match output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&assignment)?),
+                OutputFormat::Jsonl => println!("{}", serde_json::to_string(&assignment)?),
+                OutputFormat::Table => print_scoped_assignment(&Some(assignment)),
+            }
         }
     }
     Ok(())
@@ -1710,24 +1784,66 @@ fn task_delegate_assignment_show_at(
     crate::cluster::membership::MembershipStore::task_delegate_assignment_read_only(home, peer_key)
 }
 
-fn task_delegate_scope_show_at(home: &Path, peer_key: &str, scope: &crate::cluster::heartbeat::TaskDelegateScope) -> Result<Option<crate::cluster::membership::TaskDelegateScopedAssignment>> {
+fn task_delegate_scope_show_at(
+    home: &Path,
+    peer_key: &str,
+    scope: &crate::cluster::heartbeat::TaskDelegateScope,
+) -> Result<Option<crate::cluster::membership::TaskDelegateScopedAssignment>> {
     validate_pub_key_hex(peer_key)?;
-    crate::cluster::heartbeat::validate_task_delegate(&crate::cluster::heartbeat::TaskDelegateBody { task_id: "scope-show".into(), prompt: "scope-show".into(), model_hint: None, scope: Some(scope.clone()) })?;
-    crate::cluster::membership::MembershipStore::task_delegate_scoped_assignment_read_only(home, peer_key, scope)
+    crate::cluster::heartbeat::validate_task_delegate(
+        &crate::cluster::heartbeat::TaskDelegateBody {
+            task_id: "scope-show".into(),
+            prompt: "scope-show".into(),
+            model_hint: None,
+            scope: Some(scope.clone()),
+        },
+    )?;
+    crate::cluster::membership::MembershipStore::task_delegate_scoped_assignment_read_only(
+        home, peer_key, scope,
+    )
 }
 
-fn print_scoped_assignment(assignment: &Option<crate::cluster::membership::TaskDelegateScopedAssignment>) {
+fn print_scoped_assignment(
+    assignment: &Option<crate::cluster::membership::TaskDelegateScopedAssignment>,
+) {
     match assignment {
-        Some(value) => println!("peer_key={} skill={} channel={} account={} allowed={} revision={}", value.peer_key, value.skill_id, value.channel_id.as_deref().unwrap_or(""), value.account_id.as_deref().unwrap_or(""), value.allowed, value.revision),
+        Some(value) => println!(
+            "peer_key={} skill={} channel={} account={} allowed={} revision={}",
+            value.peer_key,
+            value.skill_id,
+            value.channel_id.as_deref().unwrap_or(""),
+            value.account_id.as_deref().unwrap_or(""),
+            value.allowed,
+            value.revision
+        ),
         None => println!("scoped_task_delegate=false revision=0 (default deny)"),
     }
 }
 
-fn task_delegate_scope_set_at(home: &Path, peer_key: &str, scope: &crate::cluster::heartbeat::TaskDelegateScope, allowed: bool, expected_revision: u64) -> Result<crate::cluster::membership::TaskDelegateScopedAssignment> {
+fn task_delegate_scope_set_at(
+    home: &Path,
+    peer_key: &str,
+    scope: &crate::cluster::heartbeat::TaskDelegateScope,
+    allowed: bool,
+    expected_revision: u64,
+) -> Result<crate::cluster::membership::TaskDelegateScopedAssignment> {
     validate_pub_key_hex(peer_key)?;
-    anyhow::ensure!(live_daemon_owner_pid(home)?.is_none(), "stop the daemon before changing scoped task-delegate assignments; live scoped RPC is not available");
+    anyhow::ensure!(
+        live_daemon_owner_pid(home)?.is_none(),
+        "stop the daemon before changing scoped task-delegate assignments; live scoped RPC is not available"
+    );
     let _offline_authority_lock = acquire_offline_membership_guard(home)?;
-    crate::cluster::membership::MembershipStore::open(home)?.set_task_delegate_scoped_assignment(&crate::cluster::membership::TaskDelegateScopedAssignment { peer_key: peer_key.into(), skill_id: scope.skill_id.clone(), channel_id: scope.channel_id.clone(), account_id: scope.account_id.clone(), allowed, revision: 0 }, expected_revision)
+    crate::cluster::membership::MembershipStore::open(home)?.set_task_delegate_scoped_assignment(
+        &crate::cluster::membership::TaskDelegateScopedAssignment {
+            peer_key: peer_key.into(),
+            skill_id: scope.skill_id.clone(),
+            channel_id: scope.channel_id.clone(),
+            account_id: scope.account_id.clone(),
+            allowed,
+            revision: 0,
+        },
+        expected_revision,
+    )
 }
 
 fn task_delegate_assignment_set_at(
@@ -5387,9 +5503,13 @@ mod tests {
                 .to_string()
                 .contains("revision conflict")
         );
-        let reset = task_delegate_scope_set_at(home.path(), &peer_key, &scope, false, allowed.revision)
-            .unwrap();
-        assert!(!reset.allowed, "scope-reset must leave an explicit deny tombstone");
+        let reset =
+            task_delegate_scope_set_at(home.path(), &peer_key, &scope, false, allowed.revision)
+                .unwrap();
+        assert!(
+            !reset.allowed,
+            "scope-reset must leave an explicit deny tombstone"
+        );
         assert_eq!(reset.revision, 2);
         assert_eq!(
             task_delegate_scope_show_at(home.path(), &peer_key, &scope).unwrap(),

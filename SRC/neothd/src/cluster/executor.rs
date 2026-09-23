@@ -574,10 +574,11 @@ async fn run_one_task_execution_inner(
     // The delegation CAS and external permit use one short authority gate.
     // A setter that commits first therefore wins before the provider-start
     // linearization; the gate is released before any provider future is run.
-    let mut external_permit = match job
-        .membership_grant
-        .begin_task_delegate_external(&mut effect_guard, (now_unix_ms() / 1_000) as i64, job.scope.as_ref())
-    {
+    let mut external_permit = match job.membership_grant.begin_task_delegate_external(
+        &mut effect_guard,
+        (now_unix_ms() / 1_000) as i64,
+        job.scope.as_ref(),
+    ) {
         Ok(permit) => permit,
         Err(crate::cluster::membership::TaskDelegateExternalAdmissionError::AssignmentDenied) => {
             tracing::warn!(
@@ -846,14 +847,30 @@ mod tests {
 
     fn scoped_job(home: &std::path::Path, prompt: &str) -> ClusterTaskJob {
         let mut queued = job(home, prompt);
-        let peer_key = queued.membership_grant.transport_identity().as_str().to_string();
+        let peer_key = queued
+            .membership_grant
+            .transport_identity()
+            .as_str()
+            .to_string();
         let scope = super::super::heartbeat::TaskDelegateScope {
-            skill_id: "summarize".into(), channel_id: Some("telegram".into()), account_id: Some("primary".into()),
+            skill_id: "summarize".into(),
+            channel_id: Some("telegram".into()),
+            account_id: Some("primary".into()),
         };
-        crate::cluster::membership::MembershipStore::open(home).unwrap()
-            .set_task_delegate_scoped_assignment(&crate::cluster::membership::TaskDelegateScopedAssignment {
-                peer_key, skill_id: scope.skill_id.clone(), channel_id: scope.channel_id.clone(), account_id: scope.account_id.clone(), allowed: true, revision: 0,
-            }, 0).unwrap();
+        crate::cluster::membership::MembershipStore::open(home)
+            .unwrap()
+            .set_task_delegate_scoped_assignment(
+                &crate::cluster::membership::TaskDelegateScopedAssignment {
+                    peer_key,
+                    skill_id: scope.skill_id.clone(),
+                    channel_id: scope.channel_id.clone(),
+                    account_id: scope.account_id.clone(),
+                    allowed: true,
+                    revision: 0,
+                },
+                0,
+            )
+            .unwrap();
         queued.scope = Some(scope);
         queued
     }
@@ -917,7 +934,8 @@ mod tests {
             )
             .unwrap();
         (
-            ClusterTaskJob::authorized("t-1".into(), prompt.into(), "aa".into(), None, grant).unwrap(),
+            ClusterTaskJob::authorized("t-1".into(), prompt.into(), "aa".into(), None, grant)
+                .unwrap(),
             controller,
         )
     }
@@ -1414,9 +1432,14 @@ mod tests {
             )
             .unwrap();
         let stable = grant.stable_node_id().clone();
-        let queued =
-            ClusterTaskJob::authorized("cancel-me".into(), "block".into(), "aa".into(), None, grant)
-                .unwrap();
+        let queued = ClusterTaskJob::authorized(
+            "cancel-me".into(),
+            "block".into(),
+            "aa".into(),
+            None,
+            grant,
+        )
+        .unwrap();
 
         let calls = Arc::new(AtomicUsize::new(0));
         let started = Arc::new(tokio::sync::Notify::new());

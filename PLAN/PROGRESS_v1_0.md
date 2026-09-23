@@ -2,6 +2,27 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W373/W388-W390 authenticated leaf and Group780 follow-up (2026-09-23):**
+W373 integrates the signed Prepared/Delivered journal with bounded no-follow
+staging, authenticated namespace-leaf proof, normal marker-HMAC rebinding,
+atomic replacement and append-once rewrite receipt. Recovery never reconstructs
+erased input; target/home conflicts refuse. Shared target identity and capped
+reads were corrected in final integrated review. Twenty-two selected tests
+cover CLI recovery, durable-before-ACK loss, structural/interior refusal,
+replacement, independent namespaces and legacy compressed-only compatibility.
+Encrypted/interior/unauthenticated explicit sealed rewriting remains refused;
+no broader erase or Road-parent completion is claimed.
+Group780e5 run35857339883 admitted752 executed:750PASS/2FAIL,28not-executed,
+all159source bindings, matrix/lock and ordered actual terminals. W388 corrects
+the Completed research fixture's active-effect flag while retaining historical
+audit/WAL/provider/no-replay assertions. W389 explicitly triages browser as
+CLI-only. W390 fixes the Dream-Cron identity to its real zf06_fleet_tests module;
+no selected test is dropped. Seven exact formatter outputs from hosted
+Preflight648 run35859898596 were hash/preimage/postimage verified and imported.
+Inventory668;native1122+Windows19/Linux33/macOS32;Group810;GUI135Linux/131macOS.
+Road1324=1027checked/295open/2partial;WS-LF20done/98open unchanged.
+Independent static reviews passed; hosted format/core/new CLI reference and
+all affected behavior remain pending. No local executable validation ran.
 **W383-W386 retry and hosted recovery batch (2026-09-23):**
 W383 sends bounded typed error facts to the real direct-chat LLM retry and
 reauthorizes the changed request. Two new caller tests cover context delivery

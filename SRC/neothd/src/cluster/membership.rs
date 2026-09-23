@@ -1972,7 +1972,9 @@ impl MembershipGrant {
         match scope {
             None => self.task_delegate_authorized(),
             Some(scope) => {
-                if !self.task_delegate_authorized()? { return Ok(false); }
+                if !self.task_delegate_authorized()? {
+                    return Ok(false);
+                }
                 MembershipStore::open_path(self.authority_path.clone(), false)?
                     .task_delegate_scope_authorized(self.transport_identity.as_str(), scope)
             }
@@ -2827,17 +2829,23 @@ impl MembershipStore {
     }
 
     pub fn task_delegate_scoped_assignment_read_only(
-        home: &Path, peer_key: &str, scope: &crate::cluster::heartbeat::TaskDelegateScope,
+        home: &Path,
+        peer_key: &str,
+        scope: &crate::cluster::heartbeat::TaskDelegateScope,
     ) -> Result<Option<TaskDelegateScopedAssignment>> {
         validate_peeroxide_transport_key(peer_key)?;
         let path = home.join(AUTHORITY_DB_FILE);
-        if !path.exists() { return Ok(None); }
+        if !path.exists() {
+            return Ok(None);
+        }
         let conn = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .with_context(|| format!("open membership authority read-only {}", path.display()))?;
         let has_table: i64 = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_delegate_scoped_assignments')",
             [], |row| row.get(0))?;
-        if has_table == 0 { return Ok(None); }
+        if has_table == 0 {
+            return Ok(None);
+        }
         let channel = scope.channel_id.as_deref().unwrap_or("");
         let account = scope.account_id.as_deref().unwrap_or("");
         conn.query_row(
@@ -3046,18 +3054,22 @@ impl MembershipStore {
         let channel = scope.channel_id.as_deref().unwrap_or("");
         let account = scope.account_id.as_deref().unwrap_or("");
         let conn = self.connection()?;
-        let allowed = conn.query_row(
-            "SELECT allowed FROM task_delegate_scoped_assignments
+        let allowed = conn
+            .query_row(
+                "SELECT allowed FROM task_delegate_scoped_assignments
              WHERE carrier='peeroxide' AND transport_identity=?1 AND skill_id=?2
                AND channel_id=?3 AND account_id=?4",
-            params![peer_key, scope.skill_id, channel, account],
-            |row| row.get::<_, i64>(0),
-        ).optional()?;
+                params![peer_key, scope.skill_id, channel, account],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
         Ok(matches!(allowed, Some(1)))
     }
 
     pub fn task_delegate_scoped_assignment(
-        &self, peer_key: &str, scope: &crate::cluster::heartbeat::TaskDelegateScope,
+        &self,
+        peer_key: &str,
+        scope: &crate::cluster::heartbeat::TaskDelegateScope,
     ) -> Result<Option<TaskDelegateScopedAssignment>> {
         validate_peeroxide_transport_key(peer_key)?;
         let channel = scope.channel_id.as_deref().unwrap_or("");
@@ -3079,14 +3091,25 @@ impl MembershipStore {
     ) -> Result<TaskDelegateScopedAssignment> {
         validate_peeroxide_transport_key(&assignment.peer_key)?;
         let scope = crate::cluster::heartbeat::TaskDelegateScope {
-            skill_id: assignment.skill_id.clone(), channel_id: assignment.channel_id.clone(), account_id: assignment.account_id.clone(),
+            skill_id: assignment.skill_id.clone(),
+            channel_id: assignment.channel_id.clone(),
+            account_id: assignment.account_id.clone(),
         };
-        crate::cluster::heartbeat::validate_task_delegate(&crate::cluster::heartbeat::TaskDelegateBody {
-            task_id: "scope-validation".into(), prompt: "scope-validation".into(), model_hint: None, scope: Some(scope.clone()),
-        })?;
+        crate::cluster::heartbeat::validate_task_delegate(
+            &crate::cluster::heartbeat::TaskDelegateBody {
+                task_id: "scope-validation".into(),
+                prompt: "scope-validation".into(),
+                model_hint: None,
+                scope: Some(scope.clone()),
+            },
+        )?;
         let channel = scope.channel_id.as_deref().unwrap_or("");
         let account = scope.account_id.as_deref().unwrap_or("");
-        let _authority_gate = self.effects.task_delegate_start.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _authority_gate = self
+            .effects
+            .task_delegate_start
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         #[cfg(test)]
         self.effects.observe_task_delegate_setter_gate();
         let mut conn = self.connection()?;
@@ -3094,17 +3117,28 @@ impl MembershipStore {
         let active: i64 = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM members m JOIN transport_bindings b ON b.stable_node_id=m.stable_node_id JOIN authority_meta a ON a.singleton=1 WHERE m.state='active' AND b.carrier='peeroxide' AND b.transport_identity=?1 AND b.auth_epoch=m.auth_epoch AND b.membership_epoch=m.membership_epoch AND m.membership_epoch=a.membership_epoch AND m.membership_epoch>=a.revocation_floor)",
             [&assignment.peer_key], |row| row.get(0))?;
-        anyhow::ensure!(active == 1, "scoped task delegate assignment requires an active exact peeroxide membership");
+        anyhow::ensure!(
+            active == 1,
+            "scoped task delegate assignment requires an active exact peeroxide membership"
+        );
         let current = tx.query_row(
             "SELECT revision FROM task_delegate_scoped_assignments WHERE carrier='peeroxide' AND transport_identity=?1 AND skill_id=?2 AND channel_id=?3 AND account_id=?4",
             params![assignment.peer_key, assignment.skill_id, channel, account], |row| row.get::<_, u64>(0)).optional()?.unwrap_or(0);
-        anyhow::ensure!(current == expected_revision, "scoped task delegate assignment revision conflict: expected {expected_revision}, current {current}");
-        let revision = current.checked_add(1).context("scoped task delegate assignment revision exhausted")?;
+        anyhow::ensure!(
+            current == expected_revision,
+            "scoped task delegate assignment revision conflict: expected {expected_revision}, current {current}"
+        );
+        let revision = current
+            .checked_add(1)
+            .context("scoped task delegate assignment revision exhausted")?;
         tx.execute(
             "INSERT INTO task_delegate_scoped_assignments (carrier,transport_identity,skill_id,channel_id,account_id,allowed,revision) VALUES ('peeroxide',?1,?2,?3,?4,?5,?6) ON CONFLICT(carrier,transport_identity,skill_id,channel_id,account_id) DO UPDATE SET allowed=excluded.allowed,revision=excluded.revision",
             params![assignment.peer_key, assignment.skill_id, channel, account, i64::from(assignment.allowed), revision])?;
         tx.commit()?;
-        Ok(TaskDelegateScopedAssignment { revision, ..assignment.clone() })
+        Ok(TaskDelegateScopedAssignment {
+            revision,
+            ..assignment.clone()
+        })
     }
 
     pub fn latest_invitation_digest(
@@ -5362,21 +5396,57 @@ mod tests {
         let (_, attestation, transport) = identity_and_attestation(home.path(), now);
         let peer_key = transport.as_str().to_string();
         let store = MembershipStore::open(home.path()).unwrap();
-        store.confirm_attestation(&attestation, CarrierKind::Peeroxide, &transport, "127.0.0.1:1234", "v5-migration", now).unwrap();
-        let unscoped = store.set_task_delegate_assignment(&peer_key, true, 0).unwrap();
+        store
+            .confirm_attestation(
+                &attestation,
+                CarrierKind::Peeroxide,
+                &transport,
+                "127.0.0.1:1234",
+                "v5-migration",
+                now,
+            )
+            .unwrap();
+        let unscoped = store
+            .set_task_delegate_assignment(&peer_key, true, 0)
+            .unwrap();
         let path = store.path().to_path_buf();
         drop(store);
         let conn = Connection::open(&path).unwrap();
-        conn.execute_batch("DROP TABLE task_delegate_scoped_assignments; PRAGMA user_version=5;").unwrap();
+        conn.execute_batch("DROP TABLE task_delegate_scoped_assignments; PRAGMA user_version=5;")
+            .unwrap();
         drop(conn);
-        let scope = crate::cluster::heartbeat::TaskDelegateScope { skill_id: "summarize".into(), channel_id: None, account_id: None };
-        assert_eq!(MembershipStore::task_delegate_scoped_assignment_read_only(home.path(), &peer_key, &scope).unwrap(), None);
+        let scope = crate::cluster::heartbeat::TaskDelegateScope {
+            skill_id: "summarize".into(),
+            channel_id: None,
+            account_id: None,
+        };
+        assert_eq!(
+            MembershipStore::task_delegate_scoped_assignment_read_only(
+                home.path(),
+                &peer_key,
+                &scope
+            )
+            .unwrap(),
+            None
+        );
         let conn = Connection::open(&path).unwrap();
-        assert_eq!(conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 5);
+        assert_eq!(
+            conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            5
+        );
         drop(conn);
         let migrated = MembershipStore::open_path(path, false).unwrap();
-        assert_eq!(migrated.task_delegate_assignment(&peer_key).unwrap(), Some(unscoped));
-        assert_eq!(migrated.task_delegate_scoped_assignment(&peer_key, &scope).unwrap(), None);
+        assert_eq!(
+            migrated.task_delegate_assignment(&peer_key).unwrap(),
+            Some(unscoped)
+        );
+        assert_eq!(
+            migrated
+                .task_delegate_scoped_assignment(&peer_key, &scope)
+                .unwrap(),
+            None
+        );
         migrated.integrity_check().unwrap();
     }
 
@@ -5437,22 +5507,86 @@ mod tests {
         let (_, attestation, transport) = identity_and_attestation(home.path(), now);
         let peer_key = transport.as_str().to_string();
         let store = MembershipStore::open(home.path()).unwrap();
-        store.confirm_attestation(&attestation, CarrierKind::Peeroxide, &transport, "127.0.0.1:1234", "scope-test", now).unwrap();
-        let grant = store.admit(CarrierKind::Peeroxide, &transport, now).unwrap();
-        store.set_task_delegate_assignment(&peer_key, true, 0).unwrap();
-        let scope = crate::cluster::heartbeat::TaskDelegateScope { skill_id: "summarize".into(), channel_id: Some("telegram".into()), account_id: Some("primary".into()) };
+        store
+            .confirm_attestation(
+                &attestation,
+                CarrierKind::Peeroxide,
+                &transport,
+                "127.0.0.1:1234",
+                "scope-test",
+                now,
+            )
+            .unwrap();
+        let grant = store
+            .admit(CarrierKind::Peeroxide, &transport, now)
+            .unwrap();
+        store
+            .set_task_delegate_assignment(&peer_key, true, 0)
+            .unwrap();
+        let scope = crate::cluster::heartbeat::TaskDelegateScope {
+            skill_id: "summarize".into(),
+            channel_id: Some("telegram".into()),
+            account_id: Some("primary".into()),
+        };
         assert!(!grant.task_delegate_scope_authorized(Some(&scope)).unwrap());
-        let committed = store.set_task_delegate_scoped_assignment(&TaskDelegateScopedAssignment { peer_key: peer_key.clone(), skill_id: scope.skill_id.clone(), channel_id: scope.channel_id.clone(), account_id: scope.account_id.clone(), allowed: true, revision: 0 }, 0).unwrap();
+        let committed = store
+            .set_task_delegate_scoped_assignment(
+                &TaskDelegateScopedAssignment {
+                    peer_key: peer_key.clone(),
+                    skill_id: scope.skill_id.clone(),
+                    channel_id: scope.channel_id.clone(),
+                    account_id: scope.account_id.clone(),
+                    allowed: true,
+                    revision: 0,
+                },
+                0,
+            )
+            .unwrap();
         assert_eq!(committed.revision, 1);
         assert!(grant.task_delegate_scope_authorized(Some(&scope)).unwrap());
-        let wrong_skill = crate::cluster::heartbeat::TaskDelegateScope { skill_id: "other".into(), ..scope.clone() };
-        assert!(!grant.task_delegate_scope_authorized(Some(&wrong_skill)).unwrap());
-        let wrong_channel = crate::cluster::heartbeat::TaskDelegateScope { channel_id: Some("discord".into()), ..scope.clone() };
-        let wrong_account = crate::cluster::heartbeat::TaskDelegateScope { account_id: Some("secondary".into()), ..scope.clone() };
-        assert!(!grant.task_delegate_scope_authorized(Some(&wrong_channel)).unwrap());
-        assert!(!grant.task_delegate_scope_authorized(Some(&wrong_account)).unwrap());
-        assert!(store.set_task_delegate_scoped_assignment(&committed, 0).unwrap_err().to_string().contains("revision conflict"));
-        let reset = store.set_task_delegate_scoped_assignment(&TaskDelegateScopedAssignment { allowed: false, ..committed.clone() }, committed.revision).unwrap();
+        let wrong_skill = crate::cluster::heartbeat::TaskDelegateScope {
+            skill_id: "other".into(),
+            ..scope.clone()
+        };
+        assert!(
+            !grant
+                .task_delegate_scope_authorized(Some(&wrong_skill))
+                .unwrap()
+        );
+        let wrong_channel = crate::cluster::heartbeat::TaskDelegateScope {
+            channel_id: Some("discord".into()),
+            ..scope.clone()
+        };
+        let wrong_account = crate::cluster::heartbeat::TaskDelegateScope {
+            account_id: Some("secondary".into()),
+            ..scope.clone()
+        };
+        assert!(
+            !grant
+                .task_delegate_scope_authorized(Some(&wrong_channel))
+                .unwrap()
+        );
+        assert!(
+            !grant
+                .task_delegate_scope_authorized(Some(&wrong_account))
+                .unwrap()
+        );
+        assert!(
+            store
+                .set_task_delegate_scoped_assignment(&committed, 0)
+                .unwrap_err()
+                .to_string()
+                .contains("revision conflict")
+        );
+        let reset = store
+            .set_task_delegate_scoped_assignment(
+                &TaskDelegateScopedAssignment {
+                    allowed: false,
+                    ..committed.clone()
+                },
+                committed.revision,
+            )
+            .unwrap();
         assert_eq!(reset.revision, 2);
         assert!(!grant.task_delegate_scope_authorized(Some(&scope)).unwrap());
     }
