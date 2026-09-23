@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W270 Hippocampus accepted; Group465 all green (2026-09-23):** P2-02 is
+closed from eleven actual passing tests, including WAL-indexed importance
+through the accepted task tick to CLI readback, threshold/idempotency, rejected
+reload, Custom refusal, retention rollback and both migration outcomes. Root
+verified all 103 Group465 source bindings, matrix/lock and 465 individual terminals;
+the ten production dependency files remain unchanged through 4162c45b. An
+independent review confirmed the complete runtime path. W269 readiness and W271
+actual Doctor caller also passed in this run. Wider channel/CRG/release rows
+remain open. Road 1324 = 1019 checked / 303 open / 2 partial; raw blockers 305 and release-tag
+blockers 304. WS-LF 118 = 12 done / 106 open. Inventory 540/884/98 and Group465/GUI124
+remain unchanged. The exact two-path hosted GUI formatter receipt is imported;
+no local executable validation ran.
+
 **W273/W274 deterministic platform fixtures (2026-09-23):** the two provider
 cancellation tests now use the existing one-shot provider-error acknowledgement
 gate. Each requires the real cancellation terminal to become durable, proves
@@ -126,7 +139,7 @@ progress wiring, 120-second silence semantics, cancellation races and visible
 typed retry guidance. No whole failed run or unrelated feature was accepted.
 P1-20 remains open under its explicit all-OS/current-candidate release gate.
 Current Road1324=1018checked/304open/2partial;WS-LF118=11done/107open;
-raw blockers306/release-tag blockers305. No local executable validation ran.
+raw blockers306/release-tag blockers 305. No local executable validation ran.
 See `docs/gold-wave265-watchdog-acceptance.md` and
 `docs/verification/gold-wave265-watchdog-acceptance.json`.
 
@@ -4058,14 +4071,14 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection, P2-29 throughput and P1-21 watchdog accepted: **11 done / 107
+> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog and P2-02 Hippocampus accepted: **12 done / 106
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable
 > patches before persistence or apply. No other recovered feature or
 > Plan-001/002/003 leaf was closed by the inventory repair.
 >
-> `GOLD-LF-P1-20` is implemented but deliberately remains one of those 111
+> `GOLD-LF-P1-20` is implemented but deliberately remains one of those 106
 > open tasks until exact-head CI proves the cross-platform/release boundary.
 > The desktop derives sidebar previews and selected-session history from the
 > canonical read-only `raw_turns` store, re-sanitizes every displayed role,

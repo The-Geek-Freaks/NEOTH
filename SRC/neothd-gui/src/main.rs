@@ -47392,11 +47392,7 @@ exit 0
     }
 
     #[cfg(all(target_os = "macos", feature = "macos-native-gui-test"))]
-    fn w274_assert_macos_legacy_child_refusal(
-        window: &MainWindow,
-        fixture: &TempDir,
-        label: &str,
-    ) {
+    fn w274_assert_macos_legacy_child_refusal(window: &MainWindow, fixture: &TempDir, label: &str) {
         w153_pump_until(window, label, |window| {
             !window.get_chat_send_in_flight()
                 && window.get_chat_live_messages().iter().any(|row| {
@@ -47447,8 +47443,7 @@ exit 0
                 let one_proof_lookup = calls
                     .iter()
                     .filter(|line| {
-                        line.contains("citation lookup")
-                            && line.contains("--gui-approval-stdin")
+                        line.contains("citation lookup") && line.contains("--gui-approval-stdin")
                     })
                     .count()
                     == 1;
@@ -47485,8 +47480,7 @@ exit 0
             calls
                 .iter()
                 .filter(|line| {
-                    line.contains("citation lookup")
-                        && line.contains("--gui-approval-stdin")
+                    line.contains("citation lookup") && line.contains("--gui-approval-stdin")
                 })
                 .count(),
         );
@@ -50063,8 +50057,7 @@ exit 7
             approved_calls
                 .iter()
                 .filter(|line| {
-                    line.contains("citation lookup")
-                        && line.contains("--gui-approval-stdin")
+                    line.contains("citation lookup") && line.contains("--gui-approval-stdin")
                 })
                 .count(),
             1,

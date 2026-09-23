@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W270 Hippocampus accepted; Group465 all green (2026-09-23):** P2-02 is
+closed from eleven actual passing tests, including WAL-indexed importance
+through the accepted task tick to CLI readback, threshold/idempotency, rejected
+reload, Custom refusal, retention rollback and both migration outcomes. Root
+verified all 103 Group465 source bindings, matrix/lock and 465 individual terminals;
+the ten production dependency files remain unchanged through 4162c45b. An
+independent review confirmed the complete runtime path. W269 readiness and W271
+actual Doctor caller also passed in this run. Wider channel/CRG/release rows
+remain open. Road 1324 = 1019 checked / 303 open / 2 partial; raw blockers 305 and release-tag
+blockers 304. WS-LF 118 = 12 done / 106 open. Inventory 540/884/98 and Group465/GUI124
+remain unchanged. The exact two-path hosted GUI formatter receipt is imported;
+no local executable validation ran.
+
 **W273/W274 deterministic platform fixtures (2026-09-23):** the two provider
 cancellation tests now use the existing one-shot provider-error acknowledgement
 gate. Each requires the real cancellation terminal to become durable, proves
@@ -127,7 +140,7 @@ progress wiring, 120-second silence semantics, cancellation races and visible
 typed retry guidance. No whole failed run or unrelated feature was accepted.
 P1-20 remains open under its explicit all-OS/current-candidate release gate.
 Current Road1324=1018checked/304open/2partial;WS-LF118=11done/107open;
-raw blockers306/release-tag blockers305. No local executable validation ran.
+raw blockers306/release-tag blockers 305. No local executable validation ran.
 See `docs/gold-wave265-watchdog-acceptance.md` and
 `docs/verification/gold-wave265-watchdog-acceptance.json`.
 

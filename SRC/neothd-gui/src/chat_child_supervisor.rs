@@ -2553,7 +2553,6 @@ mod tests {
         );
     }
 
-
     /// Malicious provider fixture: create a new session plus a double-forked
     /// descendant, then stay alive until the manager kills the entire unit.
     #[cfg(target_os = "linux")]

@@ -1,0 +1,75 @@
+{
+  "schema": "neoth-scoped-source-equivalence/v1",
+  "head": "4162c45bd4f619edd5dd684d6f3d54e4ef2f5d6a",
+  "nativeBase": "180400ba9be6b88653657ea0e57f2c24370c79f4",
+  "nativeRun": 35812741498,
+  "sources": [
+    {
+      "path": "SRC/neothd/src/config/memory.rs",
+      "gitBlob": "43fa1864a4d9bbc42147de0175f125c9a950aae8",
+      "sha256": "7FD0882D6067852BC9BC73B20DA0D6935F3E579DEB5F8465E2E5B2FC9A1843DC"
+    },
+    {
+      "path": "SRC/neothd/src/config/reload.rs",
+      "gitBlob": "62426beb111e70f36470c45fb816a1647f607a84",
+      "sha256": "FB7D2A102971309CAE8E0811D04DA63071061C63D632F41F2CB455886BD168FC"
+    },
+    {
+      "path": "SRC/neothd/src/memory/decay_task.rs",
+      "gitBlob": "39e6cd9c2277fd6966672128bffcedc0c2bf9996",
+      "sha256": "9A7CEF2775B6ED383209595C33961B49DE5E54C70D6545A08B9EFC31CE5B02A7"
+    },
+    {
+      "path": "SRC/neothd/src/memory/consolidate.rs",
+      "gitBlob": "93b5298b01a2e4923e15165f2183fe071c9b157b",
+      "sha256": "9EE52D9FC13AEFBF890DB6DAE7E8303C90C5BA2FB4F536D1984AD54F71C16448"
+    },
+    {
+      "path": "SRC/neothd/src/memory/hippocampus.rs",
+      "gitBlob": "a67b9f4949bd6df7cd861fd125356ff7594dc998",
+      "sha256": "E73F6A5D974DCA825C6C406E20F0B449A79DF632E7DC7B75DCD8AC9ED9431BDD"
+    },
+    {
+      "path": "SRC/neothd/src/memory/migrations/mod.rs",
+      "gitBlob": "e1525d9e5777e483300fb9d5035f7ad549bff3a8",
+      "sha256": "388D3AE1823D37C50C00D092032AEB02AB69149DF3C2059447EFF29713535697"
+    },
+    {
+      "path": "SRC/neothd/src/memory/store.rs",
+      "gitBlob": "b4dfe01d4793e41492ea5274c11bae994e3e8bbd",
+      "sha256": "9B7398EB76E7DDBF6259DF771AACB3241F0C506E72EF77F15F8103151BE9B238"
+    },
+    {
+      "path": "SRC/neothd/src/memory/indexer.rs",
+      "gitBlob": "4726111038d2a6803f3b62586fd1704ed2718f3f",
+      "sha256": "4A95B8BD411D698E5778EF7BEF643349C87C6B4FB69C00D44A1FCB7994D39DA3"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve.rs",
+      "gitBlob": "a3f367dd2cc82adeab68837803d85b8bde2e9875",
+      "sha256": "D96A36FBB8C84CC15A9590FE90A4F652313F23E628BF2D7E14C74D494B11EC96"
+    },
+    {
+      "path": "SRC/neothd/src/cli/memory.rs",
+      "gitBlob": "30ba73da80e49ae14e5865440cd3723cc31067ff",
+      "sha256": "FD348C948FA3CD9229D126FD4C9C1BB0BBBABEEDA10F920DF4FE404E6065D54F"
+    }
+  ],
+  "unchanged": true,
+  "requiredTests": [
+    "config::memory::tests::hippocampus_membership_is_default_off_and_parses_explicit_opt_in",
+    "memory::hippocampus::tests::selection_boundary_is_inclusive_and_idempotent",
+    "memory::hippocampus::tests::reconcile_removes_decayed_and_missing_membership_atomically",
+    "memory::hippocampus::tests::read_only_query_hides_stale_rows_and_uses_stable_order",
+    "memory::migrations::tests::v40_to_v41_adds_membership_without_rewriting_existing_importance",
+    "memory::migrations::tests::v40_to_v41_rolls_back_when_an_incompatible_existing_table_blocks_the_index",
+    "memory::consolidate::tests::hippocampus_membership_moves_with_retained_event_and_rolls_back_with_decay",
+    "memory::decay_task::tests::hippocampus_selection_is_default_off_and_custom_fail_closed",
+    "memory::decay_task::tests::rejected_reload_keeps_the_last_accepted_hippocampus_policy",
+    "memory::decay_task::tests::wal_indexed_importance_flows_through_accepted_tick_to_cli_hippocampus_view",
+    "cli::memory::tests::hippocampus_flag_accepts_an_omitted_or_explicit_query"
+  ],
+  "admittedNativeTerminals": 11,
+  "acceptance": "GOLD-LF-P2-02 only; Group465 all exact tests passed; no GUI/Buddy contract added",
+  "localExecutableValidationRan": false
+}

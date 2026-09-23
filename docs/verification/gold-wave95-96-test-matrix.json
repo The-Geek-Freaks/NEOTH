@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W273 ack-gated cancellation/W274 true macOS refusal+private proof witness reviewed; hosted validation pending",
+  "status": "Group465180 admitted465/465; P2-02 accepted11terminals10unchangeddependencies; exactGUIformat imported; newplatform fixtures pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 93406,
-    "sha256": "8C66CC0804385D5B69DE256B2F467F7E1046C9FB1B125648821CD2ADE9796AB7"
+    "bytes": 93429,
+    "sha256": "0F39E1490AA3EC289B80757AA0A76F4D5E5645C6E2828F6CCA58CBF6B3726396"
   },
   "sourceInputs": 540,
   "requiredNativeTests": [
@@ -5914,8 +5914,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2176608,
-      "sha256": "ABB96469FC631E43AD0B0CC05E2CB82F219108A1BBF5BE1514E8AC825C81B6B1"
+      "bytes": 2176501,
+      "sha256": "693DF4790672BA169FF84104F3F5D9E6A0A8E5BA2A5A25A3065E8983575BB0EA"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -17393,7 +17393,9 @@
     ],
     "report": "docs/gold-wave270-hippocampus-validation.md",
     "localValidationRan": false,
-    "note": "Existing complete production implementation; 11 focused config/threshold/idempotency/reload/retention/CLI/migration cases selected. Runtime pass required before P2-02 closure."
+    "note": "Accepted GOLD-LF-P2-02: 11 exact passing terminals Group465180; ten production dependency sources unchanged through4162; actual caller chain independently reviewed.",
+    "hostedRun": 35812741498,
+    "acceptanceProof": "docs/verification/gold-wave270-hippocampus-acceptance.json"
   },
   "wave269NativeReadinessAcceptance": {
     "requiredTests": [
@@ -17495,6 +17497,26 @@
       }
     ],
     "note": "W273 existing provider-error TestAckGate proves dispatch Pending until durable receipt acknowledged; real no-replay binding retained. W274 accepts operator Complete rows but rejects successful assistant repaint under macOS refusal. Root binds earlypublished main; duplicateGUIcancelled.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave270AcceptedAndPlatformFixtureFormat": {
+    "base": "4162c45bd4f619edd5dd684d6f3d54e4ef2f5d6a",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
+        "bytes": 106756,
+        "sha256": "74DB8CB13FF1CB14FBC3D66F9A5A432B2E53D62BCB93B27ED9E1EBFDE9012F55",
+        "blob": "eb542208d3dbc65febd5a01e6763711405fcfc12"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2176501,
+        "sha256": "693DF4790672BA169FF84104F3F5D9E6A0A8E5BA2A5A25A3065E8983575BB0EA",
+        "blob": "67d88d25e303dc6911ba2adf85b6040b09014179"
+      }
+    ],
+    "note": "Hippocampus accepted only after independent caller review and exact native terminals/source equivalence. W273/W274 formatter import hashes/pre/postimages verified. Road1019/303/2; WS-LF12/106; source count540.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

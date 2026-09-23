@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T03:18:40.9668328Z",
-  "validationStatus": "W273 ack-gated cancellation/W274 true macOS refusal+private proof witness reviewed; hosted validation pending",
+  "capturedUtc": "2026-09-23T03:22:35.0689936Z",
+  "validationStatus": "Group465180 admitted465/465; P2-02 accepted11terminals10unchangeddependencies; exactGUIformat imported; newplatform fixtures pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -438,18 +438,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 111897,
-      "sha256": "188C213D51CAD417D419491B891756198F80A8B28B3E2EB670B1BBA032C31B6D"
+      "bytes": 112816,
+      "sha256": "61B712F1DF9EB117B81F9CBC094F34023B72EC4DC974C096619AACC8E33F754C"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1114856,
-      "sha256": "F8956CFC18EC4908A766A19E3EAE3AA579C760856328E875DB7048829E7CA7D4"
+      "bytes": 1115794,
+      "sha256": "D56E0B44FC4ADC1CA2AA044F7EBD590FC95B8796F371CECFE96475554E541840"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1711076,
-      "sha256": "E0F501E2D6AD8798A89FC012937DEE0BC0D85B6ECA4C59C9E4FD8AA1658151A0"
+      "bytes": 1712069,
+      "sha256": "DFF9B64BA91E8B8FBAC78E70FD3F939148C444142B6AC8F5F3E58805FC3D6068"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -583,8 +583,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
-      "bytes": 106757,
-      "sha256": "F174FBD25B78BB0918F0C9230215A16DA2171A471A7F9D4E16E04755A2F967EB"
+      "bytes": 106756,
+      "sha256": "74DB8CB13FF1CB14FBC3D66F9A5A432B2E53D62BCB93B27ED9E1EBFDE9012F55"
     },
     {
       "path": "SRC/neothd-gui/src/chat_reasoning.rs",
@@ -653,8 +653,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2176608,
-      "sha256": "ABB96469FC631E43AD0B0CC05E2CB82F219108A1BBF5BE1514E8AC825C81B6B1"
+      "bytes": 2176501,
+      "sha256": "693DF4790672BA169FF84104F3F5D9E6A0A8E5BA2A5A25A3065E8983575BB0EA"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
