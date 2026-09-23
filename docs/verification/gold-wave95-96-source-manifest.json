@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T08:03:12.6515434Z",
-  "validationStatus": "W315 SOURCE PASS with13selectedfixtures; hosted verification pending. Core750 admitted.",
+  "capturedUtc": "2026-09-23T08:30:26.5113997Z",
+  "validationStatus": "W318-W322 SOURCE PASS; P222 accepted22/22 unchanged sources; Group684 selected; hosted repair validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -73,8 +73,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 13879,
-      "sha256": "1FA60A2FDD017F03515F546E555D9FAA33E7383EC93ADAE7F18B861F92C1FA5E"
+      "bytes": 13989,
+      "sha256": "696E176D9452FB5302E7FC41A795AA5E0A3DF799053A633F32A8293070003EE3"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -473,18 +473,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 141492,
-      "sha256": "D1E437406099511FB65BE2002C1DFAB95D9960228CB503BFA3750FF282B27BCA"
+      "bytes": 143381,
+      "sha256": "2D1E3D46C8856F2B399AADD666A85359D32CE3AAA972F320E3C133E46B2FF377"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1144516,
-      "sha256": "C65796C966932D9EBFBC6BD782FB9943EC0AC6F8B4E05A119CB03407C447B7E8"
+      "bytes": 1146405,
+      "sha256": "9BF1813B8B99F82483557F6F5433FA61E11422D40EB3BF897BF3B02AF0FCCA4D"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1741048,
-      "sha256": "4D8B5ACE569B7534551B94400105F6F83D2FBB3C40EDF1F3AA074352661A2F6A"
+      "bytes": 1742922,
+      "sha256": "19659D12A1871C6AC490BB6A0210EAC3FEBA2D811040C2D086330D2C1ADC33AA"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -623,8 +623,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
-      "bytes": 126638,
-      "sha256": "02D105952B4B926A77D3B7234305D129D266536650408F2CBF98729A2BEE840B"
+      "bytes": 129931,
+      "sha256": "385C26EDA3886223E03036FD3147DCBA64BC1721C2421BEC03EDB112197BEBFD"
     },
     {
       "path": "SRC/neothd-gui/src/chat_reasoning.rs",
@@ -1083,8 +1083,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1139553,
-      "sha256": "6B5B23AC0025958E0E431FF426CBDD57E5489128A44AE075E82F725B8AC34018"
+      "bytes": 1139621,
+      "sha256": "699AE490D4515B3846203A77B9FEA671D290CF56BFC8885A1CE63305524E8AD2"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -1108,8 +1108,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/code.rs",
-      "bytes": 113860,
-      "sha256": "34096571A35CCEAE6DCA52C0870697446AF67F761F0442F2AACD3BF5074BFC09"
+      "bytes": 113938,
+      "sha256": "C832CFFCED48D99DCF7F0BF3932C4A2272B69D05AD89AE1BA353520B7A247DF7"
     },
     {
       "path": "SRC/neothd/src/cli/connect.rs",
@@ -1288,8 +1288,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/profile.rs",
-      "bytes": 228726,
-      "sha256": "BF2BAD77FC9155D906E7B0B65F1CC544E95EC046C3617DDC2E51C58505161AC2"
+      "bytes": 228803,
+      "sha256": "67D8C75C1C72515EF5CB31007AFB3011AEA75D1EB63F5CAC7DBC7515CEB76154"
     },
     {
       "path": "SRC/neothd/src/cli/recall_score.rs",
@@ -1513,8 +1513,8 @@
     },
     {
       "path": "SRC/neothd/src/coding/service.rs",
-      "bytes": 152487,
-      "sha256": "690CE48A037C60A610B60C7E145C98A5D0DC961AF42BC94DF6E44EBF08DDD67F"
+      "bytes": 152555,
+      "sha256": "CEEE5B83178606E291C87A9058D22AB24CE7EC1939B4BBBD3A635833E37DCD7C"
     },
     {
       "path": "SRC/neothd/src/coding/store.rs",
@@ -2268,8 +2268,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/compactor.rs",
-      "bytes": 88851,
-      "sha256": "E572934788DFB9B727F999E03E7A0CF1FB20F4C5579FB01E561432AB92F5822B"
+      "bytes": 88780,
+      "sha256": "10C257DB5AC3CA8A74D6456168C29954890CF1E0FDEB87D244D0F6750CCB394E"
     },
     {
       "path": "SRC/neothd/src/providers/copilot.rs",
@@ -2278,13 +2278,13 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "bytes": 333580,
-      "sha256": "ED26926BE1FEDB0E7E3DBC69347AAC0327B2F4742FAF90049ECCBD7DD1565AD3"
+      "bytes": 333863,
+      "sha256": "6171F3A844CEE9C607D8DE78469D50A457F1140B81ED05590089E7B433EB9AA7"
     },
     {
       "path": "SRC/neothd/src/providers/fallback.rs",
-      "bytes": 85205,
-      "sha256": "C978CCE2263B507EE8E9BD82524AF1A48430B0D6CEC3AE2C71AB20A739D7FAC9"
+      "bytes": 85252,
+      "sha256": "9FB623DC35EF56DC060BCC248347B6895999C4911741F0487A26AB208B39DDBA"
     },
     {
       "path": "SRC/neothd/src/providers/gemini_api.rs",
@@ -2303,8 +2303,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/mod.rs",
-      "bytes": 271099,
-      "sha256": "66624B784A4B19817D715E8761C21915E1EF28D75551D9FEF85AC0A6EEB6402F"
+      "bytes": 271171,
+      "sha256": "59F48F5E65DCD6DC840F1408D07E99067436CD15E8DE474DBCA3BFEFFEEC16A4"
     },
     {
       "path": "SRC/neothd/src/providers/ollama_api.rs",
@@ -2408,8 +2408,8 @@
     },
     {
       "path": "SRC/neothd/src/reflection/periodic.rs",
-      "bytes": 242120,
-      "sha256": "4E3D28894C9AC497564331D475A69159388B02FEAE1318BAA4D52A7163DCC0B1"
+      "bytes": 243110,
+      "sha256": "8892572D09E930C922EB6C6F6A80D9446CFD468F92F219A905D02FB817E69581"
     },
     {
       "path": "SRC/neothd/src/security/mirror_refusal_pipeline.rs",
@@ -2523,8 +2523,8 @@
     },
     {
       "path": "SRC/neothd/src/sub_agents/runtime.rs",
-      "bytes": 81838,
-      "sha256": "1262E88983970F573D81320681429394380738670E5614808C8D0284047395CA"
+      "bytes": 81850,
+      "sha256": "0B0931DDD9F011D946A76DEF63232EEA16DD42085894B60212099BA3B3EE73D9"
     },
     {
       "path": "SRC/neothd/src/tokens/budget.rs",
@@ -2828,8 +2828,8 @@
     },
     {
       "path": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "bytes": 27422,
-      "sha256": "217F5D9D9C2CF5268A80C5BA7EC6AD50774626603ABBBFDAE945462E8E86D282"
+      "bytes": 29358,
+      "sha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7"
     },
     {
       "path": "docs/gold-wave280-daily-retention.md",
@@ -2878,8 +2878,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/hemispheres.rs",
-      "bytes": 66492,
-      "sha256": "A75790931189E4F1AB9F5EDBB6DA62A783C75D3BE7B2F96993E97A350EA533E3"
+      "bytes": 66569,
+      "sha256": "CD38859430CFA0FA57E52A4110054E8325B001B5F15894E99746D3961A417E35"
     },
     {
       "path": "SRC/neothd/src/cli/cron.rs",
@@ -3010,6 +3010,41 @@
       "path": "docs/gold-wave315-direct-provider-retry.md",
       "bytes": 3454,
       "sha256": "E3AD1879DF182E8EF2EDC8D3BFAEA04724059B0F45C061BC1A4656ABBEA40E5A"
+    },
+    {
+      "path": "docs/gold-wave318-retention-fixture-inventory.md",
+      "bytes": 2163,
+      "sha256": "FB7128BB1D4E4E89EB65F0D5BABBBEFC46504E6E6C1718239F4A191E0C65A6A2"
+    },
+    {
+      "path": "docs/gold-wave319-gui-hosted-failure-repair.md",
+      "bytes": 2285,
+      "sha256": "0CB4D0E681923A3451EDFF955A9346C5FB9A882748F4F238767F3A2E926A1AAB"
+    },
+    {
+      "path": "docs/gold-wave320-coding-role-fixture-bindings.md",
+      "bytes": 2021,
+      "sha256": "F3AC7AC5F234D46A0EE8D636547E26DF85DC6A36F3B3C42E9EB6D8F8E6E3BE37"
+    },
+    {
+      "path": "docs/gold-wave321-cli-role-fixture-bindings.md",
+      "bytes": 995,
+      "sha256": "AEFF7BB477AB4E8AB87CB1642125BD64C693E6FC424E5629F403B58038CC4BD2"
+    },
+    {
+      "path": "docs/gold-wave322-role-fixture-lifecycle.md",
+      "bytes": 2538,
+      "sha256": "6549F20CF6D8977BDF1B457CE14E1A66C77CF1DD9F924B54CF8936FEA81A4A7A"
+    },
+    {
+      "path": "docs/gold-wave323-hosted-acceptance.md",
+      "bytes": 2961,
+      "sha256": "4215C6F27CB63FAF6D8094F4E612FFF8D530E36B82B8A6D9E2F2F577CA9F7D33"
+    },
+    {
+      "path": "docs/verification/gold-wave323-p222-acceptance.json",
+      "bytes": 8479,
+      "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
     }
   ]
 }

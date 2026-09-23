@@ -2714,7 +2714,9 @@ pub trait Provider: Send + Sync {
                     retry_attempt = retry_attempt.saturating_add(1);
                     if let Err(retry_error) = permit.begin_retry_attempt().await {
                         if let Err(audit_error) = permit
-                            .finish_retry_authorization_denied("provider_retry_authorization_denied")
+                            .finish_retry_authorization_denied(
+                                "provider_retry_authorization_denied",
+                            )
                             .await
                         {
                             return Err(anyhow::anyhow!(
@@ -3252,7 +3254,8 @@ fn direct_retry_classification(error: &anyhow::Error) -> Option<claude_retry::Re
             _ => None,
         };
     }
-    (transport.is_timeout() || transport.is_connect()).then_some(claude_retry::RetryClass::Transient)
+    (transport.is_timeout() || transport.is_connect())
+        .then_some(claude_retry::RetryClass::Transient)
 }
 
 fn direct_quota_retry_delay(error: &anyhow::Error) -> Option<Duration> {

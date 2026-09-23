@@ -895,7 +895,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let fallback = fallback_at(
             dir.path(),
-            vec![mock("primary", Behavior::Quota), mock("secondary", Behavior::Ok)],
+            vec![
+                mock("primary", Behavior::Quota),
+                mock("secondary", Behavior::Ok),
+            ],
             1,
             None,
         );

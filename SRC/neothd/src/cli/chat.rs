@@ -1214,7 +1214,10 @@ impl Provider for CanaryGuardedProvider<'_> {
             .complete_authorized_direct_retry(req, authorizer, call_scope)
             .await
             .map_err(|error| {
-                sanitize_chat_post_mint_provider_error("guarded_complete_authorized_direct_retry", &error)
+                sanitize_chat_post_mint_provider_error(
+                    "guarded_complete_authorized_direct_retry",
+                    &error,
+                )
             })?;
         self.guard(completion)
     }
@@ -19635,7 +19638,7 @@ modes:
         let loop_cfg = crate::loop_engine::engine::LoopConfig::for_dissent_invoke(
             config.autonomy,
             home.path().to_path_buf(),
-            None,
+            Some(1),
         );
 
         let record = crate::loop_engine::engine::run_loop(
@@ -19693,7 +19696,7 @@ modes:
         let loop_cfg = crate::loop_engine::engine::LoopConfig::for_dissent_invoke(
             config.autonomy,
             home.path().to_path_buf(),
-            None,
+            Some(1),
         );
 
         let error = crate::loop_engine::engine::run_loop(
@@ -20042,7 +20045,7 @@ modes:
                 Some(crate::config::role_policy::RolePolicyConfig {
                     rules: vec![crate::config::role_policy::RolePolicyRule {
                         role: crate::config::inference::HemisphereRole::Left,
-                        provider: crate::config::inference::InferenceProvider::OpenAi,
+                        provider: crate::config::inference::InferenceProvider::ClaudeCli,
                         model: Some(W292_LEFT_MODEL.to_owned()),
                     }],
                 });

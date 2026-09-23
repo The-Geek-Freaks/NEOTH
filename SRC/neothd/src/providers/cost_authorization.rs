@@ -4183,17 +4183,21 @@ mod tests {
         ) -> Result<Completion> {
             let attempt = self.attempts.fetch_add(1, Ordering::SeqCst);
             if self.typed_http_auth_failure {
-                return Err(anyhow::Error::new(crate::providers::ProviderHttpStatusError {
-                    provider: self.name(),
-                    status: 401,
-                }));
+                return Err(anyhow::Error::new(
+                    crate::providers::ProviderHttpStatusError {
+                        provider: self.name(),
+                        status: 401,
+                    },
+                ));
             }
             if attempt < self.failures_before_success && self.retryable_failure {
-                return Err(anyhow::Error::new(crate::providers::ProviderHttpStatusError {
-                    provider: self.name(),
-                    status: 500,
-                })
-                .context("untrusted fixture upstream body: retry marker"));
+                return Err(
+                    anyhow::Error::new(crate::providers::ProviderHttpStatusError {
+                        provider: self.name(),
+                        status: 500,
+                    })
+                    .context("untrusted fixture upstream body: retry marker"),
+                );
             }
             if attempt < self.failures_before_success {
                 anyhow::bail!("untyped fixture provider failure");
@@ -4507,20 +4511,28 @@ mod tests {
             ]
         );
         assert_eq!(frames[1].1["error_kind"], "provider_retry_transient");
-        assert_eq!(frames[1].1["retry_receipt"]["disposition"], "retry_intent_closed");
+        assert_eq!(
+            frames[1].1["retry_receipt"]["disposition"],
+            "retry_intent_closed"
+        );
         assert_eq!(frames[2].1["retry_attempt"], 2);
         assert_eq!(
-            frames[2].1["retry_chain_id"], frames[1].1["retry_receipt"]["retry_chain_id"]
+            frames[2].1["retry_chain_id"],
+            frames[1].1["retry_receipt"]["retry_chain_id"]
         );
         assert!(
-            !frames.iter().any(|frame| frame.1.to_string().contains("untrusted fixture upstream body")),
+            !frames.iter().any(|frame| frame
+                .1
+                .to_string()
+                .contains("untrusted fixture upstream body")),
             "the raw provider error must never enter lifecycle payloads"
         );
     }
 
     #[tokio::test]
     async fn direct_retry_untyped_failure_is_terminal_without_a_second_raw_call() {
-        let (result, attempts, _budget, frames) = run_direct_retry(usize::MAX, false, false, 1).await;
+        let (result, attempts, _budget, frames) =
+            run_direct_retry(usize::MAX, false, false, 1).await;
         assert!(result.is_err());
         assert_eq!(attempts, 1);
         assert_eq!(
@@ -4547,7 +4559,10 @@ mod tests {
             ]
         );
         assert_eq!(frames[1].1["retry_receipt"]["class"], "auth");
-        assert_eq!(frames[1].1["retry_receipt"]["disposition"], "auth_non_retryable");
+        assert_eq!(
+            frames[1].1["retry_receipt"]["disposition"],
+            "auth_non_retryable"
+        );
     }
 
     #[tokio::test]
@@ -4610,7 +4625,10 @@ mod tests {
                 crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
             ]
         );
-        assert_eq!(lifecycle[3].1["retry_receipt"]["disposition"], "authorization_denied");
+        assert_eq!(
+            lifecycle[3].1["retry_receipt"]["disposition"],
+            "authorization_denied"
+        );
     }
 
     #[tokio::test]

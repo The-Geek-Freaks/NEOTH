@@ -1103,6 +1103,7 @@ mod tests {
 
     fn w301_role_config(provider: InferenceProvider, model: &str) -> FreedomConfig {
         let mut cfg = FreedomConfig::default();
+        cfg.inference.mode = crate::config::inference::TopologyMode::Custom;
         cfg.inference.right.provider = Some(provider);
         cfg.inference.right.model = Some(model.into());
         cfg.inference.role_policy = Some(crate::config::role_policy::RolePolicyConfig {

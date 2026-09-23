@@ -151,6 +151,8 @@ jobs:
               "wave310LiveEgressSessionAcceptance": 3,
               "wave316WalSessionParentAcceptance": 44,
               "wave315DirectRetryAcceptance": 13,
+              "wave318RetentionInventoryAcceptance": 3,
+              "wave323CodegraphParentAcceptance": 25,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():

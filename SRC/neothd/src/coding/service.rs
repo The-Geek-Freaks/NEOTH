@@ -2895,7 +2895,7 @@ mod tests {
     use crate::coding::code_map_receipt::{
         CodeMapContextKind, CodeMapContextSource, CodeMapSelectedFile,
     };
-    use crate::config::inference::{HemisphereRole, InferenceProvider};
+    use crate::config::inference::{HemisphereRole, InferenceProvider, TopologyMode};
     use crate::config::role_policy::{RolePolicyConfig, RolePolicyRule};
     use crate::permissions::AutonomyLevel;
     use crate::providers::{Completion, Provider, Request};
@@ -2931,6 +2931,7 @@ mod tests {
 
     fn w300_role_config(policy_provider: InferenceProvider) -> crate::config::FreedomConfig {
         let mut config = crate::config::FreedomConfig::default();
+        config.inference.mode = TopologyMode::Custom;
         config.inference.cerebellum.provider = Some(InferenceProvider::LocalOllama);
         config.inference.role_policy = Some(RolePolicyConfig {
             rules: vec![RolePolicyRule {

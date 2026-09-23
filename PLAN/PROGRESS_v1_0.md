@@ -2,6 +2,34 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W318-W323 repairs and P2-22 acceptance (2026-09-23):** Group643750
+run35833333444 is source/terminal admitted:643executed,624PASS/19FAIL,
+138fixture sources plus matrix/lock and every ordered actual terminal checked.
+GUI129d6da35831827281 is admitted125PASS/4FAIL, with23source/input bindings;
+its overall gate remains failed. Core5bf35835186407 passed all four steps,
+including exact CLI reference equality. Hosted preflight5bf formatting was
+imported in five files after SHA256 and every Git pre/postimage verification.
+
+P2-22 is accepted: all22 consent/consumer tests passed and all10 relevant
+implementation/test sources remain unchanged. Durable grant/revoke ceremony,
+default denial, account/sender isolation, revocation quarantine and recovery
+are covered. See docs/verification/gold-wave323-p222-acceptance.json.
+P2-08 retains51 historical passing tests but stays open for changed provider
+sources. P2-11 adds25 missing existing test identities to the next group.
+
+W318 validates the real no-follow quarantine directory before excluding it
+from note inventory; foreign file/symlink cases still fail. W320/W321 correct
+fixture topology, W322 corrects fixture budget/reload/quota identities. W319
+keeps an initially inactive, not-yet-started systemd unit pending under the
+existing deadline; READY still requires the complete unit/cgroup contract.
+Independent source review passed; all repairs await hosted behavior gates.
+Three W318 regressions plus25 P2-11 cases expand Group656 to684. Inventory608;
+native1022 universal+Windows19/Linux32/macOS31; GUI129Linux/125macOS unchanged.
+Road1324=1022checked/300open/2partial;302raw/301pre-tag blockers. WS-LF15done/
+103open. FullCI75035833337095 continues; Linux has a repaired lint plus a
+separate runner shutdown, Windows/macOS remain pending. No local executable
+validation ran; no workstation crash-cause or overall release claim.
+
 **W315 direct-provider retry (2026-09-23):** Normal nonstream direct chat now
 uses the existing fresh-permit retry lifecycle. Typed HTTP401/403 are terminal,
 unknown errors remain terminal, known transients are bounded, and a short

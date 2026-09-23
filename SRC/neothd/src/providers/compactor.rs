@@ -1513,14 +1513,8 @@ mod tests {
         let prompt = long_prompt(500);
         let (inner, inner_calls) = StubProvider::new("inner_reply");
         let (utility, utility_calls) = StubProvider::new("SUMMARY_TEXT");
-        let cp = CompactingProvider::new(
-            Box::new(inner),
-            Some(Box::new(utility)),
-            100,
-            0.8,
-            50,
-            None,
-        );
+        let cp =
+            CompactingProvider::new(Box::new(inner), Some(Box::new(utility)), 100, 0.8, 50, None);
         let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
             crate::permissions::AutonomyLevel::Full,
         );

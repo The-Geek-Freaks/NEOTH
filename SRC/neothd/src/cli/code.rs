@@ -1540,7 +1540,7 @@ fn validate_apply_has_dispatch_path(apply: bool, dispatch: bool, run_pending: bo
 mod tests {
     use super::*;
     use crate::code_map::graph::EdgeKind;
-    use crate::config::inference::InferenceProvider;
+    use crate::config::inference::{InferenceProvider, TopologyMode};
     use crate::config::role_policy::{RolePolicyConfig, RolePolicyRule};
     use crate::permissions::AutonomyLevel;
     use crate::providers::{Completion, Provider, Request};
@@ -1578,6 +1578,7 @@ mod tests {
     async fn resume_worker_role_binding_allows_selected_right_and_denies_mismatch_before_transport()
     {
         let mut allowed_config = FreedomConfig::default();
+        allowed_config.inference.mode = TopologyMode::Custom;
         allowed_config.inference.right.provider = Some(InferenceProvider::LocalOllama);
         allowed_config.inference.role_policy = Some(RolePolicyConfig {
             rules: vec![RolePolicyRule {

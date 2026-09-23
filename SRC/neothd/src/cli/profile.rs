@@ -3842,6 +3842,7 @@ mod tests {
 
     fn w301_profile_config(model: &str) -> FreedomConfig {
         let mut cfg = FreedomConfig::default();
+        cfg.inference.mode = crate::config::inference::TopologyMode::Custom;
         cfg.inference.left.provider =
             Some(crate::config::inference::InferenceProvider::LocalOllama);
         cfg.inference.left.model = Some(model.into());

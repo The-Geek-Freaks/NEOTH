@@ -2052,6 +2052,19 @@ fn plan_managed_daily_note_retention(
         unattested_expired_temps: 0,
     };
     for name in bounded_retention_child_names(&target.daily, MAX_DAILY_RETENTION_ENTRIES)? {
+        if name == OsStr::new(".neoth-retention-v2") {
+            let Some(_quarantine) = open_existing_read_only_child(
+                &target.daily,
+                &name,
+                &target.daily_path.join(&name),
+            )? else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "daily retention note quarantine disappeared during inventory",
+                ));
+            };
+            continue;
+        }
         let (tag, kind) = note_leaf_from_retention_name(&name)?;
         let record = archives.get(&tag).ok_or_else(|| {
             std::io::Error::new(
@@ -2092,6 +2105,19 @@ fn count_unattested_daily_note_debt_without_archive(
 ) -> std::io::Result<usize> {
     let mut debt = 0usize;
     for name in bounded_retention_child_names(&target.daily, MAX_DAILY_RETENTION_ENTRIES)? {
+        if name == OsStr::new(".neoth-retention-v2") {
+            let Some(_quarantine) = open_existing_read_only_child(
+                &target.daily,
+                &name,
+                &target.daily_path.join(&name),
+            )? else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "daily retention note quarantine disappeared during inventory",
+                ));
+            };
+            continue;
+        }
         let _ = note_leaf_from_retention_name(&name)?;
         let path = target.daily_path.join(&name);
         let bytes =

@@ -1,0 +1,179 @@
+{
+  "schema": "neoth-parent-acceptance/v1",
+  "parent": "GOLD-LF-P2-22",
+  "status": "ACCEPTED",
+  "run": 35833333444,
+  "sourceHead": "750d162b075d01c9155f00291d207180dacc3341",
+  "runConclusion": "failure",
+  "parentRequired": 22,
+  "parentPassed": 22,
+  "unrelatedFailures": 19,
+  "groupAdmissionSha256": "A9D70BEBCAC61963FF568298E8D7130FAE56048909F189003C5B0A9383B55779",
+  "orderedTestTerminals": true,
+  "tests": [
+    {
+      "test": "cli::serve_pipeline::tests::counterparty_consent_pending_grant_audit_recovers_from_exact_input_receipt",
+      "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "sourceSha256": "b34c8192d455dd4f48ebe8dea92e1a2f646aaa98bacd275d938b163b2a4af1c1"
+    },
+    {
+      "test": "cli::serve_pipeline::tests::counterparty_consent_pending_revoke_audit_recovers_without_restoring_consent",
+      "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "sourceSha256": "b34c8192d455dd4f48ebe8dea92e1a2f646aaa98bacd275d938b163b2a4af1c1"
+    },
+    {
+      "test": "cli::serve_pipeline::tests::counterparty_consent_pipeline_grant_then_revoke_tracks_real_status",
+      "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "sourceSha256": "b34c8192d455dd4f48ebe8dea92e1a2f646aaa98bacd275d938b163b2a4af1c1"
+    },
+    {
+      "test": "cli::serve_pipeline::tests::counterparty_consent_request_bypasses_normal_ingress_and_provider",
+      "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "sourceSha256": "b34c8192d455dd4f48ebe8dea92e1a2f646aaa98bacd275d938b163b2a4af1c1"
+    },
+    {
+      "test": "cli::serve_pipeline::tests::malformed_counterparty_consent_never_receipts_or_reaches_provider",
+      "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "sourceSha256": "b34c8192d455dd4f48ebe8dea92e1a2f646aaa98bacd275d938b163b2a4af1c1"
+    },
+    {
+      "test": "memory::consolidation_sweep::tests::channel_scope_isolates_account_and_sender_even_when_display_channel_matches",
+      "sourcePath": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "sourceSha256": "9c851e06d673e764dbe28b90d30c53747920664ed951a69d136c7bad565ed145"
+    },
+    {
+      "test": "memory::consolidation_sweep::tests::cross_channel_episodes_do_not_cluster",
+      "sourcePath": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "sourceSha256": "9c851e06d673e764dbe28b90d30c53747920664ed951a69d136c7bad565ed145"
+    },
+    {
+      "test": "memory::consolidation_sweep::tests::legacy_unreceipted_episodes_are_denied_before_clustering",
+      "sourcePath": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "sourceSha256": "9c851e06d673e764dbe28b90d30c53747920664ed951a69d136c7bad565ed145"
+    },
+    {
+      "test": "memory::counterparty_consent_ceremony::tests::expired_pending_audit_is_still_nonreplaceable",
+      "sourcePath": "SRC/neothd/src/memory/counterparty_consent_ceremony.rs",
+      "sourceSha256": "b6269e9c0851c9cec36764bc5ee20cf0d4126c1643460067a65a223f964ee9a0"
+    },
+    {
+      "test": "memory::counterparty_consent_ceremony::tests::old_challenge_echo_cannot_adopt_a_post_revoke_baseline_but_fresh_echo_can",
+      "sourcePath": "SRC/neothd/src/memory/counterparty_consent_ceremony.rs",
+      "sourceSha256": "b6269e9c0851c9cec36764bc5ee20cf0d4126c1643460067a65a223f964ee9a0"
+    },
+    {
+      "test": "memory::counterparty_consent_ceremony::tests::parser_accepts_only_whole_ascii_ceremony_commands",
+      "sourcePath": "SRC/neothd/src/memory/counterparty_consent_ceremony.rs",
+      "sourceSha256": "b6269e9c0851c9cec36764bc5ee20cf0d4126c1643460067a65a223f964ee9a0"
+    },
+    {
+      "test": "memory::counterparty_consent_ceremony::tests::pending_audit_enumeration_is_content_free_and_ignores_terminal_rows",
+      "sourcePath": "SRC/neothd/src/memory/counterparty_consent_ceremony.rs",
+      "sourceSha256": "b6269e9c0851c9cec36764bc5ee20cf0d4126c1643460067a65a223f964ee9a0"
+    },
+    {
+      "test": "memory::counterparty_consent_ceremony::tests::reserve_rejects_wrong_command_sender_conversation_expiry_and_replay",
+      "sourcePath": "SRC/neothd/src/memory/counterparty_consent_ceremony.rs",
+      "sourceSha256": "b6269e9c0851c9cec36764bc5ee20cf0d4126c1643460067a65a223f964ee9a0"
+    },
+    {
+      "test": "memory::counterparty_consent_ceremony::tests::revoke_wins_over_pending_regrant_without_erasing_its_terminal_custody",
+      "sourcePath": "SRC/neothd/src/memory/counterparty_consent_ceremony.rs",
+      "sourceSha256": "b6269e9c0851c9cec36764bc5ee20cf0d4126c1643460067a65a223f964ee9a0"
+    },
+    {
+      "test": "memory::counterparty_consent_ceremony::tests::token_and_operation_ids_are_lowercase_fixed_width_hex",
+      "sourcePath": "SRC/neothd/src/memory/counterparty_consent_ceremony.rs",
+      "sourceSha256": "b6269e9c0851c9cec36764bc5ee20cf0d4126c1643460067a65a223f964ee9a0"
+    },
+    {
+      "test": "memory::counterparty_consent::tests::exact_revoke_deletes_only_bound_vectors_and_synthesis_facts",
+      "sourcePath": "SRC/neothd/src/memory/counterparty_consent.rs",
+      "sourceSha256": "e6fa8052834bbaa2e294243a9e044eb477178a215eda46842eca49b25e320d79"
+    },
+    {
+      "test": "memory::counterparty_consent::tests::legacy_raw_is_default_denied_but_valid_local_receipt_is_eligible",
+      "sourcePath": "SRC/neothd/src/memory/counterparty_consent.rs",
+      "sourceSha256": "e6fa8052834bbaa2e294243a9e044eb477178a215eda46842eca49b25e320d79"
+    },
+    {
+      "test": "memory::embeddings::tests::revoke_fences_late_store_and_stale_hnsw_episode_recall",
+      "sourcePath": "SRC/neothd/src/memory/embeddings.rs",
+      "sourceSha256": "a144af36a4607861fdc04b25ab88926e426d8e83fbf9527dd0a21abb161e5c83"
+    },
+    {
+      "test": "memory::migrations::tests::v42_to_v43_preserves_w208_state_without_backfilling_challenges_and_reopens",
+      "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
+      "sourceSha256": "388d3ae1823d37c50c00d092032aeb02ab69149df3c2059447eff29713535697"
+    },
+    {
+      "test": "wal::writer::tests::counterparty_consent_input_locator_conflict_fails_closed",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "8e82353b6f1801a347002323243e0a70ca18ce150967eb6af2da15edf8bcd806"
+    },
+    {
+      "test": "wal::writer::tests::counterparty_consent_input_once_is_durable_readback_and_idempotent",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "8e82353b6f1801a347002323243e0a70ca18ce150967eb6af2da15edf8bcd806"
+    },
+    {
+      "test": "wal::writer::tests::counterparty_consent_subtypes_refuse_every_generic_writer_entry",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "8e82353b6f1801a347002323243e0a70ca18ce150967eb6af2da15edf8bcd806"
+    }
+  ],
+  "currentSourceBindings": [
+    {
+      "path": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "blob": "f9462ea89171874879d9391ba0a23e5b57d22d69",
+      "unchangedFromHostedSource": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_tasks.rs",
+      "blob": "c611cdac9d7cedda27b3fbe9c6088aec5fe99efa",
+      "unchangedFromHostedSource": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve.rs",
+      "blob": "a3f367dd2cc82adeab68837803d85b8bde2e9875",
+      "unchangedFromHostedSource": true
+    },
+    {
+      "path": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "blob": "aade9ea8f82537874df774fa9227724a95cc4e9e",
+      "unchangedFromHostedSource": true
+    },
+    {
+      "path": "SRC/neothd/src/memory/counterparty_consent_ceremony.rs",
+      "blob": "9443eed08ebd691c6e915379b91e6e8d9930cd6f",
+      "unchangedFromHostedSource": true
+    },
+    {
+      "path": "SRC/neothd/src/memory/counterparty_consent.rs",
+      "blob": "a64509516f873a8dd855cddce01e0207da2810c5",
+      "unchangedFromHostedSource": true
+    },
+    {
+      "path": "SRC/neothd/src/memory/embeddings.rs",
+      "blob": "2060933e71211619f2201ec7c965012dbed44443",
+      "unchangedFromHostedSource": true
+    },
+    {
+      "path": "SRC/neothd/src/memory/indexer.rs",
+      "blob": "4726111038d2a6803f3b62586fd1704ed2718f3f",
+      "unchangedFromHostedSource": true
+    },
+    {
+      "path": "SRC/neothd/src/memory/migrations/mod.rs",
+      "blob": "e1525d9e5777e483300fb9d5035f7ad549bff3a8",
+      "unchangedFromHostedSource": true
+    },
+    {
+      "path": "SRC/neothd/src/wal/writer.rs",
+      "blob": "b244e64458758eca4b2e61bd81d47c08ee1d7bd5",
+      "unchangedFromHostedSource": true
+    }
+  ],
+  "review": "W219 criterion map and Root actual terminal/source verification",
+  "localExecutableValidationRan": false
+}

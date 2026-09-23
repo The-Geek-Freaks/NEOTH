@@ -197,6 +197,70 @@ fn v2_default_off_leaves_real_archive_and_settlement_note_unchanged() {
 }
 
 #[test]
+fn v2_reserved_note_quarantine_directory_is_accepted_by_inventory() {
+    let (home, vault, _stale) = settled_expired_pair();
+    std::fs::create_dir(vault.path().join("NEOTH/Daily/.neoth-retention-v2")).unwrap();
+
+    let outcome = enforce_daily_retention(
+        home.path(),
+        NOW,
+        &DailyRetentionConfig::default(),
+        Some((vault.path(), "NEOTH")),
+    )
+    .unwrap();
+    assert_eq!(outcome.execution, DailyRetentionExecution::AwaitingRetentionAuthority);
+}
+
+#[test]
+fn v2_reserved_note_quarantine_regular_file_is_inventory_error() {
+    let (home, vault, stale) = settled_expired_pair();
+    let reserved = vault.path().join("NEOTH/Daily/.neoth-retention-v2");
+    std::fs::write(&reserved, b"foreign regular file").unwrap();
+
+    let error = enforce_daily_retention(
+        home.path(),
+        NOW,
+        &DailyRetentionConfig::default(),
+        Some((vault.path(), "NEOTH")),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error,
+        DailyRetentionError {
+            reason: "managed note inventory is invalid",
+        }
+    );
+    assert!(jsonl_file(home.path(), PeriodKind::Daily, &stale.tag).exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn v2_reserved_note_quarantine_symlink_is_inventory_error() {
+    use std::os::unix::fs::symlink;
+
+    let (home, vault, stale) = settled_expired_pair();
+    let outside = private_retention_home();
+    let reserved = vault.path().join("NEOTH/Daily/.neoth-retention-v2");
+    symlink(outside.path(), &reserved).unwrap();
+
+    let error = enforce_daily_retention(
+        home.path(),
+        NOW,
+        &DailyRetentionConfig::default(),
+        Some((vault.path(), "NEOTH")),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error,
+        DailyRetentionError {
+            reason: "managed note inventory is invalid",
+        }
+    );
+    assert!(jsonl_file(home.path(), PeriodKind::Daily, &stale.tag).exists());
+    assert!(outside.path().exists());
+}
+
+#[test]
 fn v2_enabled_quarantines_real_archive_and_receipt_owned_note_without_losing_period_input() {
     let (home, vault, stale) = settled_expired_pair();
     let outcome = enforce_daily_retention_with_execution(

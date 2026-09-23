@@ -841,7 +841,7 @@ mod tests {
     #[async_trait::async_trait]
     impl Provider for W296FallbackProvider {
         fn name(&self) -> &'static str {
-            "openai_api"
+            "w296-fallback-provider"
         }
 
         fn default_model(&self) -> Option<&str> {
