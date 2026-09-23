@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T06:23:07.0399988Z",
-  "validationStatus": "W292/W293 source reviewed and exact hosted formatting imported; Core424 GUI128 and Group564452 active",
+  "capturedUtc": "2026-09-23T06:29:41.2294907Z",
+  "validationStatus": "W298 narrow chat preparation lint repair; Group564 and GUI128 pending; fresh Core required",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -473,18 +473,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 132793,
-      "sha256": "986A4ABF2077642D9A2491B005B5D8AF23B6AD62E8A6E6DDBA465A25F18A748D"
+      "bytes": 133248,
+      "sha256": "31C1C561B3C5FB15962D6D3BAF8A80606B2DCC44F63FCC15587D82DD347BCB69"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1135817,
-      "sha256": "18C7D08F419E74DAD3C10F16F9DB59FF6E0A4F4B8FD0F08FA2E80BC4ED1F77C6"
+      "bytes": 1136272,
+      "sha256": "A5EC3C06311EE1A9452277CCC43D95F4F5C869BB83FE6788846DC8A9FAF613DF"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1732349,
-      "sha256": "66A9A80F75BD8858A62E639F3BAFBE7113A5E96E86CD649DD6E09B6628F46903"
+      "bytes": 1732804,
+      "sha256": "DE63948520BAFB675992CEF31E5E69E20DCBC89368077FC978D6209991B916D6"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1083,8 +1083,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1129849,
-      "sha256": "FF8360103CEA831B0BB13746D68AA14E9E16099FFECA079FA5DD247CB8F0FFB0"
+      "bytes": 1130117,
+      "sha256": "305E23197B3BE4092931B2A568DA0091E12C0F7D493C965512A8138927CEFB54"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -2870,6 +2870,11 @@
       "path": "docs/gold-wave293-cgroup-namespace-staging.md",
       "bytes": 3781,
       "sha256": "AD9AB65549932576F87AF10993005E4F55442737B9027B1783E295C8525DEED5"
+    },
+    {
+      "path": "docs/gold-wave298-chat-preparation-lint.md",
+      "bytes": 707,
+      "sha256": "00B64D8632C4DF3D3B9C1D108DD4CF2D0B48DD2D9F84206C97ED8C61966BD305"
     }
   ]
 }

@@ -9389,6 +9389,10 @@ async fn prepare_cli_chat_turn(
     finish_chat_turn_preparation(input, output).await
 }
 
+// The CLI and daemon adapters deliberately supply each lifecycle authority at
+// this boundary: collapsing them into a shared context could couple a turn to
+// the wrong consent, reload policy, cancellation token, or output sink.
+#[allow(clippy::too_many_arguments)]
 async fn prepare_chat_turn_input(
     mut args: ChatArgs,
     config: FreedomConfig,

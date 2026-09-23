@@ -8,6 +8,12 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W298 focused chat preparation lint repair (2026-09-23):** Core424
+run35826459440 stopped at one strict Clippy diagnostic: prepare_chat_turn_input
+now has9arguments after the daemon role-policy controller was added. The narrow
+lint accommodation documents this existing explicit-authority adapter boundary;
+no provider behavior changes. Preflight31c run35826643045 is green. Group564452
+and GUI128424 continue independently. Fresh Core remains required.
 **W292/W293 hosted formatting (2026-09-23):** Preflight424 run35826445977
 reported formatting only in chat.rs and chat_child_supervisor.rs. The exact
 hosted patch was imported after verifying SHA256 plus both Git pre/postimages.
