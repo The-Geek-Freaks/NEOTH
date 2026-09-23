@@ -457,6 +457,20 @@ fn parse_cgroup2_mounts(contents: &str) -> Result<Vec<(String, String)>, String>
 }
 
 #[cfg(any(target_os = "linux", test))]
+fn verify_cgroup2_mount_points_are_only_public(mountinfo: &str) -> Result<(), String> {
+    let mounts = parse_cgroup2_mounts(mountinfo)?;
+    if mounts
+        .iter()
+        .any(|(_, mount_point)| mount_point != "/sys/fs/cgroup")
+    {
+        return Err(format!(
+            "cgroup2 is exposed outside the public /sys/fs/cgroup mount: {mounts:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", test))]
 fn parse_linux_filesystem_mount_points(
     contents: &str,
     filesystem_type: &str,
@@ -1747,6 +1761,8 @@ fn enter_linux_request_namespaces(expected_unit: &str) -> Result<(), String> {
     }
     let mountinfo = std::fs::read_to_string("/proc/self/mountinfo")
         .map_err(|error| format!("{LINUX_NAMESPACE_ERROR}: read namespaced mountinfo: {error}"))?;
+    verify_cgroup2_mount_points_are_only_public(&mountinfo)
+        .map_err(|error| format!("{LINUX_NAMESPACE_ERROR}: {error}"))?;
     let security = linux_cgroup_mount_security(&mountinfo, Some("/sys/fs/cgroup"))
         .map_err(|error| format!("{LINUX_NAMESPACE_ERROR}: {error}"))?;
     if security.root != "/" || !security.read_only || !security.nsdelegate {
@@ -1789,26 +1805,35 @@ fn make_linux_mounts_private() -> Result<(), String> {
 #[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LinuxCgroupMountOperation {
-    UnmountInheritedNamespaceMount,
-    FreshNamespaceRoot,
-    BindRemountNamespaceRootReadOnly,
+    MountPrivateStagingTmpfs,
+    FreshNamespaceRootAtStaging,
+    BindStagingNamespaceRootAtPublicPath,
+    BindRemountPublicNamespaceRootReadOnly,
+    UnmountStagingNamespaceRoot,
+    RemoveStagingDirectory,
+    UnmountPrivateStagingTmpfs,
 }
 
 #[cfg(target_os = "linux")]
-const LINUX_CGROUP_MOUNT_PLAN: [LinuxCgroupMountOperation; 3] = [
-    LinuxCgroupMountOperation::UnmountInheritedNamespaceMount,
-    LinuxCgroupMountOperation::FreshNamespaceRoot,
-    LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly,
+const LINUX_CGROUP_MOUNT_PLAN: [LinuxCgroupMountOperation; 7] = [
+    LinuxCgroupMountOperation::MountPrivateStagingTmpfs,
+    LinuxCgroupMountOperation::FreshNamespaceRootAtStaging,
+    LinuxCgroupMountOperation::BindStagingNamespaceRootAtPublicPath,
+    LinuxCgroupMountOperation::BindRemountPublicNamespaceRootReadOnly,
+    LinuxCgroupMountOperation::UnmountStagingNamespaceRoot,
+    LinuxCgroupMountOperation::RemoveStagingDirectory,
+    LinuxCgroupMountOperation::UnmountPrivateStagingTmpfs,
 ];
 
 #[cfg(target_os = "linux")]
 fn linux_cgroup_mount_flags(operation: LinuxCgroupMountOperation) -> libc::c_ulong {
     match operation {
-        LinuxCgroupMountOperation::UnmountInheritedNamespaceMount => 0,
-        LinuxCgroupMountOperation::FreshNamespaceRoot => {
+        LinuxCgroupMountOperation::MountPrivateStagingTmpfs
+        | LinuxCgroupMountOperation::FreshNamespaceRootAtStaging => {
             (libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC) as libc::c_ulong
         }
-        LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly => {
+        LinuxCgroupMountOperation::BindStagingNamespaceRootAtPublicPath => libc::MS_BIND as libc::c_ulong,
+        LinuxCgroupMountOperation::BindRemountPublicNamespaceRootReadOnly => {
             (libc::MS_BIND
                 | libc::MS_REMOUNT
                 | libc::MS_RDONLY
@@ -1816,57 +1841,106 @@ fn linux_cgroup_mount_flags(operation: LinuxCgroupMountOperation) -> libc::c_ulo
                 | libc::MS_NODEV
                 | libc::MS_NOEXEC) as libc::c_ulong
         }
+        LinuxCgroupMountOperation::UnmountStagingNamespaceRoot
+        | LinuxCgroupMountOperation::RemoveStagingDirectory
+        | LinuxCgroupMountOperation::UnmountPrivateStagingTmpfs => 0,
     }
 }
 
 #[cfg(target_os = "linux")]
 fn linux_cgroup_mount_operation_stage(operation: LinuxCgroupMountOperation) -> &'static str {
     match operation {
-        LinuxCgroupMountOperation::UnmountInheritedNamespaceMount => {
-            "unmount inherited cgroup mount"
+        LinuxCgroupMountOperation::MountPrivateStagingTmpfs => "mount private cgroup staging tmpfs",
+        LinuxCgroupMountOperation::FreshNamespaceRootAtStaging => {
+            "mount cgroup namespace root at private staging path"
         }
-        LinuxCgroupMountOperation::FreshNamespaceRoot => "mount cgroup namespace root",
-        LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly => {
-            "bind-remount cgroup namespace root read-only"
+        LinuxCgroupMountOperation::BindStagingNamespaceRootAtPublicPath => {
+            "bind staged cgroup namespace root at public path"
         }
+        LinuxCgroupMountOperation::BindRemountPublicNamespaceRootReadOnly => {
+            "bind-remount public cgroup namespace root read-only"
+        }
+        LinuxCgroupMountOperation::UnmountStagingNamespaceRoot => {
+            "unmount staged cgroup namespace root"
+        }
+        LinuxCgroupMountOperation::RemoveStagingDirectory => "remove private cgroup staging directory",
+        LinuxCgroupMountOperation::UnmountPrivateStagingTmpfs => "unmount private cgroup staging tmpfs",
     }
 }
 
 #[cfg(target_os = "linux")]
 fn remount_linux_cgroup_at_namespace_root() -> Result<(), String> {
-    let target = std::ffi::CString::new("/sys/fs/cgroup").expect("static cgroup path");
+    let public_target = std::ffi::CString::new("/sys/fs/cgroup").expect("static cgroup path");
+    let staging_root = std::ffi::CString::new("/tmp").expect("static staging root");
+    let staging_target =
+        std::ffi::CString::new("/tmp/neoth-cgroup-namespace-stage").expect("static staging path");
     let source = std::ffi::CString::new("none").expect("static cgroup source");
     let filesystem = std::ffi::CString::new("cgroup2").expect("static cgroup filesystem");
+    let tmpfs = std::ffi::CString::new("tmpfs").expect("static tmpfs filesystem");
+    let tmpfs_options =
+        std::ffi::CString::new("mode=0700,size=1048576").expect("static tmpfs mount options");
 
     for operation in LINUX_CGROUP_MOUNT_PLAN {
-        // SAFETY: All CString pointers remain live and NUL-terminated during
-        // each syscall. mount permits the null data/source/type pointers used
-        // for these operations; umount2 receives a valid target and zero flags.
         let result = unsafe {
             match operation {
-                // cgroup_namespaces(7) requires removing the inherited
-                // cgroupfs mount, whose root belongs to the parent cgroup
-                // namespace, before mounting the current namespace root.
-                LinuxCgroupMountOperation::UnmountInheritedNamespaceMount => {
-                    libc::umount2(target.as_ptr(), 0)
-                }
-                // A cgroup2 hierarchy already has a shared superblock. Keep it
-                // read-write while mounting the cgroup namespace root, then
-                // restrict only this namespace-private mount below.
-                LinuxCgroupMountOperation::FreshNamespaceRoot => libc::mount(
+                // The inherited mount may be MNT_LOCKED after CLONE_NEWUSER.
+                // A private tmpfs gives the fresh cgroup2 mount a disposable
+                // staging path without creating a host-visible directory.
+                LinuxCgroupMountOperation::MountPrivateStagingTmpfs => libc::mount(
                     source.as_ptr(),
-                    target.as_ptr(),
-                    filesystem.as_ptr(),
+                    staging_root.as_ptr(),
+                    tmpfs.as_ptr(),
+                    linux_cgroup_mount_flags(operation),
+                    tmpfs_options.as_ptr().cast(),
+                ),
+                LinuxCgroupMountOperation::FreshNamespaceRootAtStaging => {
+                    if let Err(error) = std::fs::create_dir("/tmp/neoth-cgroup-namespace-stage") {
+                        return Err(format!(
+                            "{LINUX_NAMESPACE_ERROR}: create private cgroup staging directory: {error}"
+                        ));
+                    }
+                    // A fresh cgroup2 mount made after CLONE_NEWCGROUP has root
+                    // `/` in that cgroup namespace. Keep it writable only until
+                    // its public bind clone is made read-only below.
+                    libc::mount(
+                        source.as_ptr(),
+                        staging_target.as_ptr(),
+                        filesystem.as_ptr(),
+                        linux_cgroup_mount_flags(operation),
+                        std::ptr::null(),
+                    )
+                }
+                // Stacking the fresh mount's bind clone over the locked
+                // inherited mount is allowed; never unmount or modify the
+                // inherited mount itself.
+                LinuxCgroupMountOperation::BindStagingNamespaceRootAtPublicPath => libc::mount(
+                    staging_target.as_ptr(),
+                    public_target.as_ptr(),
+                    std::ptr::null(),
                     linux_cgroup_mount_flags(operation),
                     std::ptr::null(),
                 ),
-                LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly => libc::mount(
+                LinuxCgroupMountOperation::BindRemountPublicNamespaceRootReadOnly => libc::mount(
                     std::ptr::null(),
-                    target.as_ptr(),
+                    public_target.as_ptr(),
                     std::ptr::null(),
                     linux_cgroup_mount_flags(operation),
                     std::ptr::null(),
                 ),
+                LinuxCgroupMountOperation::UnmountStagingNamespaceRoot => {
+                    libc::umount2(staging_target.as_ptr(), 0)
+                }
+                LinuxCgroupMountOperation::RemoveStagingDirectory => {
+                    if let Err(error) = std::fs::remove_dir("/tmp/neoth-cgroup-namespace-stage") {
+                        return Err(format!(
+                            "{LINUX_NAMESPACE_ERROR}: remove private cgroup staging directory: {error}"
+                        ));
+                    }
+                    0
+                }
+                LinuxCgroupMountOperation::UnmountPrivateStagingTmpfs => {
+                    libc::umount2(staging_root.as_ptr(), 0)
+                }
             }
         };
         if result != 0 {
@@ -1929,6 +2003,7 @@ fn run_linux_pid_namespace_guardian(
     ready: std::os::fd::OwnedFd,
 ) -> ! {
     use std::os::fd::AsRawFd as _;
+    use std::os::unix::process::CommandExt as _;
 
     let ready_fd = ready.as_raw_fd();
     let result = (|| {
@@ -1962,6 +2037,9 @@ fn run_linux_pid_namespace_guardian(
             if linux_provider_environment_allowed(name.as_os_str()) {
                 command.env(name, value);
             }
+        }
+        unsafe {
+            command.pre_exec(restrict_linux_provider_capabilities_before_exec);
         }
         let mut child = command
             .spawn()
@@ -2002,6 +2080,75 @@ fn linux_provider_environment_allowed(name: &std::ffi::OsStr) -> bool {
             | b"INVOCATION_ID"
             | b"JOURNAL_STREAM"
     )
+}
+
+/// The guardian needs namespace authority for setup and reaping. The provider
+/// gets an empty capability set only in the child immediately before exec.
+#[cfg(target_os = "linux")]
+#[repr(C)]
+struct LinuxCapabilityHeader {
+    version: u32,
+    pid: i32,
+}
+
+#[cfg(target_os = "linux")]
+#[repr(C)]
+struct LinuxCapabilityData {
+    effective: u32,
+    permitted: u32,
+    inheritable: u32,
+}
+
+#[cfg(target_os = "linux")]
+fn restrict_linux_provider_capabilities_before_exec() -> std::io::Result<()> {
+    const PR_SET_NO_NEW_PRIVS: libc::c_int = 38;
+    const PR_SET_SECUREBITS: libc::c_int = 28;
+    const PR_CAP_AMBIENT: libc::c_int = 47;
+    const PR_CAP_AMBIENT_CLEAR_ALL: libc::c_ulong = 4;
+    const SECBIT_NOROOT: libc::c_ulong = 1;
+    const SECBIT_NOROOT_LOCKED: libc::c_ulong = 2;
+    const LINUX_CAPABILITY_VERSION_3: u32 = 0x2008_0522;
+
+    if unsafe { libc::prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // A provider executed with mapped UID 0 must not regain capabilities via
+    // root's exec transition after its sets have been cleared below.
+    if unsafe {
+        libc::prctl(
+            PR_SET_SECUREBITS,
+            SECBIT_NOROOT | SECBIT_NOROOT_LOCKED,
+            0,
+            0,
+            0,
+        )
+    } != 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    if unsafe { libc::prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut header = LinuxCapabilityHeader {
+        version: LINUX_CAPABILITY_VERSION_3,
+        pid: 0,
+    };
+    let data = [
+        LinuxCapabilityData {
+            effective: 0,
+            permitted: 0,
+            inheritable: 0,
+        },
+        LinuxCapabilityData {
+            effective: 0,
+            permitted: 0,
+            inheritable: 0,
+        },
+    ];
+    if unsafe { libc::syscall(libc::SYS_capset, &mut header, data.as_ptr()) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -2583,29 +2730,59 @@ mod tests {
         );
     }
 
+    #[test]
+    fn staged_cgroup_final_mount_contract_allows_only_a_read_only_public_top_mount() {
+        let final_mountinfo = concat!(
+            "31 22 0:28 /host/user.slice/request.service /sys/fs/cgroup rw - cgroup2 cgroup rw,nsdelegate\n",
+            "32 22 0:28 / /sys/fs/cgroup ro,nosuid,nodev,noexec - cgroup2 cgroup rw,nsdelegate\n"
+        );
+        verify_cgroup2_mount_points_are_only_public(final_mountinfo).unwrap();
+        assert_eq!(
+            linux_cgroup_mount_security(final_mountinfo, Some("/sys/fs/cgroup")).unwrap(),
+            LinuxCgroupMountSecurity {
+                root: "/".to_string(),
+                read_only: true,
+                nsdelegate: true,
+            }
+        );
+
+        let leaked_staging = format!(
+            "{final_mountinfo}33 22 0:28 / /tmp/neoth-cgroup-namespace-stage rw - cgroup2 cgroup rw,nsdelegate\n"
+        );
+        assert!(verify_cgroup2_mount_points_are_only_public(&leaked_staging).is_err());
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
-    fn cgroup_namespace_root_mount_plan_replaces_inherited_mount_before_private_ro() {
+    fn cgroup_namespace_root_mount_plan_stages_without_unmounting_inherited_mount() {
         assert_eq!(
             LINUX_CGROUP_MOUNT_PLAN,
             [
-                LinuxCgroupMountOperation::UnmountInheritedNamespaceMount,
-                LinuxCgroupMountOperation::FreshNamespaceRoot,
-                LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly,
+                LinuxCgroupMountOperation::MountPrivateStagingTmpfs,
+                LinuxCgroupMountOperation::FreshNamespaceRootAtStaging,
+                LinuxCgroupMountOperation::BindStagingNamespaceRootAtPublicPath,
+                LinuxCgroupMountOperation::BindRemountPublicNamespaceRootReadOnly,
+                LinuxCgroupMountOperation::UnmountStagingNamespaceRoot,
+                LinuxCgroupMountOperation::RemoveStagingDirectory,
+                LinuxCgroupMountOperation::UnmountPrivateStagingTmpfs,
             ]
         );
         assert_eq!(
-            linux_cgroup_mount_flags(LinuxCgroupMountOperation::UnmountInheritedNamespaceMount),
-            0
+            linux_cgroup_mount_operation_stage(
+                LinuxCgroupMountOperation::MountPrivateStagingTmpfs
+            ),
+            "mount private cgroup staging tmpfs"
         );
         assert_eq!(
             linux_cgroup_mount_operation_stage(
-                LinuxCgroupMountOperation::UnmountInheritedNamespaceMount
+                LinuxCgroupMountOperation::FreshNamespaceRootAtStaging
             ),
-            "unmount inherited cgroup mount"
+            "mount cgroup namespace root at private staging path"
         );
 
-        let fresh = linux_cgroup_mount_flags(LinuxCgroupMountOperation::FreshNamespaceRoot);
+        let fresh = linux_cgroup_mount_flags(
+            LinuxCgroupMountOperation::FreshNamespaceRootAtStaging,
+        );
         assert_eq!(
             fresh,
             (libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC) as libc::c_ulong
@@ -2614,12 +2791,15 @@ mod tests {
         assert_eq!(fresh & (libc::MS_BIND as libc::c_ulong), 0);
         assert_eq!(fresh & (libc::MS_REMOUNT as libc::c_ulong), 0);
         assert_eq!(
-            linux_cgroup_mount_operation_stage(LinuxCgroupMountOperation::FreshNamespaceRoot),
-            "mount cgroup namespace root"
+            linux_cgroup_mount_flags(
+                LinuxCgroupMountOperation::BindStagingNamespaceRootAtPublicPath
+            ),
+            libc::MS_BIND as libc::c_ulong
         );
 
-        let read_only =
-            linux_cgroup_mount_flags(LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly);
+        let read_only = linux_cgroup_mount_flags(
+            LinuxCgroupMountOperation::BindRemountPublicNamespaceRootReadOnly,
+        );
         assert_eq!(
             read_only,
             (libc::MS_BIND
@@ -2631,9 +2811,27 @@ mod tests {
         );
         assert_eq!(
             linux_cgroup_mount_operation_stage(
-                LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly
+                LinuxCgroupMountOperation::BindRemountPublicNamespaceRootReadOnly
             ),
-            "bind-remount cgroup namespace root read-only"
+            "bind-remount public cgroup namespace root read-only"
+        );
+        assert_eq!(
+            linux_cgroup_mount_operation_stage(
+                LinuxCgroupMountOperation::UnmountStagingNamespaceRoot
+            ),
+            "unmount staged cgroup namespace root"
+        );
+        assert_eq!(
+            linux_cgroup_mount_operation_stage(
+                LinuxCgroupMountOperation::RemoveStagingDirectory
+            ),
+            "remove private cgroup staging directory"
+        );
+        assert_eq!(
+            linux_cgroup_mount_operation_stage(
+                LinuxCgroupMountOperation::UnmountPrivateStagingTmpfs
+            ),
+            "unmount private cgroup staging tmpfs"
         );
     }
 
@@ -2696,6 +2894,62 @@ mod tests {
             .expect("read private cgroup namespace");
         assert_eq!(cgroup, "/", "provider can see a cgroup ancestor");
 
+        const LINUX_CAPABILITY_VERSION_3: u32 = 0x2008_0522;
+        const PR_GET_SECUREBITS: libc::c_int = 27;
+        const SECBIT_NOROOT: libc::c_ulong = 1;
+        const SECBIT_NOROOT_LOCKED: libc::c_ulong = 2;
+        let mut capability_header = LinuxCapabilityHeader {
+            version: LINUX_CAPABILITY_VERSION_3,
+            pid: 0,
+        };
+        let mut capability_data = [
+            LinuxCapabilityData {
+                effective: 0,
+                permitted: 0,
+                inheritable: 0,
+            },
+            LinuxCapabilityData {
+                effective: 0,
+                permitted: 0,
+                inheritable: 0,
+            },
+        ];
+        assert_eq!(
+            unsafe {
+                libc::syscall(
+                    libc::SYS_capget,
+                    &mut capability_header,
+                    capability_data.as_mut_ptr(),
+                )
+            },
+            0,
+            "read provider capability sets"
+        );
+        assert!(
+            capability_data.iter().all(|set| {
+                set.effective == 0 && set.permitted == 0 && set.inheritable == 0
+            }),
+            "provider retained a capability set after guardian setup"
+        );
+        let provider_status =
+            std::fs::read_to_string("/proc/self/status").expect("read provider status");
+        for required in [
+            "CapAmb:\t0000000000000000",
+            "NoNewPrivs:\t1",
+        ] {
+            assert!(
+                provider_status.lines().any(|line| line == required),
+                "provider status omitted required containment field {required}"
+            );
+        }
+        let securebits = unsafe { libc::prctl(PR_GET_SECUREBITS, 0, 0, 0, 0) };
+        assert!(securebits >= 0, "read provider securebits");
+        assert_eq!(
+            (securebits as libc::c_ulong) & (SECBIT_NOROOT | SECBIT_NOROOT_LOCKED),
+            SECBIT_NOROOT | SECBIT_NOROOT_LOCKED,
+            "provider can regain capabilities through a root exec transition"
+        );
+
         let mountinfo =
             std::fs::read_to_string("/proc/self/mountinfo").expect("read private mountinfo");
         let cgroup_mounts = parse_cgroup2_mounts(&mountinfo).expect("find private cgroup2 mount");
@@ -2734,6 +2988,62 @@ mod tests {
                 "provider can migrate to an ancestor cgroup"
             );
         }
+        let public_cgroup =
+            std::ffi::CString::new("/sys/fs/cgroup").expect("static public cgroup path");
+        let mountinfo_before_escape_attempts = mountinfo.clone();
+        assert_eq!(
+            unsafe { libc::umount2(public_cgroup.as_ptr(), 0) },
+            -1,
+            "provider can unmount the public cgroup containment mount"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EPERM),
+            "provider cgroup unmount was rejected for an unexpected reason"
+        );
+        assert_eq!(
+            unsafe {
+                libc::mount(
+                    std::ptr::null(),
+                    public_cgroup.as_ptr(),
+                    std::ptr::null(),
+                    (libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY) as libc::c_ulong,
+                    std::ptr::null(),
+                )
+            },
+            -1,
+            "provider can remount the public cgroup containment mount"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EPERM),
+            "provider cgroup remount was rejected for an unexpected reason"
+        );
+        let namespace_probe = unsafe { libc::fork() };
+        assert!(namespace_probe >= 0, "fork nested namespace probe");
+        if namespace_probe == 0 {
+            let result = unsafe { libc::unshare(libc::CLONE_NEWUSER | libc::CLONE_NEWNS) };
+            if result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM) {
+                unsafe { libc::_exit(0) };
+            }
+            unsafe { libc::_exit(124) };
+        }
+        let mut namespace_probe_status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(namespace_probe, &mut namespace_probe_status, 0) },
+            namespace_probe,
+            "wait nested namespace probe"
+        );
+        assert_eq!(
+            unsafe { libc::WEXITSTATUS(namespace_probe_status) },
+            0,
+            "nested user/mount namespace probe failed unexpectedly"
+        );
+        assert_eq!(
+            std::fs::read_to_string("/proc/self/mountinfo").expect("re-read private mountinfo"),
+            mountinfo_before_escape_attempts,
+            "provider mount escape attempts changed the verified parent mount view"
+        );
 
         let uid = unsafe { libc::geteuid() };
         let runtime = std::path::PathBuf::from(format!("/run/user/{uid}"));

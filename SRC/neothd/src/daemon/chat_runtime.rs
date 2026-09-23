@@ -252,6 +252,7 @@ impl DaemonChatRuntime {
             self.selected_config_path.clone(),
             self.selected_home.clone(),
             admission.provider.as_ref(),
+            Arc::clone(&self.reload_controller),
             cancellation.clone(),
             sink,
         )
@@ -530,6 +531,7 @@ impl DaemonChatRuntime {
             self.selected_config_path.clone(),
             self.selected_home.clone(),
             provider.as_ref(),
+            Arc::clone(&self.reload_controller),
             cancellation.clone(),
             &mut sink,
         )

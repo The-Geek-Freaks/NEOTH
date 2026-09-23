@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T06:02:53.5027557Z",
-  "validationStatus": "Production Clippy1d6 PASS; three exact testtarget compile errors repaired, hosted retry pending; W292/W293 uncommitted separate work",
+  "capturedUtc": "2026-09-23T06:20:08.1337242Z",
+  "validationStatus": "W292 normal-chat role and W293 cgroup staging source reviews passed; hosted behavior pending; Core452 typecheck/CLI passed",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -39,7 +39,7 @@
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
       "bytes": 39347,
-      "sha256": "664ACF76B9353239C553DFD8621C694B79DCB62F56F8C75ECBD7140E24711783"
+      "sha256": "73B35B159DF03802C18F66F01AF1DA5ABB5F4D9C3164DE4DBC6E915B65C3BD8E"
     },
     {
       "path": ".github/workflows/live-audio.yml",
@@ -73,8 +73,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 13257,
-      "sha256": "49C663D27C45F7BC7D550F06639A72D3F2492D3AFCBB89DEF00143D88D5CDA4E"
+      "bytes": 13309,
+      "sha256": "4841D2608424070F5B03A9651BABC36D62F246B6B8CD26222D148C4BC4E403AD"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -473,18 +473,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 130868,
-      "sha256": "5ADC01D6FEB8F39542A8B9E864218F787BF2119E639DF8AB6595F252FC01F3A6"
+      "bytes": 132423,
+      "sha256": "F026B5B3758AFB7D7AE3A836ED9C744D7F7FEAC21769021B97DE256325A7C66D"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1133892,
-      "sha256": "F1CEFAF339F504718BCC5148EF9D025B32EA06A205A8280DD36A41121FF984C7"
+      "bytes": 1135447,
+      "sha256": "BBF862E464ED01C79612DC319F7C529B5506415F0959D33E1ACDEEC2447C5D75"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1730424,
-      "sha256": "6164306A2B50D7C06EC53AFD3BA9B8A8B0CBCBE4E4299A5D94E9B16148FE820A"
+      "bytes": 1731979,
+      "sha256": "56770C084E854E95634B6D7CC62F18A3E9D7359996A0D4D3C3DA4CB7B3C5E799"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -623,8 +623,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
-      "bytes": 111814,
-      "sha256": "288048FE26234CB2F51D395F34596ADABE253CC7AA724CEF0FB32DE1C393E9EA"
+      "bytes": 124318,
+      "sha256": "A09E90A3AD05A4943CC68DAB091D4A4B6F383FADC4965B8B8DA63CBF48396B02"
     },
     {
       "path": "SRC/neothd-gui/src/chat_reasoning.rs",
@@ -1073,8 +1073,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "bytes": 162562,
-      "sha256": "F5E984A23791E23CAB7CCAB8BE001DBD6C0655B19C1278E0FD1E8E4B81417032"
+      "bytes": 163844,
+      "sha256": "164D0BD8004A75794B995288E9C67A343B911150D60E5D46D2F1C4F40BDAFE4D"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_watchdog.rs",
@@ -1083,8 +1083,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1107955,
-      "sha256": "69339311D7CE78A0FAF2CFB503934F7488D9A9C11DCE6C963A3DD4903EB3E4C1"
+      "bytes": 1128127,
+      "sha256": "E473092C5242C69858252655678EE32366F263CE698396073ECAEB5DEBB06538"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -1688,8 +1688,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "bytes": 54622,
-      "sha256": "AE3FD7ACDEA9134B4C64232A7C883AB57C3C5697C17DCDE5DC6A0554D6B34B0A"
+      "bytes": 54720,
+      "sha256": "A4A95415E3B7733EBF0600D683DA7D50D919779495F9FA2FCDBB0FE026346658"
     },
     {
       "path": "SRC/neothd/src/daemon/checkin_cron.rs",
@@ -2860,6 +2860,16 @@
       "path": "docs/gold-wave295-hosted-fixture-type-repair.md",
       "bytes": 769,
       "sha256": "F3823B39F7B5BA5FB3AE4A532B5C4AC0B6389E60C136D5EFF3FE54C8695AEF58"
+    },
+    {
+      "path": "docs/gold-wave292-normal-chat-role-binding.md",
+      "bytes": 2337,
+      "sha256": "1E7B22FB52CE1D891EB20DC09870EF3427232B536EEC16EA671F5855278A20CD"
+    },
+    {
+      "path": "docs/gold-wave293-cgroup-namespace-staging.md",
+      "bytes": 3781,
+      "sha256": "AD9AB65549932576F87AF10993005E4F55442737B9027B1783E295C8525DEED5"
     }
   ]
 }

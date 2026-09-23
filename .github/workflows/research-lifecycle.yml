@@ -139,6 +139,7 @@ jobs:
               "wave287DoctorContractRepair": 1,
               "wave280RetentionAcceptance": 51,
               "wave289CronRoleAcceptance": 8,
+              "wave292NormalChatRoleAcceptance": 7,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():

@@ -8,6 +8,29 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W292 normal-chat roles and W293 Linux containment staging (2026-09-23):**
+Normal chat now retains its configured Left origin through direct/fallback calls
+and the post-reply authorizer; daemon calls recheck accepted role-policy reloads.
+Seven real provider/WAL fixtures cover allow/deny, both fallback leaves and
+policy changes after durable request acknowledgment. Source review passed.
+The W206 refusal mirror remains terminal; no raw recovery execution is claimed.
+
+Linux containment now stages a fresh cgroup2 mount in a private tmpfs, binds it
+over the inherited locked mount, remounts the public top read-only and removes
+staging before READY. Provider exec clears capabilities and locks NOROOT.
+The selected stop/crash parent fixtures exercise actual capget, NNP, securebits,
+mount-denial and reaping checks. Independent source re-review passed; runtime
+acceptance remains pending.
+
+Core452 run35825113899 passed test-target typechecking and CLI build/export;
+the export exactly matches committed F7E3604A. Production Clippy was skipped
+in that run; its separate successful evidence is Core1d6 run35824016472.
+Group564 run35826131329 was dispatched on452 before these new changes.
+New inventory:573 paths; native967; Group571 plus2 separate BGE cases;
+GUI99 universal +29Linux/26macOS =128Linux/125macOS;18GUI source bindings.
+Road unchanged:1324 total,1021 checked,301 open,2 partial;WS-LF14done/104open.
+No local executable validation ran. Fresh hosted Core, GUI and then native
+platform CI remain required; no parent acceptance box is closed.
 **W295 hosted fixture type repairs (2026-09-23):**
 Core1d6 run35824016472 passed strict slim production Clippy, then found three
 test-target errors: two TempDir paths missed path(), and the Cron reload fixture

@@ -116,14 +116,14 @@ jobs:
                   raise SystemExit(f"{label} contains a duplicate test identity")
               return value
 
-          universal = require_names(matrix.get("requiredGuiTests"), "requiredGuiTests", 98)
+          universal = require_names(matrix.get("requiredGuiTests"), "requiredGuiTests", 99)
           by_platform = matrix.get("requiredGuiTestsByPlatform")
           if not isinstance(by_platform, dict):
               raise SystemExit("requiredGuiTestsByPlatform is missing or malformed")
-          linux = require_names(by_platform.get("Linux"), "requiredGuiTestsByPlatform.Linux", 27)
+          linux = require_names(by_platform.get("Linux"), "requiredGuiTestsByPlatform.Linux", 29)
           selected = universal + linux
-          if len(selected) != 125 or len(selected) != len(set(selected)):
-              raise SystemExit("GUI fixture selection must contain exactly 125 unique identities (98 universal + 27 Linux)")
+          if len(selected) != 128 or len(selected) != len(set(selected)):
+              raise SystemExit("GUI fixture selection must contain exactly 128 unique identities (99 universal + 29 Linux)")
 
           supported_classes = {
               "neothd-gui::bin/neothd-gui": {"kind": "bin", "selector": ["--bin", "neothd-gui"]},
