@@ -47,13 +47,18 @@ pub(crate) enum RecallWarmKind {
 /// rendered recall text, or the warm-summary negative event sentinel.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RecallChipCitation {
-    Event { event_id: i64, event_type: u8 },
+    Event {
+        event_id: i64,
+        event_type: u8,
+    },
     WarmSnapshot {
         consolidated_id: i64,
         kind: RecallWarmKind,
         original_event_id: Option<i64>,
     },
-    GroundTruth { fact_id: i64 },
+    GroundTruth {
+        fact_id: i64,
+    },
 }
 
 /// Public-safe tier vocabulary for the later reduced control frame.
@@ -199,10 +204,9 @@ impl RecallPresentationHit {
 
 fn citation_for(tier: RecallChipTier, source: &RecallSourceRef) -> Option<RecallChipCitation> {
     match (tier, source) {
-        (
-            RecallChipTier::Canonical,
-            RecallSourceRef::GroundTruth { fact_id },
-        ) if *fact_id > 0 => Some(RecallChipCitation::GroundTruth { fact_id: *fact_id }),
+        (RecallChipTier::Canonical, RecallSourceRef::GroundTruth { fact_id }) if *fact_id > 0 => {
+            Some(RecallChipCitation::GroundTruth { fact_id: *fact_id })
+        }
         (
             RecallChipTier::Hot | RecallChipTier::Warm | RecallChipTier::Cold,
             RecallSourceRef::Event {
@@ -220,12 +224,13 @@ fn citation_for(tier: RecallChipTier, source: &RecallSourceRef) -> Option<Recall
                 kind: RecallWarmKind::Retained,
                 original_event_id,
             },
-        ) if *consolidated_id > 0
-            && original_event_id.is_none_or(|event_id| event_id > 0) => Some(RecallChipCitation::WarmSnapshot {
-            consolidated_id: *consolidated_id,
-            kind: RecallWarmKind::Retained,
-            original_event_id: *original_event_id,
-        }),
+        ) if *consolidated_id > 0 && original_event_id.is_none_or(|event_id| event_id > 0) => {
+            Some(RecallChipCitation::WarmSnapshot {
+                consolidated_id: *consolidated_id,
+                kind: RecallWarmKind::Retained,
+                original_event_id: *original_event_id,
+            })
+        }
         (
             RecallChipTier::Warm,
             RecallSourceRef::WarmSnapshot {

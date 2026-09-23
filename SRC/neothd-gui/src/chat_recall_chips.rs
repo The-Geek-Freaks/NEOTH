@@ -143,13 +143,18 @@ struct RecallChipRowFrame {
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum RecallChipCitationFrame {
-    Event { event_id: i64, event_type: u8 },
+    Event {
+        event_id: i64,
+        event_type: u8,
+    },
     WarmSnapshot {
         consolidated_id: i64,
         warm_kind: RecallChipWarmKindFrame,
         original_event_id: Option<i64>,
     },
-    GroundTruth { fact_id: i64 },
+    GroundTruth {
+        fact_id: i64,
+    },
 }
 
 #[derive(Deserialize)]
@@ -699,7 +704,10 @@ mod tests {
             .expect("accept closed W246 citations");
         assert!(matches!(
             snapshot.rows[0].citation,
-            Some(RecallChipCitation::Event { event_id: 11, event_type: 4 })
+            Some(RecallChipCitation::Event {
+                event_id: 11,
+                event_type: 4
+            })
         ));
         assert!(matches!(
             snapshot.rows[3].citation,
@@ -711,29 +719,52 @@ mod tests {
         ));
 
         for invalid in [
-            cited("canonical", serde_json::json!({"kind":"event","event_id":11,"event_type":4})),
+            cited(
+                "canonical",
+                serde_json::json!({"kind":"event","event_id":11,"event_type":4}),
+            ),
             serde_json::json!({"tier":"warm","score":null,"source_state":"missing","citation":{"kind":"warm_snapshot","consolidated_id":12,"warm_kind":"retained","original_event_id":11}}),
-            cited("warm", serde_json::json!({"kind":"warm_snapshot","consolidated_id":-12,"warm_kind":"summary","original_event_id":null})),
-            cited("warm", serde_json::json!({"kind":"warm_snapshot","consolidated_id":12,"warm_kind":"summary","original_event_id":11})),
-            cited("canonical", serde_json::json!({"kind":"ground_truth","fact_id":0})),
-            cited("canonical", serde_json::json!({"kind":"ground_truth","fact_id":14,"extra":"denied"})),
+            cited(
+                "warm",
+                serde_json::json!({"kind":"warm_snapshot","consolidated_id":-12,"warm_kind":"summary","original_event_id":null}),
+            ),
+            cited(
+                "warm",
+                serde_json::json!({"kind":"warm_snapshot","consolidated_id":12,"warm_kind":"summary","original_event_id":11}),
+            ),
+            cited(
+                "canonical",
+                serde_json::json!({"kind":"ground_truth","fact_id":0}),
+            ),
+            cited(
+                "canonical",
+                serde_json::json!({"kind":"ground_truth","fact_id":14,"extra":"denied"}),
+            ),
         ] {
             let mut denied = Projection::new("request-a".into());
-            assert!(denied
-                .apply_json(&batch(1, "ready", vec![invalid]), "token-a", 3)
-                .is_err());
+            assert!(
+                denied
+                    .apply_json(&batch(1, "ready", vec![invalid]), "token-a", 3)
+                    .is_err()
+            );
             assert!(denied.snapshot().is_none());
             assert!(denied.is_frozen());
         }
 
         let mut legacy = Projection::new("request-a".into());
-        assert!(legacy
-            .apply_json(
-                &batch(1, "ready", vec![row("warm", serde_json::Value::Null, "available")]),
-                "token-a",
-                3,
-            )
-            .is_ok());
+        assert!(
+            legacy
+                .apply_json(
+                    &batch(
+                        1,
+                        "ready",
+                        vec![row("warm", serde_json::Value::Null, "available")]
+                    ),
+                    "token-a",
+                    3,
+                )
+                .is_ok()
+        );
     }
 
     #[test]

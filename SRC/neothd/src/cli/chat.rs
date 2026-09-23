@@ -4400,13 +4400,18 @@ fn recall_chip_batch_frame_line(
     #[derive(serde::Serialize)]
     #[serde(tag = "kind", rename_all = "snake_case")]
     enum RecallChipCitationFrame {
-        Event { event_id: i64, event_type: u8 },
+        Event {
+            event_id: i64,
+            event_type: u8,
+        },
         WarmSnapshot {
             consolidated_id: i64,
             warm_kind: &'static str,
             original_event_id: Option<i64>,
         },
-        GroundTruth { fact_id: i64 },
+        GroundTruth {
+            fact_id: i64,
+        },
     }
 
     #[derive(serde::Serialize)]
@@ -4479,7 +4484,8 @@ fn recall_chip_batch_frame_line(
                     RecallChipTier::Warm,
                     RecallChipSourceState::Available,
                 ) if *consolidated_id > 0
-                    && original_event_id.is_none_or(|event_id| event_id > 0) => {
+                    && original_event_id.is_none_or(|event_id| event_id > 0) =>
+                {
                     Some(RecallChipCitationFrame::WarmSnapshot {
                         consolidated_id: *consolidated_id,
                         warm_kind: "retained",
@@ -4503,9 +4509,9 @@ fn recall_chip_batch_frame_line(
                     Some(RecallChipCitation::GroundTruth { fact_id }),
                     RecallChipTier::Canonical,
                     RecallChipSourceState::Available,
-                ) if *fact_id > 0 => Some(RecallChipCitationFrame::GroundTruth {
-                    fact_id: *fact_id,
-                }),
+                ) if *fact_id > 0 => {
+                    Some(RecallChipCitationFrame::GroundTruth { fact_id: *fact_id })
+                }
                 _ => None,
             };
             RecallChipRowFrame {

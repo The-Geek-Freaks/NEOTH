@@ -661,6 +661,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let (connector_control_rpc_task, mut connector_control_rpc_guard) = {
         let (task, guard) = crate::cli::serve_tasks::spawn_connector_control_rpc(
             &neoth_home,
+            &config_path,
             &audit_endpoint_nonce,
             Arc::clone(&connector_control_plane),
             connector_control_subject,

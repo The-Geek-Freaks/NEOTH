@@ -28955,9 +28955,7 @@ fn recall_chip_source_label(source: chat_recall_chips::RecallChipSourceState) ->
     }
 }
 
-fn recall_chip_citation_label(
-    citation: chat_recall_chips::RecallChipCitation,
-) -> Option<String> {
+fn recall_chip_citation_label(citation: chat_recall_chips::RecallChipCitation) -> Option<String> {
     use chat_recall_chips::{RecallChipCitation, RecallChipWarmKind};
 
     match citation {
@@ -28982,7 +28980,9 @@ fn recall_chip_citation_label(
             warm_kind: RecallChipWarmKind::Summary,
             original_event_id: None,
         } => Some(format!("citation warm summary {consolidated_id}")),
-        RecallChipCitation::GroundTruth { fact_id } => Some(format!("citation ground truth {fact_id}")),
+        RecallChipCitation::GroundTruth { fact_id } => {
+            Some(format!("citation ground truth {fact_id}"))
+        }
         _ => None,
     }
 }
@@ -48248,11 +48248,17 @@ exit 0
         let lines = window.get_chat_recall_chip_lines();
         assert!(lines.row_count() <= chat_recall_chips::MAX_RECALL_CHIP_ROWS);
         assert_eq!(
-            lines.row_data(0).expect("W246 event citation label").as_str(),
+            lines
+                .row_data(0)
+                .expect("W246 event citation label")
+                .as_str(),
             "Recall · warm · score 0.75 · source available · citation event 1631 · type 7"
         );
         assert_eq!(
-            lines.row_data(1).expect("W246 ground-truth citation label").as_str(),
+            lines
+                .row_data(1)
+                .expect("W246 ground-truth citation label")
+                .as_str(),
             "Recall · canonical · score unavailable · source available · citation ground truth 1632"
         );
         project_chat_recall_chip_snapshot(

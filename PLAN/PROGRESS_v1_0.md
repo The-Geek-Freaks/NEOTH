@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W247 durable Local Import pause/resume (2026-09-23):** authenticated Windows
+CLI requests bind both expected revisions and the fixed accountless Local Import
+instance. The daemon preserves the selected config path, prepares its exact
+source CAS, drains owned import leases with a five-second deadline, then publishes
+and installs the matching successor. Prepublication timeout restores admission;
+postpublication projection failure remains fail-closed. Responses describe the
+reviewed committed successor, not a later possibly concurrent status read.
+Six universal regressions and the existing Windows daemon roundtrip cover the
+new boundary. Independent source review passed after fixing a response race,
+bounded lease drainage and two type-level defects. Hosted execution is pending.
+Inventory537sources/861universal native/98GUI; Group424, GUI124. CC-03/CC-04 and
+Road1016checked/306open/2partial remain open/unchanged. W246's exact seven-path
+Hosted formatting patch was source/SHA/preimage/postimage verified and imported;
+no local formatter/compiler/test/runtime was invoked. See
+`docs/gold-wave247-context-import-lifecycle.md`.
 **W246 bound Recall provenance (2026-09-23):** Main and Buddy now receive passive,
 content-free Event, WarmSnapshot or GroundTruth citations from the same verified
 recall result. Exact positive source IDs, tier/trust checks, summary sentinel

@@ -123,13 +123,18 @@ pub enum GuiChatBridgeRecallWarmKind {
 /// cannot resolve or navigate from it through this bridge contract.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GuiChatBridgeRecallChipCitation {
-    Event { event_id: i64, event_type: u8 },
+    Event {
+        event_id: i64,
+        event_type: u8,
+    },
     WarmSnapshot {
         consolidated_id: i64,
         warm_kind: GuiChatBridgeRecallWarmKind,
         original_event_id: Option<i64>,
     },
-    GroundTruth { fact_id: i64 },
+    GroundTruth {
+        fact_id: i64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]

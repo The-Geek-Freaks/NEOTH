@@ -9,6 +9,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Condvar, Mutex, Weak},
+    time::Instant,
 };
 
 use crate::config::PreparedFreedomUpdate;
@@ -109,6 +110,48 @@ impl AccountLeaseGate {
                 .wait(state)
                 .map_err(|_| ConnectorControlPlaneError::AuthorityPoisoned)?;
         }
+        Ok(())
+    }
+
+    /// Temporarily close admission while a lifecycle request waits for owned
+    /// leases. Unlike permanent retirement, a timeout must let every retained
+    /// lease become live again when the transition is dropped, so its
+    /// generation changes only after the drain completes.
+    fn suspend_and_drain_until(&self, deadline: Instant) -> Result<(), ConnectorControlPlaneError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| ConnectorControlPlaneError::AuthorityPoisoned)?;
+        state.accepting_leases = false;
+        while state.live_leases != 0 {
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .ok_or(ConnectorControlPlaneError::LeaseDrainTimedOut)?;
+            let (next, timeout) = self
+                .drained
+                .wait_timeout(state, remaining)
+                .map_err(|_| ConnectorControlPlaneError::AuthorityPoisoned)?;
+            state = next;
+            if timeout.timed_out() && state.live_leases != 0 {
+                return Err(ConnectorControlPlaneError::LeaseDrainTimedOut);
+            }
+        }
+        Ok(())
+    }
+
+    fn finalize_suspension(&self) -> Result<(), ConnectorControlPlaneError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| ConnectorControlPlaneError::AuthorityPoisoned)?;
+        debug_assert!(
+            !state.accepting_leases && state.live_leases == 0,
+            "only a fully drained suspended gate may finalize a lifecycle transition"
+        );
+        state.generation = state
+            .generation
+            .checked_add(1)
+            .ok_or(ConnectorControlPlaneError::AuthorityGenerationExhausted)?;
         Ok(())
     }
 
@@ -733,6 +776,24 @@ impl ConnectorControlPlane {
         &self,
         next_config: ConnectorControlConfig,
     ) -> Result<ConnectorControlTransition, ConnectorControlPlaneError> {
+        self.begin_transition(next_config, None)
+    }
+
+    /// Lifecycle RPC mutations use a bounded drain so an abandoned in-flight
+    /// request cannot hold the same-user control worker indefinitely.
+    pub(crate) fn begin_lifecycle_transition(
+        &self,
+        next_config: ConnectorControlConfig,
+        deadline: Instant,
+    ) -> Result<ConnectorControlTransition, ConnectorControlPlaneError> {
+        self.begin_transition(next_config, Some(deadline))
+    }
+
+    fn begin_transition(
+        &self,
+        next_config: ConnectorControlConfig,
+        lifecycle_deadline: Option<Instant>,
+    ) -> Result<ConnectorControlTransition, ConnectorControlPlaneError> {
         next_config
             .validate()
             .map_err(ConnectorControlPlaneError::InvalidConfig)?;
@@ -784,13 +845,39 @@ impl ConnectorControlPlane {
         };
 
         for restore in &previous_gates {
-            if let Err(error) = restore.gate.retire_and_drain() {
+            let result = match lifecycle_deadline {
+                Some(deadline) => restore.gate.suspend_and_drain_until(deadline),
+                None => restore.gate.retire_and_drain(),
+            };
+            if let Err(error) = result {
+                if lifecycle_deadline.is_some() {
+                    for previous in &previous_gates {
+                        let _ = previous.gate.reopen(previous.accepting_leases);
+                    }
+                    if let Ok(mut control) = self.state.lock() {
+                        control.transition_in_progress = false;
+                    }
+                    return Err(error);
+                }
                 // Gate failure means this transition cannot prove that every
                 // old generation is safely drained. Reopening captured gates
                 // after that error could resurrect authority, including an
                 // emergency-retired account, so globally fail closed instead.
                 self.fail_closed_after_prepare_failure();
                 return Err(error);
+            }
+        }
+        if lifecycle_deadline.is_some() {
+            for restore in &previous_gates {
+                if let Err(error) = restore.gate.finalize_suspension() {
+                    for previous in &previous_gates {
+                        let _ = previous.gate.reopen(previous.accepting_leases);
+                    }
+                    if let Ok(mut control) = self.state.lock() {
+                        control.transition_in_progress = false;
+                    }
+                    return Err(error);
+                }
             }
         }
 
@@ -942,6 +1029,77 @@ impl ConnectorControlPlane {
                 lifecycle_revision: slot.account.lifecycle_revision,
             })
             .collect())
+    }
+
+    /// Build the only durable successor accepted for a same-user lifecycle
+    /// request. Import admission intentionally remains separate: resuming a
+    /// paused account must be possible without first treating it as active.
+    pub(crate) fn prepare_lifecycle_successor(
+        &self,
+        session: &AuthenticatedControlSession,
+        instance_id: &ConnectorInstanceId,
+        expected_policy_revision: u64,
+        expected_lifecycle_revision: u64,
+        target: ConnectorLifecycle,
+    ) -> Result<(ConnectorControlConfig, ConnectorControlConfig), ConnectorControlPlaneError> {
+        let control = self
+            .state
+            .lock()
+            .map_err(|_| ConnectorControlPlaneError::ControlPlaneStatePoisoned)?;
+        if control.failed_closed {
+            return Err(ConnectorControlPlaneError::ProjectionFailedClosed);
+        }
+        if control.transition_in_progress {
+            return Err(ConnectorControlPlaneError::TransitionInProgress);
+        }
+        if !control.durable_config.enabled {
+            return Err(ConnectorControlPlaneError::ControlPlaneDisabled);
+        }
+        let slot = control
+            .accounts
+            .get(instance_id)
+            .ok_or(ConnectorControlPlaneError::UnknownAccount)?;
+        if slot.emergency_retirement_in_progress {
+            return Err(ConnectorControlPlaneError::AuthorityRetired);
+        }
+        if slot.account.configuration.subject_id != *session.subject_id() {
+            return Err(ConnectorControlPlaneError::SubjectBindingMismatch);
+        }
+        if slot.account.configuration.policy.revision != expected_policy_revision {
+            return Err(ConnectorControlPlaneError::StalePolicyRevision {
+                instance: instance_id.clone(),
+            });
+        }
+        if slot.account.lifecycle_revision != expected_lifecycle_revision {
+            return Err(ConnectorControlPlaneError::StaleLifecycleRevision {
+                instance: instance_id.clone(),
+            });
+        }
+        if !matches!(
+            (slot.account.lifecycle, target),
+            (ConnectorLifecycle::Active, ConnectorLifecycle::Paused)
+                | (ConnectorLifecycle::Paused, ConnectorLifecycle::Active)
+        ) {
+            return Err(ConnectorControlPlaneError::LifecycleTransitionRejected {
+                actual: slot.account.lifecycle,
+                target,
+            });
+        }
+        let next_revision = slot
+            .account
+            .lifecycle_revision
+            .checked_add(1)
+            .ok_or(ConnectorControlPlaneError::LifecycleRevisionExhausted)?;
+        let current = control.durable_config.clone();
+        let mut next = current.clone();
+        let account = next
+            .registered_accounts
+            .iter_mut()
+            .find(|account| account.instance_id() == *instance_id)
+            .ok_or(ConnectorControlPlaneError::UnknownAccount)?;
+        account.lifecycle = target;
+        account.lifecycle_revision = next_revision;
+        Ok((current, next))
     }
 }
 
@@ -1121,6 +1279,8 @@ pub(crate) enum ConnectorControlPlaneError {
     AuthorityGenerationExhausted,
     #[error("connector operation lease count is exhausted")]
     LeaseCountExhausted,
+    #[error("connector lifecycle lease drain exceeded its bounded deadline")]
+    LeaseDrainTimedOut,
     #[error("connector runtime binding identity is exhausted")]
     RuntimeIdExhausted,
     #[error("connector operation lease identity is exhausted")]
@@ -1133,6 +1293,13 @@ pub(crate) enum ConnectorControlPlaneError {
     StalePolicyRevision { instance: ConnectorInstanceId },
     #[error("connector account `{instance:?}` changed lifecycle revision without a state change")]
     UnexpectedLifecycleRevision { instance: ConnectorInstanceId },
+    #[error("connector lifecycle transition from {actual:?} to {target:?} is not allowed")]
+    LifecycleTransitionRejected {
+        actual: ConnectorLifecycle,
+        target: ConnectorLifecycle,
+    },
+    #[error("connector lifecycle revision is exhausted")]
+    LifecycleRevisionExhausted,
     #[error("connector account `{instance:?}` must be durably revoked before removal")]
     RemovalRequiresRevocation { instance: ConnectorInstanceId },
 }
@@ -1149,6 +1316,7 @@ mod tests {
         ConnectorConfiguration, ConnectorId, ConnectorPolicySnapshot,
         control_state::{CONNECTOR_CONTROL_STATE_SCHEMA_VERSION, RegisteredConnectorAccount},
     };
+    use crate::config::FreedomConfig;
 
     fn account(
         subject: &str,
@@ -1214,6 +1382,186 @@ mod tests {
             ),
             Err(ConnectorControlPlaneError::SubjectBindingMismatch)
         ));
+    }
+
+    #[test]
+    fn authenticated_lifecycle_successor_is_revision_fenced_and_never_uses_import_admission() {
+        let active_plane = plane(ConnectorLifecycle::Active);
+        let instance = instance();
+        let (current, paused) = active_plane
+            .prepare_lifecycle_successor(&session(), &instance, 7, 11, ConnectorLifecycle::Paused)
+            .unwrap();
+        assert_eq!(current.registered_accounts[0].lifecycle, ConnectorLifecycle::Active);
+        assert_eq!(paused.registered_accounts[0].lifecycle, ConnectorLifecycle::Paused);
+        assert_eq!(paused.registered_accounts[0].lifecycle_revision, 12);
+        assert!(matches!(
+            active_plane.prepare_lifecycle_successor(&session(), &instance, 7, 10, ConnectorLifecycle::Paused),
+            Err(ConnectorControlPlaneError::StaleLifecycleRevision { .. })
+        ));
+        assert!(matches!(
+            active_plane.prepare_lifecycle_successor(&session(), &instance, 6, 11, ConnectorLifecycle::Paused),
+            Err(ConnectorControlPlaneError::StalePolicyRevision { .. })
+        ));
+        assert!(matches!(
+            active_plane.prepare_lifecycle_successor(&session(), &instance, 7, 11, ConnectorLifecycle::Active),
+            Err(ConnectorControlPlaneError::LifecycleTransitionRejected { .. })
+        ));
+        assert!(matches!(
+            active_plane.prepare_lifecycle_successor(
+                &AuthenticatedControlSession::test_authenticated(SubjectId::new("other").unwrap()),
+                &instance,
+                7,
+                11,
+                ConnectorLifecycle::Paused,
+            ),
+            Err(ConnectorControlPlaneError::SubjectBindingMismatch)
+        ));
+
+        let paused_plane = plane(ConnectorLifecycle::Paused);
+        let (_, resumed) = paused_plane
+            .prepare_lifecycle_successor(&session(), &instance, 7, 11, ConnectorLifecycle::Active)
+            .unwrap();
+        assert_eq!(resumed.registered_accounts[0].lifecycle, ConnectorLifecycle::Active);
+        assert!(matches!(
+            paused_plane.authorize_context_import(&session(), &instance),
+            Err(ConnectorControlPlaneError::AccountNotActive(ConnectorLifecycle::Paused))
+        ));
+
+        let revoked_plane = plane(ConnectorLifecycle::Revoked);
+        assert!(matches!(
+            revoked_plane.prepare_lifecycle_successor(
+                &session(),
+                &instance,
+                7,
+                11,
+                ConnectorLifecycle::Active,
+            ),
+            Err(ConnectorControlPlaneError::LifecycleTransitionRejected { .. })
+        ));
+
+        let overflow = ConnectorControlPlane::from_config(&ConnectorControlConfig {
+            schema_version: CONNECTOR_CONTROL_STATE_SCHEMA_VERSION,
+            enabled: true,
+            registered_accounts: vec![account("operator", ConnectorLifecycle::Active, 7, u64::MAX)],
+        })
+        .unwrap();
+        assert!(matches!(
+            overflow.prepare_lifecycle_successor(
+                &session(),
+                &instance,
+                7,
+                u64::MAX,
+                ConnectorLifecycle::Paused,
+            ),
+            Err(ConnectorControlPlaneError::LifecycleRevisionExhausted)
+        ));
+    }
+
+    #[test]
+    fn lifecycle_transition_cas_failure_reopens_the_unpublished_active_authority() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("freedom.yaml");
+        let mut persisted = FreedomConfig::default();
+        persisted.context_connectors = config(ConnectorLifecycle::Active);
+        std::fs::write(&path, serde_yaml::to_string(&persisted).unwrap()).unwrap();
+
+        let plane = plane(ConnectorLifecycle::Active);
+        let instance = instance();
+        let (current, next) = plane
+            .prepare_lifecycle_successor(&session(), &instance, 7, 11, ConnectorLifecycle::Paused)
+            .unwrap();
+        let next_for_config = next.clone();
+        let (update, ()) = FreedomConfig::prepare_update_at(&path, move |config| {
+            assert_eq!(config.context_connectors, current);
+            config.context_connectors = next_for_config;
+            Ok(())
+        })
+        .unwrap();
+        std::fs::write(&path, "# concurrent operator change\n").unwrap();
+
+        let transition = plane.begin_durable_transition(next).unwrap();
+        assert!(matches!(
+            transition.commit_durable_update(update),
+            Err(ConnectorControlPlaneError::DurablePublication(_))
+        ));
+        assert!(
+            plane.authorize_context_import(&session(), &instance).is_ok(),
+            "a failed pre-publication CAS must restore the prior active authority"
+        );
+    }
+
+    #[test]
+    fn lifecycle_drain_timeout_preserves_the_live_lease_and_prior_authority() {
+        let plane = plane(ConnectorLifecycle::Active);
+        let instance = instance();
+        let authority = plane
+            .authorize_context_import(&session(), &instance)
+            .unwrap();
+        let lease = authority.acquire_context_import_operation_lease().unwrap();
+        let (_, next) = plane
+            .prepare_lifecycle_successor(&session(), &instance, 7, 11, ConnectorLifecycle::Paused)
+            .unwrap();
+
+        assert!(matches!(
+            plane.begin_lifecycle_transition(next, Instant::now()),
+            Err(ConnectorControlPlaneError::LeaseDrainTimedOut)
+        ));
+        lease.ensure_live().unwrap();
+        authority.acquire_context_import_operation_lease().unwrap();
+    }
+
+    #[test]
+    fn lifecycle_drain_commits_after_the_held_lease_releases() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("freedom.yaml");
+        let mut persisted = FreedomConfig::default();
+        persisted.context_connectors = config(ConnectorLifecycle::Active);
+        std::fs::write(&path, serde_yaml::to_string(&persisted).unwrap()).unwrap();
+
+        let plane = Arc::new(plane(ConnectorLifecycle::Active));
+        let instance = instance();
+        let authority = plane
+            .authorize_context_import(&session(), &instance)
+            .unwrap();
+        let lease = authority.acquire_context_import_operation_lease().unwrap();
+        let (current, next) = plane
+            .prepare_lifecycle_successor(&session(), &instance, 7, 11, ConnectorLifecycle::Paused)
+            .unwrap();
+        let next_for_config = next.clone();
+        let (update, ()) = FreedomConfig::prepare_update_at(&path, move |config| {
+            assert_eq!(config.context_connectors, current);
+            config.context_connectors = next_for_config;
+            Ok(())
+        })
+        .unwrap();
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (transition_tx, transition_rx) = mpsc::channel();
+        let transition_plane = Arc::clone(&plane);
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            transition_tx.send(
+                transition_plane.begin_lifecycle_transition(
+                    next,
+                    Instant::now() + Duration::from_secs(1),
+                ),
+            )
+        });
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        wait_until("lifecycle admission to close", || {
+            matches!(
+                authority.acquire_context_import_operation_lease(),
+                Err(ConnectorControlPlaneError::AuthorityRetired)
+            )
+        });
+        drop(lease);
+        let transition = transition_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+        worker.join().unwrap().unwrap();
+        transition.commit_durable_update(update).unwrap();
+        assert_eq!(plane.status().unwrap()[0].lifecycle, ConnectorLifecycle::Paused);
     }
 
     #[test]

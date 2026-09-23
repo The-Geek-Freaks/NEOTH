@@ -4320,6 +4320,7 @@ pub(crate) async fn spawn_audit_rpc(
 #[cfg(any(unix, windows))]
 pub(crate) async fn spawn_connector_control_rpc(
     home: &std::path::Path,
+    config_path: &std::path::Path,
     audit_pid_nonce: &str,
     plane: Arc<crate::connectors::control_plane::ConnectorControlPlane>,
     daemon_subject: Option<crate::connectors::SubjectId>,
@@ -4330,6 +4331,7 @@ pub(crate) async fn spawn_connector_control_rpc(
 )> {
     crate::connectors::control_plane::rpc::bind_and_serve(
         home,
+        config_path,
         audit_pid_nonce,
         plane,
         daemon_subject,

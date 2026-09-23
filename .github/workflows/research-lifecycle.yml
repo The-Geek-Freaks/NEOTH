@@ -120,6 +120,7 @@ jobs:
               "wave239NativeReadAcceptance": 10,
               "wave242ContextStatusAcceptance": 1,
               "wave246RecallCitationAcceptance": 5,
+              "wave247ImportLifecycleAcceptance": 6,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():

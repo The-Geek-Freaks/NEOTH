@@ -580,13 +580,18 @@ pub(crate) enum GuiChatRecallWarmKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, tag = "kind", rename_all = "snake_case")]
 pub(crate) enum GuiChatRecallChipCitation {
-    Event { event_id: i64, event_type: u8 },
+    Event {
+        event_id: i64,
+        event_type: u8,
+    },
     WarmSnapshot {
         consolidated_id: i64,
         warm_kind: GuiChatRecallWarmKind,
         original_event_id: Option<i64>,
     },
-    GroundTruth { fact_id: i64 },
+    GroundTruth {
+        fact_id: i64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1010,7 +1015,9 @@ pub(crate) fn validate_recall_chip_batch(batch: &GuiChatRecallChipBatch) -> GuiC
                     event_id,
                     event_type: _,
                 }),
-                GuiChatRecallChipTier::Hot | GuiChatRecallChipTier::Warm | GuiChatRecallChipTier::Cold,
+                GuiChatRecallChipTier::Hot
+                | GuiChatRecallChipTier::Warm
+                | GuiChatRecallChipTier::Cold,
                 GuiChatRecallChipSourceState::Available,
             ) if *event_id > 0 => {}
             (
@@ -1021,8 +1028,7 @@ pub(crate) fn validate_recall_chip_batch(batch: &GuiChatRecallChipBatch) -> GuiC
                 }),
                 GuiChatRecallChipTier::Warm,
                 GuiChatRecallChipSourceState::Available,
-            ) if *consolidated_id > 0
-                && original_event_id.is_none_or(|event_id| event_id > 0) => {}
+            ) if *consolidated_id > 0 && original_event_id.is_none_or(|event_id| event_id > 0) => {}
             (
                 Some(GuiChatRecallChipCitation::WarmSnapshot {
                     consolidated_id,
@@ -1896,10 +1902,9 @@ mod tests {
         };
         validate_stream_frame(&frame(legacy)).unwrap();
 
-        let legacy_wire: GuiChatRecallChipRow = serde_json::from_str(
-            r#"{"tier":"warm","score":0.42,"source_state":"available"}"#,
-        )
-        .unwrap();
+        let legacy_wire: GuiChatRecallChipRow =
+            serde_json::from_str(r#"{"tier":"warm","score":0.42,"source_state":"available"}"#)
+                .unwrap();
         assert_eq!(legacy_wire.citation, None);
         assert!(serde_json::from_str::<GuiChatRecallChipRow>(
             r#"{"tier":"warm","score":0.42,"source_state":"available","citation":{"kind":"event","event_id":1,"event_type":7,"extra":true}}"#,

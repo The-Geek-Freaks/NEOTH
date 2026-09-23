@@ -43,6 +43,8 @@ use super::{ConnectorControlPlane, SubjectId};
 #[cfg(any(unix, windows))]
 use super::{ConnectorInstanceId, daemon_authenticated_session};
 #[cfg(any(unix, windows))]
+use crate::connectors::control_state::ConnectorLifecycle;
+#[cfg(any(unix, windows))]
 use crate::connectors::local_import::{approve_import_root, issue_operator_import_capability};
 #[cfg(any(unix, windows))]
 use crate::connectors::runtime_local_import::RuntimeLocalImport;
@@ -254,6 +256,7 @@ struct RpcState {
     plane: Arc<ConnectorControlPlane>,
     daemon_subject: Option<SubjectId>,
     home: PathBuf,
+    config_path: PathBuf,
     writer: WalWriterHandle,
     plans: Mutex<PlanRegistry>,
 }
@@ -288,6 +291,14 @@ struct ApplyRequest {
     confirmation_nonce: String,
 }
 
+#[cfg(any(unix, windows))]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LifecycleRequest {
+    policy_revision: u64,
+    lifecycle_revision: u64,
+}
+
 /// Start the private control endpoint. `audit_pid_nonce` has already been
 /// committed to the held daemon PID lock; the connector nonce is a
 /// domain-separated digest of it, so discovery cannot substitute audit's
@@ -295,6 +306,7 @@ struct ApplyRequest {
 #[cfg(unix)]
 pub(crate) async fn bind_and_serve(
     home: &Path,
+    config_path: &Path,
     audit_pid_nonce: &str,
     plane: Arc<ConnectorControlPlane>,
     daemon_subject: Option<SubjectId>,
@@ -335,6 +347,7 @@ pub(crate) async fn bind_and_serve(
         plane,
         daemon_subject,
         home: home.to_path_buf(),
+        config_path: config_path.to_path_buf(),
         writer,
         plans: Mutex::new(PlanRegistry {
             planning: BTreeMap::new(),
@@ -379,6 +392,7 @@ pub(crate) async fn bind_and_serve(
 #[cfg(windows)]
 pub(crate) async fn bind_and_serve(
     home: &Path,
+    config_path: &Path,
     audit_pid_nonce: &str,
     plane: Arc<ConnectorControlPlane>,
     daemon_subject: Option<SubjectId>,
@@ -407,6 +421,7 @@ pub(crate) async fn bind_and_serve(
         plane,
         daemon_subject,
         home: home.to_path_buf(),
+        config_path: config_path.to_path_buf(),
         writer,
         plans: Mutex::new(PlanRegistry {
             planning: BTreeMap::new(),
@@ -436,6 +451,7 @@ pub(crate) async fn bind_and_serve(
 /// no TCP or un-attested pipe fallback.
 #[cfg(not(any(unix, windows)))]
 pub(crate) async fn bind_and_serve(
+    _: &Path,
     _: &Path,
     _: &str,
     _: Arc<ConnectorControlPlane>,
@@ -1638,6 +1654,8 @@ where
                 | "/cc/accounts/status"
                 | "/cc/local-import/plan"
                 | "/cc/local-import/apply"
+                | "/cc/local-import/pause"
+                | "/cc/local-import/resume"
         )
     {
         write_response(&mut stream, 404, "not_found", None).await?;
@@ -1854,8 +1872,81 @@ fn process_route(
             let outcome = apply_import(state, request).map_err(|_| "local_import_apply_failed")?;
             Ok(Some(outcome))
         }
+        "/cc/local-import/pause" => {
+            let request: LifecycleRequest =
+                serde_json::from_slice(body).map_err(|_| "invalid_lifecycle_request")?;
+            let outcome = transition_lifecycle(state, request, ConnectorLifecycle::Paused)
+                .map_err(|_| "local_import_lifecycle_failed")?;
+            Ok(Some(outcome))
+        }
+        "/cc/local-import/resume" => {
+            let request: LifecycleRequest =
+                serde_json::from_slice(body).map_err(|_| "invalid_lifecycle_request")?;
+            let outcome = transition_lifecycle(state, request, ConnectorLifecycle::Active)
+                .map_err(|_| "local_import_lifecycle_failed")?;
+            Ok(Some(outcome))
+        }
         _ => Err("not_found"),
     }
+}
+
+#[cfg(any(unix, windows))]
+fn transition_lifecycle(
+    state: &RpcState,
+    request: LifecycleRequest,
+    target: ConnectorLifecycle,
+) -> Result<String> {
+    let subject = state
+        .daemon_subject
+        .clone()
+        .context("daemon has no configured connector-control subject")?;
+    let instance = ConnectorInstanceId::accountless(ConnectorId::LocalImport);
+    let (current, next) = state.plane.prepare_lifecycle_successor(
+        &daemon_authenticated_session(subject),
+        &instance,
+        request.policy_revision,
+        request.lifecycle_revision,
+        target,
+    )?;
+    let response_account = next
+        .account(&instance)
+        .cloned()
+        .context("prepared local-import lifecycle is absent from its successor")?;
+    let next_for_config = next.clone();
+    let (update, ()) = crate::config::FreedomConfig::prepare_update_at(
+        &state.config_path,
+        move |config| {
+            ensure!(
+                config.context_connectors == current,
+                "freedom.yaml connector-control state differs from the live daemon projection"
+            );
+            config.context_connectors = next_for_config;
+            Ok(())
+        },
+    )?;
+    let deadline = Instant::now()
+        .checked_add(CONNECTION_TIMEOUT)
+        .context("connector lifecycle drain deadline overflow")?;
+    let transition = state.plane.begin_lifecycle_transition(next, deadline)?;
+    if Instant::now() >= deadline {
+        // The transition is still unpublished; dropping it restores its
+        // captured admission state without reporting an unapplied timeout as
+        // a committed lifecycle mutation.
+        drop(transition);
+        bail!("connector lifecycle deadline elapsed before durable publication");
+    }
+    transition.commit_durable_update(update)?;
+    let encoded = serde_json::to_string(&serde_json::json!({
+        "connector": response_account.configuration.connector_id.as_str(),
+        "lifecycle": format!("{:?}", response_account.lifecycle).to_lowercase(),
+        "policy_revision": response_account.configuration.policy.revision,
+        "lifecycle_revision": response_account.lifecycle_revision,
+    }))?;
+    ensure!(
+        encoded.len() <= MAX_RESPONSE_BYTES,
+        "connector-control lifecycle response exceeds response cap"
+    );
+    Ok(encoded)
 }
 
 #[cfg(any(unix, windows))]
@@ -2267,6 +2358,26 @@ mod tests {
         let uppercase = String::from_utf8(uppercase).expect("hex test nonce remains UTF-8");
         assert!(validate_nonce(&uppercase).is_err());
         assert!(validate_nonce(&audit_nonce[..audit_nonce.len() - 1]).is_err());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn lifecycle_request_requires_exact_revision_fields() {
+        assert!(serde_json::from_slice::<LifecycleRequest>(
+            br#"{"policy_revision":7,"lifecycle_revision":11}"#,
+        )
+        .is_ok());
+        for body in [
+            br#"{}"#.as_slice(),
+            br#"{"policy_revision":7}"#.as_slice(),
+            br#"{"policy_revision":7,"lifecycle_revision":11,"account":"other"}"#.as_slice(),
+            br#"{"policy_revision":-1,"lifecycle_revision":11}"#.as_slice(),
+        ] {
+            assert!(
+                serde_json::from_slice::<LifecycleRequest>(body).is_err(),
+                "malformed lifecycle request must not reach transition admission"
+            );
+        }
     }
 
     #[test]

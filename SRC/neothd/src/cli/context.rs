@@ -40,6 +40,20 @@ pub enum ContextImportAction {
         /// Opaque confirmation returned by `context import plan`.
         confirmation_nonce: String,
     },
+    /// Durably pause Local Import after confirming the current policy and lifecycle revisions.
+    Pause {
+        #[arg(long)]
+        policy_revision: u64,
+        #[arg(long)]
+        lifecycle_revision: u64,
+    },
+    /// Durably resume Local Import after confirming the current policy and lifecycle revisions.
+    Resume {
+        #[arg(long)]
+        policy_revision: u64,
+        #[arg(long)]
+        lifecycle_revision: u64,
+    },
 }
 
 pub async fn run(args: ContextArgs) -> Result<()> {
@@ -108,6 +122,32 @@ fn request_route_and_body(args: &ContextArgs) -> Result<(&'static str, Vec<u8>)>
                 &serde_json::json!({"plan_id": plan_id, "confirmation_nonce": confirmation_nonce}),
             )?,
         )),
+        ContextAction::Import {
+            action:
+                ContextImportAction::Pause {
+                    policy_revision,
+                    lifecycle_revision,
+                },
+        } => Ok((
+            "/cc/local-import/pause",
+            serde_json::to_vec(&serde_json::json!({
+                "policy_revision": policy_revision,
+                "lifecycle_revision": lifecycle_revision,
+            }))?,
+        )),
+        ContextAction::Import {
+            action:
+                ContextImportAction::Resume {
+                    policy_revision,
+                    lifecycle_revision,
+                },
+        } => Ok((
+            "/cc/local-import/resume",
+            serde_json::to_vec(&serde_json::json!({
+                "policy_revision": policy_revision,
+                "lifecycle_revision": lifecycle_revision,
+            }))?,
+        )),
     }
 }
 
@@ -132,6 +172,38 @@ mod route_tests {
             "status must not send import content or handles"
         );
     }
+
+    #[test]
+    fn context_import_lifecycle_routes_bind_both_expected_revisions() {
+        for (action, expected_route) in [
+            (
+                ContextImportAction::Pause {
+                    policy_revision: 7,
+                    lifecycle_revision: 11,
+                },
+                "/cc/local-import/pause",
+            ),
+            (
+                ContextImportAction::Resume {
+                    policy_revision: 7,
+                    lifecycle_revision: 12,
+                },
+                "/cc/local-import/resume",
+            ),
+        ] {
+            let args = ContextArgs {
+                action: ContextAction::Import { action },
+                output: OutputFormat::Json,
+            };
+            let (route, body) = request_route_and_body(&args).unwrap();
+            assert_eq!(route, expected_route);
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+                serde_json::json!({"policy_revision": 7, "lifecycle_revision": if expected_route.ends_with("pause") { 11 } else { 12 }}),
+                "lifecycle request must contain only the exact expected revisions"
+            );
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -151,6 +223,7 @@ mod windows_tests {
             },
             runtime_local_import::ContextEvidenceReplayRuntime,
         },
+        config::FreedomConfig,
         context_graph::{ContextImportApplyKey, ContextStore},
         daemon::{audit_rpc, pidfile},
         wal::{
@@ -159,8 +232,8 @@ mod windows_tests {
         },
     };
 
-    fn active_plane() -> Arc<ConnectorControlPlane> {
-        let config = ConnectorControlConfig {
+    fn active_config() -> ConnectorControlConfig {
+        ConnectorControlConfig {
             schema_version: CONNECTOR_CONTROL_STATE_SCHEMA_VERSION,
             enabled: true,
             registered_accounts: vec![RegisteredConnectorAccount {
@@ -174,8 +247,18 @@ mod windows_tests {
                 lifecycle: ConnectorLifecycle::Active,
                 lifecycle_revision: 11,
             }],
-        };
-        Arc::new(ConnectorControlPlane::from_config(&config).unwrap())
+        }
+    }
+
+    fn active_plane() -> Arc<ConnectorControlPlane> {
+        Arc::new(ConnectorControlPlane::from_config(&active_config()).unwrap())
+    }
+
+    fn write_active_config(home: &std::path::Path) {
+        let mut config = FreedomConfig::default();
+        config.context_connectors = active_config();
+        std::fs::write(home.join("freedom.yaml"), serde_yaml::to_string(&config).unwrap())
+            .unwrap();
     }
 
     fn args(action: ContextImportAction) -> ContextArgs {
@@ -190,6 +273,7 @@ mod windows_tests {
      {
         let home = crate::test_env::canonical_tempdir().unwrap();
         let source = crate::test_env::canonical_tempdir().unwrap();
+        write_active_config(home.path());
         std::fs::write(
             source.path().join("selected.txt"),
             "Windows CC VFS evidence",
@@ -218,6 +302,7 @@ mod windows_tests {
 
         let (listener_task, guard) = crate::connectors::control_plane::rpc::bind_and_serve(
             home.path(),
+            &home.path().join("freedom.yaml"),
             audit_nonce,
             active_plane(),
             Some(SubjectId::new("operator").unwrap()),
@@ -285,6 +370,85 @@ mod windows_tests {
         let applied: serde_json::Value = serde_json::from_str(&applied).unwrap();
         assert_eq!(applied["ok"], true);
         assert_eq!(applied["data"]["accepted"], true);
+
+        let paused = request_at(
+            home.path(),
+            &args(ContextImportAction::Pause {
+                policy_revision: 7,
+                lifecycle_revision: 11,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&paused).unwrap(),
+            serde_json::json!({
+                "ok": true,
+                "data": {
+                    "connector": "local_import",
+                    "lifecycle": "paused",
+                    "policy_revision": 7,
+                    "lifecycle_revision": 12,
+                },
+            })
+        );
+        let paused_config: FreedomConfig =
+            serde_yaml::from_slice(&std::fs::read(home.path().join("freedom.yaml")).unwrap())
+                .unwrap();
+        assert_eq!(
+            paused_config.context_connectors.registered_accounts[0].lifecycle,
+            ConnectorLifecycle::Paused
+        );
+        assert_eq!(
+            paused_config.context_connectors.registered_accounts[0].lifecycle_revision,
+            12
+        );
+        let paused_plan = request_at(
+            home.path(),
+            &args(ContextImportAction::Plan {
+                root: source.path().display().to_string(),
+                relative_path: "selected.txt".to_owned(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&paused_plan).unwrap(),
+            serde_json::json!({"ok": false, "code": "local_import_unavailable"}),
+            "paused lifecycle must block new Context Import planning"
+        );
+
+        let resumed = request_at(
+            home.path(),
+            &args(ContextImportAction::Resume {
+                policy_revision: 7,
+                lifecycle_revision: 12,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&resumed).unwrap(),
+            serde_json::json!({
+                "ok": true,
+                "data": {
+                    "connector": "local_import",
+                    "lifecycle": "active",
+                    "policy_revision": 7,
+                    "lifecycle_revision": 13,
+                },
+            })
+        );
+        let resumed_config: FreedomConfig =
+            serde_yaml::from_slice(&std::fs::read(home.path().join("freedom.yaml")).unwrap())
+                .unwrap();
+        let restarted = ConnectorControlPlane::from_config(&resumed_config.context_connectors)
+            .unwrap();
+        assert_eq!(
+            restarted.status().unwrap()[0].lifecycle,
+            ConnectorLifecycle::Active,
+            "a restarted projection must recover the persisted lifecycle"
+        );
 
         let apply_key = ContextImportApplyKey::new(
             hex::decode(plan_id).unwrap().try_into().unwrap(),
