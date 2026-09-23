@@ -228,13 +228,6 @@ fn prepare_or_load(
     // Retained warm anchors are deliberately repeatable REM evidence. The
     // bounded stable order lets two distinct Dream runs observe a real pair
     // even after Light moved its original hot sources out of the hot tier.
-    let mut warm = tx.prepare(
-        "SELECT warm.event_id, warm.text_hash, warm.trust, o.origin_kind, o.channel_id, o.account_id, o.scoped_sender_hash, COALESCE(c.state, ''), c.revision \
-         FROM idx_consolidated warm JOIN idx_episode_origin_v2 o ON o.raw_event_id=warm.event_id \
-         LEFT JOIN idx_counterparty_clustering_consent_v1 c ON c.channel_id=o.channel_id AND c.account_id=o.account_id AND c.scoped_sender_hash=o.scoped_sender_hash \
-         WHERE warm.kind='retained' AND warm.event_id IS NOT NULL AND (o.origin_kind='local_attested' OR (o.origin_kind='channel_bound' AND c.state='verified_granted')) \
-         ORDER BY warm.importance DESC, warm.consolidated_ts DESC, warm.event_id ASC LIMIT 32"
-    )?;
     let warm_rows: Vec<(
         i64,
         String,
@@ -245,21 +238,30 @@ fn prepare_or_load(
         Option<String>,
         String,
         Option<i64>,
-    )> = warm
-        .query_map([], |r| {
-            Ok((
-                r.get(0)?,
-                r.get(1)?,
-                r.get(2)?,
-                r.get(3)?,
-                r.get(4)?,
-                r.get(5)?,
-                r.get(6)?,
-                r.get(7)?,
-                r.get(8)?,
-            ))
-        })?
-        .collect::<rusqlite::Result<_>>()?;
+    )> = {
+        let mut warm = tx.prepare(
+            "SELECT warm.event_id, warm.text_hash, warm.trust, o.origin_kind, o.channel_id, o.account_id, o.scoped_sender_hash, COALESCE(c.state, ''), c.revision \
+             FROM idx_consolidated warm JOIN idx_episode_origin_v2 o ON o.raw_event_id=warm.event_id \
+             LEFT JOIN idx_counterparty_clustering_consent_v1 c ON c.channel_id=o.channel_id AND c.account_id=o.account_id AND c.scoped_sender_hash=o.scoped_sender_hash \
+             WHERE warm.kind='retained' AND warm.event_id IS NOT NULL AND (o.origin_kind='local_attested' OR (o.origin_kind='channel_bound' AND c.state='verified_granted')) \
+             ORDER BY warm.importance DESC, warm.consolidated_ts DESC, warm.event_id ASC LIMIT 32"
+        )?;
+        warm
+            .query_map([], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                    r.get(8)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<_>>()?
+    };
     for (event_id, text_hash, trust, kind, channel, account, sender, consent, revision) in warm_rows
     {
         if inputs.iter().any(|input| input.event_id == event_id) {

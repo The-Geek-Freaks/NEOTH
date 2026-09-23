@@ -1,0 +1,458 @@
+{
+  "schema": "neoth-parent-acceptance/v1",
+  "parent": "GOLD-LF-P2-15",
+  "status": "ACCEPTED",
+  "acceptedPublishedHead": "76abfed7d9b01a92554b6998dfb2e648a46caf22",
+  "run": 35843153480,
+  "sourceHead": "571b0e032b93081292293cbf4e2fa42afeee12b7",
+  "required": 50,
+  "passed": 50,
+  "supporting": 13,
+  "supportingPassed": 13,
+  "tests": [
+    {
+      "test": "config::inference::tests::absent_role_policy_preserves_legacy_role_routing",
+      "sourcePath": "SRC/neothd/src/config/inference.rs",
+      "sourceSha256": "069f7bb7c907e5b1a0f2d98f2ecf60c7494c218bc2118cbb9a01273352a1c707",
+      "requiredForParent": true,
+      "edge": "typed role policy, typed violations, final fence"
+    },
+    {
+      "test": "config::reload::tests::try_reload_accepts_role_policy_only_change_but_keeps_other_inference_restart_bound",
+      "sourcePath": "SRC/neothd/src/config/reload.rs",
+      "sourceSha256": "fb7d2a102971309cae8e0811d04da63071061c63d632f41f2cb455886bd168fc",
+      "requiredForParent": true,
+      "edge": "typed role policy, typed violations, final fence"
+    },
+    {
+      "test": "config::role_policy::tests::rule_round_trips_through_yaml",
+      "sourcePath": "SRC/neothd/src/config/role_policy.rs",
+      "sourceSha256": "41439ac791166cccbbb5a38f731374b783b11fcaa9dd2075d56f65370fbf9ba0",
+      "requiredForParent": true,
+      "edge": "typed role policy, typed violations, final fence"
+    },
+    {
+      "test": "config::role_policy::tests::rejects_duplicate_roles_and_invalid_exact_models",
+      "sourcePath": "SRC/neothd/src/config/role_policy.rs",
+      "sourceSha256": "41439ac791166cccbbb5a38f731374b783b11fcaa9dd2075d56f65370fbf9ba0",
+      "requiredForParent": true,
+      "edge": "typed role policy, typed violations, final fence"
+    },
+    {
+      "test": "config::role_policy::tests::policy_omission_and_exact_decisions_fail_closed_as_required",
+      "sourcePath": "SRC/neothd/src/config/role_policy.rs",
+      "sourceSha256": "41439ac791166cccbbb5a38f731374b783b11fcaa9dd2075d56f65370fbf9ba0",
+      "requiredForParent": true,
+      "edge": "typed role policy, typed violations, final fence"
+    },
+    {
+      "test": "config::role_policy::tests::policy_identity_is_order_independent_and_covers_every_rule",
+      "sourcePath": "SRC/neothd/src/config/role_policy.rs",
+      "sourceSha256": "41439ac791166cccbbb5a38f731374b783b11fcaa9dd2075d56f65370fbf9ba0",
+      "requiredForParent": true,
+      "edge": "typed role policy, typed violations, final fence"
+    },
+    {
+      "test": "providers::tests::role_dispatch_final_fence_rejects_model_mutated_after_permit_creation",
+      "sourcePath": "SRC/neothd/src/providers/mod.rs",
+      "sourceSha256": "59f48f5e65dcd6dc840f1408d07e99067436cd15e8de474dbca3bfeffeec16a4",
+      "requiredForParent": true,
+      "edge": "typed role policy, typed violations, final fence"
+    },
+    {
+      "test": "providers::cost_authorization::role_dispatch_tests::configured_role_denial_blocks_raw_transport",
+      "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+      "sourceSha256": "45864f9d2f9a2d6bd9fac6fa63d898abdfed28563f19471188e3da2ed0433bf4",
+      "requiredForParent": true,
+      "edge": "typed role policy, typed violations, final fence"
+    },
+    {
+      "test": "providers::cost_authorization::role_dispatch_tests::allowed_council_leaf_returns_response_and_audits_typed_role_identity",
+      "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+      "sourceSha256": "45864f9d2f9a2d6bd9fac6fa63d898abdfed28563f19471188e3da2ed0433bf4",
+      "requiredForParent": true,
+      "edge": "typed role policy, typed violations, final fence"
+    },
+    {
+      "test": "providers::cost_authorization::role_dispatch_tests::resolved_leaf_model_outside_role_policy_is_denied_before_raw_transport",
+      "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+      "sourceSha256": "45864f9d2f9a2d6bd9fac6fa63d898abdfed28563f19471188e3da2ed0433bf4",
+      "requiredForParent": true,
+      "edge": "typed role policy, typed violations, final fence"
+    },
+    {
+      "test": "providers::cost_authorization::role_dispatch_tests::accepted_role_policy_reload_between_authorization_and_raw_send_is_blocked",
+      "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+      "sourceSha256": "45864f9d2f9a2d6bd9fac6fa63d898abdfed28563f19471188e3da2ed0433bf4",
+      "requiredForParent": true,
+      "edge": "typed role policy, typed violations, final fence"
+    },
+    {
+      "test": "providers::cost_authorization::role_dispatch_tests::non_council_leaf_ignores_a_closed_policy_without_role_binding",
+      "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+      "sourceSha256": "45864f9d2f9a2d6bd9fac6fa63d898abdfed28563f19471188e3da2ed0433bf4",
+      "requiredForParent": true,
+      "edge": "typed role policy, typed violations, final fence"
+    },
+    {
+      "test": "providers::tests::role_policy_change_after_effect_intent_blocks_start_without_spending_allow_once",
+      "sourcePath": "SRC/neothd/src/providers/mod.rs",
+      "sourceSha256": "59f48f5e65dcd6dc840f1408d07e99067436cd15e8de474dbca3bfeffeec16a4",
+      "requiredForParent": true,
+      "edge": "role change before effect start"
+    },
+    {
+      "test": "providers::cost_authorization::tests::raw_callsite_digest_excludes_only_explicit_test_only_files",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "2da14a467171b2e7a8993bdfcfbbfa8bcf1df7aa15b441541344e8105dab834b",
+      "requiredForParent": true,
+      "edge": "raw callsite scope fingerprint"
+    },
+    {
+      "test": "providers::cost_authorization::role_dispatch_tests::w225_effect_start_role_rejection_closes_admitted_retry_with_denial_receipt",
+      "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+      "sourceSha256": "45864f9d2f9a2d6bd9fac6fa63d898abdfed28563f19471188e3da2ed0433bf4",
+      "requiredForParent": true,
+      "edge": "role rejection closes admitted retry at effect start"
+    },
+    {
+      "test": "providers::cost_authorization::role_dispatch_tests::w278_immediate_before_send_role_rejection_closes_admitted_retry_with_denial_receipt",
+      "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+      "sourceSha256": "45864f9d2f9a2d6bd9fac6fa63d898abdfed28563f19471188e3da2ed0433bf4",
+      "requiredForParent": true,
+      "edge": "immediate-before-send role rejection closes admitted retry"
+    },
+    {
+      "test": "cli::bg_session::tests::w285_background_left_role_binding_admits_exact_leaf_once",
+      "sourcePath": "SRC/neothd/src/cli/bg_session.rs",
+      "sourceSha256": "47d01054dcc146faa19d0a865543fa3c8ef508c5736d6123f20bdb6e8867b104",
+      "requiredForParent": true,
+      "edge": "background Left allow and deny"
+    },
+    {
+      "test": "cli::bg_session::tests::w285_background_left_role_binding_denies_disallowed_model_before_effect",
+      "sourcePath": "SRC/neothd/src/cli/bg_session.rs",
+      "sourceSha256": "47d01054dcc146faa19d0a865543fa3c8ef508c5736d6123f20bdb6e8867b104",
+      "requiredForParent": true,
+      "edge": "background Left allow and deny"
+    },
+    {
+      "test": "cron::runner::workstream_c_tests::w289_cron_provider_intent_selector_includes_model_and_role_only_jobs",
+      "sourcePath": "SRC/neothd/src/cron/runner.rs",
+      "sourceSha256": "bd579a06e0b2a26bea0bc998cfda249c7f80e83ef0b3e6dc96caea484656a3cb",
+      "requiredForParent": true,
+      "edge": "scheduled Cron role intent, allow, deny, reload"
+    },
+    {
+      "test": "cron::runner::workstream_c_tests::w289_cron_resolver_builds_owned_topology_for_model_and_role_only_intent",
+      "sourcePath": "SRC/neothd/src/cron/runner.rs",
+      "sourceSha256": "bd579a06e0b2a26bea0bc998cfda249c7f80e83ef0b3e6dc96caea484656a3cb",
+      "requiredForParent": true,
+      "edge": "scheduled Cron role intent, allow, deny, reload"
+    },
+    {
+      "test": "cron::runner::workstream_c_tests::w289_cron_override_role_binding_admits_exact_leaf_once",
+      "sourcePath": "SRC/neothd/src/cron/runner.rs",
+      "sourceSha256": "bd579a06e0b2a26bea0bc998cfda249c7f80e83ef0b3e6dc96caea484656a3cb",
+      "requiredForParent": true,
+      "edge": "scheduled Cron role intent, allow, deny, reload"
+    },
+    {
+      "test": "cron::runner::workstream_c_tests::w289_cron_override_role_binding_denies_disallowed_model_before_effect",
+      "sourcePath": "SRC/neothd/src/cron/runner.rs",
+      "sourceSha256": "bd579a06e0b2a26bea0bc998cfda249c7f80e83ef0b3e6dc96caea484656a3cb",
+      "requiredForParent": true,
+      "edge": "scheduled Cron role intent, allow, deny, reload"
+    },
+    {
+      "test": "cron::runner::workstream_c_tests::w289_cron_role_binding_rejects_accepted_policy_reload_before_raw_send",
+      "sourcePath": "SRC/neothd/src/cron/runner.rs",
+      "sourceSha256": "bd579a06e0b2a26bea0bc998cfda249c7f80e83ef0b3e6dc96caea484656a3cb",
+      "requiredForParent": true,
+      "edge": "scheduled Cron role intent, allow, deny, reload"
+    },
+    {
+      "test": "cron::runner::workstream_c_tests::w289_cron_override_requires_explicit_origin_when_policy_active",
+      "sourcePath": "SRC/neothd/src/cron/runner.rs",
+      "sourceSha256": "bd579a06e0b2a26bea0bc998cfda249c7f80e83ef0b3e6dc96caea484656a3cb",
+      "requiredForParent": true,
+      "edge": "scheduled Cron role intent, allow, deny, reload"
+    },
+    {
+      "test": "cron::runner::workstream_c_tests::w289_cron_model_only_override_requires_explicit_origin_when_policy_active",
+      "sourcePath": "SRC/neothd/src/cron/runner.rs",
+      "sourceSha256": "bd579a06e0b2a26bea0bc998cfda249c7f80e83ef0b3e6dc96caea484656a3cb",
+      "requiredForParent": true,
+      "edge": "scheduled Cron role intent, allow, deny, reload"
+    },
+    {
+      "test": "cron::runner::workstream_c_tests::w289_cron_override_without_role_policy_preserves_legacy_unbound_authorizer",
+      "sourcePath": "SRC/neothd/src/cron/runner.rs",
+      "sourceSha256": "bd579a06e0b2a26bea0bc998cfda249c7f80e83ef0b3e6dc96caea484656a3cb",
+      "requiredForParent": true,
+      "edge": "scheduled Cron role intent, allow, deny, reload"
+    },
+    {
+      "test": "cli::chat::tests::w292_normal_chat_left_policy_allows_one_raw_leaf_and_request_lifecycle",
+      "sourcePath": "SRC/neothd/src/cli/chat.rs",
+      "sourceSha256": "699ae490d4515b3846203a77b9fea671d290cf56bfc8885a1ce63305524e8ad2",
+      "requiredForParent": true,
+      "edge": "normal chat Left, fallback, accepted daemon reload"
+    },
+    {
+      "test": "cli::chat::tests::w292_normal_chat_left_policy_denial_precedes_raw_leaf_and_request_lifecycle",
+      "sourcePath": "SRC/neothd/src/cli/chat.rs",
+      "sourceSha256": "699ae490d4515b3846203a77b9fea671d290cf56bfc8885a1ce63305524e8ad2",
+      "requiredForParent": true,
+      "edge": "normal chat Left, fallback, accepted daemon reload"
+    },
+    {
+      "test": "cli::chat::tests::w292_normal_chat_left_policy_model_denial_precedes_raw_leaf_and_request_lifecycle",
+      "sourcePath": "SRC/neothd/src/cli/chat.rs",
+      "sourceSha256": "699ae490d4515b3846203a77b9fea671d290cf56bfc8885a1ce63305524e8ad2",
+      "requiredForParent": true,
+      "edge": "normal chat Left, fallback, accepted daemon reload"
+    },
+    {
+      "test": "cli::chat::tests::w292_normal_chat_compatibility_snapshot_retains_left_binding_for_later_daemon_policy_reload",
+      "sourcePath": "SRC/neothd/src/cli/chat.rs",
+      "sourceSha256": "699ae490d4515b3846203a77b9fea671d290cf56bfc8885a1ce63305524e8ad2",
+      "requiredForParent": true,
+      "edge": "normal chat Left, fallback, accepted daemon reload"
+    },
+    {
+      "test": "cli::chat::tests::w292_normal_chat_429_fallback_reuses_left_binding_for_every_leaf",
+      "sourcePath": "SRC/neothd/src/cli/chat.rs",
+      "sourceSha256": "699ae490d4515b3846203a77b9fea671d290cf56bfc8885a1ce63305524e8ad2",
+      "requiredForParent": true,
+      "edge": "normal chat Left, fallback, accepted daemon reload"
+    },
+    {
+      "test": "cli::chat::tests::w292_daemon_compatibility_left_binding_rechecks_policy_enabled_after_admission",
+      "sourcePath": "SRC/neothd/src/cli/chat.rs",
+      "sourceSha256": "699ae490d4515b3846203a77b9fea671d290cf56bfc8885a1ce63305524e8ad2",
+      "requiredForParent": true,
+      "edge": "normal chat Left, fallback, accepted daemon reload"
+    },
+    {
+      "test": "cli::chat::tests::w292_daemon_left_binding_rejects_accepted_reload_after_durable_request_ack",
+      "sourcePath": "SRC/neothd/src/cli/chat.rs",
+      "sourceSha256": "699ae490d4515b3846203a77b9fea671d290cf56bfc8885a1ce63305524e8ad2",
+      "requiredForParent": true,
+      "edge": "normal chat Left, fallback, accepted daemon reload"
+    },
+    {
+      "test": "sub_agents::runtime::tests::w296_left_policy_covers_primary_qa_and_retry_leaf_lifecycles",
+      "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
+      "sourceSha256": "2f52204a83a1921cd495f42fe1925c3fcba1eccf3305bb41367922ad033147b6",
+      "requiredForParent": true,
+      "edge": "sub-agent Left primary, QA, retry, fallback"
+    },
+    {
+      "test": "sub_agents::runtime::tests::w296_left_policy_denies_primary_provider_or_model_before_any_leaf_lifecycle",
+      "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
+      "sourceSha256": "2f52204a83a1921cd495f42fe1925c3fcba1eccf3305bb41367922ad033147b6",
+      "requiredForParent": true,
+      "edge": "sub-agent Left primary, QA, retry, fallback"
+    },
+    {
+      "test": "sub_agents::runtime::tests::w296_left_policy_covers_429_fallback_leaf_lifecycles",
+      "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
+      "sourceSha256": "2f52204a83a1921cd495f42fe1925c3fcba1eccf3305bb41367922ad033147b6",
+      "requiredForParent": true,
+      "edge": "sub-agent Left primary, QA, retry, fallback"
+    },
+    {
+      "test": "sub_agents::runtime::tests::w296_left_policy_allows_429_primary_then_denies_fallback_model_before_transport",
+      "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
+      "sourceSha256": "2f52204a83a1921cd495f42fe1925c3fcba1eccf3305bb41367922ad033147b6",
+      "requiredForParent": true,
+      "edge": "sub-agent Left primary, QA, retry, fallback"
+    },
+    {
+      "test": "cli::code::tests::resume_worker_role_binding_allows_selected_right_and_denies_mismatch_before_transport",
+      "sourcePath": "SRC/neothd/src/cli/code.rs",
+      "sourceSha256": "c832cffced48d99dcf7f0bf3932c4a2272b69d05ad89ae1ba353520b7a247df7",
+      "requiredForParent": true,
+      "edge": "coding Right and Cerebellum bindings"
+    },
+    {
+      "test": "coding::service::tests::cerebellum_decomposer_role_binding_allows_one_leaf_and_audits_then_denies_before_transport",
+      "sourcePath": "SRC/neothd/src/coding/service.rs",
+      "sourceSha256": "76aa9474776b5295e7245e73e1451b0af564f8823f756e663df14fb8412aa207",
+      "requiredForParent": true,
+      "edge": "coding Right and Cerebellum bindings"
+    },
+    {
+      "test": "cli::hemispheres::tests::w301_hemispheres_right_binding_allows_selected_leaf_once",
+      "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
+      "sourceSha256": "cd38859430cfa0fa57e52a4110054e8325b001b5f15894e99746d3961a417e35",
+      "requiredForParent": true,
+      "edge": "direct Right and profile Left bindings"
+    },
+    {
+      "test": "cli::hemispheres::tests::w301_hemispheres_right_model_denial_has_zero_raw_calls",
+      "sourcePath": "SRC/neothd/src/cli/hemispheres.rs",
+      "sourceSha256": "cd38859430cfa0fa57e52a4110054e8325b001b5f15894e99746d3961a417e35",
+      "requiredForParent": true,
+      "edge": "direct Right and profile Left bindings"
+    },
+    {
+      "test": "cli::profile::tests::w301_profile_left_binding_allows_one_raw_call_and_wal_lifecycle",
+      "sourcePath": "SRC/neothd/src/cli/profile.rs",
+      "sourceSha256": "67d8c75c1c72515ef5cb31007afb3011aea75d1eb63f5cac7dbc7515ceb76154",
+      "requiredForParent": true,
+      "edge": "direct Right and profile Left bindings"
+    },
+    {
+      "test": "cli::profile::tests::w301_profile_left_model_denial_has_zero_raw_calls_and_no_wal_effect",
+      "sourcePath": "SRC/neothd/src/cli/profile.rs",
+      "sourceSha256": "67d8c75c1c72515ef5cb31007afb3011aea75d1eb63f5cac7dbc7515ceb76154",
+      "requiredForParent": true,
+      "edge": "direct Right and profile Left bindings"
+    },
+    {
+      "test": "cli::cron::tests::w302_manual_cron_left_binding_allows_and_denies_before_raw_leaf",
+      "sourcePath": "SRC/neothd/src/cli/cron.rs",
+      "sourceSha256": "182c1670e7fff62bab7677f1b47ad5456a159981b05301278d4642e883c9014d",
+      "requiredForParent": true,
+      "edge": "manual Cron and standalone loop Left fallback/rounds"
+    },
+    {
+      "test": "cli::loop_cmd::tests::w302_standalone_loop_retains_left_binding_for_every_round",
+      "sourcePath": "SRC/neothd/src/cli/loop_cmd.rs",
+      "sourceSha256": "24d7aced5022788b9539555cb34f04931deb144a14fcaaf808f753b31eebf934",
+      "requiredForParent": true,
+      "edge": "manual Cron and standalone loop Left fallback/rounds"
+    },
+    {
+      "test": "cli::loop_cmd::tests::w302_standalone_loop_denies_primary_and_429_fallback_before_raw_leaf",
+      "sourcePath": "SRC/neothd/src/cli/loop_cmd.rs",
+      "sourceSha256": "24d7aced5022788b9539555cb34f04931deb144a14fcaaf808f753b31eebf934",
+      "requiredForParent": true,
+      "edge": "manual Cron and standalone loop Left fallback/rounds"
+    },
+    {
+      "test": "cli::chat::tests::w303_dissent_winner_right_role_allows_loop_leaf_and_records_role_decision",
+      "sourcePath": "SRC/neothd/src/cli/chat.rs",
+      "sourceSha256": "699ae490d4515b3846203a77b9fea671d290cf56bfc8885a1ce63305524e8ad2",
+      "requiredForParent": true,
+      "edge": "dissent winner Right allow and deny"
+    },
+    {
+      "test": "cli::chat::tests::w303_dissent_winner_denied_right_role_blocks_loop_leaf_before_request_wal",
+      "sourcePath": "SRC/neothd/src/cli/chat.rs",
+      "sourceSha256": "699ae490d4515b3846203a77b9fea671d290cf56bfc8885a1ce63305524e8ad2",
+      "requiredForParent": true,
+      "edge": "dissent winner Right allow and deny"
+    },
+    {
+      "test": "sub_agents::runtime::tests::w308_adversarial_role_override_stays_typed_data_and_left_bound",
+      "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
+      "sourceSha256": "2f52204a83a1921cd495f42fe1925c3fcba1eccf3305bb41367922ad033147b6",
+      "requiredForParent": true,
+      "edge": "hostile role override remains data and cannot bypass Left"
+    },
+    {
+      "test": "sub_agents::runtime::tests::w308_adversarial_right_override_cannot_bypass_denied_left_policy",
+      "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
+      "sourceSha256": "2f52204a83a1921cd495f42fe1925c3fcba1eccf3305bb41367922ad033147b6",
+      "requiredForParent": true,
+      "edge": "hostile role override remains data and cannot bypass Left"
+    },
+    {
+      "test": "providers::cost_authorization::tests::direct_retry_closes_first_terminal_then_reauthorizes_before_success",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "2da14a467171b2e7a8993bdfcfbbfa8bcf1df7aa15b441541344e8105dab834b",
+      "requiredForParent": false,
+      "edge": "direct retry reauthorization support; only reauthorization/consent cases are parent-required"
+    },
+    {
+      "test": "providers::cost_authorization::tests::direct_retry_untyped_failure_is_terminal_without_a_second_raw_call",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "2da14a467171b2e7a8993bdfcfbbfa8bcf1df7aa15b441541344e8105dab834b",
+      "requiredForParent": false,
+      "edge": "direct retry reauthorization support; only reauthorization/consent cases are parent-required"
+    },
+    {
+      "test": "providers::cost_authorization::tests::direct_retry_typed_http_auth_is_terminal_without_a_second_raw_call",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "2da14a467171b2e7a8993bdfcfbbfa8bcf1df7aa15b441541344e8105dab834b",
+      "requiredForParent": false,
+      "edge": "direct retry reauthorization support; only reauthorization/consent cases are parent-required"
+    },
+    {
+      "test": "providers::cost_authorization::tests::direct_retry_stops_at_the_shared_transient_bound",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "2da14a467171b2e7a8993bdfcfbbfa8bcf1df7aa15b441541344e8105dab834b",
+      "requiredForParent": false,
+      "edge": "direct retry reauthorization support; only reauthorization/consent cases are parent-required"
+    },
+    {
+      "test": "providers::cost_authorization::tests::direct_retry_consent_revocation_blocks_the_second_raw_call",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "2da14a467171b2e7a8993bdfcfbbfa8bcf1df7aa15b441541344e8105dab834b",
+      "requiredForParent": false,
+      "edge": "direct retry reauthorization support; only reauthorization/consent cases are parent-required"
+    },
+    {
+      "test": "providers::cost_authorization::tests::direct_retry_does_not_send_early_during_a_durable_quota_cooldown",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "2da14a467171b2e7a8993bdfcfbbfa8bcf1df7aa15b441541344e8105dab834b",
+      "requiredForParent": false,
+      "edge": "direct retry reauthorization support; only reauthorization/consent cases are parent-required"
+    },
+    {
+      "test": "providers::cost_authorization::tests::direct_retry_honours_one_short_quota_retry_and_stops",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "2da14a467171b2e7a8993bdfcfbbfa8bcf1df7aa15b441541344e8105dab834b",
+      "requiredForParent": false,
+      "edge": "direct retry reauthorization support; only reauthorization/consent cases are parent-required"
+    },
+    {
+      "test": "providers::token_cap::tests::direct_retry_rechecks_the_token_cap_before_any_leaf_authorization",
+      "sourcePath": "SRC/neothd/src/providers/token_cap.rs",
+      "sourceSha256": "b5573494e5dc8a252c31d8f631963e18c3377470c6132d17af2ef9877ca455ee",
+      "requiredForParent": false,
+      "edge": "direct retry reauthorization support; only reauthorization/consent cases are parent-required"
+    },
+    {
+      "test": "providers::compactor::tests::direct_retry_entrypoint_compacts_before_forwarding_to_the_leaf",
+      "sourcePath": "SRC/neothd/src/providers/compactor.rs",
+      "sourceSha256": "10c257db5ac3ca8a74d6456168c29954890cf1e0fdeb87d244d0f6750ccb394e",
+      "requiredForParent": false,
+      "edge": "direct retry reauthorization support; only reauthorization/consent cases are parent-required"
+    },
+    {
+      "test": "providers::fallback::tests::direct_retry_entrypoint_preserves_configured_fallback_hops",
+      "sourcePath": "SRC/neothd/src/providers/fallback.rs",
+      "sourceSha256": "65d3d2e6396960eea74474b52045441c1fea4a0c1de96c9267eec1cb40d1a140",
+      "requiredForParent": false,
+      "edge": "direct retry reauthorization support; only reauthorization/consent cases are parent-required"
+    },
+    {
+      "test": "providers::anthropic_api::tests::mock_401_auth_fail_names_status_and_provider",
+      "sourcePath": "SRC/neothd/src/providers/anthropic_api.rs",
+      "sourceSha256": "5e6164c61332401b529511b7378cb85f2846db7bb68586a12b384933dcbce06d",
+      "requiredForParent": false,
+      "edge": "direct retry reauthorization support; only reauthorization/consent cases are parent-required"
+    },
+    {
+      "test": "providers::cohere_api::tests::mock_401_names_status_and_provider",
+      "sourcePath": "SRC/neothd/src/providers/cohere_api.rs",
+      "sourceSha256": "e8c98d36233c60a293bb9a0ca47435588fc42b5899363b809889e68409e29206",
+      "requiredForParent": false,
+      "edge": "direct retry reauthorization support; only reauthorization/consent cases are parent-required"
+    },
+    {
+      "test": "providers::openai_api::tests::mock_401_auth_fail_returns_descriptive_error",
+      "sourcePath": "SRC/neothd/src/providers/openai_api.rs",
+      "sourceSha256": "650608b1a221ab7fa533de7d60cda0a002a1e954cfdd3a5e79fe4cd4ee842419",
+      "requiredForParent": false,
+      "edge": "direct retry reauthorization support; only reauthorization/consent cases are parent-required"
+    }
+  ],
+  "admissionSha256": "0E3C4DDBC24BFDCCF14F54E9D63B43D1C531181823636CA6519B8016F7B85848",
+  "sourceClosure": "Mapped role production/test sources unchanged; three cli/chat.rs diff hunks all within architecture fixture outside role paths, independently reviewed W342/W349 and Root",
+  "localExecutableValidationRan": false
+}

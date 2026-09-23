@@ -2,6 +2,22 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W349 role acceptance and W351 Dream compile repair (2026-09-23):** P2-15
+is accepted after all50 required role cases and13 supporting direct-retry
+cases passed in source-admitted Group687 run35843153480. Relevant role code
+and required fixtures are unchanged; the only mapped-file change is W342's
+unrelated reviewed architecture fixture. See docs/gold-wave349-role-enforcement-acceptance.md.
+Road1324=1027checked/295open/2partial;297raw/296pre-tag;WS-LF20done/98open.
+
+Preflight76ab run35846507938 passed all static contracts. Core4ea5 found a
+missing sixth tuple field and a retained SQLite statement borrowing its
+transaction at commit. W351 adds the trust decoder and ends the statement
+scope before commit without changing effects. Hosted compiler verification
+remains pending. W350 adds two real phase-outbox/WAL delivery fixtures with
+ACK-loss restart and no-replay proof. Native1058;Group721;inventory639.
+Group721/fullCI wait for test-target readiness.
+No local executable validation ran.
+
 **W331/W332/W341/W344 Dream integration and W342/W345/W346/W348 repairs
 (2026-09-23):** The opt-in scheduler now prepares bounded, consent-revision-bound
 inputs, resumes durable Light/REM/Repair effects and delivers authenticated
@@ -4631,7 +4647,7 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy and P2-28 response feedback accepted: **19 done / 99
+> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement accepted: **20 done / 98
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

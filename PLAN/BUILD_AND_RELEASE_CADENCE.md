@@ -3,6 +3,22 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W349 role acceptance and W351 Dream compile repair (2026-09-23):** P2-15
+is accepted after all50 required role cases and13 supporting direct-retry
+cases passed in source-admitted Group687 run35843153480. Relevant role code
+and required fixtures are unchanged; the only mapped-file change is W342's
+unrelated reviewed architecture fixture. See docs/gold-wave349-role-enforcement-acceptance.md.
+Road1324=1027checked/295open/2partial;297raw/296pre-tag;WS-LF20done/98open.
+
+Preflight76ab run35846507938 passed all static contracts. Core4ea5 found a
+missing sixth tuple field and a retained SQLite statement borrowing its
+transaction at commit. W351 adds the trust decoder and ends the statement
+scope before commit without changing effects. Hosted compiler verification
+remains pending. W350 adds two real phase-outbox/WAL delivery fixtures with
+ACK-loss restart and no-replay proof. Native1058;Group721;inventory639.
+Group721/fullCI wait for test-target readiness.
+No local executable validation ran.
+
 **W331/W332/W341/W344 Dream integration and W342/W345/W346/W348 repairs
 (2026-09-23):** The opt-in scheduler now prepares bounded, consent-revision-bound
 inputs, resumes durable Light/REM/Repair effects and delivers authenticated

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T10:01:00.6582138Z",
-  "validationStatus": "Exact hosted formatting imported W331348; Core4ea5 pending;24new tests selected Group719",
+  "capturedUtc": "2026-09-23T10:08:31.9081754Z",
+  "validationStatus": "P215accepted;W350realoutboxfixtures+W351exactcompilefixes;hostedpending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -73,8 +73,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 14152,
-      "sha256": "D06D1175DE571A5EC2001FC20A59ECD911789892F4CB8C1C226B3C077B70B856"
+      "bytes": 14201,
+      "sha256": "B92D6FFBEEE1153334AEBD13F705083E3D273CA874150E0BB37AC93F76D9FC3B"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -473,18 +473,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 150720,
-      "sha256": "E5B26662DAED3E2C20C18C96CE863046F7772D70EE9C9A9F7BE81C58E4DBDE8C"
+      "bytes": 151721,
+      "sha256": "F94FFCF7805B04FF0FCEB32CC4CD0543E973F1A142A6EC04A2599EE35939BE1B"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1153855,
-      "sha256": "20F142B5DE994FC1B76A73F33BD12D9705D1748BFB7BB1AA995920729259BD06"
+      "bytes": 1154880,
+      "sha256": "E352102A0511197BFC2823505DDC89AFAA083A8C148459F70035CB9EEFC05717"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1750989,
-      "sha256": "BEA41BF85735BBE1D9BF19CE21537490D851264A473630D077C9757B22FCDE10"
+      "bytes": 1752329,
+      "sha256": "EADF5F10012B115643B6A2C048674E714985175CF58B89976F5BB93774F58705"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -2048,8 +2048,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/consolidate.rs",
-      "bytes": 39969,
-      "sha256": "A2F94426C357D36F2E0FC04BD694AB6BA5C14311A110D8BB86A3EF8568A6075A"
+      "bytes": 40187,
+      "sha256": "1E1B16AB3D6C5B6B8E5857F8F84C2CF884D71EAE08D1F09ED22451A84849EBA8"
     },
     {
       "path": "SRC/neothd/src/memory/consolidation_sweep.rs",
@@ -3128,13 +3128,13 @@
     },
     {
       "path": "SRC/neothd/src/cli/dreaming_task.rs",
-      "bytes": 75923,
-      "sha256": "C55462EDC65606B7F93F64921E42B8B0158A1612B531E66D020B30D5544D380C"
+      "bytes": 84273,
+      "sha256": "87CE72336047E16C6A6A301978FD985B6FAFCD466A903191BD8C7104B7A5BC64"
     },
     {
       "path": "SRC/neothd/src/daemon/dream_phases.rs",
-      "bytes": 39661,
-      "sha256": "63E7CFCC38B6CE0245D26B8025197B7C9609A85C9278C9EA8107BB9F2DDE7EBE"
+      "bytes": 39761,
+      "sha256": "592D65A92AD835402958BBF1FB2A8621935E1E476EE890D107D81ABB2A6E6854"
     },
     {
       "path": "SRC/neothd/src/memory/assoc_graph.rs",
@@ -3180,6 +3180,26 @@
       "path": "docs/gold-wave348-research-wal-fixtures.md",
       "bytes": 1338,
       "sha256": "CC59C0D28520FD867FE7564C42AEAAB5A450405D7B0D57EDC44D7A9026CC4E44"
+    },
+    {
+      "path": "docs/gold-wave349-role-enforcement-acceptance.md",
+      "bytes": 1256,
+      "sha256": "1DC90631329CBC520F27BAD0208B13B313DE94C63749B0C21C943A21F4B2AEC9"
+    },
+    {
+      "path": "docs/verification/gold-wave349-p215-acceptance.json",
+      "bytes": 24603,
+      "sha256": "5179B649FFD482D23066EC99F67B10BEAD586FA27BE7FCA77B738E606D4AE3D5"
+    },
+    {
+      "path": "docs/gold-wave350-dream-outbox-fixtures.md",
+      "bytes": 1257,
+      "sha256": "B509DE43E7C5C6527CE34D921FAE75DED2F61A2108C4A577FBDF0AF9D4CD82EB"
+    },
+    {
+      "path": "docs/gold-wave351-dream-compile.md",
+      "bytes": 683,
+      "sha256": "6EDDAF6399D52A2200C5A059ACCB6CC66FFB8FED55B8D60FF91DC39DDAE2646B"
     }
   ]
 }

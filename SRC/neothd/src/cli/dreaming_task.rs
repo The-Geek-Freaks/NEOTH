@@ -1508,6 +1508,190 @@ mod tests {
         .unwrap()
     }
 
+    fn seed_dream_phase_home(home: &Path) {
+        let conn = crate::memory::store::open(&home.join("views.db"))
+            .expect("open Dream phase fixture database");
+        for id in [1_i64, 2] {
+            conn.execute(
+                "INSERT INTO idx_episode(event_id,event_type,ts_ns,text,text_hash,importance,last_access_ts,pinned,trust) \
+                 VALUES(?1,1,?1,?2,?3,.5,1,0,0)",
+                rusqlite::params![id, format!("event-{id}"), format!("hash-{id}")],
+            )
+            .expect("insert locally attested Dream input");
+            conn.execute(
+                "INSERT INTO idx_episode_origin_v2(raw_event_id,origin_kind,origin_event_id,raw_payload_hash) \
+                 VALUES(?1,'local_attested',?1,?2)",
+                rusqlite::params![id, format!("origin-{id}")],
+            )
+            .expect("bind local Dream input origin");
+        }
+    }
+
+    fn dream_audit_descriptor(
+        audit: &crate::daemon::dream_phases::AuditOutbox,
+    ) -> crate::wal::dream_receipts::DreamAuditDescriptor {
+        use crate::wal::dream_receipts::{DreamAuditDescriptor, DreamAuditState, DreamPhase};
+
+        let phase = match audit.phase.as_str() {
+            "light" => DreamPhase::Light,
+            "rem" => DreamPhase::Rem,
+            "repair" => DreamPhase::Repair,
+            _ => panic!("fixture received unknown Dream phase: {}", audit.phase),
+        };
+        DreamAuditDescriptor::new(
+            dream_audit_bytes(&audit.transition_id).expect("transition id is a hash"),
+            dream_audit_bytes(&audit.run_id).expect("run id is a hash"),
+            phase,
+            DreamAuditState::Completed,
+            dream_audit_bytes(&audit.result_sha256).expect("result id is a hash"),
+        )
+        .expect("completed Dream audit descriptor")
+    }
+
+    #[tokio::test]
+    async fn dream_phase_outboxes_deliver_once_and_exact_replay_has_no_new_effects() {
+        let home = tempdir().unwrap();
+        seed_dream_phase_home(home.path());
+        let day = "2042-03-14";
+        let generation = "w350-fixture-generation";
+        assert!(
+            crate::daemon::dream_phases::prepare_for_day(home.path(), day, generation).unwrap(),
+            "the real phase preparer must persist the day input"
+        );
+        let audits = crate::daemon::dream_phases::resume_existing_for_day(home.path(), day, generation)
+            .expect("complete real Dream phases into SQLite outboxes");
+        assert_eq!(audits.len(), 3, "Light, REM, and Repair must each be pending");
+
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("w350-phase-delivery-000001.wal");
+        let (writer, join) = crate::wal::spawn_for_home(segment.clone(), home.path().to_path_buf())
+            .expect("spawn home-bound Dream audit writer");
+        for audit in &audits {
+            deliver_dream_phase_audit(&writer, home.path(), audit)
+                .await
+                .expect("writer receipt must mark its SQLite outbox delivered");
+        }
+        assert!(
+            crate::daemon::dream_phases::pending_audits_for_day(home.path(), day)
+                .unwrap()
+                .is_empty(),
+            "all three authenticated writer receipts must bridge SQLite outboxes to delivered"
+        );
+        let wal_len_after_delivery = std::fs::metadata(&segment).unwrap().len();
+        let retained_after_delivery: i64 = crate::memory::store::open(&home.path().join("views.db"))
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM idx_consolidated", [], |row| row.get(0))
+            .unwrap();
+
+        assert!(
+            crate::daemon::dream_phases::resume_existing_for_day(home.path(), day, generation)
+                .unwrap()
+                .is_empty(),
+            "exact replay has no pending audit outboxes"
+        );
+        assert_eq!(
+            std::fs::metadata(&segment).unwrap().len(),
+            wal_len_after_delivery,
+            "exact replay must not append new WAL effects"
+        );
+        let retained_after_replay: i64 = crate::memory::store::open(&home.path().join("views.db"))
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM idx_consolidated", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            retained_after_replay, retained_after_delivery,
+            "exact replay must not replay Dream phase effects"
+        );
+
+        drop(writer);
+        join.await.expect("finish Dream audit writer");
+    }
+
+    #[tokio::test]
+    async fn dream_phase_ack_loss_stays_pending_then_restart_uses_existing_exact_before_delivery() {
+        use crate::wal::dream_receipts::DreamAuditOnceOutcome;
+
+        let home = tempdir().unwrap();
+        seed_dream_phase_home(home.path());
+        let day = "2042-03-15";
+        let generation = "w350-fixture-generation";
+        assert!(crate::daemon::dream_phases::prepare_for_day(home.path(), day, generation).unwrap());
+        let audits = crate::daemon::dream_phases::resume_existing_for_day(home.path(), day, generation)
+            .expect("complete phase effects before simulating lost acknowledgement");
+        assert_eq!(audits.len(), 3);
+        let lost_ack_audit = audits[0].clone();
+
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("w350-phase-ack-loss-000001.wal");
+        let (writer, join) = crate::wal::spawn_for_home(segment.clone(), home.path().to_path_buf())
+            .expect("spawn home-bound Dream audit writer");
+        let foreign_home = tempdir().unwrap();
+        assert!(
+            deliver_dream_phase_audit(&writer, foreign_home.path(), &audits[1])
+                .await
+                .is_err(),
+            "a writer must refuse a Dream audit descriptor presented from another home"
+        );
+        assert_eq!(
+            crate::daemon::dream_phases::pending_audits_for_day(home.path(), day)
+                .unwrap()
+                .len(),
+            3,
+            "a mismatched writer home must preserve the original SQLite outboxes"
+        );
+        let gate = crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+        let gated_writer = writer.clone().with_test_ack_gate(gate.clone());
+        let delivery_home = home.path().to_path_buf();
+        let delivery = tokio::spawn(async move {
+            deliver_dream_phase_audit(&gated_writer, &delivery_home, &lost_ack_audit).await
+        });
+        tokio::time::timeout(Duration::from_secs(10), gate.wait_until_durable())
+            .await
+            .expect("Dream audit must reach the durable-before-ack gate");
+        delivery.abort();
+        let _ = delivery.await;
+        assert_eq!(
+            crate::daemon::dream_phases::pending_audits_for_day(home.path(), day)
+                .unwrap()
+                .len(),
+            3,
+            "lost ACK after durable WAL must leave the database outbox pending"
+        );
+        gate.release();
+        drop(writer);
+        join.await.expect("finish pre-restart Dream writer");
+
+        let (restarted, restarted_join) = crate::wal::spawn_for_home(segment, home.path().to_path_buf())
+            .expect("restart the exact home-bound Dream audit writer");
+        assert!(matches!(
+            restarted
+                .append_dream_audit_once(home.path(), dream_audit_descriptor(&audits[0]))
+                .await,
+            Ok(DreamAuditOnceOutcome::ExistingExact(_))
+        ));
+        assert_eq!(
+            crate::daemon::dream_phases::pending_audits_for_day(home.path(), day)
+                .unwrap()
+                .len(),
+            3,
+            "receipt lookup alone must not mark the SQLite outbox delivered"
+        );
+        deliver_dream_phase_audit(&restarted, home.path(), &audits[0])
+            .await
+            .expect("ExistingExact receipt must bridge the pending outbox to delivered");
+        assert_eq!(
+            crate::daemon::dream_phases::pending_audits_for_day(home.path(), day)
+                .unwrap()
+                .len(),
+            2,
+            "only the lost-ack receipt becomes delivered after restart reconciliation"
+        );
+
+        drop(restarted);
+        restarted_join.await.expect("finish restarted Dream audit writer");
+    }
     struct AlwaysWeatherEmbed;
 
     #[async_trait::async_trait]

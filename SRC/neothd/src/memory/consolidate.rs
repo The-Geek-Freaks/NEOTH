@@ -40,7 +40,16 @@ pub fn promote_selected_hot_to_warm(
             .query_row(
                 "SELECT text, text_hash, importance, access_count, pinned, trust FROM idx_episode WHERE event_id = ?1",
                 params![event_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                    ))
+                },
             )
             .optional()
             .context("read Dream-selected hot episode")?;
