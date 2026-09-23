@@ -8,6 +8,13 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W496 hosted formatting import (2026-09-23):**
+W488-W493/P219 is published asc7b946f1. Preflight35917397881 produced
+artifact10776260380:2SHA256 entries and all3 complete before/after Gitblob
+pairs verified before import. No local formatter ran. Group88835917416801,
+GUI14635917420707,Windows1735917424314 and Core35917428582 validate c7;
+CLIexport3de35916213648 remains separate. Road1040/282/2 and737-source
+inventory unchanged. P118 now has a bounded served-GUI behavior follow-up.
 **W491-W493 hosted failures and reviewed repairs (2026-09-23):**
 Group88835914415313 is admitted884PASS/4FAIL/0missing with176bindings;
 both new Buddy task-delegate tests pass. W488/W489 repair the two Chat

@@ -50823,7 +50823,8 @@ exit 7
                 if weak.upgrade().is_some_and(|w| {
                     w184_call_count(&calls_for_timer, "task-delegate-show") == 1
                         && !w.get_bc_task_delegate_in_flight()
-                }) || observed.get().saturating_add(1) >= 500 {
+                }) || observed.get().saturating_add(1) >= 500
+                {
                     let _ = slint::quit_event_loop();
                 } else {
                     observed.set(observed.get() + 1);

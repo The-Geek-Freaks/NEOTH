@@ -6367,9 +6367,10 @@ mod reported_commit_tests {
             )
             .expect_err("the hosted Windows fixture must reject moving the live bound parent");
             assert!(
-                error.chain().filter_map(|cause| cause.downcast_ref::<std::io::Error>()).any(
-                    |source| source.raw_os_error() == Some(5)
-                ),
+                error
+                    .chain()
+                    .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
+                    .any(|source| source.raw_os_error() == Some(5)),
                 "hosted fixture native parent rename must fail with AccessDenied: {error:#}"
             );
             assert!(
@@ -6407,13 +6408,10 @@ mod reported_commit_tests {
         // `display_path` is diagnostics-only. Publication must remain relative
         // to the retained parent capability even when that display path names a
         // live, writable decoy namespace.
-        atomic_write_private_child(
-            &root.dir,
-            OsStr::new("state.json"),
-            &decoy_target,
-            b"new",
-        )
-        .expect("private publish must use the retained parent instead of the decoy display path");
+        atomic_write_private_child(&root.dir, OsStr::new("state.json"), &decoy_target, b"new")
+            .expect(
+                "private publish must use the retained parent instead of the decoy display path",
+            );
 
         assert_eq!(std::fs::read(&actual_target).unwrap(), b"new");
         assert_eq!(

@@ -2344,7 +2344,7 @@ pub(crate) mod w458_test_support {
             }) as Arc<dyn Provider>,
             0,
         )
-            .await?;
+        .await?;
         let runtime = DaemonGuiChatRuntime::new(
             core,
             home.path().to_path_buf(),
@@ -2496,7 +2496,10 @@ pub(crate) mod w458_test_support {
             desired_surface: surface,
             grant: same_session_grant.clone(),
         };
-        let main = match runtime.exchange_attach(exchange(GuiChatSurface::Main)).await {
+        let main = match runtime
+            .exchange_attach(exchange(GuiChatSurface::Main))
+            .await
+        {
             Ok(response) => response,
             Err(error) => {
                 let writer = cleanup_w458_failure!();
@@ -2505,7 +2508,10 @@ pub(crate) mod w458_test_support {
                 ));
             }
         };
-        let buddy = match runtime.exchange_attach(exchange(GuiChatSurface::Buddy)).await {
+        let buddy = match runtime
+            .exchange_attach(exchange(GuiChatSurface::Buddy))
+            .await
+        {
             Ok(response) => response,
             Err(error) => {
                 let writer = cleanup_w458_failure!();
@@ -2571,7 +2577,8 @@ pub(crate) mod w458_test_support {
             if replace { "replace" } else { "block" },
             &mut main_client,
         )
-        .await {
+        .await
+        {
             Ok(frames) => frames,
             Err(read_error) => {
                 let main_attach = join_attach_for_diagnostic(&mut main_task).await;
@@ -2588,7 +2595,8 @@ pub(crate) mod w458_test_support {
             if replace { "replace" } else { "block" },
             &mut buddy_client,
         )
-        .await {
+        .await
+        {
             Ok(frames) => frames,
             Err(read_error) => {
                 let main_attach = join_attach_for_diagnostic(&mut main_task).await;
