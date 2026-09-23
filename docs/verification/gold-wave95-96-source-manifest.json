@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T10:34:50.1361061Z",
-  "validationStatus": "W357 two hosted E0425 test-fixture scope errors repaired; exact-source hosted rerun pending",
+  "capturedUtc": "2026-09-23T10:48:36.0865222Z",
+  "validationStatus": "Reviewed browser artifact installer and CLI; enabled retention consumer regressions; Dream opt-in acceptance selection. Hosted validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -38,8 +38,8 @@
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
-      "bytes": 39347,
-      "sha256": "C9A0D9CAF47EAE5B3E9B319F5C4AE645EB7C870D1AE2F6FF665AF63F84317EA6"
+      "bytes": 39349,
+      "sha256": "1CB91389545A055ED5968E2C0A9F24678AD83AE7F1E10B796B479DE221338E10"
     },
     {
       "path": ".github/workflows/live-audio.yml",
@@ -78,8 +78,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 14201,
-      "sha256": "B92D6FFBEEE1153334AEBD13F705083E3D273CA874150E0BB37AC93F76D9FC3B"
+      "bytes": 14425,
+      "sha256": "92D2A9CADC64A6B0166DC38A70C82D3C5AA4230C7BB8730709CB261380BAC8D1"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -743,8 +743,8 @@
     },
     {
       "path": "docs/verification/managed-browser-cft154.json",
-      "bytes": 2362,
-      "sha256": "DC02D17BA3BAC5304B88DE7B3376FD0365743EE092A2E0DAA387EE72B9E98427"
+      "bytes": 2497,
+      "sha256": "80443D2F6E6A6E226F1617F7F5463017071D9D21130D1FCD116470F147455337"
     },
     {
       "path": "packaging/linux/build-packages.sh",
@@ -808,18 +808,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 153137,
-      "sha256": "483E462594BDC2ED8488D166F2B248549855307749A329DF7680B93998B25D95"
+      "bytes": 154419,
+      "sha256": "CD22D68C34FFA94E5D8E15BAE249E9A1F438285CAC3D34F6353E6D8D934825BD"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1156296,
-      "sha256": "BC1D1F05E14DA16608786E8CD6C986861B8C2FD4C057C180E0AD7BC2EF168442"
+      "bytes": 1157578,
+      "sha256": "21D455DE17139BE837DF8BCCCEE8123DA3159288B3E7935BCF5A1A06459B3DB4"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1753745,
-      "sha256": "5C349D4BCDEE6BFBE9D468398BF997A1B97C928EF3407136C931DDDECB007A14"
+      "bytes": 1755027,
+      "sha256": "75852A3B4680762E963D008EE73A3409B08EE464434195BE062E79506E95D9A5"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1613,8 +1613,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
-      "bytes": 114715,
-      "sha256": "A4370861BAB9BB674F563F0D774554BD3193B7145B820F1D100C6A0398DFC58A"
+      "bytes": 115035,
+      "sha256": "A4C78A0F5034CA5144ACA91C3C8CFE267741F0DFFD4C73A637095A2B74374F0F"
     },
     {
       "path": "SRC/neothd/src/cli/models.rs",
@@ -1663,8 +1663,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/reflect.rs",
-      "bytes": 86141,
-      "sha256": "9F05C7A130B403669B9EC6066409EDB5DC46A3BE97D983D9ED58326F3DD30DB4"
+      "bytes": 89258,
+      "sha256": "B9BC3B14B8726CAD5E07B4EF31B6BB21B69D71A6C78C76B3865215ADB3840768"
     },
     {
       "path": "SRC/neothd/src/cli/research.rs",
@@ -2138,8 +2138,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/reflection_cron.rs",
-      "bytes": 81851,
-      "sha256": "7C6870ADE2DACDA0B90A9149199C4BAE93F7A73AC0F5FEFD75288CA5FF132E3B"
+      "bytes": 85211,
+      "sha256": "983D0F5BFBDBA432BCD82EF182BFDBE8377881AE5731306708B620805CF7EA73"
     },
     {
       "path": "SRC/neothd/src/daemon/research_runs.rs",
@@ -2943,13 +2943,13 @@
     },
     {
       "path": "SRC/neothd/src/tools/external_http.rs",
-      "bytes": 100021,
-      "sha256": "039E57018FB0BF5189FCFEA949FD9790EEC20EC9A0831112D7FDF64D59A95B58"
+      "bytes": 101792,
+      "sha256": "9CEA94822653A2EB8FC1FD96E6B7E81C9D8952E68E472DAFA5982C91BA2C7189"
     },
     {
       "path": "SRC/neothd/src/tools/managed_browser.rs",
-      "bytes": 25049,
-      "sha256": "F23998E879B5AA60B2327E8C2B42D381E6E1FAC008ED04BA162CC597E6F685B7"
+      "bytes": 61080,
+      "sha256": "C7B307F5B0845D16FCFCE888A4782C6EB587A8AC3F511C996CEE4309638E9C6C"
     },
     {
       "path": "SRC/neothd/src/tools/mod.rs",
@@ -3210,6 +3210,36 @@
       "path": "THIRD_PARTY_LICENSES",
       "bytes": 2299156,
       "sha256": "A2F73733618DE347F4876EDD4325391DB8C2F11D853614CC4D8EDC2A82CA497D"
+    },
+    {
+      "path": "SRC/neothd/src/cli/browser.rs",
+      "bytes": 15607,
+      "sha256": "9AC9AFFEBF7FF573235E67876BC3FDE6F611A16F9ADDF6C37C89711C9E82D09E"
+    },
+    {
+      "path": "docs/gold-wave347-managed-browser-install.md",
+      "bytes": 3369,
+      "sha256": "D518DAD9D7F7B847B9F5A3A61A89733623E08DFA09DFC711DACDA249847BE08C"
+    },
+    {
+      "path": "docs/gold-wave352-managed-browser-cli.md",
+      "bytes": 2674,
+      "sha256": "861D09FAAAB5920E6F1FBF19A829A3D01FDC70217D7E182AAD77C5CB0D86BA1F"
+    },
+    {
+      "path": "docs/gold-wave355-enabled-retention-callers.md",
+      "bytes": 1258,
+      "sha256": "1980140F2D5AD5A6D09FB9E0A7080B904859E23E049F04398ACEDA4A1CD56A73"
+    },
+    {
+      "path": "SRC/neothd/src/cli/dream.rs",
+      "bytes": 29276,
+      "sha256": "58D34ED4740428AF0223F67C38DF979AD69DA56948588254A9F2D4EF0F819E68"
+    },
+    {
+      "path": "docs/gold-wave359-dream-opt-in-acceptance-selection.md",
+      "bytes": 1354,
+      "sha256": "BBE18743097865FB5920931FE44ACA855F4C2BE56AD233231F3235FEA42CB3A2"
     }
   ]
 }

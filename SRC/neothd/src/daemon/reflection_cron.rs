@@ -1455,6 +1455,92 @@ mod tests {
     }
 
     #[test]
+    fn period_tick_with_enabled_retention_quarantines_expired_archive_and_preserves_period_input() {
+        use crate::reflection::hygiene::{
+            HYGIENE_PLAN_SCHEMA_VERSION, TOPIC_SYNONYM_MAP_VERSION, TopicSynonymMap,
+            VersionedHygieneInput,
+        };
+        use crate::reflection::hygiene_store::{apply_hygiene_plan, load_hygiene_state};
+        use crate::reflection::periodic::{
+            DailyRetentionExecution, PeriodKind, build_reflection, date_tag_from_unix, jsonl_file,
+            settle_daily_admission,
+        };
+        use crate::reflection::retention_authority::{
+            DailyRetentionExecutionConfig, list_effect_receipts,
+        };
+        use std::collections::BTreeMap;
+
+        let home = TempDir::new().unwrap();
+        let now = 1_787_788_800_i64;
+        let stale_tag = date_tag_from_unix(now - 90 * 86_400);
+        let current_tag = date_tag_from_unix(now);
+        let stale = build_reflection(
+            PeriodKind::Daily,
+            &stale_tag,
+            &["enabled-cron-stale".into()],
+            now - 90 * 86_400,
+        )
+        .unwrap();
+        let current = build_reflection(
+            PeriodKind::Daily,
+            &current_tag,
+            &["enabled-cron-current".into()],
+            now,
+        )
+        .unwrap();
+        settle_daily_admission(home.path(), &stale, None, None).unwrap();
+        settle_daily_admission(home.path(), &current, None, None).unwrap();
+        apply_hygiene_plan(
+            home.path(),
+            0,
+            VersionedHygieneInput {
+                schema_version: HYGIENE_PLAN_SCHEMA_VERSION,
+                now_unix: now,
+                raw_reflections: Vec::new(),
+                period_reflections: vec![stale.clone(), current.clone()],
+                topic_synonyms: TopicSynonymMap {
+                    version: TOPIC_SYNONYM_MAP_VERSION,
+                    entries: BTreeMap::new(),
+                },
+            },
+        )
+        .unwrap();
+
+        let mut topics = crate::cli::reflect::ReflectTopics::default();
+        topics.daily_retention_execution = DailyRetentionExecutionConfig {
+            version: 2,
+            enabled: true,
+            quarantine_grace_days: 7,
+        };
+        std::fs::write(
+            crate::cli::reflect::ReflectTopics::path(home.path()),
+            serde_yaml::to_string(&topics).unwrap(),
+        )
+        .unwrap();
+
+        let results = run_period_reflection_ticks_once(
+            home.path(),
+            now,
+            &crate::config::FreedomConfig::default(),
+        )
+        .unwrap();
+        let retention = results.retention.unwrap();
+        assert_eq!(retention.execution, DailyRetentionExecution::Quarantined);
+
+        let receipts = list_effect_receipts(home.path()).unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].tag, stale_tag);
+        assert!(
+            !jsonl_file(home.path(), PeriodKind::Daily, &stale_tag).exists(),
+            "enabled Cron retention must quarantine the expired active archive"
+        );
+        assert!(jsonl_file(home.path(), PeriodKind::Daily, &current_tag).exists());
+        let hygiene = load_hygiene_state(home.path()).unwrap().unwrap();
+        assert!(hygiene.period_reflections.contains(&stale));
+        assert!(hygiene.period_reflections.contains(&current));
+    }
+
+    #[test]
     fn reflection_markers_are_atomic_and_persistence_errors_surface() {
         let tmp = TempDir::new().unwrap();
         let marker = tmp.path().join("reflections").join("daily-last.txt");

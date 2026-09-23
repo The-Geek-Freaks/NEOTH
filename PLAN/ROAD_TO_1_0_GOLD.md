@@ -8,6 +8,26 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W347/W352 managed-browser install and W355 enabled retention callers
+(2026-09-23):** Explicit browser status/install now use the reviewed CFT
+manifest, exact archive bytes and SHA, authorized no-redirect transport,
+bounded no-follow extraction and identity-confirmed generation publication.
+Status reads policy without credential migrations or locks. Default-off
+install stops before runtime config/WAL; active install binds its authorizer
+to the explicit canonical home and observes Ctrl-C. Browser launch, CDP and
+rendered navigation remain open under P2-13.
+W355 adds two real enabled CLI/Cron retention caller regressions, including
+quarantine receipts and preserved yearly-synthesis inputs. Independent static
+reviews passed; 20 new exact identities require hosted execution.
+W359 additionally selects12 existing native and6 GUI Dream opt-in/readback
+fixtures; P2-23 stays open until their actual passing terminals.
+Inventory647; native1090+Windows19/Linux33/macOS32; Group753; GUI135Linux/131macOS.
+Core954 run35849819987 passed production Clippy and test-target readiness.
+Group721 run35850850940 and fullCI run35850855062 are frozen on954f838a.
+Road1324=1027checked/295open/2partial; WS-LF20done/98open unchanged.
+No local executable validation or archive download ran.
+
+
 **W357 hosted test-fixture scope repair (2026-09-23):** Core3978
 run35848398917 passed production slim-core Clippy, then found two E0425
 errors in test code. The architecture fixture now imports its existing

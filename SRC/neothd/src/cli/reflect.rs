@@ -1837,6 +1837,83 @@ mod tests {
     }
 
     #[test]
+    fn cli_quiet_daily_digest_with_enabled_retention_quarantines_expired_archive_and_preserves_period_input() {
+        use crate::reflection::hygiene::{
+            HYGIENE_PLAN_SCHEMA_VERSION, TOPIC_SYNONYM_MAP_VERSION, TopicSynonymMap,
+            VersionedHygieneInput,
+        };
+        use crate::reflection::hygiene_store::{apply_hygiene_plan, load_hygiene_state};
+        use crate::reflection::periodic::{self, PeriodKind};
+        use crate::reflection::retention_authority::{
+            DailyRetentionExecutionConfig, list_effect_receipts,
+        };
+        use std::collections::BTreeMap;
+
+        let home = private_test_home();
+        let now = 1_787_788_800_i64;
+        let stale_tag = periodic::date_tag_from_unix(now - 90 * 86_400);
+        let current_tag = periodic::date_tag_from_unix(now);
+        let stale = periodic::build_reflection(
+            PeriodKind::Daily,
+            &stale_tag,
+            &["enabled-cli-stale".into()],
+            now - 90 * 86_400,
+        )
+        .unwrap();
+        let current = periodic::build_reflection(
+            PeriodKind::Daily,
+            &current_tag,
+            &["enabled-cli-current".into()],
+            now,
+        )
+        .unwrap();
+        periodic::settle_daily_admission(home.path(), &stale, None, None).unwrap();
+        periodic::settle_daily_admission(home.path(), &current, None, None).unwrap();
+        apply_hygiene_plan(
+            home.path(),
+            0,
+            VersionedHygieneInput {
+                schema_version: HYGIENE_PLAN_SCHEMA_VERSION,
+                now_unix: now,
+                raw_reflections: Vec::new(),
+                period_reflections: vec![stale.clone(), current.clone()],
+                topic_synonyms: TopicSynonymMap {
+                    version: TOPIC_SYNONYM_MAP_VERSION,
+                    entries: BTreeMap::new(),
+                },
+            },
+        )
+        .unwrap();
+
+        let mut topics = ReflectTopics::default();
+        topics.daily_retention_execution = DailyRetentionExecutionConfig {
+            version: 2,
+            enabled: true,
+            quarantine_grace_days: 7,
+        };
+        std::fs::write(
+            ReflectTopics::path(home.path()),
+            serde_yaml::to_string(&topics).unwrap(),
+        )
+        .unwrap();
+        drop(store::open(&home.path().join("views.db")).unwrap());
+
+        digest_at(home.path(), DigestPeriod::Daily, OutputFormat::Table, now).unwrap();
+
+        let receipts = list_effect_receipts(home.path()).unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].tag, stale_tag);
+        assert!(
+            !periodic::jsonl_file(home.path(), PeriodKind::Daily, &stale_tag).exists(),
+            "enabled CLI retention must quarantine the expired active archive"
+        );
+        assert!(periodic::jsonl_file(home.path(), PeriodKind::Daily, &current_tag).exists());
+        let hygiene = load_hygiene_state(home.path()).unwrap().unwrap();
+        assert!(hygiene.period_reflections.contains(&stale));
+        assert!(hygiene.period_reflections.contains(&current));
+    }
+
+    #[test]
     fn cli_daily_commit_reports_retention_inventory_failure_without_duplicate_retry() {
         use crate::reflection::hygiene_store::lock_daily_admission;
         use crate::reflection::periodic::{self, PeriodKind};

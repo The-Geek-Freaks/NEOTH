@@ -15,6 +15,7 @@ pub mod arxiv;
 pub mod arxiv_ingest_task;
 pub mod babel;
 pub mod backup;
+pub mod browser;
 /// HERMES-02 — `/background` + `/btw` parallel ephemeral sessions.
 pub mod bg_session;
 pub mod buddy;
@@ -291,6 +292,9 @@ pub enum Commands {
     FactCheck(fact_check::FactCheckArgs),
     /// Look up a DOI through the bounded citation provider boundary.
     Citation(citation::CitationArgs),
+    /// Inspect or explicitly install the reviewed managed-browser artifact.
+    /// Status verifies local artifact integrity only; it never starts a browser.
+    Browser(browser::BrowserArgs),
     /// GOLD-ADAPT-JV-MODE-03 — list NEOTH's own shipped capabilities (bundled
     /// skills, daemon crons, CLI + slash commands) from the self-wiki map.
     /// `--kind skill|cron|cli|slash`, `--search <keyword>`, `--output json`.
@@ -1620,6 +1624,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Citation(mut args) => {
             args.output = global_output;
             citation::run_citation(args).await?;
+        }
+        Commands::Browser(args) => {
+            browser::run_browser(args, global_output).await?;
         }
         Commands::Capabilities(mut args) => {
             args.output = global_output;

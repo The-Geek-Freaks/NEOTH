@@ -15,7 +15,8 @@
       "expected_executable": "chrome-headless-shell-win64/chrome-headless-shell.exe",
       "expected_executable_bytes": 212388352,
       "expected_executable_sha256": "8f24342b969fed6b6c6712324f9ef655355aa618948a3dd63dccd030ed9ff15b",
-      "url": "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.57/win64/chrome-headless-shell-win64.zip"
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.57/win64/chrome-headless-shell-win64.zip",
+      "archive_bytes": 120933079
     },
     {
       "platform": "linux64",
@@ -23,7 +24,8 @@
       "expected_executable": "chrome-headless-shell-linux64/chrome-headless-shell",
       "expected_executable_bytes": 197979464,
       "expected_executable_sha256": "60c03e8882f4bb47459a905ede1074e1e746c5b765e437c288e460320540a8a3",
-      "url": "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.57/linux64/chrome-headless-shell-linux64.zip"
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.57/linux64/chrome-headless-shell-linux64.zip",
+      "archive_bytes": 120504312
     },
     {
       "platform": "mac-x64",
@@ -31,7 +33,8 @@
       "expected_executable": "chrome-headless-shell-mac-x64/chrome-headless-shell",
       "expected_executable_bytes": 185455536,
       "expected_executable_sha256": "220c430c7351d9ef499896c152e014a2c1b0c2dcddce8ade807693374962c337",
-      "url": "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.57/mac-x64/chrome-headless-shell-mac-x64.zip"
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.57/mac-x64/chrome-headless-shell-mac-x64.zip",
+      "archive_bytes": 104704330
     },
     {
       "platform": "mac-arm64",
@@ -39,7 +42,8 @@
       "expected_executable": "chrome-headless-shell-mac-arm64/chrome-headless-shell",
       "expected_executable_bytes": 170030896,
       "expected_executable_sha256": "73c150f1e61a7398af80545c6483f24490166c1056c16353216d1ac425bb5a51",
-      "url": "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.57/mac-arm64/chrome-headless-shell-mac-arm64.zip"
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.57/mac-arm64/chrome-headless-shell-mac-arm64.zip",
+      "archive_bytes": 99499017
     }
   ]
 }

@@ -9,7 +9,7 @@
 use std::fmt;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -26,6 +26,9 @@ use crate::wal::writer::WalWriterHandle;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExternalHttpSurface {
+    /// Exact reviewed Chrome-for-Testing archive acquisition. This remains
+    /// distinct from generic document fetches in policy and WAL evidence.
+    ManagedBrowserInstall,
     Fetch,
     JinaReader,
     SearchBrave,
@@ -41,6 +44,7 @@ pub enum ExternalHttpSurface {
 impl ExternalHttpSurface {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ManagedBrowserInstall => "managed_browser_install",
             Self::Fetch => "fetch",
             Self::JinaReader => "jina_reader",
             Self::SearchBrave => "search_brave",
@@ -509,6 +513,16 @@ impl ExternalHttpAuthorizer {
     #[cfg(not(test))]
     pub fn interactive(policy: AutonomyPolicySnapshot) -> Result<Self> {
         let home = crate::config::FreedomConfig::default_neoth_home();
+        Self::interactive_at(&home, policy)
+    }
+
+    /// Interactive one-shot context rooted at an explicit NEOTH home. The
+    /// supplied home controls both live-daemon audit RPC discovery and the
+    /// standalone WAL location; callers must not silently substitute the
+    /// ambient default home for an operator-selected target.
+    #[cfg(not(test))]
+    pub fn interactive_at(home: &Path, policy: AutonomyPolicySnapshot) -> Result<Self> {
+        let home = home.to_path_buf();
         let pidfile = home.join("neothd.pid");
         let daemon_live = crate::daemon::pidfile::live_daemon_pid(&pidfile)
             .with_context(|| format!("inspect daemon pidfile {}", pidfile.display()))?
@@ -542,6 +556,26 @@ impl ExternalHttpAuthorizer {
     pub fn interactive(policy: AutonomyPolicySnapshot) -> Result<Self> {
         let _ = policy;
         Ok(Self::test_allow())
+    }
+
+    /// Test-visible explicit-home variant retains the production requirement
+    /// that a real WAL writer exists before the request can be authorized.
+    /// Tests deliberately do not inspect a live daemon pidfile or use audit
+    /// RPC, but they must not turn this explicit-home path into `test_allow`.
+    #[cfg(test)]
+    pub fn interactive_at(home: &Path, policy: AutonomyPolicySnapshot) -> Result<Self> {
+        let home = home.to_path_buf();
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).with_context(|| {
+            format!(
+                "create mandatory external HTTP WAL directory {}",
+                wal_dir.display()
+            )
+        })?;
+        let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "external-http");
+        let (writer, _join) = crate::wal::writer::spawn_for_home(segment, home)
+            .context("spawn mandatory external HTTP WAL writer")?;
+        Ok(Self::with_writer(policy, Gate::auto_confirm(), writer))
     }
 
     pub fn with_writer(
