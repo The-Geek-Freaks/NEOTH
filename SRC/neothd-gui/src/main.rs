@@ -49241,7 +49241,12 @@ exit 0
                 .iter()
                 .map(|row| row.last_message.to_string()),
         );
-        text.extend(overlay.get_recent_lines().iter().map(|line| line.to_string()));
+        text.extend(
+            overlay
+                .get_recent_lines()
+                .iter()
+                .map(|line| line.to_string()),
+        );
         text.join("\n")
     }
 

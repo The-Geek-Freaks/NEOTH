@@ -45,3 +45,10 @@ and visual-audit dimensions are N/A for these Rust fixture/type/lifecycle repair
 source integrity was reviewed and actual GUI behavior remains pending. There
 is no screenshot, accessibility, package or complete-release acceptance claim.
 P1-18 and P2-26a remain open. The absolute local BSOD hold is unchanged.
+
+W513 follow-up: Preflight8003 run35922289920 produced one formatting-only
+main.rs hunk (artifact10777886345). Root confirmed postblob
+0deec71a4c625535b08c5e262eb1e11ed3598b98; the receipt and complete before/after
+pair were verified before import. Core/Group/GUI/Windows behavioral runs at
+8003 remain relevant because this hunk only wraps the already-corrected closure.
+The same Preflight's later static steps were skipped; a fresh Preflight is required.

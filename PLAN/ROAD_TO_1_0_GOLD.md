@@ -8,6 +8,13 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W513 hosted formatting follow-up (2026-09-23):**
+W502-W508 is published as8003a605. Preflight35922289920 failed only
+Rust formatting; artifact10777886345 binds the single main.rs layout hunk
+with both SHA256s and the complete before/after Gitblob pair verified.
+The exact hosted patch is imported; no local formatter ran. Group890,
+GUI148, Windows24 and Core continue at8003; the format-only carry does not
+change their functional scope. Inventory746 and Road1043/279/2 unchanged.
 **W502-W508 Q8 acceptance and hosted regression repair (2026-09-23):**
 P1-09 is accepted from13 exact test/class terminals (6Windows+7macOS)
 and10 scoped source paths, including the actual macOS-native W151 callback.

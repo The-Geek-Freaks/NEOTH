@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W502Q8ACCEPTED_W503508REPAIRED_HOSTED_PENDING",
+  "status": "W513_HOSTED_FORMAT_IMPORTED_FUNCTIONAL_RUNS8003_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 130073,
-    "sha256": "D88F17FA60FA8CF36A9992F3FFD816977C6CB9BAE6971B0EFC396F5AC0B653E2"
+    "bytes": 130083,
+    "sha256": "0540749893BE13ED27381875EAAF99854AF6173364D11A9983BED5F97F047E45"
   },
   "sourceInputs": 746,
   "requiredNativeTests": [
@@ -7737,8 +7737,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2208853,
-      "sha256": "BBF9AD51FA7432AE6459979C357D7F57C676EC94290222589BCE050F9BE7B015"
+      "bytes": 2208927,
+      "sha256": "689C922058C025F79173A267DD434DD4678C4D06BA5CDAA15DD8B1DAD8C5BBB8"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -24269,6 +24269,44 @@
       }
     ],
     "note": "Group89042 admitted888PASS2FAIL0missing176bindings; P10913terminals10pathcarry accepted. W503hostedfmt W504type W507frame-prefix W508real-scheduler repair; Windows24 fresh P204 selection. No local executables.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave513HostedFormat": {
+    "base": "8003a6055373dd1371b56eaffab43196c81d2de9",
+    "sources": [
+      {
+        "path": "docs/gold-wave503-508-hosted-regression-repairs.md",
+        "bytes": 3482,
+        "sha256": "F39FAC371964621B1CFAECF2555DE873DB15F14B570F2C46D97A7EDAF2BB97B4",
+        "blob": "80abca543f42c16fed9a53415e2f4218643c1f58"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 188937,
+        "sha256": "D2DE66CE04D24CDBFBFC284BAC337B73E8B50964DD9A77A1927983A232344A06",
+        "blob": "6547390dbd13b0c61fb8fb2528286b872cd3e090"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1199172,
+        "sha256": "2F41A90847A892EA66A256BFD43FB32078D86D837CC146443B78BDFA29E3B0D3",
+        "blob": "b3c8efe92175710eea08c6e212ae854d19c49c8e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1797894,
+        "sha256": "78D0DD160153E4743DCC2548078D9F047F8BE7D9F38F0F061C0B2A50DB831FF2",
+        "blob": "fd9a6ce55b0ca3fb7cbd3def4eaf00269e7c1d04"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2208927,
+        "sha256": "689C922058C025F79173A267DD434DD4678C4D06BA5CDAA15DD8B1DAD8C5BBB8",
+        "blob": "0deec71a4c625535b08c5e262eb1e11ed3598b98"
+      }
+    ],
+    "note": "Preflight35922289920 artifact10777886345 one complete main.rs before/after pair and SHA256s verified; layout only. No local formatter/executable.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
