@@ -404,6 +404,7 @@ fn v2_committed_journal_rejects_a_mismatched_immutable_receipt() {
     receipt.quarantine_sha256 = "f".repeat(64);
     crate::reflection::retention_authority::save_effect_receipt(home.path(), &receipt).unwrap();
     let receipt_path = home
+        .path()
         .join("reflections/retention-v2/receipts")
         .join(format!("{}.json", stale.tag));
     let mismatched_bytes = std::fs::read(&receipt_path).unwrap();
@@ -478,6 +479,7 @@ fn v2_receipt_before_committed_ordering_is_idempotent_after_restart() {
     let (home, vault, stale) = settled_expired_pair();
     execute_retention(home.path(), vault.path(), NOW);
     let receipt_path = home
+        .path()
         .join("reflections/retention-v2/receipts")
         .join(format!("{}.json", stale.tag));
     let receipt_bytes = std::fs::read(&receipt_path).unwrap();

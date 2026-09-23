@@ -2333,50 +2333,52 @@ channel_accounts:
             "cron.job",
         );
 
-        let pending = provider.complete(w289_request("qwen-cron"));
-        tokio::pin!(pending);
-        tokio::select! {
-            result = &mut pending => panic!("raw transport completed before request lifecycle ack: {result:?}"),
-            result = tokio::time::timeout(Duration::from_secs(5), ack_gate.wait_until_durable()) => {
-                result.expect("Cron provider request did not become durable");
+        {
+            let pending = provider.complete(w289_request("qwen-cron"));
+            tokio::pin!(pending);
+            tokio::select! {
+                result = &mut pending => panic!("raw transport completed before request lifecycle ack: {result:?}"),
+                result = tokio::time::timeout(Duration::from_secs(5), ack_gate.wait_until_durable()) => {
+                    result.expect("Cron provider request did not become durable");
+                }
             }
-        }
 
-        let mut reloaded = reload.latest().as_ref().clone();
-        reloaded
-            .inference
-            .role_policy
-            .as_mut()
-            .expect("initial Cron role policy")
-            .rules
-            .push(crate::config::role_policy::RolePolicyRule {
-                role: crate::config::inference::HemisphereRole::Right,
-                provider: crate::config::inference::InferenceProvider::OpenAi,
-                model: Some("gpt-5".to_owned()),
-            });
-        std::fs::write(
-            &config_path,
+            let mut reloaded = reload.latest().as_ref().clone();
             reloaded
-                .public_yaml()
-                .expect("serialize reloaded Cron policy"),
-        )
-        .expect("write reloaded Cron policy");
-        assert!(matches!(
-            reload
-                .try_reload()
-                .expect("reload Cron role-policy generation"),
-            crate::config::reload::ReloadResult::Reloaded { .. }
-        ));
+                .inference
+                .role_policy
+                .as_mut()
+                .expect("initial Cron role policy")
+                .rules
+                .push(crate::config::role_policy::RolePolicyRule {
+                    role: crate::config::inference::HemisphereRole::Right,
+                    provider: crate::config::inference::InferenceProvider::OpenAi,
+                    model: Some("gpt-5".to_owned()),
+                });
+            std::fs::write(
+                &config_path,
+                reloaded
+                    .public_yaml()
+                    .expect("serialize reloaded Cron policy"),
+            )
+            .expect("write reloaded Cron policy");
+            assert!(matches!(
+                reload
+                    .try_reload()
+                    .expect("reload Cron role-policy generation"),
+                crate::config::reload::ReloadResult::Reloaded { .. }
+            ));
 
-        ack_gate.release();
-        let error = pending
-            .await
-            .expect_err("accepted changed Cron role policy must block raw transport");
-        assert!(
-            error.to_string().contains("role dispatch policy changed"),
-            "{error:#}"
-        );
-        assert_eq!(calls.load(Ordering::SeqCst), 0);
+            ack_gate.release();
+            let error = pending
+                .await
+                .expect_err("accepted changed Cron role policy must block raw transport");
+            assert!(
+                error.to_string().contains("role dispatch policy changed"),
+                "{error:#}"
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+        }
         drop(provider);
         drop(writer);
         join.await.expect("W289 WAL writer drained");

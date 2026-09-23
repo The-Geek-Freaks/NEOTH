@@ -2,6 +2,16 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W295 hosted fixture type repairs (2026-09-23):**
+Core1d6 run35824016472 passed strict slim production Clippy, then found three
+test-target errors: two TempDir paths missed path(), and the Cron reload fixture
+kept its pinned provider future alive across provider drop. W295 fixes those
+exact test-only errors; the ACK-before-reload and zero-raw-call assertions remain.
+Preflightfd0d35824727386 and Quality35824726918 both passed. The next Core run
+can reuse that production-lint evidence and starts directly at test typechecking.
+Manifest571; native960;Group564; other counts unchanged. W292/W293 remain local
+work under review; no acceptance or platform execution is claimed for them.
+
 **Canonical Road counter reconciliation (2026-09-23):** Preflight1d6ed46f
 run35824016807 reached the release-gate contract and caught a stale dashboard
 summary left at1019/303 after the already-evidenced P1-17/P2-05 acceptances.

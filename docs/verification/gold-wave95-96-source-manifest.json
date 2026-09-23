@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T05:57:51.6850797Z",
-  "validationStatus": "Canonical PROGRESS integrity section now14done/104open matching unchanged Road checkboxes; strictClippy1d6passed, typecheckactive",
+  "capturedUtc": "2026-09-23T06:02:53.5027557Z",
+  "validationStatus": "Production Clippy1d6 PASS; three exact testtarget compile errors repaired, hosted retry pending; W292/W293 uncommitted separate work",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -473,18 +473,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 130180,
-      "sha256": "6E9260B67CCFC9A221A516EC2D2723BC51001523C9D664A353B4526398B29EBE"
+      "bytes": 130868,
+      "sha256": "5ADC01D6FEB8F39542A8B9E864218F787BF2119E639DF8AB6595F252FC01F3A6"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1133204,
-      "sha256": "0B05C83DAA62265EBEE3EEC63A77ABB821F61251E080AD1F9910F6A4B4AD1C24"
+      "bytes": 1133892,
+      "sha256": "F1CEFAF339F504718BCC5148EF9D025B32EA06A205A8280DD36A41121FF984C7"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1729736,
-      "sha256": "D867EF5EBD3116F6A511E6FD43835B06C6514116E64D1D17681B2E913B7E3AB6"
+      "bytes": 1730424,
+      "sha256": "6164306A2B50D7C06EC53AFD3BA9B8A8B0CBCBE4E4299A5D94E9B16148FE820A"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1623,8 +1623,8 @@
     },
     {
       "path": "SRC/neothd/src/cron/runner.rs",
-      "bytes": 158379,
-      "sha256": "884D20E6CB2C17C48DE83B25BC3DED1C4B59F83DB8AA42EA6E3297455449518F"
+      "bytes": 158567,
+      "sha256": "BD579A06E0B2A26BEA0BC998CFDA249C7F80E83EF0B3E6DC96CAEA484656A3CB"
     },
     {
       "path": "SRC/neothd/src/cron/state.rs",
@@ -2828,8 +2828,8 @@
     },
     {
       "path": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "bytes": 26207,
-      "sha256": "02B026C0CA3DB55D884F1D401B0026508955815E2AA3B6B1006E7CBA3086580E"
+      "bytes": 26239,
+      "sha256": "37944FC613F149AC15F98BF0826CB40B5854A45FF389AA96240353CDE0F9E715"
     },
     {
       "path": "docs/gold-wave280-daily-retention.md",
@@ -2855,6 +2855,11 @@
       "path": "docs/gold-wave294-retention-lint-repair.md",
       "bytes": 732,
       "sha256": "AA79E34AE5CCA9DF75280527BB034452E5A8FF70A9DF9869221D25831C0E8588"
+    },
+    {
+      "path": "docs/gold-wave295-hosted-fixture-type-repair.md",
+      "bytes": 769,
+      "sha256": "F3823B39F7B5BA5FB3AE4A532B5C4AC0B6389E60C136D5EFF3FE54C8695AEF58"
     }
   ]
 }
