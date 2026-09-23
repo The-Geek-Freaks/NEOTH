@@ -3194,7 +3194,7 @@ impl MembershipStore {
                AND o.allowed=1 AND m.state='active' AND b.auth_epoch=m.auth_epoch
                AND b.membership_epoch=m.membership_epoch AND m.membership_epoch=a.membership_epoch
                AND m.membership_epoch>=a.revocation_floor
-             ORDER BY priority ASC, transport_identity ASC",
+             ORDER BY o.priority ASC, o.transport_identity ASC",
         )?;
         statement
             .query_map(params![scope.skill_id, channel, account], |row| {

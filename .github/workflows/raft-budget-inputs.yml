@@ -249,17 +249,18 @@ jobs:
           }
           EOF
           cp "$work_root/probe/Cargo.toml" "$evidence/probe/Cargo.toml"
-          # The probe must compile the closure actually exported from the
-          # copied NEOTH resolution. Reusing its lockfile prohibits a second,
-          # independently selected transitive OpenRaft graph. Cargo requires
-          # only the probe's own path-package record in addition to that lock.
-          cp "$work_src/Cargo.lock" "$work_root/probe/Cargo.lock"
+          # The probe is a distinct package, so Cargo needs a lock entry for
+          # its own root and must prune unrelated workspace roots. Normalize
+          # only this isolated probe from the copied lock, offline after metadata
+          # fetched the pinned closure. The exact identity/checksum comparison
+          # below rejects any graph that differs from the exported workspace.
           cp "$work_src/Cargo.lock" "$evidence/probe/exported-workspace-Cargo.lock"
-          printf '\n[[package]]\nname = "w417-openraft-probe"\nversion = "0.0.0"\ndependencies = [\n "openraft",\n]\n' >> "$work_root/probe/Cargo.lock"
+          cp "$work_src/Cargo.lock" "$work_root/probe/Cargo.lock"
           : > "$evidence/probe/cargo-check.log"
+          cargo metadata --manifest-path "$work_root/probe/Cargo.toml" --offline --format-version 1 > "$evidence/probe/cargo-metadata-normalized.json"
           cargo metadata --manifest-path "$work_root/probe/Cargo.toml" --locked --format-version 1 > "$evidence/probe/cargo-metadata.json"
           WORKSPACE_METADATA="$evidence/cargo-metadata-locked.json" PROBE_METADATA="$evidence/probe/cargo-metadata.json" \
-            LOCKFILE="$work_src/Cargo.lock" OPENRAFT_VERSION="$OPENRAFT_VERSION" \
+            WORKSPACE_LOCKFILE="$work_src/Cargo.lock" PROBE_LOCKFILE="$work_root/probe/Cargo.lock" OPENRAFT_VERSION="$OPENRAFT_VERSION" \
             RECEIPT="$evidence/probe/closure-identity-check.json" python3 - <<'PY'
           import json
           import os
@@ -280,14 +281,24 @@ jobs:
                       pending.extend(nodes[package_id]["dependencies"])
               return {(packages[i]["name"], packages[i]["version"], packages[i].get("source") or "path") for i in seen}
 
-          lock = tomllib.loads(Path(os.environ["LOCKFILE"]).read_text(encoding="utf-8"))["package"]
-          checksums = {(p["name"], p["version"], p.get("source", "path")): p.get("checksum") for p in lock}
+          def checksums(path):
+              lock = tomllib.loads(Path(path).read_text(encoding="utf-8"))["package"]
+              return {(p["name"], p["version"], p.get("source", "path")): p.get("checksum") for p in lock}
+
           workspace = closure(json.loads(Path(os.environ["WORKSPACE_METADATA"]).read_text(encoding="utf-8")))
           probe = closure(json.loads(Path(os.environ["PROBE_METADATA"]).read_text(encoding="utf-8")))
           if workspace != probe:
               raise SystemExit("probe OpenRaft closure differs from exported workspace closure")
+          workspace_checksums = checksums(os.environ["WORKSPACE_LOCKFILE"])
+          probe_checksums = checksums(os.environ["PROBE_LOCKFILE"])
+          checksum_drift = sorted(
+              identity for identity in workspace
+              if workspace_checksums.get(identity) != probe_checksums.get(identity)
+          )
+          if checksum_drift:
+              raise SystemExit("probe OpenRaft closure checksum differs from exported workspace closure: " + repr(checksum_drift))
           report = [
-              {"name": name, "version": version, "source": source, "checksum": checksums.get((name, version, source))}
+              {"name": name, "version": version, "source": source, "checksum": workspace_checksums.get((name, version, source))}
               for name, version, source in sorted(workspace)
           ]
           if any(item["source"] != "path" and item["checksum"] is None for item in report):

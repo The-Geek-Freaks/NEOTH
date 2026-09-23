@@ -1,0 +1,164 @@
+{
+  "schema": "neoth-parent-acceptance/v1",
+  "parent": "GOLD-LF-P1-20",
+  "wave": "W426",
+  "status": "SCOPED_ACCEPTED",
+  "required": 12,
+  "passed": 12,
+  "scope": "Canonical sidebar last-message preview behavior: exact store and GUI terminals only; no whole-HEAD, all-OS, release, or package claim.",
+  "behavior": {
+    "canonicalSource": "latest visible raw_turns; read-only, no migration or hindsight fallback",
+    "updatePaths": "send, stream completion/error/delete, startup and reload; active chunks never become previews",
+    "presentation": "redaction/control removal, normalized whitespace and 64-grapheme bound",
+    "sessionSafety": "per-session isolation and stale A-to-B/A-to-live load fence",
+    "uiContract": "selected historical session remains read-only and live selection restores the live model"
+  },
+  "nativeEvidence": {
+    "run": 35871794576,
+    "sourceHead": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+    "admission": "work/gold-20260906/wave423-group841bc9/ADMISSION.json",
+    "required": 841,
+    "executed": 841,
+    "passed": 834,
+    "failed": 7,
+    "allSourceHashesMatch": true,
+    "matrixAndLockMatch": true,
+    "orderedActualTerminals": true
+  },
+  "guiEvidence": {
+    "run": 35867782202,
+    "sourceHead": "8f6ef1166440037ceedc6a13c8a0f78596a8218b",
+    "admission": "work/gold-20260906/wave404411414-publication/gui1438f6/ADMISSION.json",
+    "receipt": "work/gold-20260906/wave404411414-publication/gui1438f6/w228-linux-gui-fixtures-receipt-8f6ef1166440037ceedc6a13c8a0f78596a8218b/result.json",
+    "required": 143,
+    "executed": 143,
+    "passed": 143,
+    "failed": 0,
+    "sourceAndInputBindings": 23,
+    "allBindingsMatchGit": true,
+    "orderedSelectionAndActualTerminalsVerified": true
+  },
+  "tests": [
+    {
+      "test": "memory::transcript_store::tests::lf_p1_20_readonly_session_egress_is_ordered_and_resanitizes_legacy_agent_rows",
+      "sourcePath": "SRC/neothd/src/memory/transcript_store.rs",
+      "sourceSha256": "2BDDBEF7A7E2736F8A3DD1C948F6514C3BA35132F2538444FEE956601EDECDD6",
+      "run": 35871794576,
+      "sourceHead": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "evidence": "work/gold-20260906/wave423-group841bc9/w190-research-lifecycle-log-bc9db76c4ff72bfff9fa3674f20d904ead12fc76/cargo-research-lifecycle.log (exact discovery and run terminal)",
+      "result": "PASS"
+    },
+    {
+      "test": "memory::transcript_store::tests::lf_p1_20_latest_turns_keep_sessions_isolated_and_omit_legacy_missing_cards",
+      "sourcePath": "SRC/neothd/src/memory/transcript_store.rs",
+      "sourceSha256": "2BDDBEF7A7E2736F8A3DD1C948F6514C3BA35132F2538444FEE956601EDECDD6",
+      "run": 35871794576,
+      "sourceHead": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "evidence": "work/gold-20260906/wave423-group841bc9/w190-research-lifecycle-log-bc9db76c4ff72bfff9fa3674f20d904ead12fc76/cargo-research-lifecycle.log (exact discovery and run terminal)",
+      "result": "PASS"
+    },
+    {
+      "test": "memory::transcript_store::tests::lf_p1_20_latest_turns_skip_empty_and_control_only_tail_rows",
+      "sourcePath": "SRC/neothd/src/memory/transcript_store.rs",
+      "sourceSha256": "2BDDBEF7A7E2736F8A3DD1C948F6514C3BA35132F2538444FEE956601EDECDD6",
+      "run": 35871794576,
+      "sourceHead": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "evidence": "work/gold-20260906/wave423-group841bc9/w190-research-lifecycle-log-bc9db76c4ff72bfff9fa3674f20d904ead12fc76/cargo-research-lifecycle.log (exact discovery and run terminal)",
+      "result": "PASS"
+    },
+    {
+      "test": "memory::transcript_store::tests::lf_p1_20_readonly_legacy_database_without_raw_turns_is_empty",
+      "sourcePath": "SRC/neothd/src/memory/transcript_store.rs",
+      "sourceSha256": "2BDDBEF7A7E2736F8A3DD1C948F6514C3BA35132F2538444FEE956601EDECDD6",
+      "run": 35871794576,
+      "sourceHead": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "evidence": "work/gold-20260906/wave423-group841bc9/w190-research-lifecycle-log-bc9db76c4ff72bfff9fa3674f20d904ead12fc76/cargo-research-lifecycle.log (exact discovery and run terminal)",
+      "result": "PASS"
+    },
+    {
+      "test": "panel_logic::tests::lf_p1_20_preview_redacts_normalizes_and_truncates_graphemes_once",
+      "sourcePath": "SRC/neothd-gui/src/panel_logic.rs",
+      "sourceSha256": "8482856452414A3EC61E20A069317A2F901D4D95EB57441691BD04194A5BCE1C",
+      "run": 35867782202,
+      "sourceHead": "8f6ef1166440037ceedc6a13c8a0f78596a8218b",
+      "executionReceipt": "test-106-execution.txt",
+      "result": "PASS"
+    },
+    {
+      "test": "panel_logic::tests::lf_p1_20_send_completion_delete_recomputes_to_previous_visible_message",
+      "sourcePath": "SRC/neothd-gui/src/panel_logic.rs",
+      "sourceSha256": "8482856452414A3EC61E20A069317A2F901D4D95EB57441691BD04194A5BCE1C",
+      "run": 35867782202,
+      "sourceHead": "8f6ef1166440037ceedc6a13c8a0f78596a8218b",
+      "executionReceipt": "test-107-execution.txt",
+      "result": "PASS"
+    },
+    {
+      "test": "panel_logic::tests::lf_p1_20_reload_and_session_switch_keep_a_b_isolated",
+      "sourcePath": "SRC/neothd-gui/src/panel_logic.rs",
+      "sourceSha256": "8482856452414A3EC61E20A069317A2F901D4D95EB57441691BD04194A5BCE1C",
+      "run": 35867782202,
+      "sourceHead": "8f6ef1166440037ceedc6a13c8a0f78596a8218b",
+      "executionReceipt": "test-108-execution.txt",
+      "result": "PASS"
+    },
+    {
+      "test": "panel_logic::tests::lf_p1_20_session_label_sanitizes_legacy_titles_and_controls",
+      "sourcePath": "SRC/neothd-gui/src/panel_logic.rs",
+      "sourceSha256": "8482856452414A3EC61E20A069317A2F901D4D95EB57441691BD04194A5BCE1C",
+      "run": 35867782202,
+      "sourceHead": "8f6ef1166440037ceedc6a13c8a0f78596a8218b",
+      "executionReceipt": "test-109-execution.txt",
+      "result": "PASS"
+    },
+    {
+      "test": "panel_logic::tests::lf_p1_20_session_history_propagates_corrupt_database_errors",
+      "sourcePath": "SRC/neothd-gui/src/panel_logic.rs",
+      "sourceSha256": "8482856452414A3EC61E20A069317A2F901D4D95EB57441691BD04194A5BCE1C",
+      "run": 35867782202,
+      "sourceHead": "8f6ef1166440037ceedc6a13c8a0f78596a8218b",
+      "executionReceipt": "test-110-execution.txt",
+      "result": "PASS"
+    },
+    {
+      "test": "chat_subprocess_tests::lf_p1_20_send_before_channel_probe_hydrates_live_preview",
+      "sourcePath": "SRC/neothd-gui/src/main.rs",
+      "sourceSha256": "FA5E2A251B872A03AEEED2AE53F00E579C3C040735C3BAA7069220C68728540D",
+      "run": 35867782202,
+      "sourceHead": "8f6ef1166440037ceedc6a13c8a0f78596a8218b",
+      "executionReceipt": "test-111-execution.txt",
+      "result": "PASS"
+    },
+    {
+      "test": "chat_subprocess_tests::lf_p1_20_session_load_generation_rejects_a_after_b_and_return_to_live",
+      "sourcePath": "SRC/neothd-gui/src/main.rs",
+      "sourceSha256": "FA5E2A251B872A03AEEED2AE53F00E579C3C040735C3BAA7069220C68728540D",
+      "run": 35867782202,
+      "sourceHead": "8f6ef1166440037ceedc6a13c8a0f78596a8218b",
+      "executionReceipt": "test-112-execution.txt",
+      "result": "PASS"
+    },
+    {
+      "test": "chat_subprocess_tests::lf_p1_20_chat_sidebar_session_selection_is_readonly_and_fully_wired",
+      "sourcePath": "SRC/neothd-gui/src/main.rs",
+      "sourceSha256": "FA5E2A251B872A03AEEED2AE53F00E579C3C040735C3BAA7069220C68728540D",
+      "run": 35867782202,
+      "sourceHead": "8f6ef1166440037ceedc6a13c8a0f78596a8218b",
+      "executionReceipt": "test-113-execution.txt",
+      "result": "PASS"
+    }
+  ],
+  "sourceCarry": {
+    "targetHead": "010d535c84b3966270877ae9bb808b51c8ea35e5",
+    "comparedPaths": [
+      "SRC/neothd/src/memory/transcript_store.rs",
+      "SRC/neothd-gui/src/panel_logic.rs",
+      "SRC/neothd-gui/src/main.rs",
+      "SRC/neothd-gui/ui/main.slint",
+      "SRC/neothd-gui/ui/chat.slint"
+    ],
+    "result": "No committed delta on any compared path from Group841bc9 or GUI1438f6 evidence heads through targetHead.",
+    "dirtyWorktreeExcluded": true
+  },
+  "localExecutableValidationRan": false
+}

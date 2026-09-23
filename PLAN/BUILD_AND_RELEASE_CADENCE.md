@@ -3,6 +3,25 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W422/W424 hosted repairs, W425/W426 functional acceptance and W428 lane (2026-09-23):**
+Group841bc9 run35871794576 is admitted:841 executed,834PASS,7FAIL; all169
+source bindings, matrix/lock and actual ordered terminals match. All seven
+failures share an ambiguous SQL ORDER BY transport_identity; W424 qualifies
+the existing assignment columns without relaxing predicates or assertions.
+W422 groups audit-RPC startup inputs to resolve the actual workspace-Clippy
+9/8 argument diagnostic; both feature-gated call sites retain their inputs.
+P2-06 is accepted with17Group841+1Group810 Doctor terminals. P1-20 is accepted
+with4Group841+8GUI143 terminals; Root checked actual passes and relevant source carry.
+W428 adds optional workspace Clippy to the existing CLI-reference lane so the
+focused rerun preserves continuing Windows/macOS FullCIbc9 jobs.
+W417's first hosted input run35874794184 preserved existing workspace locks
+and added8packages, but the separate probe needed its own resolved root lock;
+the repair retains exact OpenRaft closure identity/checksum equality before check.
+Inventory700; native1136+Windows19/Linux33/macOS32;Group841;GUI143Linux/139macOS.
+Road1324=1034checked/288open/2partial;290raw/289pre-tag;WS-LF27done/91open.
+Citation010d535c continues; production Raft integration remains uncommitted.
+No local executable validation ran; the absolute BSOD hold remains active.
+
 **W417 hosted Raft inputs and W421 citation terminal repair (2026-09-23):**
 Citation run35871580933 remains FAILURE:41 actual Rust PASS,9 unstarted;
 the runner rejected the interleaved stderr/final-ok form of identity41.

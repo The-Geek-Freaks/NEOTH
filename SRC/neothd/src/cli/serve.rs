@@ -580,27 +580,31 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         ));
     #[cfg(feature = "cluster")]
     let (audit_rpc_task, mut audit_rpc_guard) = crate::cli::serve_tasks::spawn_audit_rpc(
-        &config,
-        &neoth_home,
-        &writer,
-        Arc::clone(&chat_runtime),
-        Arc::clone(&gui_chat_runtime),
-        daemon_pid_guard,
-        &audit_endpoint_nonce,
-        std::sync::Arc::clone(&membership_controller),
-        std::sync::Arc::clone(&outbound_task_delegate),
+        crate::cli::serve_tasks::AuditRpcInputs {
+            config: &config,
+            home: &neoth_home,
+            writer: &writer,
+            chat_runtime: Arc::clone(&chat_runtime),
+            gui_chat_runtime: Arc::clone(&gui_chat_runtime),
+            pid_guard: daemon_pid_guard,
+            endpoint_nonce: &audit_endpoint_nonce,
+            membership: std::sync::Arc::clone(&membership_controller),
+            outbound_task_delegate: std::sync::Arc::clone(&outbound_task_delegate),
+        },
     )
     .await
     .context("start daemon membership/audit RPC")?;
     #[cfg(not(feature = "cluster"))]
     let (audit_rpc_task, mut audit_rpc_guard) = crate::cli::serve_tasks::spawn_audit_rpc(
-        &config,
-        &neoth_home,
-        &writer,
-        Arc::clone(&chat_runtime),
-        Arc::clone(&gui_chat_runtime),
-        daemon_pid_guard,
-        &audit_endpoint_nonce,
+        crate::cli::serve_tasks::AuditRpcInputs {
+            config: &config,
+            home: &neoth_home,
+            writer: &writer,
+            chat_runtime: Arc::clone(&chat_runtime),
+            gui_chat_runtime: Arc::clone(&gui_chat_runtime),
+            pid_guard: daemon_pid_guard,
+            endpoint_nonce: &audit_endpoint_nonce,
+        },
     )
     .await
     .context("start mandatory daemon audit RPC")?;

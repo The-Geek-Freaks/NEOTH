@@ -7,6 +7,10 @@ on:
         description: 'Also verify the exact slim-core production Clippy contract'
         type: boolean
         default: false
+      workspace_clippy:
+        description: 'Also verify the exact Linux-quality workspace Clippy contract'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,7 +28,7 @@ jobs:
   generate:
     name: Export exact-source CLI reference
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
+    timeout-minutes: ${{ inputs.workspace_clippy && 90 || 50 }}
     steps:
       - name: Checkout requested source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -37,6 +41,20 @@ jobs:
           toolchain: '1.91.0'
           components: clippy
 
+      - name: Install Linux workspace-Clippy build deps
+        if: ${{ inputs.workspace_clippy }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig1-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-0 \
+            xauth \
+            xvfb \
+            ffmpeg
+
       - name: Restore Gold smoke compiler cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
@@ -45,9 +63,9 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             SRC/target/
-          key: ${{ runner.os }}-gold-smoke-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          key: ${{ inputs.workspace_clippy && format('linux-1.91-cargo-{0}', hashFiles('SRC/Cargo.lock')) || format('{0}-gold-smoke-cargo-{1}', runner.os, hashFiles('SRC/Cargo.lock')) }}
           restore-keys: |
-            ${{ runner.os }}-gold-smoke-cargo-
+            ${{ inputs.workspace_clippy && 'linux-1.91-cargo-' || format('{0}-gold-smoke-cargo-', runner.os) }}
 
       - name: Check exact-source slim-core production Clippy
         if: ${{ inputs.slim_clippy }}
@@ -62,6 +80,12 @@ jobs:
         timeout-minutes: 15
         working-directory: SRC
         run: cargo check -p neoth --tests --locked --keep-going
+
+      - name: Check exact Linux-quality workspace Clippy
+        if: ${{ inputs.workspace_clippy }}
+        timeout-minutes: 30
+        working-directory: SRC
+        run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -D warnings
 
       - name: Build current public CLI
         timeout-minutes: 25

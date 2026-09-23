@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T14:28:59.4925624Z",
-  "validationStatus": "W417 OpenRaft inputs and W421citation terminal repair reviewed; hosted execution pending; no new acceptance",
+  "capturedUtc": "2026-09-23T14:40:16.5023824Z",
+  "validationStatus": "P206accepted18;P120accepted12;Group841admitted834PASS7FAIL;W422W424repairs reviewed hostedpending;W417probe root repair and W428optional workspaceClippy",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -33,8 +33,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 3039,
-      "sha256": "FD5DD2665B0C6DE1B5EA78BA495D7E00C8B9FB878DBEBB856B5A81D0B5526438"
+      "bytes": 4085,
+      "sha256": "7010FCB9F74183C021E459899E08BC8821AA11AA288B4190E58E57570A810824"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -808,18 +808,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 166086,
-      "sha256": "D356983B9219411674F9CC16D21F4F2E2DBBF85237627C24FD97AF43098182C5"
+      "bytes": 167485,
+      "sha256": "7489ABE28876ACA6B50FAED85AE41C07EAA549C8DDEBEA2CA88015234898FC20"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1176151,
-      "sha256": "B78A1911DE5A6902346D4E5F474AC28E656A811C4FDDF615135F4F7E866594E5"
+      "bytes": 1177550,
+      "sha256": "B899A17ABDB6FABDFF10768FBE18B82378CC06C5F444B3C0C7F3BAA2E10D0E45"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1773774,
-      "sha256": "E95EA0C108041FAC0C65FE82654653BA151996D94DBF9E8B6C2E37EA3E24B1BF"
+      "bytes": 1775397,
+      "sha256": "95E327359AF68DBD259962C30467919F6130FEAA47F863214654764A181E5F0A"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1688,8 +1688,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
-      "bytes": 529559,
-      "sha256": "92EF8213A2CD0ED773291544E3ABD6A6ACFB46388E364E21E6B9F1F948A48051"
+      "bytes": 530065,
+      "sha256": "75CE6030B7CE0436F8AF88B529E18C136FBFFADF5743B51BFA7B3AE145B78BE9"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tests.rs",
@@ -1698,8 +1698,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve.rs",
-      "bytes": 174225,
-      "sha256": "627805565DF15EFCA01B1777DAE84D60A98655A38C313CDCDEE7011388A42194"
+      "bytes": 174609,
+      "sha256": "87324684E9BCBC1B0F0103625BD9D0C59E21ABE205CC516EFE5F5B85C7E7377F"
     },
     {
       "path": "SRC/neothd/src/cli/updater.rs",
@@ -1728,8 +1728,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/membership.rs",
-      "bytes": 298771,
-      "sha256": "5AD3497CE474EA2D4FF97788167145744DF5465B9C73B685F5658FBAD36C3F6F"
+      "bytes": 298775,
+      "sha256": "E78B6FB856DFFDDDA7B2C2B55D56167465C14AAC5B53893E5F082BB494549752"
     },
     {
       "path": "SRC/neothd/src/code_map/co_change.rs",
@@ -3448,13 +3448,13 @@
     },
     {
       "path": "docs/gold-wave411-capability-decay-acceptance.md",
-      "bytes": 1956,
-      "sha256": "D767E099FC4DB902780D22B868223E8C81149AEFEC8142909DD464AB3089B34A"
+      "bytes": 2302,
+      "sha256": "67E4202CD1B241346AEBEA2D4DBE2B648F1234C09E879DE3D257A4520A28D8AD"
     },
     {
       "path": "docs/verification/gold-wave411-p206-acceptance.json",
-      "bytes": 1350,
-      "sha256": "B3A34206514EAACC0ADFAFF9B80083C31D84827B5D927A1D9E9392E50D50BE0A"
+      "bytes": 5724,
+      "sha256": "ECED525A3589951AAFC0D1E775A4040A8408CFB711D193DA8310F9EBA2405EC7"
     },
     {
       "path": "docs/gold-wave413-retry-acceptance.md",
@@ -3468,18 +3468,43 @@
     },
     {
       "path": ".github/workflows/raft-budget-inputs.yml",
-      "bytes": 16658,
-      "sha256": "A1A7C068A161A9064FD9E0295FE830DACB86AAB271A8E224C633765C11413893"
+      "bytes": 17308,
+      "sha256": "4D44201968E159F691EB94876C470C4A390149A332234FA024C738CEFFBBFE61"
     },
     {
       "path": "docs/gold-wave417-raft-hosted-inputs.md",
-      "bytes": 3237,
-      "sha256": "ABA3750087145D8538CFCBDB27497ABF3CF83108CADB83C48C325D932E1FC04F"
+      "bytes": 3355,
+      "sha256": "C03D2D725F0EFE63B0E140135C4E1476C1AD1857DA8B6FE303D0BD102EB85CF6"
     },
     {
       "path": "docs/gold-wave421-citation-terminal-repair.md",
       "bytes": 2269,
       "sha256": "4BBDB5452661B09052BFDA370AE4BA4C15C65424C34351B22D6DE0EBF31185B0"
+    },
+    {
+      "path": "docs/gold-wave422-clippy-repair.md",
+      "bytes": 2234,
+      "sha256": "B794924C8FA4598E6A881FE085157B748EE7195F5B11D87D195C94505BC066E0"
+    },
+    {
+      "path": "docs/gold-wave424-outbound-repair.md",
+      "bytes": 2465,
+      "sha256": "C2C0C775F933DC0952F3EE7BC63EE4319BE2B6C74C08BB6FB4F1537717EC404F"
+    },
+    {
+      "path": "docs/gold-wave426-sidebar-acceptance.md",
+      "bytes": 4135,
+      "sha256": "94FD7F3CBBB76E3D26F6C03351E16485B2E2E05F6BCB4E874BF0C9782D07C8C5"
+    },
+    {
+      "path": "docs/verification/gold-wave426-p120-acceptance.json",
+      "bytes": 8045,
+      "sha256": "46A6399074010B2EC4D97C65CA31919B85C18C22EA500CCABFC956C084A01918"
+    },
+    {
+      "path": "docs/gold-wave428-workspace-clippy-lane.md",
+      "bytes": 1023,
+      "sha256": "D6DCD6A072B58C9C9B6194AEE49A71C2A76365B09D70236D83DD98312FEE2B21"
     }
   ]
 }

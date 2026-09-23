@@ -31,13 +31,14 @@ closure must be no higher than Rust 1.91.
 
 The runner also creates a separate, minimal probe crate with exactly
 OpenRaft `=0.9.25`, `default-features = false`, and `serde` plus `storage-v2`.
-It copies the exported workspace lockfile into that crate, proves the full
-OpenRaft closure identities and checksums are identical, then runs
-`cargo check --locked` under Rust 1.91. The only added lock record is the
-probe's own local package; no dependency is resolved again. This verifies the
-pinned package configuration can compile on the supported compiler without
-compiling the application or treating a successful resolver run as an application
-integration proof.
+It saves the exported workspace lockfile as evidence, copies it into the isolated
+probe, then lets `cargo metadata --offline` normalize the probe root while
+preserving existing dependency selections after workspace metadata fetched them. The workflow proves the entire OpenRaft
+closure has identical identities and checksums in both locks before running
+`cargo check --locked` under Rust 1.91. This verifies the pinned package
+configuration can compile on the supported compiler without compiling the
+application or treating a successful resolver run as an application integration
+proof.
 
 The artifact is uploaded even after a failure. It includes command logs, source
 and final hash manifests, upstream source copies and hashes, metadata, new package

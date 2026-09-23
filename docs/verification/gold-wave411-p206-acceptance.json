@@ -1,20 +1,51 @@
 {
-  "schema": "neoth-gold-p206-acceptance/v1",
+  "schema": "neoth-gold-p206-acceptance/v2",
   "roadItem": "GOLD-LF-P2-06",
-  "decision": "selection_pending",
-  "currentHead": "8f6ef1166440037ceedc6a13c8a0f78596a8218b",
-  "priorAdmission": { "run": 35712523037, "head": "2cef823968db4ee7e20317315b7189d87895f761", "required": 18, "executed": 18, "passed": 18 },
-  "currentSourceAdmission": {
-    "run": 35866133454,
-    "head": "bdb50ac2acc4583345b61eb620ae7d08ecac5307",
-    "required": 810,
-    "executed": 810,
-    "passed": 807,
-    "passedP206Terminal": "cli::doctor::tests::check_docs_listed_count_matches_runtime_contract",
-    "failedUnrelated": ["cli::parity_drift::operation_inventory_tracks_live_nested_cli_leaves", "cli::memory::tests::physical_redaction_refuses_journal_target_that_is_not_the_bound_leaf", "wal::redact::tests::staged_authenticated_leaf_refuses_matched_structural_frame_byte_identically"]
+  "decision": "accepted",
+  "currentHead": "010d535c84b3966270877ae9bb808b51c8ea35e5",
+  "group841": {
+    "run": 35871794576,
+    "head": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+    "required": 841,
+    "executed": 841,
+    "passed": 834,
+    "failedUnrelated": ["cluster::membership::tests::v6_to_v7_migration_preserves_scoped_assignment_and_keeps_outbound_empty", "cluster::outbound_tests::outbound_candidates_require_the_exact_allowed_scope", "cluster::outbound_tests::outbound_candidates_order_by_priority_then_authenticated_peer_key_and_stale_cas_preserves_route", "cluster::outbound_tests::runtime_dispatch_fails_over_from_unknown_or_closed_candidate_before_acceptance", "cluster::outbound_tests::clearing_previously_live_peer_streams_refuses_new_outbound_dispatch_without_enqueueing", "cluster::outbound_tests::clear_waits_for_inflight_dispatch_admission_then_fences_later_dispatches", "daemon::audit_rpc::tests::outbound_task_delegate_rpc_requires_auth_reports_unavailable_and_queues_typed_receipt"],
+    "allSourceHashesMatch": true,
+    "matrixAndLockMatch": true
   },
-  "carryForward": { "currentP206SurfacePathsGitIdenticalToGroup810": true, "blockedByChangedProducerDependencyPathsSincePriorAdmission": ["SRC/neothd/src/providers/cost_authorization.rs", "SRC/neothd/src/wal/writer.rs"] },
-  "missingTerminalCount": 17,
-  "selection": "work/gold-20260906/W411-additional-grouped.json",
+  "group810DoctorOverlap": { "run": 35866133454, "head": "bdb50ac2acc4583345b61eb620ae7d08ecac5307", "test": "cli::doctor::tests::check_docs_listed_count_matches_runtime_contract", "passed": true },
+  "currentDependenciesGitIdenticalToGroup841": true,
+  "directSourceHashes": {
+    "SRC/neothd/src/daemon/capability_decay.rs": "462bd3ba177bbe5c92ad29b1895f3397e3311c4419016d06497e6dfcac1e80d6",
+    "SRC/neothd/src/daemon/capability_decay/history.rs": "717bdfb33d8eacb659e85d6e9198cf4a2e69c503b94042ad78b58d626b22380c",
+    "SRC/neothd/src/cli/capabilities.rs": "3e2b81ceb057aaaa2c56b30869f14fd6ec90553a8558488da8eb2fda585f1549",
+    "SRC/neothd/src/cli/doctor/checks/capabilities.rs": "1e0d6b8d6285a6d0336a4f4e2f12b57f3948df7a8bf2179658ed6d58a05ec83f",
+    "SRC/neothd/src/cli/doctor.rs": "c218336fafeaef8cae9c48a8301da987fbbe6870a2aa6b6bdc0175e585bc8fd5"
+  },
+  "producerWriterDependencyHashes": {
+    "SRC/neothd/src/providers/cost_authorization.rs": "544b485c5c874deb8788828a9e4f777bdd2a96d87285503b0f06a7d0e4cb25f5",
+    "SRC/neothd/src/wal/writer.rs": "a96bf3df2098206e623596d1eb5b23ca949576a9289e2ca49ead292937ad1b80"
+  },
+  "terminalCount": 18,
+  "terminals": [
+    {"test":"daemon::capability_decay::tests::min_samples_keep_each_identity_inconclusive","sourcePath":"SRC/neothd/src/daemon/capability_decay.rs","group":"841"},
+    {"test":"daemon::capability_decay::tests::regression_and_recovery_require_separate_conservative_windows","sourcePath":"SRC/neothd/src/daemon/capability_decay.rs","group":"841"},
+    {"test":"daemon::capability_decay::tests::provider_and_capability_never_share_a_window","sourcePath":"SRC/neothd/src/daemon/capability_decay.rs","group":"841"},
+    {"test":"daemon::capability_decay::tests::malformed_or_unattributed_terminal_payload_never_becomes_quality_evidence","sourcePath":"SRC/neothd/src/daemon/capability_decay.rs","group":"841"},
+    {"test":"daemon::capability_decay::tests::authenticated_provider_terminal_producer_reaches_scanner_and_doctor","sourcePath":"SRC/neothd/src/daemon/capability_decay.rs","group":"841"},
+    {"test":"daemon::capability_decay::tests::authenticated_terminal_history_refuses_a_later_incomplete_prefix","sourcePath":"SRC/neothd/src/daemon/capability_decay.rs","group":"841"},
+    {"test":"cli::doctor::checks::capabilities::tests::capability_quality_doctor_home_is_read_only_when_history_is_absent","sourcePath":"SRC/neothd/src/cli/doctor/checks/capabilities.rs","group":"841"},
+    {"test":"cli::doctor::checks::capabilities::tests::capability_quality_limits_rendered_degradation_labels","sourcePath":"SRC/neothd/src/cli/doctor/checks/capabilities.rs","group":"841"},
+    {"test":"daemon::capability_decay::history::tests::authenticated_terminal_snapshot_persists_and_reopens","sourcePath":"SRC/neothd/src/daemon/capability_decay/history.rs","group":"841"},
+    {"test":"daemon::capability_decay::history::tests::history_retains_the_newest_32_captured_snapshots","sourcePath":"SRC/neothd/src/daemon/capability_decay/history.rs","group":"841"},
+    {"test":"daemon::capability_decay::history::tests::torn_wal_refuses_capture_without_overwrite","sourcePath":"SRC/neothd/src/daemon/capability_decay/history.rs","group":"841"},
+    {"test":"daemon::capability_decay::history::tests::corrupt_or_future_store_refuses_read_and_capture_without_repair","sourcePath":"SRC/neothd/src/daemon/capability_decay/history.rs","group":"841"},
+    {"test":"daemon::capability_decay::history::tests::held_store_lock_refuses_capture_without_repair","sourcePath":"SRC/neothd/src/daemon/capability_decay/history.rs","group":"841"},
+    {"test":"daemon::capability_decay::history::tests::empty_authenticated_history_persists_no_false_sample","sourcePath":"SRC/neothd/src/daemon/capability_decay/history.rs","group":"841"},
+    {"test":"daemon::capability_decay::history::tests::capture_refuses_a_missing_home_without_creating_it","sourcePath":"SRC/neothd/src/daemon/capability_decay/history.rs","group":"841"},
+    {"test":"cli::capabilities::tests::clap_keeps_plain_list_and_quality_actions_separate","sourcePath":"SRC/neothd/src/cli/capabilities.rs","group":"841"},
+    {"test":"cli::doctor::tests::run_all_checks_returns_one_outcome_per_diagnostic","sourcePath":"SRC/neothd/src/cli/doctor.rs","group":"841"},
+    {"test":"cli::doctor::tests::check_docs_listed_count_matches_runtime_contract","sourcePath":"SRC/neothd/src/cli/doctor.rs","group":"810"}
+  ],
   "notClaimed": ["semantic answer quality", "automatic routing or provider disabling", "GUI or platform-specific acceptance", "full release acceptance"]
 }

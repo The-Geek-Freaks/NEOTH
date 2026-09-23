@@ -4238,6 +4238,25 @@ pub(crate) fn spawn_healthz(
     }
 }
 
+pub(crate) struct AuditRpcInputs<'a> {
+    pub(crate) config: &'a FreedomConfig,
+    pub(crate) home: &'a std::path::Path,
+    pub(crate) writer: &'a WalWriterHandle,
+    pub(crate) chat_runtime: std::sync::Arc<crate::daemon::chat_runtime::DaemonChatRuntime>,
+    pub(crate) gui_chat_runtime:
+        std::sync::Arc<dyn crate::daemon::gui_chat_protocol::GuiChatRuntime>,
+    pub(crate) pid_guard: &'a mut crate::daemon::pidfile::PidGuard,
+    pub(crate) endpoint_nonce: &'a str,
+    #[cfg(feature = "cluster")]
+    pub(crate) membership: std::sync::Arc<
+        crate::cluster::membership::MembershipController,
+    >,
+    #[cfg(feature = "cluster")]
+    pub(crate) outbound_task_delegate: std::sync::Arc<
+        crate::cluster::runtime_supervisor::OutboundTaskDelegateController,
+    >,
+}
+
 /// Mandatory same-user OS control listener. The internal Skill-mutation route is
 /// always present while this daemon owns the WAL; `audit_rpc.enabled` controls
 /// only the optional public audit/token routes. Returns BOTH the listener task
@@ -4247,23 +4266,24 @@ pub(crate) fn spawn_healthz(
 /// listener cannot be established. Async (binds the platform OS endpoint).
 /// WAL-emitting via the listener's writer clone.
 pub(crate) async fn spawn_audit_rpc(
-    config: &FreedomConfig,
-    home: &std::path::Path,
-    writer: &WalWriterHandle,
-    chat_runtime: std::sync::Arc<crate::daemon::chat_runtime::DaemonChatRuntime>,
-    gui_chat_runtime: std::sync::Arc<dyn crate::daemon::gui_chat_protocol::GuiChatRuntime>,
-    pid_guard: &mut crate::daemon::pidfile::PidGuard,
-    endpoint_nonce: &str,
-    #[cfg(feature = "cluster")] membership: std::sync::Arc<
-        crate::cluster::membership::MembershipController,
-    >,
-    #[cfg(feature = "cluster")] outbound_task_delegate: std::sync::Arc<
-        crate::cluster::runtime_supervisor::OutboundTaskDelegateController,
-    >,
+    inputs: AuditRpcInputs<'_>,
 ) -> anyhow::Result<(
     Option<JoinHandle<anyhow::Result<()>>>,
     Option<crate::daemon::audit_rpc::SidecarGuard>,
 )> {
+    let AuditRpcInputs {
+        config,
+        home,
+        writer,
+        chat_runtime,
+        gui_chat_runtime,
+        pid_guard,
+        endpoint_nonce,
+        #[cfg(feature = "cluster")]
+        membership,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate,
+    } = inputs;
     let home = home.to_path_buf();
     // Clear discovery a PRIOR daemon left behind on a crash (no clean
     // SidecarGuard drop) before atomically replacing its bearer. The strict

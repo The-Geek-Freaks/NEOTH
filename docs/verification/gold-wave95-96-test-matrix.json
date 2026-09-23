@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W417 OpenRaft inputs and W421citation terminal repair reviewed; hosted execution pending; no new acceptance",
+  "status": "P206accepted18;P120accepted12;Group841admitted834PASS7FAIL;W422W424repairs reviewed hostedpending;W417probe root repair and W428optional workspaceClippy",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 120951,
-    "sha256": "7C2750A9E1C41F134949F1FE218608560424CCE4C426BE1391705D322652699E"
+    "bytes": 121873,
+    "sha256": "00F11FBAF60115E9C0563B6B555D12BAD1542399BC7F345514E1E93DF5A3BB93"
   },
-  "sourceInputs": 695,
+  "sourceInputs": 700,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -552,7 +552,7 @@
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::paired_reply_binding_releases_a_retired_telegram_adapter",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "92EF8213A2CD0ED773291544E3ABD6A6ACFB46388E364E21E6B9F1F948A48051",
+      "sourceSha256": "75CE6030B7CE0436F8AF88B529E18C136FBFFADF5743B51BFA7B3AE145B78BE9",
       "junitClass": "neoth"
     },
     {
@@ -618,7 +618,7 @@
     {
       "test": "cli::serve_tasks::tests::readiness_publisher_revokes_on_false_and_cannot_republish_a_replaced_lease",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "92EF8213A2CD0ED773291544E3ABD6A6ACFB46388E364E21E6B9F1F948A48051",
+      "sourceSha256": "75CE6030B7CE0436F8AF88B529E18C136FBFFADF5743B51BFA7B3AE145B78BE9",
       "junitClass": "neoth"
     },
     {
@@ -2532,7 +2532,7 @@
     {
       "test": "cli::serve_tasks::tests::write_usage_snapshot_roundtrips_json",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "92EF8213A2CD0ED773291544E3ABD6A6ACFB46388E364E21E6B9F1F948A48051",
+      "sourceSha256": "75CE6030B7CE0436F8AF88B529E18C136FBFFADF5743B51BFA7B3AE145B78BE9",
       "junitClass": "neoth"
     },
     {
@@ -2916,13 +2916,13 @@
     {
       "test": "cli::serve_tasks::vault_mirror_scheduler_tests::vault_mirror_scheduler_requires_both_nightly_gates",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "92EF8213A2CD0ED773291544E3ABD6A6ACFB46388E364E21E6B9F1F948A48051",
+      "sourceSha256": "75CE6030B7CE0436F8AF88B529E18C136FBFFADF5743B51BFA7B3AE145B78BE9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::vault_mirror_scheduler_tests::accepted_reload_revoking_nightly_push_stops_scheduler",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "92EF8213A2CD0ED773291544E3ABD6A6ACFB46388E364E21E6B9F1F948A48051",
+      "sourceSha256": "75CE6030B7CE0436F8AF88B529E18C136FBFFADF5743B51BFA7B3AE145B78BE9",
       "junitClass": "neoth"
     },
     {
@@ -3180,7 +3180,7 @@
     {
       "test": "cli::serve_tasks::local_models_lifecycle_tests::local_models_runtime_requires_active_native_ollama_provider",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "92EF8213A2CD0ED773291544E3ABD6A6ACFB46388E364E21E6B9F1F948A48051",
+      "sourceSha256": "75CE6030B7CE0436F8AF88B529E18C136FBFFADF5743B51BFA7B3AE145B78BE9",
       "junitClass": "neoth"
     },
     {
@@ -4932,13 +4932,13 @@
     {
       "test": "cluster::membership::tests::v4_migration_preserves_membership_rows_and_introduces_default_deny_assignment",
       "sourcePath": "SRC/neothd/src/cluster/membership.rs",
-      "sourceSha256": "5AD3497CE474EA2D4FF97788167145744DF5465B9C73B685F5658FBAD36C3F6F",
+      "sourceSha256": "E78B6FB856DFFDDDA7B2C2B55D56167465C14AAC5B53893E5F082BB494549752",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::membership::tests::task_delegate_assignment_is_default_deny_exact_key_and_revisioned",
       "sourcePath": "SRC/neothd/src/cluster/membership.rs",
-      "sourceSha256": "5AD3497CE474EA2D4FF97788167145744DF5465B9C73B685F5658FBAD36C3F6F",
+      "sourceSha256": "E78B6FB856DFFDDDA7B2C2B55D56167465C14AAC5B53893E5F082BB494549752",
       "junitClass": "neoth"
     },
     {
@@ -5274,7 +5274,7 @@
     {
       "test": "cli::serve_tasks::tests::admitted_legacy_live_factories_seal_distinct_default_capabilities",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "92EF8213A2CD0ED773291544E3ABD6A6ACFB46388E364E21E6B9F1F948A48051",
+      "sourceSha256": "75CE6030B7CE0436F8AF88B529E18C136FBFFADF5743B51BFA7B3AE145B78BE9",
       "junitClass": "neoth"
     },
     {
@@ -6540,13 +6540,13 @@
     {
       "test": "cli::serve_tasks::tests::spawn_cron_scheduler_blocks_strict_and_fail_closed_custom",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "92EF8213A2CD0ED773291544E3ABD6A6ACFB46388E364E21E6B9F1F948A48051",
+      "sourceSha256": "75CE6030B7CE0436F8AF88B529E18C136FBFFADF5743B51BFA7B3AE145B78BE9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::zf06_fleet_tests::desired_dream_cron_uses_explicit_fail_closed_autonomy_rail",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "92EF8213A2CD0ED773291544E3ABD6A6ACFB46388E364E21E6B9F1F948A48051",
+      "sourceSha256": "75CE6030B7CE0436F8AF88B529E18C136FBFFADF5743B51BFA7B3AE145B78BE9",
       "junitClass": "neoth"
     },
     {
@@ -6564,13 +6564,13 @@
     {
       "test": "cluster::membership::tests::v5_to_v6_migration_preserves_unscoped_assignment_and_keeps_scopes_absent",
       "sourcePath": "SRC/neothd/src/cluster/membership.rs",
-      "sourceSha256": "5AD3497CE474EA2D4FF97788167145744DF5465B9C73B685F5658FBAD36C3F6F",
+      "sourceSha256": "E78B6FB856DFFDDDA7B2C2B55D56167465C14AAC5B53893E5F082BB494549752",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::membership::tests::scoped_task_delegate_assignment_is_exact_revisioned_and_default_deny",
       "sourcePath": "SRC/neothd/src/cluster/membership.rs",
-      "sourceSha256": "5AD3497CE474EA2D4FF97788167145744DF5465B9C73B685F5658FBAD36C3F6F",
+      "sourceSha256": "E78B6FB856DFFDDDA7B2C2B55D56167465C14AAC5B53893E5F082BB494549752",
       "junitClass": "neoth"
     },
     {
@@ -6744,7 +6744,7 @@
     {
       "test": "cluster::membership::tests::v6_to_v7_migration_preserves_scoped_assignment_and_keeps_outbound_empty",
       "sourcePath": "SRC/neothd/src/cluster/membership.rs",
-      "sourceSha256": "5AD3497CE474EA2D4FF97788167145744DF5465B9C73B685F5658FBAD36C3F6F",
+      "sourceSha256": "E78B6FB856DFFDDDA7B2C2B55D56167465C14AAC5B53893E5F082BB494549752",
       "junitClass": "neoth"
     },
     {
@@ -22541,6 +22541,32 @@
     "base": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
     "sources": [],
     "note": "Citation41 actualPASS/9unstarted; strict matcher repair; isolated OpenRaft0.9.25 input qualification. Coreef82all4/GUI143admitted; Group841 and FullCIbc9 active; LinuxClippyfailed. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave422428RepairsAndP206P120Acceptance": {
+    "base": "010d535c84b3966270877ae9bb808b51c8ea35e5",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/serve_tasks.rs",
+        "bytes": 530065,
+        "sha256": "75CE6030B7CE0436F8AF88B529E18C136FBFFADF5743B51BFA7B3AE145B78BE9",
+        "blob": "e23b2b806f6c6edd92e691ed90310f1590ec5da9"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve.rs",
+        "bytes": 174609,
+        "sha256": "87324684E9BCBC1B0F0103625BD9D0C59E21ABE205CC516EFE5F5B85C7E7377F",
+        "blob": "917a0ef2eefc33f8b24aaa259f96c61a676e6726"
+      },
+      {
+        "path": "SRC/neothd/src/cluster/membership.rs",
+        "bytes": 298775,
+        "sha256": "E78B6FB856DFFDDDA7B2C2B55D56167465C14AAC5B53893E5F082BB494549752",
+        "blob": "060c4bbf2c3eff92a73ad962daf76214b99be242"
+      }
+    ],
+    "note": "Root verified scoped actual terminals and relevant source carry. SQL ambiguous ORDERBY fixed unchanged predicates, AuditRpcInputs avoids9/8lint. Native1136/Group841 unchanged. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
