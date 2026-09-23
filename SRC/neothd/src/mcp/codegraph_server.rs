@@ -2602,7 +2602,8 @@ fn render_native_fs_read_enrichment(
     gaps: &crate::code_map::test_coverage::ImpactTestGapResult,
     call_id: crate::hooks::PreToolUseCallId,
 ) -> String {
-    let mut rendered = render_outline_enrichment(root_identity, relative, impact, gaps, call_id, None);
+    let mut rendered =
+        render_outline_enrichment(root_identity, relative, impact, gaps, call_id, None);
     rendered = rendered.replacen(
         "[untrusted built-in codegraph_outline sidecar]",
         "[untrusted native fs-read codegraph sidecar]",
@@ -5612,8 +5613,14 @@ fn root() { alpha(); beta(); }
         let plan = prepare_native_fs_read_enrichment(home.path(), &root, &target, &context, true)
             .unwrap()
             .expect("the actual generated descriptor and fresh indexed target are eligible");
-        let sidecar = plan.still_fresh().expect("fresh sidecar after the successful read boundary");
-        assert!(sidecar.as_str().contains("native_origin: direct_cli_os_file_read"));
+        let sidecar = plan
+            .still_fresh()
+            .expect("fresh sidecar after the successful read boundary");
+        assert!(
+            sidecar
+                .as_str()
+                .contains("native_origin: direct_cli_os_file_read")
+        );
         assert!(!sidecar.as_str().contains("configured_mcp:"));
 
         std::fs::write(&target, "fn changed_after_plan() {}\n").unwrap();

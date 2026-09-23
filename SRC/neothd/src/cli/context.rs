@@ -127,7 +127,10 @@ mod route_tests {
         let (route, body) = request_route_and_body(&args).unwrap();
 
         assert_eq!(route, "/cc/accounts/status");
-        assert!(body.is_empty(), "status must not send import content or handles");
+        assert!(
+            body.is_empty(),
+            "status must not send import content or handles"
+        );
     }
 }
 
@@ -183,7 +186,8 @@ mod windows_tests {
     }
 
     #[tokio::test]
-    async fn windows_context_cli_client_status_plan_apply_reopen_and_shutdown_are_bound_to_live_daemon() {
+    async fn windows_context_cli_client_status_plan_apply_reopen_and_shutdown_are_bound_to_live_daemon()
+     {
         let home = crate::test_env::canonical_tempdir().unwrap();
         let source = crate::test_env::canonical_tempdir().unwrap();
         std::fs::write(

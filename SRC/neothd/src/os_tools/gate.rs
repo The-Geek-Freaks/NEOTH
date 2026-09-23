@@ -286,7 +286,10 @@ async fn preflight_os_file_read_with_before_open<P: PolicyArgument>(
 /// audit await and redirect the descriptor outside the allowed object.
 fn open_no_follow_read_descriptor(canonical: &Path) -> std::io::Result<std::fs::File> {
     let parent_path = canonical.parent().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "file target has no parent")
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "file target has no parent",
+        )
     })?;
     let leaf = canonical.file_name().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::InvalidInput, "file target has no leaf")
@@ -344,9 +347,7 @@ fn open_absolute_directory_no_follow(path: &Path) -> std::io::Result<Dir> {
             // `std::fs::canonicalize` normally returns this spelling. Keep the
             // verbatim prefix when opening the capability root so the later
             // component walk remains in the same Windows namespace.
-            Prefix::VerbatimDisk(letter) => {
-                PathBuf::from(format!(r"\\?\{}:\", char::from(letter)))
-            }
+            Prefix::VerbatimDisk(letter) => PathBuf::from(format!(r"\\?\{}:\", char::from(letter))),
             _ => {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
@@ -1392,15 +1393,10 @@ mod tests {
         let mut cfg = cfg_for(dir.path());
         cfg.max_read_bytes = 4;
 
-        let admitted = preflight_os_file_read(
-            &file,
-            &cfg,
-            AutonomyLevel::Standard,
-            AuditSink::None,
-            0,
-        )
-        .await
-        .expect("policy admission binds but does not consume the file");
+        let admitted =
+            preflight_os_file_read(&file, &cfg, AutonomyLevel::Standard, AuditSink::None, 0)
+                .await
+                .expect("policy admission binds but does not consume the file");
         assert_eq!(admitted.canonical_path(), file.canonicalize().unwrap());
         assert!(matches!(
             invoke_preflighted_os_file_read(admitted, AuditSink::None, 0).await,
@@ -1441,15 +1437,10 @@ mod tests {
         fs::write(&target, b"accepted descriptor\n").unwrap();
         fs::write(&replacement, b"replacement path\n").unwrap();
         let cfg = cfg_for(dir.path());
-        let admitted = preflight_os_file_read(
-            &target,
-            &cfg,
-            AutonomyLevel::Standard,
-            AuditSink::None,
-            0,
-        )
-        .await
-        .unwrap();
+        let admitted =
+            preflight_os_file_read(&target, &cfg, AutonomyLevel::Standard, AuditSink::None, 0)
+                .await
+                .unwrap();
         fs::rename(&replacement, &target).unwrap();
         let text = invoke_preflighted_os_file_read(admitted, AuditSink::None, 0)
             .await

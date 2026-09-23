@@ -78,9 +78,9 @@ pub async fn run_fs(args: FsArgs) -> Result<()> {
                 (true, None) => anyhow::bail!(
                     "--codegraph-enrichment requires --repository-root <ABSOLUTE_ROOT>"
                 ),
-                (false, Some(_)) => anyhow::bail!(
-                    "--repository-root requires --codegraph-enrichment"
-                ),
+                (false, Some(_)) => {
+                    anyhow::bail!("--repository-root requires --codegraph-enrichment")
+                }
             };
             run_read(path, &cfg, args.output, enrichment_root).await
         }
@@ -289,10 +289,7 @@ async fn run_read(
                     if let Some(enrichment) = read.enrichment {
                         rendered["codegraph_enrichment"] = serde_json::Value::String(enrichment);
                     }
-                    println!(
-                        "{}",
-                        rendered
-                    );
+                    println!("{}", rendered);
                 }
                 OutputFormat::Table => {
                     print!("{}", read.text);
@@ -355,18 +352,12 @@ async fn read_with_optional_native_enrichment_with_cancellation(
     timeout: std::time::Duration,
 ) -> Result<FsReadOutcome, OsGateError> {
     let Some(repository_root) = repository_root else {
-        return read_os_file(
-            path,
-            &cfg.tools.os,
-            &cfg.autonomy_policy(),
-            sink,
-            now,
-        )
-        .await
-        .map(|text| FsReadOutcome {
-            text,
-            enrichment: None,
-        });
+        return read_os_file(path, &cfg.tools.os, &cfg.autonomy_policy(), sink, now)
+            .await
+            .map(|text| FsReadOutcome {
+                text,
+                enrichment: None,
+            });
     };
 
     let admitted = crate::os_tools::gate::preflight_os_file_read(
@@ -401,7 +392,9 @@ async fn read_with_optional_native_enrichment_with_cancellation(
     .map_err(|error| OsGateError::PreToolUse(error.to_string()))?;
     let hooks = crate::hooks::load_all_strict(&home.join("hooks"))
         .await
-        .map_err(|error| OsGateError::PreToolUse(format!("cannot load configured hooks: {error:#}")))?;
+        .map_err(|error| {
+            OsGateError::PreToolUse(format!("cannot load configured hooks: {error:#}"))
+        })?;
     let once_guard = crate::hooks::SessionOnceGuard::new();
     let hook_enrichment = match crate::hooks::run_pre_tool_use(
         &context,
@@ -563,10 +556,12 @@ mod tests {
         .await
         .expect("the real fs caller enriches one fresh indexed local file");
         assert_eq!(outcome.text, "fn indexed() {}\n");
-        assert!(outcome
-            .enrichment
-            .as_deref()
-            .is_some_and(|sidecar| sidecar.contains("native_origin: direct_cli_os_file_read")));
+        assert!(
+            outcome
+                .enrichment
+                .as_deref()
+                .is_some_and(|sidecar| sidecar.contains("native_origin: direct_cli_os_file_read"))
+        );
     }
 
     #[tokio::test]

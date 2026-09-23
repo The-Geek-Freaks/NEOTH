@@ -761,45 +761,185 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         state: OperationState::Verified,
     },
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.configure", "cluster", "cluster configure", "config", "Configuration > Cluster", "the GUI persists cluster settings through its composite configuration transaction, not this exact CLI leaf"),
+    unwired_operation(
+        "cluster.configure",
+        "cluster",
+        "cluster configure",
+        "config",
+        "Configuration > Cluster",
+        "the GUI persists cluster settings through its composite configuration transaction, not this exact CLI leaf",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.confirm", "cluster", "cluster confirm", "mesh", "Mesh > membership", "no exact cluster confirm callback is exposed"),
+    unwired_operation(
+        "cluster.confirm",
+        "cluster",
+        "cluster confirm",
+        "mesh",
+        "Mesh > membership",
+        "no exact cluster confirm callback is exposed",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.conflicts", "cluster", "cluster conflicts", "mesh", "Mesh > conflicts", "the mesh dashboard consumes conflict output as a composite refresh, without an exact operation receipt"),
+    unwired_operation(
+        "cluster.conflicts",
+        "cluster",
+        "cluster conflicts",
+        "mesh",
+        "Mesh > conflicts",
+        "the mesh dashboard consumes conflict output as a composite refresh, without an exact operation receipt",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.conflicts.resolve", "cluster", "cluster conflicts resolve", "mesh", "Mesh > conflict resolution", "no exact conflict-resolution callback is exposed"),
+    unwired_operation(
+        "cluster.conflicts.resolve",
+        "cluster",
+        "cluster conflicts resolve",
+        "mesh",
+        "Mesh > conflict resolution",
+        "no exact conflict-resolution callback is exposed",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.disable", "cluster", "cluster disable", "config", "Configuration > Cluster", "the GUI does not invoke the exact enable/disable CLI leaves"),
+    unwired_operation(
+        "cluster.disable",
+        "cluster",
+        "cluster disable",
+        "config",
+        "Configuration > Cluster",
+        "the GUI does not invoke the exact enable/disable CLI leaves",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.discover", "cluster", "cluster discover", "mesh", "Mesh > discovery", "no exact discovery scan callback is exposed"),
+    unwired_operation(
+        "cluster.discover",
+        "cluster",
+        "cluster discover",
+        "mesh",
+        "Mesh > discovery",
+        "no exact discovery scan callback is exposed",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.enable", "cluster", "cluster enable", "config", "Configuration > Cluster", "the GUI does not invoke the exact enable/disable CLI leaves"),
+    unwired_operation(
+        "cluster.enable",
+        "cluster",
+        "cluster enable",
+        "config",
+        "Configuration > Cluster",
+        "the GUI does not invoke the exact enable/disable CLI leaves",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.events", "cluster", "cluster events", "mesh", "Mesh > event log", "the mesh dashboard probes events only as part of a composite refresh"),
+    unwired_operation(
+        "cluster.events",
+        "cluster",
+        "cluster events",
+        "mesh",
+        "Mesh > event log",
+        "the mesh dashboard probes events only as part of a composite refresh",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.export-foreign", "cluster", "cluster export-foreign", "mesh", "Mesh > foreign replication", "export remains CLI-only"),
+    unwired_operation(
+        "cluster.export-foreign",
+        "cluster",
+        "cluster export-foreign",
+        "mesh",
+        "Mesh > foreign replication",
+        "export remains CLI-only",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.frontier", "cluster", "cluster frontier", "mesh", "Mesh > causal frontier", "no exact frontier callback is exposed"),
+    unwired_operation(
+        "cluster.frontier",
+        "cluster",
+        "cluster frontier",
+        "mesh",
+        "Mesh > causal frontier",
+        "no exact frontier callback is exposed",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.list", "cluster", "cluster list", "mesh", "Mesh > membership", "the GUI renders authority snapshots through other projections"),
+    unwired_operation(
+        "cluster.list",
+        "cluster",
+        "cluster list",
+        "mesh",
+        "Mesh > membership",
+        "the GUI renders authority snapshots through other projections",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.plan", "cluster", "cluster plan", "mesh", "Mesh > routing plan", "no exact plan rehearsal callback is exposed"),
+    unwired_operation(
+        "cluster.plan",
+        "cluster",
+        "cluster plan",
+        "mesh",
+        "Mesh > routing plan",
+        "no exact plan rehearsal callback is exposed",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.request-sync", "cluster", "cluster request-sync", "mesh", "Mesh > peer sync", "the GUI dispatches request-sync with a selected peer but has no standalone operation ledger receipt"),
+    unwired_operation(
+        "cluster.request-sync",
+        "cluster",
+        "cluster request-sync",
+        "mesh",
+        "Mesh > peer sync",
+        "the GUI dispatches request-sync with a selected peer but has no standalone operation ledger receipt",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.restore", "cluster", "cluster restore", "mesh", "Mesh > foreign replication", "restore is CLI-only"),
+    unwired_operation(
+        "cluster.restore",
+        "cluster",
+        "cluster restore",
+        "mesh",
+        "Mesh > foreign replication",
+        "restore is CLI-only",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.revoke", "cluster", "cluster revoke", "mesh", "Mesh > membership revoke", "the GUI uses its Buddy revocation transaction rather than this exact cluster leaf"),
+    unwired_operation(
+        "cluster.revoke",
+        "cluster",
+        "cluster revoke",
+        "mesh",
+        "Mesh > membership revoke",
+        "the GUI uses its Buddy revocation transaction rather than this exact cluster leaf",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.revoke-status", "cluster", "cluster revoke-status", "mesh", "Mesh > membership revocation", "the GUI reads Buddy revocation status rather than this exact cluster leaf"),
+    unwired_operation(
+        "cluster.revoke-status",
+        "cluster",
+        "cluster revoke-status",
+        "mesh",
+        "Mesh > membership revocation",
+        "the GUI reads Buddy revocation status rather than this exact cluster leaf",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.status", "cluster", "cluster status", "mesh", "Mesh > status", "the GUI consumes status in composite refreshes without a leaf-level parity receipt"),
+    unwired_operation(
+        "cluster.status",
+        "cluster",
+        "cluster status",
+        "mesh",
+        "Mesh > status",
+        "the GUI consumes status in composite refreshes without a leaf-level parity receipt",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.swarm", "cluster", "cluster swarm", "mesh", "Mesh > swarm", "the mesh dashboard probes swarm only as part of a composite refresh"),
+    unwired_operation(
+        "cluster.swarm",
+        "cluster",
+        "cluster swarm",
+        "mesh",
+        "Mesh > swarm",
+        "the mesh dashboard probes swarm only as part of a composite refresh",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.sync-state", "cluster", "cluster sync-state", "mesh", "Mesh > peer sync", "the mesh dashboard consumes sync state as a composite refresh"),
+    unwired_operation(
+        "cluster.sync-state",
+        "cluster",
+        "cluster sync-state",
+        "mesh",
+        "Mesh > peer sync",
+        "the mesh dashboard consumes sync state as a composite refresh",
+    ),
     #[cfg(feature = "cluster")]
-    unwired_operation("cluster.topology", "cluster", "cluster topology", "mesh", "Mesh > topology", "the GUI projects topology through a dedicated snapshot helper but lacks leaf-level receipt parity"),
+    unwired_operation(
+        "cluster.topology",
+        "cluster",
+        "cluster topology",
+        "mesh",
+        "Mesh > topology",
+        "the GUI projects topology through a dedicated snapshot helper but lacks leaf-level receipt parity",
+    ),
     #[cfg(feature = "cluster")]
     OperationParity {
         id: "cluster.task-delegate.inspect",

@@ -47303,9 +47303,7 @@ exit 0
         let visible_failures = window
             .get_chat_live_messages()
             .iter()
-            .filter(|row| {
-                row.role.as_str() == "error" || row.stream_phase.as_str() == "failed"
-            })
+            .filter(|row| row.role.as_str() == "error" || row.stream_phase.as_str() == "failed")
             .take(3)
             .map(|row| {
                 let text: String = row.text.chars().take(240).collect();

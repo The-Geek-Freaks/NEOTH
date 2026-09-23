@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T23:59:19.8908635Z",
-  "validationStatus": "W239 native read/W242 context status/W240-W243 recovery source-reviewed; Hosted execution pending",
+  "capturedUtc": "2026-09-23T00:02:31.7178180Z",
+  "validationStatus": "W239-W243 source reviewed and exactHostedformatted; executable gates pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -653,8 +653,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2165251,
-      "sha256": "6078D7C30904E8DBB900CD580FC28F15D8EF3DE574BFF0687FDE6F9E6856865E"
+      "bytes": 2165219,
+      "sha256": "2C8ADB066E317F59352AAC9CAEE98DD0C15F504B7515853D5F5C8C86281292ED"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -1073,8 +1073,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/context.rs",
-      "bytes": 11384,
-      "sha256": "3FDD8ABBA63A3468FC7A953BD6CC65CD22F6DA0055F3BFE92CB78C128C1847F6"
+      "bytes": 11423,
+      "sha256": "C5E0400F42AA1DB131E83286E9CA5371052B8610A59C4873C3F5B5891253B6DD"
     },
     {
       "path": "SRC/neothd/src/cli/credential_transfer.rs",
@@ -1128,8 +1128,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/fs.rs",
-      "bytes": 23570,
-      "sha256": "65BE1A8A564220F3A5C168A51B50DC640D3BE108CD59A2DAF2CEF2AAF1A4B87D"
+      "bytes": 23508,
+      "sha256": "042C6A0F6119069D9AD6F1B18898FC1932EDFF22D45F93CB18ACAEBDA5B118C4"
     },
     {
       "path": "SRC/neothd/src/cli/gui_stream.rs",
@@ -1223,8 +1223,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/parity_drift.rs",
-      "bytes": 73715,
-      "sha256": "E18AB6748FE6E67143A9064D2C2504D11E27130D6CE06265F12B8C4406F64DA2"
+      "bytes": 74815,
+      "sha256": "EA7D9C189C768B467E3BE45BA4166EFCA10EEC998A5E331DE4CAC73602611A0B"
     },
     {
       "path": "SRC/neothd/src/cli/proactive.rs",
@@ -1873,8 +1873,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "bytes": 218543,
-      "sha256": "4C5DCD0A2016BDC3CEA6471F1EB743D8836EA964BCF47625B93D65EEDC71AE9D"
+      "bytes": 218633,
+      "sha256": "EEFA8E5A9A09157474DCDE543DB7FED6DCE2BC5D090E1DA0E17EA18C9097D514"
     },
     {
       "path": "SRC/neothd/src/mcp/config.rs",
@@ -2093,8 +2093,8 @@
     },
     {
       "path": "SRC/neothd/src/os_tools/gate.rs",
-      "bytes": 92652,
-      "sha256": "F54E7CFD278C375945707686A5A8D5EFC411AA56119F77ECCD04725EB985E7EE"
+      "bytes": 92570,
+      "sha256": "D7A62375B7D56DF5959DB45B5C8D772AB9E484ADE1C72D318F329DBC9615B750"
     },
     {
       "path": "SRC/neothd/src/permissions/gate.rs",
@@ -2208,8 +2208,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "bytes": 318200,
-      "sha256": "43FEBCE8FEAC091D847FCA87082DC455A18F5935C06ABD11D1D425CF60C770EA"
+      "bytes": 318104,
+      "sha256": "FE6BFB05414621ADF3EBC20ECCEE92CA9D8EB83BCA976D15ABCD7CC3F5E6669A"
     },
     {
       "path": "SRC/neothd/src/providers/fallback.rs",

@@ -15,3 +15,8 @@ Scope: `cluster` feature leaf commands captured by `cli::parity_drift`. This is 
 | task-delegate show, task-delegate set | Wired W233 GUI actions with typed receipt/projection/readback handling. Leaf paths intentionally omit positional arguments. |
 
 The `parity_drift` guard compares these paths to Clap-derived leaf identities. Positional arguments and flags must not be part of `cli_path`.
+The grouped W239–W243 publication's Preflight35800178743 produced a formatting
+patch for seven Rust files. Root verified sourcea7f3, artifact SHA256SUMS, Git and
+local preimages, apply-check and exact postimages before importing it. This is
+Hosted-format evidence only; it does not replace the active Core/Group413/GUI123
+checks on that source. No local formatter, compiler or runtime was invoked.
