@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 136180,
-    "sha256": "55C511C3C55C0690C263734A0BF6303B4217DA02C2062E8835EB402E9E3B95C4"
+    "sha256": "69D55B0ECC55078859C3DC680B14194CAAEC8B278E1CB55288583721F193EF5B"
   },
   "sourceInputs": 776,
   "requiredNativeTests": [
@@ -25403,6 +25403,38 @@
       }
     ],
     "note": "W547boundPaperlesspublication,W548same-live-GChat,W550strictfixturecapability,W551opaque test-adapter repair;W549actual903/902/1/0 admitted;hosted execution pending",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave552GChatWorkflowRuntimeEnvEvidence": {
+    "base": "a7019b9e4546df82b2fbdfaa67b28730cda359f8",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 6898,
+        "sha256": "49ACD27013F62D330B7F92334F874206FDE1EC55CD9CE0AF321359822C467D30",
+        "blob": "372143d7fc1af1bd61378fa3d63d5105108a10e3"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 198420,
+        "sha256": "1250C21AF8903E574687D79EBEEF70B997A28A62199D3FE7532EA52B7EDC55F8",
+        "blob": "406ba4611721837e524fe53b9aadcbbbd590603a"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1208744,
+        "sha256": "E5B6536CCDFD3763DE99B4A669220F567AB44D82BBFA7CF54D2DD61F2BF294C8",
+        "blob": "7a21b1bc0a2fa9cedb68b80539bceafe69310c83"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1807377,
+        "sha256": "81AA4BD19083B8E8407D64EF27384A668676A0D454A592D3388E9920C6BFA2F2",
+        "blob": "852215cc58e09a7d257b22054f59369a620c02b3"
+      }
+    ],
+    "note": "Actual GitHub HTTP422 rejected job-level runner.temp; bind evidence root through RUNNER_TEMP runtime step; no GChat execution inferred",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

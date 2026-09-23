@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T23:20:32.2521481Z",
+  "capturedUtc": "2026-09-23T23:21:32.4578833Z",
   "validationStatus": "SOURCE_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 6875,
-      "sha256": "27F897997FAAA82453905785F40346A37422B058DB1502E29FAF7F1D4695E398"
+      "bytes": 6898,
+      "sha256": "49ACD27013F62D330B7F92334F874206FDE1EC55CD9CE0AF321359822C467D30"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -1323,18 +1323,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 198054,
-      "sha256": "DD4E2A41A0D793784085CB6697761BD00CFB686724495C2B24FA952E7769BDD4"
+      "bytes": 198420,
+      "sha256": "1250C21AF8903E574687D79EBEEF70B997A28A62199D3FE7532EA52B7EDC55F8"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1208378,
-      "sha256": "DA702BB1DE9F423F416E7D2EA30BD254F563065E6A12C89AF19A278DEBE9FCFB"
+      "bytes": 1208744,
+      "sha256": "E5B6536CCDFD3763DE99B4A669220F567AB44D82BBFA7CF54D2DD61F2BF294C8"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1807011,
-      "sha256": "171C1E63BAB9D941565FCB8F012469414B6EABA7F241FF864050593C4EB32E05"
+      "bytes": 1807377,
+      "sha256": "81AA4BD19083B8E8407D64EF27384A668676A0D454A592D3388E9920C6BFA2F2"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

@@ -18,7 +18,6 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
       CARGO_TERM_COLOR: never
       RUST_BACKTRACE: 1
-      W548_ROOT: ${{ runner.temp }}/w548-gchat-live-regressions
     steps:
       - name: Check out source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -28,6 +27,7 @@ jobs:
       - name: Require main branch dispatch
         run: |
           test "${GITHUB_REF}" = "refs/heads/main"
+          echo "W548_ROOT=${RUNNER_TEMP}/w548-gchat-live-regressions" >> "$GITHUB_ENV"
 
       - name: Set up Rust 1.91.0
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable

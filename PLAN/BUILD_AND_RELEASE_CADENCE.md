@@ -3,6 +3,12 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W552 GChat workflow dispatch correction (2026-09-24):**
+W547-W551 is published asa7019b9e; core35933302798 dispatched. GitHub rejected
+the GChat lane before execution because runner.temp is unavailable in job-level
+env. Its evidence root is now initialized from RUNNER_TEMP in a runtime step.
+No GChat fixture or acceptance is claimed from the rejected dispatch.
+
 **W547-W551 publication and live-chat follow-up (2026-09-24):**
 Group903a53 run35930437377 is admitted902PASS/1FAIL/0missing with179bindings;
 all13Paperless readiness and13Wizard IPC support cases passed. W550 repairs
