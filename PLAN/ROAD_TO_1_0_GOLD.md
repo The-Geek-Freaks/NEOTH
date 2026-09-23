@@ -8,6 +8,15 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W561 live delivery default-account repair (2026-09-24):**
+GChat35934263615 executed all4feature cases; the positive same-instance case
+failed because the queued item retained account_id=None while its v6 permit
+correctly named the concrete default account. The dispatcher now seals that
+planned ConnectionBound account before entering Egress. The prior explicit-
+account path still exits before this step, preserving mapped account authority.
+Independent review approved. Missing/revoked routes remain no-send; corrected
+feature execution is pending. Road and test-selection counts remain unchanged.
+
 **W558 artifact admission; W562 current CLI reference (2026-09-24):**
 Hosted35935325488 at77d914b7 passed TypeScript, bundle build and3/3plugin
 contract tests. Root admitted6source hashes,3artifact ZIP digests, all exit

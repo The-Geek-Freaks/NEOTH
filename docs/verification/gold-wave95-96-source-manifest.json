@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T23:51:16.1788142Z",
-  "validationStatus": "SOURCE_BOUND_ARTIFACTS_ADMITTED",
+  "capturedUtc": "2026-09-23T23:54:40.2696309Z",
+  "validationStatus": "SOURCE_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1023,8 +1023,8 @@
     },
     {
       "path": "docs/gold-wave535-connection-bound-egress.md",
-      "bytes": 1302,
-      "sha256": "DF19F9279B534B39475E70B714519749B6E96FDEEF7274C2C13D7E713D982521"
+      "bytes": 2423,
+      "sha256": "9E21B29E5E8AD58B8AFFF8EFC42BBEDC1C2590A63A19229CA48ADB7F829287DD"
     },
     {
       "path": "docs/gold-wave547-551-followup.md",
@@ -1353,18 +1353,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 201441,
-      "sha256": "C25B934F79206761802C87BE31D217081E9E517FA1EB0A073068983FDA50781B"
+      "bytes": 202044,
+      "sha256": "2207170D3F269A98254EE27B48DA5195C453AC5C46DE1476DFF800DBCD3B44E9"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1211765,
-      "sha256": "D916AF9DA77651EC6E764EABBEB6A6A265D8945C414DDF3A7B8985BBA468B491"
+      "bytes": 1212368,
+      "sha256": "8BA63E4F0A1BCA53BFE9B61A86170C84534921FA089A410E0153E313B50BD27F"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1810398,
-      "sha256": "5DB4A317623AAFBCF3E514D8A90D840B9556597FE58D90C5CD87D44BFB3D62A2"
+      "bytes": 1811001,
+      "sha256": "E85B75266D79342B6CB37E3B156F764067D37F7BAEE5A18C635A5137BF8C128C"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -2828,8 +2828,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "bytes": 124370,
-      "sha256": "31622933065988F16985F7E9F9511D3218CF3F978617406369B4B41980DB4C46"
+      "bytes": 124811,
+      "sha256": "E4619A04ACA3A5EEFA3C7E77BBDC7CE1CCE23310E1813224A317675E03AF8B93"
     },
     {
       "path": "SRC/neothd/src/daemon/proactive_egress.rs",

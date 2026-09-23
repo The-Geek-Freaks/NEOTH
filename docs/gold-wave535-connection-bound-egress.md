@@ -21,3 +21,22 @@ Independent static review is complete. Hosted formatting, compilation and
 behavioral execution remain pending at publication. No local executable ran
 under the BSOD hold. This slice does not close P1-14 or establish live provider
 acceptance.
+
+## W561: canonical default account before the v6 claim
+
+Hosted GChat35934263615 atce7394ba executed four exact feature cases. The
+positive same-instance case failed: the planned ConnectionBound route and live
+permit named the default account, but the original queue item had no account.
+The strict v6 validator rejected that mismatch before Claim and emitted only
+SidecarOnly, making the expected delivery count zero.
+
+The dispatcher now copies the selected ConnectionBound account into the in-flight
+item before Egress. Explicit mapped-account items keep their earlier authoritative
+path and continue before this normalization; g_01_mini stays sidecar-only. Claims,
+WAL, History and permit validation remain strict and share the same chosen account.
+The same shared path applies to default IRC, Twitch and Nostr routes. No live
+instance reconstruction or alternative send path was introduced.
+
+Independent review approved; the four GChat-feature cases require a fresh hosted
+run. Retained prior source/log/receipt ZIP hashes live under
+work/gold-20260906/wave561-gchatce7394. No new Road acceptance or local execution.

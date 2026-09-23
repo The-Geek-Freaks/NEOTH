@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "SOURCE_BOUND_ARTIFACTS_ADMITTED",
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 138600,
-    "sha256": "E6C47CD3323660EDB874E6FD52768D104D4D11E3AF7CD4418ED858C0149A8325"
+    "bytes": 138599,
+    "sha256": "73404166AFCE7984C95B111CB43A95BBCD6CD60E564206B5EBAF73F78D513745"
   },
   "sourceInputs": 789,
   "requiredNativeTests": [
@@ -588,31 +588,31 @@
     {
       "test": "daemon::proactive_dispatcher::tests::connection_bound_delivery_uses_only_the_exact_live_channel_ref",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "31622933065988F16985F7E9F9511D3218CF3F978617406369B4B41980DB4C46",
+      "sourceSha256": "E4619A04ACA3A5EEFA3C7E77BBDC7CE1CCE23310E1813224A317675E03AF8B93",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::unavailable_connection_bound_handles_settle_sidecar_before_transport",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "31622933065988F16985F7E9F9511D3218CF3F978617406369B4B41980DB4C46",
+      "sourceSha256": "E4619A04ACA3A5EEFA3C7E77BBDC7CE1CCE23310E1813224A317675E03AF8B93",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::malformed_connection_bound_targets_never_acquire_or_arm_live_transport",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "31622933065988F16985F7E9F9511D3218CF3F978617406369B4B41980DB4C46",
+      "sourceSha256": "E4619A04ACA3A5EEFA3C7E77BBDC7CE1CCE23310E1813224A317675E03AF8B93",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::failed_connection_bound_adapter_never_records_delivered",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "31622933065988F16985F7E9F9511D3218CF3F978617406369B4B41980DB4C46",
+      "sourceSha256": "E4619A04ACA3A5EEFA3C7E77BBDC7CE1CCE23310E1813224A317675E03AF8B93",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::plan_delivery_connection_bound_channels_require_the_live_registry",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "31622933065988F16985F7E9F9511D3218CF3F978617406369B4B41980DB4C46",
+      "sourceSha256": "E4619A04ACA3A5EEFA3C7E77BBDC7CE1CCE23310E1813224A317675E03AF8B93",
       "junitClass": "neoth"
     },
     {
@@ -25677,6 +25677,44 @@
       }
     ],
     "note": "Hosted Obsidian3/3+typecheck/build admitted6sources3zips; imported real JS+lock. Corece7394passedClippy/typecheck/CLI; source-bound paperlessprepare reference imported. Native lifecycle not in index.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave561Evidence": {
+    "base": "5a5b13ea957bb442bbfb5b7e1f840a66f1ada87e",
+    "sources": [
+      {
+        "path": "docs/gold-wave535-connection-bound-egress.md",
+        "bytes": 2423,
+        "sha256": "9E21B29E5E8AD58B8AFFF8EFC42BBEDC1C2590A63A19229CA48ADB7F829287DD",
+        "blob": "c7208dea93bd2de7d42eaeb1aca267182e7c8a9f"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 202044,
+        "sha256": "2207170D3F269A98254EE27B48DA5195C453AC5C46DE1476DFF800DBCD3B44E9",
+        "blob": "03dcd6043e8c5afff4da0bac27d54332f72a099f"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1212368,
+        "sha256": "8BA63E4F0A1BCA53BFE9B61A86170C84534921FA089A410E0153E313B50BD27F",
+        "blob": "0cd32fce78c3bf4a02ba55bd05e848a8915e5e13"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1811001,
+        "sha256": "E85B75266D79342B6CB37E3B156F764067D37F7BAEE5A18C635A5137BF8C128C",
+        "blob": "4f79e03bd99f7dfd917c12b6a4de37be9d3d9e30"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+        "bytes": 124811,
+        "sha256": "E4619A04ACA3A5EEFA3C7E77BBDC7CE1CCE23310E1813224A317675E03AF8B93",
+        "blob": "0d7c5f8ef8a100d318985d7fb9e208a7cc945c44"
+      }
+    ],
+    "note": "ConnectionBound defaultaccount canonicalization before strict v6claim; mapped accounts unchanged. Reviewed, GChat feature rerun pending",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

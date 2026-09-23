@@ -1073,7 +1073,7 @@ pub(crate) async fn run_proactive_delivery_tick_with_accepted(
         channel_fingerprints: &channel_fingerprints,
     };
     let mut delivered = 0usize;
-    for (item, queue_generation) in drained {
+    for (mut item, queue_generation) in drained {
         // An explicit account was selected and persisted with this item. Its
         // original channel remains authoritative: a later source/default
         // routing edit must never replace account A with whatever account B
@@ -1195,6 +1195,13 @@ pub(crate) async fn run_proactive_delivery_tick_with_accepted(
                 &runtime.credentials,
             )
         };
+        // A ConnectionBound route selects one concrete daemon-owned default
+        // account. Seal that selection into the in-flight item before v6
+        // claims bind the permit, so the durable item, ChannelRef and live
+        // generation all describe the same authority.
+        if let DeliveryRoute::ConnectionBound { channel_ref, .. } = &route {
+            item.account_id = Some(channel_ref.account_id.clone());
+        }
         let item_for_configuration_failure = item.clone();
         let status = match deliver_live_route(
             &egress,
