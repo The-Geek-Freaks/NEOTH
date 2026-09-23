@@ -1368,8 +1368,6 @@ mod tests {
     #[test]
     fn citation_child_policy_is_bounded_and_cancellation_is_shared() {
         assert!(CITATION_CHILD_TIMEOUT > std::time::Duration::from_secs(0));
-        assert!(CITATION_CHILD_STDOUT_CAP_BYTES > 0);
-        assert!(CITATION_CHILD_STDERR_CAP_BYTES > 0);
         assert!(CITATION_CHILD_DRAIN_GRACE > std::time::Duration::from_secs(0));
         let cancellation = CitationGuiChildCancellation::new();
         let worker = cancellation.clone();
@@ -1444,11 +1442,11 @@ mod tests {
         let confirmed = request
             .approved_lookup_command_args(request_id, true)
             .expect("valid confirmed args");
-        assert!(!preflight.iter().any(|arg| *arg == "challenge-token"));
-        assert!(!decision.iter().any(|arg| *arg == "challenge-token"));
-        assert!(!ready.iter().any(|arg| *arg == "proof-token"));
-        assert!(!ready.iter().any(|arg| *arg == "--gui-approval-stdin"));
-        assert!(confirmed.iter().any(|arg| *arg == "--gui-approval-stdin"));
+        assert!(!preflight.contains(&"challenge-token"));
+        assert!(!decision.contains(&"challenge-token"));
+        assert!(!ready.contains(&"proof-token"));
+        assert!(!ready.contains(&"--gui-approval-stdin"));
+        assert!(confirmed.contains(&"--gui-approval-stdin"));
         assert!(
             request
                 .preflight_command_args("request id with spaces")

@@ -2211,6 +2211,8 @@ pub(crate) mod w458_test_support {
         pub(crate) buddy_generation: u64,
         pub(crate) main_initial_sequence: u64,
         pub(crate) buddy_initial_sequence: u64,
+        pub(crate) main_replay_cursor: u64,
+        pub(crate) buddy_replay_cursor: u64,
         pub(crate) main_frames: Vec<GuiChatStreamFrame>,
         pub(crate) buddy_frames: Vec<GuiChatStreamFrame>,
         pub(crate) provider_invocations: usize,
@@ -2218,7 +2220,9 @@ pub(crate) mod w458_test_support {
         pub(crate) post_provider_hook_observed: bool,
     }
 
-    struct W458StreamProvider;
+    struct W458StreamProvider {
+        release: Arc<tokio::sync::Semaphore>,
+    }
 
     #[async_trait]
     impl Provider for W458StreamProvider {
@@ -2239,6 +2243,11 @@ pub(crate) mod w458_test_support {
             _request: Request,
             _permit: &crate::providers::ProviderDispatchPermit,
         ) -> anyhow::Result<ChunkStream> {
+            self.release
+                .acquire()
+                .await
+                .map_err(|_| anyhow::anyhow!("W458 producer gate closed"))?
+                .forget();
             STREAM_OPENS.fetch_add(1, Ordering::SeqCst);
             Ok(Box::pin(
                 stream::iter(vec![
@@ -2284,12 +2293,20 @@ pub(crate) mod w458_test_support {
         hook_toml: &str,
     ) -> anyhow::Result<(
         DaemonGuiChatRuntime,
-        Uuid,
+        GuiChatStartResponse,
         crate::wal::writer::WalWriterCompletion,
         tempfile::TempDir,
+        Arc<tokio::sync::Semaphore>,
     )> {
         let home = tempfile::tempdir()?;
-        crate::consent::grant(home.path(), crate::cli::init::ProviderKind::ClaudeCli)?;
+        crate::consent::prepare_grant_routes(
+            home.path(),
+            &[crate::consent::ConsentRoute::new(
+                crate::cli::init::ProviderKind::ClaudeCli,
+                None,
+            )],
+        )?
+        .commit()?;
         std::fs::create_dir_all(home.path().join("hooks"))?;
         std::fs::write(home.path().join("hooks").join("w458.toml"), hook_toml)?;
         let mut config = crate::config::FreedomConfig {
@@ -2320,7 +2337,13 @@ pub(crate) mod w458_test_support {
             controller,
             writer,
         ));
-        core.publish_provider(Arc::new(W458StreamProvider) as Arc<dyn Provider>, 0)
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        core.publish_provider(
+            Arc::new(W458StreamProvider {
+                release: Arc::clone(&release),
+            }) as Arc<dyn Provider>,
+            0,
+        )
             .await?;
         let runtime = DaemonGuiChatRuntime::new(
             core,
@@ -2328,7 +2351,6 @@ pub(crate) mod w458_test_support {
             config_path,
             "w458-boot".into(),
         );
-        let turn_id = Uuid::now_v7();
         let request_id = GuiChatRequestId(Uuid::now_v7());
         let request = GuiChatPreflightRequest {
             schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
@@ -2343,54 +2365,49 @@ pub(crate) mod w458_test_support {
             reasoning_display: false,
             attachments: Vec::new(),
         };
-        let mut state = runtime.state.lock().await;
-        state.preflights.insert(
-            "w458-preflight".into(),
-            Preflight {
-                request: request.clone(),
-                digest: GuiChatDigest("w458-digest".into()),
-                staged: Vec::new(),
-                challenge: "w458-challenge".into(),
-                start_capability: None,
-                ephemeral: Some(crate::consent::EphemeralConsent::default()),
-            },
-        );
-        state.turns.insert(
-            turn_id,
-            Turn {
+        let preflight = runtime.preflight(request.clone()).await?;
+        let proof = crate::cli::consent_challenge::mint_ready_request_bound_gui_chat_consent(
+            home.path(),
+            &preflight.preflight_descriptor_digest.0,
+            &preflight.consent_challenge.0,
+            &request.session_id,
+            crate::time::now_unix_secs(),
+        )?;
+        let decision = runtime
+            .decide(GuiChatConsentDecisionRequest {
+                schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+                expected_boot_id: "w458-boot".into(),
+                preflight_id: preflight.preflight_id.clone(),
+                preflight_descriptor_digest: preflight.preflight_descriptor_digest.clone(),
+                consent_challenge: preflight.consent_challenge.clone(),
+                decision: GuiChatConsentDecision::AllowOnce,
+                consent_proof: Some(GuiChatConsentProof(proof.to_string())),
+            })
+            .await?;
+        let (intent, start_capability, attachment_tickets) = match decision {
+            GuiChatConsentDecisionResponse::Approved {
+                turn_intent_digest,
+                start_capability,
+                attachment_tickets,
+                ..
+            } => (turn_intent_digest, start_capability, attachment_tickets),
+            GuiChatConsentDecisionResponse::Denied { .. } => {
+                anyhow::bail!("W458 ready consent unexpectedly denied")
+            }
+        };
+        let start = runtime
+            .start(GuiChatStartRequest {
+                schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+                expected_boot_id: "w458-boot".into(),
                 request_id,
-                intent: GuiChatDigest("w458-intent".into()),
-                session: request.session_id,
-                incognito: false,
-                reasoning_display: false,
-                next_reasoning_sequence: 1,
-                reasoning_event_count: 0,
-                reasoning_byte_count: 0,
-                reasoning_terminal: None,
-                cancellation: Default::default(),
-                cancel_capability: "w458-cancel".into(),
-                grant: "w458-grant".into(),
-                subscriptions: HashMap::new(),
-                live_reasoning_owner: None,
-                replay: VecDeque::new(),
-                replay_bytes: 0,
-                next_sequence: 1,
-                phase: GuiChatPhase::Waiting,
-                terminal: None,
-                effects: HashMap::new(),
-                next_effect_id: 1,
-                effect_admission: Arc::new(Mutex::new(())),
-                effect_changed: Arc::new(Notify::new()),
-                owner_registry: Arc::new(StdMutex::new(OwnerRegistry {
-                    closed: false,
-                    cancellations: Vec::new(),
-                })),
-                staged: Vec::new(),
-                ephemeral: Some(crate::consent::EphemeralConsent::default()),
-            },
-        );
-        drop(state);
-        Ok((runtime, turn_id, completion, home))
+                session_id: request.session_id,
+                origin_surface: request.origin_surface,
+                turn_intent_digest: intent,
+                start_capability,
+                attachment_tickets,
+            })
+            .await?;
+        Ok((runtime, start, completion, home, release))
     }
 
     async fn read_header(stream: &mut tokio::io::DuplexStream) -> anyhow::Result<()> {
@@ -2438,27 +2455,69 @@ pub(crate) mod w458_test_support {
         anyhow::bail!("W458 stream exceeded the bounded terminal frame budget")
     }
 
+    async fn join_attach_for_diagnostic(
+        task: &mut tokio::task::JoinHandle<GuiChatResult<()>>,
+    ) -> String {
+        match tokio::time::timeout(Duration::from_secs(1), &mut *task).await {
+            Ok(result) => format!("{result:?}"),
+            Err(_) => {
+                task.abort();
+                let _ = task.await;
+                "timed out and was aborted".into()
+            }
+        }
+    }
+
     pub(crate) async fn capture_real_producer(replace: bool) -> anyhow::Result<W458RuntimeCapture> {
         const BLOCK: &str = "\nname = \"w458-post-provider-block\"\nstage = \"post_provider_call\"\n[matcher]\npattern = \"sk-w458-never-visible\"\n[action]\nkind = \"block\"\nreason = \"synthetic secret\"\n";
         const REPLACE: &str = "\nname = \"w458-post-provider-replace\"\nstage = \"post_provider_call\"\n[matcher]\npattern = \"sk-w458-never-visible\"\n[action]\nkind = \"replace\"\ntemplate = \"[REDACTED]\"\n";
         STREAM_OPENS.store(0, Ordering::SeqCst);
         STREAM_ITEMS_POLLED.store(0, Ordering::SeqCst);
-        let (runtime, turn_id, completion, home) =
+        let (runtime, start, completion, home, release) =
             runtime_with_admitted_turn(if replace { REPLACE } else { BLOCK }).await?;
+        macro_rules! cleanup_w458_failure {
+            () => {{
+                // `start` has registered the producer before this fixture can
+                // exchange its two attachments. Always release the test gate
+                // before draining so no failure path strands that owned task.
+                release.add_permits(1);
+                runtime.close_and_drain().await;
+                drop(runtime);
+                completion.wait().await
+            }};
+        }
+        let turn_id = start.turn_id.0;
+        let same_session_grant = start.same_session_attach_grant.grant.clone();
         let exchange = |surface| GuiChatAttachExchangeRequest {
             schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
             expected_boot_id: "w458-boot".into(),
             turn_id: GuiChatTurnId(turn_id),
-            session_id: "w458-session".into(),
+            session_id: start.same_session_attach_grant.session_id.clone(),
             desired_surface: surface,
-            grant: GuiChatOpaqueCapability("w458-grant".into()),
+            grant: same_session_grant.clone(),
         };
-        let main = runtime
-            .exchange_attach(exchange(GuiChatSurface::Main))
-            .await?;
-        let buddy = runtime
-            .exchange_attach(exchange(GuiChatSurface::Buddy))
-            .await?;
+        let main = match runtime.exchange_attach(exchange(GuiChatSurface::Main)).await {
+            Ok(response) => response,
+            Err(error) => {
+                let writer = cleanup_w458_failure!();
+                return Err(anyhow::anyhow!(
+                    "W458 main attach exchange failed: {error:?}; writer={writer:?}"
+                ));
+            }
+        };
+        let buddy = match runtime.exchange_attach(exchange(GuiChatSurface::Buddy)).await {
+            Ok(response) => response,
+            Err(error) => {
+                let writer = cleanup_w458_failure!();
+                return Err(anyhow::anyhow!(
+                    "W458 buddy attach exchange failed: {error:?}; writer={writer:?}"
+                ));
+            }
+        };
+        anyhow::ensure!(
+            main.initial_sequence > 0 && buddy.initial_sequence > 0,
+            "W458 real start must publish Accepted before either attachment exchange"
+        );
         let request = |response: &GuiChatAttachExchangeResponse| GuiChatAttachRequest {
             schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
             expected_boot_id: "w458-boot".into(),
@@ -2472,7 +2531,7 @@ pub(crate) mod w458_test_support {
         let (main_server, mut main_client) = tokio::io::duplex(128 * 1024);
         let main_runtime = runtime.clone();
         let main_request = request(&main);
-        let main_task = tokio::spawn(async move {
+        let mut main_task = tokio::spawn(async move {
             main_runtime
                 .attach(Box::new(main_server), main_request)
                 .await
@@ -2480,28 +2539,66 @@ pub(crate) mod w458_test_support {
         let (buddy_server, mut buddy_client) = tokio::io::duplex(128 * 1024);
         let buddy_runtime = runtime.clone();
         let buddy_request = request(&buddy);
-        let buddy_task = tokio::spawn(async move {
+        let mut buddy_task = tokio::spawn(async move {
             buddy_runtime
                 .attach(Box::new(buddy_server), buddy_request)
                 .await
         });
-        read_header(&mut main_client).await?;
-        read_header(&mut buddy_client).await?;
-        runtime.schedule_turn(turn_id);
-        let main_frames = read_terminal_frames(
+        let headers = async {
+            tokio::time::timeout(Duration::from_secs(10), read_header(&mut main_client))
+                .await
+                .map_err(|_| anyhow::anyhow!("W458 main attach header timed out"))??;
+            tokio::time::timeout(Duration::from_secs(10), read_header(&mut buddy_client))
+                .await
+                .map_err(|_| anyhow::anyhow!("W458 buddy attach header timed out"))??;
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+        if let Err(header_error) = headers {
+            // Do not leave a gate-held producer or registered runtime task
+            // behind when attach setup itself fails.
+            let main_attach = join_attach_for_diagnostic(&mut main_task).await;
+            let buddy_attach = join_attach_for_diagnostic(&mut buddy_task).await;
+            let writer = cleanup_w458_failure!();
+            return Err(header_error.context(format!(
+                "W458 attach header setup failed; main attach={main_attach}; buddy attach={buddy_attach}; writer={writer:?}"
+            )));
+        }
+        release.add_permits(1);
+        let main_frames = match read_terminal_frames(
             &runtime,
             turn_id,
             if replace { "replace" } else { "block" },
             &mut main_client,
         )
-        .await?;
-        let buddy_frames = read_terminal_frames(
+        .await {
+            Ok(frames) => frames,
+            Err(read_error) => {
+                let main_attach = join_attach_for_diagnostic(&mut main_task).await;
+                let buddy_attach = join_attach_for_diagnostic(&mut buddy_task).await;
+                let writer = cleanup_w458_failure!();
+                return Err(read_error.context(format!(
+                    "W458 main stream ended before terminal; main attach={main_attach}; buddy attach={buddy_attach}; writer={writer:?}"
+                )));
+            }
+        };
+        let buddy_frames = match read_terminal_frames(
             &runtime,
             turn_id,
             if replace { "replace" } else { "block" },
             &mut buddy_client,
         )
-        .await?;
+        .await {
+            Ok(frames) => frames,
+            Err(read_error) => {
+                let main_attach = join_attach_for_diagnostic(&mut main_task).await;
+                let buddy_attach = join_attach_for_diagnostic(&mut buddy_task).await;
+                let writer = cleanup_w458_failure!();
+                return Err(read_error.context(format!(
+                    "W458 buddy stream ended before terminal; main attach={main_attach}; buddy attach={buddy_attach}; writer={writer:?}"
+                )));
+            }
+        };
         main_task.await.context("W458 main task join")??;
         buddy_task.await.context("W458 buddy task join")??;
         runtime.close_and_drain().await;
@@ -2534,6 +2631,11 @@ pub(crate) mod w458_test_support {
             buddy_generation: buddy.subscription_generation,
             main_initial_sequence: main.initial_sequence,
             buddy_initial_sequence: buddy.initial_sequence,
+            // The fixture deliberately replays the full attachment history.
+            // `initial_sequence` is retained above as the real exchange upper
+            // bound, while reducer adoption must begin at this request cursor.
+            main_replay_cursor: 0,
+            buddy_replay_cursor: 0,
             main_frames,
             buddy_frames,
             provider_invocations: STREAM_OPENS.load(Ordering::SeqCst),

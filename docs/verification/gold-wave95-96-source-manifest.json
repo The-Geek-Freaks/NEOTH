@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T20:10:43.7048406Z",
-  "validationStatus": "W487 verified2file hosted rustfmt import and restored exact upload-artifact pins after accidental count substitution; inventory734/native1183/Group888/GUI146Linux142macOS; Group888 redispatch required",
+  "capturedUtc": "2026-09-23T20:36:46.7250338Z",
+  "validationStatus": "W490 P219accepted38/38; W488W489Chat realstart+WAL+GUIdependencyrepair; W491Clippy23,W492Buddyinventory9,W493Windows17;737sources1183native+Win24Linux33mac32;Group888;GUI146Linux142mac;hostedpending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -103,8 +103,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 9908,
-      "sha256": "51646791E3B32CEB9472E2D8AAA12E256AA0A05EE5CF2483E66B7042E0C6B6CC"
+      "bytes": 10034,
+      "sha256": "82F24B787BB5C1C8F1CD64EBF3FF0E06C3F1353F9967816B62B5419DCB2A4BC4"
     },
     {
       "path": "docs/architecture.md",
@@ -957,6 +957,16 @@
       "sha256": "DF4F0BD5A1612A54AEC9E949ABB12C3A7D5413ED09AD2A58FE48A15A74FF7A11"
     },
     {
+      "path": "docs/gold-wave490-budget-quorum-acceptance.md",
+      "bytes": 1795,
+      "sha256": "0F2A2A432FF51B499356AD79528FCFA9E7B547B689EE4A92470F4BD4FA8014C6"
+    },
+    {
+      "path": "docs/gold-wave491-493-hosted-repairs.md",
+      "bytes": 3893,
+      "sha256": "8352DF6885F1C74CDC3415EFBCC65F093D1E1D8C14D5A0D360FBDA62D2C414DD"
+    },
+    {
       "path": "docs/install.md",
       "bytes": 13637,
       "sha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625"
@@ -1092,6 +1102,11 @@
       "sha256": "9C2A07E4203185A2BC04CD7961DA06A9C5C5DD732AC08B4CAE9F2B4412259877"
     },
     {
+      "path": "docs/verification/gold-wave490-p219-acceptance.json",
+      "bytes": 9057,
+      "sha256": "0DB4F30DF6F19DAF2AD9D4033E140FA02002EA55A276F76CFFBA982F59474C15"
+    },
+    {
       "path": "docs/verification/managed-browser-cft154.json",
       "bytes": 2497,
       "sha256": "80443D2F6E6A6E226F1617F7F5463017071D9D21130D1FCD116470F147455337"
@@ -1163,18 +1178,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 183323,
-      "sha256": "643190325298AC97DD5956319EEA36A48440F744ED645ED6D3C0F6A2A24B754A"
+      "bytes": 185539,
+      "sha256": "0916E620A683A7DAAA7C0B39249DF4BB05BC3C51D60279EE3336DB3AEF807099"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1193536,
-      "sha256": "1493FCFBA50EB14A53707CCE5F52E73A59104AA5A8DE11EAC6EF79FE895C2FCB"
+      "bytes": 1195774,
+      "sha256": "DCA4DCB557C69F5D29843C3B701B4332CA5A6CF14AB94C39976271CC3ED049C3"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1791869,
-      "sha256": "B8BA1FDED823955214D62004344A4145700A4F7A9EFD29928BEB85C98D98C382"
+      "bytes": 1794247,
+      "sha256": "52848D060030FA7C229334DA4991ED4EE1805F9DCA740B53EE94499735C56D34"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1343,8 +1358,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/citation_gui.rs",
-      "bytes": 54750,
-      "sha256": "AD47F7CEE7EDF968E166AB859EE80D4C46CC47B31B086074AE330C5F5E36E558"
+      "bytes": 54567,
+      "sha256": "DAF70ECCC97106319F68524EE8B173D734C4A9338ABE572E242C0373789826AC"
     },
     {
       "path": "SRC/neothd-gui/src/code_map_controller.rs",
@@ -1383,8 +1398,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2201524,
-      "sha256": "B3AC6B0FAFA3D82C0BC32CA0288268FD953019FEB4DE640CB28975008E8028FE"
+      "bytes": 2197927,
+      "sha256": "2D378B0FC5BB0CCEB9D279ED39FBD66E35817E1A084A50FB1E1D1051DC1A06BB"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -1778,8 +1793,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1145629,
-      "sha256": "0F32327F678BC8FE86BDFE10D5C6F37C9E660DA95899B9AD20330592D34996F0"
+      "bytes": 1146828,
+      "sha256": "6282C352B60351F060F737B74A5E3C9C6A06944F8A420D15FC01E61E76661D48"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -1998,8 +2013,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/parity_drift.rs",
-      "bytes": 77969,
-      "sha256": "81ED394ECD3BAD35B41FD9AF4F58798F7A359D07C276A99119E14CB8A426B141"
+      "bytes": 81970,
+      "sha256": "C8CB9EAAC970B4F3A63E53851ABB5A6155B0E386E3D1E4C3E53580908E743530"
     },
     {
       "path": "SRC/neothd/src/cli/proactive.rs",
@@ -2518,8 +2533,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_bridge.rs",
-      "bytes": 60257,
-      "sha256": "23CBD344B82F67345FF61624A3A0B70FD47C174F3FB8CCCF74FAEE8759271D6C"
+      "bytes": 60957,
+      "sha256": "57903810F3D164AF2092B82BEA3FF21FE31E736F1119D63DF8E0F61400ED71A1"
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_protocol.rs",
@@ -2528,8 +2543,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "bytes": 163054,
-      "sha256": "41170E650590E8C7C2E971638B6BBB45CCFD24197D427B5F4791AC1F97DC6D25"
+      "bytes": 167917,
+      "sha256": "1BD85131969DE3E8BC9F08C16D508D311FCF73F1A346A49C31EFE8710F7C2D1C"
     },
     {
       "path": "SRC/neothd/src/daemon/live_throughput.rs",
@@ -3348,8 +3363,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/store.rs",
-      "bytes": 249665,
-      "sha256": "A031C4AF44C457965B0112888C951FEF7348386B4027795A564A4C383EE5F994"
+      "bytes": 250985,
+      "sha256": "FFA894BCE1ECAE4B0FF31FF26037AE14A2668FDB53ADD169DAAC9E950D9C38B7"
     },
     {
       "path": "SRC/neothd/src/slash/schema.rs",

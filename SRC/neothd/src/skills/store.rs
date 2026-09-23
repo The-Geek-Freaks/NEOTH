@@ -6330,7 +6330,7 @@ mod reported_commit_tests {
 
     #[cfg(windows)]
     #[test]
-    fn private_stage_keeps_the_bound_parent_when_ambient_parent_is_swapped() {
+    fn live_bound_parent_native_rename_is_denied() {
         let _scope = windows_private_atomic_stage::qualified_local_ntfs_for_test();
         let temp = tempdir().unwrap();
         let ambient_parent = temp.path().join("bound-parent");
@@ -6348,52 +6348,78 @@ mod reported_commit_tests {
         let hook_ambient_parent = ambient_parent.clone();
         let hook_displaced_parent = displaced_parent.clone();
         windows_private_atomic_stage::set_before_rename_for_test(move || {
-            // Win32's path-based directory rename refuses the live subtree even
-            // when its handles share DELETE. Use the native capability-relative
-            // operation an uncooperative same-user writer can actually perform.
+            // This hosted Windows fixture refused both the path-based attempt
+            // and this native capability-relative operation while the subtree
+            // has a live bound parent. Keep this as a separate platform-result
+            // regression; it is not a claim about every Windows configuration.
             let source = open_windows_mutation_handle(
                 &ambient_namespace.dir,
                 OsStr::new("bound-parent"),
                 &hook_ambient_parent,
             )
             .unwrap();
-            windows_rename_open_handle_ex(
+            let error = windows_rename_open_handle_ex(
                 &source,
                 &ambient_namespace.dir,
                 OsStr::new("displaced-parent"),
                 false,
                 &hook_displaced_parent,
             )
-            .unwrap();
-            create_private_child_directory(&ambient_namespace.dir, OsStr::new("bound-parent"))
-                .unwrap();
-            let replacement_parent = open_real_child_dir(
-                &ambient_namespace.dir,
-                OsStr::new("bound-parent"),
-                &hook_ambient_parent,
-            )
-            .unwrap();
-            atomic_write_private_child(
-                &replacement_parent,
-                OsStr::new("state.json"),
-                &hook_ambient_parent.join("state.json"),
-                b"ambient replacement",
-            )
-            .unwrap();
+            .expect_err("the hosted Windows fixture must reject moving the live bound parent");
+            assert!(
+                error.chain().filter_map(|cause| cause.downcast_ref::<std::io::Error>()).any(
+                    |source| source.raw_os_error() == Some(5)
+                ),
+                "hosted fixture native parent rename must fail with AccessDenied: {error:#}"
+            );
+            assert!(
+                !hook_displaced_parent.exists(),
+                "a failed parent rename must not publish the displaced namespace"
+            );
         });
 
         atomic_write_private_child(&root.dir, OsStr::new("state.json"), &target, b"new")
             .expect("private publish must resolve the target through the bound parent");
 
         assert_eq!(
-            std::fs::read(displaced_parent.join("state.json")).unwrap(),
-            b"new",
-            "the bound directory object remains the publication destination"
-        );
-        assert_eq!(
             std::fs::read(&target).unwrap(),
+            b"new",
+            "the bound parent remains publishable after the hosted fixture refuses its rename"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_stage_publishes_through_bound_parent_despite_mismatched_display_path() {
+        let _scope = windows_private_atomic_stage::qualified_local_ntfs_for_test();
+        let temp = tempdir().unwrap();
+        let bound_parent = temp.path().join("bound-parent");
+        let decoy_parent = temp.path().join("ambient-decoy");
+        std::fs::create_dir(&bound_parent).unwrap();
+        std::fs::create_dir(&decoy_parent).unwrap();
+        let actual_target = bound_parent.join("state.json");
+        let decoy_target = decoy_parent.join("state.json");
+        std::fs::write(&decoy_target, b"ambient replacement").unwrap();
+        let root = open_bound_directory(&bound_parent, false, "test store")
+            .unwrap()
+            .unwrap();
+
+        // `display_path` is diagnostics-only. Publication must remain relative
+        // to the retained parent capability even when that display path names a
+        // live, writable decoy namespace.
+        atomic_write_private_child(
+            &root.dir,
+            OsStr::new("state.json"),
+            &decoy_target,
+            b"new",
+        )
+        .expect("private publish must use the retained parent instead of the decoy display path");
+
+        assert_eq!(std::fs::read(&actual_target).unwrap(), b"new");
+        assert_eq!(
+            std::fs::read(&decoy_target).unwrap(),
             b"ambient replacement",
-            "the swapped ambient parent is never used as the publication destination"
+            "the mismatched display path is never a publication destination"
         );
     }
 

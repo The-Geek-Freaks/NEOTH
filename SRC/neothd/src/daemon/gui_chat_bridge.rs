@@ -559,6 +559,22 @@ pub mod gui_bridge_test_support {
             matches!(scenario, W458PostProviderScenario::Replace),
         )
         .await?;
+        anyhow::ensure!(
+            capture.main_initial_sequence >= capture.main_replay_cursor
+                && capture.buddy_initial_sequence >= capture.buddy_replay_cursor,
+            "W458 replay cursor exceeds the real attachment exchange upper bound"
+        );
+        anyhow::ensure!(
+            capture
+                .main_frames
+                .iter()
+                .all(|frame| frame.sequence > capture.main_replay_cursor)
+                && capture
+                    .buddy_frames
+                    .iter()
+                    .all(|frame| frame.sequence > capture.buddy_replay_cursor),
+            "W458 capture contains a frame at or before the requested replay cursor"
+        );
         let turn = GuiChatTurnMetadata {
             boot_id: "w458-boot".into(),
             turn_id: GuiChatTurnId(capture.turn_id),
@@ -567,21 +583,21 @@ pub mod gui_bridge_test_support {
             // reducer cursor from this value, so terminal/replay progress is
             // represented only by the captured real events below.
             phase: GuiChatPhase::Waiting,
-            latest_sequence: capture.main_initial_sequence,
+            latest_sequence: capture.main_replay_cursor,
         };
         let main_subscription = GuiChatSubscriptionMetadata {
             boot_id: turn.boot_id.clone(),
             turn_id: turn.turn_id,
             surface: GuiChatSurface::Main,
             generation: capture.main_generation,
-            latest_sequence: capture.main_initial_sequence,
+            latest_sequence: capture.main_replay_cursor,
         };
         let buddy_subscription = GuiChatSubscriptionMetadata {
             boot_id: turn.boot_id.clone(),
             turn_id: turn.turn_id,
             surface: GuiChatSurface::Buddy,
             generation: capture.buddy_generation,
-            latest_sequence: capture.buddy_initial_sequence,
+            latest_sequence: capture.buddy_replay_cursor,
         };
         let main_events = capture
             .main_frames

@@ -21372,7 +21372,7 @@ reason = "synthetic secret"
             system: None,
             edit: false,
             config: Some(dir.path().join("freedom.yaml")),
-            wal_segment: Some(blocked_seg),
+            wal_segment: Some(blocked_seg.clone()),
             stream: true,
             show_reasoning: false,
             gui_consent_token_stdin: false,
@@ -21408,11 +21408,36 @@ reason = "synthetic secret"
         )
         .await;
         let blocked_error = blocked.expect_err("the real hook must block the buffered stream");
+        let blocked_error = format!("{blocked_error:#}");
         assert!(
-            format!("{blocked_error:#}").contains(
-                "hook `w458-post-provider-block` blocked the reply at post_provider_call: synthetic secret"
+            blocked_error.contains(
+                "chat post-mint provider/orchestration failure at post_reply_pipeline; content quarantined"
             ),
-            "an unrelated preparation error is not post-provider block evidence: {blocked_error:#}"
+            "post-mint failures intentionally quarantine provider and hook content: {blocked_error}"
+        );
+        assert!(
+            !blocked_error.contains("sk-w458-never-visible"),
+            "the post-mint error must not expose the provider body or hook match"
+        );
+        let blocked_wal = std::fs::read(&blocked_seg).expect("read drained W458 block WAL");
+        let mut hook_blocks = Vec::new();
+        crate::wal::scan::for_each_frame(&blocked_wal, |_, frame| {
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_HOOK_BLOCKED {
+                hook_blocks.push(
+                    serde_json::from_slice::<serde_json::Value>(frame.payload)
+                        .expect("decode W458 HOOK_BLOCKED payload"),
+                );
+            }
+            Ok(())
+        })
+        .expect("scan drained W458 block WAL");
+        assert!(
+            hook_blocks.iter().any(|payload| {
+                payload["name"] == "w458-post-provider-block"
+                    && payload["stage"] == "post_provider_call"
+                    && payload["note"] == "synthetic secret"
+            }),
+            "the opaque post-mint error must be caused by the configured PostProviderCall hook: {hook_blocks:?}"
         );
         assert!(
             !blocked_output.0.iter().any(|event| matches!(

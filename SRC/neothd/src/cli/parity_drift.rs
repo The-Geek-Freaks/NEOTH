@@ -1058,6 +1058,87 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
     },
     #[cfg(feature = "cluster")]
     unwired_operation(
+        "buddy.cluster.task-delegate.show",
+        "buddy",
+        "buddy cluster task-delegate show",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > TaskDelegate assignment",
+        "the GUI dispatches the canonical cluster task-delegate show route, not this Buddy CLI alias",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "buddy.cluster.task-delegate.set",
+        "buddy",
+        "buddy cluster task-delegate set",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > TaskDelegate assignment",
+        "the GUI dispatches the canonical cluster task-delegate set route, not this Buddy CLI alias",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "buddy.cluster.task-delegate.scope-show",
+        "buddy",
+        "buddy cluster task-delegate scope-show",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > TaskDelegate scoped authority",
+        "the GUI has no scoped skill/channel/account readback through the Buddy task-delegate route",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "buddy.cluster.task-delegate.scope-set",
+        "buddy",
+        "buddy cluster task-delegate scope-set",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > TaskDelegate scoped authority",
+        "the GUI has no scoped skill/channel/account editor or CAS receipt through the Buddy task-delegate route",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "buddy.cluster.task-delegate.scope-reset",
+        "buddy",
+        "buddy cluster task-delegate scope-reset",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > TaskDelegate scoped authority",
+        "the GUI cannot create the exact scoped deny tombstone through the Buddy task-delegate route",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "buddy.cluster.task-delegate.outbound-show",
+        "buddy",
+        "buddy cluster task-delegate outbound-show",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > Outbound TaskDelegate route",
+        "the GUI has no outbound route projection keyed by peer, skill, channel, and account through the Buddy task-delegate route",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "buddy.cluster.task-delegate.outbound-set",
+        "buddy",
+        "buddy cluster task-delegate outbound-set",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > Outbound TaskDelegate route",
+        "the GUI has no outbound route editor or committed readback through the Buddy task-delegate route",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "buddy.cluster.task-delegate.outbound-reset",
+        "buddy",
+        "buddy cluster task-delegate outbound-reset",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > Outbound TaskDelegate route",
+        "the GUI has no outbound-route reset control that writes the exact durable deny tombstone through the Buddy task-delegate route",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "buddy.cluster.task-delegate.outbound-dispatch",
+        "buddy",
+        "buddy cluster task-delegate outbound-dispatch",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > Outbound TaskDelegate dispatch",
+        "the GUI has no operation/task/prompt dispatch control or authenticated-daemon receipt/readback through the Buddy task-delegate route",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
         "buddy.cluster.invite",
         "buddy",
         "buddy cluster invite",
@@ -2035,6 +2116,15 @@ fn operation_inventory_keeps_r4_05_gaps_explicit() {
         "buddy.cluster.invite",
         "buddy.cluster.confirm",
         "buddy.cluster.revoke",
+        "buddy.cluster.task-delegate.show",
+        "buddy.cluster.task-delegate.set",
+        "buddy.cluster.task-delegate.scope-show",
+        "buddy.cluster.task-delegate.scope-set",
+        "buddy.cluster.task-delegate.scope-reset",
+        "buddy.cluster.task-delegate.outbound-show",
+        "buddy.cluster.task-delegate.outbound-set",
+        "buddy.cluster.task-delegate.outbound-reset",
+        "buddy.cluster.task-delegate.outbound-dispatch",
         "cluster.configure",
         "cluster.confirm",
         "cluster.conflicts",

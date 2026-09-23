@@ -17168,7 +17168,7 @@ enum GuiFinishOutcome {
         status: String,
     },
     Failed {
-        error: anyhow::Error,
+        _error: anyhow::Error,
         status: String,
     },
 }
@@ -17233,7 +17233,7 @@ where
             status: format!(
                 "Setup files were prepared, but completion could not be verified: {error}. Reopen NEOTH to check the committed state, then click Finish again if needed."
             ),
-            error,
+            _error: error,
         },
     }
 }
@@ -37778,18 +37778,6 @@ struct GuiInitializationBeginAcknowledgement {
 }
 
 #[cfg(test)]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct GuiCompletionAcknowledgement {
-    schema_version: u8,
-    completed: bool,
-    ready: bool,
-    transaction_id: String,
-    home: PathBuf,
-    marker_path: PathBuf,
-}
-
-#[cfg(test)]
 fn valid_gui_transaction_hex(value: &str) -> bool {
     value.len() == GUI_INIT_TRANSACTION_HEX_LEN
         && value
@@ -37834,23 +37822,6 @@ fn parse_gui_initialization_begin(
     })
 }
 
-#[cfg(test)]
-fn begin_gui_initialization(bin: &Path, home: &Path) -> Result<GuiInitializationTransaction> {
-    let output = spawn_neothd_plain(bin)
-        .env("NEOTH_HOME", home)
-        .args(["init", "--begin-from-gui"])
-        .output()
-        .context("begin canonical GUI initialization transaction")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "initialization transaction could not begin (exit {}): {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    parse_gui_initialization_begin(&output.stdout, home)
-}
-
 fn gui_initialization_is_ready(bin: &Path, home: &Path) -> Result<bool> {
     let output = spawn_neothd_plain(bin)
         .env("NEOTH_HOME", home)
@@ -37878,73 +37849,6 @@ fn gui_initialization_is_ready(bin: &Path, home: &Path) -> Result<bool> {
         );
     }
     Ok(acknowledgement.ready)
-}
-
-#[cfg(test)]
-fn complete_gui_initialization(
-    bin: &Path,
-    home: &Path,
-    transaction: &GuiInitializationTransaction,
-) -> Result<PathBuf> {
-    use std::process::Stdio;
-
-    let mut command = spawn_neothd_plain(bin);
-    let mut child = command
-        .env("NEOTH_HOME", home)
-        .args(["init", "--complete-from-gui"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("start canonical GUI initialization commit")?;
-    let write_result = (|| -> Result<()> {
-        let stdin = child
-            .stdin
-            .as_mut()
-            .context("GUI initialization commit stdin is unavailable")?;
-        stdin
-            .write_all(transaction.token.as_bytes())
-            .context("write GUI initialization transaction token")?;
-        stdin
-            .write_all(b"\n")
-            .context("terminate GUI initialization transaction token")?;
-        Ok(())
-    })();
-    drop(child.stdin.take());
-    if let Err(error) = write_result {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(error);
-    }
-    let output = child
-        .wait_with_output()
-        .context("commit canonical GUI initialization marker")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "initialization completion failed (exit {}): {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    let acknowledgement: GuiCompletionAcknowledgement = serde_json::from_slice(&output.stdout)
-        .context("parse initialization completion acknowledgement")?;
-    let expected_home = canonical_existing_path(home, "expected NEOTH home")?;
-    let acknowledged_home =
-        canonical_existing_path(&acknowledgement.home, "acknowledged NEOTH home")?;
-    let expected = home.join(".initialized");
-    let expected_canonical = canonical_existing_path(&expected, "committed marker")?;
-    let acknowledged_canonical =
-        canonical_existing_path(&acknowledgement.marker_path, "acknowledged marker")?;
-    if !acknowledgement.completed
-        || !acknowledgement.ready
-        || acknowledgement.schema_version != 1
-        || acknowledgement.transaction_id != transaction.transaction_id
-        || acknowledged_home != expected_home
-        || acknowledged_canonical != expected_canonical
-    {
-        anyhow::bail!("initialization completion returned an invalid acknowledgement");
-    }
-    Ok(expected_canonical)
 }
 
 const TERMINAL_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
@@ -38705,19 +38609,21 @@ mod interface_preference_tests {
             })
             .expect("admitted GUI wizard choice before completion");
 
-        let mut state = WizardSnapshot::default();
-        state.operator_id = "sam".into();
-        state.provider_kind = "claude_cli".into();
-        state.autonomy = "standard".into();
-        state.license_accepted = true;
-        state.hemisphere_use_single = false;
-        state.hemisphere_shared_model = "claude-sonnet-4-6".into();
-        state.hemisphere_left_provider = "anthropic_api".into();
-        state.hemisphere_left_model = "claude-opus-4-6".into();
-        state.hemisphere_right_provider = "openai_api".into();
-        state.hemisphere_right_model = "gpt-5.5".into();
-        state.hemisphere_cerebellum_provider = "local_ollama".into();
-        state.hemisphere_cerebellum_model = "qwen3:8b".into();
+        let state = WizardSnapshot {
+            operator_id: "sam".into(),
+            provider_kind: "claude_cli".into(),
+            autonomy: "standard".into(),
+            license_accepted: true,
+            hemisphere_use_single: false,
+            hemisphere_shared_model: "claude-sonnet-4-6".into(),
+            hemisphere_left_provider: "anthropic_api".into(),
+            hemisphere_left_model: "claude-opus-4-6".into(),
+            hemisphere_right_provider: "openai_api".into(),
+            hemisphere_right_model: "gpt-5.5".into(),
+            hemisphere_cerebellum_provider: "local_ollama".into(),
+            hemisphere_cerebellum_model: "qwen3:8b".into(),
+            ..Default::default()
+        };
 
         let prepared = finish_in_home(&state, home.path()).expect("GUI prepare custom topology");
         let config_hash = wizard_session_controller::prepared_config_sha256(&prepared.freedom_path)
@@ -47326,16 +47232,16 @@ exit 72
     #[cfg(not(windows))]
     fn w142_proposal_matches(window: &MainWindow, quality: &str, summary: &str) -> bool {
         window.get_si_proposals().row_data(0).is_some_and(|row| {
-            row.id.to_string() == "p142"
-                && row.status.to_string() == "accepted"
-                && row.quality_state.to_string() == quality
-                && row.evidence_sha256.to_string()
+            row.id == "p142"
+                && row.status == "accepted"
+                && row.quality_state == quality
+                && row.evidence_sha256
                     == if quality == "current" {
                         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
                     } else {
                         ""
                     }
-                && row.title.to_string() == summary
+                && row.title == summary
         })
     }
 
@@ -47343,7 +47249,7 @@ exit 72
     fn w142_toast_count(window: &MainWindow, title: &str) -> usize {
         (0..window.get_toasts().row_count())
             .filter_map(|index| window.get_toasts().row_data(index))
-            .filter(|toast| toast.title.to_string() == title)
+            .filter(|toast| toast.title == title)
             .count()
     }
 
@@ -49420,12 +49326,10 @@ exit 0
                         && !window.get_ouro_q8_verify_unavailable()
                         && w151_ouro_call_count(&calls) == expected.calls
                         && window.get_ouro_q8_verify_verified() == expected.verified
-                        && window.get_ouro_q8_verify_configured_mode().to_string()
-                            == expected.configured_mode
-                        && window.get_ouro_q8_verify_receipt().to_string() == expected.receipt
-                        && window.get_ouro_q8_verify_device().to_string() == expected.device
-                        && window.get_ouro_q8_verify_forward_summary().to_string()
-                            == expected.forward_summary
+                        && window.get_ouro_q8_verify_configured_mode() == expected.configured_mode
+                        && window.get_ouro_q8_verify_receipt() == expected.receipt
+                        && window.get_ouro_q8_verify_device() == expected.device
+                        && window.get_ouro_q8_verify_forward_summary() == expected.forward_summary
                         && window
                             .get_ouro_q8_verify_status()
                             .to_string()
@@ -50919,9 +50823,7 @@ exit 7
                 if weak.upgrade().is_some_and(|w| {
                     w184_call_count(&calls_for_timer, "task-delegate-show") == 1
                         && !w.get_bc_task_delegate_in_flight()
-                }) {
-                    let _ = slint::quit_event_loop();
-                } else if observed.get().saturating_add(1) >= 500 {
+                }) || observed.get().saturating_add(1) >= 500 {
                     let _ = slint::quit_event_loop();
                 } else {
                     observed.set(observed.get() + 1);

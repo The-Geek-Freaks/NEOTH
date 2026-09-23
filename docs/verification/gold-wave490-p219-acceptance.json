@@ -1,0 +1,230 @@
+{
+  "schema": "neoth-functional-acceptance/v1",
+  "roadItem": "GOLD-LF-P2-19",
+  "verdict": "ACCEPTED_FUNCTIONAL",
+  "acceptedSource": "9abb52d52604710b838967ecb92b0d89919e35dd",
+  "run": 35911456591,
+  "selection": {
+    "requiredIdentities": 38,
+    "passed": 38
+  },
+  "criteria": [
+    "Real Raft-backed SQLite quorum authority and shared cap",
+    "Concurrent full-cap reservations from two distinct live followers: one grant, one CapExceeded",
+    "Claim/replay/restart never reproduces a provider permit",
+    "Partition, leader change, lost ACK and snapshot recovery preserve conservative accounting",
+    "Actual authorized paid-provider leaf dispatches once and denies without quorum"
+  ],
+  "terminals": [
+    {
+      "test": "cluster::budget_raft::tests::frozen_membership_scope_and_config_tampering_fail_closed",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::tests::reserve_replay_keeps_original_position_and_cap_never_rebates_release",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::tests::claim_ack_loss_is_reconcile_only_and_never_changes_first_claim_position",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::tests::unauthorized_owner_and_changed_reserve_replay_are_rejected",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::tests::unknown_settlement_holds_full_bound_and_terminal_replay_is_exact",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::tests::overrun_is_durable_reconciliation_and_changed_retry_is_conflict",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::tests::corrupted_recovery_state_is_not_admissible",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::tests::corrupted_terminal_position_or_fence_is_not_admissible",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::store_tests::restart_reloads_vote_and_never_silently_resets_frozen_store",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::store_tests::corrupt_deserialized_ledger_stays_unavailable_without_reset",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::store_tests::missing_config_marker_rejects_durable_vote_evidence",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::store_tests::snapshot_stream_refuses_growth_past_hard_limit",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::store_tests::snapshot_stream_seek_past_eof_reads_empty_without_panicking",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::store_tests::applied_index_ledger_and_snapshot_survive_one_restart_together",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::store_tests::schema_uses_wal_full_sync_and_keeps_one_snapshot_slot",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::store_tests::truncation_and_purge_keep_the_log_boundary_durable",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::service_tests::three_voter_quorum_reserves_claims_once_releases_and_settles",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::service_tests::minority_partition_cannot_commit_a_new_reservation",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::service_tests::restart_after_discarded_claim_ack_never_reissues_provider_permit",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::service_tests::unknown_and_overrun_settlements_stay_terminal_without_a_new_permit",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::service_tests::changed_membership_origin_cannot_claim_through_a_follower",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::membership_validator::tests::exact_current_snapshot_derives_the_three_fixed_peeroxide_voters",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::membership_validator::tests::revoked_frozen_voter_fails_closed",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::membership_validator::tests::changed_membership_epoch_fails_closed",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::membership_validator::tests::configured_peeroxide_binding_mismatch_fails_closed",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::carrier::tests::stop_is_visible_to_subscribers_created_after_last_receiver_was_dropped",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::carrier::tests::pending_cleanup_releases_slot_when_request_future_is_dropped",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::heartbeat::tests::budget_raft_envelope_rejects_wrong_version_and_oversized_nested_payload",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::heartbeat::tests::budget_raft_response_tags_cannot_be_confused_with_requests",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::heartbeat::tests::budget_command_lane_round_trips_as_a_distinct_typed_budget_frame",
+      "status": "passed"
+    },
+    {
+      "test": "config::budget_raft_config_tests::budget_raft_is_default_disabled_and_has_no_implicit_authority",
+      "status": "passed"
+    },
+    {
+      "test": "config::budget_raft_config_tests::enabled_budget_raft_requires_exact_peeroxide_three_voter_policy",
+      "status": "passed"
+    },
+    {
+      "test": "config::budget_raft_config_tests::enabled_budget_raft_refuses_iroh_until_authenticated_budget_carrier_exists",
+      "status": "passed"
+    },
+    {
+      "test": "providers::cost_authorization::tests::cluster_budget_rounds_positive_reserves_up_but_allows_zero_actual_cost",
+      "status": "passed"
+    },
+    {
+      "test": "providers::cost_authorization::tests::cluster_budget_quorum_leaf_dispatches_exactly_once",
+      "status": "passed"
+    },
+    {
+      "test": "providers::cost_authorization::tests::cluster_budget_no_quorum_blocks_before_raw_provider_dispatch",
+      "status": "passed"
+    },
+    {
+      "test": "providers::cost_authorization::tests::cluster_budget_unknown_price_blocks_before_raft_or_raw_provider_dispatch",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::budget_raft::service_tests::concurrent_followers_cannot_overspend_or_reuse_shared_cap",
+      "status": "passed"
+    }
+  ],
+  "sourceBindings": [
+    {
+      "path": "SRC/neothd/src/cluster/budget_raft/carrier.rs",
+      "blob": "a9587e3c4c8e2b7a13cc14cc8ae6909923220fc6",
+      "sha256": "D12C96935AAB310C8B2771C46A9A539B29FF5D2B75AD565B4D2D3B12459D5629"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/budget_raft/membership_validator.rs",
+      "blob": "1f9a9a7f7705df385a832152910b6c042ea5becf",
+      "sha256": "852127182B82C5C1FF8958D0B779AA693542BCC311F5C57FCE5DA8A129CAF9DB"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/budget_raft/service_tests.rs",
+      "blob": "75e624038d01122f3886d70bac5391b11e31b4e5",
+      "sha256": "E3A40D381B48D021F21CB8A6F748FB964C3C2919FDE14372F7413D8D60ABC3E4"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/budget_raft/store_tests.rs",
+      "blob": "a866d2fc093edc8ea643c63eda3a69e635ec773e",
+      "sha256": "923D4A8C928891B4B122784AFD3B90A3B684FCD6BBE8D22F82FFE1BD74775C70"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/budget_raft/tests.rs",
+      "blob": "7ae609b99f4fd68a9ef49d157608b954facdbf95",
+      "sha256": "00CDDD094BF10247EF6FCEB4EF9723C3B389E1677407C8D197B71D19A90FCB35"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/heartbeat.rs",
+      "blob": "1b92aa89a7870d7d8a5ea7398dc550faa631c26a",
+      "sha256": "5E405E3D26C057922835D92B403C3B80A12AA1BDE8753BDFDDF07B2AFF607C38"
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "blob": "fdcdb54cb81d3e56add6aa77e4d90f20be645935",
+      "sha256": "43BA25C58FD27C6934E6A27CC8F5178AF9BDEB7FAF9FB9EF3D11F4B48AB90B17"
+    },
+    {
+      "path": "SRC/neothd/src/providers/cost_authorization.rs",
+      "blob": "d9747b5580f37c4dc9b3acec9ca6fcfc2370c339",
+      "sha256": "D731FEB192679D796F3C0B69C935F9D03D2B779D0129E894383D19D54186EEA5"
+    }
+  ],
+  "groupAdmission": {
+    "path": "work/gold-20260906/wave479-hosted-results/group886/ADMISSION.json",
+    "sha256": "3B2237E6C5E8FE43597D9D059C6D4AA812646EAE182E8F6E2F8D666F23E42242",
+    "executed": 886,
+    "passed": 884,
+    "failed": 2,
+    "missingTerminal": 0,
+    "allSourceInputBindings": 176
+  },
+  "logSha256": "4CB1993C6FB1B5D65575C839FA0BBA0B4B564A5958DB4819DEFDBD3D46B1AFF8",
+  "sourceCarry": {
+    "through": "3de1cfe2536f7fa6141ab3901cd2023d4224a114",
+    "note": "Budget service and concurrent-test changes after9abb are verified hosted rustfmt only (W482); later W480/W487 changes leave BudgetRaft and paid-provider behavior unchanged."
+  },
+  "limitations": "Functional P2-19 acceptance only. Two unrelated Chat fixtures failed in the same run; full workspace/release and installed-package claims remain separate.",
+  "localExecutableValidationRan": false
+}

@@ -85,7 +85,8 @@ jobs:
           wal::redact::tests::stage_then_publish_authenticated_leaf_preserves_writer_marker_hmac	neothd/src/wal/redact.rs
           wal::redact::tests::staged_leaf_in_independent_namespace_is_accepted_when_another_namespace_is_last	neothd/src/wal/redact.rs
           skills::store::reported_commit_tests::private_stage_replaces_a_delete_sharing_bound_target_without_closing_it	neothd/src/skills/store.rs
-          skills::store::reported_commit_tests::private_stage_keeps_the_bound_parent_when_ambient_parent_is_swapped	neothd/src/skills/store.rs
+          skills::store::reported_commit_tests::live_bound_parent_native_rename_is_denied	neothd/src/skills/store.rs
+          skills::store::reported_commit_tests::private_stage_publishes_through_bound_parent_despite_mismatched_display_path	neothd/src/skills/store.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -102,7 +103,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 16 ]]; then
+          if [[ "$expected" -ne 17 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -112,7 +113,7 @@ jobs:
             cargo test -p neoth --lib --locked --no-run > "$evidence/compile.log" 2>&1 || compile_status=$?
           else
             compile_status=64
-            printf 'selection is not the required 16 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 17 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

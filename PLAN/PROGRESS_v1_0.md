@@ -2,6 +2,37 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W491-W493 hosted failures and reviewed repairs (2026-09-23):**
+Group88835914415313 is admitted884PASS/4FAIL/0missing with176bindings;
+both new Buddy task-delegate tests pass. W488/W489 repair the two Chat
+fixtures; W492 accounts for all9new Buddy leaves without overstating GUI
+parity. Core9abb passed slimClippy/typecheck but failed23GUI workspace
+Clippy diagnostics, now source-repaired. Windows16034 is admitted15PASS/
+1FAIL: native parent rename returned Win325. Windows17 replaces the false
+successful-swap claim with explicit refusal and independent decoy-path
+publication tests. GUI146034 failed compilation at the cfg(test)-only
+consent helper before0tests; the shared capture repair covers this boundary.
+Hosted CLI-reference export35916213648 is queued. Independent source
+reviews pass; fresh hosted results remain required for these repairs.
+Inventory737/native1183+Win24Linux33mac32/Group888/GUI146Linux142macOS.
+Road1040checked/282open/2partial;284raw/283pre-tag;WS-LF33done/85open.
+Local BSOD hold remains. Evidence:docs/gold-wave491-493-hosted-repairs.md.
+**W490 BudgetToken functional acceptance and W488/W489 Chat follow-up (2026-09-23):**
+Group88635911456591 at9abb52d5 is source/terminal admitted:886executed,
+884PASS,2FAIL,0missingterminals; all176source/input bindings verified. All38
+BudgetToken identities pass, including real concurrent reservations from two
+followers against one shared cap. P2-19 is accepted with partition, leader-change,
+replay, recovery and paid-provider leaf evidence. The unrelated Chat failures
+remain open: the CLI test incorrectly expected an exposed post-provider error,
+and the real runtime attach reached EOF before its required terminal. W488
+uses the intentionally opaque error plus exact HOOK_BLOCKED WAL causation;
+W489 traces the missing runtime terminal without accepting EOF as success.
+Preflight3de35914415349 and CodeQuality35914414156 passed. Group88835914415313
+runs with the corrected action pin; GUI146 and Windows16 continue at03456722.
+Inventory736/native1183/Group888/GUI146Linux142macOS;Road1040checked/282open/
+2partial,284raw/283pre-tag;WS-LF33done/85open. No local executables ran.
+Evidence: docs/gold-wave490-budget-quorum-acceptance.md.
+
 **W487 hosted formatting and workflow pin repair (2026-09-23):**
 W480/W484-W486 is published as03456722. Preflight35913977425 exported two
 Rust formatting changes; artifact10773559802, both SHA256 entries and all
@@ -5185,7 +5216,7 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay, P1-20 sidebar preview, P2-03 vault, P1-10 reasoning, P1-12 citation and P2-17 recorded skip decision and P1-22 provider wizard accepted: **32 done / 86
+> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay, P1-20 sidebar preview, P2-03 vault, P1-10 reasoning, P1-12 citation and P2-17 recorded skip decision and P1-22 provider wizard and P2-19 BudgetToken accepted: **33 done / 85
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable
