@@ -1494,6 +1494,7 @@ pub(crate) fn redaction_authorisation_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wal::{events, HeaderBuilder};
     use crate::wal::frame::{decode_frame, encode_frame};
     use crate::wal::hlc::Hlc;
     use crate::wal::segment_header::SegmentHeader;
@@ -1986,7 +1987,7 @@ mod tests {
         }))
         .unwrap();
         let marker_header =
-            HeaderBuilder::new(super::events::EVENT_TYPE_COMPACTION_MARKER, &marker_payload)
+            HeaderBuilder::new(events::EVENT_TYPE_COMPACTION_MARKER, &marker_payload)
                 .flags(EventFlags::SYNTHETIC)
                 .build();
         let mut logical = data;
@@ -2030,7 +2031,8 @@ mod tests {
         );
         let rewrite = prepared.publish().unwrap();
         assert_eq!(rewrite.report.frames_redacted_count(), 1);
-        let logical = crate::wal::compaction::logical_segment_bytes(&std::fs::read(&path).unwrap())
+        let rewritten_bytes = std::fs::read(&path).unwrap();
+        let logical = crate::wal::compaction::logical_segment_bytes(&rewritten_bytes)
             .unwrap()
             .1;
         let header_len = crate::wal::segment_header::SEGMENT_HEADER_V2_LEN;
@@ -2075,7 +2077,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let path = write_authenticated_leaf_with_writer_marker_type(
             home.path(),
-            super::events::EVENT_TYPE_SEGMENT_ROLLOVER,
+            events::EVENT_TYPE_SEGMENT_ROLLOVER,
             b"AcmeCorp structural link",
         );
         let before = std::fs::read(&path).unwrap();
@@ -2109,7 +2111,7 @@ mod tests {
             "opened_segment_name":successor_name, "opened_generation":1, "opened_seq":2,
             "opened_start_ts_ns":0, "opened_node_id":([0_u8;16]), "reason":"size", "ts_ns":1,
         })).unwrap();
-        let link_header = HeaderBuilder::new(super::events::EVENT_TYPE_SEGMENT_ROLLOVER, &payload)
+        let link_header = HeaderBuilder::new(events::EVENT_TYPE_SEGMENT_ROLLOVER, &payload)
             .flags(EventFlags::SYNTHETIC)
             .build();
         let link = encode_frame(&link_header, &payload);
@@ -2122,7 +2124,7 @@ mod tests {
         let marker = state.finalise_marker(&[7; 32], successor.len() as u64);
         let marker_payload = serde_json::to_vec(&marker).unwrap();
         let marker_header =
-            HeaderBuilder::new(super::events::EVENT_TYPE_COMPACTION_MARKER, &marker_payload)
+            HeaderBuilder::new(events::EVENT_TYPE_COMPACTION_MARKER, &marker_payload)
                 .flags(EventFlags::SYNTHETIC)
                 .build();
         successor.extend_from_slice(&encode_frame(&marker_header, &marker_payload));

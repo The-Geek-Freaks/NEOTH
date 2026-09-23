@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T12:50:20.9062460Z",
-  "validationStatus": "W394 static reviewed WAL lint repair; GUI135216 source-admitted135PASS; current hosted Core/Group810 pending",
+  "capturedUtc": "2026-09-23T13:04:19.2012590Z",
+  "validationStatus": "P224 accepted25/25 functional cases; W399 test-only WAL compile repair static reviewed; hosted rerun pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -808,18 +808,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 160203,
-      "sha256": "0B245CF559005E16C402F1AC4A1ABA11837A727A435A7B22D556CBEDE9582B66"
+      "bytes": 161266,
+      "sha256": "ADD40381E3FC52341F381B7623C841EFEEF52DCB793AB0609260C78173204E63"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1169078,
-      "sha256": "DC80682D0B63FCDD8E909ED0504B50CDC96C84DD657C7E128681A2CE7302BC02"
+      "bytes": 1170158,
+      "sha256": "ACFD49F6906122F50EEF0E87933067F0CB52A031BED911353C6FD4035D07B7A0"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1766527,
-      "sha256": "2527915136A8C7709216B60C07EBF5C524666A4680136A0A3B3D6CBDE9BFC5AD"
+      "bytes": 1767867,
+      "sha256": "905D8D0617E269EB8941CE859EF73E53A265EFBF2FEA75B024B1C690CCDA9387"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -3039,7 +3039,7 @@
     {
       "path": "SRC/neothd/src/wal/mod.rs",
       "bytes": 6627,
-      "sha256": "87FC70F972B54E629B375DC8B079DCF56F906FD0F7AB9FC162D3D371CAD4639E"
+      "sha256": "1DFD9D91D06D25A209C2CB473DEB4FE0F90503AFACFD01FE41282EDA4D2A8C29"
     },
     {
       "path": "SRC/neothd/src/wal/payloads_u04.rs",
@@ -3355,6 +3355,21 @@
       "path": "docs/gold-wave394-wal-receipt-lint.md",
       "bytes": 880,
       "sha256": "4FD227A95A5538FD0F0DEBC8EAF976EA8A0833AC9142CE6B834A7108D368B1AF"
+    },
+    {
+      "path": "docs/gold-wave395-bge-acceptance.md",
+      "bytes": 1819,
+      "sha256": "28C20E571635FFE668E450BBFA1554ED37B0A7D86591AF7D4066D9AD484B6021"
+    },
+    {
+      "path": "docs/verification/gold-wave395-p224-acceptance.json",
+      "bytes": 10532,
+      "sha256": "6897A86F41524E8B4443A152391925B6860621BAFE99856B4A41F593338A4136"
+    },
+    {
+      "path": "docs/gold-wave399-leaf-fixture-compile.md",
+      "bytes": 946,
+      "sha256": "6CD128A0C4CAF25B0E9D13962BDB732905A7F4480BC663B444C0068B66AFF1F0"
     }
   ]
 }

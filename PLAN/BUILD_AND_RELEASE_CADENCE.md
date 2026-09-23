@@ -3,6 +3,21 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W395 BGE acceptance and W399 WAL test-compile repair (2026-09-23):**
+P2-24 is accepted with25/25 required source-bound PASS terminals:16native in
+Group780e5,7GUI in GUI135216 and2official-model cases in BGE216. Independent
+source-delta review and Root's individual-terminal checks agree; two unrelated
+group failures and28unstarted tests remain recorded. See the exact W395 receipt.
+Core11835863307776 passed production slim Clippy, then found8 test-only compile
+errors in authenticated-leaf fixtures. W399 supplies correct nested-module
+imports and keeps the backing bytes alive for logical-frame assertions.
+Independent static review passed; the hosted rerun is pending.
+The single-path format patch from Preflight11835863308037 was imported only
+after source, artifact digest and before/after Git-blob checks. Quality118 passed.
+Inventory673;native1122+Windows19/Linux33/macOS32;Group810;GUI135Linux/131macOS.
+Road1324=1028checked/294open/2partial;296raw/295pre-tag blockers;WS-LF21done/97open.
+No local executable validation or model archive download ran.
+
 **W394 WAL lint repair and admitted GUI135 (2026-09-23):**
 Core8ac run35861027738 failed on unused receipt exports/accessors. The narrow,
 independently reviewed repair removes unused production surface and retains

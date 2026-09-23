@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W395 BGE acceptance and W399 WAL test-compile repair (2026-09-23):**
+P2-24 is accepted with25/25 required source-bound PASS terminals:16native in
+Group780e5,7GUI in GUI135216 and2official-model cases in BGE216. Independent
+source-delta review and Root's individual-terminal checks agree; two unrelated
+group failures and28unstarted tests remain recorded. See the exact W395 receipt.
+Core11835863307776 passed production slim Clippy, then found8 test-only compile
+errors in authenticated-leaf fixtures. W399 supplies correct nested-module
+imports and keeps the backing bytes alive for logical-frame assertions.
+Independent static review passed; the hosted rerun is pending.
+The single-path format patch from Preflight11835863308037 was imported only
+after source, artifact digest and before/after Git-blob checks. Quality118 passed.
+Inventory673;native1122+Windows19/Linux33/macOS32;Group810;GUI135Linux/131macOS.
+Road1324=1028checked/294open/2partial;296raw/295pre-tag blockers;WS-LF21done/97open.
+No local executable validation or model archive download ran.
+
 **W394 WAL lint repair and admitted GUI135 (2026-09-23):**
 Core8ac run35861027738 failed on unused receipt exports/accessors. The narrow,
 independently reviewed repair removes unused production surface and retains
@@ -4851,7 +4866,7 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement accepted: **20 done / 98
+> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3 accepted: **21 done / 97
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

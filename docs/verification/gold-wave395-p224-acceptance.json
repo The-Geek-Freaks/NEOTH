@@ -1,0 +1,228 @@
+{
+  "schema": "neoth-parent-acceptance/v1",
+  "parent": "GOLD-LF-P2-24",
+  "status": "ACCEPTED",
+  "acceptedPublishedHead": "1182864f84260eee1208112f2a09fc23216dfd74",
+  "required": 25,
+  "passed": 25,
+  "tests": [
+    {
+      "test": "config::embedding::tests::absent_embed_selection_defaults_to_qwen3_q8",
+      "run": 35857339883,
+      "sourceHead": "e5bdf2abac5046ecd67e5641cb07661b02791d6e",
+      "sourcePath": "SRC/neothd/src/config/embedding.rs",
+      "sourceSha256": "ff8816a992d2e3c76adf8fd7103f0826e05c8249f1c537a910485f9e2ce08212",
+      "result": "PASS"
+    },
+    {
+      "test": "config::embedding::tests::bge_m3_round_trips_at_the_embed_namespace",
+      "run": 35857339883,
+      "sourceHead": "e5bdf2abac5046ecd67e5641cb07661b02791d6e",
+      "sourcePath": "SRC/neothd/src/config/embedding.rs",
+      "sourceSha256": "ff8816a992d2e3c76adf8fd7103f0826e05c8249f1c537a910485f9e2ce08212",
+      "result": "PASS"
+    },
+    {
+      "test": "config::embedding::tests::unknown_embedding_model_fails_configuration_parse",
+      "run": 35857339883,
+      "sourceHead": "e5bdf2abac5046ecd67e5641cb07661b02791d6e",
+      "sourcePath": "SRC/neothd/src/config/embedding.rs",
+      "sourceSha256": "ff8816a992d2e3c76adf8fd7103f0826e05c8249f1c537a910485f9e2ce08212",
+      "result": "PASS"
+    },
+    {
+      "test": "config::embedding::tests::embedding_selection_does_not_change_chat_or_profile_provider_routes",
+      "run": 35857339883,
+      "sourceHead": "e5bdf2abac5046ecd67e5641cb07661b02791d6e",
+      "sourcePath": "SRC/neothd/src/config/embedding.rs",
+      "sourceSha256": "ff8816a992d2e3c76adf8fd7103f0826e05c8249f1c537a910485f9e2ce08212",
+      "result": "PASS"
+    },
+    {
+      "test": "providers::bge_m3_artifacts::tests::official_modules_array_is_accepted_at_the_manifest_boundary",
+      "run": 35857339883,
+      "sourceHead": "e5bdf2abac5046ecd67e5641cb07661b02791d6e",
+      "sourcePath": "SRC/neothd/src/providers/bge_m3_artifacts.rs",
+      "sourceSha256": "4ca8303d6caf59a60c2246552e2f24dfb3a5e9a347502a11dcf2a98d943f14af",
+      "result": "PASS"
+    },
+    {
+      "test": "providers::bge_m3_artifacts::tests::modules_artifact_missing_or_truncated_is_not_ready",
+      "run": 35857339883,
+      "sourceHead": "e5bdf2abac5046ecd67e5641cb07661b02791d6e",
+      "sourcePath": "SRC/neothd/src/providers/bge_m3_artifacts.rs",
+      "sourceSha256": "4ca8303d6caf59a60c2246552e2f24dfb3a5e9a347502a11dcf2a98d943f14af",
+      "result": "PASS"
+    },
+    {
+      "test": "providers::bge_m3_artifacts::tests::acquisition_refuses_missing_cache_before_hf_initialization_without_d7",
+      "run": 35857339883,
+      "sourceHead": "e5bdf2abac5046ecd67e5641cb07661b02791d6e",
+      "sourcePath": "SRC/neothd/src/providers/bge_m3_artifacts.rs",
+      "sourceSha256": "4ca8303d6caf59a60c2246552e2f24dfb3a5e9a347502a11dcf2a98d943f14af",
+      "result": "PASS"
+    },
+    {
+      "test": "providers::bge_m3_artifacts::tests::terminal_ready_retry_is_not_network_authorized",
+      "run": 35857339883,
+      "sourceHead": "e5bdf2abac5046ecd67e5641cb07661b02791d6e",
+      "sourcePath": "SRC/neothd/src/providers/bge_m3_artifacts.rs",
+      "sourceSha256": "4ca8303d6caf59a60c2246552e2f24dfb3a5e9a347502a11dcf2a98d943f14af",
+      "result": "PASS"
+    },
+    {
+      "test": "providers::local_bge_m3::tests::bge_vector_normalization_requires_exact_finite_dimension",
+      "run": 35857339883,
+      "sourceHead": "e5bdf2abac5046ecd67e5641cb07661b02791d6e",
+      "sourcePath": "SRC/neothd/src/providers/local_bge_m3.rs",
+      "sourceSha256": "f67dfd97f9044e4112a7b6a0a0a245dbbeff3f36f85b9b2552b90c15b5ecd13a",
+      "result": "PASS"
+    },
+    {
+      "test": "providers::tests::explicit_bge_m3_rejects_cloud_embedding_provider_without_dispatch",
+      "run": 35857339883,
+      "sourceHead": "e5bdf2abac5046ecd67e5641cb07661b02791d6e",
+      "sourcePath": "SRC/neothd/src/providers/mod.rs",
+      "sourceSha256": "59f48f5e65dcd6dc840f1408d07e99067436cd15e8de474dbca3bfeffeec16a4",
+      "result": "PASS"
+    },
+    {
+      "test": "cli::models::tests::bge_m3_nested_commands_have_no_mutable_artifact_selectors",
+      "run": 35857339883,
+      "sourceHead": "e5bdf2abac5046ecd67e5641cb07661b02791d6e",
+      "sourcePath": "SRC/neothd/src/cli/models.rs",
+      "sourceSha256": "f95a48bb5d8897818b31427f12615071faa8e42d5f83934e248b91ad1a624228",
+      "result": "PASS"
+    },
+    {
+      "test": "cli::models::tests::bge_m3_load_failure_records_failed_d8_and_never_ready",
+      "run": 35857339883,
+      "sourceHead": "e5bdf2abac5046ecd67e5641cb07661b02791d6e",
+      "sourcePath": "SRC/neothd/src/cli/models.rs",
+      "sourceSha256": "f95a48bb5d8897818b31427f12615071faa8e42d5f83934e248b91ad1a624228",
+      "result": "PASS"
+    },
+    {
+      "test": "providers::local_qwen::tests::preflight_disk_space_rejects_absurd_minimum",
+      "run": 35857339883,
+      "sourceHead": "e5bdf2abac5046ecd67e5641cb07661b02791d6e",
+      "sourcePath": "SRC/neothd/src/providers/local_qwen.rs",
+      "sourceSha256": "c2fb83bfd3a6cc176c89541945de7ebc449f985c5c20d08d9a677b67dbefaf31",
+      "result": "PASS"
+    },
+    {
+      "test": "cli::buddy::tests::buddy_embedding_parses_all_actions_and_rejects_unknown_action",
+      "run": 35857339883,
+      "sourceHead": "e5bdf2abac5046ecd67e5641cb07661b02791d6e",
+      "sourcePath": "SRC/neothd/src/cli/buddy.rs",
+      "sourceSha256": "9635c51a35cef6a62b0f04915b522c1487d126ef4b7db215c6d49766175f2aff",
+      "result": "PASS"
+    },
+    {
+      "test": "cli::buddy::tests::buddy_embedding_select_mutates_only_supplied_config_and_preserves_unknown_fields",
+      "run": 35857339883,
+      "sourceHead": "e5bdf2abac5046ecd67e5641cb07661b02791d6e",
+      "sourcePath": "SRC/neothd/src/cli/buddy.rs",
+      "sourceSha256": "9635c51a35cef6a62b0f04915b522c1487d126ef4b7db215c6d49766175f2aff",
+      "result": "PASS"
+    },
+    {
+      "test": "cli::buddy::tests::buddy_embedding_qwen_actions_fail_before_lifecycle_side_effects",
+      "run": 35857339883,
+      "sourceHead": "e5bdf2abac5046ecd67e5641cb07661b02791d6e",
+      "sourcePath": "SRC/neothd/src/cli/buddy.rs",
+      "sourceSha256": "9635c51a35cef6a62b0f04915b522c1487d126ef4b7db215c6d49766175f2aff",
+      "result": "PASS"
+    },
+    {
+      "test": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_unknown_fields_and_bad_row_contract",
+      "run": 35856964423,
+      "sourceHead": "21612331dbc4e1fc8929e6990775f165c86fb3f1",
+      "sourcePath": "SRC/neothd-gui/src/panel_logic.rs",
+      "sourceSha256": "8482856452414A3EC61E20A069317A2F901D4D95EB57441691BD04194A5BCE1C",
+      "executionReceipt": "test-088-execution.txt",
+      "result": "PASS"
+    },
+    {
+      "test": "panel_logic::embedding_models_contract_tests::only_fresh_exact_ready_bge_snapshot_passes_buddy_gate",
+      "run": 35856964423,
+      "sourceHead": "21612331dbc4e1fc8929e6990775f165c86fb3f1",
+      "sourcePath": "SRC/neothd-gui/src/panel_logic.rs",
+      "sourceSha256": "8482856452414A3EC61E20A069317A2F901D4D95EB57441691BD04194A5BCE1C",
+      "executionReceipt": "test-089-execution.txt",
+      "result": "PASS"
+    },
+    {
+      "test": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_actions_for_unselected_or_qwen_rows",
+      "run": 35856964423,
+      "sourceHead": "21612331dbc4e1fc8929e6990775f165c86fb3f1",
+      "sourcePath": "SRC/neothd-gui/src/panel_logic.rs",
+      "sourceSha256": "8482856452414A3EC61E20A069317A2F901D4D95EB57441691BD04194A5BCE1C",
+      "executionReceipt": "test-090-execution.txt",
+      "result": "PASS"
+    },
+    {
+      "test": "panel_logic::embedding_models_contract_tests::buddy_gate_rejects_cache_source_even_with_ready_bge",
+      "run": 35856964423,
+      "sourceHead": "21612331dbc4e1fc8929e6990775f165c86fb3f1",
+      "sourcePath": "SRC/neothd-gui/src/panel_logic.rs",
+      "sourceSha256": "8482856452414A3EC61E20A069317A2F901D4D95EB57441691BD04194A5BCE1C",
+      "executionReceipt": "test-091-execution.txt",
+      "result": "PASS"
+    },
+    {
+      "test": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_wrong_pin_and_impossible_observation",
+      "run": 35856964423,
+      "sourceHead": "21612331dbc4e1fc8929e6990775f165c86fb3f1",
+      "sourcePath": "SRC/neothd-gui/src/panel_logic.rs",
+      "sourceSha256": "8482856452414A3EC61E20A069317A2F901D4D95EB57441691BD04194A5BCE1C",
+      "executionReceipt": "test-092-execution.txt",
+      "result": "PASS"
+    },
+    {
+      "test": "buddy_wiring_tests::w218_buddy_embedding_callbacks_use_instance_config_and_shared_freshness_fence",
+      "run": 35856964423,
+      "sourceHead": "21612331dbc4e1fc8929e6990775f165c86fb3f1",
+      "sourcePath": "SRC/neothd-gui/src/main.rs",
+      "sourceSha256": "B6A91F71D55671D107D1F3A714471B4E1356313613AE81233F72CE6D9111E922",
+      "executionReceipt": "test-093-execution.txt",
+      "result": "PASS"
+    },
+    {
+      "test": "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe",
+      "run": 35856964423,
+      "sourceHead": "21612331dbc4e1fc8929e6990775f165c86fb3f1",
+      "sourcePath": "SRC/neothd-gui/src/main.rs",
+      "sourceSha256": "B6A91F71D55671D107D1F3A714471B4E1356313613AE81233F72CE6D9111E922",
+      "executionReceipt": "test-126-execution.txt",
+      "result": "PASS"
+    },
+    {
+      "test": "providers::local_bge_m3::tests::hosted_official_bge_m3_smoke",
+      "run": 35856967745,
+      "sourceHead": "21612331dbc4e1fc8929e6990775f165c86fb3f1",
+      "result": "PASS",
+      "bindings": "BGE216 admitted9 source inputs"
+    },
+    {
+      "test": "cli::models::tests::bge_m3_retained_ready_marker_is_healthy_only_for_its_recovery_attempt",
+      "run": 35856967745,
+      "sourceHead": "21612331dbc4e1fc8929e6990775f165c86fb3f1",
+      "result": "PASS",
+      "bindings": "BGE216 admitted9 source inputs"
+    }
+  ],
+  "sourceDriftReview": [
+    {
+      "path": "SRC/neothd/src/providers/mod.rs",
+      "assessment": "Bounded Direct-Chat retry request/reauthorization delta; BGE provider selection, embedding dispatch, acquisition and readiness unchanged."
+    },
+    {
+      "path": "SRC/neothd-gui/src/main.rs",
+      "assessment": "W164 macOS response-feedback and citation fixture deltas; BGE/W218 production callbacks and required tests unchanged."
+    }
+  ],
+  "basis": "Admitted Group780e5+GUI135216+BGE216; exact W387 minimum selection. Unrelated group failures retained.",
+  "localExecutableValidationRan": false,
+  "modelDownloadedLocally": false
+}
