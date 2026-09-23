@@ -3077,7 +3077,15 @@ mod tests {
         let error = run_physical_redaction(home.path(), "acme", 1705)
             .await
             .expect_err("journal target must be rebound through a real direct child");
-        assert!(format!("{error:#}").contains("authenticated leaf rewrite recovery target"));
+        // The exact platform wrapper varies, but it must identify the exact
+        // journal-named child which failed no-follow rebinding.
+        assert!(format!("{error:#}").contains("missing-leaf.wal"));
+        assert!(
+            error.chain().filter_map(|cause| cause.downcast_ref::<std::io::Error>()).any(|io| {
+                io.kind() == std::io::ErrorKind::NotFound
+            }),
+            "missing journal leaf must retain an OS NotFound cause: {error:#}"
+        );
         assert!(
             home.path()
                 .join("wal/.redaction-rewrite-journal.json")

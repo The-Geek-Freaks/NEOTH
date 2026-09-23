@@ -1,0 +1,375 @@
+{
+  "schema": "neoth-p201-acceptance/v1",
+  "assessment": "ACCEPTED SOURCE-BOUND PARENT EVIDENCE",
+  "roadId": "GOLD-LF-P2-01",
+  "currentHead": "8f6ef1166440037ceedc6a13c8a0f78596a8218b",
+  "group810": {
+    "run": 35866133454,
+    "sourceHead": "bdb50ac2acc4583345b61eb620ae7d08ecac5307",
+    "required": 810,
+    "executed": 810,
+    "passed": 807,
+    "failed": 3,
+    "failedTests": [
+      "cli::parity_drift::operation_inventory_tracks_live_nested_cli_leaves",
+      "cli::memory::tests::physical_redaction_refuses_journal_target_that_is_not_the_bound_leaf",
+      "wal::redact::tests::staged_authenticated_leaf_refuses_matched_structural_frame_byte_identically"
+    ],
+    "allSourceHashesMatch": true,
+    "matrixAndLockMatch": true,
+    "orderedSelectionAndActualTerminalsVerified": true,
+    "admission": "work/gold-20260906/wave405-recovery/group810bdb/ADMISSION.json",
+    "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-receipt-bdb50ac2acc4583345b61eb620ae7d08ecac5307/selection.json",
+    "fixtureIdentities": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json"
+  },
+  "sourceCarry": {
+    "commitDiffFromGroup810ToHead": [],
+    "workingTreeDiffRelevantPaths": [],
+    "rationale": "All nine P2-01 source paths are unchanged from Group810 source head to current HEAD; Group810 individual PASS terminals therefore carry source-equivalently."
+  },
+  "requiredCases": [
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "daemon::dream_phases::tests::light_promotes_only_selected_hot_inputs_and_real_warm_reader_retains_trust_zero",
+      "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
+      "sourceSha256": "26db0e0e68d7613b9e466d6e9cea565b873503bececf8094e27072c3cfc85435",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 31484
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "daemon::dream_phases::tests::second_day_with_no_fresh_hot_rows_creates_one_canonical_rem_edge_and_duplicate_ticks_do_not_reinforce",
+      "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
+      "sourceSha256": "26db0e0e68d7613b9e466d6e9cea565b873503bececf8094e27072c3cfc85435",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 31529
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "daemon::dream_phases::tests::oversized_dream_ids_bind_the_deterministic_first_32_and_leave_the_rest_hot",
+      "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
+      "sourceSha256": "26db0e0e68d7613b9e466d6e9cea565b873503bececf8094e27072c3cfc85435",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 31574
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "daemon::dream_phases::tests::channel_consent_revocation_after_prepare_blocks_all_dream_effects",
+      "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
+      "sourceSha256": "26db0e0e68d7613b9e466d6e9cea565b873503bececf8094e27072c3cfc85435",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 31619
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "daemon::dream_phases::tests::channel_consent_regrant_with_a_new_revision_denies_the_prepared_binding",
+      "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
+      "sourceSha256": "26db0e0e68d7613b9e466d6e9cea565b873503bececf8094e27072c3cfc85435",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 31664
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "daemon::dream_phases::tests::generation_or_corrupted_binding_denial_leaves_phase_effects_unmutated",
+      "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
+      "sourceSha256": "26db0e0e68d7613b9e466d6e9cea565b873503bececf8094e27072c3cfc85435",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 31709
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "daemon::dream_phases::tests::claimed_resume_only_uses_existing_bound_input_and_cannot_select_new_rows",
+      "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
+      "sourceSha256": "26db0e0e68d7613b9e466d6e9cea565b873503bececf8094e27072c3cfc85435",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 31754
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "daemon::dream_phases::tests::prepared_repair_recreates_only_the_declared_missing_pair_once",
+      "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
+      "sourceSha256": "26db0e0e68d7613b9e466d6e9cea565b873503bececf8094e27072c3cfc85435",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 31799
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "daemon::dream_phases::tests::rejected_light_write_rolls_back_without_completing_the_prepared_receipt",
+      "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
+      "sourceSha256": "26db0e0e68d7613b9e466d6e9cea565b873503bececf8094e27072c3cfc85435",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 31844
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "wal::dream_receipts::tests::canonical_payload_round_trips_and_excludes_text_fields",
+      "sourcePath": "SRC/neothd/src/wal/dream_receipts.rs",
+      "sourceSha256": "e2e521d3e15edd91db3585109132450a30395fd756128a021cdc0a9bd90176f5",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 31889
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "wal::dream_receipts::tests::descriptor_rejects_zero_identity_or_noncanonical_reserved_byte",
+      "sourcePath": "SRC/neothd/src/wal/dream_receipts.rs",
+      "sourceSha256": "e2e521d3e15edd91db3585109132450a30395fd756128a021cdc0a9bd90176f5",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 31934
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "wal::writer::tests::dream_audit_subtype_refuses_generic_writer_entry",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "a96bf3df2098206e623596d1eb5b23ca949576a9289e2ca49ead292937ad1b80",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 31979
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "wal::writer::tests::dream_audit_once_returns_existing_exact_and_conflict_without_second_append",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "a96bf3df2098206e623596d1eb5b23ca949576a9289e2ca49ead292937ad1b80",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 32024
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "wal::writer::tests::dream_audit_reserved_subtype_rejects_all_real_generic_handle_entrypoints",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "a96bf3df2098206e623596d1eb5b23ca949576a9289e2ca49ead292937ad1b80",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 32069
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "wal::writer::tests::dream_audit_durable_before_ack_loss_recovers_exactly_once_after_restart",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "a96bf3df2098206e623596d1eb5b23ca949576a9289e2ca49ead292937ad1b80",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 32114
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "wal::writer::tests::dream_audit_rejects_different_home_and_incomplete_authenticated_scan_without_append",
+      "sourcePath": "SRC/neothd/src/wal/writer.rs",
+      "sourceSha256": "a96bf3df2098206e623596d1eb5b23ca949576a9289e2ca49ead292937ad1b80",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 32159
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "memory::migrations::tests::v44_to_v45_preserves_existing_tier_rows_defaults_trust_and_creates_dream_schema",
+      "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
+      "sourceSha256": "dc62e88d9387f4990d9d2f7da0fb6d8dee3769907db2ecf279b3d9d85231b339",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 32204
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "memory::migrations::tests::v44_to_v45_rolls_back_tier_columns_when_dream_schema_cannot_be_created",
+      "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
+      "sourceSha256": "dc62e88d9387f4990d9d2f7da0fb6d8dee3769907db2ecf279b3d9d85231b339",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 32249
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "memory::store::tests::fresh_v45_schema_has_tier_trust_defaults_and_dream_phase_tables",
+      "sourcePath": "SRC/neothd/src/memory/store.rs",
+      "sourceSha256": "880eb5f7569a3f581e462c81ab56d4346c6488e07e9155a77ebef0a9678aaf9f",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 32294
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "memory::consolidate::tests::ordinary_untrusted_trust_survives_hot_warm_cold_consolidation",
+      "sourcePath": "SRC/neothd/src/memory/consolidate.rs",
+      "sourceSha256": "404b66c896f062d1168422062ff36c5ca71be19ee2b6ed8b636206efc5265500",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 32339
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "cli::recall::tests::recall_cold_like_surfaces_cold_tier_rows_with_correct_tier_label",
+      "sourcePath": "SRC/neothd/src/cli/recall.rs",
+      "sourceSha256": "f44295cf945b8f8d2a807358692d4ae9e93ba9235168b45512d778df9775bcb5",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 32384
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "cli::dreaming_task::tests::effect_rail_rejects_cancelled_and_superseded_generations",
+      "sourcePath": "SRC/neothd/src/cli/dreaming_task.rs",
+      "sourceSha256": "780e72a072123b4355e5c2d1cba21e4d0ce56f48ac5ddbc372377cf699044ffc",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 32429
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "cli::dreaming_task::tests::scheduled_pass_binds_jsonl_dream_and_audit_day_to_claimed_local_date",
+      "sourcePath": "SRC/neothd/src/cli/dreaming_task.rs",
+      "sourceSha256": "780e72a072123b4355e5c2d1cba21e4d0ce56f48ac5ddbc372377cf699044ffc",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 32474
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave331DreamIntegratedAcceptance",
+      "testIdentity": "cli::chat::tests::architecture_skill_appends_automatic_cycle_findings_without_repo_context_gate",
+      "sourcePath": "SRC/neothd/src/cli/chat.rs",
+      "sourceSha256": "dbc8f3c2dab6e191933ebeb1005490997307e0962241bd0c8b049693ba928469",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 32519
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave350DreamOutboxAcceptance",
+      "testIdentity": "cli::dreaming_task::tests::dream_phase_outboxes_deliver_once_and_exact_replay_has_no_new_effects",
+      "sourcePath": "SRC/neothd/src/cli/dreaming_task.rs",
+      "sourceSha256": "780e72a072123b4355e5c2d1cba21e4d0ce56f48ac5ddbc372377cf699044ffc",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 32564
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    },
+    {
+      "acceptanceSet": "wave350DreamOutboxAcceptance",
+      "testIdentity": "cli::dreaming_task::tests::dream_phase_ack_loss_stays_pending_then_restart_uses_existing_exact_before_delivery",
+      "sourcePath": "SRC/neothd/src/cli/dreaming_task.rs",
+      "sourceSha256": "780e72a072123b4355e5c2d1cba21e4d0ce56f48ac5ddbc372377cf699044ffc",
+      "group810Terminal": {
+        "result": "PASS",
+        "log": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "line": 32609
+      },
+      "selection": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-source-bdb50ac2acc4583345b61eb620ae7d08ecac5307/fixture-identities.json",
+      "currentSourceCarry": "unchanged from Group810 source head through current HEAD"
+    }
+  ],
+  "verdict": {
+    "accepted": true,
+    "reason": "All 26 W356-required identities have individual Group810bdb PASS terminals and every relevant source path is unchanged through current HEAD.",
+    "limitations": "No local executable validation was run; this is source-bound hosted evidence."
+  }
+}

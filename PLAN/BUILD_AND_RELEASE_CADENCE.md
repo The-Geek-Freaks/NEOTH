@@ -3,6 +3,23 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W405-W410 recovery, hosted repairs and three functional acceptances (2026-09-23):**
+Group810 run35866133454 is source-admitted:810 executed,807 PASS,3 failures;
+all163source paths, matrix/lock and ordered individual terminals verified.
+P2-01 Dream phases (26), P2-09 research lifecycle (18) and P2-23 Dream opt-in
+(12native+10GUI) now satisfy their scoped requirements. W408-W410 retain exact
+receipts and relevant-source carry reviews; Root checked all66 terminals.
+The three unrelated grouped failures remain open pending W406/W407 rerun.
+W406 fixes invalid rollover-fixture JSON and checks the missing journal child
+with its NotFound cause; byte preservation and journal retention stay required.
+W407 adds seven actual cluster command leaves with honest Unwired GUI gaps,
+including the exact inventory-regression expectation. Independent review passed.
+Coreed97935866308409 passed all4gates; its bound D9C6E38C CLI reference is imported.
+Obsolete FullCI35867787236 is confirmed cancelled; GUI14335867782202 continues.
+Next: hosted core readiness, Group824 and replacement full CI for these repairs.
+Inventory685;native1136+Windows19/Linux33/macOS32;GUI143Linux/139macOS.
+Road1324=1031checked/291open/2partial;293raw/292pre-tag blockers;WS-LF24done/94open.
+No local executable validation or model download ran; BSOD cause unproven.
 **W392 outbound cluster and W400 session-preview selection (2026-09-23):**
 The daemon-owned outbound dispatcher binds exact operator scopes to active
 authenticated peers, persists Prepared before enqueue, and permits candidate

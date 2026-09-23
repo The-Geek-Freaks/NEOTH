@@ -795,6 +795,50 @@ Inspect durable per-peer mesh cursors, pending exact replays, ACK high water mar
 
 Manage the exact-key operator assignment required for inbound `TaskDelegate` frames. Missing assignment is a deny
 
+#### `neoth cluster task-delegate outbound-dispatch`
+
+Ask the live authenticated daemon to dispatch exactly one outbound delegated task. There is intentionally no offline approximation
+
+- `--operation-id <OPERATION_ID>`
+- `--task-id <TASK_ID>`
+- `--prompt <PROMPT>`
+- `--model-hint <MODEL_HINT>`
+- `--skill <SKILL>`
+- `--channel <CHANNEL>`
+- `--account <ACCOUNT>`
+
+#### `neoth cluster task-delegate outbound-reset`
+
+CAS-reset one outbound route to a durable deny tombstone
+
+- `<PEER_KEY>`
+- `--skill <SKILL>`
+- `--channel <CHANNEL>`
+- `--account <ACCOUNT>`
+- `--priority <PRIORITY>`
+- `--expected-revision <EXPECTED_REVISION>`
+
+#### `neoth cluster task-delegate outbound-set`
+
+CAS one exact outbound route. This changes only local durable authority; daemon dispatch remains a separate live operation
+
+- `<PEER_KEY>`
+- `--skill <SKILL>`
+- `--channel <CHANNEL>`
+- `--account <ACCOUNT>`
+- `--allowed <ALLOWED>`
+- `--priority <PRIORITY>`
+- `--expected-revision <EXPECTED_REVISION>`
+
+#### `neoth cluster task-delegate outbound-show`
+
+Read one exact operator-owned outbound delegation route
+
+- `<PEER_KEY>`
+- `--skill <SKILL>`
+- `--channel <CHANNEL>`
+- `--account <ACCOUNT>`
+
 #### `neoth cluster task-delegate scope-reset`
 
 CAS-reset an exact scoped authority to denied while retaining its revision tombstone; reset never re-opens a broad permission

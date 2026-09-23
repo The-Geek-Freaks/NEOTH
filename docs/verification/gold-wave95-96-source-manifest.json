@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T13:20:57.7414769Z",
-  "validationStatus": "W39210path verified hosted format import; Core9fd all4gates admitted; Group810 and Coreed979 pending",
+  "capturedUtc": "2026-09-23T13:55:15.7333556Z",
+  "validationStatus": "W408Dream26 W409Research18 W410OptIn22 ACCEPTED; Group810807PASS3FAIL retained; W406WAL/W407inventory repairs hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -103,8 +103,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 242584,
-      "sha256": "54491B9543F7285A76CF73057C13CC7BFAA3F91941A92CB9AC67230FDC94BFDB"
+      "bytes": 243754,
+      "sha256": "D9C6E38C851CCD2E1F4C451851DFFE3FB0F6011123CD5D5C6EF2C27850D6C82E"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -808,18 +808,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 162460,
-      "sha256": "8C10994D039E3E2E1D767CD04F9F453256D008DCB63BCEA9B7048B9864A3762D"
+      "bytes": 163796,
+      "sha256": "8E4515186DA91378A169083B0A3C8BC7FD7FD54543CFBC8E9BCE5CA374356C0C"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1172430,
-      "sha256": "32734C79E900234617B9F7D6F5AFC572DF14871089001EB62E97DF5080ADAF8A"
+      "bytes": 1173825,
+      "sha256": "ADE0FB07BB27668C39160B2EC8D66D9BDD7A33C119523D2BBCC45425B420BF65"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1770139,
-      "sha256": "8745BBBE321A563F957BC94B9518BB027DFC5D2B5DD38824BD86F9E2BD6ADD87"
+      "bytes": 1771475,
+      "sha256": "874294416EF5B2C3CCB9E932A2E4FA1E79C497B979E2719F9F47A3C570278BA2"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1598,8 +1598,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/memory.rs",
-      "bytes": 132164,
-      "sha256": "6C15D18471A562E777C806F53B4DEA6617961E26E5673493604EAA7755A662C5"
+      "bytes": 132557,
+      "sha256": "F80E7270E2AF676B39DF5CD457D7DEB7AB9F63AE8C58C2344260E81D86AF5A2A"
     },
     {
       "path": "SRC/neothd/src/cli/meter.rs",
@@ -1633,8 +1633,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/parity_drift.rs",
-      "bytes": 74999,
-      "sha256": "A5F7343EBB2C4A69D120EEC65C11B34EAC891F2CCF00DC2200191927CA1A3D84"
+      "bytes": 77961,
+      "sha256": "73607356D82A8C15A96E27E3B1371978AA17C95AA20AA2627DE0CAAD71638CBD"
     },
     {
       "path": "SRC/neothd/src/cli/proactive.rs",
@@ -3385,6 +3385,51 @@
       "path": "docs/gold-wave400-session-preview-selection.md",
       "bytes": 1754,
       "sha256": "D5A2F0CF5A0C93C161BA30E2B998DCF57289FE9C47FD988263486FCEF4E94FD6"
+    },
+    {
+      "path": "docs/gold-wave405-recovery-and-cli-reference.md",
+      "bytes": 2116,
+      "sha256": "4F79DF6777F0F1DE5BEBA5CF50723864D24990EC1BB5918B35803967DEB10B55"
+    },
+    {
+      "path": "docs/gold-wave406-wal-behavior-repair.md",
+      "bytes": 873,
+      "sha256": "4FCE63DC7E0D539613F5AD945A0F47FF17E07CF590FC76F18728F11A2409F203"
+    },
+    {
+      "path": "docs/gold-wave407-cluster-operation-inventory.md",
+      "bytes": 2575,
+      "sha256": "14E88554858AD76954CBB9403D6BA184F78D216AD2401390CE19167F65B5E8BE"
+    },
+    {
+      "path": "docs/gold-wave408-dream-acceptance.md",
+      "bytes": 13226,
+      "sha256": "ABA6CE71C3D253DFF34FF3190358BCE3E4325DC35FF3D9145BB2FEBAE5A1D0EC"
+    },
+    {
+      "path": "docs/verification/gold-wave408-p201-acceptance.json",
+      "bytes": 23742,
+      "sha256": "1B1250EEC6D11F7D6BA3B90B6D71EF69ED1454314D084C09BE003DCDD1248E22"
+    },
+    {
+      "path": "docs/gold-wave409-research-acceptance.md",
+      "bytes": 5210,
+      "sha256": "A82AA3C7B369BBE14EBBC83DD6E17F776A463F40FF1161259C542D031A963704"
+    },
+    {
+      "path": "docs/verification/gold-wave409-p209-acceptance.json",
+      "bytes": 14450,
+      "sha256": "3E3C7774742C28DD1F1997086642928AE78C00C81C1FBB176D62852DD2A65248"
+    },
+    {
+      "path": "docs/gold-wave410-dream-opt-in-acceptance.md",
+      "bytes": 5475,
+      "sha256": "0BBBE84754EF070B8C1B14CC266094214C5A006386BF11B22F9E96861CA417E4"
+    },
+    {
+      "path": "docs/verification/gold-wave410-p223-acceptance.json",
+      "bytes": 15611,
+      "sha256": "ED7C3C72698E829DCCEED2B0CD0BF22CD1DB32E023A04A2445E749BE46E64128"
     }
   ]
 }

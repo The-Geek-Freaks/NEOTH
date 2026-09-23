@@ -2075,17 +2075,30 @@ mod tests {
     #[test]
     fn staged_authenticated_leaf_refuses_matched_structural_frame_byte_identically() {
         let home = tempfile::tempdir().unwrap();
+        // This is the production cross-segment rollover payload shape.  It is
+        // deliberately a valid typed payload so the authenticated-home scan
+        // reaches the redaction classifier instead of failing at JSON decode.
+        let rollover = serde_json::to_vec(&serde_json::json!({
+            "link_domain": "neoth.wal.cross-segment.v1", "link_version": 1,
+            "closed_segment_name": "prior-000001.wal", "closed_generation": 1,
+            "closed_seq": 1, "closed_bytes": 104, "closed_start_ts_ns": 0,
+            "closed_node_id": ([0_u8; 16]), "closed_physical_bytes": 104,
+            "closed_sha256_hex": hex::encode([0_u8; 32]),
+            "opened_segment_name": "000001.wal", "opened_generation": 1,
+            "opened_seq": 1, "opened_start_ts_ns": 0,
+            "opened_node_id": ([0_u8; 16]), "reason": "acmecorp", "ts_ns": 1,
+        })).unwrap();
         let path = write_authenticated_leaf_with_writer_marker_type(
             home.path(),
             events::EVENT_TYPE_SEGMENT_ROLLOVER,
-            b"AcmeCorp structural link",
+            &rollover,
         );
         let before = std::fs::read(&path).unwrap();
         let error =
             stage_authenticated_sealed_leaf(home.path(), &path, payload_contains_topic("acmecorp"))
                 .err()
                 .expect("matched authenticated structural frame must refuse");
-        assert!(format!("{error:#}").contains("chain-structural"));
+        assert!(format!("{error:#}").contains("chain-structural"), "{error:#}");
         assert_eq!(
             std::fs::read(&path).unwrap(),
             before,

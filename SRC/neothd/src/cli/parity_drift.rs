@@ -978,6 +978,69 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         state: OperationState::Verified,
     },
     #[cfg(feature = "cluster")]
+    unwired_operation(
+        "cluster.task-delegate.scope-show",
+        "cluster",
+        "cluster task-delegate scope-show",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > TaskDelegate scoped authority",
+        "the GUI inspects only the unscoped peer assignment; it has no skill/channel/account scoped readback",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "cluster.task-delegate.scope-set",
+        "cluster",
+        "cluster task-delegate scope-set",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > TaskDelegate scoped authority",
+        "the GUI has no scoped skill/channel/account editor or scoped CAS receipt/readback",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "cluster.task-delegate.scope-reset",
+        "cluster",
+        "cluster task-delegate scope-reset",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > TaskDelegate scoped authority",
+        "the GUI deny/reset control changes the unscoped assignment; it cannot create the exact scoped deny tombstone",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "cluster.task-delegate.outbound-show",
+        "cluster",
+        "cluster task-delegate outbound-show",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > Outbound TaskDelegate route",
+        "the GUI has no outbound route projection keyed by peer, skill, channel, and account",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "cluster.task-delegate.outbound-set",
+        "cluster",
+        "cluster task-delegate outbound-set",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > Outbound TaskDelegate route",
+        "the GUI has no outbound route editor for allowed, priority, revision, or committed readback",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "cluster.task-delegate.outbound-reset",
+        "cluster",
+        "cluster task-delegate outbound-reset",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > Outbound TaskDelegate route",
+        "the GUI has no outbound-route reset control that writes the exact durable deny tombstone",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "cluster.task-delegate.outbound-dispatch",
+        "cluster",
+        "cluster task-delegate outbound-dispatch",
+        "buddyconfig",
+        "Buddy Config > Cluster membership > Outbound TaskDelegate dispatch",
+        "the GUI has no operation/task/prompt dispatch control or authenticated-daemon receipt/readback",
+    ),
+    #[cfg(feature = "cluster")]
     OperationParity {
         id: "buddy.cluster.status",
         capability: "buddy",
@@ -1991,6 +2054,13 @@ fn operation_inventory_keeps_r4_05_gaps_explicit() {
         "cluster.status",
         "cluster.swarm",
         "cluster.sync-state",
+        "cluster.task-delegate.outbound-dispatch",
+        "cluster.task-delegate.outbound-reset",
+        "cluster.task-delegate.outbound-set",
+        "cluster.task-delegate.outbound-show",
+        "cluster.task-delegate.scope-reset",
+        "cluster.task-delegate.scope-set",
+        "cluster.task-delegate.scope-show",
         "cluster.topology",
     ]);
     assert_eq!(unwired, expected_unwired);

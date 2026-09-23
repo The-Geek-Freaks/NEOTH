@@ -1,0 +1,251 @@
+{
+  "schema": "neoth-p209-acceptance/v1",
+  "decision": "accepted",
+  "parent": "GOLD-LF-P2-09",
+  "reviewedHead": "8f6ef116",
+  "admittedRun": {
+    "run": 35866133454,
+    "sourceHead": "bdb50ac2acc4583345b61eb620ae7d08ecac5307",
+    "required": 810,
+    "executed": 810,
+    "passed": 807,
+    "failed": 3,
+    "allSourceHashesMatch": true,
+    "matrixAndLockMatch": true,
+    "orderedActualTerminalsVerified": true
+  },
+  "criterion": "operator-governed lifecycle; bounded planning/execution and budgets; pause/resume/cancel; evidence; proposal-first mutation; audit/rollback",
+  "requiredTests": [
+    {
+      "identity": "daemon::research_runs::tests::approval_is_revision_bound_and_budget_is_immutable",
+      "sourcePath": "SRC/neothd/src/daemon/research_runs.rs",
+      "sourceSha256": "1162647a942b7eaf2b820481fcca3c7da4cb405cade65388e3eab32ad37f72c2",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test daemon::research_runs::tests::approval_is_revision_bound_and_budget_is_immutable ... ok"
+      }
+    },
+    {
+      "identity": "daemon::research_runs::tests::cancel_before_effect_is_terminal",
+      "sourcePath": "SRC/neothd/src/daemon/research_runs.rs",
+      "sourceSha256": "1162647a942b7eaf2b820481fcca3c7da4cb405cade65388e3eab32ad37f72c2",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test daemon::research_runs::tests::cancel_before_effect_is_terminal ... ok"
+      }
+    },
+    {
+      "identity": "daemon::research_runs::tests::checkpoint_survives_pause_and_claimed_resume_without_round_rewind",
+      "sourcePath": "SRC/neothd/src/daemon/research_runs.rs",
+      "sourceSha256": "1162647a942b7eaf2b820481fcca3c7da4cb405cade65388e3eab32ad37f72c2",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test daemon::research_runs::tests::checkpoint_survives_pause_and_claimed_resume_without_round_rewind ... ok"
+      }
+    },
+    {
+      "identity": "daemon::research_runs::tests::malformed_unknown_future_or_filename_mismatched_store_refuses_without_overwrite",
+      "sourcePath": "SRC/neothd/src/daemon/research_runs.rs",
+      "sourceSha256": "1162647a942b7eaf2b820481fcca3c7da4cb405cade65388e3eab32ad37f72c2",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test daemon::research_runs::tests::malformed_unknown_future_or_filename_mismatched_store_refuses_without_overwrite ... ok"
+      }
+    },
+    {
+      "identity": "daemon::research_runs::tests::missing_home_reads_create_nothing_and_held_lock_refuses_rewrite",
+      "sourcePath": "SRC/neothd/src/daemon/research_runs.rs",
+      "sourceSha256": "1162647a942b7eaf2b820481fcca3c7da4cb405cade65388e3eab32ad37f72c2",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test daemon::research_runs::tests::missing_home_reads_create_nothing_and_held_lock_refuses_rewrite ... ok"
+      }
+    },
+    {
+      "identity": "daemon::research_runs::tests::stale_attempt_cannot_mutate_resumed_run_and_late_control_still_completes",
+      "sourcePath": "SRC/neothd/src/daemon/research_runs.rs",
+      "sourceSha256": "1162647a942b7eaf2b820481fcca3c7da4cb405cade65388e3eab32ad37f72c2",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test daemon::research_runs::tests::stale_attempt_cannot_mutate_resumed_run_and_late_control_still_completes ... ok"
+      }
+    },
+    {
+      "identity": "tools::deep_research::tests::resumed_checkpoint_skips_planning_search_and_fetch_for_completed_round",
+      "sourcePath": "SRC/neothd/src/tools/deep_research.rs",
+      "sourceSha256": "58df521f8b8c0cfc60ce158ae4c8b41ca3f8e77de693c803e45b903eecc49696",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test tools::deep_research::tests::resumed_checkpoint_skips_planning_search_and_fetch_for_completed_round ... ok"
+      }
+    },
+    {
+      "identity": "cli::research::tests::provider_call_cap_rejects_next_call_without_inner_invocation",
+      "sourcePath": "SRC/neothd/src/cli/research.rs",
+      "sourceSha256": "fe6ab2d408ea3c31aef8edbf579917626abd847f5929db1cb14e772089619268",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test cli::research::tests::provider_call_cap_rejects_next_call_without_inner_invocation ... ok"
+      }
+    },
+    {
+      "identity": "cli::research::tests::research_parser_requires_revision_for_mutations_and_keeps_read_commands",
+      "sourcePath": "SRC/neothd/src/cli/research.rs",
+      "sourceSha256": "fe6ab2d408ea3c31aef8edbf579917626abd847f5929db1cb14e772089619268",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test cli::research::tests::research_parser_requires_revision_for_mutations_and_keeps_read_commands ... ok"
+      }
+    },
+    {
+      "identity": "cli::research::tests::pre_effect_config_setup_failure_persists_failed_without_provider_or_http_effect",
+      "sourcePath": "SRC/neothd/src/cli/research.rs",
+      "sourceSha256": "fe6ab2d408ea3c31aef8edbf579917626abd847f5929db1cb14e772089619268",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test cli::research::tests::pre_effect_config_setup_failure_persists_failed_without_provider_or_http_effect ... ok"
+      }
+    },
+    {
+      "identity": "daemon::research_runs::tests::provider_call_reservations_persist_across_pause_reopen_and_resume",
+      "sourcePath": "SRC/neothd/src/daemon/research_runs.rs",
+      "sourceSha256": "1162647a942b7eaf2b820481fcca3c7da4cb405cade65388e3eab32ad37f72c2",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test daemon::research_runs::tests::provider_call_reservations_persist_across_pause_reopen_and_resume ... ok"
+      }
+    },
+    {
+      "identity": "daemon::research_runs::tests::wall_time_accumulates_active_attempts_without_pause_dwell",
+      "sourcePath": "SRC/neothd/src/daemon/research_runs.rs",
+      "sourceSha256": "1162647a942b7eaf2b820481fcca3c7da4cb405cade65388e3eab32ad37f72c2",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test daemon::research_runs::tests::wall_time_accumulates_active_attempts_without_pause_dwell ... ok"
+      }
+    },
+    {
+      "identity": "daemon::research_runs::tests::wall_time_settlement_caps_timeout_overshoot_for_terminal_persistence",
+      "sourcePath": "SRC/neothd/src/daemon/research_runs.rs",
+      "sourceSha256": "1162647a942b7eaf2b820481fcca3c7da4cb405cade65388e3eab32ad37f72c2",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test daemon::research_runs::tests::wall_time_settlement_caps_timeout_overshoot_for_terminal_persistence ... ok"
+      }
+    },
+    {
+      "identity": "daemon::research_runs::tests::missing_budget_consumption_fields_refuse_without_overwrite",
+      "sourcePath": "SRC/neothd/src/daemon/research_runs.rs",
+      "sourceSha256": "1162647a942b7eaf2b820481fcca3c7da4cb405cade65388e3eab32ad37f72c2",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test daemon::research_runs::tests::missing_budget_consumption_fields_refuse_without_overwrite ... ok"
+      }
+    },
+    {
+      "identity": "cli::research::tests::paused_or_cancelled_terminal_wal_failure_is_reported_without_mutation",
+      "sourcePath": "SRC/neothd/src/cli/research.rs",
+      "sourceSha256": "fe6ab2d408ea3c31aef8edbf579917626abd847f5929db1cb14e772089619268",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test cli::research::tests::paused_or_cancelled_terminal_wal_failure_is_reported_without_mutation ... ok"
+      }
+    },
+    {
+      "identity": "cli::research::tests::operator_lifecycle_dispatches_create_approve_run_pause_resume_cancel_show_and_list_with_exact_revisions",
+      "sourcePath": "SRC/neothd/src/cli/research.rs",
+      "sourceSha256": "fe6ab2d408ea3c31aef8edbf579917626abd847f5929db1cb14e772089619268",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test cli::research::tests::operator_lifecycle_dispatches_create_approve_run_pause_resume_cancel_show_and_list_with_exact_revisions ... ok"
+      }
+    },
+    {
+      "identity": "cli::research::tests::successful_lifecycle_dispatches_real_authorized_producer_and_decodes_wal_terminals_without_replay",
+      "sourcePath": "SRC/neothd/src/cli/research.rs",
+      "sourceSha256": "fe6ab2d408ea3c31aef8edbf579917626abd847f5929db1cb14e772089619268",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test cli::research::tests::successful_lifecycle_dispatches_real_authorized_producer_and_decodes_wal_terminals_without_replay ... ok"
+      }
+    },
+    {
+      "identity": "cli::research::tests::interrupted_lifecycle_decodes_started_wal_and_refuses_replay_after_terminal_failure",
+      "sourcePath": "SRC/neothd/src/cli/research.rs",
+      "sourceSha256": "fe6ab2d408ea3c31aef8edbf579917626abd847f5929db1cb14e772089619268",
+      "receipt": {
+        "kind": "hosted_actual_terminal",
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test cli::research::tests::interrupted_lifecycle_decodes_started_wal_and_refuses_replay_after_terminal_failure ... ok"
+      }
+    }
+  ],
+  "sourceCarry": [
+    {
+      "path": "SRC/neothd/src/cli/research.rs",
+      "bdb50ac2Blob": "554b734e1e48c16a44f30b4a20c789daa3017058",
+      "current8f6ef116Blob": "554b734e1e48c16a44f30b4a20c789daa3017058",
+      "unchanged": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/research_runs.rs",
+      "bdb50ac2Blob": "40907f766bc7a230d249c6af6c1a0ff752fd9a59",
+      "current8f6ef116Blob": "40907f766bc7a230d249c6af6c1a0ff752fd9a59",
+      "unchanged": true
+    },
+    {
+      "path": "SRC/neothd/src/tools/deep_research.rs",
+      "bdb50ac2Blob": "ee8584eff097e8e10cb775408eaf72fc2dff42b9",
+      "current8f6ef116Blob": "ee8584eff097e8e10cb775408eaf72fc2dff42b9",
+      "unchanged": true
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "bdb50ac2Blob": "4c30ba907566a8011a4f8efd35e718ffeef90e94",
+      "current8f6ef116Blob": "4c30ba907566a8011a4f8efd35e718ffeef90e94",
+      "unchanged": true
+    },
+    {
+      "path": "SRC/neothd/src/config/automation.rs",
+      "bdb50ac2Blob": "1a8c6d4ade7e2fc768d542baf125f1b1bdad8844",
+      "current8f6ef116Blob": "1a8c6d4ade7e2fc768d542baf125f1b1bdad8844",
+      "unchanged": true
+    },
+    {
+      "path": "SRC/neothd/src/wal/writer.rs",
+      "bdb50ac2Blob": "84e4b272843e9725b0210dcb38fe81764d0505dd",
+      "current8f6ef116Blob": "84e4b272843e9725b0210dcb38fe81764d0505dd",
+      "unchanged": true
+    },
+    {
+      "path": "SRC/neothd/src/wal/events.rs",
+      "bdb50ac2Blob": "cef42102fdcfa21d5941079c8a95462e86bc2525",
+      "current8f6ef116Blob": "cef42102fdcfa21d5941079c8a95462e86bc2525",
+      "unchanged": true
+    }
+  ],
+  "retainedUnrelatedFailures": [
+    "cli::parity_drift::operation_inventory_tracks_live_nested_cli_leaves",
+    "cli::memory::tests::physical_redaction_refuses_journal_target_that_is_not_the_bound_leaf",
+    "wal::redact::tests::staged_authenticated_leaf_refuses_matched_structural_frame_byte_identically"
+  ],
+  "carryRationale": "All P2-09 production, configuration, and WAL-terminal blobs are identical from the admitted source to current head. The intervening delta is cluster/workflow/roadmap/source-manifest scoped.",
+  "localExecutableValidationRan": false
+}

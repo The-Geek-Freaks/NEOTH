@@ -2,6 +2,23 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W405-W410 recovery, hosted repairs and three functional acceptances (2026-09-23):**
+Group810 run35866133454 is source-admitted:810 executed,807 PASS,3 failures;
+all163source paths, matrix/lock and ordered individual terminals verified.
+P2-01 Dream phases (26), P2-09 research lifecycle (18) and P2-23 Dream opt-in
+(12native+10GUI) now satisfy their scoped requirements. W408-W410 retain exact
+receipts and relevant-source carry reviews; Root checked all66 terminals.
+The three unrelated grouped failures remain open pending W406/W407 rerun.
+W406 fixes invalid rollover-fixture JSON and checks the missing journal child
+with its NotFound cause; byte preservation and journal retention stay required.
+W407 adds seven actual cluster command leaves with honest Unwired GUI gaps,
+including the exact inventory-regression expectation. Independent review passed.
+Coreed97935866308409 passed all4gates; its bound D9C6E38C CLI reference is imported.
+Obsolete FullCI35867787236 is confirmed cancelled; GUI14335867782202 continues.
+Next: hosted core readiness, Group824 and replacement full CI for these repairs.
+Inventory685;native1136+Windows19/Linux33/macOS32;GUI143Linux/139macOS.
+Road1324=1031checked/291open/2partial;293raw/292pre-tag blockers;WS-LF24done/94open.
+No local executable validation or model download ran; BSOD cause unproven.
 **W403 hosted cluster formatting and admitted WAL Core (2026-09-23):**
 Core9fd35864804945 is source-admitted across all4gates; exported54491B95
 matches its committed CLI reference. Group810bdb35866133454 is running after
@@ -4900,7 +4917,7 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3 accepted: **21 done / 97
+> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in accepted: **24 done / 94
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable
