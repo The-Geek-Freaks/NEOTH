@@ -797,7 +797,13 @@ mod tests {
         // Build a faithful v41 fixture from the otherwise fresh schema: the
         // historic episode/vector survive, while all v42-only state is absent.
         conn.execute_batch(
-            "DROP INDEX idx_embedding_episode_generation; \
+            "DROP TABLE dream_rem_pair; \
+             DROP TABLE dream_phase_receipt; \
+             DROP TABLE dream_phase_input; \
+             DROP TABLE dream_phase_run; \
+             ALTER TABLE idx_consolidated DROP COLUMN trust; \
+             ALTER TABLE idx_longterm DROP COLUMN trust; \
+             DROP INDEX idx_embedding_episode_generation; \
              ALTER TABLE idx_embedding DROP COLUMN generation; \
              DROP TABLE idx_counterparty_consent_audit_terminal_v1; \
              DROP TABLE idx_counterparty_consent_challenge_v1; \

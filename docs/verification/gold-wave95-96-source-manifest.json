@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T11:07:49.3331632Z",
-  "validationStatus": "Reviewed nightly backup caller/archive/remote fixtures and two hosted browser lint repairs; fresh hosted verification pending",
+  "capturedUtc": "2026-09-23T11:21:28.8548924Z",
+  "validationStatus": "Group721 admitted711/721; independently reviewed migration/research/browser/Dream fixes pending hosted rerun",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -808,18 +808,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 156193,
-      "sha256": "FE339680DD30FB83CCC4D78EC97996D4359260105C10F519407F3396A3BA0EB5"
+      "bytes": 157476,
+      "sha256": "770DE60071B8267A3FC684330CAF9A8A16DB97F919F6F21B64C78F1A787FADB4"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1159352,
-      "sha256": "3D43FD6959DA26C94BB84731B7EA02EC357C03FFF2ECB4B777A31245DF50F563"
+      "bytes": 1160635,
+      "sha256": "25EA5C1EF3CC523E453D60E925F371FE0BA243BB5134C062AB0C6DDAD6608927"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1756801,
-      "sha256": "C798C3328A8C38337531C982B96FF4AD9485BB7B3BC23B34534D672B733E7882"
+      "bytes": 1758084,
+      "sha256": "67AB0A01A719CFE4E19AB9DC7E9D7C988C8752AC134BB2B1EE185B557A91445C"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1668,8 +1668,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/research.rs",
-      "bytes": 46065,
-      "sha256": "C11DE25CD33FE9FAB03718F276C125DC7A784E542DF719D8EEE867007E6F8C36"
+      "bytes": 46139,
+      "sha256": "CF8013A7D678A5245F6894CD650C6D9AB8E939DC0382965BDDB8E5988DD8788C"
     },
     {
       "path": "SRC/neothd/src/cli/review.rs",
@@ -2173,8 +2173,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/vault_mirror.rs",
-      "bytes": 80400,
-      "sha256": "7D8ED9135346FB12BB3DBAF0751FCF0441616F794DCE3921A73AD374569ADE8B"
+      "bytes": 80500,
+      "sha256": "B5D8B4D4EEF55E88391D3170C4A8E6B78F5FEEC95B3B87873B119E050BE860C6"
     },
     {
       "path": "SRC/neothd/src/daemon/watchdog_cron.rs",
@@ -2443,8 +2443,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/counterparty_consent.rs",
-      "bytes": 39808,
-      "sha256": "E6FA8052834BBAA2E294243A9E044EB477178A215EDA46842ECA49B25E320D79"
+      "bytes": 40107,
+      "sha256": "D1B25CD9A939B03498CDA28A3411DAB182A3714E7A56FC73DA630CA7BDFAACCA"
     },
     {
       "path": "SRC/neothd/src/memory/decay_task.rs",
@@ -2468,8 +2468,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/migrations/mod.rs",
-      "bytes": 237583,
-      "sha256": "E379297E1055BF334546D6D3EE837B0C34F865783FB2CAA807CF09282164C2F7"
+      "bytes": 238991,
+      "sha256": "DC62E88D9387F4990D9D2F7DA0FB6D8DEE3769907DB2ECF279B3D9D85231B339"
     },
     {
       "path": "SRC/neothd/src/memory/mod.rs",
@@ -2948,8 +2948,8 @@
     },
     {
       "path": "SRC/neothd/src/tools/managed_browser.rs",
-      "bytes": 64396,
-      "sha256": "9658D24E66C0F29FF4C2B123B1807123F14231EA0A858D966AC4BB4799A64B1D"
+      "bytes": 64759,
+      "sha256": "A16E2C5A79B1B5F5D87183DF7BA25541AFF98E0F1FC981A5C16CCD9ECDBD36B0"
     },
     {
       "path": "SRC/neothd/src/tools/mod.rs",
@@ -3083,8 +3083,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",
-      "bytes": 430276,
-      "sha256": "86634853F6776279A8928757C142BEFEF576C75206AF43D79C31F33A70D1572A"
+      "bytes": 430224,
+      "sha256": "007EA3B9FDB18D0866A333E7DC5DEC9A818B5BA318E6174C08364B11FB563E2C"
     },
     {
       "path": "SRC/neothd/src/wiki/ingest.rs",
@@ -3255,6 +3255,26 @@
       "path": "docs/gold-wave365-browser-clippy.md",
       "bytes": 719,
       "sha256": "3CC6D469D380C8FE800C0236A62D6AF497A5A98F5895D494734A1B4304AD730B"
+    },
+    {
+      "path": "docs/gold-wave367-migration-fixtures.md",
+      "bytes": 3140,
+      "sha256": "3AC5577834FCBBEDBDB25D69D7499DB07C02BB06C8E2D80C01F008910599EE25"
+    },
+    {
+      "path": "docs/gold-wave368-research-authorized-budget.md",
+      "bytes": 1234,
+      "sha256": "1FCB40C878F84E1BFF9A4CF93FD1FE9F9B98A39ADA20DDC76259C6E4BE7029A9"
+    },
+    {
+      "path": "docs/gold-wave369-browser-missing-generation.md",
+      "bytes": 1365,
+      "sha256": "53AE34265B9F95D584B890277591580928E9ECFE0541662661CE6E933944D602"
+    },
+    {
+      "path": "docs/gold-wave370-dream-audit-runtime.md",
+      "bytes": 749,
+      "sha256": "4764D8D3EBD904A428ADE580EF93A0ED7BC702F5C51CA87CA12AB07FFFAB603F"
     }
   ]
 }

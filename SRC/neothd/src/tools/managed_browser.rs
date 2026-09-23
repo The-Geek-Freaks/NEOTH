@@ -359,8 +359,12 @@ fn resolve_from_manifest(
 
     let managed_root_name = OsString::from(MANAGED_BROWSER_DIR);
     let managed_root_display = home.physical_display_path.join(&managed_root_name);
-    let (managed_root, managed_root_binding) =
-        open_bound_real_child_dir(&home.dir, &managed_root_name, &managed_root_display)?;
+    let (managed_root, managed_root_binding) = open_bound_real_child_dir(
+        &home.dir,
+        &managed_root_name,
+        &managed_root_display,
+    )
+    .context("resolve managed-browser root beneath explicit home")?;
 
     let generations_name = OsString::from(GENERATIONS_DIR);
     let generations_display = managed_root_display.join(&generations_name);
@@ -1198,7 +1202,15 @@ mod tests {
         let manifest = fixture_manifest();
         let error = resolve_from_manifest(home.path(), ManagedBrowserPlatform::Win64, &manifest)
             .unwrap_err();
-        assert!(error.to_string().contains("managed-browser root"));
+        assert!(
+            error
+                .to_string()
+                .contains("resolve managed-browser root beneath explicit home")
+        );
+        assert!(
+            !home.path().join(MANAGED_BROWSER_DIR).exists(),
+            "failed resolution must not create a managed-browser root or use an ambient fallback"
+        );
     }
 
     #[test]

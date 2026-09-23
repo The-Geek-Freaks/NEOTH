@@ -23,7 +23,7 @@
 //! match.
 
 use anyhow::{Context, Result, anyhow, ensure};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use tracing::info;
 
 use crate::memory::{
@@ -339,11 +339,40 @@ pub const MIGRATIONS: &[Migration] = &[
 ];
 
 pub(crate) fn migration_v44_to_v45(conn: &Connection) -> Result<()> {
+    // A real v44 predecessor has no W331 objects. SQLite's `CREATE TABLE IF
+    // NOT EXISTS` would otherwise accept a conflicting view or malformed
+    // table, then allow this step to stamp v45. Refuse every collision before
+    // adding tier columns so the migration transaction remains all-or-nothing.
+    for table in [
+        "dream_phase_run",
+        "dream_phase_input",
+        "dream_phase_receipt",
+        "dream_rem_pair",
+    ] {
+        ensure_dream_phase_object_absent(conn, table)?;
+    }
     conn.execute_batch("ALTER TABLE idx_consolidated ADD COLUMN trust INTEGER NOT NULL DEFAULT 1 CHECK(trust BETWEEN 0 AND 2); \
                         ALTER TABLE idx_longterm ADD COLUMN trust INTEGER NOT NULL DEFAULT 1 CHECK(trust BETWEEN 0 AND 2);")
         .context("v44→v45: preserve tier trust")?;
     conn.execute_batch(crate::daemon::dream_phases::DREAM_PHASE_SCHEMA_SQL)
         .context("v44→v45: create Dream phase journal")?;
+    Ok(())
+}
+
+fn ensure_dream_phase_object_absent(conn: &Connection, table: &str) -> Result<()> {
+    let object_type: Option<String> = conn
+        .query_row(
+            "SELECT type FROM sqlite_schema WHERE name = ?1 COLLATE NOCASE",
+            [table],
+            |row| row.get(0),
+        )
+        .optional()
+        .with_context(|| format!("v44→v45 inspect Dream phase object {table}"))?;
+    ensure!(
+        object_type.is_none(),
+        "v44→v45: Dream phase object {table} already exists as {}",
+        object_type.as_deref().unwrap_or("unknown")
+    );
     Ok(())
 }
 
@@ -5185,6 +5214,12 @@ mod tests {
              INSERT INTO idx_counterparty_clustering_consent_v1 \
                 (channel_id,account_id,scoped_sender_hash,state,proof_kind,proof_sha256,proof_verified_at_ns,revision,revoked_at_ns) \
               VALUES('telegram','default','0123456789abcdef','verified_granted','pre-v43-proof',zeroblob(32),8,3,NULL); \
+             DROP TABLE dream_rem_pair; \
+             DROP TABLE dream_phase_receipt; \
+             DROP TABLE dream_phase_input; \
+             DROP TABLE dream_phase_run; \
+             ALTER TABLE idx_consolidated DROP COLUMN trust; \
+             ALTER TABLE idx_longterm DROP COLUMN trust; \
              DROP INDEX idx_embedding_episode_generation; \
              ALTER TABLE idx_embedding DROP COLUMN generation; \
              DROP TABLE idx_counterparty_consent_audit_terminal_v1; \
@@ -5301,7 +5336,7 @@ mod tests {
         conn.execute_batch(
             "CREATE TABLE idx_consolidated (id INTEGER PRIMARY KEY);\
              CREATE TABLE idx_longterm (id INTEGER PRIMARY KEY);\
-             CREATE VIEW dream_phase_run AS SELECT 1 AS poisoned;",
+             CREATE VIEW Dream_Phase_Run AS SELECT 1 AS poisoned;",
         )
         .unwrap();
 

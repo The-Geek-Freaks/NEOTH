@@ -1649,17 +1649,16 @@ mod tests {
         let home = fixture.path().join("missing-neoth-home");
 
         let disabled = run_nightly(&home, &VaultMirrorConfig::default()).await;
-        assert!(matches!(
-            disabled.config,
-            MirrorConfigStatus::Disabled
-        ));
+        assert!(matches!(disabled.config, MirrorConfigStatus::Disabled));
         assert!(disabled.receipt.is_none());
         assert!(!home.exists());
 
         let denied = run_nightly(&home, &test_config(1, false)).await;
         assert!(matches!(
             denied.receipt.as_ref().map(|receipt| &receipt.phase),
-            Some(MirrorPhase::Blocked(MirrorBlockReason::NightlyPushNotAllowed))
+            Some(MirrorPhase::Blocked(
+                MirrorBlockReason::NightlyPushNotAllowed
+            ))
         ));
         assert!(!home.exists());
     }
@@ -1674,7 +1673,11 @@ mod tests {
         let bare = fixture.path().join("remote.git");
         std::fs::create_dir_all(home.join("wal")).unwrap();
         std::fs::write(home.join("wal/fixture.wal"), b"nightly WAL fixture bytes").unwrap();
-        std::fs::write(home.join("credentials.yaml"), b"nightly credential sentinel").unwrap();
+        std::fs::write(
+            home.join("credentials.yaml"),
+            b"nightly credential sentinel",
+        )
+        .unwrap();
         init_bare_remote(&bare);
         let remote = bare.to_str().unwrap();
         let mut config = test_config(1, false);
@@ -1716,9 +1719,14 @@ mod tests {
                 credentials_member = true;
             }
         }
-        assert_eq!(fixture_wal.as_deref(), Some(b"nightly WAL fixture bytes".as_slice()));
+        assert_eq!(
+            fixture_wal.as_deref(),
+            Some(b"nightly WAL fixture bytes".as_slice())
+        );
         assert!(!credentials_member);
-        let state = load_state(&paths).unwrap().expect("persisted nightly state");
+        let state = load_state(&paths)
+            .unwrap()
+            .expect("persisted nightly state");
         assert!(state.active.is_none());
         assert_eq!(state.verified_runs.len(), 1);
         assert_eq!(state.verified_runs[0].run_id, receipt.run_id);

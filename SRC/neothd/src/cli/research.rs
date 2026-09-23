@@ -983,7 +983,7 @@ mod tests {
         let home = tempfile::tempdir().expect("create isolated successful lifecycle home");
         std::fs::write(
             home.path().join("freedom.yaml"),
-            "autonomy: full\ndeep_research:\n  max_rounds: 1\n  results_per_query: 1\n  pages_per_round: 1\n",
+            "autonomy: full\ntokens:\n  max_per_request: 4096\ndeep_research:\n  max_rounds: 1\n  results_per_query: 1\n  pages_per_round: 1\n",
         )
         .expect("write isolated full-autonomy research configuration");
 
@@ -996,7 +996,7 @@ mod tests {
                 max_rounds: 1,
                 results_per_query: 1,
                 pages_per_round: 1,
-                max_provider_tokens: 0,
+                max_provider_tokens: 4096,
                 max_wall_secs: 60,
                 max_provider_calls: 3,
             },
@@ -1098,7 +1098,7 @@ mod tests {
         let home = tempfile::tempdir().expect("create isolated interrupted lifecycle home");
         std::fs::write(
             home.path().join("freedom.yaml"),
-            "autonomy: full\ndeep_research:\n  max_rounds: 1\n  results_per_query: 1\n  pages_per_round: 1\n",
+            "autonomy: full\ntokens:\n  max_per_request: 4096\ndeep_research:\n  max_rounds: 1\n  results_per_query: 1\n  pages_per_round: 1\n",
         )
         .expect("write isolated full-autonomy research configuration");
         let topic = "W329 interrupted CLI lifecycle";
@@ -1110,7 +1110,7 @@ mod tests {
                 max_rounds: 1,
                 results_per_query: 1,
                 pages_per_round: 1,
-                max_provider_tokens: 0,
+                max_provider_tokens: 4096,
                 max_wall_secs: 60,
                 max_provider_calls: 3,
             },

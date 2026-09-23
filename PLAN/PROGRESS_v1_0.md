@@ -2,6 +2,24 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W367-W370 Group721 failure repair (2026-09-23):** Source-bound run
+35850850940 on954f838a executed all721 selected identities:711passed/10failed;
+all153source bindings, matrix/lock and individual terminals were admitted.
+W367 removes v45-only objects from historical v41/v42 fixtures and refuses
+case-insensitive Dream schema collisions before adding trust columns.
+W368 supplies both explicit4096-token fixture budgets without changing
+production limits. W369 gives missing managed-browser roots stable error
+context and retains no creation/fallback. W370 validates the existing Dream
+audit request subtype/payload without minting a second event header; other
+audit families remain unchanged. All four repairs passed independent static
+review; their hosted rerun is pending. W363 formatting was imported from
+source/hash-bound Preflight69 output; no local formatter ran.
+Inventory654;native1092+Windows19/Linux33/macOS32;Group780;GUI135Linux/131macOS.
+Road1324=1027checked/295open/2partial;WS-LF20done/98open unchanged.
+Next: hosted preflight/core, new bound browser CLI-reference import, then
+Group780/GUI135/BGE2. FullCI954 Windows/macOS continue; its Linux runner
+shutdown(exit143) remains an infrastructure failure awaiting targeted retry.
+No local executable validation ran.
 **W363 nightly backup and W365 browser lint repair (2026-09-23):**
 The public nightly backup and the controlled bare-remote fixture now share
 one policy dispatcher. Two new regressions prove both denied modes leave the
