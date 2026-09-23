@@ -20,7 +20,9 @@ failed activation cleanup, with one nonblocking read capped at4096bytes.
 Production containment and successful stream handling are unchanged.
 Coreaf0 `35807294240` passed slimClippy, test-target checking and CLI export;
 the SHA-bound CLI reference matches the committed snapshot. W256/W258 core
-and Group441 runs on `85c87f57` remain pending. Hosted rustfmt was imported
+Group441 on `85c87f57` remains pending. Its Core run failed the strict
+nine-argument helper lint; W263 groups cancellation and timeout without a
+lint waiver or behavior change. A fresh Core run is required. Hosted rustfmt was imported
 with exact source/SHA/preimage/postimage verification; no local formatter ran.
 Current Road:1324 leaves,1017checked/305open/2partial; WS-LF10done/108open;
 raw blockers307/release-tag blockers306. No release qualification claimed.

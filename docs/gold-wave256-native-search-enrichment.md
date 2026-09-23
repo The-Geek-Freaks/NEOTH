@@ -31,3 +31,6 @@ sidecar cannot authorize or alter the underlying file-read result.
 
 No local compiler, formatter, parser, test, fixture, or runtime command was
 run under the BSOD hold. Hosted validation remains required.
+The internal native-search admission keeps cancellation and its deadline together
+as one bounded control value. This is a lint-only parameter grouping: the
+existing cancellation-before-read and deadline-before-read behavior is unchanged.

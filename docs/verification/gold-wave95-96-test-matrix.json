@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W260 Linux test-only diagnostics reviewed; P2-29 W261 exact scoped acceptance; hosted GUI rerun pending",
+  "status": "W263 actual Core85c lint repair; W260 hosted formatting imported; hosted behavior pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 93061,
-    "sha256": "10E66E11C8A4823A2D2BA7BE17F0148EAFBA356C6F5B5F6FECEF7F8223220FF5"
+    "bytes": 93047,
+    "sha256": "F6035593BF77F0665B425962B960EB07811468C69618211F6ABB96F8FD2EFD6D"
   },
   "sourceInputs": 538,
   "requiredNativeTests": [
@@ -5082,31 +5082,31 @@
     {
       "test": "cli::fs::tests::w239_real_fs_caller_keeps_default_master_off_output_unenriched",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "16615E2C2C3BF4AF7618E1AEDCFE22FEAB123531B56200E8B680682CE7148BBB",
+      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w239_real_fs_caller_appends_native_sidecar_only_for_fresh_indexed_target",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "16615E2C2C3BF4AF7618E1AEDCFE22FEAB123531B56200E8B680682CE7148BBB",
+      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w239_real_fs_caller_denial_stops_before_typed_native_read",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "16615E2C2C3BF4AF7618E1AEDCFE22FEAB123531B56200E8B680682CE7148BBB",
+      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w239_real_fs_caller_cancellation_stops_before_native_read",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "16615E2C2C3BF4AF7618E1AEDCFE22FEAB123531B56200E8B680682CE7148BBB",
+      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w239_real_fs_caller_zero_deadline_drops_admission_without_consuming_bytes",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "16615E2C2C3BF4AF7618E1AEDCFE22FEAB123531B56200E8B680682CE7148BBB",
+      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
       "junitClass": "neoth"
     },
     {
@@ -5208,31 +5208,31 @@
     {
       "test": "cli::fs::tests::w256_grep_cli_parses_default_and_maximum_and_rejects_out_of_range_results",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "16615E2C2C3BF4AF7618E1AEDCFE22FEAB123531B56200E8B680682CE7148BBB",
+      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w256_literal_search_reports_empty_line_numbers_and_bounded_truncation",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "16615E2C2C3BF4AF7618E1AEDCFE22FEAB123531B56200E8B680682CE7148BBB",
+      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w256_actual_grep_search_origin_hook_enrichment_and_once_guard",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "16615E2C2C3BF4AF7618E1AEDCFE22FEAB123531B56200E8B680682CE7148BBB",
+      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w256_actual_grep_no_hit_drops_codegraph_sidecar_after_retained_fd_scan",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "16615E2C2C3BF4AF7618E1AEDCFE22FEAB123531B56200E8B680682CE7148BBB",
+      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w256_actual_grep_denial_and_cancellation_stop_before_search_output",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "16615E2C2C3BF4AF7618E1AEDCFE22FEAB123531B56200E8B680682CE7148BBB",
+      "sourceSha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
       "junitClass": "neoth"
     }
   ],
@@ -17064,6 +17064,26 @@
       }
     ],
     "note": "Test-only bounded nonblocking failed-helper stderr; P2-29 accepted19 individual terminals atd99 with22sourcepaths unchanged throughc43; W153/W164 retained",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave263CoreLintRepair": {
+    "base": "a8b8cd28f374354806e6519c8723df32023574f7",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
+        "bytes": 106464,
+        "sha256": "4D43E3AF55CE6A240E24504B15A78D33DC4DA87A834C16914F31FF44CAE55128",
+        "blob": "5ff4c684cd4ba27653d7e8bf3ef540f507cc20b2"
+      },
+      {
+        "path": "SRC/neothd/src/cli/fs.rs",
+        "bytes": 44259,
+        "sha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452",
+        "blob": "5850bfe5826827c289181e37a5f02be6a03017bf"
+      }
+    ],
+    "note": "Core35808220429 rejected9/8arguments; group cancellation+timeout unchanged. Preflight35808735750 onepath GUI rustfmt imported source/SHA/pre/postimage checked.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

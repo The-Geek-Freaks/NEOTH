@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T01:59:59.4478211Z",
-  "validationStatus": "W260 Linux test-only diagnostics reviewed; P2-29 W261 exact scoped acceptance; hosted GUI rerun pending",
+  "capturedUtc": "2026-09-23T02:02:42.6771067Z",
+  "validationStatus": "W263 actual Core85c lint repair; W260 hosted formatting imported; hosted behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -438,18 +438,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 101096,
-      "sha256": "B8B0BB02EC3F9DA9F71BE55173F919D4AE2CE28466E26BE8ADC7103E76B22A01"
+      "bytes": 101255,
+      "sha256": "A9B2CB4323F22D953B92A1C3F65DCB110019DC477BF601A41097080509974F76"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1104044,
-      "sha256": "701339334FAD3067A32BB234560B25DD3C01A02C08ED2FB9CFA43233DAF91C70"
+      "bytes": 1104203,
+      "sha256": "D5450CD3C4418BC4B71F097A867C6D141811290B37F54FB1AD8555D69E358055"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1699974,
-      "sha256": "83B6964061EA97CF1A70EF3DA44B8F0C7DDD4C78078A851FE2BE3DAB4860D5A0"
+      "bytes": 1700133,
+      "sha256": "E9F1C3B8A3B8A8D50FB85BDFB382F585601FF46BA6183621A208D8A576E3B822"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -583,8 +583,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
-      "bytes": 106408,
-      "sha256": "0B1656B045C93380B877576A485CA9792D5C665E3D1CA0A898DF60EB70FD2DB3"
+      "bytes": 106464,
+      "sha256": "4D43E3AF55CE6A240E24504B15A78D33DC4DA87A834C16914F31FF44CAE55128"
     },
     {
       "path": "SRC/neothd-gui/src/chat_reasoning.rs",
@@ -1133,8 +1133,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/fs.rs",
-      "bytes": 43745,
-      "sha256": "16615E2C2C3BF4AF7618E1AEDCFE22FEAB123531B56200E8B680682CE7148BBB"
+      "bytes": 44259,
+      "sha256": "B9A1F115EA11301424BF0F29898AB1BA8B735515AD345620BE9FF48142282452"
     },
     {
       "path": "SRC/neothd/src/cli/gui_stream.rs",

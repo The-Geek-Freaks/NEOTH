@@ -575,6 +575,11 @@ struct FsReadOutcome {
     pre_tool_use_once_guard: Option<TestPreToolUseOnceGuard>,
 }
 
+struct NativePreToolUseAdmission {
+    cancellation: crate::hooks::PreToolUseCancellation,
+    timeout: std::time::Duration,
+}
+
 /// The default route stays on the compatibility wrapper.  The opt-in route
 /// performs the same OS preflight first, then exactly one typed native
 /// PreToolUse admission, and only then consumes the opaque gate admission for
@@ -594,8 +599,10 @@ async fn read_with_optional_native_enrichment(
         now,
         home,
         repository_root,
-        crate::hooks::PreToolUseCancellation::unbound(),
-        crate::mcp::client::DEFAULT_REQUEST_TIMEOUT,
+        NativePreToolUseAdmission {
+            cancellation: crate::hooks::PreToolUseCancellation::unbound(),
+            timeout: crate::mcp::client::DEFAULT_REQUEST_TIMEOUT,
+        },
         None,
     )
     .await
@@ -618,8 +625,10 @@ async fn search_with_optional_native_enrichment(
         now,
         home,
         repository_root,
-        crate::hooks::PreToolUseCancellation::unbound(),
-        crate::mcp::client::DEFAULT_REQUEST_TIMEOUT,
+        NativePreToolUseAdmission {
+            cancellation: crate::hooks::PreToolUseCancellation::unbound(),
+            timeout: crate::mcp::client::DEFAULT_REQUEST_TIMEOUT,
+        },
         Some((literal, max_results)),
     )
     .await
@@ -632,8 +641,7 @@ async fn read_with_optional_native_enrichment_with_cancellation(
     now: i64,
     home: &Path,
     repository_root: Option<&Path>,
-    cancellation: crate::hooks::PreToolUseCancellation,
-    timeout: std::time::Duration,
+    admission: NativePreToolUseAdmission,
     search: Option<(&str, usize)>,
 ) -> Result<FsReadOutcome, OsGateError> {
     let Some(repository_root) = repository_root else {
@@ -691,8 +699,8 @@ async fn read_with_optional_native_enrichment_with_cancellation(
         &arguments,
         &root,
         &root,
-        timeout,
-        cancellation,
+        admission.timeout,
+        admission.cancellation,
         crate::hooks::PreToolUseReplay::direct_request(),
     )
     .map_err(|error| OsGateError::PreToolUse(error.to_string()))?;
@@ -1049,8 +1057,10 @@ template = "[native-search-hook]"
             0,
             home.path(),
             Some(repository.path()),
-            crate::hooks::PreToolUseCancellation::from_chat_turn(cancelled),
-            crate::mcp::client::DEFAULT_REQUEST_TIMEOUT,
+            NativePreToolUseAdmission {
+                cancellation: crate::hooks::PreToolUseCancellation::from_chat_turn(cancelled),
+                timeout: crate::mcp::client::DEFAULT_REQUEST_TIMEOUT,
+            },
             Some(("needle", 20)),
         )
         .await
@@ -1195,8 +1205,10 @@ template = "[native-search-hook]"
             0,
             home.path(),
             Some(repository.path()),
-            crate::hooks::PreToolUseCancellation::from_chat_turn(cancelled),
-            crate::mcp::client::DEFAULT_REQUEST_TIMEOUT,
+            NativePreToolUseAdmission {
+                cancellation: crate::hooks::PreToolUseCancellation::from_chat_turn(cancelled),
+                timeout: crate::mcp::client::DEFAULT_REQUEST_TIMEOUT,
+            },
             None,
         )
         .await
@@ -1219,8 +1231,10 @@ template = "[native-search-hook]"
             0,
             home.path(),
             Some(repository.path()),
-            crate::hooks::PreToolUseCancellation::unbound(),
-            std::time::Duration::ZERO,
+            NativePreToolUseAdmission {
+                cancellation: crate::hooks::PreToolUseCancellation::unbound(),
+                timeout: std::time::Duration::ZERO,
+            },
             None,
         )
         .await

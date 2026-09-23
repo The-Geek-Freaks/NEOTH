@@ -161,7 +161,11 @@ fn read_test_linux_systemd_run_stderr(child: &mut Child) -> String {
     let result = match stderr.read(&mut bytes) {
         Ok(0) => "<empty>".to_string(),
         Ok(read) => {
-            let suffix = if read == MAX_BYTES { " [truncated]" } else { "" };
+            let suffix = if read == MAX_BYTES {
+                " [truncated]"
+            } else {
+                ""
+            };
             format!("{}{}", String::from_utf8_lossy(&bytes[..read]), suffix)
         }
         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
