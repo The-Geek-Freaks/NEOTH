@@ -28183,8 +28183,9 @@ pub(crate) fn accept_daemon_recall_chip_batch(
     batch: neothd::daemon::gui_chat_bridge::GuiChatBridgeRecallChipBatch,
 ) -> std::result::Result<chat_recall_chips::RecallChipSnapshot, String> {
     use neothd::daemon::gui_chat_bridge::{
+        GuiChatBridgeRecallChipCitation as Citation,
         GuiChatBridgeRecallChipSourceState as SourceState, GuiChatBridgeRecallChipStatus as Status,
-        GuiChatBridgeRecallChipTier as Tier,
+        GuiChatBridgeRecallChipTier as Tier, GuiChatBridgeRecallWarmKind as WarmKind,
     };
 
     let status = match batch.status {
@@ -28213,6 +28214,30 @@ pub(crate) fn accept_daemon_recall_chip_batch(
                 SourceState::Revoked => chat_recall_chips::RecallChipSourceState::Revoked,
                 SourceState::Untrusted => chat_recall_chips::RecallChipSourceState::Untrusted,
             },
+            citation: row.citation.map(|citation| match citation {
+                Citation::Event {
+                    event_id,
+                    event_type,
+                } => chat_recall_chips::RecallChipCitation::Event {
+                    event_id,
+                    event_type,
+                },
+                Citation::WarmSnapshot {
+                    consolidated_id,
+                    warm_kind,
+                    original_event_id,
+                } => chat_recall_chips::RecallChipCitation::WarmSnapshot {
+                    consolidated_id,
+                    warm_kind: match warm_kind {
+                        WarmKind::Retained => chat_recall_chips::RecallChipWarmKind::Retained,
+                        WarmKind::Summary => chat_recall_chips::RecallChipWarmKind::Summary,
+                    },
+                    original_event_id,
+                },
+                Citation::GroundTruth { fact_id } => {
+                    chat_recall_chips::RecallChipCitation::GroundTruth { fact_id }
+                }
+            }),
         })
         .collect();
     let key = daemon_recall_chip_projection_id(operation_id);
@@ -28930,6 +28955,38 @@ fn recall_chip_source_label(source: chat_recall_chips::RecallChipSourceState) ->
     }
 }
 
+fn recall_chip_citation_label(
+    citation: chat_recall_chips::RecallChipCitation,
+) -> Option<String> {
+    use chat_recall_chips::{RecallChipCitation, RecallChipWarmKind};
+
+    match citation {
+        RecallChipCitation::Event {
+            event_id,
+            event_type,
+        } => Some(format!("citation event {event_id} · type {event_type}")),
+        RecallChipCitation::WarmSnapshot {
+            consolidated_id,
+            warm_kind: RecallChipWarmKind::Retained,
+            original_event_id: Some(original_event_id),
+        } => Some(format!(
+            "citation warm retained {consolidated_id} · original event {original_event_id}"
+        )),
+        RecallChipCitation::WarmSnapshot {
+            consolidated_id,
+            warm_kind: RecallChipWarmKind::Retained,
+            original_event_id: None,
+        } => Some(format!("citation warm retained {consolidated_id}")),
+        RecallChipCitation::WarmSnapshot {
+            consolidated_id,
+            warm_kind: RecallChipWarmKind::Summary,
+            original_event_id: None,
+        } => Some(format!("citation warm summary {consolidated_id}")),
+        RecallChipCitation::GroundTruth { fact_id } => Some(format!("citation ground truth {fact_id}")),
+        _ => None,
+    }
+}
+
 fn recall_chip_lines(snapshot: &chat_recall_chips::RecallChipSnapshot) -> Vec<slint::SharedString> {
     if !snapshot.status.is_ready() {
         return vec![
@@ -28950,10 +29007,14 @@ fn recall_chip_lines(snapshot: &chat_recall_chips::RecallChipSnapshot) -> Vec<sl
                 .map(|score| format!("score {score:.2}"))
                 .unwrap_or_else(|| "score unavailable".to_string());
             format!(
-                "Recall · {} · {} · source {}",
+                "Recall · {} · {} · source {}{}",
                 recall_chip_tier_label(row.tier),
                 score,
                 recall_chip_source_label(row.source_state),
+                row.citation
+                    .and_then(recall_chip_citation_label)
+                    .map(|label| format!(" · {label}"))
+                    .unwrap_or_default(),
             )
             .into()
         })
@@ -43424,8 +43485,9 @@ mod w58_gui_callback_runtime_tests {
         GuiChatBridge, GuiChatBridgeDecisionOutcome, GuiChatBridgeDecisionReceipt,
         GuiChatBridgeEvent, GuiChatBridgeEventSink, GuiChatBridgePreflight,
         GuiChatBridgePreflightInput, GuiChatBridgePreflightReceipt, GuiChatBridgeRecallChipBatch,
-        GuiChatBridgeRecallChipRow, GuiChatBridgeRecallChipSourceState,
-        GuiChatBridgeRecallChipStatus, GuiChatBridgeRecallChipTier, GuiChatBridgeResult,
+        GuiChatBridgeRecallChipCitation, GuiChatBridgeRecallChipRow,
+        GuiChatBridgeRecallChipSourceState, GuiChatBridgeRecallChipStatus,
+        GuiChatBridgeRecallChipTier, GuiChatBridgeRecallWarmKind, GuiChatBridgeResult,
         GuiChatBridgeSubscription, GuiChatBridgeThroughputBasis, GuiChatBridgeThroughputState,
         GuiChatBridgeTurn, GuiChatConsentDecision, GuiChatPhase, GuiChatSubscriptionMetadata,
         GuiChatSurface, GuiChatTerminalState, GuiChatTurnMetadata, gui_bridge_test_support,
@@ -43660,6 +43722,11 @@ mod w58_gui_callback_runtime_tests {
                         tier: GuiChatBridgeRecallChipTier::Warm,
                         score: Some(0.75),
                         source_state: GuiChatBridgeRecallChipSourceState::Available,
+                        citation: Some(GuiChatBridgeRecallChipCitation::WarmSnapshot {
+                            consolidated_id: 75,
+                            warm_kind: GuiChatBridgeRecallWarmKind::Summary,
+                            original_event_id: None,
+                        }),
                     }]
                 })
                 .unwrap_or_default();
@@ -48142,8 +48209,10 @@ exit 0
             "neoth_stream": "recall_chip_batch", "protocol_version": 3,
             "request_id": chat_stream_request_id(token), "control_token": token,
             "sequence": 1, "status": "ready", "rows": [
-                {"tier": "warm", "score": 0.75, "source_state": "available"},
-                {"tier": "canonical", "score": null, "source_state": "available"}
+                {"tier": "warm", "score": 0.75, "source_state": "available",
+                 "citation": {"kind":"event","event_id":1631,"event_type":7}},
+                {"tier": "canonical", "score": null, "source_state": "available",
+                 "citation": {"kind":"ground_truth","fact_id":1632}}
             ],
         })
         .to_string();
@@ -48178,15 +48247,27 @@ exit 0
         assert!(window.get_chat_recall_chips_active());
         let lines = window.get_chat_recall_chip_lines();
         assert!(lines.row_count() <= chat_recall_chips::MAX_RECALL_CHIP_ROWS);
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.contains("warm · score 0.75 · source available"))
+        assert_eq!(
+            lines.row_data(0).expect("W246 event citation label").as_str(),
+            "Recall · warm · score 0.75 · source available · citation event 1631 · type 7"
         );
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.contains("canonical · score unavailable · source available"))
+        assert_eq!(
+            lines.row_data(1).expect("W246 ground-truth citation label").as_str(),
+            "Recall · canonical · score unavailable · source available · citation ground truth 1632"
+        );
+        project_chat_recall_chip_snapshot(
+            Some(&window),
+            Some(&overlay),
+            ChatStreamSurface::Buddy,
+            &snapshots[0],
+        );
+        assert_eq!(
+            overlay
+                .get_recall_chip_lines()
+                .row_data(0)
+                .expect("W246 Buddy event citation label")
+                .as_str(),
+            "Recall · warm · score 0.75 · source available · citation event 1631 · type 7"
         );
         assert!(
             !window
@@ -48223,6 +48304,14 @@ exit 0
         );
         assert!(window.get_chat_recall_chips_active());
         assert_eq!(window.get_chat_recall_chip_lines().row_count(), 2);
+        assert_eq!(
+            window
+                .get_chat_recall_chip_lines()
+                .row_data(0)
+                .expect("retained W246 event citation label")
+                .as_str(),
+            "Recall · warm · score 0.75 · source available · citation event 1631 · type 7"
+        );
 
         let buddy_request = ChatStreamRequestId::parse_wire("164").expect("W163 Buddy request id");
         begin_chat_recall_chip_projection(&projections, buddy_request, token);
@@ -48335,12 +48424,13 @@ exit 0
             !window.get_chat_send_in_flight() && window.get_chat_recall_chips_active()
         });
         assert_eq!(window.get_chat_recall_chip_lines().row_count(), 1);
-        assert!(
+        assert_eq!(
             window
                 .get_chat_recall_chip_lines()
                 .row_data(0)
                 .expect("one W167 recall-chip line")
-                .contains("score 0.75")
+                .as_str(),
+            "Recall · warm · score 0.75 · source available · citation warm summary 75"
         );
         let key = daemon_recall_chip_projection_id(1);
         assert!(

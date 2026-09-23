@@ -113,11 +113,31 @@ pub enum GuiChatBridgeRecallChipSourceState {
     Untrusted,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuiChatBridgeRecallWarmKind {
+    Retained,
+    Summary,
+}
+
+/// Passive content-free W246 provenance. GUI consumers may display it but
+/// cannot resolve or navigate from it through this bridge contract.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GuiChatBridgeRecallChipCitation {
+    Event { event_id: i64, event_type: u8 },
+    WarmSnapshot {
+        consolidated_id: i64,
+        warm_kind: GuiChatBridgeRecallWarmKind,
+        original_event_id: Option<i64>,
+    },
+    GroundTruth { fact_id: i64 },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct GuiChatBridgeRecallChipRow {
     pub tier: GuiChatBridgeRecallChipTier,
     pub score: Option<f64>,
     pub source_state: GuiChatBridgeRecallChipSourceState,
+    pub citation: Option<GuiChatBridgeRecallChipCitation>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1046,7 +1066,8 @@ fn map_recall_chip_batch(
     batch: crate::daemon::gui_chat_protocol::GuiChatRecallChipBatch,
 ) -> GuiChatBridgeRecallChipBatch {
     use crate::daemon::gui_chat_protocol::{
-        GuiChatRecallChipSourceState, GuiChatRecallChipStatus, GuiChatRecallChipTier,
+        GuiChatRecallChipCitation, GuiChatRecallChipSourceState, GuiChatRecallChipStatus,
+        GuiChatRecallChipTier, GuiChatRecallWarmKind,
     };
 
     GuiChatBridgeRecallChipBatch {
@@ -1084,6 +1105,32 @@ fn map_recall_chip_batch(
                         GuiChatBridgeRecallChipSourceState::Untrusted
                     }
                 },
+                citation: row.citation.map(|citation| match citation {
+                    GuiChatRecallChipCitation::Event {
+                        event_id,
+                        event_type,
+                    } => GuiChatBridgeRecallChipCitation::Event {
+                        event_id,
+                        event_type,
+                    },
+                    GuiChatRecallChipCitation::WarmSnapshot {
+                        consolidated_id,
+                        warm_kind,
+                        original_event_id,
+                    } => GuiChatBridgeRecallChipCitation::WarmSnapshot {
+                        consolidated_id,
+                        warm_kind: match warm_kind {
+                            GuiChatRecallWarmKind::Retained => {
+                                GuiChatBridgeRecallWarmKind::Retained
+                            }
+                            GuiChatRecallWarmKind::Summary => GuiChatBridgeRecallWarmKind::Summary,
+                        },
+                        original_event_id,
+                    },
+                    GuiChatRecallChipCitation::GroundTruth { fact_id } => {
+                        GuiChatBridgeRecallChipCitation::GroundTruth { fact_id }
+                    }
+                }),
             })
             .collect(),
     }
@@ -1310,6 +1357,11 @@ mod tests {
                             tier: protocol::GuiChatRecallChipTier::Warm,
                             score: Some(f64::from(0.42_f32)),
                             source_state: protocol::GuiChatRecallChipSourceState::Available,
+                            citation: Some(protocol::GuiChatRecallChipCitation::WarmSnapshot {
+                                consolidated_id: 12,
+                                warm_kind: protocol::GuiChatRecallWarmKind::Summary,
+                                original_event_id: None,
+                            }),
                         }],
                     },
                 },
@@ -1335,6 +1387,11 @@ mod tests {
                 tier: GuiChatBridgeRecallChipTier::Warm,
                 score: Some(f64::from(0.42_f32)),
                 source_state: GuiChatBridgeRecallChipSourceState::Available,
+                citation: Some(GuiChatBridgeRecallChipCitation::WarmSnapshot {
+                    consolidated_id: 12,
+                    warm_kind: GuiChatBridgeRecallWarmKind::Summary,
+                    original_event_id: None,
+                }),
             }]
         ));
     }

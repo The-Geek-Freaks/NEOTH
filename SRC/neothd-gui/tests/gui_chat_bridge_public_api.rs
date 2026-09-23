@@ -4,8 +4,9 @@
 
 use neothd::daemon::gui_chat_bridge::{
     GuiChatBridge, GuiChatBridgeEvent, GuiChatBridgePreflight, GuiChatBridgePreflightInput,
-    GuiChatBridgeRecallChipBatch, GuiChatBridgeRecallChipRow, GuiChatBridgeRecallChipSourceState,
-    GuiChatBridgeRecallChipStatus, GuiChatBridgeRecallChipTier,
+    GuiChatBridgeRecallChipBatch, GuiChatBridgeRecallChipCitation, GuiChatBridgeRecallChipRow,
+    GuiChatBridgeRecallChipSourceState, GuiChatBridgeRecallChipStatus, GuiChatBridgeRecallChipTier,
+    GuiChatBridgeRecallWarmKind,
     GuiChatBridgeResponseFeedbackTarget, GuiChatBridgeThroughputBasis,
     GuiChatBridgeThroughputState, GuiChatConsentDecision, GuiChatConsentPrompt,
     GuiChatConsentRoute, GuiChatPhase, GuiChatSubscriptionMetadata, GuiChatSurface,
@@ -167,6 +168,11 @@ fn gui_crate_has_non_authorizing_reducer_fixtures_and_explicit_consent_types() {
                 tier: GuiChatBridgeRecallChipTier::Warm,
                 score: Some(0.42),
                 source_state: GuiChatBridgeRecallChipSourceState::Available,
+                citation: Some(GuiChatBridgeRecallChipCitation::WarmSnapshot {
+                    consolidated_id: 42,
+                    warm_kind: GuiChatBridgeRecallWarmKind::Retained,
+                    original_event_id: Some(24),
+                }),
             }],
         },
     };
@@ -183,6 +189,11 @@ fn gui_crate_has_non_authorizing_reducer_fixtures_and_explicit_consent_types() {
             tier: GuiChatBridgeRecallChipTier::Warm,
             score: Some(0.42),
             source_state: GuiChatBridgeRecallChipSourceState::Available,
+            citation: Some(GuiChatBridgeRecallChipCitation::WarmSnapshot {
+                consolidated_id: 42,
+                warm_kind: GuiChatBridgeRecallWarmKind::Retained,
+                original_event_id: Some(24),
+            }),
         }]
     ));
     let throughput = GuiChatBridgeEvent::ThroughputState {

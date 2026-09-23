@@ -420,8 +420,9 @@ pub(crate) enum GuiChatFramePayload {
         event_count: u64,
         byte_count: u64,
     },
-    /// The already-reduced W163 same-query projection. It has no recall text,
-    /// source identity, request token, session, provider, or storage value.
+    /// The already-reduced same-query projection. It has no recall text,
+    /// request token, session, provider, or storage value; W246 may include
+    /// passive typed source provenance for an available exact binding.
     RecallChipBatch {
         batch: GuiChatRecallChipBatch,
     },
@@ -564,6 +565,30 @@ pub(crate) enum GuiChatRecallChipSourceState {
     Untrusted,
 }
 
+/// The W246 closed warm-source kind. A summary citation carries the positive
+/// consolidated snapshot identity; it never carries the negative event
+/// sentinel used internally by legacy warm retrieval.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GuiChatRecallWarmKind {
+    Retained,
+    Summary,
+}
+
+/// Content-free W246 Recall-chip provenance. This is a passive identity
+/// projection only; it grants no lookup, navigation, or authority.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, tag = "kind", rename_all = "snake_case")]
+pub(crate) enum GuiChatRecallChipCitation {
+    Event { event_id: i64, event_type: u8 },
+    WarmSnapshot {
+        consolidated_id: i64,
+        warm_kind: GuiChatRecallWarmKind,
+        original_event_id: Option<i64>,
+    },
+    GroundTruth { fact_id: i64 },
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct GuiChatRecallChipRow {
@@ -572,6 +597,10 @@ pub(crate) struct GuiChatRecallChipRow {
     /// warm rows. W167 does not recompute or normalize it.
     pub(crate) score: Option<f64>,
     pub(crate) source_state: GuiChatRecallChipSourceState,
+    /// Omission is accepted only to decode a legacy W163 batch. A W246
+    /// producer emits it solely for an available, exact typed source binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) citation: Option<GuiChatRecallChipCitation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -973,6 +1002,42 @@ pub(crate) fn validate_recall_chip_batch(batch: &GuiChatRecallChipBatch) -> GuiC
                     && (0.0..=1.0).contains(&score) => {}
             Some(_) => return Err(GuiChatProtocolError::Invalid("recall_chip_score")),
             None => {}
+        }
+        match (&row.citation, row.tier, row.source_state) {
+            (None, _, _) => {}
+            (
+                Some(GuiChatRecallChipCitation::Event {
+                    event_id,
+                    event_type: _,
+                }),
+                GuiChatRecallChipTier::Hot | GuiChatRecallChipTier::Warm | GuiChatRecallChipTier::Cold,
+                GuiChatRecallChipSourceState::Available,
+            ) if *event_id > 0 => {}
+            (
+                Some(GuiChatRecallChipCitation::WarmSnapshot {
+                    consolidated_id,
+                    warm_kind: GuiChatRecallWarmKind::Retained,
+                    original_event_id,
+                }),
+                GuiChatRecallChipTier::Warm,
+                GuiChatRecallChipSourceState::Available,
+            ) if *consolidated_id > 0
+                && original_event_id.is_none_or(|event_id| event_id > 0) => {}
+            (
+                Some(GuiChatRecallChipCitation::WarmSnapshot {
+                    consolidated_id,
+                    warm_kind: GuiChatRecallWarmKind::Summary,
+                    original_event_id: None,
+                }),
+                GuiChatRecallChipTier::Warm,
+                GuiChatRecallChipSourceState::Available,
+            ) if *consolidated_id > 0 => {}
+            (
+                Some(GuiChatRecallChipCitation::GroundTruth { fact_id }),
+                GuiChatRecallChipTier::Canonical,
+                GuiChatRecallChipSourceState::Available,
+            ) if *fact_id > 0 => {}
+            _ => return Err(GuiChatProtocolError::Invalid("recall_chip_citation")),
         }
     }
     Ok(())
@@ -1688,6 +1753,7 @@ mod tests {
             tier: GuiChatRecallChipTier::Warm,
             score: Some(0.42),
             source_state: GuiChatRecallChipSourceState::Available,
+            citation: None,
         };
         let frame = |batch| GuiChatStreamFrame {
             schema_version: 1,
@@ -1740,6 +1806,7 @@ mod tests {
                 tier: GuiChatRecallChipTier::Unknown,
                 score: None,
                 source_state: GuiChatRecallChipSourceState::Available,
+                citation: None,
             }],
         });
         assert!(matches!(
@@ -1753,12 +1820,91 @@ mod tests {
                 tier: GuiChatRecallChipTier::Hot,
                 score: Some(0.42),
                 source_state: GuiChatRecallChipSourceState::Available,
+                citation: None,
             }],
         });
         assert!(matches!(
             validate_stream_frame(&invalid_score),
             Err(GuiChatProtocolError::Invalid("recall_chip_score"))
         ));
+    }
+
+    #[test]
+    fn recall_chip_citation_requires_exact_available_tier_and_positive_binding() {
+        let frame = |row| GuiChatStreamFrame {
+            schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+            boot_id: "boot".into(),
+            turn_id: GuiChatTurnId(Uuid::now_v7()),
+            subscription: GuiChatSubscription {
+                session_id: "gui-subscription".into(),
+                surface: GuiChatSurface::Main,
+                generation: 1,
+            },
+            sequence: 1,
+            payload: GuiChatFramePayload::RecallChipBatch {
+                batch: GuiChatRecallChipBatch {
+                    status: GuiChatRecallChipStatus::Ready,
+                    rows: vec![row],
+                },
+            },
+        };
+        let summary = GuiChatRecallChipRow {
+            tier: GuiChatRecallChipTier::Warm,
+            score: Some(0.42),
+            source_state: GuiChatRecallChipSourceState::Available,
+            citation: Some(GuiChatRecallChipCitation::WarmSnapshot {
+                consolidated_id: 12,
+                warm_kind: GuiChatRecallWarmKind::Summary,
+                original_event_id: None,
+            }),
+        };
+        validate_stream_frame(&frame(summary)).unwrap();
+
+        let forged = GuiChatRecallChipRow {
+            tier: GuiChatRecallChipTier::Warm,
+            score: None,
+            source_state: GuiChatRecallChipSourceState::Untrusted,
+            citation: Some(GuiChatRecallChipCitation::Event {
+                event_id: 1,
+                event_type: 7,
+            }),
+        };
+        assert!(matches!(
+            validate_stream_frame(&frame(forged)),
+            Err(GuiChatProtocolError::Invalid("recall_chip_citation"))
+        ));
+
+        let sentinel = GuiChatRecallChipRow {
+            tier: GuiChatRecallChipTier::Warm,
+            score: None,
+            source_state: GuiChatRecallChipSourceState::Available,
+            citation: Some(GuiChatRecallChipCitation::Event {
+                event_id: -12,
+                event_type: 7,
+            }),
+        };
+        assert!(matches!(
+            validate_stream_frame(&frame(sentinel)),
+            Err(GuiChatProtocolError::Invalid("recall_chip_citation"))
+        ));
+
+        let legacy = GuiChatRecallChipRow {
+            tier: GuiChatRecallChipTier::Warm,
+            score: Some(0.42),
+            source_state: GuiChatRecallChipSourceState::Available,
+            citation: None,
+        };
+        validate_stream_frame(&frame(legacy)).unwrap();
+
+        let legacy_wire: GuiChatRecallChipRow = serde_json::from_str(
+            r#"{"tier":"warm","score":0.42,"source_state":"available"}"#,
+        )
+        .unwrap();
+        assert_eq!(legacy_wire.citation, None);
+        assert!(serde_json::from_str::<GuiChatRecallChipRow>(
+            r#"{"tier":"warm","score":0.42,"source_state":"available","citation":{"kind":"event","event_id":1,"event_type":7,"extra":true}}"#,
+        )
+        .is_err());
     }
 
     #[test]

@@ -3,6 +3,28 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W246 bound Recall provenance (2026-09-23):** Main and Buddy now receive passive,
+content-free Event, WarmSnapshot or GroundTruth citations from the same verified
+recall result. Exact positive source IDs, tier/trust checks, summary sentinel
+rejection and both raw/typed transport paths are enforced. Omitted legacy fields
+remain decodable; older strict consumers reject cited rows, so paired producer/
+consumer deployment is required. No source navigation or content disclosure is
+added. Independent static review passed; fresh Hosted behavior remains pending.
+Five core identities are selected in addition to the retained25W231 cases, plus
+one new GUI reducer case and strengthened existing raw/daemon Main/Buddy cases.
+Inventory537sources/855universal native/98GUI; Group418, GUI124; Windows19/Linux22/
+macOS21 native extras and26Linux/26macOS GUI extras remain. P2-27 stays open.
+
+Fresh evidence for prior batches: Group41335800840265 on1a6a19d7 passed **413/413**;
+all89sourcebindings, matrix, lock and individual execution terminals verified.
+Core35800838154 passed test-target typecheck and CLI build/export; its exact-source
+SHA-verified reference includes W239 read flags and W242 status. Preflight35801625810
+and CodeQuality35801625255 passed on5a52ad92 after the verified one-path W245 format
+import. GUI123/a7f3 executed123:121passed/2failed with all17GUI source bindings
+and exact terminals verified; W168 passed, W153/W164 exposed missing/failed
+systemd user containment. W248 runner repair is separate; W245 Windows remains pending.
+Road1016checked/306open/2partial is unchanged. No local executable validation ran.
+See `docs/gold-wave246-recall-citations.md` and W239–W245 reports.
 **W245 Windows read-root compatibility (2026-09-23):** the descriptor-bound
 reader retains ordinary and verbatim UNC roots as well as drive roots, avoiding
 an unintended regression for existing allowlisted shares. Device/pipe and relative

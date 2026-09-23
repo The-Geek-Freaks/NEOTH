@@ -51,7 +51,8 @@ jobs:
             libxkbcommon-x11-0 \
             xauth \
             xvfb \
-            ffmpeg
+            ffmpeg \
+            dbus-user-session
 
       # Read-only reuse of CI's Linux/Rust-1.91 cache. This lane never saves a
       # partial target directory into that shared cache family.
@@ -114,14 +115,14 @@ jobs:
                   raise SystemExit(f"{label} contains a duplicate test identity")
               return value
 
-          universal = require_names(matrix.get("requiredGuiTests"), "requiredGuiTests", 97)
+          universal = require_names(matrix.get("requiredGuiTests"), "requiredGuiTests", 98)
           by_platform = matrix.get("requiredGuiTestsByPlatform")
           if not isinstance(by_platform, dict):
               raise SystemExit("requiredGuiTestsByPlatform is missing or malformed")
           linux = require_names(by_platform.get("Linux"), "requiredGuiTestsByPlatform.Linux", 26)
           selected = universal + linux
-          if len(selected) != 123 or len(selected) != len(set(selected)):
-              raise SystemExit("GUI fixture selection must contain exactly 123 unique identities (97 universal + 26 Linux)")
+          if len(selected) != 124 or len(selected) != len(set(selected)):
+              raise SystemExit("GUI fixture selection must contain exactly 124 unique identities (98 universal + 26 Linux)")
 
           supported_classes = {
               "neothd-gui::bin/neothd-gui": {"kind": "bin", "selector": ["--bin", "neothd-gui"]},
@@ -277,6 +278,83 @@ jobs:
           overall=0
           deadline_reached=false
           incomplete_reason=""
+          containment_runtime="/run/user/$(id -u)"
+          containment_bus_pid=""
+          containment_manager_pid=""
+          containment_owns_bus=false
+          containment_owns_manager=false
+          containment_readiness="$evidence_root/receipt/linux-contained-chat-readiness.txt"
+          containment_diagnostics="$evidence_root/receipt/linux-contained-chat-diagnostics.txt"
+          : > "$containment_diagnostics"
+          cleanup_containment_session() {
+            if [[ "$containment_owns_manager" == true && -n "$containment_manager_pid" ]]; then
+              /usr/bin/systemctl --user exit >/dev/null 2>&1 || true
+              kill "$containment_manager_pid" >/dev/null 2>&1 || true
+              wait "$containment_manager_pid" >/dev/null 2>&1 || true
+            fi
+            if [[ "$containment_owns_bus" == true && -n "$containment_bus_pid" ]]; then
+              kill "$containment_bus_pid" >/dev/null 2>&1 || true
+              wait "$containment_bus_pid" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup_containment_session EXIT
+          containment_snapshot() {
+            {
+              echo '=== contained-chat manager snapshot ==='
+              printf 'uid=%s runtime=%s\n' "$(id -u)" "$XDG_RUNTIME_DIR"
+              stat -c 'runtime mode=%a uid=%u gid=%g type=%F' "$XDG_RUNTIME_DIR" || true
+              stat -c '%n mode=%a uid=%u gid=%g type=%F' /usr/bin/systemd-run /usr/bin/systemctl || true
+              /usr/bin/systemctl --user is-system-running || true
+              /usr/bin/systemctl --user --failed --no-legend || true
+              /usr/bin/systemctl --user list-units --all 'neoth-gui-chat-*' --no-legend || true
+              timeout 15 /usr/bin/journalctl --user --no-pager -o short-precise -n 160 || true
+            } >> "$containment_diagnostics" 2>&1
+          }
+          start_containment_session() {
+            local uid bus_pid
+            uid="$(id -u)"
+            sudo install -d -m 0700 -o "$uid" -g "$(id -g)" "$containment_runtime"
+            export XDG_RUNTIME_DIR="$containment_runtime"
+            export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+            test -d "$XDG_RUNTIME_DIR"
+            test "$(stat -c '%u' "$XDG_RUNTIME_DIR")" = "$uid"
+            test "$(stat -c '%F' "$XDG_RUNTIME_DIR")" = directory
+            if [[ ! -S "$XDG_RUNTIME_DIR/bus" ]]; then
+              bus_pid="$(/usr/bin/dbus-daemon --session --address="$DBUS_SESSION_BUS_ADDRESS" --fork --nopidfile --print-pid=1)"
+              containment_bus_pid="$bus_pid"
+              containment_owns_bus=true
+            fi
+            if ! /usr/bin/systemctl --user show-environment >/dev/null 2>&1; then
+              /usr/lib/systemd/systemd --user &
+              containment_manager_pid="$!"
+              containment_owns_manager=true
+            fi
+            local attempt
+            for attempt in $(seq 1 50); do
+              if /usr/bin/systemctl --user show-environment >/dev/null 2>&1; then
+                break
+              fi
+              sleep 0.1
+            done
+            /usr/bin/systemctl --user show-environment >/dev/null
+            {
+              echo '=== contained-chat readiness ==='
+              printf 'uid=%s runtime=%s\n' "$uid" "$XDG_RUNTIME_DIR"
+              stat -c 'runtime mode=%a uid=%u gid=%g type=%F' "$XDG_RUNTIME_DIR"
+              stat -c '%n mode=%a uid=%u gid=%g type=%F' /usr/bin/systemd-run /usr/bin/systemctl
+              /usr/bin/systemctl --user is-system-running || true
+              # The child supervisor removes DBUS_SESSION_BUS_ADDRESS before it
+              # execs systemd-run. This checks its actual XDG runtime-bus path.
+              env -u DBUS_SESSION_BUS_ADDRESS timeout 20 /usr/bin/systemd-run --user --quiet --wait --pipe --collect --service-type=exec --property=Delegate=no --property=KillMode=control-group --property=SendSIGKILL=yes --property=NoNewPrivileges=yes -- /usr/bin/unshare --user --map-root-user --cgroup --mount --pid --fork /usr/bin/true
+              echo 'contained-chat readiness passed'
+            } > "$containment_readiness" 2>&1
+          }
+          if ! start_containment_session; then
+            containment_snapshot
+            cat "$containment_readiness" >&2 || true
+            exit 1
+          fi
+          export NEOTH_GUI_REQUIRE_SYSTEMD_CONTAINMENT_TESTS=1
           # Finish the runner-side protocol with time for receipt creation and
           # the always-uploaded artifacts before GitHub's 90-minute job limit.
           deadline_seconds=4500
@@ -408,6 +486,8 @@ jobs:
                 printf '%s\n' "$test_name" >> "$passed"
               else
                 test_status=$?
+                containment_snapshot
+                cat "$containment_diagnostics" >> "$log"
                 printf '%s\n' "$test_name" >> "$failed"
                 overall=1
               fi

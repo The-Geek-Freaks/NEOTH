@@ -1026,7 +1026,7 @@ Plan and apply local context imports through the running daemon
 
 ### `neoth context import`
 
-Ask the live daemon to plan one capability-bound local import
+Inspect status or plan and apply a capability-bound local import
 
 #### `neoth context import apply`
 
@@ -1041,6 +1041,10 @@ Validate one approved root and return a short-lived confirmation handle
 
 - `<ROOT>` — Absolute local directory presented for capability-bound approval
 - `<RELATIVE_PATH>` — Relative regular-file path below the approved root
+
+#### `neoth context import status`
+
+Read the daemon's content-free lifecycle and revision view for Context Import
 
 ## `neoth cost`
 
@@ -1545,6 +1549,8 @@ Fetch a URL + return its text content (A-21)
 Read a file through the gated OS-tool surface. Permitted only when the path is under `freedom.yaml::tools.os.allowed_paths` (default deny-all) AND the autonomy level allows it (Strict confirms ⇒ blocked here, since this path has no interactive prompt). WAL-audited (`0xA8`/`0xA9`)
 
 - `<PATH>` — File to read
+- `--codegraph-enrichment` — Append a bounded, untrusted local codegraph sidecar after a successful read.  This remains off unless both this switch and the existing `code_map.outline_enrichment` master switch are enabled
+- `--repository-root <ABSOLUTE_ROOT>` — Absolute indexed repository root required with `--codegraph-enrichment`.  It binds the sidecar to one contained target; it does not expand the OS read allowlist
 
 ### `neoth fs write`
 

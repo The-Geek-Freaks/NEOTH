@@ -14,8 +14,9 @@ const MAX_PRESENTABLE_SCORE: f64 = 1.0;
 
 /// Identity of the snapshot row that supplied a recall result.
 ///
-/// It is deliberately local-only. No identifier in this enum is serialized to a
-/// chat control frame or UI model.
+/// It is deliberately local-only until `source_state_for` accepts the exact
+/// hit/source binding. Only then may W246 reduce it to a positive, passive,
+/// content-free [`RecallChipCitation`] in a chip row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RecallSourceRef {
     Event {
@@ -39,6 +40,20 @@ pub(crate) enum RecallSourceRef {
 pub(crate) enum RecallWarmKind {
     Retained,
     Summary,
+}
+
+/// Content-free, typed provenance for a chip whose source was already
+/// accepted by [`source_state_for`]. It is never inferred from row ordering,
+/// rendered recall text, or the warm-summary negative event sentinel.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum RecallChipCitation {
+    Event { event_id: i64, event_type: u8 },
+    WarmSnapshot {
+        consolidated_id: i64,
+        kind: RecallWarmKind,
+        original_event_id: Option<i64>,
+    },
+    GroundTruth { fact_id: i64 },
 }
 
 /// Public-safe tier vocabulary for the later reduced control frame.
@@ -75,13 +90,15 @@ pub(crate) enum RecallChipBatchStatus {
     Incognito,
 }
 
-/// Reduced row suitable for a future UI wire format. It contains no response
-/// text, source identity, session value, prompt, or database identifier.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Reduced row suitable for the Recall-chip UI wire format. It contains no
+/// response text, session value, prompt, or database identifier; its optional
+/// typed citation is only source provenance already validated for this hit.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RecallChipRow {
     pub(crate) tier: RecallChipTier,
     pub(crate) score: RecallChipScore,
     pub(crate) source_state: RecallChipSourceState,
+    pub(crate) citation: Option<RecallChipCitation>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -168,11 +185,60 @@ impl RecallPresentationHit {
         } else {
             RecallChipScore::Unavailable
         };
+        let citation = (source_state == RecallChipSourceState::Available)
+            .then(|| citation_for(tier, &self.source))
+            .flatten();
         RecallChipRow {
             tier,
             score,
             source_state,
+            citation,
         }
+    }
+}
+
+fn citation_for(tier: RecallChipTier, source: &RecallSourceRef) -> Option<RecallChipCitation> {
+    match (tier, source) {
+        (
+            RecallChipTier::Canonical,
+            RecallSourceRef::GroundTruth { fact_id },
+        ) if *fact_id > 0 => Some(RecallChipCitation::GroundTruth { fact_id: *fact_id }),
+        (
+            RecallChipTier::Hot | RecallChipTier::Warm | RecallChipTier::Cold,
+            RecallSourceRef::Event {
+                event_id,
+                event_type,
+            },
+        ) if *event_id > 0 => Some(RecallChipCitation::Event {
+            event_id: *event_id,
+            event_type: *event_type,
+        }),
+        (
+            RecallChipTier::Warm,
+            RecallSourceRef::WarmSnapshot {
+                consolidated_id,
+                kind: RecallWarmKind::Retained,
+                original_event_id,
+            },
+        ) if *consolidated_id > 0
+            && original_event_id.is_none_or(|event_id| event_id > 0) => Some(RecallChipCitation::WarmSnapshot {
+            consolidated_id: *consolidated_id,
+            kind: RecallWarmKind::Retained,
+            original_event_id: *original_event_id,
+        }),
+        (
+            RecallChipTier::Warm,
+            RecallSourceRef::WarmSnapshot {
+                consolidated_id,
+                kind: RecallWarmKind::Summary,
+                original_event_id: None,
+            },
+        ) if *consolidated_id > 0 => Some(RecallChipCitation::WarmSnapshot {
+            consolidated_id: *consolidated_id,
+            kind: RecallWarmKind::Summary,
+            original_event_id: None,
+        }),
+        _ => None,
     }
 }
 
@@ -278,6 +344,14 @@ mod tests {
         .chip_row();
         assert_eq!(row.tier, RecallChipTier::Warm);
         assert_eq!(row.score, RecallChipScore::WarmHit((1.0 / 61.0) as f32));
+        assert_eq!(
+            row.citation,
+            Some(RecallChipCitation::WarmSnapshot {
+                consolidated_id: 12,
+                kind: RecallWarmKind::Retained,
+                original_event_id: Some(41),
+            })
+        );
     }
 
     #[test]
@@ -296,6 +370,14 @@ mod tests {
         .chip_row();
         assert_eq!(row.source_state, RecallChipSourceState::Available);
         assert!(matches!(row.score, RecallChipScore::WarmHit(_)));
+        assert_eq!(
+            row.citation,
+            Some(RecallChipCitation::WarmSnapshot {
+                consolidated_id: 12,
+                kind: RecallWarmKind::Summary,
+                original_event_id: None,
+            })
+        );
     }
 
     #[test]
@@ -314,6 +396,7 @@ mod tests {
         .chip_row();
         assert_eq!(row.source_state, RecallChipSourceState::Untrusted);
         assert_eq!(row.score, RecallChipScore::Unavailable);
+        assert_eq!(row.citation, None);
     }
 
     #[test]
@@ -332,6 +415,7 @@ mod tests {
         .chip_row();
         assert_eq!(row.source_state, RecallChipSourceState::Untrusted);
         assert_eq!(row.score, RecallChipScore::Unavailable);
+        assert_eq!(row.citation, None);
     }
 
     #[test]
@@ -350,6 +434,7 @@ mod tests {
         assert_eq!(row.tier, RecallChipTier::Unknown);
         assert_eq!(row.source_state, RecallChipSourceState::Untrusted);
         assert_eq!(row.score, RecallChipScore::Unavailable);
+        assert_eq!(row.citation, None);
     }
 
     #[test]
@@ -367,6 +452,38 @@ mod tests {
         .chip_row();
         assert_eq!(row.source_state, RecallChipSourceState::Untrusted);
         assert_eq!(row.score, RecallChipScore::Unavailable);
+        assert_eq!(row.citation, None);
+    }
+
+    #[test]
+    fn exact_positive_event_and_ground_truth_bindings_project_typed_citations() {
+        let event = RecallPresentationHit::from_final_parts(
+            hit("hot", 41),
+            0.42,
+            RecallSourceRef::Event {
+                event_id: 41,
+                event_type: 7,
+            },
+        )
+        .chip_row();
+        assert_eq!(
+            event.citation,
+            Some(RecallChipCitation::Event {
+                event_id: 41,
+                event_type: 7,
+            })
+        );
+
+        let fact = RecallPresentationHit::from_final_parts(
+            hit("groundtruth", 9),
+            0.42,
+            RecallSourceRef::GroundTruth { fact_id: 9 },
+        )
+        .chip_row();
+        assert_eq!(
+            fact.citation,
+            Some(RecallChipCitation::GroundTruth { fact_id: 9 })
+        );
     }
 
     #[test]

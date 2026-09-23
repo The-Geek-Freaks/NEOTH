@@ -1,9 +1,9 @@
 //! Request-owned W163 recall-chip control reducer.
 //!
 //! This module accepts the reduced, authenticated `recall_chip_batch` v3
-//! payload only. It keeps no recall text, source identity, hash, session value,
-//! prompt, provider value, WAL value, history, or click target. A later GUI
-//! owner may render its returned informational rows for the current response.
+//! payload only. It keeps no recall text, hash, session value, prompt, provider
+//! value, WAL value, history, or click target. W246 additionally retains only
+//! a closed, typed source identifier for a passive current-response label.
 
 use serde::Deserialize;
 use zeroize::Zeroizing;
@@ -73,6 +73,30 @@ pub enum RecallChipSourceState {
     Untrusted,
 }
 
+/// A closed, content-free identity for a real recall source. It is display-only:
+/// the GUI never turns it into a lookup, navigation target, or history row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecallChipWarmKind {
+    Retained,
+    Summary,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecallChipCitation {
+    Event {
+        event_id: i64,
+        event_type: u8,
+    },
+    WarmSnapshot {
+        consolidated_id: i64,
+        warm_kind: RecallChipWarmKind,
+        original_event_id: Option<i64>,
+    },
+    GroundTruth {
+        fact_id: i64,
+    },
+}
+
 impl RecallChipSourceState {
     fn parse(value: &str) -> Option<Self> {
         Some(match value {
@@ -92,9 +116,10 @@ pub struct RecallChip {
     pub tier: RecallChipTier,
     pub score: Option<f64>,
     pub source_state: RecallChipSourceState,
+    pub citation: Option<RecallChipCitation>,
 }
 
-/// The complete, transient projection for one request. It contains no string
+/// The complete, transient projection for one request. It contains no text
 /// values and can be kept readable after a successful provider boundary.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RecallChipSnapshot {
@@ -111,6 +136,54 @@ struct RecallChipRowFrame {
     tier: String,
     score: NullableScore,
     source_state: String,
+    #[serde(default)]
+    citation: Option<RecallChipCitationFrame>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum RecallChipCitationFrame {
+    Event { event_id: i64, event_type: u8 },
+    WarmSnapshot {
+        consolidated_id: i64,
+        warm_kind: RecallChipWarmKindFrame,
+        original_event_id: Option<i64>,
+    },
+    GroundTruth { fact_id: i64 },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RecallChipWarmKindFrame {
+    Retained,
+    Summary,
+}
+
+impl RecallChipCitationFrame {
+    fn into_citation(self) -> RecallChipCitation {
+        match self {
+            Self::Event {
+                event_id,
+                event_type,
+            } => RecallChipCitation::Event {
+                event_id,
+                event_type,
+            },
+            Self::WarmSnapshot {
+                consolidated_id,
+                warm_kind,
+                original_event_id,
+            } => RecallChipCitation::WarmSnapshot {
+                consolidated_id,
+                warm_kind: match warm_kind {
+                    RecallChipWarmKindFrame::Retained => RecallChipWarmKind::Retained,
+                    RecallChipWarmKindFrame::Summary => RecallChipWarmKind::Summary,
+                },
+                original_event_id,
+            },
+            Self::GroundTruth { fact_id } => RecallChipCitation::GroundTruth { fact_id },
+        }
+    }
 }
 
 impl Drop for RecallChipRowFrame {
@@ -248,6 +321,9 @@ impl Projection {
                 {
                     return Err("invalid recall chip score");
                 }
+                if !recall_chip_citation_is_valid(row) {
+                    return Err("invalid recall chip citation");
+                }
             }
             let snapshot = RecallChipSnapshot { status, rows };
             self.snapshot = Some(snapshot.clone());
@@ -286,7 +362,7 @@ impl Projection {
         if line.len() > MAX_RECALL_CHIP_CONTROL_BYTES {
             return Err("recall chip control exceeds its bounded schema");
         }
-        let frame = serde_json::from_str::<RecallChipBatchFrame>(line)
+        let mut frame = serde_json::from_str::<RecallChipBatchFrame>(line)
             .map_err(|_| "invalid recall chip control schema")?;
         if frame.neoth_stream != "recall_chip_batch"
             || frame.protocol_version != protocol_version
@@ -309,7 +385,7 @@ impl Projection {
         }
 
         let mut rows = Vec::with_capacity(frame.rows.len());
-        for row in &frame.rows {
+        for row in &mut frame.rows {
             let tier =
                 RecallChipTier::parse(row.tier.as_str()).ok_or("unknown recall chip tier")?;
             let source_state = RecallChipSourceState::parse(row.source_state.as_str())
@@ -329,11 +405,20 @@ impl Projection {
                 Some(_) => return Err("invalid recall chip score"),
                 None => None,
             };
-            rows.push(RecallChip {
+            let citation = row
+                .citation
+                .take()
+                .map(RecallChipCitationFrame::into_citation);
+            let row = RecallChip {
                 tier,
                 score,
                 source_state,
-            });
+                citation,
+            };
+            if !recall_chip_citation_is_valid(&row) {
+                return Err("invalid recall chip citation");
+            }
+            rows.push(row);
         }
         self.next_sequence = self
             .next_sequence
@@ -342,6 +427,47 @@ impl Projection {
         let snapshot = RecallChipSnapshot { status, rows };
         self.snapshot = Some(snapshot.clone());
         Ok(snapshot)
+    }
+}
+
+fn recall_chip_citation_is_valid(row: &RecallChip) -> bool {
+    match (row.citation, row.tier, row.source_state) {
+        (None, _, _) => true,
+        (
+            Some(RecallChipCitation::Event { event_id, .. }),
+            RecallChipTier::Hot | RecallChipTier::Warm | RecallChipTier::Cold,
+            RecallChipSourceState::Available,
+        ) => event_id > 0,
+        (
+            Some(RecallChipCitation::WarmSnapshot {
+                consolidated_id,
+                warm_kind: RecallChipWarmKind::Retained,
+                original_event_id,
+            }),
+            RecallChipTier::Warm,
+            RecallChipSourceState::Available,
+        ) => {
+            consolidated_id > 0
+                && match original_event_id {
+                    None => true,
+                    Some(event_id) => event_id > 0,
+                }
+        }
+        (
+            Some(RecallChipCitation::WarmSnapshot {
+                consolidated_id,
+                warm_kind: RecallChipWarmKind::Summary,
+                original_event_id: None,
+            }),
+            RecallChipTier::Warm,
+            RecallChipSourceState::Available,
+        ) => consolidated_id > 0,
+        (
+            Some(RecallChipCitation::GroundTruth { fact_id }),
+            RecallChipTier::Canonical,
+            RecallChipSourceState::Available,
+        ) => fact_id > 0,
+        _ => false,
     }
 }
 
@@ -544,6 +670,73 @@ mod tests {
     }
 
     #[test]
+    fn citations_are_closed_available_source_labels_with_positive_matching_ids() {
+        let cited = |tier, citation| {
+            serde_json::json!({
+                "tier": tier,
+                "score": null,
+                "source_state": "available",
+                "citation": citation,
+            })
+        };
+        let mut projection = Projection::new("request-a".into());
+        let snapshot = projection
+            .apply_json(
+                &batch(
+                    1,
+                    "ready",
+                    vec![
+                        cited("hot", serde_json::json!({"kind":"event","event_id":11,"event_type":4})),
+                        cited("warm", serde_json::json!({"kind":"warm_snapshot","consolidated_id":12,"warm_kind":"retained","original_event_id":11})),
+                        cited("warm", serde_json::json!({"kind":"warm_snapshot","consolidated_id":13,"warm_kind":"retained","original_event_id":null})),
+                        cited("warm", serde_json::json!({"kind":"warm_snapshot","consolidated_id":13,"warm_kind":"summary","original_event_id":null})),
+                        cited("canonical", serde_json::json!({"kind":"ground_truth","fact_id":14})),
+                    ],
+                ),
+                "token-a",
+                3,
+            )
+            .expect("accept closed W246 citations");
+        assert!(matches!(
+            snapshot.rows[0].citation,
+            Some(RecallChipCitation::Event { event_id: 11, event_type: 4 })
+        ));
+        assert!(matches!(
+            snapshot.rows[3].citation,
+            Some(RecallChipCitation::WarmSnapshot {
+                consolidated_id: 13,
+                warm_kind: RecallChipWarmKind::Summary,
+                original_event_id: None,
+            })
+        ));
+
+        for invalid in [
+            cited("canonical", serde_json::json!({"kind":"event","event_id":11,"event_type":4})),
+            serde_json::json!({"tier":"warm","score":null,"source_state":"missing","citation":{"kind":"warm_snapshot","consolidated_id":12,"warm_kind":"retained","original_event_id":11}}),
+            cited("warm", serde_json::json!({"kind":"warm_snapshot","consolidated_id":-12,"warm_kind":"summary","original_event_id":null})),
+            cited("warm", serde_json::json!({"kind":"warm_snapshot","consolidated_id":12,"warm_kind":"summary","original_event_id":11})),
+            cited("canonical", serde_json::json!({"kind":"ground_truth","fact_id":0})),
+            cited("canonical", serde_json::json!({"kind":"ground_truth","fact_id":14,"extra":"denied"})),
+        ] {
+            let mut denied = Projection::new("request-a".into());
+            assert!(denied
+                .apply_json(&batch(1, "ready", vec![invalid]), "token-a", 3)
+                .is_err());
+            assert!(denied.snapshot().is_none());
+            assert!(denied.is_frozen());
+        }
+
+        let mut legacy = Projection::new("request-a".into());
+        assert!(legacy
+            .apply_json(
+                &batch(1, "ready", vec![row("warm", serde_json::Value::Null, "available")]),
+                "token-a",
+                3,
+            )
+            .is_ok());
+    }
+
+    #[test]
     fn typed_daemon_batch_reuses_closed_validation_and_provider_done_freeze() {
         let mut projection = Projection::new("daemon-operation-9".into());
         let accepted = projection
@@ -553,6 +746,7 @@ mod tests {
                     tier: RecallChipTier::Warm,
                     score: Some(0.42),
                     source_state: RecallChipSourceState::Available,
+                    citation: None,
                 }],
             )
             .expect("accept daemon-reduced W163 batch");
@@ -573,6 +767,7 @@ mod tests {
                         tier: RecallChipTier::Unknown,
                         score: None,
                         source_state: RecallChipSourceState::Available,
+                        citation: None,
                     }],
                 )
                 .is_err()

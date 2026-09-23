@@ -1316,7 +1316,8 @@ fn map_recall_chip_batch(
     batch: crate::memory::recall_presentation::RecallChipBatch,
 ) -> GuiChatRecallChipBatch {
     use crate::memory::recall_presentation::{
-        RecallChipBatchStatus, RecallChipScore, RecallChipSourceState, RecallChipTier,
+        RecallChipBatchStatus, RecallChipCitation, RecallChipScore, RecallChipSourceState,
+        RecallChipTier, RecallWarmKind,
     };
 
     let status = match batch.status {
@@ -1347,6 +1348,30 @@ fn map_recall_chip_batch(
                 RecallChipSourceState::Missing => GuiChatRecallChipSourceState::Missing,
                 RecallChipSourceState::Untrusted => GuiChatRecallChipSourceState::Untrusted,
             },
+            citation: row.citation.map(|citation| match citation {
+                RecallChipCitation::Event {
+                    event_id,
+                    event_type,
+                } => GuiChatRecallChipCitation::Event {
+                    event_id,
+                    event_type,
+                },
+                RecallChipCitation::WarmSnapshot {
+                    consolidated_id,
+                    kind,
+                    original_event_id,
+                } => GuiChatRecallChipCitation::WarmSnapshot {
+                    consolidated_id,
+                    warm_kind: match kind {
+                        RecallWarmKind::Retained => GuiChatRecallWarmKind::Retained,
+                        RecallWarmKind::Summary => GuiChatRecallWarmKind::Summary,
+                    },
+                    original_event_id,
+                },
+                RecallChipCitation::GroundTruth { fact_id } => {
+                    GuiChatRecallChipCitation::GroundTruth { fact_id }
+                }
+            }),
         })
         .collect();
     GuiChatRecallChipBatch { status, rows }
@@ -2129,8 +2154,8 @@ mod lifecycle_tests {
     #[test]
     fn recall_chip_mapping_preserves_typed_same_query_rows() {
         use crate::memory::recall_presentation::{
-            RecallChipBatch, RecallChipBatchStatus, RecallChipRow, RecallChipScore,
-            RecallChipSourceState, RecallChipTier,
+            RecallChipBatch, RecallChipBatchStatus, RecallChipCitation, RecallChipRow,
+            RecallChipScore, RecallChipSourceState, RecallChipTier, RecallWarmKind,
         };
 
         let batch = map_recall_chip_batch(RecallChipBatch {
@@ -2139,6 +2164,11 @@ mod lifecycle_tests {
                 tier: RecallChipTier::Warm,
                 score: RecallChipScore::WarmHit(0.42),
                 source_state: RecallChipSourceState::Available,
+                citation: Some(RecallChipCitation::WarmSnapshot {
+                    consolidated_id: 12,
+                    kind: RecallWarmKind::Summary,
+                    original_event_id: None,
+                }),
             }],
         });
         assert_eq!(batch.status, GuiChatRecallChipStatus::Ready);
@@ -2148,6 +2178,14 @@ mod lifecycle_tests {
         assert_eq!(
             batch.rows[0].source_state,
             GuiChatRecallChipSourceState::Available
+        );
+        assert_eq!(
+            batch.rows[0].citation,
+            Some(GuiChatRecallChipCitation::WarmSnapshot {
+                consolidated_id: 12,
+                warm_kind: GuiChatRecallWarmKind::Summary,
+                original_event_id: None,
+            })
         );
         validate_recall_chip_batch(&batch).expect("mapped W163 batch remains valid");
 

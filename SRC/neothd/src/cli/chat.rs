@@ -4384,8 +4384,8 @@ fn recall_chip_batch_frame_line(
     batch: &crate::memory::recall_presentation::RecallChipBatch,
 ) -> std::io::Result<String> {
     use crate::memory::recall_presentation::{
-        MAX_RECALL_CHIP_ROWS, RecallChipBatchStatus, RecallChipScore, RecallChipSourceState,
-        RecallChipTier,
+        MAX_RECALL_CHIP_ROWS, RecallChipBatchStatus, RecallChipCitation, RecallChipScore,
+        RecallChipSourceState, RecallChipTier, RecallWarmKind,
     };
 
     #[derive(serde::Serialize)]
@@ -4393,6 +4393,20 @@ fn recall_chip_batch_frame_line(
         tier: &'static str,
         score: Option<f32>,
         source_state: &'static str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        citation: Option<RecallChipCitationFrame>,
+    }
+
+    #[derive(serde::Serialize)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    enum RecallChipCitationFrame {
+        Event { event_id: i64, event_type: u8 },
+        WarmSnapshot {
+            consolidated_id: i64,
+            warm_kind: &'static str,
+            original_event_id: Option<i64>,
+        },
+        GroundTruth { fact_id: i64 },
     }
 
     #[derive(serde::Serialize)]
@@ -4444,10 +4458,61 @@ fn recall_chip_batch_frame_line(
                 }
                 RecallChipScore::WarmHit(_) | RecallChipScore::Unavailable => None,
             };
+            let citation = match (&row.citation, row.tier, row.source_state) {
+                (
+                    Some(RecallChipCitation::Event {
+                        event_id,
+                        event_type,
+                    }),
+                    RecallChipTier::Hot | RecallChipTier::Warm | RecallChipTier::Cold,
+                    RecallChipSourceState::Available,
+                ) if *event_id > 0 => Some(RecallChipCitationFrame::Event {
+                    event_id: *event_id,
+                    event_type: *event_type,
+                }),
+                (
+                    Some(RecallChipCitation::WarmSnapshot {
+                        consolidated_id,
+                        kind: RecallWarmKind::Retained,
+                        original_event_id,
+                    }),
+                    RecallChipTier::Warm,
+                    RecallChipSourceState::Available,
+                ) if *consolidated_id > 0
+                    && original_event_id.is_none_or(|event_id| event_id > 0) => {
+                    Some(RecallChipCitationFrame::WarmSnapshot {
+                        consolidated_id: *consolidated_id,
+                        warm_kind: "retained",
+                        original_event_id: *original_event_id,
+                    })
+                }
+                (
+                    Some(RecallChipCitation::WarmSnapshot {
+                        consolidated_id,
+                        kind: RecallWarmKind::Summary,
+                        original_event_id: None,
+                    }),
+                    RecallChipTier::Warm,
+                    RecallChipSourceState::Available,
+                ) if *consolidated_id > 0 => Some(RecallChipCitationFrame::WarmSnapshot {
+                    consolidated_id: *consolidated_id,
+                    warm_kind: "summary",
+                    original_event_id: None,
+                }),
+                (
+                    Some(RecallChipCitation::GroundTruth { fact_id }),
+                    RecallChipTier::Canonical,
+                    RecallChipSourceState::Available,
+                ) if *fact_id > 0 => Some(RecallChipCitationFrame::GroundTruth {
+                    fact_id: *fact_id,
+                }),
+                _ => None,
+            };
             RecallChipRowFrame {
                 tier,
                 score,
                 source_state,
+                citation,
             }
         })
         .collect();
@@ -15973,8 +16038,8 @@ mod tests {
     #[test]
     fn w163_recall_chip_wire_is_private_bounded_and_has_exact_schema() {
         use crate::memory::recall_presentation::{
-            RecallChipBatch, RecallChipBatchStatus, RecallChipRow, RecallChipScore,
-            RecallChipSourceState, RecallChipTier,
+            RecallChipBatch, RecallChipBatchStatus, RecallChipCitation, RecallChipRow,
+            RecallChipScore, RecallChipSourceState, RecallChipTier, RecallWarmKind,
         };
 
         let token = "0123456789abcdef0123456789abcdef";
@@ -15985,6 +16050,11 @@ mod tests {
                     tier: RecallChipTier::Warm,
                     score: RecallChipScore::WarmHit(0.42),
                     source_state: RecallChipSourceState::Available,
+                    citation: Some(RecallChipCitation::WarmSnapshot {
+                        consolidated_id: 12,
+                        kind: RecallWarmKind::Summary,
+                        original_event_id: None,
+                    }),
                 })
                 .collect(),
         };
@@ -16013,12 +16083,16 @@ mod tests {
         assert_eq!(rows.len(), 5);
         assert!(rows.iter().all(|row| {
             row.as_object().is_some_and(|row| {
-                row.len() == 3
+                row.len() == 4
                     && row.contains_key("tier")
                     && row.contains_key("score")
                     && row.contains_key("source_state")
+                    && row.contains_key("citation")
             })
         }));
+        assert_eq!(rows[0]["citation"]["kind"], "warm_snapshot");
+        assert_eq!(rows[0]["citation"]["consolidated_id"], 12);
+        assert!(rows[0]["citation"]["original_event_id"].is_null());
         assert!(!line.contains("prompt") && !line.contains("session") && !line.contains("wal"));
     }
 
@@ -16036,26 +16110,31 @@ mod tests {
                     tier: RecallChipTier::Warm,
                     score: RecallChipScore::WarmHit(0.42),
                     source_state: RecallChipSourceState::Available,
+                    citation: None,
                 },
                 RecallChipRow {
                     tier: RecallChipTier::Warm,
                     score: RecallChipScore::WarmHit(f32::NAN),
                     source_state: RecallChipSourceState::Available,
+                    citation: None,
                 },
                 RecallChipRow {
                     tier: RecallChipTier::Warm,
                     score: RecallChipScore::WarmHit(1.1),
                     source_state: RecallChipSourceState::Available,
+                    citation: None,
                 },
                 RecallChipRow {
                     tier: RecallChipTier::Warm,
                     score: RecallChipScore::WarmHit(0.2),
                     source_state: RecallChipSourceState::Missing,
+                    citation: None,
                 },
                 RecallChipRow {
                     tier: RecallChipTier::Hot,
                     score: RecallChipScore::WarmHit(0.2),
                     source_state: RecallChipSourceState::Available,
+                    citation: None,
                 },
             ],
         };
