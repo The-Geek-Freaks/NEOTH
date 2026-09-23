@@ -3,6 +3,21 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W417 hosted Raft inputs and W421 citation terminal repair (2026-09-23):**
+Citation run35871580933 remains FAILURE:41 actual Rust PASS,9 unstarted;
+the runner rejected the interleaved stderr/final-ok form of identity41.
+W421 repairs that matcher with seven hosted self-tests before Cargo. Source,
+selection50 and three public-provider probes are unchanged; rerun is pending.
+W417 qualifies pinned OpenRaft0.9.25 and exports a source-bound manifest/lock
+proposal entirely on GitHub. Production dependency and W419 cluster budget
+integration remain unpublished and unaccepted. Independent static reviews passed.
+Coreef82 is admitted at all4 gates; GUI1438f6 is admitted143/143 with23 bindings.
+Group841bc9 and Windows/macOS FullCIbc9 continue. Linux FullCIbc9 failed Clippy;
+its exact diagnostics are being repaired separately without cancelling other jobs.
+Inventory695; native1136+Windows19/Linux33/macOS32; Group841; GUI143Linux/139macOS.
+Road1324=1032checked/290open/2partial;292raw/291pre-tag;WS-LF25done/93open.
+The absolute local BSOD hold remains: text/JSON/hash/Git/GitHub operations only.
+
 **W404 citation lane, W411 selection, W413 retry acceptance and W414 format (2026-09-23):**
 P2-14 is accepted with19 actual source-bound PASS terminals:17native Group810
 and2GUI135; Root verified each terminal and unchanged relevant retry sources.

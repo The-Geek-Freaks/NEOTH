@@ -42,6 +42,9 @@ jobs:
           test "$GITHUB_REF" = 'refs/heads/main'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
+      - name: Verify citation terminal matcher before Cargo work
+        shell: bash
+        run: python3 packaging/tests/citation_acceptance.py self-test
       - name: Set up pinned Rust
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:

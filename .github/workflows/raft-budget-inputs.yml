@@ -1,0 +1,307 @@
+name: W417 Raft budget hosted inputs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-and-probe:
+    # A manual workflow can be chosen from an arbitrary ref in the UI. The
+    # exported patch is useful only when it is bound to main's source.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_BUILD_JOBS: "1"
+      CARGO_INCREMENTAL: "0"
+      CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+      OPENRAFT_VERSION: "0.9.25"
+      OPENRAFT_TAG: "v0.9.25"
+    steps:
+      - name: Checkout main without credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Install Rust 1.91
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+
+      - name: Resolve and probe pinned OpenRaft in runner scratch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/main'
+
+          work_root="$RUNNER_TEMP/w417-raft-budget-inputs"
+          work_src="$work_root/SRC"
+          evidence="$work_root/evidence"
+          mkdir -p "$evidence/input" "$evidence/upstream" "$evidence/probe"
+          exec > >(tee "$evidence/runner.log") 2>&1
+          cp -a SRC "$work_src"
+
+          capture_state() {
+            local source="$1" target="$2"
+            mkdir -p "$target/files"
+            cp "$source/neothd/Cargo.toml" "$target/files/neothd-Cargo.toml"
+            cp "$source/Cargo.lock" "$target/files/Cargo.lock"
+            (cd "$source" && sha256sum neothd/Cargo.toml Cargo.lock) > "$target/files.sha256"
+            {
+              printf 'SRC/neothd/Cargo.toml\t'; git hash-object "$source/neothd/Cargo.toml"
+              printf 'SRC/Cargo.lock\t'; git hash-object "$source/Cargo.lock"
+            } > "$target/files.gitblobs.tsv"
+            find "$source" -name Cargo.toml -type f -print0 | sort -z | xargs -0 sha256sum > "$target/all-cargo-manifests.sha256"
+          }
+
+          export_patch_and_final_state() {
+            local original_status="$?"
+            local artifact_failure=0
+            trap - EXIT
+            if [ -d "$work_src" ]; then
+              capture_state "$work_src" "$evidence/output" || artifact_failure=1
+              # Stage the before pair in an isolated scratch index, overlay the
+              # resolved pair, then diff index-to-worktree. This is the Git
+              # full-index format with stable a/SRC and b/SRC paths; it never
+              # touches the checked-out repository or its index.
+              mkdir -p "$work_root/patch-repo/SRC/neothd" || artifact_failure=1
+              if [ "$artifact_failure" -eq 0 ]; then
+                cp "$evidence/input/files/neothd-Cargo.toml" "$work_root/patch-repo/SRC/neothd/Cargo.toml" || artifact_failure=1
+                cp "$evidence/input/files/Cargo.lock" "$work_root/patch-repo/SRC/Cargo.lock" || artifact_failure=1
+              fi
+              if [ "$artifact_failure" -eq 0 ]; then
+                (
+                  cd "$work_root/patch-repo" &&
+                  git init --quiet &&
+                  git add SRC/neothd/Cargo.toml SRC/Cargo.lock &&
+                  cp "$work_src/neothd/Cargo.toml" SRC/neothd/Cargo.toml &&
+                  cp "$work_src/Cargo.lock" SRC/Cargo.lock &&
+                  git diff --full-index --no-ext-diff -- SRC/neothd/Cargo.toml SRC/Cargo.lock > "$evidence/source-bound.patch"
+                ) || artifact_failure=1
+              fi
+              # runner.log remains open through this EXIT trap because `exec`
+              # writes through tee. It is retained but deliberately excluded
+              # from the final digest manifest rather than hashed mid-write.
+              (cd "$evidence" && find . -type f ! -name SHA256SUMS ! -name runner.log -print0 | sort -z | xargs -0 sha256sum) > "$evidence/SHA256SUMS" || artifact_failure=1
+            fi
+            if [ "$original_status" -eq 0 ] && [ "$artifact_failure" -ne 0 ]; then
+              exit 1
+            fi
+            exit "$original_status"
+          }
+          trap export_patch_and_final_state EXIT
+
+          git rev-parse HEAD > "$evidence/source-head.txt"
+          git ls-files --stage -- SRC/neothd/Cargo.toml SRC/Cargo.lock > "$evidence/source-index-before.txt"
+          capture_state "$work_src" "$evidence/input"
+          # Keep the artifact shape useful even if a network or resolver step
+          # fails before it can replace these initial empty reports.
+          printf '[]\n' > "$evidence/new-lock-packages.json"
+          printf '[]\n' > "$evidence/openraft-closure-rust-version.json"
+          : > "$evidence/cargo-metadata.json"
+          : > "$evidence/cargo-metadata-locked.json"
+
+          # The exact tagged upstream source is evidence for API features. Do
+          # not consult the 0.10 alpha branch for this qualification.
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+            --output "$evidence/upstream/Cargo.toml" \
+            "https://raw.githubusercontent.com/databendlabs/openraft/${OPENRAFT_TAG}/Cargo.toml"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+            --output "$evidence/upstream/openraft-Cargo.toml" \
+            "https://raw.githubusercontent.com/databendlabs/openraft/${OPENRAFT_TAG}/openraft/Cargo.toml"
+          OPENRAFT_VERSION="$OPENRAFT_VERSION" UPSTREAM="$evidence/upstream" python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          root = (Path(os.environ["UPSTREAM"]) / "Cargo.toml").read_text(encoding="utf-8")
+          crate = (Path(os.environ["UPSTREAM"]) / "openraft-Cargo.toml").read_text(encoding="utf-8")
+          version = re.escape(os.environ["OPENRAFT_VERSION"])
+          checks = {
+              "tagged workspace version": rf'(?m)^version\s*=\s*"{version}"\s*$',
+              "serde feature": r'(?m)^serde\s*=\s*\["dep:serde"\]\s*$',
+              "storage-v2 feature": r'(?m)^storage-v2\s*=\s*\[\]\s*$',
+          }
+          if not re.search(checks["tagged workspace version"], root):
+              raise SystemExit("pinned OpenRaft source does not declare the requested workspace version")
+          for label in ("serde feature", "storage-v2 feature"):
+              if not re.search(checks[label], crate):
+                  raise SystemExit(f"pinned OpenRaft source does not declare {label}")
+          PY
+          sha256sum "$evidence/upstream/Cargo.toml" "$evidence/upstream/openraft-Cargo.toml" > "$evidence/upstream/SHA256SUMS"
+
+          WORK_SRC="$work_src" OPENRAFT_VERSION="$OPENRAFT_VERSION" python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          manifest = Path(os.environ["WORK_SRC"]) / "neothd" / "Cargo.toml"
+          text = manifest.read_text(encoding="utf-8")
+          cluster = re.search(r'(?m)^cluster\s*=\s*\[([^\]]*)\]\s*$', text)
+          if not cluster:
+              raise SystemExit("expected existing cluster feature")
+          cluster_members = re.findall(r'"([^"]+)"', cluster.group(1))
+          if cluster_members != ["dep:peeroxide"]:
+              raise SystemExit("cluster feature changed from the W417-reviewed dep:peeroxide-only source shape")
+          replacement = 'cluster = ["dep:peeroxide", "dep:openraft"]'
+          text = text[:cluster.start()] + replacement + text[cluster.end():]
+
+          dependency = re.search(r'(?m)^openraft\s*=.*$', text)
+          expected = 'openraft = { version = "=' + os.environ["OPENRAFT_VERSION"] + '", default-features = false, features = ["serde", "storage-v2"], optional = true }'
+          if dependency:
+              if dependency.group(0) != expected:
+                  raise SystemExit("existing openraft dependency does not match W417's exact pinned configuration")
+          else:
+              section = re.search(r'(?m)^\[dependencies\]\s*$', text)
+              if not section:
+                  raise SystemExit("neothd manifest has no [dependencies] section")
+              text = text[:section.end()] + '\n# W417 hosted resolver qualification; production implementation lands separately.\n' + expected + '\n' + text[section.end():]
+          manifest.write_text(text, encoding="utf-8")
+          PY
+
+          # Ordinary metadata resolution changes only the copied lockfile. Do
+          # not use cargo update or cargo generate-lockfile in this workspace.
+          cargo metadata --manifest-path "$work_src/Cargo.toml" --format-version 1 > "$evidence/cargo-metadata.json"
+          cargo metadata --manifest-path "$work_src/Cargo.toml" --locked --format-version 1 > "$evidence/cargo-metadata-locked.json"
+
+          INPUT_LOCK="$evidence/input/files/Cargo.lock" OUTPUT_LOCK="$work_src/Cargo.lock" \
+            NEW_LOCK="$evidence/new-lock-packages.json" OPENRAFT_VERSION="$OPENRAFT_VERSION" python3 - <<'PY'
+          import json
+          import os
+          import tomllib
+          from pathlib import Path
+
+          def entries(path):
+              return {
+                  (p["name"], p["version"], p.get("source", "path")): p.get("checksum")
+                  for p in tomllib.loads(Path(path).read_text(encoding="utf-8"))["package"]
+              }
+
+          before, after = entries(os.environ["INPUT_LOCK"]), entries(os.environ["OUTPUT_LOCK"])
+          missing = sorted(set(before) - set(after))
+          changed = sorted(k for k, checksum in before.items() if after.get(k) != checksum)
+          if missing or changed:
+              detail = missing + changed
+              raise SystemExit("pre-existing Cargo.lock identity/checksum changed: " + repr(detail))
+          required = ("openraft", os.environ["OPENRAFT_VERSION"])
+          if not any((name, version) == required for name, version, _ in after):
+              raise SystemExit("exact pinned OpenRaft package is absent from resolved Cargo.lock")
+          additions = [
+              {"name": name, "version": version, "source": source, "checksum": after[(name, version, source)]}
+              for name, version, source in sorted(set(after) - set(before))
+          ]
+          Path(os.environ["NEW_LOCK"]).write_text(json.dumps(additions, indent=2) + "\n", encoding="utf-8")
+          PY
+
+          METADATA="$evidence/cargo-metadata-locked.json" OPENRAFT_VERSION="$OPENRAFT_VERSION" \
+            CLOSURE="$evidence/openraft-closure-rust-version.json" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          def version_tuple(value):
+              return tuple(int(p) for p in value.split("-", 1)[0].split("."))
+
+          metadata = json.loads(Path(os.environ["METADATA"]).read_text(encoding="utf-8"))
+          packages = {p["id"]: p for p in metadata["packages"]}
+          nodes = {n["id"]: n for n in metadata["resolve"]["nodes"]}
+          roots = [p["id"] for p in metadata["packages"] if p["name"] == "openraft" and p["version"] == os.environ["OPENRAFT_VERSION"]]
+          if len(roots) != 1:
+              raise SystemExit(f"expected one pinned OpenRaft package, found {len(roots)}")
+          closure, pending = set(), roots[:]
+          while pending:
+              package_id = pending.pop()
+              if package_id in closure:
+                  continue
+              closure.add(package_id)
+              pending.extend(nodes[package_id]["dependencies"])
+          report = []
+          incompatible = []
+          for package_id in sorted(closure, key=lambda i: (packages[i]["name"], packages[i]["version"])):
+              package = packages[package_id]
+              rust_version = package.get("rust_version")
+              row = {"name": package["name"], "version": package["version"], "source": package.get("source"), "rust_version": rust_version}
+              report.append(row)
+              if rust_version and version_tuple(rust_version) > (1, 91, 0):
+                  incompatible.append(f"{package['name']} {package['version']} requires Rust {rust_version}")
+          Path(os.environ["CLOSURE"]).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+          if incompatible:
+              raise SystemExit("OpenRaft closure exceeds Rust 1.91: " + "; ".join(incompatible))
+          PY
+
+          mkdir -p "$work_root/probe/src"
+          cat > "$work_root/probe/Cargo.toml" <<EOF
+          [package]
+          name = "w417-openraft-probe"
+          version = "0.0.0"
+          edition = "2024"
+          rust-version = "1.91"
+
+          [dependencies]
+          openraft = { version = "=${OPENRAFT_VERSION}", default-features = false, features = ["serde", "storage-v2"] }
+          EOF
+          cat > "$work_root/probe/src/main.rs" <<'EOF'
+          fn main() {
+              let _ = std::any::TypeId::of::<openraft::LogId<u64>>();
+          }
+          EOF
+          cp "$work_root/probe/Cargo.toml" "$evidence/probe/Cargo.toml"
+          # The probe must compile the closure actually exported from the
+          # copied NEOTH resolution. Reusing its lockfile prohibits a second,
+          # independently selected transitive OpenRaft graph. Cargo requires
+          # only the probe's own path-package record in addition to that lock.
+          cp "$work_src/Cargo.lock" "$work_root/probe/Cargo.lock"
+          cp "$work_src/Cargo.lock" "$evidence/probe/exported-workspace-Cargo.lock"
+          printf '\n[[package]]\nname = "w417-openraft-probe"\nversion = "0.0.0"\ndependencies = [\n "openraft",\n]\n' >> "$work_root/probe/Cargo.lock"
+          : > "$evidence/probe/cargo-check.log"
+          cargo metadata --manifest-path "$work_root/probe/Cargo.toml" --locked --format-version 1 > "$evidence/probe/cargo-metadata.json"
+          WORKSPACE_METADATA="$evidence/cargo-metadata-locked.json" PROBE_METADATA="$evidence/probe/cargo-metadata.json" \
+            LOCKFILE="$work_src/Cargo.lock" OPENRAFT_VERSION="$OPENRAFT_VERSION" \
+            RECEIPT="$evidence/probe/closure-identity-check.json" python3 - <<'PY'
+          import json
+          import os
+          import tomllib
+          from pathlib import Path
+
+          def closure(metadata):
+              packages = {p["id"]: p for p in metadata["packages"]}
+              nodes = {n["id"]: n for n in metadata["resolve"]["nodes"]}
+              roots = [p["id"] for p in packages.values() if p["name"] == "openraft" and p["version"] == os.environ["OPENRAFT_VERSION"]]
+              if len(roots) != 1:
+                  raise SystemExit(f"expected one pinned OpenRaft in metadata, found {len(roots)}")
+              seen, pending = set(), roots
+              while pending:
+                  package_id = pending.pop()
+                  if package_id not in seen:
+                      seen.add(package_id)
+                      pending.extend(nodes[package_id]["dependencies"])
+              return {(packages[i]["name"], packages[i]["version"], packages[i].get("source") or "path") for i in seen}
+
+          lock = tomllib.loads(Path(os.environ["LOCKFILE"]).read_text(encoding="utf-8"))["package"]
+          checksums = {(p["name"], p["version"], p.get("source", "path")): p.get("checksum") for p in lock}
+          workspace = closure(json.loads(Path(os.environ["WORKSPACE_METADATA"]).read_text(encoding="utf-8")))
+          probe = closure(json.loads(Path(os.environ["PROBE_METADATA"]).read_text(encoding="utf-8")))
+          if workspace != probe:
+              raise SystemExit("probe OpenRaft closure differs from exported workspace closure")
+          report = [
+              {"name": name, "version": version, "source": source, "checksum": checksums.get((name, version, source))}
+              for name, version, source in sorted(workspace)
+          ]
+          if any(item["source"] != "path" and item["checksum"] is None for item in report):
+              raise SystemExit("exported OpenRaft closure has an identity without its Cargo.lock checksum")
+          Path(os.environ["RECEIPT"]).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+          PY
+          cargo check --manifest-path "$work_root/probe/Cargo.toml" --locked 2>&1 | tee "$evidence/probe/cargo-check.log"
+          cp "$work_root/probe/Cargo.lock" "$evidence/probe/Cargo.lock"
+
+      - name: Upload W417 Raft qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w417-raft-budget-inputs-${{ github.sha }}
+          path: ${{ runner.temp }}/w417-raft-budget-inputs/evidence
+          if-no-files-found: warn
+          retention-days: 14

@@ -172,6 +172,69 @@ def bind_source(root: Path, evidence: Path, expected_head: str) -> list[dict[str
     return selection
 
 
+def selected_test_has_final_ok_terminal(stdout: str, cargo_filter: str) -> bool:
+    """Accept one selected test whose stderr was interleaved before its final `ok`."""
+    lines = stdout.splitlines()
+    starts = [
+        index
+        for index, line in enumerate(lines)
+        if re.fullmatch(rf"test {re.escape(cargo_filter)} \.\.\..*", line)
+    ]
+    if len(starts) != 1:
+        return False
+    start = starts[0]
+    if lines[start] == f"test {cargo_filter} ... ok":
+        return True
+    if lines[start].endswith(" FAILED"):
+        return False
+    end = next(
+        (
+            index
+            for index in range(start + 1, len(lines))
+            if lines[index].startswith("test ") or lines[index].startswith("test result: ")
+        ),
+        len(lines),
+    )
+    terminal_lines = [line for line in lines[start + 1:end] if line]
+    return terminal_lines.count("ok") == 1 and terminal_lines[-1:] == ["ok"]
+
+
+def matcher_self_test() -> int:
+    selected = "citation_cli_contract::gui_decide_rejects_oversized_private_stdin_before_consent_mutation"
+    cases = {
+        "ordinary-final-ok": (
+            f"running 1 test\ntest {selected} ... ok\n\ntest result: ok. 1 passed; 0 failed;\n",
+            True,
+        ),
+        "interleaved-stderr-final-ok": (
+            f"running 1 test\ntest {selected} ... Error: expected private-input rejection\nstack frame\nok\n\ntest result: ok. 1 passed; 0 failed;\n",
+            True,
+        ),
+        "failed-terminal": (
+            f"running 1 test\ntest {selected} ... FAILED\n\ntest result: FAILED. 0 passed; 1 failed;\n",
+            False,
+        ),
+        "wrong-identity": (
+            "running 1 test\ntest another::test ... ok\n\ntest result: ok. 1 passed; 0 failed;\n",
+            False,
+        ),
+        "failed-header-with-spurious-ok": (
+            f"running 1 test\ntest {selected} ... FAILED\nerror detail\nok\n\ntest result: FAILED. 0 passed; 1 failed;\n",
+            False,
+        ),
+        "duplicate-selected-header": (
+            f"running 2 tests\ntest {selected} ... ok\ntest {selected} ... ok\n\ntest result: ok. 2 passed; 0 failed;\n",
+            False,
+        ),
+        "zero-tests": ("running 0 tests\n\ntest result: ok. 0 passed; 0 failed;\n", False),
+    }
+    for name, case in cases.items():
+        stdout, expected = case
+        actual = selected_test_has_final_ok_terminal(stdout, selected)
+        if actual != expected:
+            raise RuntimeError(f"citation terminal matcher self-test failed: {name}")
+    return 0
+
 def native(args: argparse.Namespace) -> int:
     root, evidence = Path(args.repository).resolve(), Path(args.evidence_dir).resolve()
     src = root / "SRC"
@@ -212,9 +275,13 @@ def native(args: argparse.Namespace) -> int:
                 timeout_secs,
             )
             execution_exit = execution.returncode
-            exact_terminal = re.findall(rf"(?m)^test {re.escape(cargo_filter)} \.\.\. ok$", execution.stdout)
             one_pass_summary = len(re.findall(r"(?m)^test result: ok\. 1 passed; 0 failed;", execution.stdout)) == 1
-            passed = execution.returncode == 0 and not execution_timed_out and len(exact_terminal) == 1 and one_pass_summary
+            passed = (
+                execution.returncode == 0
+                and not execution_timed_out
+                and selected_test_has_final_ok_terminal(execution.stdout, cargo_filter)
+                and one_pass_summary
+            )
         results.append({
             "name": name,
             "cargoFilter": cargo_filter,
@@ -381,12 +448,16 @@ def live(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("native", "live"))
-    parser.add_argument("--repository", required=True)
-    parser.add_argument("--evidence-dir", required=True)
-    parser.add_argument("--expected-head", required=True)
+    parser.add_argument("mode", choices=("native", "live", "self-test"))
+    parser.add_argument("--repository")
+    parser.add_argument("--evidence-dir")
+    parser.add_argument("--expected-head")
     parser.add_argument("--cli-bin")
     args = parser.parse_args()
+    if args.mode == "self-test":
+        return matcher_self_test()
+    if not args.repository or not args.evidence_dir or not args.expected_head:
+        parser.error("native and live modes require --repository, --evidence-dir, and --expected-head")
     if args.mode == "native":
         return native(args)
     if not args.cli_bin:

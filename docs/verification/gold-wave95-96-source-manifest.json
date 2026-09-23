@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T14:02:12.7335270Z",
-  "validationStatus": "P214 ACCEPTED19; W404citation50+optional3live and W411Group841 pending; W414verifiedhostedformat",
+  "capturedUtc": "2026-09-23T14:28:59.4925624Z",
+  "validationStatus": "W417 OpenRaft inputs and W421citation terminal repair reviewed; hosted execution pending; no new acceptance",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -808,18 +808,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 164987,
-      "sha256": "DF15E947265FFA6758CE6BE10DF0ECF56FEB0B70D30D91FCA1824E6CC3B0997A"
+      "bytes": 166086,
+      "sha256": "D356983B9219411674F9CC16D21F4F2E2DBBF85237627C24FD97AF43098182C5"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1175052,
-      "sha256": "228429C2588B03530788DF67D8C2D868F408E28FCE8204ABBCDB95A564F40B04"
+      "bytes": 1176151,
+      "sha256": "B78A1911DE5A6902346D4E5F474AC28E656A811C4FDDF615135F4F7E866594E5"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1772675,
-      "sha256": "F0ABAEE3F635581A2D8B5B1DBEDA417E61B4AA3E006FD45EA882C6273C143BBD"
+      "bytes": 1773774,
+      "sha256": "E95EA0C108041FAC0C65FE82654653BA151996D94DBF9E8B6C2E37EA3E24B1BF"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -3433,13 +3433,13 @@
     },
     {
       "path": ".github/workflows/citation-acceptance.yml",
-      "bytes": 5163,
-      "sha256": "2C0F8FAE644A98CD05F9AD82DFE6303B5B85CC02D7C02EF083FD6FDAC0AF0F58"
+      "bytes": 5319,
+      "sha256": "B7D18B8448ECE2BCE9E2ABDCC8295B4A3A1812D6C7659BEB13B0B7EDC0E500C5"
     },
     {
       "path": "packaging/tests/citation_acceptance.py",
-      "bytes": 21765,
-      "sha256": "671EE4BB0105D9B5C76DB296724A2FE3565453F476E070480C24C42D5E3A4363"
+      "bytes": 24540,
+      "sha256": "1B3C270A6343DE2D3D7D39C0E50B8C68A50A93711DEBA9BD6E6D015603295CDC"
     },
     {
       "path": "docs/gold-wave404-citation-hosted-acceptance.md",
@@ -3465,6 +3465,21 @@
       "path": "docs/verification/gold-wave413-p214-acceptance.json",
       "bytes": 15238,
       "sha256": "C8B8DCF16A3766663149173CFEA649A7C3481B05B8E6228CA12BE6E35298DC48"
+    },
+    {
+      "path": ".github/workflows/raft-budget-inputs.yml",
+      "bytes": 16658,
+      "sha256": "A1A7C068A161A9064FD9E0295FE830DACB86AAB271A8E224C633765C11413893"
+    },
+    {
+      "path": "docs/gold-wave417-raft-hosted-inputs.md",
+      "bytes": 3237,
+      "sha256": "ABA3750087145D8538CFCBDB27497ABF3CF83108CADB83C48C325D932E1FC04F"
+    },
+    {
+      "path": "docs/gold-wave421-citation-terminal-repair.md",
+      "bytes": 2269,
+      "sha256": "4BBDB5452661B09052BFDA370AE4BA4C15C65424C34351B22D6DE0EBF31185B0"
     }
   ]
 }
