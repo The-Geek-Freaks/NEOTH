@@ -951,9 +951,9 @@ fn verify_staged_executable(
     );
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt as _;
+        use cap_std::fs::PermissionsExt as _;
         executable
-            .set_permissions(std::fs::Permissions::from_mode(0o700))
+            .set_permissions(cap_std::fs::Permissions::from_mode(0o700))
             .context("grant owner execute to verified managed-browser executable")?;
         ensure!(
             executable

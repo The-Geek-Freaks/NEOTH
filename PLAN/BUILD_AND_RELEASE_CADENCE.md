@@ -3,6 +3,14 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W362 browser permission type repair (2026-09-23):** Core356
+run35851362763 found two Unix capability-permission type errors. The verified
+file now uses cap_std Permissions and its extension trait, preserving0700,
+the retained handle and the metadata postcheck. Hosted rerun is pending.
+Preflight356 run35851360607 passed; source-admitted Core954 passed all4gates.
+Group721 and fullCI954 remain active. Inventory648; other counts unchanged.
+No local executable validation ran.
+
 **W347/W352 managed-browser install and W355 enabled retention callers
 (2026-09-23):** Explicit browser status/install now use the reviewed CFT
 manifest, exact archive bytes and SHA, authorized no-redirect transport,

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T10:51:12.2029029Z",
-  "validationStatus": "Hosted rustfmt receipt35851144788 imported after head/SHA/all4Gitpreimage/postimage checks; compilation and tests pending",
+  "capturedUtc": "2026-09-23T10:57:43.8894491Z",
+  "validationStatus": "W362 two Unix cap_std permission type errors corrected; hosted rerun pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -808,18 +808,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 154419,
-      "sha256": "CD22D68C34FFA94E5D8E15BAE249E9A1F438285CAC3D34F6353E6D8D934825BD"
+      "bytes": 154898,
+      "sha256": "6A2C2B588DC8A7BE66AA2CD9EC3D0D070B966427AFFFED66A9936FAFC3C265C5"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1157578,
-      "sha256": "21D455DE17139BE837DF8BCCCEE8123DA3159288B3E7935BCF5A1A06459B3DB4"
+      "bytes": 1158057,
+      "sha256": "F8D748333C1D9F917A3F58C4322AFE2490B20CA8AB503E1259D4C0178E270D95"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1755027,
-      "sha256": "75852A3B4680762E963D008EE73A3409B08EE464434195BE062E79506E95D9A5"
+      "bytes": 1755506,
+      "sha256": "B6D3E1A2F2BE9670F46437795B926A98246A956D31010DD3179A5FC0D6600349"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -2948,8 +2948,8 @@
     },
     {
       "path": "SRC/neothd/src/tools/managed_browser.rs",
-      "bytes": 64307,
-      "sha256": "B8A0092245C0225D8E2D6F7C158E3B9617D580E3CA1F87A079DF42C1DC8098C2"
+      "bytes": 64305,
+      "sha256": "062FE57747F61C28F66B264025EA7FF2A9C451BA90FBBF42B6618D6EC07E7B4D"
     },
     {
       "path": "SRC/neothd/src/tools/mod.rs",
@@ -3240,6 +3240,11 @@
       "path": "docs/gold-wave359-dream-opt-in-acceptance-selection.md",
       "bytes": 1354,
       "sha256": "BBE18743097865FB5920931FE44ACA855F4C2BE56AD233231F3235FEA42CB3A2"
+    },
+    {
+      "path": "docs/gold-wave362-browser-permission-types.md",
+      "bytes": 717,
+      "sha256": "44D0F57B84907E65555BF60E08702E3E5DEEB14B9C3F6613B63B9BBAC004806B"
     }
   ]
 }
