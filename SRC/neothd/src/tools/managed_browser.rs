@@ -26,10 +26,10 @@ use cap_std::fs::Dir;
 use sha2::{Digest, Sha256};
 
 use crate::skills::store::{
-    BoundChildObject, BoundDirectory, BoundDirectoryChild, open_absolute_bound_directory,
-    open_bound_real_child_dir, open_bound_regular_file, open_or_create_private_child_dir,
-    remove_bound_real_directory_tree, rename_child, sync_parent_directory,
-    atomic_write_private_child_create_new, cap_metadata_is_link_like,
+    BoundChildObject, BoundDirectory, BoundDirectoryChild, atomic_write_private_child_create_new,
+    cap_metadata_is_link_like, open_absolute_bound_directory, open_bound_real_child_dir,
+    open_bound_regular_file, open_or_create_private_child_dir, remove_bound_real_directory_tree,
+    rename_child, sync_parent_directory,
 };
 use crate::tools::external_http::{
     ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface,
@@ -484,8 +484,14 @@ pub async fn install_reviewed_managed_browser(
     http: &ExternalHttpAuthorizer,
     cancelled: &AtomicBool,
 ) -> Result<ManagedBrowserInstallResult> {
-    ensure!(config.enabled, "managed browser is disabled by configuration");
-    ensure!(!cancelled.load(Ordering::Acquire), "managed-browser install cancelled");
+    ensure!(
+        config.enabled,
+        "managed browser is disabled by configuration"
+    );
+    ensure!(
+        !cancelled.load(Ordering::Acquire),
+        "managed-browser install cancelled"
+    );
 
     let manifest = reviewed_manifest()?;
     if let Ok(resolved) = resolve_from_manifest(home, platform, &manifest) {
@@ -498,7 +504,10 @@ pub async fn install_reviewed_managed_browser(
         .context("managed-browser platform is not admitted")?;
 
     let archive = download_reviewed_archive(target, http, cancelled).await?;
-    ensure!(!cancelled.load(Ordering::Acquire), "managed-browser install cancelled");
+    ensure!(
+        !cancelled.load(Ordering::Acquire),
+        "managed-browser install cancelled"
+    );
     install_archive_from_manifest(home, platform, &manifest, target, &archive, cancelled)
 }
 
@@ -555,7 +564,10 @@ async fn download_reviewed_archive_at(
     let expected_sha256 = expected_sha256.to_owned();
     http.execute(request, move |permit| async move {
         permit.require(&permitted_request)?;
-        ensure!(!cancelled.load(Ordering::Acquire), "managed-browser install cancelled");
+        ensure!(
+            !cancelled.load(Ordering::Acquire),
+            "managed-browser install cancelled"
+        );
         let client = crate::providers::http_client::build_client_no_redirect()
             .context("build no-redirect managed-browser HTTP client")?;
         let mut response = client
@@ -586,10 +598,15 @@ async fn download_reviewed_archive_at(
             .await
             .context("read managed-browser archive stream")?
         {
-            ensure!(!cancelled.load(Ordering::Acquire), "managed-browser install cancelled");
+            ensure!(
+                !cancelled.load(Ordering::Acquire),
+                "managed-browser install cancelled"
+            );
             let total = u64::try_from(archive.len())
                 .context("managed-browser archive length does not fit u64")?
-                .checked_add(u64::try_from(chunk.len()).context("archive chunk length does not fit u64")?)
+                .checked_add(
+                    u64::try_from(chunk.len()).context("archive chunk length does not fit u64")?,
+                )
                 .context("managed-browser archive length overflow")?;
             ensure!(
                 total <= expected_bytes,
@@ -599,7 +616,8 @@ async fn download_reviewed_archive_at(
             archive.extend_from_slice(&chunk);
         }
         ensure!(
-            u64::try_from(archive.len()).context("managed-browser archive length does not fit u64")?
+            u64::try_from(archive.len())
+                .context("managed-browser archive length does not fit u64")?
                 == expected_bytes,
             "managed-browser archive byte length does not match reviewed target"
         );
@@ -620,19 +638,32 @@ fn install_verified_archive(
     archive: &[u8],
     cancelled: &AtomicBool,
 ) -> Result<ResolvedManagedBrowser> {
-    ensure!(!cancelled.load(Ordering::Acquire), "managed-browser install cancelled");
+    ensure!(
+        !cancelled.load(Ordering::Acquire),
+        "managed-browser install cancelled"
+    );
     let home = open_absolute_bound_directory(home_path, false, "managed-browser explicit home")?
         .context("managed-browser explicit home is missing")?;
     let managed_display = home.physical_display_path.join(MANAGED_BROWSER_DIR);
-    let managed = open_or_create_private_child_dir(&home.dir, OsStr::new(MANAGED_BROWSER_DIR), &managed_display)?;
+    let managed = open_or_create_private_child_dir(
+        &home.dir,
+        OsStr::new(MANAGED_BROWSER_DIR),
+        &managed_display,
+    )?;
     let generations_display = managed_display.join(GENERATIONS_DIR);
     let generations = open_or_create_private_child_dir(
         &managed,
         OsStr::new(GENERATIONS_DIR),
         &generations_display,
     )?;
-    let generation_name = format!("{}-{}-{}", target.platform, manifest.version, target.archive_sha256);
-    ensure!(is_safe_component(&generation_name), "managed-browser generation name is unsafe");
+    let generation_name = format!(
+        "{}-{}-{}",
+        target.platform, manifest.version, target.archive_sha256
+    );
+    ensure!(
+        is_safe_component(&generation_name),
+        "managed-browser generation name is unsafe"
+    );
     let stage_name = OsString::from(format!(".stage-{}", uuid::Uuid::now_v7().simple()));
     let stage_display = generations_display.join(&stage_name);
     let (stage, stage_binding) = create_private_stage(&generations, &stage_name, &stage_display)?;
@@ -641,10 +672,16 @@ fn install_verified_archive(
     let install = (|| {
         revalidate_stage(&stage_binding, &generations, &stage_name, &stage_display)?;
         extract_reviewed_zip(&stage, &stage_display, target, archive, cancelled)?;
-        ensure!(!cancelled.load(Ordering::Acquire), "managed-browser install cancelled");
+        ensure!(
+            !cancelled.load(Ordering::Acquire),
+            "managed-browser install cancelled"
+        );
         revalidate_stage(&stage_binding, &generations, &stage_name, &stage_display)?;
         write_generation_marker(&stage, &stage_display, manifest, target)?;
-        ensure!(!cancelled.load(Ordering::Acquire), "managed-browser install cancelled");
+        ensure!(
+            !cancelled.load(Ordering::Acquire),
+            "managed-browser install cancelled"
+        );
         revalidate_stage(&stage_binding, &generations, &stage_name, &stage_display)?;
         drop(stage);
         let generation_display = generations_display.join(&generation_name);
@@ -685,7 +722,11 @@ fn install_verified_archive(
     install
 }
 
-fn create_private_stage(parent: &Dir, name: &OsStr, display: &Path) -> Result<(Dir, BoundDirectoryChild)> {
+fn create_private_stage(
+    parent: &Dir,
+    name: &OsStr,
+    display: &Path,
+) -> Result<(Dir, BoundDirectoryChild)> {
     let created: std::io::Result<()> = {
         #[cfg(unix)]
         {
@@ -699,10 +740,16 @@ fn create_private_stage(parent: &Dir, name: &OsStr, display: &Path) -> Result<(D
             parent.create_dir(name)
         }
     };
-    created.with_context(|| format!("create managed-browser private stage {}", display.display()))?;
+    created
+        .with_context(|| format!("create managed-browser private stage {}", display.display()))?;
     let (stage, binding) = open_bound_real_child_dir(parent, name, display)?;
-    let metadata = stage.dir_metadata().context("inspect managed-browser stage")?;
-    ensure!(metadata.is_dir() && !cap_metadata_is_link_like(&metadata), "managed-browser stage is not a real directory");
+    let metadata = stage
+        .dir_metadata()
+        .context("inspect managed-browser stage")?;
+    ensure!(
+        metadata.is_dir() && !cap_metadata_is_link_like(&metadata),
+        "managed-browser stage is not a real directory"
+    );
     let _ = sync_parent_directory(parent, display.parent().unwrap_or(display))?;
     Ok((stage, binding))
 }
@@ -719,43 +766,84 @@ fn extract_reviewed_zip(
 
     let expected_root = fixed_executable_components(&target.expected_executable)?.0;
     let expected_root = expected_root.to_string_lossy().into_owned();
-    let mut archive = zip::ZipArchive::new(Cursor::new(archive_bytes)).context("open reviewed managed-browser ZIP")?;
-    ensure!(archive.len() <= MAX_ARCHIVE_MEMBERS, "managed-browser ZIP has too many members");
+    let mut archive = zip::ZipArchive::new(Cursor::new(archive_bytes))
+        .context("open reviewed managed-browser ZIP")?;
+    ensure!(
+        archive.len() <= MAX_ARCHIVE_MEMBERS,
+        "managed-browser ZIP has too many members"
+    );
     let mut seen = BTreeSet::new();
     let mut total = 0_u64;
     for index in 0..archive.len() {
-        ensure!(!cancelled.load(Ordering::Acquire), "managed-browser install cancelled");
-        let entry = archive.by_index(index).context("read managed-browser ZIP member")?;
-        let raw = std::str::from_utf8(entry.name_raw()).context("managed-browser ZIP member name is not UTF-8")?;
+        ensure!(
+            !cancelled.load(Ordering::Acquire),
+            "managed-browser install cancelled"
+        );
+        let entry = archive
+            .by_index(index)
+            .context("read managed-browser ZIP member")?;
+        let raw = std::str::from_utf8(entry.name_raw())
+            .context("managed-browser ZIP member name is not UTF-8")?;
         let components = safe_zip_components(raw)?;
-        ensure!(components.first().is_some_and(|component| component == &expected_root), "managed-browser ZIP has unexpected top-level root");
+        ensure!(
+            components
+                .first()
+                .is_some_and(|component| component == &expected_root),
+            "managed-browser ZIP has unexpected top-level root"
+        );
         let key = components.join("/").to_ascii_lowercase();
-        ensure!(seen.insert(key), "managed-browser ZIP has duplicate or case-colliding member");
+        ensure!(
+            seen.insert(key),
+            "managed-browser ZIP has duplicate or case-colliding member"
+        );
         if let Some(mode) = entry.unix_mode() {
             let kind = mode & 0o170_000;
             let expected_kind = if entry.is_dir() { 0o040_000 } else { 0o100_000 };
-            ensure!(kind == 0 || kind == expected_kind, "managed-browser ZIP contains symlink or special member");
+            ensure!(
+                kind == 0 || kind == expected_kind,
+                "managed-browser ZIP contains symlink or special member"
+            );
         }
         if !entry.is_dir() {
-            ensure!(entry.size() <= MAX_ARCHIVE_MEMBER_BYTES, "managed-browser ZIP member exceeds byte limit");
-            total = total.checked_add(entry.size()).context("managed-browser ZIP byte count overflow")?;
-            ensure!(total <= MAX_UNCOMPRESSED_BYTES, "managed-browser ZIP exceeds uncompressed byte limit");
+            ensure!(
+                entry.size() <= MAX_ARCHIVE_MEMBER_BYTES,
+                "managed-browser ZIP member exceeds byte limit"
+            );
+            total = total
+                .checked_add(entry.size())
+                .context("managed-browser ZIP byte count overflow")?;
+            ensure!(
+                total <= MAX_UNCOMPRESSED_BYTES,
+                "managed-browser ZIP exceeds uncompressed byte limit"
+            );
         }
     }
     drop(archive);
 
-    let mut archive = zip::ZipArchive::new(Cursor::new(archive_bytes)).context("reopen reviewed managed-browser ZIP")?;
+    let mut archive = zip::ZipArchive::new(Cursor::new(archive_bytes))
+        .context("reopen reviewed managed-browser ZIP")?;
     for index in 0..archive.len() {
-        ensure!(!cancelled.load(Ordering::Acquire), "managed-browser install cancelled");
-        let mut entry = archive.by_index(index).context("read managed-browser ZIP member")?;
-        let raw = std::str::from_utf8(entry.name_raw()).context("managed-browser ZIP member name is not UTF-8")?;
+        ensure!(
+            !cancelled.load(Ordering::Acquire),
+            "managed-browser install cancelled"
+        );
+        let mut entry = archive
+            .by_index(index)
+            .context("read managed-browser ZIP member")?;
+        let raw = std::str::from_utf8(entry.name_raw())
+            .context("managed-browser ZIP member name is not UTF-8")?;
         let components = safe_zip_components(raw)?;
         if entry.is_dir() {
             let _ = ensure_stage_directory(stage, stage_display, &components)?;
             continue;
         }
-        let file_name = OsString::from(components.last().context("managed-browser ZIP member has no file name")?);
-        let parent = ensure_stage_directory(stage, stage_display, &components[..components.len() - 1])?;
+        let file_name = OsString::from(
+            components
+                .last()
+                .context("managed-browser ZIP member has no file name")?,
+        );
+        let parent =
+            ensure_stage_directory(stage, stage_display, &components[..components.len() - 1])?;
         let file_display = stage_display.join(components.join("/"));
         let (mut output, _) = crate::skills::store::create_private_regular_file_child_create_new(
             &parent,
@@ -777,20 +865,30 @@ fn safe_zip_components(raw: &str) -> Result<Vec<&str>> {
     let mut result = Vec::new();
     for component in path.components() {
         match component {
-            Component::Normal(value) => result.push(value.to_str().context("managed-browser ZIP member component is not UTF-8")?),
+            Component::Normal(value) => result.push(
+                value
+                    .to_str()
+                    .context("managed-browser ZIP member component is not UTF-8")?,
+            ),
             _ => bail!("managed-browser ZIP member path is unsafe"),
         }
     }
-    ensure!(!result.is_empty(), "managed-browser ZIP member path is empty");
+    ensure!(
+        !result.is_empty(),
+        "managed-browser ZIP member path is empty"
+    );
     Ok(result)
 }
 
 fn ensure_stage_directory(stage: &Dir, display: &Path, components: &[&str]) -> Result<Dir> {
-    let mut current = stage.try_clone().context("clone managed-browser stage capability")?;
+    let mut current = stage
+        .try_clone()
+        .context("clone managed-browser stage capability")?;
     let mut current_display = display.to_path_buf();
     for component in components {
         current_display.push(component);
-        current = open_or_create_private_child_dir(&current, OsStr::new(component), &current_display)?;
+        current =
+            open_or_create_private_child_dir(&current, OsStr::new(component), &current_display)?;
     }
     Ok(current)
 }
@@ -804,24 +902,53 @@ fn copy_zip_member_exact(
     let mut total = 0_u64;
     let mut buffer = [0_u8; 64 * 1024];
     loop {
-        let read = input.read(&mut buffer).with_context(|| format!("read ZIP member {}", display.display()))?;
-        if read == 0 { break; }
-        total = total.checked_add(read as u64).context("managed-browser ZIP member length overflow")?;
-        ensure!(total <= expected, "managed-browser ZIP member exceeds declared length");
-        output.write_all(&buffer[..read]).with_context(|| format!("write ZIP member {}", display.display()))?;
+        let read = input
+            .read(&mut buffer)
+            .with_context(|| format!("read ZIP member {}", display.display()))?;
+        if read == 0 {
+            break;
+        }
+        total = total
+            .checked_add(read as u64)
+            .context("managed-browser ZIP member length overflow")?;
+        ensure!(
+            total <= expected,
+            "managed-browser ZIP member exceeds declared length"
+        );
+        output
+            .write_all(&buffer[..read])
+            .with_context(|| format!("write ZIP member {}", display.display()))?;
     }
-    ensure!(total == expected, "managed-browser ZIP member length differs from declared length");
-    output.sync_all().with_context(|| format!("sync ZIP member {}", display.display()))
+    ensure!(
+        total == expected,
+        "managed-browser ZIP member length differs from declared length"
+    );
+    output
+        .sync_all()
+        .with_context(|| format!("sync ZIP member {}", display.display()))
 }
 
-fn verify_staged_executable(stage: &Dir, stage_display: &Path, target: &ReviewedTarget) -> Result<()> {
-    let (parent_component, executable_component) = fixed_executable_components(&target.expected_executable)?;
+fn verify_staged_executable(
+    stage: &Dir,
+    stage_display: &Path,
+    target: &ReviewedTarget,
+) -> Result<()> {
+    let (parent_component, executable_component) =
+        fixed_executable_components(&target.expected_executable)?;
     let parent_display = stage_display.join(parent_component);
     let (parent, _) = open_bound_real_child_dir(stage, parent_component, &parent_display)?;
     let executable_display = parent_display.join(executable_component);
-    let (mut executable, _) = open_bound_regular_file(&parent, executable_component, &executable_display)?;
-    let digest = hash_regular_file_exact(&mut executable, target.expected_executable_bytes, "staged managed-browser executable")?;
-    ensure!(digest == target.expected_executable_sha256, "staged managed-browser executable digest does not match reviewed target");
+    let (mut executable, _) =
+        open_bound_regular_file(&parent, executable_component, &executable_display)?;
+    let digest = hash_regular_file_exact(
+        &mut executable,
+        target.expected_executable_bytes,
+        "staged managed-browser executable",
+    )?;
+    ensure!(
+        digest == target.expected_executable_sha256,
+        "staged managed-browser executable digest does not match reviewed target"
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -838,7 +965,9 @@ fn verify_staged_executable(stage: &Dir, stage_display: &Path, target: &Reviewed
                 == 0o700,
             "verified managed-browser executable is not owner-executable and private"
         );
-        executable.sync_all().context("sync verified managed-browser executable permissions")?;
+        executable
+            .sync_all()
+            .context("sync verified managed-browser executable permissions")?;
     }
     Ok(())
 }
@@ -858,7 +987,8 @@ fn write_generation_marker(
         executable_sha256: target.expected_executable_sha256.clone(),
         executable_bytes: target.expected_executable_bytes,
     };
-    let marker_bytes = serde_json::to_vec(&marker).context("serialize managed-browser generation marker")?;
+    let marker_bytes =
+        serde_json::to_vec(&marker).context("serialize managed-browser generation marker")?;
     atomic_write_private_child_create_new(
         stage,
         OsStr::new(GENERATION_MARKER),
@@ -1134,28 +1264,32 @@ mod tests {
     async fn disabled_or_precancelled_install_creates_no_stage_or_network_route() {
         let home = fixture_home();
         let disabled = ManagedBrowserConfig::default();
-        assert!(install_reviewed_managed_browser(
-            home.path(),
-            ManagedBrowserPlatform::Win64,
-            &disabled,
-            &ExternalHttpAuthorizer::test_allow(),
-            &AtomicBool::new(false),
-        )
-        .await
-        .is_err());
+        assert!(
+            install_reviewed_managed_browser(
+                home.path(),
+                ManagedBrowserPlatform::Win64,
+                &disabled,
+                &ExternalHttpAuthorizer::test_allow(),
+                &AtomicBool::new(false),
+            )
+            .await
+            .is_err()
+        );
         assert!(!home.path().join(MANAGED_BROWSER_DIR).exists());
 
         let enabled = ManagedBrowserConfig { enabled: true };
         let cancelled = AtomicBool::new(true);
-        assert!(install_reviewed_managed_browser(
-            home.path(),
-            ManagedBrowserPlatform::Win64,
-            &enabled,
-            &ExternalHttpAuthorizer::test_allow(),
-            &cancelled,
-        )
-        .await
-        .is_err());
+        assert!(
+            install_reviewed_managed_browser(
+                home.path(),
+                ManagedBrowserPlatform::Win64,
+                &enabled,
+                &ExternalHttpAuthorizer::test_allow(),
+                &cancelled,
+            )
+            .await
+            .is_err()
+        );
         assert!(!home.path().join(MANAGED_BROWSER_DIR).exists());
     }
 
@@ -1168,15 +1302,17 @@ mod tests {
             ),
             crate::permissions::ConfirmStrategy::FailClosed,
         );
-        assert!(install_reviewed_managed_browser(
-            home.path(),
-            ManagedBrowserPlatform::Win64,
-            &ManagedBrowserConfig { enabled: true },
-            &denied,
-            &AtomicBool::new(false),
-        )
-        .await
-        .is_err());
+        assert!(
+            install_reviewed_managed_browser(
+                home.path(),
+                ManagedBrowserPlatform::Win64,
+                &ManagedBrowserConfig { enabled: true },
+                &denied,
+                &AtomicBool::new(false),
+            )
+            .await
+            .is_err()
+        );
         assert!(!home.path().join(MANAGED_BROWSER_DIR).exists());
     }
 
@@ -1218,15 +1354,17 @@ mod tests {
             } else {
                 manifest.targets[0].archive_bytes += 1;
             }
-            assert!(install_archive_from_manifest(
-                home.path(),
-                ManagedBrowserPlatform::Win64,
-                &manifest,
-                &manifest.targets[0],
-                &archive,
-                &AtomicBool::new(false),
-            )
-            .is_err());
+            assert!(
+                install_archive_from_manifest(
+                    home.path(),
+                    ManagedBrowserPlatform::Win64,
+                    &manifest,
+                    &manifest.targets[0],
+                    &archive,
+                    &AtomicBool::new(false),
+                )
+                .is_err()
+            );
             assert!(
                 !home.path().join(MANAGED_BROWSER_DIR).exists(),
                 "archive verification must fail before stage creation"
@@ -1243,19 +1381,27 @@ mod tests {
             .path()
             .join(MANAGED_BROWSER_DIR)
             .join(GENERATIONS_DIR)
-            .join(format!("{}-{}-{}", target.platform, manifest.version, target.archive_sha256));
+            .join(format!(
+                "{}-{}-{}",
+                target.platform, manifest.version, target.archive_sha256
+            ));
         std::fs::create_dir_all(&generation).unwrap();
         std::fs::write(generation.join("foreign-kept"), b"must survive").unwrap();
-        assert!(install_archive_from_manifest(
-            home.path(),
-            ManagedBrowserPlatform::Win64,
-            &manifest,
-            target,
-            &archive,
-            &AtomicBool::new(false),
-        )
-        .is_err());
-        assert_eq!(std::fs::read(generation.join("foreign-kept")).unwrap(), b"must survive");
+        assert!(
+            install_archive_from_manifest(
+                home.path(),
+                ManagedBrowserPlatform::Win64,
+                &manifest,
+                target,
+                &archive,
+                &AtomicBool::new(false),
+            )
+            .is_err()
+        );
+        assert_eq!(
+            std::fs::read(generation.join("foreign-kept")).unwrap(),
+            b"must survive"
+        );
     }
 
     #[test]
@@ -1263,9 +1409,20 @@ mod tests {
         let home = fixture_home();
         let generations_path = home.path().join(MANAGED_BROWSER_DIR).join(GENERATIONS_DIR);
         std::fs::create_dir_all(&generations_path).unwrap();
-        let home_binding = open_absolute_bound_directory(home.path(), false, "test home").unwrap().unwrap();
-        let managed = open_bound_real_child_dir(&home_binding.dir, OsStr::new(MANAGED_BROWSER_DIR), &home.path().join(MANAGED_BROWSER_DIR)).unwrap().0;
-        let generations = open_bound_real_child_dir(&managed, OsStr::new(GENERATIONS_DIR), &generations_path).unwrap().0;
+        let home_binding = open_absolute_bound_directory(home.path(), false, "test home")
+            .unwrap()
+            .unwrap();
+        let managed = open_bound_real_child_dir(
+            &home_binding.dir,
+            OsStr::new(MANAGED_BROWSER_DIR),
+            &home.path().join(MANAGED_BROWSER_DIR),
+        )
+        .unwrap()
+        .0;
+        let generations =
+            open_bound_real_child_dir(&managed, OsStr::new(GENERATIONS_DIR), &generations_path)
+                .unwrap()
+                .0;
         let name = OsStr::new(".stage-test");
         let display = generations_path.join(".stage-test");
         let (stage, binding) = create_private_stage(&generations, name, &display).unwrap();
@@ -1285,8 +1442,19 @@ mod tests {
         std::fs::create_dir(&display).unwrap();
         std::fs::write(display.join("foreign-kept"), b"must survive").unwrap();
         assert!(revalidate_stage(&binding, &generations, name, &display).is_err());
-        assert!(remove_bound_real_directory_tree(&generations, name, &display, binding.identity_token()).is_err());
-        assert_eq!(std::fs::read(display.join("foreign-kept")).unwrap(), b"must survive");
+        assert!(
+            remove_bound_real_directory_tree(
+                &generations,
+                name,
+                &display,
+                binding.identity_token()
+            )
+            .is_err()
+        );
+        assert_eq!(
+            std::fs::read(display.join("foreign-kept")).unwrap(),
+            b"must survive"
+        );
     }
 
     #[test]
@@ -1294,12 +1462,24 @@ mod tests {
         let home = fixture_home();
         let generations_path = home.path().join(MANAGED_BROWSER_DIR).join(GENERATIONS_DIR);
         std::fs::create_dir_all(&generations_path).unwrap();
-        let home_binding = open_absolute_bound_directory(home.path(), false, "test home").unwrap().unwrap();
-        let managed = open_bound_real_child_dir(&home_binding.dir, OsStr::new(MANAGED_BROWSER_DIR), &home.path().join(MANAGED_BROWSER_DIR)).unwrap().0;
-        let generations = open_bound_real_child_dir(&managed, OsStr::new(GENERATIONS_DIR), &generations_path).unwrap().0;
+        let home_binding = open_absolute_bound_directory(home.path(), false, "test home")
+            .unwrap()
+            .unwrap();
+        let managed = open_bound_real_child_dir(
+            &home_binding.dir,
+            OsStr::new(MANAGED_BROWSER_DIR),
+            &home.path().join(MANAGED_BROWSER_DIR),
+        )
+        .unwrap()
+        .0;
+        let generations =
+            open_bound_real_child_dir(&managed, OsStr::new(GENERATIONS_DIR), &generations_path)
+                .unwrap()
+                .0;
         let stage_name = OsStr::new(".stage-test");
         let stage_display = generations_path.join(".stage-test");
-        let (stage, binding) = create_private_stage(&generations, stage_name, &stage_display).unwrap();
+        let (stage, binding) =
+            create_private_stage(&generations, stage_name, &stage_display).unwrap();
         drop(stage);
         let generation_name = OsStr::new("published-generation");
         let generation_display = generations_path.join(generation_name);
@@ -1327,8 +1507,19 @@ mod tests {
         .unwrap();
         std::fs::create_dir(&generation_display).unwrap();
         std::fs::write(generation_display.join("foreign-kept"), b"must survive").unwrap();
-        assert!(confirm_published_stage_identity(&binding, &generations, generation_name, &generation_display).is_err());
-        assert_eq!(std::fs::read(generation_display.join("foreign-kept")).unwrap(), b"must survive");
+        assert!(
+            confirm_published_stage_identity(
+                &binding,
+                &generations,
+                generation_name,
+                &generation_display
+            )
+            .is_err()
+        );
+        assert_eq!(
+            std::fs::read(generation_display.join("foreign-kept")).unwrap(),
+            b"must survive"
+        );
     }
 
     #[tokio::test]
@@ -1361,15 +1552,17 @@ mod tests {
             .respond_with(ResponseTemplate::new(302).insert_header("location", server.uri()))
             .mount(&redirect)
             .await;
-        assert!(download_reviewed_archive_at(
-            &redirect.uri(),
-            archive.len() as u64,
-            &expected,
-            &ExternalHttpAuthorizer::test_allow(),
-            &cancelled,
-        )
-        .await
-        .is_err());
+        assert!(
+            download_reviewed_archive_at(
+                &redirect.uri(),
+                archive.len() as u64,
+                &expected,
+                &ExternalHttpAuthorizer::test_allow(),
+                &cancelled,
+            )
+            .await
+            .is_err()
+        );
     }
 
     #[test]
@@ -1381,7 +1574,8 @@ mod tests {
             ("shell/browser.exe", &[1_u8, 2, 3, 4]),
             ("shell/runtime.dat", b"fixture runtime"),
         ]);
-        std::fs::create_dir_all(home.path().join(MANAGED_BROWSER_DIR).join(GENERATIONS_DIR)).unwrap();
+        std::fs::create_dir_all(home.path().join(MANAGED_BROWSER_DIR).join(GENERATIONS_DIR))
+            .unwrap();
         let bound = open_absolute_bound_directory(home.path(), false, "test home")
             .unwrap()
             .unwrap();
@@ -1400,18 +1594,19 @@ mod tests {
         .unwrap()
         .0;
         let stage_name = OsStr::new(".stage-test");
-        let stage_display = home.path().join(MANAGED_BROWSER_DIR).join(GENERATIONS_DIR).join(".stage-test");
+        let stage_display = home
+            .path()
+            .join(MANAGED_BROWSER_DIR)
+            .join(GENERATIONS_DIR)
+            .join(".stage-test");
         let (stage, _) = create_private_stage(&generations, stage_name, &stage_display).unwrap();
         let cancelled = AtomicBool::new(false);
-        extract_reviewed_zip(
-            &stage,
-            &stage_display,
-            target,
-            &archive,
-            &cancelled,
-        )
-        .expect("controlled archive is extracted through capability-relative handles");
-        assert_eq!(std::fs::read(stage_display.join("shell/browser.exe")).unwrap(), [1, 2, 3, 4]);
+        extract_reviewed_zip(&stage, &stage_display, target, &archive, &cancelled)
+            .expect("controlled archive is extracted through capability-relative handles");
+        assert_eq!(
+            std::fs::read(stage_display.join("shell/browser.exe")).unwrap(),
+            [1, 2, 3, 4]
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
@@ -1440,14 +1635,43 @@ mod tests {
         ];
         for archive in cases {
             let home = fixture_home();
-            std::fs::create_dir_all(home.path().join(MANAGED_BROWSER_DIR).join(GENERATIONS_DIR)).unwrap();
-            let bound = open_absolute_bound_directory(home.path(), false, "test home").unwrap().unwrap();
-            let managed = open_bound_real_child_dir(&bound.dir, OsStr::new(MANAGED_BROWSER_DIR), &home.path().join(MANAGED_BROWSER_DIR)).unwrap().0;
-            let generations = open_bound_real_child_dir(&managed, OsStr::new(GENERATIONS_DIR), &home.path().join(MANAGED_BROWSER_DIR).join(GENERATIONS_DIR)).unwrap().0;
+            std::fs::create_dir_all(home.path().join(MANAGED_BROWSER_DIR).join(GENERATIONS_DIR))
+                .unwrap();
+            let bound = open_absolute_bound_directory(home.path(), false, "test home")
+                .unwrap()
+                .unwrap();
+            let managed = open_bound_real_child_dir(
+                &bound.dir,
+                OsStr::new(MANAGED_BROWSER_DIR),
+                &home.path().join(MANAGED_BROWSER_DIR),
+            )
+            .unwrap()
+            .0;
+            let generations = open_bound_real_child_dir(
+                &managed,
+                OsStr::new(GENERATIONS_DIR),
+                &home.path().join(MANAGED_BROWSER_DIR).join(GENERATIONS_DIR),
+            )
+            .unwrap()
+            .0;
             let stage_name = OsStr::new(".stage-test");
-            let stage_display = home.path().join(MANAGED_BROWSER_DIR).join(GENERATIONS_DIR).join(".stage-test");
-            let (stage, _) = create_private_stage(&generations, stage_name, &stage_display).unwrap();
-            assert!(extract_reviewed_zip(&stage, &stage_display, target, &archive, &AtomicBool::new(false)).is_err());
+            let stage_display = home
+                .path()
+                .join(MANAGED_BROWSER_DIR)
+                .join(GENERATIONS_DIR)
+                .join(".stage-test");
+            let (stage, _) =
+                create_private_stage(&generations, stage_name, &stage_display).unwrap();
+            assert!(
+                extract_reviewed_zip(
+                    &stage,
+                    &stage_display,
+                    target,
+                    &archive,
+                    &AtomicBool::new(false)
+                )
+                .is_err()
+            );
         }
     }
 
@@ -1470,15 +1694,43 @@ mod tests {
             writer.finish().unwrap();
         }
         let home = fixture_home();
-        std::fs::create_dir_all(home.path().join(MANAGED_BROWSER_DIR).join(GENERATIONS_DIR)).unwrap();
+        std::fs::create_dir_all(home.path().join(MANAGED_BROWSER_DIR).join(GENERATIONS_DIR))
+            .unwrap();
         let manifest = fixture_manifest();
-        let bound = open_absolute_bound_directory(home.path(), false, "test home").unwrap().unwrap();
-        let managed = open_bound_real_child_dir(&bound.dir, OsStr::new(MANAGED_BROWSER_DIR), &home.path().join(MANAGED_BROWSER_DIR)).unwrap().0;
-        let generations = open_bound_real_child_dir(&managed, OsStr::new(GENERATIONS_DIR), &home.path().join(MANAGED_BROWSER_DIR).join(GENERATIONS_DIR)).unwrap().0;
+        let bound = open_absolute_bound_directory(home.path(), false, "test home")
+            .unwrap()
+            .unwrap();
+        let managed = open_bound_real_child_dir(
+            &bound.dir,
+            OsStr::new(MANAGED_BROWSER_DIR),
+            &home.path().join(MANAGED_BROWSER_DIR),
+        )
+        .unwrap()
+        .0;
+        let generations = open_bound_real_child_dir(
+            &managed,
+            OsStr::new(GENERATIONS_DIR),
+            &home.path().join(MANAGED_BROWSER_DIR).join(GENERATIONS_DIR),
+        )
+        .unwrap()
+        .0;
         let stage_name = OsStr::new(".stage-test");
-        let stage_display = home.path().join(MANAGED_BROWSER_DIR).join(GENERATIONS_DIR).join(".stage-test");
+        let stage_display = home
+            .path()
+            .join(MANAGED_BROWSER_DIR)
+            .join(GENERATIONS_DIR)
+            .join(".stage-test");
         let (stage, _) = create_private_stage(&generations, stage_name, &stage_display).unwrap();
-        assert!(extract_reviewed_zip(&stage, &stage_display, &manifest.targets[0], &archive, &AtomicBool::new(false)).is_err());
+        assert!(
+            extract_reviewed_zip(
+                &stage,
+                &stage_display,
+                &manifest.targets[0],
+                &archive,
+                &AtomicBool::new(false)
+            )
+            .is_err()
+        );
     }
 
     #[cfg(unix)]

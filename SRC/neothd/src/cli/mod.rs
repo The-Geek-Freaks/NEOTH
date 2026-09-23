@@ -15,9 +15,9 @@ pub mod arxiv;
 pub mod arxiv_ingest_task;
 pub mod babel;
 pub mod backup;
-pub mod browser;
 /// HERMES-02 — `/background` + `/btw` parallel ephemeral sessions.
 pub mod bg_session;
+pub mod browser;
 pub mod buddy;
 pub mod catalog;
 pub mod channel;

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T10:48:36.0865222Z",
-  "validationStatus": "Reviewed browser artifact installer and CLI; enabled retention consumer regressions; Dream opt-in acceptance selection. Hosted validation pending",
+  "capturedUtc": "2026-09-23T10:51:12.2029029Z",
+  "validationStatus": "Hosted rustfmt receipt35851144788 imported after head/SHA/all4Gitpreimage/postimage checks; compilation and tests pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1614,7 +1614,7 @@
     {
       "path": "SRC/neothd/src/cli/mod.rs",
       "bytes": 115035,
-      "sha256": "A4C78A0F5034CA5144ACA91C3C8CFE267741F0DFFD4C73A637095A2B74374F0F"
+      "sha256": "76F8D20505B79DB722D617995C9E6AD2491D7B03CC48CBE362E4A817D0AA7587"
     },
     {
       "path": "SRC/neothd/src/cli/models.rs",
@@ -1663,8 +1663,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/reflect.rs",
-      "bytes": 89258,
-      "sha256": "B9BC3B14B8726CAD5E07B4EF31B6BB21B69D71A6C78C76B3865215ADB3840768"
+      "bytes": 89263,
+      "sha256": "6F1D6B7510E9A6F9518E0D9B5E42C608755080C79F1F0AE8BD21E60BB50E7897"
     },
     {
       "path": "SRC/neothd/src/cli/research.rs",
@@ -2948,8 +2948,8 @@
     },
     {
       "path": "SRC/neothd/src/tools/managed_browser.rs",
-      "bytes": 61080,
-      "sha256": "C7B307F5B0845D16FCFCE888A4782C6EB587A8AC3F511C996CEE4309638E9C6C"
+      "bytes": 64307,
+      "sha256": "B8A0092245C0225D8E2D6F7C158E3B9617D580E3CA1F87A079DF42C1DC8098C2"
     },
     {
       "path": "SRC/neothd/src/tools/mod.rs",
@@ -3213,8 +3213,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/browser.rs",
-      "bytes": 15607,
-      "sha256": "9AC9AFFEBF7FF573235E67876BC3FDE6F611A16F9ADDF6C37C89711C9E82D09E"
+      "bytes": 16047,
+      "sha256": "A50A8EC37B4B6395A85462B7BFC6F05C6783B7B20FAD4F4F07E9A59146334DF0"
     },
     {
       "path": "docs/gold-wave347-managed-browser-install.md",

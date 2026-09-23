@@ -156,7 +156,10 @@ fn status_at(
             version: None,
             revision: None,
             archive_sha256: None,
-            detail: Some("managed browser is disabled by configuration; local artifact was not inspected".into()),
+            detail: Some(
+                "managed browser is disabled by configuration; local artifact was not inspected"
+                    .into(),
+            ),
         };
     }
 
@@ -212,7 +215,14 @@ fn render_status(
         OutputFormat::Table => {
             println!("managed browser artifact");
             println!("  platform: {0}", status.platform);
-            println!("  config:   {0}", if status.enabled { "enabled" } else { "disabled" });
+            println!(
+                "  config:   {0}",
+                if status.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            );
             println!("  artifact: {0}", status.artifact_status);
             if let Some(executable) = status.executable {
                 println!("  executable: {executable}");
@@ -292,7 +302,11 @@ async fn run_install_with_authorizer(
         OutputFormat::Jsonl => println!("{}", serde_json::to_string(&receipt)?),
         OutputFormat::Table => println!(
             "managed browser {} and verified: {} ({})",
-            if result.installed() { "installed" } else { "already installed" },
+            if result.installed() {
+                "installed"
+            } else {
+                "already installed"
+            },
             resolved.version(),
             resolved.platform().as_str(),
         ),
@@ -308,12 +322,20 @@ mod tests {
     #[test]
     fn browser_parser_accepts_exact_status_and_install_actions() {
         assert!(matches!(
-            crate::cli::Cli::try_parse_from(["neoth", "browser", "status"]).unwrap().command,
-            crate::cli::Commands::Browser(BrowserArgs { action: BrowserAction::Status })
+            crate::cli::Cli::try_parse_from(["neoth", "browser", "status"])
+                .unwrap()
+                .command,
+            crate::cli::Commands::Browser(BrowserArgs {
+                action: BrowserAction::Status
+            })
         ));
         assert!(matches!(
-            crate::cli::Cli::try_parse_from(["neoth", "browser", "install"]).unwrap().command,
-            crate::cli::Commands::Browser(BrowserArgs { action: BrowserAction::Install })
+            crate::cli::Cli::try_parse_from(["neoth", "browser", "install"])
+                .unwrap()
+                .command,
+            crate::cli::Commands::Browser(BrowserArgs {
+                action: BrowserAction::Install
+            })
         ));
     }
 
@@ -359,8 +381,7 @@ mod tests {
     fn read_only_policy_loader_preserves_existing_legacy_credential_source_without_locks() {
         let home = tempfile::tempdir().unwrap();
         let config_path = home.path().join("freedom.yaml");
-        let source =
-            b"provider_key: legacy-inline-sentinel\nmanaged_browser:\n  enabled: false\n";
+        let source = b"provider_key: legacy-inline-sentinel\nmanaged_browser:\n  enabled: false\n";
         std::fs::write(&config_path, source).unwrap();
 
         let config = load_browser_config_read_only_at(&config_path).unwrap();
@@ -369,7 +390,12 @@ mod tests {
         assert_eq!(std::fs::read(&config_path).unwrap(), source);
         assert!(!home.path().join("credentials.lock").exists());
         assert!(!home.path().join("freedom.yaml.lock").exists());
-        assert!(!home.path().join(".freedom-credentials.transaction.lock").exists());
+        assert!(
+            !home
+                .path()
+                .join(".freedom-credentials.transaction.lock")
+                .exists()
+        );
     }
 
     #[tokio::test]
@@ -379,7 +405,9 @@ mod tests {
         let error = run_browser_at(
             home.path(),
             &freedom,
-            BrowserArgs { action: BrowserAction::Install },
+            BrowserArgs {
+                action: BrowserAction::Install,
+            },
             OutputFormat::Json,
         )
         .await

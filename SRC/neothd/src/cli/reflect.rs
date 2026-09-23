@@ -1837,7 +1837,8 @@ mod tests {
     }
 
     #[test]
-    fn cli_quiet_daily_digest_with_enabled_retention_quarantines_expired_archive_and_preserves_period_input() {
+    fn cli_quiet_daily_digest_with_enabled_retention_quarantines_expired_archive_and_preserves_period_input()
+     {
         use crate::reflection::hygiene::{
             HYGIENE_PLAN_SCHEMA_VERSION, TOPIC_SYNONYM_MAP_VERSION, TopicSynonymMap,
             VersionedHygieneInput,
