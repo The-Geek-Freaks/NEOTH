@@ -835,12 +835,7 @@ async fn read_with_optional_native_enrichment_with_cancellation(
         (None, Some(hook)) => Some(hook),
         (None, None) => None,
     };
-    let enrichment = if no_matching_lines
-    {
-        None
-    } else {
-        enrichment
-    };
+    let enrichment = if no_matching_lines { None } else { enrichment };
     Ok(FsReadOutcome {
         text,
         enrichment,
@@ -873,16 +868,13 @@ mod tests {
     #[test]
     fn w269_enrichment_status_json_is_additive_and_bounded() {
         let mut rendered = serde_json::json!({"path": "selected.rs"});
-        render_enrichment_status(
-            &mut rendered,
-            Some(NativeEnrichmentStatus::NoMatchingLines),
-        );
+        render_enrichment_status(&mut rendered, Some(NativeEnrichmentStatus::NoMatchingLines));
         assert_eq!(rendered["path"], "selected.rs");
+        assert_eq!(rendered["codegraph_enrichment_status"], "no_matching_lines");
         assert_eq!(
-            rendered["codegraph_enrichment_status"],
-            "no_matching_lines"
+            NativeEnrichmentStatus::MasterDisabled.as_str(),
+            "master_disabled"
         );
-        assert_eq!(NativeEnrichmentStatus::MasterDisabled.as_str(), "master_disabled");
         assert_eq!(NativeEnrichmentStatus::Unavailable.as_str(), "unavailable");
         assert_eq!(NativeEnrichmentStatus::Stale.as_str(), "stale");
         assert_eq!(NativeEnrichmentStatus::Applied.as_str(), "applied");

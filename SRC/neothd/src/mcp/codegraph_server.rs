@@ -5664,10 +5664,7 @@ fn root() { alpha(); beta(); }
             NativeFsReadFreshness::Stale
         ));
         assert!(
-            !matches!(
-                plan.freshness_after_read(),
-                NativeFsReadFreshness::Fresh(_)
-            ),
+            !matches!(plan.freshness_after_read(), NativeFsReadFreshness::Fresh(_)),
             "a changed root cannot append native sidecar evidence after the file read"
         );
     }

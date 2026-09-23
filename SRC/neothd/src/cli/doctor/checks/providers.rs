@@ -730,7 +730,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn channel_transport_flapping_reads_authenticated_live_wal_and_warns_only_failed_channel() {
+    async fn channel_transport_flapping_reads_authenticated_live_wal_and_warns_only_failed_channel()
+    {
         let home = tempfile::tempdir().expect("create Doctor transport fixture home");
         let wal = home.path().join("wal");
         std::fs::create_dir_all(&wal).expect("create Doctor transport fixture WAL");
@@ -742,14 +743,12 @@ mod tests {
             .wait()
             .await
             .expect("initialize Doctor transport fixture WAL writer");
-        let signal = crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(
-            ChannelId::Signal,
-        )
-        .expect("Signal default live provenance");
-        let discord = crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(
-            ChannelId::Discord,
-        )
-        .expect("Discord default live provenance");
+        let signal =
+            crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(ChannelId::Signal)
+                .expect("Signal default live provenance");
+        let discord =
+            crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(ChannelId::Discord)
+                .expect("Discord default live provenance");
         let now = crate::time::now_unix_secs();
         for index in 0..FLAPPING_MIN_SAMPLES {
             let ts = now.saturating_sub(10).saturating_add(index);

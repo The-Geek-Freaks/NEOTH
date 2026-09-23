@@ -8,6 +8,25 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**Hosted GUI/FullCI failure evidence (2026-09-23):** GUI841 run35810916881
+is fully admitted at122/124 (17 source bindings, 276 artifact hashes, every
+ordered terminal). W153 now exposes the actual helper syscall failure:
+`unshare user/cgroup/mount/PID namespaces: Invalid argument (os error 22)`.
+W164 has empty helper stderr and no independently bound exit125 record.
+There is no matching AppArmor DENIED. The fixture currently enters the helper
+through Rust libtest rather than the production early-main path; W272 is
+repairing that test launch using the actual production executable while keeping
+all namespaces and systemd containment checks mandatory.
+
+FullCI49 run35805037288 has completed. Windows passed17,575/17,576 (24 skipped)
+and macOS17,658/17,663 (25 skipped). macOS failed two chat cancellation fixture
+assertions, W155 citation proof-file readback, and W153/W164 legacy-child startup
+on the explicit fail-closed unsupported macOS containment path. These are
+individual test failures, not runner/job timeouts. Fresh current-source platform
+validation and the GUI repairs remain required; no release acceptance is claimed.
+The W269/W271 hosted formatter receipt was verified against all three exact
+source pre/postimages. Road counts are unchanged; no local executable work ran.
+
 **W269/W270/W271 combined native batch (2026-09-23):** explicit native
 `fs read`/`fs grep` enrichment now exposes bounded optional readiness in JSON
 and Table output. Existing admission, retained-file reads and no-hit sidecar
