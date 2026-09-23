@@ -3,6 +3,10 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W308 exact hosted formatting (2026-09-23):** Preflightd2 run35829527664
+requested one runtime.rs format patch. SHA2565AB810E4 plus exact Git pre/postimage
+were verified before import. Cored2 run35829527494 and GUI128424 run35826461386
+continue; Group596/full nativeCI are not yet dispatched. No local formatter ran.
 **W308 adversarial role regression and W309 one-shot repair (2026-09-23):**
 Two real sub-agent fixtures prove hostile role/provider/delimiter text stays
 in typed data: admitted calls and WAL keep Left; allowed-Right text cannot

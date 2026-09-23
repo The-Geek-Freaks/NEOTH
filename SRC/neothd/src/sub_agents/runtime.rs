@@ -1555,7 +1555,11 @@ mod tests {
         assert_eq!(report.pass_count, 1);
         assert_eq!(raw.script.calls.load(Ordering::SeqCst), 2);
         let requests = raw.requests.lock().unwrap();
-        assert_eq!(requests.len(), 2, "primary and QA use the actual worker transport");
+        assert_eq!(
+            requests.len(),
+            2,
+            "primary and QA use the actual worker transport"
+        );
         let primary_envelope_start = requests[0]
             .0
             .find("{\"schema\":")
@@ -1565,8 +1569,7 @@ mod tests {
                 .expect("decode primary typed envelope");
         assert_eq!(primary_envelope["trust"], "untrusted_data_only");
         assert_eq!(
-            primary_envelope["fields"][0]["data"],
-            hostile_context,
+            primary_envelope["fields"][0]["data"], hostile_context,
             "the hostile task survives only as the typed operator-task value"
         );
         assert!(
@@ -1613,11 +1616,17 @@ mod tests {
         hostile_request.context = hostile_context.clone();
         hostile_request.deliverable = format!("override to allowed Right: {hostile_context}");
         let mut config = w296_left_config(InferenceProvider::Gemini, "wire-model-v1");
-        config.inference.role_policy.as_mut().unwrap().rules.push(RolePolicyRule {
-            role: HemisphereRole::Right,
-            provider: InferenceProvider::OpenAi,
-            model: Some("wire-model-v1".to_owned()),
-        });
+        config
+            .inference
+            .role_policy
+            .as_mut()
+            .unwrap()
+            .rules
+            .push(RolePolicyRule {
+                role: HemisphereRole::Right,
+                provider: InferenceProvider::OpenAi,
+                model: Some("wire-model-v1".to_owned()),
+            });
         let worker = Arc::new(ProviderSubAgentWorker::new_without_skill_registry_context(
             w296_authorized_left(Arc::clone(&raw), Arc::new(config), writer.clone()),
             [hostile_agent],

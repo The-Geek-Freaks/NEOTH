@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Adversarial role fixtures source-reviewed and OneShot handle repaired; fresh hosted Core/Group596/native pending",
+  "status": "Exact W308 hosted formatting imported; Cored2 and GUI128424 active; Group596/native pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 102927,
-    "sha256": "08DA7CFA2BD95567696C52AA6D5885AD2405FEE2A50B373020680233C2ED37A6"
+    "bytes": 102906,
+    "sha256": "BDED823FC0553B1483E4CE580DAEE1C8EC181279174FD3FE57987A18EAFB4152"
   },
   "sourceInputs": 594,
   "requiredNativeTests": [
@@ -234,7 +234,7 @@
     {
       "test": "sub_agents::runtime::tests::initial_qa_and_retry_keep_adversarial_values_inside_typed_fields",
       "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
-      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
+      "sourceSha256": "25965741B299A4DC2B6B59A8F4066809028B3161ABFF2F67537365E3A4A5EAD9",
       "junitClass": "neoth"
     },
     {
@@ -4812,13 +4812,13 @@
     {
       "test": "sub_agents::runtime::tests::registry_envelope_is_identical_for_primary_qa_and_retry",
       "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
-      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
+      "sourceSha256": "25965741B299A4DC2B6B59A8F4066809028B3161ABFF2F67537365E3A4A5EAD9",
       "junitClass": "neoth"
     },
     {
       "test": "sub_agents::runtime::tests::qa_registry_aggregate_overflow_rejects_before_any_provider_call",
       "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
-      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
+      "sourceSha256": "25965741B299A4DC2B6B59A8F4066809028B3161ABFF2F67537365E3A4A5EAD9",
       "junitClass": "neoth"
     },
     {
@@ -5814,25 +5814,25 @@
     {
       "test": "sub_agents::runtime::tests::w296_left_policy_covers_primary_qa_and_retry_leaf_lifecycles",
       "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
-      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
+      "sourceSha256": "25965741B299A4DC2B6B59A8F4066809028B3161ABFF2F67537365E3A4A5EAD9",
       "junitClass": "neoth"
     },
     {
       "test": "sub_agents::runtime::tests::w296_left_policy_denies_primary_provider_or_model_before_any_leaf_lifecycle",
       "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
-      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
+      "sourceSha256": "25965741B299A4DC2B6B59A8F4066809028B3161ABFF2F67537365E3A4A5EAD9",
       "junitClass": "neoth"
     },
     {
       "test": "sub_agents::runtime::tests::w296_left_policy_covers_429_fallback_leaf_lifecycles",
       "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
-      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
+      "sourceSha256": "25965741B299A4DC2B6B59A8F4066809028B3161ABFF2F67537365E3A4A5EAD9",
       "junitClass": "neoth"
     },
     {
       "test": "sub_agents::runtime::tests::w296_left_policy_allows_429_primary_then_denies_fallback_model_before_transport",
       "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
-      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
+      "sourceSha256": "25965741B299A4DC2B6B59A8F4066809028B3161ABFF2F67537365E3A4A5EAD9",
       "junitClass": "neoth"
     },
     {
@@ -5952,13 +5952,13 @@
     {
       "test": "sub_agents::runtime::tests::w308_adversarial_role_override_stays_typed_data_and_left_bound",
       "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
-      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
+      "sourceSha256": "25965741B299A4DC2B6B59A8F4066809028B3161ABFF2F67537365E3A4A5EAD9",
       "junitClass": "neoth"
     },
     {
       "test": "sub_agents::runtime::tests::w308_adversarial_right_override_cannot_bypass_denied_left_policy",
       "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
-      "sourceSha256": "98F1461B0EE7C61E21050100E9EEBD31CE4959816B7DC01C70D4D59D1BDBD665",
+      "sourceSha256": "25965741B299A4DC2B6B59A8F4066809028B3161ABFF2F67537365E3A4A5EAD9",
       "junitClass": "neoth"
     }
   ],
@@ -19479,6 +19479,20 @@
       }
     ],
     "note": "Source594 native992 Group596; no local executable validation",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave308HostedFormatting": {
+    "base": "d2b96ac0e45afbc4ee18c7ba2510a918a3f0c90b",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/sub_agents/runtime.rs",
+        "bytes": 81800,
+        "sha256": "25965741B299A4DC2B6B59A8F4066809028B3161ABFF2F67537365E3A4A5EAD9",
+        "blob": "c5c65c6634005651afea1f9e07bb356d721ba889"
+      }
+    ],
+    "note": "One hosted runtime.rs patch hash/pre/post verified; no local formatter",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
