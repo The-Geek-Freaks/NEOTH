@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W408Dream26 W409Research18 W410OptIn22 ACCEPTED; Group810807PASS3FAIL retained; W406WAL/W407inventory repairs hosted pending",
+  "status": "P214 ACCEPTED19; W404citation50+optional3live and W411Group841 pending; W414verifiedhostedformat",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 119178,
-    "sha256": "6D34D310D9A58ADE7506877C019DD9ABE54F05341C183DB54C0075ED75774029"
+    "bytes": 120410,
+    "sha256": "52789D02BC9133A85467711E7DCF01642FC504685B68F7E1F87EA76C96D932FC"
   },
-  "sourceInputs": 685,
+  "sourceInputs": 692,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -2706,7 +2706,7 @@
     {
       "test": "cli::memory::tests::hippocampus_flag_accepts_an_omitted_or_explicit_query",
       "sourcePath": "SRC/neothd/src/cli/memory.rs",
-      "sourceSha256": "F80E7270E2AF676B39DF5CD457D7DEB7AB9F63AE8C58C2344260E81D86AF5A2A",
+      "sourceSha256": "51595ECBCBB45914D85FE49A8D506CE8365C53D1395E0D978A30AC99E8CA7602",
       "junitClass": "neoth"
     },
     {
@@ -4308,13 +4308,13 @@
     {
       "test": "cli::memory::tests::embed_backfill_embeds_all_unembedded_episodes",
       "sourcePath": "SRC/neothd/src/cli/memory.rs",
-      "sourceSha256": "F80E7270E2AF676B39DF5CD457D7DEB7AB9F63AE8C58C2344260E81D86AF5A2A",
+      "sourceSha256": "51595ECBCBB45914D85FE49A8D506CE8365C53D1395E0D978A30AC99E8CA7602",
       "junitClass": "neoth"
     },
     {
       "test": "cli::memory::tests::embed_backfill_is_idempotent",
       "sourcePath": "SRC/neothd/src/cli/memory.rs",
-      "sourceSha256": "F80E7270E2AF676B39DF5CD457D7DEB7AB9F63AE8C58C2344260E81D86AF5A2A",
+      "sourceSha256": "51595ECBCBB45914D85FE49A8D506CE8365C53D1395E0D978A30AC99E8CA7602",
       "junitClass": "neoth"
     },
     {
@@ -6612,55 +6612,55 @@
     {
       "test": "cli::memory::tests::physical_redaction_authenticated_sealed_leaf_rebinds_and_receipts_without_generic_marker",
       "sourcePath": "SRC/neothd/src/cli/memory.rs",
-      "sourceSha256": "F80E7270E2AF676B39DF5CD457D7DEB7AB9F63AE8C58C2344260E81D86AF5A2A",
+      "sourceSha256": "51595ECBCBB45914D85FE49A8D506CE8365C53D1395E0D978A30AC99E8CA7602",
       "junitClass": "neoth"
     },
     {
       "test": "cli::memory::tests::physical_redaction_legacy_compressed_segment_keeps_generic_marker_path",
       "sourcePath": "SRC/neothd/src/cli/memory.rs",
-      "sourceSha256": "F80E7270E2AF676B39DF5CD457D7DEB7AB9F63AE8C58C2344260E81D86AF5A2A",
+      "sourceSha256": "51595ECBCBB45914D85FE49A8D506CE8365C53D1395E0D978A30AC99E8CA7602",
       "junitClass": "neoth"
     },
     {
       "test": "cli::memory::tests::physical_redaction_restart_delivers_published_leaf_without_reapplying_payload",
       "sourcePath": "SRC/neothd/src/cli/memory.rs",
-      "sourceSha256": "F80E7270E2AF676B39DF5CD457D7DEB7AB9F63AE8C58C2344260E81D86AF5A2A",
+      "sourceSha256": "51595ECBCBB45914D85FE49A8D506CE8365C53D1395E0D978A30AC99E8CA7602",
       "junitClass": "neoth"
     },
     {
       "test": "cli::memory::tests::physical_redaction_refuses_journal_target_that_is_not_the_bound_leaf",
       "sourcePath": "SRC/neothd/src/cli/memory.rs",
-      "sourceSha256": "F80E7270E2AF676B39DF5CD457D7DEB7AB9F63AE8C58C2344260E81D86AF5A2A",
+      "sourceSha256": "51595ECBCBB45914D85FE49A8D506CE8365C53D1395E0D978A30AC99E8CA7602",
       "junitClass": "neoth"
     },
     {
       "test": "wal::redact::tests::stage_then_publish_authenticated_leaf_preserves_writer_marker_hmac",
       "sourcePath": "SRC/neothd/src/wal/redact.rs",
-      "sourceSha256": "DFE5EA131EFD1A93D4DD834B9F90E72A72B81BA0378FAA2E94FDCFFE8E96AC94",
+      "sourceSha256": "B1564C3555AA338B3E99B0D5F85FF26ED67DCA1B2E37BE3800FF24E97F5D6C9B",
       "junitClass": "neoth"
     },
     {
       "test": "wal::redact::tests::staged_authenticated_leaf_refuses_a_replaced_target_without_overwriting_it",
       "sourcePath": "SRC/neothd/src/wal/redact.rs",
-      "sourceSha256": "DFE5EA131EFD1A93D4DD834B9F90E72A72B81BA0378FAA2E94FDCFFE8E96AC94",
+      "sourceSha256": "B1564C3555AA338B3E99B0D5F85FF26ED67DCA1B2E37BE3800FF24E97F5D6C9B",
       "junitClass": "neoth"
     },
     {
       "test": "wal::redact::tests::staged_authenticated_leaf_refuses_matched_structural_frame_byte_identically",
       "sourcePath": "SRC/neothd/src/wal/redact.rs",
-      "sourceSha256": "DFE5EA131EFD1A93D4DD834B9F90E72A72B81BA0378FAA2E94FDCFFE8E96AC94",
+      "sourceSha256": "B1564C3555AA338B3E99B0D5F85FF26ED67DCA1B2E37BE3800FF24E97F5D6C9B",
       "junitClass": "neoth"
     },
     {
       "test": "wal::redact::tests::staged_authenticated_predecessor_refuses_real_authenticated_rollover_successor",
       "sourcePath": "SRC/neothd/src/wal/redact.rs",
-      "sourceSha256": "DFE5EA131EFD1A93D4DD834B9F90E72A72B81BA0378FAA2E94FDCFFE8E96AC94",
+      "sourceSha256": "B1564C3555AA338B3E99B0D5F85FF26ED67DCA1B2E37BE3800FF24E97F5D6C9B",
       "junitClass": "neoth"
     },
     {
       "test": "wal::redact::tests::staged_leaf_in_independent_namespace_is_accepted_when_another_namespace_is_last",
       "sourcePath": "SRC/neothd/src/wal/redact.rs",
-      "sourceSha256": "DFE5EA131EFD1A93D4DD834B9F90E72A72B81BA0378FAA2E94FDCFFE8E96AC94",
+      "sourceSha256": "B1564C3555AA338B3E99B0D5F85FF26ED67DCA1B2E37BE3800FF24E97F5D6C9B",
       "junitClass": "neoth"
     },
     {
@@ -22489,6 +22489,51 @@
       }
     ],
     "note": "Source-bound Coreed979 reference D9C6E38C imported; obsoleteFullCIcancelled;3functional parents accepted66terminals; independent W406W407 static reviewPASS",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave411CapabilityDecayAcceptance": {
+    "requiredTests": [
+      "daemon::capability_decay::tests::min_samples_keep_each_identity_inconclusive",
+      "daemon::capability_decay::tests::regression_and_recovery_require_separate_conservative_windows",
+      "daemon::capability_decay::tests::provider_and_capability_never_share_a_window",
+      "daemon::capability_decay::tests::malformed_or_unattributed_terminal_payload_never_becomes_quality_evidence",
+      "daemon::capability_decay::tests::authenticated_provider_terminal_producer_reaches_scanner_and_doctor",
+      "daemon::capability_decay::tests::authenticated_terminal_history_refuses_a_later_incomplete_prefix",
+      "cli::doctor::checks::capabilities::tests::capability_quality_doctor_home_is_read_only_when_history_is_absent",
+      "cli::doctor::checks::capabilities::tests::capability_quality_limits_rendered_degradation_labels",
+      "daemon::capability_decay::history::tests::authenticated_terminal_snapshot_persists_and_reopens",
+      "daemon::capability_decay::history::tests::history_retains_the_newest_32_captured_snapshots",
+      "daemon::capability_decay::history::tests::torn_wal_refuses_capture_without_overwrite",
+      "daemon::capability_decay::history::tests::corrupt_or_future_store_refuses_read_and_capture_without_repair",
+      "daemon::capability_decay::history::tests::held_store_lock_refuses_capture_without_repair",
+      "daemon::capability_decay::history::tests::empty_authenticated_history_persists_no_false_sample",
+      "daemon::capability_decay::history::tests::capture_refuses_a_missing_home_without_creating_it",
+      "cli::capabilities::tests::clap_keeps_plain_list_and_quality_actions_separate",
+      "cli::doctor::tests::run_all_checks_returns_one_outcome_per_diagnostic"
+    ],
+    "report": "docs/gold-wave411-capability-decay-acceptance.md",
+    "scope": "Seventeen nonoverlapping existing capability quality tests; Doctor overlap admitted inGroup810; producer/WAL dependency changes need current behavior",
+    "hosted": "pending",
+    "localValidationRan": false
+  },
+  "wave404411414HostedCitationSelectionAndRetryAcceptance": {
+    "base": "ef82de9a940a89be75d01c2f6981936a38f52bc8",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/memory.rs",
+        "bytes": 132580,
+        "sha256": "51595ECBCBB45914D85FE49A8D506CE8365C53D1395E0D978A30AC99E8CA7602",
+        "blob": "36d16239c636bb8934f9a5a89d2db47e913ffb72"
+      },
+      {
+        "path": "SRC/neothd/src/wal/redact.rs",
+        "bytes": 124022,
+        "sha256": "B1564C3555AA338B3E99B0D5F85FF26ED67DCA1B2E37BE3800FF24E97F5D6C9B",
+        "blob": "1d4f652dbafb054605f294e83d4ed118273658c2"
+      }
+    ],
+    "note": "Root verified19P214terminals and source carry. P206open17selected existing identities; Coreef82continues, actualbehaviorpending; no local executable validation",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

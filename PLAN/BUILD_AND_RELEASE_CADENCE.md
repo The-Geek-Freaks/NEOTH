@@ -3,6 +3,21 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W404 citation lane, W411 selection, W413 retry acceptance and W414 format (2026-09-23):**
+P2-14 is accepted with19 actual source-bound PASS terminals:17native Group810
+and2GUI135; Root verified each terminal and unchanged relevant retry sources.
+W404 adds a main-only hosted lane for50 exact citation tests, with correct
+integration-harness filters, per-harness compile timeouts and individual receipts.
+Its optional three public-provider CLI probes retain typed unavailable results
+as noncoverage and recompute every successful claim/record binding.
+W411 selects17 existing capability-quality cases for the next group: the old
+18/18 receipt cannot settle later producer/WAL dependency changes by itself.
+P2-06 remains open; its overlapping Doctor contract already passed inGroup810.
+W414 imports only the source/digest/blob-bound two-path formatter output from
+Preflightef8235870714177; Coreef8235870714111 continues on equivalent source.
+Inventory692;native1136+Windows19/Linux33/macOS32;Group841;GUI143Linux/139macOS.
+Road1324=1032checked/290open/2partial;292raw/291pre-tag blockers;WS-LF25done/93open.
+No local compiler, formatter, parser, test, product runtime or model download ran.
 **W405-W410 recovery, hosted repairs and three functional acceptances (2026-09-23):**
 Group810 run35866133454 is source-admitted:810 executed,807 PASS,3 failures;
 all163source paths, matrix/lock and ordered individual terminals verified.

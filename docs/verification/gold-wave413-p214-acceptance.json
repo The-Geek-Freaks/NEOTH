@@ -1,0 +1,269 @@
+{
+  "schema": "neoth-p214-acceptance/v1",
+  "decision": "accepted",
+  "parent": "GOLD-LF-P2-14",
+  "reviewedHead": "8f6ef116",
+  "criterion": "typed classification; bounded LLM correction retry; request/model/cost/permission rebinding; deterministic stops; receipts; CLI/GUI/Buddy",
+  "requiredTests": [
+    {
+      "identity": "providers::claude_retry::tests::retry_receipt_wire_is_versioned_and_content_free",
+      "sourcePath": "SRC/neothd/src/providers/claude_retry.rs",
+      "sourceSha256": "075a1d0cb0efc45b8adeb05c0de42a9946cbda9d385b8fb44c3eaca1b984c675",
+      "receipt": {
+        "run": 35866133454,
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test providers::claude_retry::tests::retry_receipt_wire_is_versioned_and_content_free ... ok"
+      }
+    },
+    {
+      "identity": "providers::claude_retry::tests::authenticated_retry_history_requires_same_session_next_attempt_and_valid_receipt",
+      "sourcePath": "SRC/neothd/src/providers/claude_retry.rs",
+      "sourceSha256": "075a1d0cb0efc45b8adeb05c0de42a9946cbda9d385b8fb44c3eaca1b984c675",
+      "receipt": {
+        "run": 35866133454,
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test providers::claude_retry::tests::authenticated_retry_history_requires_same_session_next_attempt_and_valid_receipt ... ok"
+      }
+    },
+    {
+      "identity": "providers::cost_authorization::tests::empty_stdout_retry_gets_a_second_authorized_lifecycle",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "544b485c5c874deb8788828a9e4f777bdd2a96d87285503b0f06a7d0e4cb25f5",
+      "receipt": {
+        "run": 35866133454,
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test providers::cost_authorization::tests::empty_stdout_retry_gets_a_second_authorized_lifecycle ... ok"
+      }
+    },
+    {
+      "identity": "providers::cost_authorization::tests::final_retry_receipts_close_once_and_buddy_never_marks_them_followed_up",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "544b485c5c874deb8788828a9e4f777bdd2a96d87285503b0f06a7d0e4cb25f5",
+      "receipt": {
+        "run": 35866133454,
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test providers::cost_authorization::tests::final_retry_receipts_close_once_and_buddy_never_marks_them_followed_up ... ok"
+      }
+    },
+    {
+      "identity": "providers::cost_authorization::tests::consent_revoked_between_attempts_blocks_before_the_retry_wire",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "544b485c5c874deb8788828a9e4f777bdd2a96d87285503b0f06a7d0e4cb25f5",
+      "receipt": {
+        "run": 35866133454,
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test providers::cost_authorization::tests::consent_revoked_between_attempts_blocks_before_the_retry_wire ... ok"
+      }
+    },
+    {
+      "identity": "providers::cost_authorization::tests::mixed_retry_chain_retains_origin_only_for_final_authorization_denial",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "544b485c5c874deb8788828a9e4f777bdd2a96d87285503b0f06a7d0e4cb25f5",
+      "receipt": {
+        "run": 35866133454,
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test providers::cost_authorization::tests::mixed_retry_chain_retains_origin_only_for_final_authorization_denial ... ok"
+      }
+    },
+    {
+      "identity": "providers::cost_authorization::role_dispatch_tests::w225_effect_start_role_rejection_closes_admitted_retry_with_denial_receipt",
+      "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+      "sourceSha256": "45864f9d2f9a2d6bd9fac6fa63d898abdfed28563f19471188e3da2ed0433bf4",
+      "receipt": {
+        "run": 35866133454,
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test providers::cost_authorization::role_dispatch_tests::w225_effect_start_role_rejection_closes_admitted_retry_with_denial_receipt ... ok"
+      }
+    },
+    {
+      "identity": "providers::cost_authorization::role_dispatch_tests::w278_immediate_before_send_role_rejection_closes_admitted_retry_with_denial_receipt",
+      "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+      "sourceSha256": "45864f9d2f9a2d6bd9fac6fa63d898abdfed28563f19471188e3da2ed0433bf4",
+      "receipt": {
+        "run": 35866133454,
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test providers::cost_authorization::role_dispatch_tests::w278_immediate_before_send_role_rejection_closes_admitted_retry_with_denial_receipt ... ok"
+      }
+    },
+    {
+      "identity": "providers::cost_authorization::tests::direct_retry_closes_first_terminal_then_reauthorizes_before_success",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "544b485c5c874deb8788828a9e4f777bdd2a96d87285503b0f06a7d0e4cb25f5",
+      "receipt": {
+        "run": 35866133454,
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test providers::cost_authorization::tests::direct_retry_closes_first_terminal_then_reauthorizes_before_success ... ok"
+      }
+    },
+    {
+      "identity": "providers::cost_authorization::tests::direct_retry_untyped_failure_is_terminal_without_a_second_raw_call",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "544b485c5c874deb8788828a9e4f777bdd2a96d87285503b0f06a7d0e4cb25f5",
+      "receipt": {
+        "run": 35866133454,
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test providers::cost_authorization::tests::direct_retry_untyped_failure_is_terminal_without_a_second_raw_call ... ok"
+      }
+    },
+    {
+      "identity": "providers::cost_authorization::tests::direct_retry_typed_http_auth_is_terminal_without_a_second_raw_call",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "544b485c5c874deb8788828a9e4f777bdd2a96d87285503b0f06a7d0e4cb25f5",
+      "receipt": {
+        "run": 35866133454,
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test providers::cost_authorization::tests::direct_retry_typed_http_auth_is_terminal_without_a_second_raw_call ... ok"
+      }
+    },
+    {
+      "identity": "providers::cost_authorization::tests::direct_retry_stops_at_the_shared_transient_bound",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "544b485c5c874deb8788828a9e4f777bdd2a96d87285503b0f06a7d0e4cb25f5",
+      "receipt": {
+        "run": 35866133454,
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test providers::cost_authorization::tests::direct_retry_stops_at_the_shared_transient_bound ... ok"
+      }
+    },
+    {
+      "identity": "providers::cost_authorization::tests::direct_retry_consent_revocation_blocks_the_second_raw_call",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "544b485c5c874deb8788828a9e4f777bdd2a96d87285503b0f06a7d0e4cb25f5",
+      "receipt": {
+        "run": 35866133454,
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test providers::cost_authorization::tests::direct_retry_consent_revocation_blocks_the_second_raw_call ... ok"
+      }
+    },
+    {
+      "identity": "providers::cost_authorization::tests::direct_retry_does_not_send_early_during_a_durable_quota_cooldown",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "544b485c5c874deb8788828a9e4f777bdd2a96d87285503b0f06a7d0e4cb25f5",
+      "receipt": {
+        "run": 35866133454,
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test providers::cost_authorization::tests::direct_retry_does_not_send_early_during_a_durable_quota_cooldown ... ok"
+      }
+    },
+    {
+      "identity": "providers::cost_authorization::tests::direct_retry_honours_one_short_quota_retry_and_stops",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "544b485c5c874deb8788828a9e4f777bdd2a96d87285503b0f06a7d0e4cb25f5",
+      "receipt": {
+        "run": 35866133454,
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test providers::cost_authorization::tests::direct_retry_honours_one_short_quota_retry_and_stops ... ok"
+      }
+    },
+    {
+      "identity": "providers::cost_authorization::tests::direct_retry_reauthorizes_a_bounded_typed_error_correction_request",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "544b485c5c874deb8788828a9e4f777bdd2a96d87285503b0f06a7d0e4cb25f5",
+      "receipt": {
+        "run": 35866133454,
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test providers::cost_authorization::tests::direct_retry_reauthorizes_a_bounded_typed_error_correction_request ... ok"
+      }
+    },
+    {
+      "identity": "providers::cost_authorization::tests::direct_retry_context_over_input_cap_is_denied_before_a_second_raw_send",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "544b485c5c874deb8788828a9e4f777bdd2a96d87285503b0f06a7d0e4cb25f5",
+      "receipt": {
+        "run": 35866133454,
+        "artifact": "work/gold-20260906/wave405-recovery/group810bdb/w190-research-lifecycle-log-bdb50ac2acc4583345b61eb620ae7d08ecac5307/cargo-research-lifecycle.log",
+        "terminal": "test providers::cost_authorization::tests::direct_retry_context_over_input_cap_is_denied_before_a_second_raw_send ... ok"
+      }
+    },
+    {
+      "identity": "panel_logic::tests::w219_provider_retry_is_strict_bounded_redacted_and_absence_compatible",
+      "sourcePath": "SRC/neothd-gui/src/panel_logic.rs",
+      "receipt": {
+        "run": 35856964423,
+        "artifact": "work/gold-20260906/wave393-publication/gui135216/w228-linux-gui-fixtures-receipt-21612331dbc4e1fc8929e6990775f165c86fb3f1/test-094-execution.txt",
+        "terminal": "test panel_logic::tests::w219_provider_retry_is_strict_bounded_redacted_and_absence_compatible ... ok"
+      }
+    },
+    {
+      "identity": "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good",
+      "sourcePath": "SRC/neothd-gui/src/main.rs",
+      "receipt": {
+        "run": 35856964423,
+        "artifact": "work/gold-20260906/wave393-publication/gui135216/w228-linux-gui-fixtures-receipt-21612331dbc4e1fc8929e6990775f165c86fb3f1/test-127-execution.txt",
+        "terminal": "test w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good ... ok"
+      }
+    }
+  ],
+  "group810": {
+    "run": 35866133454,
+    "head": "bdb50ac2acc4583345b61eb620ae7d08ecac5307",
+    "required": 810,
+    "executed": 810,
+    "passed": 807,
+    "failed": 3,
+    "allSourceHashesMatch": true,
+    "matrixAndLockMatch": true
+  },
+  "gui135": {
+    "run": 35856964423,
+    "head": "21612331dbc4e1fc8929e6990775f165c86fb3f1",
+    "required": 135,
+    "passed": 135,
+    "allBindingsMatchGit": true,
+    "orderedActualTerminalsVerified": true
+  },
+  "sourceCarry": [
+    {
+      "path": "SRC/neothd/src/providers/claude_retry.rs",
+      "bdb50ac2Blob": "ba7c5a5f8d7909db0da1a488af64c11c029d17f0",
+      "current8f6ef116Blob": "ba7c5a5f8d7909db0da1a488af64c11c029d17f0",
+      "unchanged": true
+    },
+    {
+      "path": "SRC/neothd/src/providers/cost_authorization.rs",
+      "bdb50ac2Blob": "9856b8eeb216622c448ee865965e20b15312ec97",
+      "current8f6ef116Blob": "9856b8eeb216622c448ee865965e20b15312ec97",
+      "unchanged": true
+    },
+    {
+      "path": "SRC/neothd/src/providers/mod.rs",
+      "bdb50ac2Blob": "13a6618d7e705045a0c5b769a278ea61d2c12cc8",
+      "current8f6ef116Blob": "13a6618d7e705045a0c5b769a278ea61d2c12cc8",
+      "unchanged": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "bdb50ac2Blob": "bb3f964e380e6558f1eefc8d9f4de150d34268c8",
+      "current8f6ef116Blob": "bb3f964e380e6558f1eefc8d9f4de150d34268c8",
+      "unchanged": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/buddy.rs",
+      "bdb50ac2Blob": "19593f9eedd01ffaf870f97eac9d5d6f0cc82a09",
+      "current8f6ef116Blob": "19593f9eedd01ffaf870f97eac9d5d6f0cc82a09",
+      "unchanged": true
+    },
+    {
+      "path": "SRC/neothd-gui/src/panel_logic.rs",
+      "bdb50ac2Blob": "6bcd0468e6bcc5cf0014610ef68995d13ef7d495",
+      "current8f6ef116Blob": "6bcd0468e6bcc5cf0014610ef68995d13ef7d495",
+      "unchanged": true
+    },
+    {
+      "path": "SRC/neothd-gui/src/main.rs",
+      "bdb50ac2Blob": "0705853e795bb1a9a52693daa0449435e65aa306",
+      "current8f6ef116Blob": "0705853e795bb1a9a52693daa0449435e65aa306",
+      "unchanged": true
+    }
+  ],
+  "retainedUnrelatedFailures": [
+    "cli::parity_drift::operation_inventory_tracks_live_nested_cli_leaves",
+    "cli::memory::tests::physical_redaction_refuses_journal_target_that_is_not_the_bound_leaf",
+    "wal::redact::tests::staged_authenticated_leaf_refuses_matched_structural_frame_byte_identically"
+  ],
+  "w375GapClosure": [
+    "direct_retry_reauthorizes_a_bounded_typed_error_correction_request",
+    "direct_retry_context_over_input_cap_is_denied_before_a_second_raw_send"
+  ],
+  "localExecutableValidationRan": false
+}

@@ -168,6 +168,7 @@ jobs:
               "wave373AuthenticatedLeafAcceptance": 22,
               "wave392OutboundClusterAcceptance": 10,
               "wave400SessionPreviewAcceptance": 4,
+              "wave411CapabilityDecayAcceptance": 17,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():

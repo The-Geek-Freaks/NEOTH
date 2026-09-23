@@ -1,0 +1,20 @@
+{
+  "schema": "neoth-gold-p206-acceptance/v1",
+  "roadItem": "GOLD-LF-P2-06",
+  "decision": "selection_pending",
+  "currentHead": "8f6ef1166440037ceedc6a13c8a0f78596a8218b",
+  "priorAdmission": { "run": 35712523037, "head": "2cef823968db4ee7e20317315b7189d87895f761", "required": 18, "executed": 18, "passed": 18 },
+  "currentSourceAdmission": {
+    "run": 35866133454,
+    "head": "bdb50ac2acc4583345b61eb620ae7d08ecac5307",
+    "required": 810,
+    "executed": 810,
+    "passed": 807,
+    "passedP206Terminal": "cli::doctor::tests::check_docs_listed_count_matches_runtime_contract",
+    "failedUnrelated": ["cli::parity_drift::operation_inventory_tracks_live_nested_cli_leaves", "cli::memory::tests::physical_redaction_refuses_journal_target_that_is_not_the_bound_leaf", "wal::redact::tests::staged_authenticated_leaf_refuses_matched_structural_frame_byte_identically"]
+  },
+  "carryForward": { "currentP206SurfacePathsGitIdenticalToGroup810": true, "blockedByChangedProducerDependencyPathsSincePriorAdmission": ["SRC/neothd/src/providers/cost_authorization.rs", "SRC/neothd/src/wal/writer.rs"] },
+  "missingTerminalCount": 17,
+  "selection": "work/gold-20260906/W411-additional-grouped.json",
+  "notClaimed": ["semantic answer quality", "automatic routing or provider disabling", "GUI or platform-specific acceptance", "full release acceptance"]
+}

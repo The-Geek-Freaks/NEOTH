@@ -3081,9 +3081,10 @@ mod tests {
         // journal-named child which failed no-follow rebinding.
         assert!(format!("{error:#}").contains("missing-leaf.wal"));
         assert!(
-            error.chain().filter_map(|cause| cause.downcast_ref::<std::io::Error>()).any(|io| {
-                io.kind() == std::io::ErrorKind::NotFound
-            }),
+            error
+                .chain()
+                .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
+                .any(|io| { io.kind() == std::io::ErrorKind::NotFound }),
             "missing journal leaf must retain an OS NotFound cause: {error:#}"
         );
         assert!(

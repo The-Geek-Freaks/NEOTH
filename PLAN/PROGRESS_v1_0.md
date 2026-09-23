@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W404 citation lane, W411 selection, W413 retry acceptance and W414 format (2026-09-23):**
+P2-14 is accepted with19 actual source-bound PASS terminals:17native Group810
+and2GUI135; Root verified each terminal and unchanged relevant retry sources.
+W404 adds a main-only hosted lane for50 exact citation tests, with correct
+integration-harness filters, per-harness compile timeouts and individual receipts.
+Its optional three public-provider CLI probes retain typed unavailable results
+as noncoverage and recompute every successful claim/record binding.
+W411 selects17 existing capability-quality cases for the next group: the old
+18/18 receipt cannot settle later producer/WAL dependency changes by itself.
+P2-06 remains open; its overlapping Doctor contract already passed inGroup810.
+W414 imports only the source/digest/blob-bound two-path formatter output from
+Preflightef8235870714177; Coreef8235870714111 continues on equivalent source.
+Inventory692;native1136+Windows19/Linux33/macOS32;Group841;GUI143Linux/139macOS.
+Road1324=1032checked/290open/2partial;292raw/291pre-tag blockers;WS-LF25done/93open.
+No local compiler, formatter, parser, test, product runtime or model download ran.
 **W405-W410 recovery, hosted repairs and three functional acceptances (2026-09-23):**
 Group810 run35866133454 is source-admitted:810 executed,807 PASS,3 failures;
 all163source paths, matrix/lock and ordered individual terminals verified.
@@ -4917,7 +4932,7 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in accepted: **24 done / 94
+> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry accepted: **25 done / 93
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

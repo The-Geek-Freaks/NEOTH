@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T13:55:15.7333556Z",
-  "validationStatus": "W408Dream26 W409Research18 W410OptIn22 ACCEPTED; Group810807PASS3FAIL retained; W406WAL/W407inventory repairs hosted pending",
+  "capturedUtc": "2026-09-23T14:02:12.7335270Z",
+  "validationStatus": "P214 ACCEPTED19; W404citation50+optional3live and W411Group841 pending; W414verifiedhostedformat",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -78,8 +78,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 14793,
-      "sha256": "676B301BDDDD363DD82DB2F324A86B44500E33B498900BF714ACD3071D80F536"
+      "bytes": 14847,
+      "sha256": "F6961D6E3CE299E38661536A07B54E0F6B81278AB44AFFE79E0089A75EC116A9"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -808,18 +808,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 163796,
-      "sha256": "8E4515186DA91378A169083B0A3C8BC7FD7FD54543CFBC8E9BCE5CA374356C0C"
+      "bytes": 164987,
+      "sha256": "DF15E947265FFA6758CE6BE10DF0ECF56FEB0B70D30D91FCA1824E6CC3B0997A"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1173825,
-      "sha256": "ADE0FB07BB27668C39160B2EC8D66D9BDD7A33C119523D2BBCC45425B420BF65"
+      "bytes": 1175052,
+      "sha256": "228429C2588B03530788DF67D8C2D868F408E28FCE8204ABBCDB95A564F40B04"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1771475,
-      "sha256": "874294416EF5B2C3CCB9E932A2E4FA1E79C497B979E2719F9F47A3C570278BA2"
+      "bytes": 1772675,
+      "sha256": "F0ABAEE3F635581A2D8B5B1DBEDA417E61B4AA3E006FD45EA882C6273C143BBD"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1598,8 +1598,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/memory.rs",
-      "bytes": 132557,
-      "sha256": "F80E7270E2AF676B39DF5CD457D7DEB7AB9F63AE8C58C2344260E81D86AF5A2A"
+      "bytes": 132580,
+      "sha256": "51595ECBCBB45914D85FE49A8D506CE8365C53D1395E0D978A30AC99E8CA7602"
     },
     {
       "path": "SRC/neothd/src/cli/meter.rs",
@@ -3430,6 +3430,41 @@
       "path": "docs/verification/gold-wave410-p223-acceptance.json",
       "bytes": 15611,
       "sha256": "ED7C3C72698E829DCCEED2B0CD0BF22CD1DB32E023A04A2445E749BE46E64128"
+    },
+    {
+      "path": ".github/workflows/citation-acceptance.yml",
+      "bytes": 5163,
+      "sha256": "2C0F8FAE644A98CD05F9AD82DFE6303B5B85CC02D7C02EF083FD6FDAC0AF0F58"
+    },
+    {
+      "path": "packaging/tests/citation_acceptance.py",
+      "bytes": 21765,
+      "sha256": "671EE4BB0105D9B5C76DB296724A2FE3565453F476E070480C24C42D5E3A4363"
+    },
+    {
+      "path": "docs/gold-wave404-citation-hosted-acceptance.md",
+      "bytes": 3790,
+      "sha256": "3E04E5507B4FAB857929919E7D3895D778A4E822FCD6703BC195B5E1E28A5F3A"
+    },
+    {
+      "path": "docs/gold-wave411-capability-decay-acceptance.md",
+      "bytes": 1956,
+      "sha256": "D767E099FC4DB902780D22B868223E8C81149AEFEC8142909DD464AB3089B34A"
+    },
+    {
+      "path": "docs/verification/gold-wave411-p206-acceptance.json",
+      "bytes": 1350,
+      "sha256": "B3A34206514EAACC0ADFAFF9B80083C31D84827B5D927A1D9E9392E50D50BE0A"
+    },
+    {
+      "path": "docs/gold-wave413-retry-acceptance.md",
+      "bytes": 5306,
+      "sha256": "47C5ABB03E178899F131BE50DE19E6C9E7766EB73DFAD60FAB2DAAFAE68A73B4"
+    },
+    {
+      "path": "docs/verification/gold-wave413-p214-acceptance.json",
+      "bytes": 15238,
+      "sha256": "C8B8DCF16A3766663149173CFEA649A7C3481B05B8E6228CA12BE6E35298DC48"
     }
   ]
 }

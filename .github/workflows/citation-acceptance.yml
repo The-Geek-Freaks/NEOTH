@@ -1,0 +1,134 @@
+name: W404 citation hosted acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      live_probes:
+        description: 'Run the three authorized public-provider CLI probes after native acceptance'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: w404-citation-acceptance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  citation-acceptance:
+    if: github.ref == 'refs/heads/main'
+    name: W404 exact citation native acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: '1'
+    steps:
+      - name: Checkout main without credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Require exact main dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Set up pinned Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+
+      - name: Restore Gold-smoke Cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-gold-smoke-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-gold-smoke-cargo-
+
+      - name: Bind and run the exact 50-test native selection
+        id: native
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/w404-citation-acceptance"
+          mkdir -p "$evidence_root"
+          python3 packaging/tests/citation_acceptance.py native \
+            --repository "$GITHUB_WORKSPACE" \
+            --evidence-dir "$evidence_root" \
+            --expected-head "$GITHUB_SHA"
+
+      - name: Build the exact production CLI for optional live probes
+        if: ${{ inputs.live_probes }}
+        shell: bash
+        working-directory: SRC
+        run: |
+          set -uo pipefail
+          evidence_root="$RUNNER_TEMP/w404-citation-acceptance"
+          mkdir -p "$evidence_root/logs" "$evidence_root/receipt"
+          timeout 1500 cargo build -p neoth --bin neoth --locked 2>&1 | tee "$evidence_root/logs/build-production-cli.log"
+          status=${PIPESTATUS[0]}
+          BUILD_STATUS="$status" BUILD_HEAD="$GITHUB_SHA" python3 - "$evidence_root/receipt/live-cli-build.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          status = int(os.environ["BUILD_STATUS"])
+          Path(sys.argv[1]).write_text(json.dumps({
+              "schema": "neoth-w404-citation-live-cli-build/v1",
+              "sourceHead": os.environ["BUILD_HEAD"],
+              "exitCode": status,
+              "timedOut": status == 124,
+              "command": "cargo build -p neoth --bin neoth --locked",
+          }, indent=2) + "\n", encoding="utf-8")
+          PY
+          if [ "$status" -eq 124 ]; then
+            printf '%s\n' 'W404 production CLI build timed out after 1500s; partial output retained.' >> "$evidence_root/logs/build-production-cli.log"
+          fi
+          exit "$status"
+
+      - name: Run authorized public-provider probes through the ordinary CLI path
+        if: ${{ inputs.live_probes }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 packaging/tests/citation_acceptance.py live \
+            --repository "$GITHUB_WORKSPACE" \
+            --evidence-dir "$RUNNER_TEMP/w404-citation-acceptance" \
+            --expected-head "$GITHUB_SHA" \
+            --cli-bin "$GITHUB_WORKSPACE/SRC/target/debug/neoth"
+
+      - name: Save completed focused Cargo cache
+        if: ${{ !cancelled() && steps.native.outcome == 'success' && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-w404-citation-complete-${{ hashFiles('SRC/Cargo.lock', 'SRC/neothd/src/tools/citation_lookup.rs', 'SRC/neothd/src/tools/citation_consent.rs', 'SRC/neothd/src/tools/citation_http.rs', 'SRC/neothd/src/tools/external_http.rs', 'SRC/neothd/src/cli/citation.rs', 'SRC/neothd/tests/citation_cli_contract.rs') }}
+
+      - name: Upload source-bound W404 evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w404-citation-acceptance-${{ github.sha }}
+          path: ${{ runner.temp }}/w404-citation-acceptance/
+          if-no-files-found: error
+          retention-days: 14

@@ -2087,7 +2087,8 @@ mod tests {
             "opened_segment_name": "000001.wal", "opened_generation": 1,
             "opened_seq": 1, "opened_start_ts_ns": 0,
             "opened_node_id": ([0_u8; 16]), "reason": "acmecorp", "ts_ns": 1,
-        })).unwrap();
+        }))
+        .unwrap();
         let path = write_authenticated_leaf_with_writer_marker_type(
             home.path(),
             events::EVENT_TYPE_SEGMENT_ROLLOVER,
@@ -2098,7 +2099,10 @@ mod tests {
             stage_authenticated_sealed_leaf(home.path(), &path, payload_contains_topic("acmecorp"))
                 .err()
                 .expect("matched authenticated structural frame must refuse");
-        assert!(format!("{error:#}").contains("chain-structural"), "{error:#}");
+        assert!(
+            format!("{error:#}").contains("chain-structural"),
+            "{error:#}"
+        );
         assert_eq!(
             std::fs::read(&path).unwrap(),
             before,
