@@ -24,3 +24,7 @@ Source review is separate from hosted compilation and execution. No local
 compiler, formatter, parser, test or product runtime was run under the BSOD
 hold. The current CLI reference will be refreshed from the next exact-source
 hosted export.
+
+## W284 hosted follow-up
+
+Preflight run35818238243 supplied the exact four-path formatter patch for source7f84dbdc. Core run35818250744 stopped at seven Clippy diagnostics: Boolean simplification, helper argument count and collapsible conditionals. The narrow repair retains discovery/permission/audit semantics, groups the two limits in GlobBounds and removes an unnecessary test-DB mutable binding. No warning is suppressed. Fresh hosted compilation and execution remain required.

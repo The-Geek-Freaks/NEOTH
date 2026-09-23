@@ -3,6 +3,34 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**P2-05 Self-improve quality accepted (2026-09-23):**
+Group489 run35816919838 passed489/489 atb7ca8bf4 with all107 source bindings,
+matrix/lock and ordered terminals admitted. This includes the four passive
+Buddy-quality cases and W278's exact retry-role denial receipt. W275's nine
+Core/CLI cases are also admitted from Group484. Seven GUI quality fixtures
+at GUI8f16 positions23–27,105–106 passed: quality projection/refusal, exact
+accept/readback and passive Buddy handoff. GUI8f16 as a whole remains122/124;
+its W153/W164 failures are outside this specific quality acceptance.
+
+The six Core/GUI dependency blobs are unchanged fromb7ca to7f84. Relative to
+GUI8f16, main.rs changed only unrelated W274/W155 test helpers; the production
+quality path and all seven accepted quality fixtures are unchanged.
+P2-05 is closed. Road1324 =1021 checked/301 open/2 partial; raw blockers303,
+release-tag blockers302; WS-LF118 =14 done/104 open. This does not claim live
+provider QA, packaged GUI acceptance or overall release readiness.
+
+**W284 exact hosted formatting and Clippy repair (2026-09-23):**
+Preflight7f84 exported a four-path rustfmt patch. Root verified the run HEAD,
+artifact hashes and exact Git preimages/postimages before applying it.
+Core7f84 then reported seven diagnostics in three classes: nonminimal Boolean
+conditions, the nine-argument glob helper and two collapsible conditionals.
+The repair names the forbidden-pattern predicate, groups the two discovery
+limits in GlobBounds and uses let-chains; no lint is suppressed. One unnecessary
+test-DB mutable binding is removed. Runtime admission awaits fresh hosted gates.
+FullCIce0 Linux failed from hosted-runner communication loss during workspace
+Clippy, after slim Clippy passed; CPU/memory/network cause is unproven. Windows
+and macOS continue, and that run is preserved. No local executable work ran.
+
 **W279 native glob source batch (2026-09-23):**
 Native fs glob now enumerates bounded, sorted names through a separate
 OsDirectoryList permission and retained no-follow directory capabilities.

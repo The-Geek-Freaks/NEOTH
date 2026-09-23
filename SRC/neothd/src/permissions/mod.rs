@@ -1752,7 +1752,10 @@ mod tests {
         let action = Action::OsDirectoryList {
             path: std::path::PathBuf::from("/x/d"),
         };
-        assert!(matches!(evaluate(&action, AutonomyLevel::Strict), Decision::Confirm(_)));
+        assert!(matches!(
+            evaluate(&action, AutonomyLevel::Strict),
+            Decision::Confirm(_)
+        ));
         assert!(evaluate(&action, AutonomyLevel::Standard).is_allow());
         assert!(evaluate(&action, AutonomyLevel::Elevated).is_allow());
         assert!(evaluate(&action, AutonomyLevel::Full).is_allow());

@@ -8,6 +8,34 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**P2-05 Self-improve quality accepted (2026-09-23):**
+Group489 run35816919838 passed489/489 atb7ca8bf4 with all107 source bindings,
+matrix/lock and ordered terminals admitted. This includes the four passive
+Buddy-quality cases and W278's exact retry-role denial receipt. W275's nine
+Core/CLI cases are also admitted from Group484. Seven GUI quality fixtures
+at GUI8f16 positions23–27,105–106 passed: quality projection/refusal, exact
+accept/readback and passive Buddy handoff. GUI8f16 as a whole remains122/124;
+its W153/W164 failures are outside this specific quality acceptance.
+
+The six Core/GUI dependency blobs are unchanged fromb7ca to7f84. Relative to
+GUI8f16, main.rs changed only unrelated W274/W155 test helpers; the production
+quality path and all seven accepted quality fixtures are unchanged.
+P2-05 is closed. Road1324 =1021 checked/301 open/2 partial; raw blockers303,
+release-tag blockers302; WS-LF118 =14 done/104 open. This does not claim live
+provider QA, packaged GUI acceptance or overall release readiness.
+
+**W284 exact hosted formatting and Clippy repair (2026-09-23):**
+Preflight7f84 exported a four-path rustfmt patch. Root verified the run HEAD,
+artifact hashes and exact Git preimages/postimages before applying it.
+Core7f84 then reported seven diagnostics in three classes: nonminimal Boolean
+conditions, the nine-argument glob helper and two collapsible conditionals.
+The repair names the forbidden-pattern predicate, groups the two discovery
+limits in GlobBounds and uses let-chains; no lint is suppressed. One unnecessary
+test-DB mutable binding is removed. Runtime admission awaits fresh hosted gates.
+FullCIce0 Linux failed from hosted-runner communication loss during workspace
+Clippy, after slim Clippy passed; CPU/memory/network cause is unproven. Windows
+and macOS continue, and that run is preserved. No local executable work ran.
+
 **W279 native glob source batch (2026-09-23):**
 Native fs glob now enumerates bounded, sorted names through a separate
 OsDirectoryList permission and retained no-follow directory capabilities.
@@ -8304,7 +8332,7 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
   quarantine, operator and executor paths, Jaccard topic deduplication, yearly
   synthesis and deterministic synonym mapping remain open; no parent
   acceptance criterion is complete.
-- [ ] **GOLD-LF-P2-05 — Self-improve proposal quality schema:** version and persist eval source, corpus hash, regressions and quality evidence, reject incomplete/stale proposals before acceptance, and expose the same proof in CLI/GUI/Buddy. Source: REFLECT_BACKLOG §B.
+- [x] **GOLD-LF-P2-05 — Self-improve proposal quality schema:** version and persist eval source, corpus hash, regressions and quality evidence, reject incomplete/stale proposals before acceptance, and expose the same proof in CLI/GUI/Buddy. Source: REFLECT_BACKLOG §B. Accepted 2026-09-23: W275 core/CLI, Group489 passive-quality and seven GUI W142/W149 cases; see docs/gold-wave275-self-improve-cli-acceptance.md.
 - [ ] **GOLD-LF-P2-06 — Capability decay tracking:** define and persist provider/capability quality-over-time metrics, decay/recovery rules and operator-visible diagnostics without allowing noisy samples to silently disable capabilities. Source: FEATURE_EVAL.md C-13.
 - [ ] **GOLD-LF-P2-07 — EXP-FD-1..5 fractal-dimension experiments:** complete the reasoning-depth literature/design note, then implement all five reproducible gated experiments with datasets, metrics, provenance and explicit promotion/rejection criteria. Source: dimension.rs gated experiment backlog.
 - [ ] **GOLD-LF-P2-08 — Universal WAL session_id:** thread the authenticated session identity through make_header and every applicable emitter, migrate/read legacy zero values safely and prove cross-session replay/query isolation. Source: builder.rs session_id finding.

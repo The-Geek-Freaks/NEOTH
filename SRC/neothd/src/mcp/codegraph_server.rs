@@ -2605,72 +2605,227 @@ pub(crate) fn prepare_native_fs_glob_enrichment(
     context: &crate::hooks::PreToolUseContext,
     enabled: bool,
 ) -> Result<Option<NativeFsGlobEnrichmentPlan>> {
-    if !enabled { return Ok(None); }
-    anyhow::ensure!(matches!(context.origin(), crate::hooks::PreToolUseOrigin::DirectCliOsDirectoryGlob), "native glob enrichment requires direct CLI glob origin");
-    anyhow::ensure!(!context.is_cancelled() && !context.deadline_elapsed(), "native glob enrichment cancelled or deadline elapsed");
+    if !enabled {
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        matches!(
+            context.origin(),
+            crate::hooks::PreToolUseOrigin::DirectCliOsDirectoryGlob
+        ),
+        "native glob enrichment requires direct CLI glob origin"
+    );
+    anyhow::ensure!(
+        !context.is_cancelled() && !context.deadline_elapsed(),
+        "native glob enrichment cancelled or deadline elapsed"
+    );
     let repository_root = repository_root.canonicalize()?;
     let admitted_root = admitted_root.to_path_buf();
-    anyhow::ensure!(admitted_root.starts_with(&repository_root), "glob root is outside indexed repository root");
-    anyhow::ensure!(crate::os_tools::gate::current_directory_identity_no_follow(&admitted_root)? == admitted_root_identity, "glob root changed after retained-directory admission");
-    anyhow::ensure!(context.canonical_root() == repository_root && context.canonical_cwd() == repository_root, "glob context is not bound to repository root");
+    anyhow::ensure!(
+        admitted_root.starts_with(&repository_root),
+        "glob root is outside indexed repository root"
+    );
+    anyhow::ensure!(
+        crate::os_tools::gate::current_directory_identity_no_follow(&admitted_root)?
+            == admitted_root_identity,
+        "glob root changed after retained-directory admission"
+    );
+    anyhow::ensure!(
+        context.canonical_root() == repository_root && context.canonical_cwd() == repository_root,
+        "glob context is not bound to repository root"
+    );
     let servers = McpServers::load_from(&home.join("mcp_servers.yaml"))?;
-    let Some(database_path) = servers.get_enabled("neoth-codegraph").and_then(trusted_generated_codegraph_database) else { return Ok(None); };
+    let Some(database_path) = servers
+        .get_enabled("neoth-codegraph")
+        .and_then(trusted_generated_codegraph_database)
+    else {
+        return Ok(None);
+    };
     let conn = open_code_map_read_only(&database_path)?;
-    let Some(active) = crate::code_map::recall::resolve_active_root_snapshot(&conn, &repository_root)? else { return Ok(None); };
-    anyhow::ensure!(active.root.path() == repository_root && active.index_generation > 0 && active.index_generation == active.graph_generation && crate::code_map::persist::root_snapshot_complete(&conn, active.root.display())? && !crate::code_map::persist::index_freshness_receipt(&conn, active.root.display())?.stale, "native glob enrichment requires a fresh complete exact snapshot");
-    Ok(Some(NativeFsGlobEnrichmentPlan { context: context.clone(), database_path, repository_root, admitted_root, admitted_root_identity: admitted_root_identity.to_owned(), root_identity: active.root.identity().as_str().to_owned(), index_generation: active.index_generation, graph_generation: active.graph_generation }))
+    let Some(active) =
+        crate::code_map::recall::resolve_active_root_snapshot(&conn, &repository_root)?
+    else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        active.root.path() == repository_root
+            && active.index_generation > 0
+            && active.index_generation == active.graph_generation
+            && crate::code_map::persist::root_snapshot_complete(&conn, active.root.display())?
+            && !crate::code_map::persist::index_freshness_receipt(&conn, active.root.display())?
+                .stale,
+        "native glob enrichment requires a fresh complete exact snapshot"
+    );
+    Ok(Some(NativeFsGlobEnrichmentPlan {
+        context: context.clone(),
+        database_path,
+        repository_root,
+        admitted_root,
+        admitted_root_identity: admitted_root_identity.to_owned(),
+        root_identity: active.root.identity().as_str().to_owned(),
+        index_generation: active.index_generation,
+        graph_generation: active.graph_generation,
+    }))
 }
 
 impl NativeFsGlobEnrichmentPlan {
     pub(crate) fn freshness_after_glob(&self, matches: &[String]) -> NativeFsGlobFreshness {
-        if self.context.is_cancelled() || self.context.deadline_elapsed() { return NativeFsGlobFreshness::Unavailable; }
+        if self.context.is_cancelled() || self.context.deadline_elapsed() {
+            return NativeFsGlobFreshness::Unavailable;
+        }
         match crate::os_tools::gate::current_directory_identity_no_follow(&self.admitted_root) {
             Ok(identity) if identity == self.admitted_root_identity => {}
             Ok(_) => return NativeFsGlobFreshness::Stale,
             Err(_) => return NativeFsGlobFreshness::Unavailable,
         }
-        let Ok(conn) = open_code_map_read_only(&self.database_path) else { return NativeFsGlobFreshness::Unavailable; };
-        let Ok(Some(active)) = crate::code_map::recall::resolve_active_root_snapshot(&conn, &self.repository_root) else { return NativeFsGlobFreshness::Unavailable; };
-        let Ok(complete) = crate::code_map::persist::root_snapshot_complete(&conn, active.root.display()) else { return NativeFsGlobFreshness::Unavailable; };
-        let Ok(receipt) = crate::code_map::persist::index_freshness_receipt(&conn, active.root.display()) else { return NativeFsGlobFreshness::Unavailable; };
-        if active.root.identity().as_str() != self.root_identity || active.index_generation != self.index_generation || active.graph_generation != self.graph_generation || !complete || receipt.stale { return NativeFsGlobFreshness::Stale; }
-        let base = match self.admitted_root.strip_prefix(&self.repository_root) { Ok(path) => path, Err(_) => return NativeFsGlobFreshness::Unavailable };
+        let Ok(conn) = open_code_map_read_only(&self.database_path) else {
+            return NativeFsGlobFreshness::Unavailable;
+        };
+        let Ok(Some(active)) =
+            crate::code_map::recall::resolve_active_root_snapshot(&conn, &self.repository_root)
+        else {
+            return NativeFsGlobFreshness::Unavailable;
+        };
+        let Ok(complete) =
+            crate::code_map::persist::root_snapshot_complete(&conn, active.root.display())
+        else {
+            return NativeFsGlobFreshness::Unavailable;
+        };
+        let Ok(receipt) =
+            crate::code_map::persist::index_freshness_receipt(&conn, active.root.display())
+        else {
+            return NativeFsGlobFreshness::Unavailable;
+        };
+        if active.root.identity().as_str() != self.root_identity
+            || active.index_generation != self.index_generation
+            || active.graph_generation != self.graph_generation
+            || !complete
+            || receipt.stale
+        {
+            return NativeFsGlobFreshness::Stale;
+        }
+        let base = match self.admitted_root.strip_prefix(&self.repository_root) {
+            Ok(path) => path,
+            Err(_) => return NativeFsGlobFreshness::Unavailable,
+        };
         let mut paths = Vec::new();
         for item in matches.iter().take(64) {
             let path = base.join(item).to_string_lossy().replace('\\', "/");
-            if !path.is_empty() && !path.split('/').any(|part| part.is_empty() || part == "." || part == "..") { paths.push(path); }
+            if !path.is_empty()
+                && !path
+                    .split('/')
+                    .any(|part| part.is_empty() || part == "." || part == "..")
+            {
+                paths.push(path);
+            }
         }
-        let sidecar = match render_native_fs_glob_enrichment(&conn, active.root.display(), &paths, &self.root_identity, self.index_generation, self.graph_generation, self.context.call_id()) { Ok(value) => value, Err(_) => return NativeFsGlobFreshness::Unavailable };
-        if self.context.is_cancelled() || self.context.deadline_elapsed() { return NativeFsGlobFreshness::Unavailable; }
-        let Ok(Some(final_active)) = crate::code_map::recall::resolve_active_root_snapshot(&conn, &self.repository_root) else { return NativeFsGlobFreshness::Unavailable; };
-        let Ok(final_complete) = crate::code_map::persist::root_snapshot_complete(&conn, final_active.root.display()) else { return NativeFsGlobFreshness::Unavailable; };
-        let Ok(final_receipt) = crate::code_map::persist::index_freshness_receipt(&conn, final_active.root.display()) else { return NativeFsGlobFreshness::Unavailable; };
+        let sidecar = match render_native_fs_glob_enrichment(
+            &conn,
+            active.root.display(),
+            &paths,
+            &self.root_identity,
+            self.index_generation,
+            self.graph_generation,
+            self.context.call_id(),
+        ) {
+            Ok(value) => value,
+            Err(_) => return NativeFsGlobFreshness::Unavailable,
+        };
+        if self.context.is_cancelled() || self.context.deadline_elapsed() {
+            return NativeFsGlobFreshness::Unavailable;
+        }
+        let Ok(Some(final_active)) =
+            crate::code_map::recall::resolve_active_root_snapshot(&conn, &self.repository_root)
+        else {
+            return NativeFsGlobFreshness::Unavailable;
+        };
+        let Ok(final_complete) =
+            crate::code_map::persist::root_snapshot_complete(&conn, final_active.root.display())
+        else {
+            return NativeFsGlobFreshness::Unavailable;
+        };
+        let Ok(final_receipt) =
+            crate::code_map::persist::index_freshness_receipt(&conn, final_active.root.display())
+        else {
+            return NativeFsGlobFreshness::Unavailable;
+        };
         match crate::os_tools::gate::current_directory_identity_no_follow(&self.admitted_root) {
             Ok(identity) if identity == self.admitted_root_identity => {}
             Ok(_) => return NativeFsGlobFreshness::Stale,
             Err(_) => return NativeFsGlobFreshness::Unavailable,
         }
-        if final_active.root.identity().as_str() != self.root_identity || final_active.index_generation != self.index_generation || final_active.graph_generation != self.graph_generation || !final_complete || final_receipt.stale { return NativeFsGlobFreshness::Stale; }
-        crate::hooks::PreToolUseEnrichment::new(sidecar).map(NativeFsGlobFreshness::Fresh).unwrap_or(NativeFsGlobFreshness::Unavailable)
+        if final_active.root.identity().as_str() != self.root_identity
+            || final_active.index_generation != self.index_generation
+            || final_active.graph_generation != self.graph_generation
+            || !final_complete
+            || final_receipt.stale
+        {
+            return NativeFsGlobFreshness::Stale;
+        }
+        crate::hooks::PreToolUseEnrichment::new(sidecar)
+            .map(NativeFsGlobFreshness::Fresh)
+            .unwrap_or(NativeFsGlobFreshness::Unavailable)
     }
 }
 
-fn render_native_fs_glob_enrichment(conn: &rusqlite::Connection, root: &str, paths: &[String], identity: &str, index_generation: i64, graph_generation: i64, call_id: crate::hooks::PreToolUseCallId) -> Result<String> {
+fn render_native_fs_glob_enrichment(
+    conn: &rusqlite::Connection,
+    root: &str,
+    paths: &[String],
+    identity: &str,
+    index_generation: i64,
+    graph_generation: i64,
+    call_id: crate::hooks::PreToolUseCallId,
+) -> Result<String> {
     const LIMIT: usize = crate::hooks::pre_tool_use::MAX_PRE_TOOL_USE_ENRICHMENT_BYTES;
     const SYMBOL_CAP: usize = 96;
-    let mut out = format!("[untrusted native fs-glob codegraph sidecar]\ncall_id: {:?}\nnative_origin: direct_cli_os_directory_glob\nroot_identity: {identity}\ngenerations: index={index_generation} graph={graph_generation}\nsnapshot: fresh_complete=true stale=false\n", call_id);
-    if paths.is_empty() { return Ok(out); }
-    let marks = (1..=paths.len()).map(|n| format!("?{}", n + 1)).collect::<Vec<_>>().join(",");
-    let sql = format!("SELECT f.path, s.name, s.kind, s.line, s.line_end FROM code_map_files f LEFT JOIN code_map_symbols s ON s.file_id = f.id WHERE f.root = ?1 AND f.path IN ({marks}) ORDER BY f.path, s.line, s.name LIMIT {}", SYMBOL_CAP + paths.len() + 1);
-    let mut values = Vec::with_capacity(paths.len() + 1); values.push(rusqlite::types::Value::Text(root.to_owned())); values.extend(paths.iter().cloned().map(rusqlite::types::Value::Text));
+    let mut out = format!(
+        "[untrusted native fs-glob codegraph sidecar]\ncall_id: {:?}\nnative_origin: direct_cli_os_directory_glob\nroot_identity: {identity}\ngenerations: index={index_generation} graph={graph_generation}\nsnapshot: fresh_complete=true stale=false\n",
+        call_id
+    );
+    if paths.is_empty() {
+        return Ok(out);
+    }
+    let marks = (1..=paths.len())
+        .map(|n| format!("?{}", n + 1))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT f.path, s.name, s.kind, s.line, s.line_end FROM code_map_files f LEFT JOIN code_map_symbols s ON s.file_id = f.id WHERE f.root = ?1 AND f.path IN ({marks}) ORDER BY f.path, s.line, s.name LIMIT {}",
+        SYMBOL_CAP + paths.len() + 1
+    );
+    let mut values = Vec::with_capacity(paths.len() + 1);
+    values.push(rusqlite::types::Value::Text(root.to_owned()));
+    values.extend(paths.iter().cloned().map(rusqlite::types::Value::Text));
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(rusqlite::params_from_iter(values))?;
-    let mut truncated = false; let mut symbols = 0usize;
+    let mut truncated = false;
+    let mut symbols = 0usize;
     while let Some(row) = rows.next()? {
-        let path: String = row.get(0)?; let name: Option<String> = row.get(1)?; let kind: Option<String> = row.get(2)?; let line: Option<i64> = row.get(3)?; let end: Option<i64> = row.get(4)?;
-        if name.is_some() { symbols += 1; if symbols > SYMBOL_CAP { truncated = true; break; } }
-        let item = match (name, kind, line) { (Some(name), Some(kind), Some(line)) => format!("symbol: {path} :: {name} ({kind}) @{}..{}\n", line, end.unwrap_or(line)), _ => format!("file: {path}\n") };
-        if out.len() + item.len() > LIMIT.saturating_sub(25) { truncated = true; break; }
+        let path: String = row.get(0)?;
+        let name: Option<String> = row.get(1)?;
+        let kind: Option<String> = row.get(2)?;
+        let line: Option<i64> = row.get(3)?;
+        let end: Option<i64> = row.get(4)?;
+        if name.is_some() {
+            symbols += 1;
+            if symbols > SYMBOL_CAP {
+                truncated = true;
+                break;
+            }
+        }
+        let item = match (name, kind, line) {
+            (Some(name), Some(kind), Some(line)) => format!(
+                "symbol: {path} :: {name} ({kind}) @{}..{}\n",
+                line,
+                end.unwrap_or(line)
+            ),
+            _ => format!("file: {path}\n"),
+        };
+        if out.len() + item.len() > LIMIT.saturating_sub(25) {
+            truncated = true;
+            break;
+        }
         out.push_str(&item);
     }
     out.push_str(&format!("sidecar_truncated: {truncated}\n"));
@@ -5771,30 +5926,126 @@ fn root() { alpha(); beta(); }
     }
     #[test]
     fn w279_native_glob_plan_is_db_only_fresh_stale_and_bounded() {
-        let home = tempdir().unwrap(); let repository = home.path().join("repository"); let database = home.path().join("code_map.db"); seed_code_map_db(&database, &repository);
-        std::fs::write(home.path().join("mcp_servers.yaml"), serde_yaml::to_string(&McpServers { servers: vec![w56_generated_base(&database.canonicalize().unwrap())], smart_loading: false }).unwrap()).unwrap();
-        let root = repository.canonicalize().unwrap(); let context = crate::hooks::PreToolUseContext::admitted(crate::hooks::PreToolUseOrigin::DirectCliOsDirectoryGlob, "native-os-directory-glob", "fs-glob", &serde_json::json!({"root": root.display().to_string(), "pattern": "*.rs"}), &root, &root, std::time::Duration::from_secs(1), crate::hooks::PreToolUseCancellation::unbound(), crate::hooks::PreToolUseReplay::direct_request()).unwrap();
+        let home = tempdir().unwrap();
+        let repository = home.path().join("repository");
+        let database = home.path().join("code_map.db");
+        seed_code_map_db(&database, &repository);
+        std::fs::write(
+            home.path().join("mcp_servers.yaml"),
+            serde_yaml::to_string(&McpServers {
+                servers: vec![w56_generated_base(&database.canonicalize().unwrap())],
+                smart_loading: false,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let root = repository.canonicalize().unwrap();
+        let context = crate::hooks::PreToolUseContext::admitted(
+            crate::hooks::PreToolUseOrigin::DirectCliOsDirectoryGlob,
+            "native-os-directory-glob",
+            "fs-glob",
+            &serde_json::json!({"root": root.display().to_string(), "pattern": "*.rs"}),
+            &root,
+            &root,
+            std::time::Duration::from_secs(1),
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+        )
+        .unwrap();
         let identity = crate::os_tools::gate::current_directory_identity_no_follow(&root).unwrap();
-        let plan = prepare_native_fs_glob_enrichment(home.path(), &root, &root, &identity, &context, true).unwrap().unwrap();
-        let NativeFsGlobFreshness::Fresh(sidecar) = plan.freshness_after_glob(&["x.rs".into()]) else { panic!("fresh indexed symbol sidecar") };
-        assert!(sidecar.as_str().contains("symbol: x.rs ::")); assert!(sidecar.as_str().contains("generations: index=")); assert!(!sidecar.as_str().contains("fn leaf"));
-        let replacement_plan = prepare_native_fs_glob_enrichment(home.path(), &root, &root, &identity, &context, true).unwrap().unwrap();
-        let moved = home.path().join("repository-before-swap"); std::fs::rename(&root, &moved).unwrap(); std::fs::create_dir(&root).unwrap();
-        assert!(!matches!(replacement_plan.freshness_after_glob(&["x.rs".into()]), NativeFsGlobFreshness::Fresh(_)), "ambient root replacement must suppress a sidecar bound to the retained directory");
-        std::fs::remove_dir(&root).unwrap(); std::fs::rename(&moved, &root).unwrap();
+        let plan =
+            prepare_native_fs_glob_enrichment(home.path(), &root, &root, &identity, &context, true)
+                .unwrap()
+                .unwrap();
+        let NativeFsGlobFreshness::Fresh(sidecar) = plan.freshness_after_glob(&["x.rs".into()])
+        else {
+            panic!("fresh indexed symbol sidecar")
+        };
+        assert!(sidecar.as_str().contains("symbol: x.rs ::"));
+        assert!(sidecar.as_str().contains("generations: index="));
+        assert!(!sidecar.as_str().contains("fn leaf"));
+        let replacement_plan =
+            prepare_native_fs_glob_enrichment(home.path(), &root, &root, &identity, &context, true)
+                .unwrap()
+                .unwrap();
+        let moved = home.path().join("repository-before-swap");
+        std::fs::rename(&root, &moved).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        assert!(
+            !matches!(
+                replacement_plan.freshness_after_glob(&["x.rs".into()]),
+                NativeFsGlobFreshness::Fresh(_)
+            ),
+            "ambient root replacement must suppress a sidecar bound to the retained directory"
+        );
+        std::fs::remove_dir(&root).unwrap();
+        std::fs::rename(&moved, &root).unwrap();
         std::fs::write(root.join("x.rs"), "fn changed() {}\n").unwrap();
-        assert!(matches!(plan.freshness_after_glob(&["x.rs".into()]), NativeFsGlobFreshness::Stale));
+        assert!(matches!(
+            plan.freshness_after_glob(&["x.rs".into()]),
+            NativeFsGlobFreshness::Stale
+        ));
     }
 
     #[test]
     fn w279_native_glob_plan_refuses_malformed_descriptor_and_marks_symbol_overflow() {
-        let home = tempdir().unwrap(); let repository = home.path().join("repository"); let database = home.path().join("code_map.db"); seed_code_map_db(&database, &repository);
-        std::fs::write(home.path().join("mcp_servers.yaml"), "servers: []\nsmart_loading: false\n").unwrap(); let root = repository.canonicalize().unwrap();
-        let context = crate::hooks::PreToolUseContext::admitted(crate::hooks::PreToolUseOrigin::DirectCliOsDirectoryGlob, "native-os-directory-glob", "fs-glob", &serde_json::json!({}), &root, &root, std::time::Duration::from_secs(1), crate::hooks::PreToolUseCancellation::unbound(), crate::hooks::PreToolUseReplay::direct_request()).unwrap();
-        let identity = crate::os_tools::gate::current_directory_identity_no_follow(&root).unwrap(); assert!(prepare_native_fs_glob_enrichment(home.path(), &root, &root, &identity, &context, true).unwrap().is_none());
-        let conn = open_code_map_read_only(&database).unwrap(); let mut values = Vec::new(); for n in 0..100 { values.push(format!("extra_{n}")); }
-        let root_display = root.display().to_string(); let file_id: i64 = conn.query_row("SELECT id FROM code_map_files WHERE root = ?1 AND path = 'x.rs'", rusqlite::params![root_display], |row| row.get(0)).unwrap(); drop(conn);
-        let mut writable = crate::code_map::persist::open(&database).unwrap(); for name in values { writable.execute("INSERT INTO code_map_symbols (file_id, name, kind, line, line_end) VALUES (?1, ?2, 'function', 1, 1)", rusqlite::params![file_id, name]).unwrap(); }
-        let readonly = open_code_map_read_only(&database).unwrap(); let rendered = render_native_fs_glob_enrichment(&readonly, &root_display, &["x.rs".into()], "identity", 1, 1, context.call_id()).unwrap(); assert!(rendered.contains("sidecar_truncated: true"));
+        let home = tempdir().unwrap();
+        let repository = home.path().join("repository");
+        let database = home.path().join("code_map.db");
+        seed_code_map_db(&database, &repository);
+        std::fs::write(
+            home.path().join("mcp_servers.yaml"),
+            "servers: []\nsmart_loading: false\n",
+        )
+        .unwrap();
+        let root = repository.canonicalize().unwrap();
+        let context = crate::hooks::PreToolUseContext::admitted(
+            crate::hooks::PreToolUseOrigin::DirectCliOsDirectoryGlob,
+            "native-os-directory-glob",
+            "fs-glob",
+            &serde_json::json!({}),
+            &root,
+            &root,
+            std::time::Duration::from_secs(1),
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+        )
+        .unwrap();
+        let identity = crate::os_tools::gate::current_directory_identity_no_follow(&root).unwrap();
+        assert!(
+            prepare_native_fs_glob_enrichment(home.path(), &root, &root, &identity, &context, true)
+                .unwrap()
+                .is_none()
+        );
+        let conn = open_code_map_read_only(&database).unwrap();
+        let mut values = Vec::new();
+        for n in 0..100 {
+            values.push(format!("extra_{n}"));
+        }
+        let root_display = root.display().to_string();
+        let file_id: i64 = conn
+            .query_row(
+                "SELECT id FROM code_map_files WHERE root = ?1 AND path = 'x.rs'",
+                rusqlite::params![root_display],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(conn);
+        let writable = crate::code_map::persist::open(&database).unwrap();
+        for name in values {
+            writable.execute("INSERT INTO code_map_symbols (file_id, name, kind, line, line_end) VALUES (?1, ?2, 'function', 1, 1)", rusqlite::params![file_id, name]).unwrap();
+        }
+        let readonly = open_code_map_read_only(&database).unwrap();
+        let rendered = render_native_fs_glob_enrichment(
+            &readonly,
+            &root_display,
+            &["x.rs".into()],
+            "identity",
+            1,
+            1,
+            context.call_id(),
+        )
+        .unwrap();
+        assert!(rendered.contains("sidecar_truncated: true"));
     }
 }

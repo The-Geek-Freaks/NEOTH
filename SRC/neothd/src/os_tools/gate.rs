@@ -92,7 +92,9 @@ impl AdmittedOsDirectoryList {
     pub fn directory(&self) -> std::io::Result<Dir> {
         self.directory.try_clone()
     }
-    pub fn identity(&self) -> &str { &self.identity }
+    pub fn identity(&self) -> &str {
+        &self.identity
+    }
 }
 
 impl AdmittedOsFileRead {
@@ -248,11 +250,19 @@ pub async fn preflight_os_directory_list<P: PolicyArgument>(
     let canonical = match resolve_within_allowlist(target, &cfg.allowed_paths) {
         Ok(path) => path,
         Err(error) => {
-            emit_denied(sink, &target.display().to_string(), &error.to_string(), now_unix).await;
+            emit_denied(
+                sink,
+                &target.display().to_string(),
+                &error.to_string(),
+                now_unix,
+            )
+            .await;
             return Err(error.into());
         }
     };
-    let action = Action::OsDirectoryList { path: canonical.clone() };
+    let action = Action::OsDirectoryList {
+        path: canonical.clone(),
+    };
     let policy_snapshot = policy.policy_snapshot();
     let decision = evaluate(&action, policy);
     emit_trust_decision(sink, &action, policy_snapshot.level(), &decision, now_unix).await;
@@ -263,7 +273,13 @@ pub async fn preflight_os_directory_list<P: PolicyArgument>(
             return Err(OsGateError::Denied(reason));
         }
         Decision::Confirm(reason) => {
-            emit_denied(sink, &canonical.display().to_string(), &format!("confirm-required: {reason}"), now_unix).await;
+            emit_denied(
+                sink,
+                &canonical.display().to_string(),
+                &format!("confirm-required: {reason}"),
+                now_unix,
+            )
+            .await;
             return Err(OsGateError::ConfirmRequired(reason));
         }
     }
@@ -271,15 +287,25 @@ pub async fn preflight_os_directory_list<P: PolicyArgument>(
         OsGateError::ReadFailed(format!("open directory {}: {error}", canonical.display()))
     })?;
     let identity = directory_identity(&directory)?;
-    Ok(AdmittedOsDirectoryList { canonical, directory, identity })
+    Ok(AdmittedOsDirectoryList {
+        canonical,
+        directory,
+        identity,
+    })
 }
 
 fn directory_identity(directory: &Dir) -> Result<String, OsGateError> {
     #[cfg(unix)]
     {
-        let metadata = directory.dir_metadata().map_err(|error| OsGateError::ReadFailed(error.to_string()))?;
+        let metadata = directory
+            .dir_metadata()
+            .map_err(|error| OsGateError::ReadFailed(error.to_string()))?;
         use cap_std::fs::MetadataExt as _;
-        Ok(format!("unix:{:016x}:{:016x}", metadata.dev(), metadata.ino()))
+        Ok(format!(
+            "unix:{:016x}:{:016x}",
+            metadata.dev(),
+            metadata.ino()
+        ))
     }
     #[cfg(windows)]
     {
@@ -288,25 +314,53 @@ fn directory_identity(directory: &Dir) -> Result<String, OsGateError> {
             FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
         };
         let mut info = std::mem::MaybeUninit::<FILE_ID_INFO>::uninit();
-        let size = u32::try_from(std::mem::size_of::<FILE_ID_INFO>()).map_err(|error| OsGateError::ReadFailed(error.to_string()))?;
+        let size = u32::try_from(std::mem::size_of::<FILE_ID_INFO>())
+            .map_err(|error| OsGateError::ReadFailed(error.to_string()))?;
         // SAFETY: `directory` owns a live directory handle for this entire
         // call; `info` is writable `FILE_ID_INFO` storage and `size` is its
         // exact byte size, as required by FileIdInfo.
-        if unsafe { GetFileInformationByHandleEx(directory.as_raw_handle() as _, FileIdInfo, info.as_mut_ptr().cast(), size) } == 0 {
-            return Err(OsGateError::ReadFailed(std::io::Error::last_os_error().to_string()));
+        if unsafe {
+            GetFileInformationByHandleEx(
+                directory.as_raw_handle() as _,
+                FileIdInfo,
+                info.as_mut_ptr().cast(),
+                size,
+            )
+        } == 0
+        {
+            return Err(OsGateError::ReadFailed(
+                std::io::Error::last_os_error().to_string(),
+            ));
         }
         // SAFETY: a nonzero result above guarantees the complete FILE_ID_INFO
         // buffer was initialized by the OS before it is read here.
         let info = unsafe { info.assume_init() };
-        if info.FileId.Identifier.iter().all(|byte| *byte == 0) { return Err(OsGateError::ReadFailed("directory handle has no stable file identity".into())); }
-        Ok(format!("windows:{:08x}:{}", info.VolumeSerialNumber, info.FileId.Identifier.iter().map(|byte| format!("{byte:02x}")).collect::<String>()))
+        if info.FileId.Identifier.iter().all(|byte| *byte == 0) {
+            return Err(OsGateError::ReadFailed(
+                "directory handle has no stable file identity".into(),
+            ));
+        }
+        Ok(format!(
+            "windows:{:08x}:{}",
+            info.VolumeSerialNumber,
+            info.FileId
+                .Identifier
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        ))
     }
     #[cfg(not(any(unix, windows)))]
-    { Err(OsGateError::ReadFailed("no directory identity primitive on this platform".into())) }
+    {
+        Err(OsGateError::ReadFailed(
+            "no directory identity primitive on this platform".into(),
+        ))
+    }
 }
 
 pub(crate) fn current_directory_identity_no_follow(path: &Path) -> Result<String, OsGateError> {
-    let directory = open_absolute_directory_no_follow(path).map_err(|error| OsGateError::ReadFailed(error.to_string()))?;
+    let directory = open_absolute_directory_no_follow(path)
+        .map_err(|error| OsGateError::ReadFailed(error.to_string()))?;
     directory_identity(&directory)
 }
 
@@ -561,15 +615,23 @@ pub fn open_child_directory_no_follow(parent: &Dir, child: &Path) -> std::io::Re
             FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
             FILE_SHARE_READ, FILE_SHARE_WRITE,
         };
-        options.access_mode(FILE_GENERIC_READ).share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        options
+            .access_mode(FILE_GENERIC_READ)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
     }
     #[cfg(not(any(unix, windows)))]
-    return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "no no-follow child directory primitive on this platform"));
+    return Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "no no-follow child directory primitive on this platform",
+    ));
     let opened = parent.open_with(child, &options)?.into_std();
     let metadata = opened.metadata()?;
     if metadata_is_link_or_reparse(&metadata) || !metadata.is_dir() {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "child is a link, reparse point, or non-directory"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "child is a link, reparse point, or non-directory",
+        ));
     }
     Ok(Dir::from_std_file(opened))
 }
