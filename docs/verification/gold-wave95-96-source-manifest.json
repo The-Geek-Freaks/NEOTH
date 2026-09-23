@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T01:52:13.4178364Z",
-  "validationStatus": "W256/W258 independently statically reviewed; Group441 hosted execution pending; absolute local BSOD hold",
+  "capturedUtc": "2026-09-23T01:54:19.1845355Z",
+  "validationStatus": "W256/W258 source reviewed; hosted formatting imported; Group441/core85c pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1133,8 +1133,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/fs.rs",
-      "bytes": 41974,
-      "sha256": "CB140022F10061388F06A71ECDDE1CB4126F04839825225BF3B69A05BFD68F4F"
+      "bytes": 43745,
+      "sha256": "16615E2C2C3BF4AF7618E1AEDCFE22FEAB123531B56200E8B680682CE7148BBB"
     },
     {
       "path": "SRC/neothd/src/cli/gui_stream.rs",
@@ -1878,8 +1878,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "bytes": 219203,
-      "sha256": "8E867C3A6C34B39CBF158CBF7920344F02A8C6D090F2348FCDEFF1EE0F3D2E41"
+      "bytes": 219265,
+      "sha256": "9A4FBB6E09B9D9F2366E698F3D63D92422CE4EFAEB7A11CBCAA9F52D5132E5E2"
     },
     {
       "path": "SRC/neothd/src/mcp/config.rs",

@@ -2613,7 +2613,9 @@ fn render_native_fs_read_enrichment(
     rendered = rendered.replacen(
         "[untrusted built-in codegraph_outline sidecar]",
         match origin {
-            crate::hooks::PreToolUseOrigin::DirectCliOsFileSearch => "[untrusted native fs-grep codegraph sidecar]",
+            crate::hooks::PreToolUseOrigin::DirectCliOsFileSearch => {
+                "[untrusted native fs-grep codegraph sidecar]"
+            }
             _ => "[untrusted native fs-read codegraph sidecar]",
         },
         1,
@@ -2621,7 +2623,9 @@ fn render_native_fs_read_enrichment(
     rendered = rendered.replacen(
         "configured_mcp: built_in=neoth-codegraph/codegraph_outline",
         match origin {
-            crate::hooks::PreToolUseOrigin::DirectCliOsFileSearch => "native_origin: direct_cli_os_file_search",
+            crate::hooks::PreToolUseOrigin::DirectCliOsFileSearch => {
+                "native_origin: direct_cli_os_file_search"
+            }
             _ => "native_origin: direct_cli_os_file_read",
         },
         1,

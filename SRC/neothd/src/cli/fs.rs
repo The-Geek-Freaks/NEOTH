@@ -86,9 +86,9 @@ pub enum FsAction {
 }
 
 fn parse_grep_max_results(raw: &str) -> std::result::Result<usize, String> {
-    let value = raw
-        .parse::<usize>()
-        .map_err(|_| format!("grep max-results must be an integer from 1 through {MAX_GREP_RESULTS}"))?;
+    let value = raw.parse::<usize>().map_err(|_| {
+        format!("grep max-results must be an integer from 1 through {MAX_GREP_RESULTS}")
+    })?;
     if !(1..=MAX_GREP_RESULTS).contains(&value) {
         return Err(format!(
             "grep max-results must be from 1 through {MAX_GREP_RESULTS}"
@@ -132,18 +132,30 @@ pub async fn run_fs(args: FsArgs) -> Result<()> {
                 anyhow::bail!("grep max-results must be from 1 through {MAX_GREP_RESULTS}");
             }
             if literal.is_empty() || literal.len() > MAX_GREP_LITERAL_BYTES {
-                anyhow::bail!(
-                    "grep literal must contain 1..={MAX_GREP_LITERAL_BYTES} UTF-8 bytes"
-                );
+                anyhow::bail!("grep literal must contain 1..={MAX_GREP_LITERAL_BYTES} UTF-8 bytes");
             }
             let enrichment_root = match (*codegraph_enrichment, repository_root.as_deref()) {
                 (false, None) => None,
                 (true, Some(root)) if root.is_absolute() => Some(root),
-                (true, Some(_)) => anyhow::bail!("--repository-root must be absolute when --codegraph-enrichment is set"),
-                (true, None) => anyhow::bail!("--codegraph-enrichment requires --repository-root <ABSOLUTE_ROOT>"),
-                (false, Some(_)) => anyhow::bail!("--repository-root requires --codegraph-enrichment"),
+                (true, Some(_)) => anyhow::bail!(
+                    "--repository-root must be absolute when --codegraph-enrichment is set"
+                ),
+                (true, None) => anyhow::bail!(
+                    "--codegraph-enrichment requires --repository-root <ABSOLUTE_ROOT>"
+                ),
+                (false, Some(_)) => {
+                    anyhow::bail!("--repository-root requires --codegraph-enrichment")
+                }
             };
-            run_grep(path, literal, *max_results, &cfg, args.output, enrichment_root).await
+            run_grep(
+                path,
+                literal,
+                *max_results,
+                &cfg,
+                args.output,
+                enrichment_root,
+            )
+            .await
         }
         FsAction::Write { path, content } => run_write(path, content, &cfg, args.output).await,
     }
@@ -381,33 +393,73 @@ async fn run_grep(
 ) -> Result<()> {
     let now = now_unix();
     let home = FreedomConfig::default_neoth_home();
-    let daemon_live = matches!(crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid")), Ok(Some(_)));
+    let daemon_live = matches!(
+        crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid")),
+        Ok(Some(_))
+    );
     crate::daemon::audit_rpc::enforce_required_audit(
         cfg.audit_rpc.required_for_oneshot_permission_events,
         daemon_live,
         &home,
     )?;
     let read = if daemon_live {
-        search_with_optional_native_enrichment(path, literal, max_results, cfg, AuditSink::DaemonRpc(&home), now, &home, enrichment_root).await
+        search_with_optional_native_enrichment(
+            path,
+            literal,
+            max_results,
+            cfg,
+            AuditSink::DaemonRpc(&home),
+            now,
+            &home,
+            enrichment_root,
+        )
+        .await
     } else {
         let wal_dir = home.join("wal");
         match std::fs::create_dir_all(&wal_dir)
             .map_err(crate::wal::error::WalError::Io)
-            .and_then(|()| crate::wal::writer::spawn_for_home(crate::wal::writer::unique_standalone_segment_path(&wal_dir, "fs-grep"), home.clone())) {
+            .and_then(|()| {
+                crate::wal::writer::spawn_for_home(
+                    crate::wal::writer::unique_standalone_segment_path(&wal_dir, "fs-grep"),
+                    home.clone(),
+                )
+            }) {
             Ok((writer, join)) => {
-                let result = search_with_optional_native_enrichment(path, literal, max_results, cfg, AuditSink::Writer(&writer), now, &home, enrichment_root).await;
+                let result = search_with_optional_native_enrichment(
+                    path,
+                    literal,
+                    max_results,
+                    cfg,
+                    AuditSink::Writer(&writer),
+                    now,
+                    &home,
+                    enrichment_root,
+                )
+                .await;
                 drop(writer);
                 let _ = join.await;
                 result
             }
             Err(error) => {
                 tracing::warn!(error = %error, "fs grep proceeding WITHOUT WAL audit — could not open a one-shot WAL writer");
-                search_with_optional_native_enrichment(path, literal, max_results, cfg, AuditSink::None, now, &home, enrichment_root).await
+                search_with_optional_native_enrichment(
+                    path,
+                    literal,
+                    max_results,
+                    cfg,
+                    AuditSink::None,
+                    now,
+                    &home,
+                    enrichment_root,
+                )
+                .await
             }
         }
     };
     let read = read.map_err(|error| anyhow::anyhow!("{error}"))?;
-    let matches = read.search.expect("fs grep retains matches from the admitted descriptor");
+    let matches = read
+        .search
+        .expect("fs grep retains matches from the admitted descriptor");
     let truncated = matches.truncated;
     let empty = matches.rows.is_empty();
     match output {
@@ -425,37 +477,65 @@ async fn run_grep(
             println!("{rendered}");
         }
         OutputFormat::Table => {
-            if empty { println!("no literal matches"); }
-            for row in matches.rows { println!("{}:{}", row.line, row.text); }
-            if truncated { println!("[results truncated]"); }
-            if let Some(enrichment) = read.enrichment { print!("\n{enrichment}"); }
+            if empty {
+                println!("no literal matches");
+            }
+            for row in matches.rows {
+                println!("{}:{}", row.line, row.text);
+            }
+            if truncated {
+                println!("[results truncated]");
+            }
+            if let Some(enrichment) = read.enrichment {
+                print!("\n{enrichment}");
+            }
         }
     }
     Ok(())
 }
 
 #[derive(Debug, serde::Serialize)]
-struct GrepMatch { line: usize, text: String, truncated: bool }
+struct GrepMatch {
+    line: usize,
+    text: String,
+    truncated: bool,
+}
 #[derive(Debug)]
-struct GrepMatches { rows: Vec<GrepMatch>, truncated: bool }
+struct GrepMatches {
+    rows: Vec<GrepMatch>,
+    truncated: bool,
+}
 
 fn literal_matches(text: &str, literal: &str, max_results: usize) -> GrepMatches {
     let mut rows = Vec::new();
     let mut truncated = false;
     for (index, line) in text.lines().enumerate() {
-        if !line.contains(literal) { continue; }
-        if rows.len() == max_results { truncated = true; break; }
+        if !line.contains(literal) {
+            continue;
+        }
+        if rows.len() == max_results {
+            truncated = true;
+            break;
+        }
         let (snippet, line_truncated) = bounded_grep_line(line, literal);
         truncated |= line_truncated;
-        rows.push(GrepMatch { line: index + 1, text: snippet, truncated: line_truncated });
+        rows.push(GrepMatch {
+            line: index + 1,
+            text: snippet,
+            truncated: line_truncated,
+        });
     }
     GrepMatches { rows, truncated }
 }
 
 fn bounded_grep_line(line: &str, literal: &str) -> (String, bool) {
-    if line.len() <= MAX_GREP_LINE_BYTES { return (line.to_owned(), false); }
+    if line.len() <= MAX_GREP_LINE_BYTES {
+        return (line.to_owned(), false);
+    }
 
-    let match_start = line.find(literal).expect("matched line contains the literal");
+    let match_start = line
+        .find(literal)
+        .expect("matched line contains the literal");
     // Reserve both possible UTF-8 ellipses up front. The returned payload is
     // then always bounded even when the selected window has both sides clipped.
     let mut start = match_start.saturating_sub(128);
@@ -559,7 +639,8 @@ async fn read_with_optional_native_enrichment_with_cancellation(
     let Some(repository_root) = repository_root else {
         let text = read_os_file(path, &cfg.tools.os, &cfg.autonomy_policy(), sink, now).await?;
         return Ok(FsReadOutcome {
-            search: search.map(|(literal, max_results)| literal_matches(&text, literal, max_results)),
+            search: search
+                .map(|(literal, max_results)| literal_matches(&text, literal, max_results)),
             text,
             enrichment: None,
             #[cfg(test)]
@@ -584,13 +665,29 @@ async fn read_with_optional_native_enrichment_with_cancellation(
         ))
     })?;
     let arguments = match search {
-        Some((literal, max_results)) => serde_json::json!({"path": admitted.canonical_path().display().to_string(), "literal": literal, "max_results": max_results, "repository_root": root.display().to_string()}),
-        None => serde_json::json!({"path": admitted.canonical_path().display().to_string(), "repository_root": root.display().to_string()}),
+        Some((literal, max_results)) => {
+            serde_json::json!({"path": admitted.canonical_path().display().to_string(), "literal": literal, "max_results": max_results, "repository_root": root.display().to_string()})
+        }
+        None => {
+            serde_json::json!({"path": admitted.canonical_path().display().to_string(), "repository_root": root.display().to_string()})
+        }
     };
     let context = crate::hooks::PreToolUseContext::admitted(
-        if search.is_some() { crate::hooks::PreToolUseOrigin::DirectCliOsFileSearch } else { crate::hooks::PreToolUseOrigin::DirectCliOsFileRead },
-        if search.is_some() { "native-os-file-search" } else { "native-os-file-read" },
-        if search.is_some() { "fs-grep" } else { "fs-read" },
+        if search.is_some() {
+            crate::hooks::PreToolUseOrigin::DirectCliOsFileSearch
+        } else {
+            crate::hooks::PreToolUseOrigin::DirectCliOsFileRead
+        },
+        if search.is_some() {
+            "native-os-file-search"
+        } else {
+            "native-os-file-read"
+        },
+        if search.is_some() {
+            "fs-grep"
+        } else {
+            "fs-read"
+        },
         &arguments,
         &root,
         &root,
@@ -637,7 +734,8 @@ async fn read_with_optional_native_enrichment_with_cancellation(
     let text = crate::os_tools::gate::invoke_preflighted_os_file_read(admitted, sink, now).await?;
     // For native grep, complete and retain one literal scan over the actual
     // retained-fd bytes before accepting any optional sidecar freshness result.
-    let search_matches = search.map(|(literal, max_results)| literal_matches(&text, literal, max_results));
+    let search_matches =
+        search.map(|(literal, max_results)| literal_matches(&text, literal, max_results));
     let native_enrichment = native_plan
         .and_then(|plan| plan.still_fresh())
         .map(|sidecar| sidecar.as_str().to_owned());
@@ -658,7 +756,10 @@ async fn read_with_optional_native_enrichment_with_cancellation(
         (None, Some(hook)) => Some(hook),
         (None, None) => None,
     };
-    let enrichment = if search_matches.as_ref().is_some_and(|matches| matches.rows.is_empty()) {
+    let enrichment = if search_matches
+        .as_ref()
+        .is_some_and(|matches| matches.rows.is_empty())
+    {
         None
     } else {
         enrichment
@@ -695,14 +796,9 @@ mod tests {
     fn w256_grep_cli_parses_default_and_maximum_and_rejects_out_of_range_results() {
         use clap::Parser as _;
 
-        let defaulted = crate::cli::Cli::try_parse_from([
-            "neoth",
-            "fs",
-            "grep",
-            "C:/selected.rs",
-            "needle",
-        ])
-        .expect("default fs grep parses");
+        let defaulted =
+            crate::cli::Cli::try_parse_from(["neoth", "fs", "grep", "C:/selected.rs", "needle"])
+                .expect("default fs grep parses");
         assert!(matches!(
             defaulted.command,
             crate::cli::Commands::Fs(FsArgs {
@@ -761,7 +857,10 @@ mod tests {
         assert_eq!(matched.rows.len(), 1);
         assert_eq!(matched.rows[0].line, 2);
         assert_eq!(matched.rows[0].text, "needle one");
-        assert!(matched.truncated, "the second literal match must report the result cap");
+        assert!(
+            matched.truncated,
+            "the second literal match must report the result cap"
+        );
 
         let long = format!("needle{}", "x".repeat(MAX_GREP_LINE_BYTES));
         let clipped = literal_matches(&long, "needle", 1);
@@ -775,7 +874,12 @@ mod tests {
         assert!(windowed.rows[0].text.len() <= MAX_GREP_LINE_BYTES);
 
         let maximum_literal = "n".repeat(MAX_GREP_LITERAL_BYTES);
-        let boundary = format!("{}{}{}", "x".repeat(255), maximum_literal, "y".repeat(1_024));
+        let boundary = format!(
+            "{}{}{}",
+            "x".repeat(255),
+            maximum_literal,
+            "y".repeat(1_024)
+        );
         let clipped_boundary = literal_matches(&boundary, &maximum_literal, 1);
         assert!(clipped_boundary.rows[0].text.contains(&maximum_literal));
         assert!(clipped_boundary.rows[0].text.len() <= MAX_GREP_LINE_BYTES);
@@ -841,19 +945,34 @@ template = "[native-search-hook]"
         );
         assert_eq!(context.server(), "native-os-file-search");
         assert_eq!(context.tool(), "fs-grep");
-        assert!(context.arguments().summary().contains(r#""literal":"needle""#));
-        assert!(context
-            .arguments()
-            .summary()
-            .contains(r#""max_results":20"#));
-        assert!(context
-            .arguments()
-            .summary()
-            .contains(file.canonicalize().unwrap().to_string_lossy().as_ref()));
-        assert!(context
-            .arguments()
-            .summary()
-            .contains(repository.path().canonicalize().unwrap().to_string_lossy().as_ref()));
+        assert!(
+            context
+                .arguments()
+                .summary()
+                .contains(r#""literal":"needle""#)
+        );
+        assert!(
+            context
+                .arguments()
+                .summary()
+                .contains(r#""max_results":20"#)
+        );
+        assert!(
+            context
+                .arguments()
+                .summary()
+                .contains(file.canonicalize().unwrap().to_string_lossy().as_ref())
+        );
+        assert!(
+            context.arguments().summary().contains(
+                repository
+                    .path()
+                    .canonicalize()
+                    .unwrap()
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
         assert!(!context.arguments().was_truncated());
 
         let hooks = crate::hooks::load_all_strict(&hooks_dir).await.unwrap();
@@ -893,7 +1012,10 @@ template = "[native-search-hook]"
         .await
         .unwrap();
         assert!(outcome.search.as_ref().unwrap().rows.is_empty());
-        assert!(outcome.enrichment.is_none(), "zero-hit grep must not attach a sidecar");
+        assert!(
+            outcome.enrichment.is_none(),
+            "zero-hit grep must not attach a sidecar"
+        );
     }
 
     #[tokio::test]
@@ -906,8 +1028,16 @@ template = "[native-search-hook]"
         denied.tools.os.allowed_paths.clear();
         assert!(matches!(
             search_with_optional_native_enrichment(
-                &file, "needle", 20, &denied, AuditSink::None, 0, home.path(), Some(repository.path())
-            ).await,
+                &file,
+                "needle",
+                20,
+                &denied,
+                AuditSink::None,
+                0,
+                home.path(),
+                Some(repository.path())
+            )
+            .await,
             Err(OsGateError::Allowlist(_))
         ));
 
