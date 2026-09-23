@@ -1,0 +1,466 @@
+{
+  "schema": "neoth-functional-acceptance/v1",
+  "roadItem": "GOLD-LF-P2-04",
+  "verdict": "ACCEPTED_FUNCTIONAL",
+  "acceptedSource": "8003a6055373dd1371b56eaffab43196c81d2de9",
+  "criteria": "Complete reflection hygiene: <=90-day retention, Jaccard deduplication, yearly synthesis from period reflections, deterministic topic synonyms, migration and long-horizon regressions.",
+  "selection": {
+    "Linux": 55,
+    "supportingWindowsStore": 3,
+    "freshWindows": 7,
+    "uniqueIdentities": 56,
+    "macOS": 55
+  },
+  "linuxGroup": {
+    "run": 35922336236,
+    "passed": 888,
+    "missing": 0,
+    "path": "work/gold-20260906/wave517-group8908003/ADMISSION.json",
+    "sha256": "76593DE91C5BEAE5B13D0C3B975DF6A82F98D462C4669753F56FB2C0CE26959C",
+    "failed": 2,
+    "executed": 890,
+    "bindings": 176
+  },
+  "macOSArtifact": {
+    "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+    "junitPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+    "sha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+  },
+  "linuxAndMacosTerminals": [
+    {
+      "test": "reflection::hygiene::tests::yearly_synthesis_selects_only_the_requested_year_without_database_input",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::hygiene::tests::yearly_inputs_use_only_supplied_daily_period_data_inside_one_year",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::tests::yearly_source_reader_uses_only_strict_daily_archive_records_in_tag_order",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::tests::yearly_synthesis_receipt_is_exactly_once_and_refuses_changed_sources",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::tests::daily_retention_uses_archive_tags_and_defers_the_inclusive_ninety_day_boundary",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::tests::daily_retention_keeps_current_admission_archive_when_authority_is_absent",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::tests::admission_state_revision_change_cannot_enable_an_unsigned_retention_effect",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::reflect::tests::cli_yearly_digest_uses_daily_archive_without_views_db_and_is_idempotent",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::reflection_cron::tests::yearly_cron_uses_canonical_daily_archive_without_views_db_and_retries_idempotently",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::hygiene::tests::daily_admission_is_synonym_aware_and_uses_an_inclusive_threshold",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::hygiene::tests::jaccard_is_integer_basis_points_and_empty_sets_never_match",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::hygiene::tests::synonyms_canonicalize_topics_and_empty_normalized_topics_are_ignored",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::hygiene::tests::deduplication_requires_an_exact_non_empty_topic_match",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::hygiene::tests::legacy_migration_preserves_period_reflection_fields_and_reports_it",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::hygiene::tests::synonym_cycles_fail_before_any_plan_is_emitted",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::hygiene_store::tests::apply_retains_only_planned_raw_and_preserves_periods_and_synonyms",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::hygiene_store::tests::legacy_requires_explicit_migration_and_apply_preserves_every_byte",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::hygiene_store::tests::migration_is_one_time_and_preserves_every_legacy_field",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::hygiene_store::tests::failed_migration_leaves_no_v1_artifact",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::hygiene_store::tests::period_inputs_survive_raw_retention_without_yearly_materialization",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::tests::deterministic_retention_batches_resume_strictly_after_the_last_terminal_candidate",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::tests::deterministic_retention_batches_cover_multiyear_history_without_starvation",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::tests::daily_retention_accepts_exactly_4096_archives_and_never_selects_or_emits_over_64",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::tests::daily_retention_defers_bounded_cross_year_history_without_effects",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::tests::retention_retry_does_not_advance_or_delete_without_an_authority_terminal_receipt",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::reflect::tests::automation_retention_defaults_to_ninety_days_and_rejects_invalid_bounds",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::reflect::tests::cli_quiet_daily_digest_reaches_but_defers_retention_without_authority",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::reflect::tests::cli_daily_commit_reports_retention_inventory_failure_without_duplicate_retry",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::reflection_cron::tests::period_tick_reaches_but_defers_default_daily_retention_without_authority",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::reflection_cron::tests::period_tick_archives_and_is_idempotent_per_tag",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_default_off_leaves_real_archive_and_settlement_note_unchanged",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_enabled_quarantines_real_archive_and_receipt_owned_note_without_losing_period_input",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_identical_byte_note_replacement_refuses_receipt_owned_quarantine",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_yearly_synthesis_provenance_is_exact_before_hygiene_after_overlap_and_after_purge",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_legacy_matching_note_is_not_adopted",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_prepared_before_rename_is_abandoned_then_next_batch_is_safe",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_post_archive_rename_before_transition_reconciles_source_identity",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_committed_journal_rejects_a_mismatched_immutable_receipt",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_receipt_owned_missing_note_still_quarantines_the_exact_archive",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_post_note_rename_before_transition_reconciles_deterministic_destination",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_receipt_before_committed_ordering_is_idempotent_after_restart",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_purge_prepared_before_unlink_restarts_from_both_quarantined_leaves",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_unlink_attempted_after_partial_unlink_is_reconciled_truthfully",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_completed_purge_is_idempotent_after_the_effect_receipt_is_timestamped",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_purged_completed_journal_finalizes_a_missing_effect_receipt_timestamp",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_completed_purge_rejects_a_foreign_receipt_binding_without_changing_evidence",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_bounded_batches_preserve_unselected_expired_records_for_later_ticks",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::retention_authority::tests::default_execution_fixture_is_explicitly_off_and_does_not_inherit_v1_horizon",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::retention_authority::tests::settlement_note_fixture_has_an_explicit_ownership_boundary",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "skills::store::tests::bound_rename_refuses_same_byte_source_replacement_before_namespace_effect",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "skills::store::tests::bound_rename_unix_race_restores_foreign_replacement_and_keeps_original",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::tests::concurrent_yearly_settlers_converge_to_one_atomic_receipt",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_reserved_note_quarantine_directory_is_accepted_by_inventory",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_reserved_note_quarantine_regular_file_is_inventory_error",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "reflection::periodic::retention_v2_tests::v2_reserved_note_quarantine_symlink_is_inventory_error",
+      "Linux": "passed",
+      "macOS": "passed",
+      "junitClass": "neoth"
+    }
+  ],
+  "windows": {
+    "artifactHashesVerified": 32,
+    "run": 35922329286,
+    "terminals": [
+      {
+        "test": "reflection::periodic::tests::windows_retention_reads_through_a_handle_withholding_delete_share",
+        "status": "passed"
+      },
+      {
+        "test": "reflection::periodic::retention_v2_tests::v2_enabled_quarantines_real_archive_and_receipt_owned_note_without_losing_period_input",
+        "status": "passed"
+      },
+      {
+        "test": "reflection::periodic::retention_v2_tests::v2_identical_byte_note_replacement_refuses_receipt_owned_quarantine",
+        "status": "passed"
+      },
+      {
+        "test": "reflection::periodic::retention_v2_tests::v2_post_archive_rename_before_transition_reconciles_source_identity",
+        "status": "passed"
+      },
+      {
+        "test": "reflection::periodic::retention_v2_tests::v2_post_note_rename_before_transition_reconciles_deterministic_destination",
+        "status": "passed"
+      },
+      {
+        "test": "reflection::periodic::retention_v2_tests::v2_receipt_before_committed_ordering_is_idempotent_after_restart",
+        "status": "passed"
+      },
+      {
+        "test": "reflection::periodic::retention_v2_tests::v2_unlink_attempted_after_partial_unlink_is_reconciled_truthfully",
+        "status": "passed"
+      }
+    ],
+    "all24Passed": true,
+    "source": "8003a6055373dd1371b56eaffab43196c81d2de9",
+    "admissionSha256": "9CAD70C875523CA52EEF8E5B32E3027102E347301074770C0BD5524A50287293",
+    "inputHashesVerified": 4,
+    "admissionPath": "work/gold-20260906/wave518-windows24/ADMISSION.json",
+    "artifact": 10778326485
+  },
+  "sourceCarry": [
+    {
+      "path": "SRC/neothd/src/cli/fs.rs",
+      "baselineBlob": "95f59d4ac359fae5e52698b52789841efa81238e",
+      "acceptedBlob": "95f59d4ac359fae5e52698b52789841efa81238e",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/cli/reflect.rs",
+      "baselineBlob": "0b56ea1c5530069e61aab21ea300d79468000e51",
+      "acceptedBlob": "0b56ea1c5530069e61aab21ea300d79468000e51",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/reflection_cron.rs",
+      "baselineBlob": "87f9e034647254870077845e4a03b4ca8ec1fbb5",
+      "acceptedBlob": "87f9e034647254870077845e4a03b4ca8ec1fbb5",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/reflection/hygiene.rs",
+      "baselineBlob": "1ba93948f51702de5a4a94e668f48ccb6b53aab3",
+      "acceptedBlob": "1ba93948f51702de5a4a94e668f48ccb6b53aab3",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/reflection/hygiene_store.rs",
+      "baselineBlob": "dac52bd18bad5d48a7433febdf174e45f33920ba",
+      "acceptedBlob": "dac52bd18bad5d48a7433febdf174e45f33920ba",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/reflection/mod.rs",
+      "baselineBlob": "b7a69e83dd3bb745971b201d351af181c5328876",
+      "acceptedBlob": "b7a69e83dd3bb745971b201d351af181c5328876",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/reflection/periodic.rs",
+      "baselineBlob": "df4819842fbe54205978ea2385b5710f95ed902a",
+      "acceptedBlob": "df4819842fbe54205978ea2385b5710f95ed902a",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/reflection/retention_authority.rs",
+      "baselineBlob": "c52bad9a728e72adc5f6cdeba08c62d89088143f",
+      "acceptedBlob": "c52bad9a728e72adc5f6cdeba08c62d89088143f",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/reflection/retention_v2_tests.rs",
+      "baselineBlob": "7d111771053bc9161a7f800099812505c0d8bd44",
+      "acceptedBlob": "7d111771053bc9161a7f800099812505c0d8bd44",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/skills/store.rs",
+      "baselineBlob": "d9d1ed8883c34351e82c4bb61eefde54e302bd0c",
+      "acceptedBlob": "6dec414fd9e21a44c802197f06a50da1f94d9111",
+      "reason": "Windows-only production storage changes and tests; fresh7P204+3store terminals required. Unix production path unchanged; W477 review."
+    }
+  ],
+  "review": "W477 independently approved actual criteria/source carry and fresh Windows gap coverage; Root verified55Linux+55macOS exact terminals, both artifact bindings and all24Windows ordered terminals, hashes and Git blobs.",
+  "limitations": "Functional retention/deduplication/yearly/synonym/migration/long-horizon acceptance. Fixtures use controlled histories and filesystem races. No live multi-year deployment, clean full-suite, GUI audit or release claim.",
+  "localExecutableValidationRan": false
+}

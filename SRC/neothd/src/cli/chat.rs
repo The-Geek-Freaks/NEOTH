@@ -21686,8 +21686,8 @@ template = "[REDACTED]"
         );
         let reasoning_audit = serde_json::to_value(&reasoning_audits[0]).unwrap();
         assert_eq!(reasoning_audit["display_granted"], false);
-        assert_eq!(reasoning_audit["terminal_state"], "unsupported");
-        assert_eq!(reasoning_audit["reason_code"], "unsupported");
+        assert_eq!(reasoning_audit["terminal_state"], "redacted");
+        assert_eq!(reasoning_audit["reason_code"], "policy_redacted");
         assert_eq!(reasoning_audit["identity"]["kind"], "authenticated_leaf");
         assert_eq!(reasoning_audit["identity"]["provider"], "mock_stream");
         assert!(

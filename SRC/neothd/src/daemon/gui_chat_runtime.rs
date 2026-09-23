@@ -198,6 +198,9 @@ impl DaemonGuiChatRuntime {
     fn capability() -> String {
         Uuid::now_v7().simple().to_string()
     }
+    fn lifecycle_receipt_id() -> GuiChatDigest {
+        GuiChatDigest(hex::encode(Sha256::digest(Self::capability().as_bytes())))
+    }
     fn reject(code: GuiChatErrorCode, detail: &'static str) -> GuiChatProtocolError {
         GuiChatProtocolError::Runtime(GuiChatErrorResponse {
             schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
@@ -726,7 +729,7 @@ impl DaemonGuiChatRuntime {
                             output_tokens: 0,
                             elapsed_ms: 0,
                         },
-                        lifecycle_receipt_id: GuiChatDigest(Self::capability()),
+                        lifecycle_receipt_id: Self::lifecycle_receipt_id(),
                         response_feedback_target: response_feedback.map(|target| {
                             GuiChatResponseFeedbackTarget {
                                 response_id: target.response_id,
@@ -755,7 +758,7 @@ impl DaemonGuiChatRuntime {
                                 output_tokens: 0,
                                 elapsed_ms: 0,
                             },
-                            lifecycle_receipt_id: GuiChatDigest(Self::capability()),
+                            lifecycle_receipt_id: Self::lifecycle_receipt_id(),
                             response_feedback_target: None,
                             response_feedback_unavailable: false,
                         }
@@ -770,7 +773,7 @@ impl DaemonGuiChatRuntime {
                             output_tokens: 0,
                             elapsed_ms: 0,
                         },
-                        lifecycle_receipt_id: GuiChatDigest(Self::capability()),
+                        lifecycle_receipt_id: Self::lifecycle_receipt_id(),
                         response_feedback_target: None,
                         response_feedback_unavailable: false,
                     },

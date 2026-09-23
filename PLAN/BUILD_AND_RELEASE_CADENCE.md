@@ -3,6 +3,21 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W518 reflection acceptance; W516/W519/W520 follow-up (2026-09-23):**
+P2-04 is accepted:55exact Linux and55macOS terminals plus7fresh Windows
+retention/quarantine/recovery cases; all24Windows cases passed at8003.
+Root verified32artifact hashes,4input hashes,24ordered source/terminal bindings
+and the10-path scoped carry. Group8908003 is admitted888PASS/2FAIL/0missing;
+the scheduler now starts, exposing a terminal receipt-format mismatch. W519
+uses canonical64hex lifecycle receipt IDs on all3terminal branches. W520
+expects policy-redacted reasoning for the intentionally deferred Replace stream.
+Both repairs are independently reviewed and await fresh hosted execution.
+Preflightcd04 passed formatting but found the stale machine-readable Road
+summary; W516 synchronizes that summary with the actual checkbox inventory.
+Inventory748sources,1185native+Win25Linux33mac32,Group890;
+GUI148Linux144macOS,macNative33. Road1044checked/278open/2partial,
+280raw/279pre-tag;WS-LF37done/81open. Local BSOD hold remains absolute.
+Evidence:docs/gold-wave518-reflection-and-stream-followup.md.
 **W513 hosted formatting follow-up (2026-09-23):**
 W502-W508 is published as8003a605. Preflight35922289920 failed only
 Rust formatting; artifact10777886345 binds the single main.rs layout hunk
