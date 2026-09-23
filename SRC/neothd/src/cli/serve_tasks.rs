@@ -4248,13 +4248,10 @@ pub(crate) struct AuditRpcInputs<'a> {
     pub(crate) pid_guard: &'a mut crate::daemon::pidfile::PidGuard,
     pub(crate) endpoint_nonce: &'a str,
     #[cfg(feature = "cluster")]
-    pub(crate) membership: std::sync::Arc<
-        crate::cluster::membership::MembershipController,
-    >,
+    pub(crate) membership: std::sync::Arc<crate::cluster::membership::MembershipController>,
     #[cfg(feature = "cluster")]
-    pub(crate) outbound_task_delegate: std::sync::Arc<
-        crate::cluster::runtime_supervisor::OutboundTaskDelegateController,
-    >,
+    pub(crate) outbound_task_delegate:
+        std::sync::Arc<crate::cluster::runtime_supervisor::OutboundTaskDelegateController>,
 }
 
 /// Mandatory same-user OS control listener. The internal Skill-mutation route is

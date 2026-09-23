@@ -579,8 +579,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             gui_chat_boot_id.0,
         ));
     #[cfg(feature = "cluster")]
-    let (audit_rpc_task, mut audit_rpc_guard) = crate::cli::serve_tasks::spawn_audit_rpc(
-        crate::cli::serve_tasks::AuditRpcInputs {
+    let (audit_rpc_task, mut audit_rpc_guard) =
+        crate::cli::serve_tasks::spawn_audit_rpc(crate::cli::serve_tasks::AuditRpcInputs {
             config: &config,
             home: &neoth_home,
             writer: &writer,
@@ -590,13 +590,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             endpoint_nonce: &audit_endpoint_nonce,
             membership: std::sync::Arc::clone(&membership_controller),
             outbound_task_delegate: std::sync::Arc::clone(&outbound_task_delegate),
-        },
-    )
-    .await
-    .context("start daemon membership/audit RPC")?;
+        })
+        .await
+        .context("start daemon membership/audit RPC")?;
     #[cfg(not(feature = "cluster"))]
-    let (audit_rpc_task, mut audit_rpc_guard) = crate::cli::serve_tasks::spawn_audit_rpc(
-        crate::cli::serve_tasks::AuditRpcInputs {
+    let (audit_rpc_task, mut audit_rpc_guard) =
+        crate::cli::serve_tasks::spawn_audit_rpc(crate::cli::serve_tasks::AuditRpcInputs {
             config: &config,
             home: &neoth_home,
             writer: &writer,
@@ -604,10 +603,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             gui_chat_runtime: Arc::clone(&gui_chat_runtime),
             pid_guard: daemon_pid_guard,
             endpoint_nonce: &audit_endpoint_nonce,
-        },
-    )
-    .await
-    .context("start mandatory daemon audit RPC")?;
+        })
+        .await
+        .context("start mandatory daemon audit RPC")?;
 
     // W185: only an accepted native-Ollama provider owns this controller. The
     // reload controller rejects provider kind/endpoint/model changes, so this

@@ -34,11 +34,20 @@ OpenRaft `=0.9.25`, `default-features = false`, and `serde` plus `storage-v2`.
 It saves the exported workspace lockfile as evidence, copies it into the isolated
 probe, then lets `cargo metadata --offline` normalize the probe root while
 preserving existing dependency selections after workspace metadata fetched them. The workflow proves the entire OpenRaft
-closure has identical identities and checksums in both locks before running
-`cargo check --locked` under Rust 1.91. This verifies the pinned package
-configuration can compile on the supported compiler without compiling the
-application or treating a successful resolver run as an application integration
-proof.
+closure reachable from the standalone probe is present with the same checksum in
+the exported workspace before running `cargo check --locked` under Rust 1.91. It
+also requires the **probe's** selected OpenRaft feature set to be exactly
+`serde` and `storage-v2`, with default features disabled. The workspace's
+selected root features are recorded separately as uncompiled by this probe.
+
+The standalone probe intentionally has a narrower feature graph than the full
+workspace. Workspace-only OpenRaft-closure package identities and shared-package
+feature differences are written to `probe-workspace-difference.json` as
+**uncompiled by the standalone probe**. They do not make a minimal-probe run fail;
+a probe-only identity or a checksum mismatch does. The copied-workspace metadata
+and its Rust-version report still cover the full resolved workspace closure. This
+lane qualifies the pinned minimal OpenRaft configuration only. Full workspace
+feature compilation belongs to the later integration slice and is not claimed here.
 
 The artifact is uploaded even after a failure. It includes command logs, source
 and final hash manifests, upstream source copies and hashes, metadata, new package

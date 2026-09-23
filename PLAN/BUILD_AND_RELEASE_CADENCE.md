@@ -3,6 +3,22 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W430 hosted formatting, W431 minimal Raft qualification and W433 citation results (2026-09-23):**
+Citation010d run35874789863 is admitted:50/50 native PASS, all9source/input
+bindings and actual ordered terminals verified. Crossref/OpenAlex ordinary CLI
+live records have independently recomputed matching claim/record bindings.
+Semantic Scholar returned typed rate_limited; successful record coverage remains
+unproven. P1-12 stays open for its remaining provider/presentation evidence.
+W430 imports only the two source/digest/full-Git-blob-bound hosted rustfmt outputs
+from Preflightd083 run35876157640. W428 core/workspaceClippy d083 continues.
+W431 corrects the isolated OpenRaft qualification scope: every minimal-probe
+identity/checksum must match the exported workspace; feature-unified workspace
+extras are explicitly recorded as uncompiled by that probe. Actual production
+Raft service/store/carrier/provider integration remains uncommitted and unaccepted.
+Inventory703;native1136+Windows19/Linux33/macOS32;Group841;GUI143Linux/139macOS.
+Road1034checked/288open/2partial;290raw/289pre-tag;WS-LF27done/91open unchanged.
+No local executable validation ran; all compilation and testing remain on GitHub.
+
 **W422/W424 hosted repairs, W425/W426 functional acceptance and W428 lane (2026-09-23):**
 Group841bc9 run35871794576 is admitted:841 executed,834PASS,7FAIL; all169
 source bindings, matrix/lock and actual ordered terminals match. All seven

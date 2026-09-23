@@ -101,6 +101,7 @@ jobs:
           # fails before it can replace these initial empty reports.
           printf '[]\n' > "$evidence/new-lock-packages.json"
           printf '[]\n' > "$evidence/openraft-closure-rust-version.json"
+          printf '{}\n' > "$evidence/probe-workspace-difference.json"
           : > "$evidence/cargo-metadata.json"
           : > "$evidence/cargo-metadata-locked.json"
 
@@ -261,49 +262,74 @@ jobs:
           cargo metadata --manifest-path "$work_root/probe/Cargo.toml" --locked --format-version 1 > "$evidence/probe/cargo-metadata.json"
           WORKSPACE_METADATA="$evidence/cargo-metadata-locked.json" PROBE_METADATA="$evidence/probe/cargo-metadata.json" \
             WORKSPACE_LOCKFILE="$work_src/Cargo.lock" PROBE_LOCKFILE="$work_root/probe/Cargo.lock" OPENRAFT_VERSION="$OPENRAFT_VERSION" \
-            RECEIPT="$evidence/probe/closure-identity-check.json" python3 - <<'PY'
+            RECEIPT="$evidence/probe-workspace-difference.json" python3 - <<'PY'
           import json
           import os
           import tomllib
           from pathlib import Path
 
-          def closure(metadata):
+          def graph(metadata, label, require_minimal_features):
               packages = {p["id"]: p for p in metadata["packages"]}
               nodes = {n["id"]: n for n in metadata["resolve"]["nodes"]}
               roots = [p["id"] for p in packages.values() if p["name"] == "openraft" and p["version"] == os.environ["OPENRAFT_VERSION"]]
               if len(roots) != 1:
-                  raise SystemExit(f"expected one pinned OpenRaft in metadata, found {len(roots)}")
+                  raise SystemExit(f"expected one pinned OpenRaft in {label} metadata, found {len(roots)}")
+              root_features = set(nodes[roots[0]]["features"])
+              required_features = {"serde", "storage-v2"}
+              if require_minimal_features and root_features != required_features:
+                  raise SystemExit(f"{label} OpenRaft selected features are {sorted(root_features)!r}, expected {sorted(required_features)!r}")
               seen, pending = set(), roots
               while pending:
                   package_id = pending.pop()
                   if package_id not in seen:
                       seen.add(package_id)
                       pending.extend(nodes[package_id]["dependencies"])
-              return {(packages[i]["name"], packages[i]["version"], packages[i].get("source") or "path") for i in seen}
+              identities = {(packages[i]["name"], packages[i]["version"], packages[i].get("source") or "path"): i for i in seen}
+              features = {identity: sorted(nodes[package_id]["features"]) for identity, package_id in identities.items()}
+              root_identity = (packages[roots[0]]["name"], packages[roots[0]]["version"], packages[roots[0]].get("source") or "path")
+              return identities, features, root_identity
 
           def checksums(path):
               lock = tomllib.loads(Path(path).read_text(encoding="utf-8"))["package"]
               return {(p["name"], p["version"], p.get("source", "path")): p.get("checksum") for p in lock}
 
-          workspace = closure(json.loads(Path(os.environ["WORKSPACE_METADATA"]).read_text(encoding="utf-8")))
-          probe = closure(json.loads(Path(os.environ["PROBE_METADATA"]).read_text(encoding="utf-8")))
-          if workspace != probe:
-              raise SystemExit("probe OpenRaft closure differs from exported workspace closure")
+          workspace, workspace_features, workspace_root = graph(json.loads(Path(os.environ["WORKSPACE_METADATA"]).read_text(encoding="utf-8")), "workspace", False)
+          probe, probe_features, probe_root = graph(json.loads(Path(os.environ["PROBE_METADATA"]).read_text(encoding="utf-8")), "probe", True)
           workspace_checksums = checksums(os.environ["WORKSPACE_LOCKFILE"])
           probe_checksums = checksums(os.environ["PROBE_LOCKFILE"])
+          probe_only = sorted(set(probe) - set(workspace))
+          workspace_only = sorted(set(workspace) - set(probe))
           checksum_drift = sorted(
-              identity for identity in workspace
+              identity for identity in probe
               if workspace_checksums.get(identity) != probe_checksums.get(identity)
           )
-          if checksum_drift:
-              raise SystemExit("probe OpenRaft closure checksum differs from exported workspace closure: " + repr(checksum_drift))
-          report = [
-              {"name": name, "version": version, "source": source, "checksum": workspace_checksums.get((name, version, source))}
-              for name, version, source in sorted(workspace)
+          feature_differences = [
+              {"name": name, "version": version, "source": source, "workspace_features": workspace_features[(name, version, source)], "probe_features": probe_features[(name, version, source)]}
+              for name, version, source in sorted(set(workspace) & set(probe))
+              if workspace_features[(name, version, source)] != probe_features[(name, version, source)]
           ]
-          if any(item["source"] != "path" and item["checksum"] is None for item in report):
+          report = {
+              "scope": "minimal-openraft-probe",
+              "openraft_features": ["serde", "storage-v2"],
+              "workspace_openraft_features_uncompiled_by_standalone_probe": workspace_features[workspace_root],
+              "probe_openraft_features": probe_features[probe_root],
+              "probe_reachable": [
+                  {"name": name, "version": version, "source": source, "checksum": probe_checksums.get((name, version, source))}
+                  for name, version, source in sorted(probe)
+              ],
+              "workspace_only_uncompiled_by_standalone_probe": [
+                  {"name": name, "version": version, "source": source, "checksum": workspace_checksums.get((name, version, source))}
+                  for name, version, source in workspace_only
+              ],
+              "shared_feature_differences_uncompiled_by_standalone_probe": feature_differences,
+              "probe_only": [{"name": name, "version": version, "source": source} for name, version, source in probe_only],
+              "checksum_drift": [{"name": name, "version": version, "source": source} for name, version, source in checksum_drift],
+          }
+          if any(item["source"] != "path" and item["checksum"] is None for item in report["probe_reachable"]):
               raise SystemExit("exported OpenRaft closure has an identity without its Cargo.lock checksum")
           Path(os.environ["RECEIPT"]).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+          if probe_only or checksum_drift:
+              raise SystemExit("probe contains a non-exported OpenRaft identity or checksum: " + repr({"probe_only": probe_only, "checksum_drift": checksum_drift}))
           PY
           cargo check --manifest-path "$work_root/probe/Cargo.toml" --locked 2>&1 | tee "$evidence/probe/cargo-check.log"
           cp "$work_root/probe/Cargo.lock" "$evidence/probe/Cargo.lock"

@@ -1,0 +1,281 @@
+{
+  "schema": "neoth-citation-admission/v1",
+  "run": 35874789863,
+  "head": "010d535c84b3966270877ae9bb808b51c8ea35e5",
+  "admission": "50NATIVE PASS;2LIVE FOUND;1TYPED RATE_LIMITED NONCOVERAGE",
+  "selected": 50,
+  "executed": 50,
+  "passed": 50,
+  "sourceBindings": 9,
+  "allBindingsAndActualTerminalsVerified": true,
+  "live": [
+    {
+      "provider": "crossref",
+      "outcome": "found_live",
+      "covered": true,
+      "actualLogAndBindingVerified": true
+    },
+    {
+      "provider": "openalex",
+      "outcome": "found_live",
+      "covered": true,
+      "actualLogAndBindingVerified": true
+    },
+    {
+      "provider": "semantic-scholar",
+      "outcome": "unavailable:rate_limited",
+      "covered": false,
+      "actualLogAndBindingVerified": true
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "nativeTests": [
+    {
+      "harness": "neoth",
+      "name": "tools::citation_lookup::tests::doi_canonicalization_rejects_arbitrary_urls_and_has_fixed_endpoints"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_lookup::tests::record_fingerprint_and_binding_are_claim_and_identity_bound"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_lookup::tests::record_bounds_and_serialized_invariant_tampering_are_rejected"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_lookup::tests::cache_rebinds_current_claim_and_is_offline_safe_hit_or_miss"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_lookup::tests::cache_rejects_corrupt_future_and_fingerprint_mismatch_entries"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_lookup::tests::cache_capacity_and_atomic_replacement_keep_only_valid_bounded_entries"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_lookup::tests::query_aware_live_constructor_rejects_record_reassociation"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_lookup::tests::cache_touch_cannot_silently_exceed_its_byte_cap"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_lookup::tests::cache_rejects_fixed_name_final_symlink_without_following_it"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_consent::tests::store_create_consume_and_replay_are_one_shot"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_consent::tests::mismatch_and_expiry_fail_before_consumption"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_consent::tests::deny_consumes_exact_challenge_without_proof"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_consent::tests::config_generation_invalidation_fails_closed"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_consent::tests::private_store_rejects_redirected_or_non_private_namespace"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_http::tests::fixed_endpoints_and_surfaces_are_provider_specific"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_http::tests::cache_hit_and_offline_miss_never_construct_an_authorizer"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_http::tests::gui_cache_and_offline_paths_never_mint_or_consume_a_proof"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_http::tests::gui_live_miss_capability_is_bound_to_its_exact_lookup"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_http::tests::real_authorized_request_builds_a_canonical_live_record"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_http::tests::provider_response_mappings_are_identity_bound"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_http::tests::malformed_or_mismatched_provider_json_is_closed_unavailable"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_http::tests::timeout_maps_to_a_typed_outcome_through_the_authorized_client_path"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_http::tests::redirect_is_not_followed_and_returns_closed_unavailable"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_http::tests::valid_429_sets_only_its_provider_cooldown_without_egress"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_http::tests::invalid_or_missing_retry_after_does_not_install_a_cooldown"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_http::tests::cooldown_is_scoped_to_one_provider"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_http::tests::denied_authorizer_never_enters_the_transport_closure"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_http::tests::retry_after_parser_is_bounded_and_data_free"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_http::tests::provider_response_text_never_enters_the_typed_outcome"
+    },
+    {
+      "harness": "neoth",
+      "name": "cli::citation::tests::provider_omission_order_and_explicit_limit_are_pinned"
+    },
+    {
+      "harness": "neoth",
+      "name": "cli::citation::tests::invalid_claim_and_query_reject_before_lookup"
+    },
+    {
+      "harness": "neoth",
+      "name": "cli::citation::tests::clap_binds_explicit_provider_and_offline_without_a_network_path"
+    },
+    {
+      "harness": "neoth",
+      "name": "cli::citation::tests::injected_empty_cache_offline_is_a_typed_miss_without_live_lookup"
+    },
+    {
+      "harness": "neoth",
+      "name": "cli::citation::tests::unavailable_receipt_has_no_display_projection"
+    },
+    {
+      "harness": "neoth",
+      "name": "cli::citation::tests::altered_claim_cannot_render_a_found_display"
+    },
+    {
+      "harness": "neoth",
+      "name": "cli::citation::tests::runner_preserves_order_and_all_prior_typed_outcomes"
+    },
+    {
+      "harness": "neoth",
+      "name": "cli::citation::tests::runner_offline_and_invalid_inputs_construct_zero_authorizers"
+    },
+    {
+      "harness": "neoth",
+      "name": "cli::citation::tests::permission_denied_stops_fallback_and_query_drift_is_rejected"
+    },
+    {
+      "harness": "neoth::citation_cli_contract",
+      "name": "citation_cli_contract::ordinary_and_gui_offline_lookups_emit_typed_receipts_before_nonzero_without_authorizer_wal"
+    },
+    {
+      "harness": "neoth::citation_cli_contract",
+      "name": "citation_cli_contract::gui_lookup_rejects_invalid_input_before_private_proof_or_authorizer"
+    },
+    {
+      "harness": "neoth::citation_cli_contract",
+      "name": "citation_cli_contract::gui_decide_rejects_oversized_private_stdin_before_consent_mutation"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::external_http::tests::gui_ready_rechecks_current_policy_and_keeps_normal_http_lifecycle"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::external_http::tests::required_http_decision_failure_blocks_intent_and_transport"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::external_http::tests::intent_failure_prevents_network"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::external_http::tests::success_and_failure_close_the_same_request_binding"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::external_http::tests::permit_is_bound_to_exact_url_and_body"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::external_http::tests::permit_rejects_a_provenance_binding_mismatch"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::external_http::tests::terminal_result_audit_failure_is_returned_after_transport"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::external_http::tests::request_drift_cannot_reach_transport"
+    },
+    {
+      "harness": "neoth",
+      "name": "tools::citation_lookup::tests::missing_cache_namespace_is_a_read_only_offline_miss"
+    }
+  ],
+  "sourceBindingsDetail": [
+    {
+      "bytes": 5319,
+      "path": ".github/workflows/citation-acceptance.yml",
+      "sha256": "b7d18b8448ece2bce9e2abdcc8295b4a3a1812d6c7659beb13b0b7edc0e500c5"
+    },
+    {
+      "bytes": 383179,
+      "path": "SRC/Cargo.lock",
+      "sha256": "1fbcb15c89e2a3bdf7b0edec9ac0252c782bc7453ebcf83224463472d513a35d"
+    },
+    {
+      "bytes": 29373,
+      "path": "SRC/neothd/src/cli/citation.rs",
+      "sha256": "77b2935de27645258a05bc97ee5ed547d2a45663f902a7b5e8b8d9837e3b696d"
+    },
+    {
+      "bytes": 39584,
+      "path": "SRC/neothd/src/tools/citation_consent.rs",
+      "sha256": "255f455918cb9ff71f7fb2e65c989f9f1680b52e589078c243a0f88a761058a5"
+    },
+    {
+      "bytes": 47050,
+      "path": "SRC/neothd/src/tools/citation_http.rs",
+      "sha256": "4147677b5d76add1e7d5bfd38942b32cc355babc649378c2f294c29076cac893"
+    },
+    {
+      "bytes": 60374,
+      "path": "SRC/neothd/src/tools/citation_lookup.rs",
+      "sha256": "0eae948e8f5bbdc05346d3db7ee3962478c105f1e3752885bde90abbe4e21672"
+    },
+    {
+      "bytes": 101792,
+      "path": "SRC/neothd/src/tools/external_http.rs",
+      "sha256": "9cea94822653a2eb8fc1fd96e6b7e81c9d8952e68e472dafa5982c91ba2c7189"
+    },
+    {
+      "bytes": 6756,
+      "path": "SRC/neothd/tests/citation_cli_contract.rs",
+      "sha256": "49449252e08869bb565a5ec5dcfe29bf01b2da6b09bcbdf1b99e91780b7ee8cb"
+    },
+    {
+      "bytes": 24540,
+      "path": "packaging/tests/citation_acceptance.py",
+      "sha256": "1b3c270a6343de2d3d7d39c0e50b8c68a50a93711deba9bd6e6d015603295cdc"
+    }
+  ]
+}

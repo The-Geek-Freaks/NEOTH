@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T14:40:16.5023824Z",
-  "validationStatus": "P206accepted18;P120accepted12;Group841admitted834PASS7FAIL;W422W424repairs reviewed hostedpending;W417probe root repair and W428optional workspaceClippy",
+  "capturedUtc": "2026-09-23T14:55:22.4384075Z",
+  "validationStatus": "W433citation50PASS+2live+1rate_limitednoncoverage;W430sourceboundhostedformat;W431minimalRaftinputqualificationrepair",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -808,18 +808,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 167485,
-      "sha256": "7489ABE28876ACA6B50FAED85AE41C07EAA549C8DDEBEA2CA88015234898FC20"
+      "bytes": 168696,
+      "sha256": "BFDECC35521D6EA164B139A178326C23C10D12BFD9169E3B6333F2D69D07EA01"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1177550,
-      "sha256": "B899A17ABDB6FABDFF10768FBE18B82378CC06C5F444B3C0C7F3BAA2E10D0E45"
+      "bytes": 1178761,
+      "sha256": "4476DF0BC44F5A9BCCC5947F52DCFB9EFCFC0AB930893A508076554E53894408"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1775397,
-      "sha256": "95E327359AF68DBD259962C30467919F6130FEAA47F863214654764A181E5F0A"
+      "bytes": 1776608,
+      "sha256": "402D191CAA81EF90D077D82420457DE82A754EF08EA97DACD08CEFCF4A9E6E8E"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1688,8 +1688,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
-      "bytes": 530065,
-      "sha256": "75CE6030B7CE0436F8AF88B529E18C136FBFFADF5743B51BFA7B3AE145B78BE9"
+      "bytes": 530043,
+      "sha256": "5DE947E583DBC87A14AB32334C8059A503CE42A4C8940B43DC4DC3C7B91A6EBA"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tests.rs",
@@ -1698,8 +1698,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve.rs",
-      "bytes": 174609,
-      "sha256": "87324684E9BCBC1B0F0103625BD9D0C59E21ABE205CC516EFE5F5B85C7E7377F"
+      "bytes": 174611,
+      "sha256": "0C824AA1D80D59AEE6C335CC3B409FAB5D28163B7AF8879B3B421338F10D5438"
     },
     {
       "path": "SRC/neothd/src/cli/updater.rs",
@@ -3468,13 +3468,13 @@
     },
     {
       "path": ".github/workflows/raft-budget-inputs.yml",
-      "bytes": 17308,
-      "sha256": "4D44201968E159F691EB94876C470C4A390149A332234FA024C738CEFFBBFE61"
+      "bytes": 19627,
+      "sha256": "2592ED0357BDFDE1FC3D3E75FAA946B5FA7AEE24667B4AAA62B11D85E56500A1"
     },
     {
       "path": "docs/gold-wave417-raft-hosted-inputs.md",
-      "bytes": 3355,
-      "sha256": "C03D2D725F0EFE63B0E140135C4E1476C1AD1857DA8B6FE303D0BD102EB85CF6"
+      "bytes": 4071,
+      "sha256": "B1513FC951E7D72B41211BC0812F389A296CC548773191C45A281AD0DFFB469E"
     },
     {
       "path": "docs/gold-wave421-citation-terminal-repair.md",
@@ -3505,6 +3505,21 @@
       "path": "docs/gold-wave428-workspace-clippy-lane.md",
       "bytes": 1023,
       "sha256": "D6DCD6A072B58C9C9B6194AEE49A71C2A76365B09D70236D83DD98312FEE2B21"
+    },
+    {
+      "path": "docs/gold-wave430-hosted-format.md",
+      "bytes": 647,
+      "sha256": "7AF064B218D6F60787C41C53CA7C9ED55E07D28BF0E5A6BBDA13A92054482C17"
+    },
+    {
+      "path": "docs/gold-wave433-citation-results.md",
+      "bytes": 1534,
+      "sha256": "CFEF685EE29AECBDB98C9B1184AC9D5891FD15262E3CE95B302BE661BF31A4FF"
+    },
+    {
+      "path": "docs/verification/gold-wave433-citation-results.json",
+      "bytes": 9383,
+      "sha256": "79F7618D1352F0AA357DB3CF2782F1D346BCA082A3404D192175B9C589848E7D"
     }
   ]
 }
