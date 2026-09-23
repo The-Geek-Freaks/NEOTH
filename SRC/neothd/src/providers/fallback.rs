@@ -893,6 +893,11 @@ mod tests {
     #[tokio::test]
     async fn direct_retry_entrypoint_preserves_configured_fallback_hops() {
         let dir = tempfile::tempdir().unwrap();
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let seg = wal_dir.join("direct-retry-fallback-000001.wal");
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(seg.clone(), dir.path().to_path_buf()).unwrap();
         let fallback = fallback_at(
             dir.path(),
             vec![
@@ -902,9 +907,12 @@ mod tests {
             1,
             None,
         );
-        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
             crate::permissions::AutonomyLevel::Full,
-        );
+            Some(writer.clone()),
+            crate::config::TokensConfig::default_max_per_request(),
+        )
+        .with_usage_home(dir.path());
         let completion = fallback
             .complete_authorized_direct_retry(
                 Request::default(),
@@ -915,6 +923,27 @@ mod tests {
             .expect("fallback route must retain its quota hop semantics");
         assert_eq!(completion.identity.provider, "secondary");
         assert_eq!(completion.identity.dispatch_route, vec![1]);
+
+        drop(fallback);
+        drop(authorizer);
+        drop(writer);
+        join.await.unwrap();
+
+        let quota_payloads = event_payloads(
+            &seg,
+            crate::wal::events::EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED,
+        );
+        assert_eq!(quota_payloads.len(), 1);
+        assert_eq!(quota_payloads[0]["provider"], "primary");
+        assert_eq!(quota_payloads[0]["source"], "fallback_candidate");
+        let hop_payloads = event_payloads(
+            &seg,
+            crate::wal::events::EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED,
+        );
+        assert_eq!(hop_payloads.len(), 1);
+        assert_eq!(hop_payloads[0]["from_provider"], "primary");
+        assert_eq!(hop_payloads[0]["to_provider"], "secondary");
+        assert_eq!(hop_payloads[0]["hop"], 1);
     }
 
     #[tokio::test]

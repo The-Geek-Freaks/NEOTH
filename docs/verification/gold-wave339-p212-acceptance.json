@@ -1,0 +1,209 @@
+{
+  "schema": "neoth-parent-acceptance/v1",
+  "parent": "GOLD-LF-P2-12",
+  "status": "ACCEPTED",
+  "run": 35838862993,
+  "sourceHead": "b6090b1f71ce4ca2926494b9f77389c56ecdb7d9",
+  "acceptedPublishedHead": "9cd6f9ab009a7af897ce82d4d311988f6c86e236",
+  "runConclusion": "failure",
+  "parentRequired": 25,
+  "parentPassed": 25,
+  "unrelatedFailures": 5,
+  "groupAdmissionSha256": "523C1E26C0243480474EC27351840031C4C7876EB7384E2D2D23AFCC1F60DA6F",
+  "orderedTestTerminals": true,
+  "tests": [
+    {
+      "test": "cli::autonomy::tests::skill_override_parser_is_strict_and_custom_only",
+      "sourcePath": "SRC/neothd/src/cli/autonomy.rs",
+      "sourceSha256": "d01c5491ae636a2709136a90158e77addeac8d2dfd4e82cbcb498a626a66cafb"
+    },
+    {
+      "test": "cli::autonomy::tests::skill_override_commit_readback_and_reset_are_exact_and_idempotent",
+      "sourcePath": "SRC/neothd/src/cli/autonomy.rs",
+      "sourceSha256": "d01c5491ae636a2709136a90158e77addeac8d2dfd4e82cbcb498a626a66cafb"
+    },
+    {
+      "test": "config::skill_autonomy_config_tests::public_config_load_rejects_invalid_skill_id",
+      "sourcePath": "SRC/neothd/src/config/mod.rs",
+      "sourceSha256": "8d387fc3b0afe1f7f2da43edc0978b7771779cb0a953614366061a681e868bc1"
+    },
+    {
+      "test": "config::skill_autonomy_config_tests::public_config_load_rejects_malformed_or_non_custom_skill_action_maps",
+      "sourcePath": "SRC/neothd/src/config/mod.rs",
+      "sourceSha256": "8d387fc3b0afe1f7f2da43edc0978b7771779cb0a953614366061a681e868bc1"
+    },
+    {
+      "test": "config::skill_autonomy_config_tests::public_config_load_rejects_more_than_128_skill_overrides",
+      "sourcePath": "SRC/neothd/src/config/mod.rs",
+      "sourceSha256": "8d387fc3b0afe1f7f2da43edc0978b7771779cb0a953614366061a681e868bc1"
+    },
+    {
+      "test": "config::skill_autonomy_config_tests::public_config_load_preserves_legacy_absence_of_skill_overrides",
+      "sourcePath": "SRC/neothd/src/config/mod.rs",
+      "sourceSha256": "8d387fc3b0afe1f7f2da43edc0978b7771779cb0a953614366061a681e868bc1"
+    },
+    {
+      "test": "permissions::policy::tests::empty_skill_overrides_preserve_legacy_v1_trust_fingerprint",
+      "sourcePath": "SRC/neothd/src/permissions/policy.rs",
+      "sourceSha256": "603afed9654f6fe794c338d91114f07504262b51a3348250eee3815e0b98b6af"
+    },
+    {
+      "test": "permissions::policy::tests::selected_skill_cap_intersects_each_action_restrictively",
+      "sourcePath": "SRC/neothd/src/permissions/policy.rs",
+      "sourceSha256": "603afed9654f6fe794c338d91114f07504262b51a3348250eee3815e0b98b6af"
+    },
+    {
+      "test": "permissions::policy::tests::skill_override_rejects_actions_without_custom_level",
+      "sourcePath": "SRC/neothd/src/permissions/policy.rs",
+      "sourceSha256": "603afed9654f6fe794c338d91114f07504262b51a3348250eee3815e0b98b6af"
+    },
+    {
+      "test": "permissions::policy::tests::retained_skill_cap_uses_current_global_effect_leaf_policy",
+      "sourcePath": "SRC/neothd/src/permissions/policy.rs",
+      "sourceSha256": "603afed9654f6fe794c338d91114f07504262b51a3348250eee3815e0b98b6af"
+    },
+    {
+      "test": "skills::installer::tests::read_only_recovery_probe_never_creates_locks_or_changes_recovery_artifacts",
+      "sourcePath": "SRC/neothd/src/skills/installer.rs",
+      "sourceSha256": "9b6ec99acee33df35adbe1c340fa908b07d5bd4a5928d08e6ce6b0de0127fc1d"
+    },
+    {
+      "test": "skills::loader::tests::read_only_inventory_keeps_pending_recovery_artifacts_and_never_creates_a_lock",
+      "sourcePath": "SRC/neothd/src/skills/loader.rs",
+      "sourceSha256": "bfb0578e25f83d5bf036c0685be92c661c6e7b1ec8ea018afca0e0e46cf4b35d"
+    },
+    {
+      "test": "skills::resolver::tests::w138_retained_cap_reload_blocks_stale_snapshot_while_no_cap_preserves_legacy_snapshot",
+      "sourcePath": "SRC/neothd/src/skills/resolver.rs",
+      "sourceSha256": "5f6cb02c991a24fc2cbc312901d65c3f406aaacd71e1f2a9296b130a9042c8f3"
+    },
+    {
+      "test": "permissions::gate::tests::w138_retained_skill_deny_blocks_effect_even_when_global_and_confirm_allow",
+      "sourcePath": "SRC/neothd/src/permissions/gate.rs",
+      "sourceSha256": "bebc63e9f80bc6712ad9c0db863da610e95426832057edf6227d7b8a3116efdc"
+    },
+    {
+      "test": "permissions::gate::tests::w138_retained_skill_confirm_uses_channel_operator_answer",
+      "sourcePath": "SRC/neothd/src/permissions/gate.rs",
+      "sourceSha256": "bebc63e9f80bc6712ad9c0db863da610e95426832057edf6227d7b8a3116efdc"
+    },
+    {
+      "test": "permissions::gate::tests::w138_effect_gate_applies_global_tightening_after_route_is_retained",
+      "sourcePath": "SRC/neothd/src/permissions/gate.rs",
+      "sourceSha256": "bebc63e9f80bc6712ad9c0db863da610e95426832057edf6227d7b8a3116efdc"
+    },
+    {
+      "test": "permissions::gate::tests::w138_retained_route_without_skill_cap_preserves_global_effect_behavior",
+      "sourcePath": "SRC/neothd/src/permissions/gate.rs",
+      "sourceSha256": "bebc63e9f80bc6712ad9c0db863da610e95426832057edf6227d7b8a3116efdc"
+    },
+    {
+      "test": "permissions::gate::tests::w138_channel_approval_rechecks_reloaded_cap_and_audits_current_deny",
+      "sourcePath": "SRC/neothd/src/permissions/gate.rs",
+      "sourceSha256": "bebc63e9f80bc6712ad9c0db863da610e95426832057edf6227d7b8a3116efdc"
+    },
+    {
+      "test": "mcp::gate::tests::w138_reloaded_global_deny_blocks_retained_cap_before_smart_approve",
+      "sourcePath": "SRC/neothd/src/mcp/gate.rs",
+      "sourceSha256": "4f45b308740abda49f6a18e5b8e25c2270f71ec76b78bc27d2cba7482acc707f"
+    },
+    {
+      "test": "mcp::gate::tests::w138_skill_confirm_cannot_be_smart_approved",
+      "sourcePath": "SRC/neothd/src/mcp/gate.rs",
+      "sourceSha256": "4f45b308740abda49f6a18e5b8e25c2270f71ec76b78bc27d2cba7482acc707f"
+    },
+    {
+      "test": "mcp::gate::tests::w138_no_cap_smart_approve_retains_baseline",
+      "sourcePath": "SRC/neothd/src/mcp/gate.rs",
+      "sourceSha256": "4f45b308740abda49f6a18e5b8e25c2270f71ec76b78bc27d2cba7482acc707f"
+    },
+    {
+      "test": "mcp::gate::tests::w138_mcp_no_cap_smart_approve_keeps_baseline_wal_allow",
+      "sourcePath": "SRC/neothd/src/mcp/gate.rs",
+      "sourceSha256": "4f45b308740abda49f6a18e5b8e25c2270f71ec76b78bc27d2cba7482acc707f"
+    },
+    {
+      "test": "mcp::gate::tests::w138_mcp_reload_final_deny_audits_current_policy_before_smart_approve",
+      "sourcePath": "SRC/neothd/src/mcp/gate.rs",
+      "sourceSha256": "4f45b308740abda49f6a18e5b8e25c2270f71ec76b78bc27d2cba7482acc707f"
+    },
+    {
+      "test": "providers::cost_authorization::tests::w138_retained_skill_deny_blocks_paid_provider_before_transport",
+      "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
+      "sourceSha256": "6171f3a844cee9c607d8de78469d50a457f1140b81ed05590089e7b433eb9aa7"
+    },
+    {
+      "test": "loop_engine::engine::tests::w145_loop_forwards_retained_skill_mcp_deny_before_stdio_transport",
+      "sourcePath": "SRC/neothd/src/loop_engine/engine.rs",
+      "sourceSha256": "04c90d996cb2921e023a052456c5559ee9ca630af128a7f3d4d3d568c775f50a"
+    }
+  ],
+  "publishedSourceBindings": [
+    {
+      "path": "SRC/neothd/src/cli/autonomy.rs",
+      "blob": "e46f0452a512497aa44b2b9b750e1e78781ae7fa",
+      "sha256": "d01c5491ae636a2709136a90158e77addeac8d2dfd4e82cbcb498a626a66cafb"
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "blob": "7a36d2e5486c5fbd33f60920528af2172b1acd21",
+      "sha256": "8d387fc3b0afe1f7f2da43edc0978b7771779cb0a953614366061a681e868bc1"
+    },
+    {
+      "path": "SRC/neothd/src/loop_engine/engine.rs",
+      "blob": "690a913eceddf110ee4358569dc72aedc3461abd",
+      "sha256": "04c90d996cb2921e023a052456c5559ee9ca630af128a7f3d4d3d568c775f50a"
+    },
+    {
+      "path": "SRC/neothd/src/mcp/gate.rs",
+      "blob": "66f17f3c73f97c89cf6fd468e3be7a1302f1c022",
+      "sha256": "4f45b308740abda49f6a18e5b8e25c2270f71ec76b78bc27d2cba7482acc707f"
+    },
+    {
+      "path": "SRC/neothd/src/permissions/gate.rs",
+      "blob": "62907f72a03e4b0cdef92768154656e03b1cd97c",
+      "sha256": "bebc63e9f80bc6712ad9c0db863da610e95426832057edf6227d7b8a3116efdc"
+    },
+    {
+      "path": "SRC/neothd/src/permissions/policy.rs",
+      "blob": "d2a36c8eb6e6c0165b4ea60d2584d3345c8544be",
+      "sha256": "603afed9654f6fe794c338d91114f07504262b51a3348250eee3815e0b98b6af"
+    },
+    {
+      "path": "SRC/neothd/src/providers/cost_authorization.rs",
+      "blob": "506e159db15cb2b17384b65446a55a85c2bf4ab0",
+      "sha256": "6171f3a844cee9c607d8de78469d50a457f1140b81ed05590089e7b433eb9aa7"
+    },
+    {
+      "path": "SRC/neothd/src/skills/installer.rs",
+      "blob": "26c15b715949c3d421def1111717ea67eb435d09",
+      "sha256": "9b6ec99acee33df35adbe1c340fa908b07d5bd4a5928d08e6ce6b0de0127fc1d"
+    },
+    {
+      "path": "SRC/neothd/src/skills/loader.rs",
+      "blob": "2a919833c32ddc847079cd8ec95307ef2c2a2a03",
+      "sha256": "bfb0578e25f83d5bf036c0685be92c661c6e7b1ec8ea018afca0e0e46cf4b35d"
+    },
+    {
+      "path": "SRC/neothd/src/skills/resolver.rs",
+      "blob": "474a51aed38b09e7c2e53cb7e535176696f86b08",
+      "sha256": "5f6cb02c991a24fc2cbc312901d65c3f406aaacd71e1f2a9296b130a9042c8f3"
+    }
+  ],
+  "review": "Existing independent literal-contract mappings P208/P211 and W327-P212; all required exact terminals now admitted",
+  "localExecutableValidationRan": false,
+  "gui": {
+    "run": 35831827281,
+    "sourceHead": "d6da730098d792a758e1b01fb9ea7049aaad8564",
+    "required": [
+      "gui_action::tests::skill_autonomy_receipts_are_strict_and_bind_exact_desired_config",
+      "w58_gui_callback_runtime_tests::w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback"
+    ],
+    "passed": 2,
+    "admissionSha256": "6F4B6B88B75BC90B4535E3446308E40C8D6B80F1A7AA5164912A152764D0D295",
+    "sourcePathsUnchanged": [
+      "SRC/neothd-gui/src/main.rs",
+      "SRC/neothd-gui/src/gui_action.rs"
+    ]
+  }
+}

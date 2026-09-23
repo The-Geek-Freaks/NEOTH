@@ -3,6 +3,23 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W336-W339 repairs and three parent acceptances (2026-09-23):**
+Group684 run35838862993 on b6090b1f is source-admitted679PASS/5FAIL:
+149source bindings, matrix/lock and every ordered terminal verified. P2-08
+accepted51/51; P2-11 accepted29/29; P2-12 accepted25/25 plus two previously
+admitted unchanged GUI callback/receipt cases. Published source identity is
+verified through9cd6f9ab. Three functional parents close; failed aggregate and
+platform/release gates remain explicit. See docs/gold-wave339-parent-acceptance.md
+and docs/verification/gold-wave339-p{208,211,212}-acceptance.json.
+
+W336-W338 repair all five remaining grouped failures: guarded dispatch count,
+real fallback-audit writer, bound retention recovery before inventory, correct
+quota-backoff lifecycle count and chained role-error assertion. Independent
+source review passed; behavior rerun is pending. W329 Core35840622919 continues.
+Dream/WAL/browser source work remains separate until its own review and gates.
+Road1324=1025checked/297open/2partial;299raw/298pre-tag blockers. WS-LF18done/
+100open. Local BSOD hold remains; no executable validation ran here.
+
 **W329 research dispatch and W330 acquisition (2026-09-23):** Three new
 research fixtures drive the real command lifecycle and authorized producer with
 an isolated SearXNG fixture. They decode authenticated WAL payloads, bind the

@@ -1,0 +1,215 @@
+{
+  "schema": "neoth-parent-acceptance/v1",
+  "parent": "GOLD-LF-P2-11",
+  "status": "ACCEPTED",
+  "run": 35838862993,
+  "sourceHead": "b6090b1f71ce4ca2926494b9f77389c56ecdb7d9",
+  "acceptedPublishedHead": "9cd6f9ab009a7af897ce82d4d311988f6c86e236",
+  "runConclusion": "failure",
+  "parentRequired": 29,
+  "parentPassed": 29,
+  "unrelatedFailures": 5,
+  "groupAdmissionSha256": "523C1E26C0243480474EC27351840031C4C7876EB7384E2D2D23AFCC1F60DA6F",
+  "orderedTestTerminals": true,
+  "tests": [
+    {
+      "test": "graphify_publish::tests::publication_seals_scoped_codegraph_witness_with_fixed_bfs_provenance",
+      "sourcePath": "SRC/neothd/src/graphify_publish.rs",
+      "sourceSha256": "d87615782476254b8e56c3d979affd8ca54c3866e091fc8806533c52a1543835"
+    },
+    {
+      "test": "graphify_publish::tests::current_pointer_cannot_drop_codegraph_generation_binding",
+      "sourcePath": "SRC/neothd/src/graphify_publish.rs",
+      "sourceSha256": "d87615782476254b8e56c3d979affd8ca54c3866e091fc8806533c52a1543835"
+    },
+    {
+      "test": "wiki::ingest::tests::current_codegraph_witness_is_receipt_bound_before_scope_replacement",
+      "sourcePath": "SRC/neothd/src/wiki/ingest.rs",
+      "sourceSha256": "c3aae352cff73f0da00b1929cd65e29666448d3c599136c1004a0e0646558962"
+    },
+    {
+      "test": "wiki::ingest::tests::current_receipt_without_codegraph_witness_preserves_prior_scope",
+      "sourcePath": "SRC/neothd/src/wiki/ingest.rs",
+      "sourceSha256": "c3aae352cff73f0da00b1929cd65e29666448d3c599136c1004a0e0646558962"
+    },
+    {
+      "test": "code_map::imports::tests::resolves_only_unambiguous_root_local_rust_and_python_modules",
+      "sourcePath": "SRC/neothd/src/code_map/imports.rs",
+      "sourceSha256": "ded3dab23604b991c8d0f07fee6aaafbd9aa571c7e895dd99e373954737d0c44"
+    },
+    {
+      "test": "code_map::imports::tests::ignores_rust_and_python_import_lookalikes_in_comments_and_strings",
+      "sourcePath": "SRC/neothd/src/code_map/imports.rs",
+      "sourceSha256": "ded3dab23604b991c8d0f07fee6aaafbd9aa571c7e895dd99e373954737d0c44"
+    },
+    {
+      "test": "code_map::imports::tests::bounded_query_terminates_cycles_and_refuses_node_or_text_overflow",
+      "sourcePath": "SRC/neothd/src/code_map/imports.rs",
+      "sourceSha256": "ded3dab23604b991c8d0f07fee6aaafbd9aa571c7e895dd99e373954737d0c44"
+    },
+    {
+      "test": "code_map::persist::tests::import_generation_is_invalidated_by_map_persist_and_bound_to_replacement",
+      "sourcePath": "SRC/neothd/src/code_map/persist.rs",
+      "sourceSha256": "e40049b942ea64deec8f9b24624ee3bb8e1365af6814a0da28e0b9274944531a"
+    },
+    {
+      "test": "code_map::persist::tests::delta_publication_replaces_imports_after_removed_module",
+      "sourcePath": "SRC/neothd/src/code_map/persist.rs",
+      "sourceSha256": "e40049b942ea64deec8f9b24624ee3bb8e1365af6814a0da28e0b9274944531a"
+    },
+    {
+      "test": "mcp::codegraph_server::tests::dispatch_codegraph_imports_reads_current_root_local_snapshot",
+      "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
+      "sourceSha256": "bab4da81cfaa54eaa599623009de21297901f9dc36c74a21eda542bc400fbd5b"
+    },
+    {
+      "test": "mcp::codegraph_server::tests::stdio_imports_call_has_bound_receipt_and_rejects_stale_generation",
+      "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
+      "sourceSha256": "bab4da81cfaa54eaa599623009de21297901f9dc36c74a21eda542bc400fbd5b"
+    },
+    {
+      "test": "code_map::type_hierarchy::tests::rust_uses_exact_lexical_scope_for_impls_and_trait_supertraits",
+      "sourcePath": "SRC/neothd/src/code_map/type_hierarchy.rs",
+      "sourceSha256": "4e02afe2fa1c2dc8b10574c9b1ae0ae2bafe72340829d7e524be477f0604922c"
+    },
+    {
+      "test": "code_map::type_hierarchy::tests::python_is_top_level_local_and_ignores_comments_strings_and_cross_language_names",
+      "sourcePath": "SRC/neothd/src/code_map/type_hierarchy.rs",
+      "sourceSha256": "4e02afe2fa1c2dc8b10574c9b1ae0ae2bafe72340829d7e524be477f0604922c"
+    },
+    {
+      "test": "code_map::type_hierarchy::tests::bounded_queries_are_deterministic_cycle_safe_and_validate_exact_endpoints",
+      "sourcePath": "SRC/neothd/src/code_map/type_hierarchy.rs",
+      "sourceSha256": "4e02afe2fa1c2dc8b10574c9b1ae0ae2bafe72340829d7e524be477f0604922c"
+    },
+    {
+      "test": "code_map::persist::tests::type_hierarchy_full_reopen_map_invalidation_and_delta_replacement",
+      "sourcePath": "SRC/neothd/src/code_map/persist.rs",
+      "sourceSha256": "e40049b942ea64deec8f9b24624ee3bb8e1365af6814a0da28e0b9274944531a"
+    },
+    {
+      "test": "mcp::codegraph_server::tests::dispatch_codegraph_types_rejects_source_mutation_and_bounded_query_overflow",
+      "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
+      "sourceSha256": "bab4da81cfaa54eaa599623009de21297901f9dc36c74a21eda542bc400fbd5b"
+    },
+    {
+      "test": "mcp::codegraph_server::tests::stdio_types_call_has_bound_receipt_and_rejects_stale_type_generation",
+      "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
+      "sourceSha256": "bab4da81cfaa54eaa599623009de21297901f9dc36c74a21eda542bc400fbd5b"
+    },
+    {
+      "test": "code_map::graph::tests::callers_of_walks_inverse_adjacency",
+      "sourcePath": "SRC/neothd/src/code_map/graph.rs",
+      "sourceSha256": "6f53c33d6755f2062d1d7bd831eb4227ec5e377bd6658ae9cb1582c1310f8c91"
+    },
+    {
+      "test": "code_map::graph::tests::callees_of_walks_forward",
+      "sourcePath": "SRC/neothd/src/code_map/graph.rs",
+      "sourceSha256": "6f53c33d6755f2062d1d7bd831eb4227ec5e377bd6658ae9cb1582c1310f8c91"
+    },
+    {
+      "test": "code_map::graph::tests::find_cycles_detects_three_cycle_and_ignores_acyclic_tail",
+      "sourcePath": "SRC/neothd/src/code_map/graph.rs",
+      "sourceSha256": "6f53c33d6755f2062d1d7bd831eb4227ec5e377bd6658ae9cb1582c1310f8c91"
+    },
+    {
+      "test": "mcp::codegraph_server::tests::callers_inner_result_is_sorted_deterministically",
+      "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
+      "sourceSha256": "bab4da81cfaa54eaa599623009de21297901f9dc36c74a21eda542bc400fbd5b"
+    },
+    {
+      "test": "mcp::codegraph_server::tests::callees_inner_result_is_sorted_deterministically",
+      "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
+      "sourceSha256": "bab4da81cfaa54eaa599623009de21297901f9dc36c74a21eda542bc400fbd5b"
+    },
+    {
+      "test": "mcp::codegraph_server::tests::call_graph_refuses_stale_or_over_budget_root_snapshots",
+      "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
+      "sourceSha256": "bab4da81cfaa54eaa599623009de21297901f9dc36c74a21eda542bc400fbd5b"
+    },
+    {
+      "test": "mcp::codegraph_server::tests::call_graph_refuses_non_positive_mismatched_or_partial_generations",
+      "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
+      "sourceSha256": "bab4da81cfaa54eaa599623009de21297901f9dc36c74a21eda542bc400fbd5b"
+    },
+    {
+      "test": "code_map::persist::tests::is_index_stale_detects_edit_add_and_remove",
+      "sourcePath": "SRC/neothd/src/code_map/persist.rs",
+      "sourceSha256": "e40049b942ea64deec8f9b24624ee3bb8e1365af6814a0da28e0b9274944531a"
+    },
+    {
+      "test": "code_map::persist::tests::known_empty_snapshot_becomes_stale_when_first_file_appears",
+      "sourcePath": "SRC/neothd/src/code_map/persist.rs",
+      "sourceSha256": "e40049b942ea64deec8f9b24624ee3bb8e1365af6814a0da28e0b9274944531a"
+    },
+    {
+      "test": "daemon::self_map_task::tests::completion_payload_binds_digest_and_matching_native_generations",
+      "sourcePath": "SRC/neothd/src/daemon/self_map_task.rs",
+      "sourceSha256": "39bffb2a2a0980284e8528f078659bdc38a8050b4b19c45df6140452ff377fda"
+    },
+    {
+      "test": "cli::graph::tests::graph_query_recall_uses_typed_generation_bound_wire_receipt",
+      "sourcePath": "SRC/neothd/src/cli/graph.rs",
+      "sourceSha256": "151906e8b7d87168fa7a0294219967332a1f116f14910e48a7116d4e0efe772a"
+    },
+    {
+      "test": "graphify_transaction::tests::recovery_inspection_uses_durable_intent_not_empty_scope_guesswork",
+      "sourcePath": "SRC/neothd/src/graphify_transaction.rs",
+      "sourceSha256": "87b0fbd7cca9dbcb950bf2ca7b9da37f0f74edd66001379fb51f9da904f839e8"
+    }
+  ],
+  "publishedSourceBindings": [
+    {
+      "path": "SRC/neothd/src/cli/graph.rs",
+      "blob": "a160b4e44677f5ec0ee1e087726e04cbacdc77fc",
+      "sha256": "151906e8b7d87168fa7a0294219967332a1f116f14910e48a7116d4e0efe772a"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/graph.rs",
+      "blob": "71cf95dbc32b2e473325055835395c9ca67bec04",
+      "sha256": "6f53c33d6755f2062d1d7bd831eb4227ec5e377bd6658ae9cb1582c1310f8c91"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/imports.rs",
+      "blob": "f977ad6aecdf9b4b83ff5562e0ff4d6743ce674c",
+      "sha256": "ded3dab23604b991c8d0f07fee6aaafbd9aa571c7e895dd99e373954737d0c44"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/persist.rs",
+      "blob": "a202a03a0a5bab2d085cfa634192ff9ac127d074",
+      "sha256": "e40049b942ea64deec8f9b24624ee3bb8e1365af6814a0da28e0b9274944531a"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/type_hierarchy.rs",
+      "blob": "0399d1c83a88c5cb36e6206aae821cff233010fa",
+      "sha256": "4e02afe2fa1c2dc8b10574c9b1ae0ae2bafe72340829d7e524be477f0604922c"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/self_map_task.rs",
+      "blob": "b2f25ec1832c212b6fb11fd2f89af9e52ee920cb",
+      "sha256": "39bffb2a2a0980284e8528f078659bdc38a8050b4b19c45df6140452ff377fda"
+    },
+    {
+      "path": "SRC/neothd/src/graphify_publish.rs",
+      "blob": "23508cda29fd7fa0edb5db8c60541c8a6691a529",
+      "sha256": "d87615782476254b8e56c3d979affd8ca54c3866e091fc8806533c52a1543835"
+    },
+    {
+      "path": "SRC/neothd/src/graphify_transaction.rs",
+      "blob": "e9b3cbf2918d83fdd85c36a1d20e1a50fc447e8a",
+      "sha256": "87b0fbd7cca9dbcb950bf2ca7b9da37f0f74edd66001379fb51f9da904f839e8"
+    },
+    {
+      "path": "SRC/neothd/src/mcp/codegraph_server.rs",
+      "blob": "da4d22f74a6061e1ba321100aa90731bb5f32dcd",
+      "sha256": "bab4da81cfaa54eaa599623009de21297901f9dc36c74a21eda542bc400fbd5b"
+    },
+    {
+      "path": "SRC/neothd/src/wiki/ingest.rs",
+      "blob": "20f04b44025f0abd4c031b3af1e8931aba484ef6",
+      "sha256": "c3aae352cff73f0da00b1929cd65e29666448d3c599136c1004a0e0646558962"
+    }
+  ],
+  "review": "Existing independent literal-contract mappings P208/P211 and W327-P212; all required exact terminals now admitted",
+  "localExecutableValidationRan": false
+}

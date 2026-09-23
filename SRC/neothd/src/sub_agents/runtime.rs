@@ -1703,15 +1703,19 @@ mod tests {
             .await
             .expect("W296 fallback fan-out completes");
         assert_eq!(report.pass_count, 1);
-        assert_eq!(quota_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            quota_calls.load(Ordering::SeqCst),
+            1,
+            "the primary 429 records durable backoff before the QA leaf"
+        );
         assert_eq!(fallback_calls.load(Ordering::SeqCst), 2);
         drop(report);
         drop(writer);
         join.await.expect("drain W296 fallback WAL");
         assert_eq!(
             w296_left_provider_request_count(&segment),
-            4,
-            "both primary and QA preserve Left across their 429 and fallback leaves"
+            3,
+            "the initial 429 and both fallback leaves preserve Left"
         );
     }
 

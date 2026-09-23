@@ -2,6 +2,23 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W336-W339 repairs and three parent acceptances (2026-09-23):**
+Group684 run35838862993 on b6090b1f is source-admitted679PASS/5FAIL:
+149source bindings, matrix/lock and every ordered terminal verified. P2-08
+accepted51/51; P2-11 accepted29/29; P2-12 accepted25/25 plus two previously
+admitted unchanged GUI callback/receipt cases. Published source identity is
+verified through9cd6f9ab. Three functional parents close; failed aggregate and
+platform/release gates remain explicit. See docs/gold-wave339-parent-acceptance.md
+and docs/verification/gold-wave339-p{208,211,212}-acceptance.json.
+
+W336-W338 repair all five remaining grouped failures: guarded dispatch count,
+real fallback-audit writer, bound retention recovery before inventory, correct
+quota-backoff lifecycle count and chained role-error assertion. Independent
+source review passed; behavior rerun is pending. W329 Core35840622919 continues.
+Dream/WAL/browser source work remains separate until its own review and gates.
+Road1324=1025checked/297open/2partial;299raw/298pre-tag blockers. WS-LF18done/
+100open. Local BSOD hold remains; no executable validation ran here.
+
 **W329 research dispatch and W330 acquisition (2026-09-23):** Three new
 research fixtures drive the real command lifecycle and authorized producer with
 an isolated SearXNG fixture. They decode authenticated WAL payloads, bind the
@@ -4558,7 +4575,7 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality and P2-22 counterparty consent accepted: **15 done / 103
+> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph and P2-12 skill autonomy accepted: **18 done / 100
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

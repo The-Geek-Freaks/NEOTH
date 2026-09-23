@@ -3017,7 +3017,7 @@ mod tests {
             .await
             .expect_err("configured Cerebellum provider mismatch must stop before transport");
         assert!(
-            error.to_string().contains("role dispatch denied"),
+            format!("{error:#}").contains("role dispatch denied"),
             "{error:#}"
         );
         assert_eq!(denied_calls.load(Ordering::SeqCst), 0);

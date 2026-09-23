@@ -2780,8 +2780,6 @@ pub fn enforce_daily_retention_with_execution(
     if !execution.enabled {
         return enforce_daily_retention(home, now_unix, policy, obsidian);
     }
-    // First retain all v1 inventory refusals, including legacy note debt.
-    let inventory = enforce_daily_retention(home, now_unix, policy, obsidian)?;
     let _gate = crate::reflection::hygiene_store::lock_daily_admission(home).map_err(|_| {
         DailyRetentionError {
             reason: "daily retention gate unavailable",
@@ -2872,6 +2870,10 @@ pub fn enforce_daily_retention_with_execution(
         &quarantine_root_path,
         note_target.as_ref(),
     )?;
+    // Recovery may restore a receipt-owned note while its exact archive is
+    // still held in the journal-bound quarantine. Inventory that transitional
+    // state only after recovery has re-established the paired namespace.
+    let inventory = enforce_daily_retention(home, now_unix, policy, obsidian)?;
     reconcile_retention_purge_journals(
         home,
         now_unix,

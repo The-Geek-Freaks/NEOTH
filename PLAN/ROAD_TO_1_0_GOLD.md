@@ -8,6 +8,23 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W336-W339 repairs and three parent acceptances (2026-09-23):**
+Group684 run35838862993 on b6090b1f is source-admitted679PASS/5FAIL:
+149source bindings, matrix/lock and every ordered terminal verified. P2-08
+accepted51/51; P2-11 accepted29/29; P2-12 accepted25/25 plus two previously
+admitted unchanged GUI callback/receipt cases. Published source identity is
+verified through9cd6f9ab. Three functional parents close; failed aggregate and
+platform/release gates remain explicit. See docs/gold-wave339-parent-acceptance.md
+and docs/verification/gold-wave339-p{208,211,212}-acceptance.json.
+
+W336-W338 repair all five remaining grouped failures: guarded dispatch count,
+real fallback-audit writer, bound retention recovery before inventory, correct
+quota-backoff lifecycle count and chained role-error assertion. Independent
+source review passed; behavior rerun is pending. W329 Core35840622919 continues.
+Dream/WAL/browser source work remains separate until its own review and gates.
+Road1324=1025checked/297open/2partial;299raw/298pre-tag blockers. WS-LF18done/
+100open. Local BSOD hold remains; no executable validation ran here.
+
 **W329 research dispatch and W330 acquisition (2026-09-23):** Three new
 research fixtures drive the real command lifecycle and authorized producer with
 an isolated SearXNG fixture. They decode authenticated WAL payloads, bind the
@@ -3760,7 +3777,7 @@ already-gated release workflow itself.
 | WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE + 2026-06-17 DAU batch + 2026-06-17b batch-2 + 2026-06-18 batch-3 GRAPH/DRAW/PONY/HANDY/IMPR/TUDU/IGNIS/SPEAKR/TERMIX/REPOW/TRAIL/OMNI + GRAPH-04..07 self-knowledge + DESIGN-01..03 taste-skills + 2026-07-06 L6 vault preload + 2026-07-07 opthash spike) | 308 unique ids (370 raw entries) | 0 | **308 ✅ COMPLETE** |
 | WS-R3 Forensic Gold correction (2026-07-14, resumed 2026-07-22) | 19 | **6** | **13** |
 | WS-R4 Zero-friction install, GUI parity and public launch (2026-07-14) | 15 | **14** | **1** |
-| WS-LF Confirmed lost-feature recovery (2026-07-18) | 118 materialized (52 recovered source rows + 65 plan leaves + 1 inventory-integrity gate) | **103** | **15** |
+| WS-LF Confirmed lost-feature recovery (2026-07-18) | 118 materialized (52 recovered source rows + 65 plan leaves + 1 inventory-integrity gate) | **100** | **18** |
 | WS-NCT Cognitive Transport + selective Buzz/Prime coordination (2026-07-27; Prime decision 2026-08-10) | 30 (`GOLD-NCT-00..27` + `GOLD-ADOPT-BUZZ-01` + `GOLD-ADOPT-PRIME-01`) | **28** | **2** |
 | WS-ADOPT31 18-source forensic adoption wave + Wayfinder/ADW/Evidence-Gated pipeline (2026-07-31) | 67 (`ADOPT31-*`; lanes A7/B12/C10/D7/E2/F4/G7/H2/**W2+I7+V5**/X2) | **64** | **3** |
 | WS-CC Context Connectors & People Intelligence (2026-08-13) | 13 (`GOLD-CC-00..12`) | **12** | **1** |
@@ -3770,15 +3787,15 @@ already-gated release workflow itself.
 inside their already-open parent rollups and therefore are not added a second
 time to the WS-R4 top-level total.
 
-**Current count semantics (reconciled 2026-09-23 after W323 P2-22 acceptance):**
-the dashboard tracks broad/workstream rollups; its OPEN column sums to **235**
-(`1 + 6 + 14 + 103 + 28 + 64 + 12 + 7`). The release workflow uses a different
+**Current count semantics (reconciled 2026-09-23 after W339 P2-08/P2-11/P2-12 acceptance):**
+the dashboard tracks broad/workstream rollups; its OPEN column sums to **232**
+(`1 + 6 + 14 + 100 + 28 + 64 + 12 + 7`). The release workflow uses a different
 and stricter contract: `packaging/roadmap_release_gate.py` counts every Markdown
 task outside fenced code, including mandatory child contracts. The whole-file
-result is **1,324 total / 1,022 done / 300 open / 2 partial = 302 raw blockers**.
-A release tag has **301 pre-tag blockers**, because only the single
+result is **1,324 total / 1,025 done / 297 open / 2 partial = 299 raw blockers**.
+A release tag has **298 pre-tag blockers**, because only the single
 `GOLD-RELEASE-ARTIFACTS` task may remain open while that workflow creates its
-evidence. The values 235, 302 and 301 answer different questions and must not be
+evidence. The values 232, 299 and 298 answer different questions and must not be
 substituted for one another in release-readiness claims. The two partials still
 block release; notably A6 has a tested VAD primitive but no live Playback-Cancel
 consumer until A2/A7 exist. `ADOPT31-C3` retains the canonical open state.
@@ -8700,7 +8717,7 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
 - [x] **GOLD-LF-P2-05 — Self-improve proposal quality schema:** version and persist eval source, corpus hash, regressions and quality evidence, reject incomplete/stale proposals before acceptance, and expose the same proof in CLI/GUI/Buddy. Source: REFLECT_BACKLOG §B. Accepted 2026-09-23: W275 core/CLI, Group489 passive-quality and seven GUI W142/W149 cases; see docs/gold-wave275-self-improve-cli-acceptance.md.
 - [ ] **GOLD-LF-P2-06 — Capability decay tracking:** define and persist provider/capability quality-over-time metrics, decay/recovery rules and operator-visible diagnostics without allowing noisy samples to silently disable capabilities. Source: FEATURE_EVAL.md C-13.
 - [ ] **GOLD-LF-P2-07 — EXP-FD-1..5 fractal-dimension experiments:** complete the reasoning-depth literature/design note, then implement all five reproducible gated experiments with datasets, metrics, provenance and explicit promotion/rejection criteria. Source: dimension.rs gated experiment backlog.
-- [ ] **GOLD-LF-P2-08 — Universal WAL session_id:** thread the authenticated session identity through make_header and every applicable emitter, migrate/read legacy zero values safely and prove cross-session replay/query isolation. Source: builder.rs session_id finding.
+- [x] **GOLD-LF-P2-08 — Universal WAL session_id:** thread the authenticated session identity through make_header and every applicable emitter, migrate/read legacy zero values safely and prove cross-session replay/query isolation. Source: builder.rs session_id finding. **Accepted 2026-09-23 (W339):** exact source-bound parent terminals; see `docs/verification/gold-wave339-p208-acceptance.json`.
   **Evidence update (2026-08-30; static audit):** universal `session_id`
   remains open. An additive draft was rejected because authenticated registry
   and contextual writer support are missing; no implementation was accepted
@@ -8709,8 +8726,8 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
   earlier failing Full CI provide no `session_id` closure evidence.
 - [ ] **GOLD-LF-P2-09 — Autonomous research loop:** implement an operator-governed agent-goal lifecycle with bounded planning/execution, budgets, pause/resume/cancel, evidence capture, proposal-first mutation and full audit/rollback surfaces. Source: FEATURE_EVAL.md C-2.
 - [x] **GOLD-LF-P2-10 — Session-start skill registry injection:** inject the exact enabled, dependency-ready skill registry into every new session and downstream retry/fallback/sub-agent path; prove hot-reload and subject/policy isolation. Source: SP-H1. **Accepted 2026-09-22:** source-bound Grouped281 `35785415701` on `778637e0`, 281/281 exact cases; independent literal-contract review. See `docs/gold-wave224-registry-acceptance.md`.
-- [ ] **GOLD-LF-P2-11 — CodeGraph import/type/BFS edges:** add ImportGraph, TypeHierarchy and bounded BFS APIs beside the existing CallGraph, regenerate Graphify/self-knowledge consumers and test cross-language, cycle and stale-index behavior. Source: CG-2/3/5.
-- [ ] **GOLD-LF-P2-12 — Per-skill autonomy gradients:** add typed per-skill overrides under the canonical Custom/autonomy policy, resolve them at every invocation edge and expose inspect/edit/reset parity with fail-closed tests. Source: per-skill autonomy finding.
+- [x] **GOLD-LF-P2-11 — CodeGraph import/type/BFS edges:** add ImportGraph, TypeHierarchy and bounded BFS APIs beside the existing CallGraph, regenerate Graphify/self-knowledge consumers and test cross-language, cycle and stale-index behavior. Source: CG-2/3/5. **Accepted 2026-09-23 (W339):** exact source-bound parent terminals; see `docs/verification/gold-wave339-p211-acceptance.json`.
+- [x] **GOLD-LF-P2-12 — Per-skill autonomy gradients:** add typed per-skill overrides under the canonical Custom/autonomy policy, resolve them at every invocation edge and expose inspect/edit/reset parity with fail-closed tests. Source: per-skill autonomy finding. **Accepted 2026-09-23 (W339):** exact source-bound parent terminals; see `docs/verification/gold-wave339-p212-acceptance.json`.
 - [ ] **GOLD-LF-P2-13 — CloakBrowser stealth fetch plugin:** document the Playwright-rs versus chromiumoxide decision, then ship a pinned managed browser/runtime with policy, network, credential, progress, cancellation and clean-machine lifecycle wiring. Source: CloakBrowser recovery row.
 - [ ] **GOLD-LF-P2-14 — Ralph error-aware retry tool:** implement typed error classification and bounded LLM retry with request/model/cost/permission rebinding, deterministic stop conditions, receipts and CLI/GUI/Buddy visibility. Source: Ralph-Retry recovery row.
 - [ ] **GOLD-LF-P2-15 — Hemisphere role-enforcement pipeline:** enforce configured role boundaries across council, normal dispatch, fallback, retries and sub-agents, with typed violations and adversarial prompt/regression evidence. Source: role-enforcement recovery row.
