@@ -9335,11 +9335,13 @@ fn normal_chat_role_binding(
         // historical unbound path while no role policy is active.
         return Ok(None);
     };
-    Ok(Some(crate::cli::chat_turn_pipeline::NormalChatRoleBinding {
-        provider,
-        fixed_config: std::sync::Arc::new(config.clone()),
-        role_policy_reload,
-    }))
+    Ok(Some(
+        crate::cli::chat_turn_pipeline::NormalChatRoleBinding {
+            provider,
+            fixed_config: std::sync::Arc::new(config.clone()),
+            role_policy_reload,
+        },
+    ))
 }
 
 fn bind_normal_chat_role_authorizer(
@@ -15326,9 +15328,10 @@ mod tests {
         let home = PathBuf::from("daemon-plain-chat-send-fixture");
         let config = FreedomConfig::default();
         let config_path = home.join("freedom.yaml");
-        let role_policy_reload = std::sync::Arc::new(
-            crate::config::reload::ReloadController::new(config.clone(), config_path.clone()),
-        );
+        let role_policy_reload = std::sync::Arc::new(crate::config::reload::ReloadController::new(
+            config.clone(),
+            config_path.clone(),
+        ));
         assert_send(prepare_daemon_plain_chat_turn(
             "ordinary daemon message".into(),
             config,
@@ -19525,15 +19528,25 @@ modes:
 
     #[async_trait]
     impl Provider for W292CountingProvider {
-        fn name(&self) -> &'static str { "w292-counting-provider" }
-        fn default_model(&self) -> Option<&str> { Some(W292_LEFT_MODEL) }
+        fn name(&self) -> &'static str {
+            "w292-counting-provider"
+        }
+        fn default_model(&self) -> Option<&str> {
+            Some(W292_LEFT_MODEL)
+        }
         async fn complete(&self, _request: Request) -> Result<Completion> {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(Completion {
-                termination: Default::default(), text: "w292 normal reply".to_owned(),
-                identity: Default::default(), model: W292_LEFT_MODEL.to_owned(),
-                latency: Duration::from_millis(1), input_tokens: Some(1), output_tokens: Some(1),
-                cache_creation_tokens: None, cache_read_tokens: None, usage_measurements: None,
+                termination: Default::default(),
+                text: "w292 normal reply".to_owned(),
+                identity: Default::default(),
+                model: W292_LEFT_MODEL.to_owned(),
+                latency: Duration::from_millis(1),
+                input_tokens: Some(1),
+                output_tokens: Some(1),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                usage_measurements: None,
             })
         }
     }
@@ -19543,17 +19556,22 @@ modes:
         policy_model: &str,
     ) -> FreedomConfig {
         let mut config = FreedomConfig {
-            provider_kind: Some(ProviderKind::ClaudeCli), provider_model: Some(W292_LEFT_MODEL.to_owned()),
-            autonomy: UNPRICED_TEST_PROVIDER_AUTONOMY, review_gate_enabled: false,
-            steps_completed: vec![1, 2, 3, 4, 5, 6, 7], ..Default::default()
+            provider_kind: Some(ProviderKind::ClaudeCli),
+            provider_model: Some(W292_LEFT_MODEL.to_owned()),
+            autonomy: UNPRICED_TEST_PROVIDER_AUTONOMY,
+            review_gate_enabled: false,
+            steps_completed: vec![1, 2, 3, 4, 5, 6, 7],
+            ..Default::default()
         };
         config.council.disabled = Some(true);
         config.memory.recall_shortcut = false;
-        config.inference.default_slot.provider = Some(crate::config::inference::InferenceProvider::ClaudeCli);
+        config.inference.default_slot.provider =
+            Some(crate::config::inference::InferenceProvider::ClaudeCli);
         config.inference.role_policy = Some(crate::config::role_policy::RolePolicyConfig {
             rules: vec![crate::config::role_policy::RolePolicyRule {
                 role: crate::config::inference::HemisphereRole::Left,
-                provider: policy_provider, model: Some(policy_model.to_owned()),
+                provider: policy_provider,
+                model: Some(policy_model.to_owned()),
             }],
         });
         config
@@ -19563,49 +19581,85 @@ modes:
         let bytes = std::fs::read(segment).expect("read W292 WAL");
         let mut count = 0;
         crate::wal::scan::for_each_frame(&bytes, |_, frame| {
-            if frame.header.event_type == EVENT_TYPE_PROVIDER_REQUEST { count += 1; }
+            if frame.header.event_type == EVENT_TYPE_PROVIDER_REQUEST {
+                count += 1;
+            }
             Ok(())
-        }).expect("scan W292 WAL");
+        })
+        .expect("scan W292 WAL");
         count
     }
 
     #[tokio::test]
     async fn w292_normal_chat_left_policy_allows_one_raw_leaf_and_request_lifecycle() {
         let home = tempdir().expect("create W292 allowed home");
-        crate::consent::grant(home.path(), ProviderKind::ClaudeCli).expect("grant W292 fixture provider consent");
+        crate::consent::grant(home.path(), ProviderKind::ClaudeCli)
+            .expect("grant W292 fixture provider consent");
         let segment = canonical_test_wal(home.path(), "w292-normal-allowed");
         let config = w292_normal_chat_config(
             crate::config::inference::InferenceProvider::ClaudeCli,
             W292_LEFT_MODEL,
         );
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let provider = W292CountingProvider { calls: std::sync::Arc::clone(&calls) };
-        run_chat_with(ChatArgs {
-            message: Some("W292 normal interactive chat".to_owned()), config: Some(home.path().join("freedom.yaml")),
-            wal_segment: Some(segment.clone()), ..test_chat_args_default()
-        }, config, &provider).await.expect("Left policy admits the normal prepared chat leaf");
+        let provider = W292CountingProvider {
+            calls: std::sync::Arc::clone(&calls),
+        };
+        run_chat_with(
+            ChatArgs {
+                message: Some("W292 normal interactive chat".to_owned()),
+                config: Some(home.path().join("freedom.yaml")),
+                wal_segment: Some(segment.clone()),
+                ..test_chat_args_default()
+            },
+            config,
+            &provider,
+        )
+        .await
+        .expect("Left policy admits the normal prepared chat leaf");
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(w292_provider_request_count(&segment), 1, "admitted normal chat emits one provider request lifecycle");
+        assert_eq!(
+            w292_provider_request_count(&segment),
+            1,
+            "admitted normal chat emits one provider request lifecycle"
+        );
     }
 
     #[tokio::test]
     async fn w292_normal_chat_left_policy_denial_precedes_raw_leaf_and_request_lifecycle() {
         let home = tempdir().expect("create W292 denied home");
-        crate::consent::grant(home.path(), ProviderKind::ClaudeCli).expect("grant W292 fixture provider consent");
+        crate::consent::grant(home.path(), ProviderKind::ClaudeCli)
+            .expect("grant W292 fixture provider consent");
         let segment = canonical_test_wal(home.path(), "w292-normal-denied");
         let config = w292_normal_chat_config(
             crate::config::inference::InferenceProvider::OpenAi,
             W292_LEFT_MODEL,
         );
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let provider = W292CountingProvider { calls: std::sync::Arc::clone(&calls) };
-        let error = run_chat_with(ChatArgs {
-            message: Some("W292 denied normal interactive chat".to_owned()), config: Some(home.path().join("freedom.yaml")),
-            wal_segment: Some(segment.clone()), ..test_chat_args_default()
-        }, config, &provider).await.expect_err("Left policy must reject a mismatched normal-chat provider");
-        assert!(format!("{error:#}").contains("dispatch_outer"), "normal chat preserves its quarantined dispatch failure boundary");
+        let provider = W292CountingProvider {
+            calls: std::sync::Arc::clone(&calls),
+        };
+        let error = run_chat_with(
+            ChatArgs {
+                message: Some("W292 denied normal interactive chat".to_owned()),
+                config: Some(home.path().join("freedom.yaml")),
+                wal_segment: Some(segment.clone()),
+                ..test_chat_args_default()
+            },
+            config,
+            &provider,
+        )
+        .await
+        .expect_err("Left policy must reject a mismatched normal-chat provider");
+        assert!(
+            format!("{error:#}").contains("dispatch_outer"),
+            "normal chat preserves its quarantined dispatch failure boundary"
+        );
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
-        assert_eq!(w292_provider_request_count(&segment), 0, "denied normal chat cannot mint a provider request lifecycle");
+        assert_eq!(
+            w292_provider_request_count(&segment),
+            0,
+            "denied normal chat cannot mint a provider request lifecycle"
+        );
     }
     #[tokio::test]
     async fn w292_normal_chat_left_policy_model_denial_precedes_raw_leaf_and_request_lifecycle() {
@@ -19618,19 +19672,28 @@ modes:
             "w292-other-model",
         );
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let provider = W292CountingProvider { calls: std::sync::Arc::clone(&calls) };
-        run_chat_with(ChatArgs {
-            message: Some("W292 model-denied normal interactive chat".to_owned()),
-            config: Some(home.path().join("freedom.yaml")),
-            wal_segment: Some(segment.clone()),
-            ..test_chat_args_default()
-        }, config, &provider).await.expect_err("Left policy must reject a mismatched normal-chat model");
+        let provider = W292CountingProvider {
+            calls: std::sync::Arc::clone(&calls),
+        };
+        run_chat_with(
+            ChatArgs {
+                message: Some("W292 model-denied normal interactive chat".to_owned()),
+                config: Some(home.path().join("freedom.yaml")),
+                wal_segment: Some(segment.clone()),
+                ..test_chat_args_default()
+            },
+            config,
+            &provider,
+        )
+        .await
+        .expect_err("Left policy must reject a mismatched normal-chat model");
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert_eq!(w292_provider_request_count(&segment), 0);
     }
 
     #[test]
-    fn w292_normal_chat_compatibility_snapshot_retains_left_binding_for_later_daemon_policy_reload() {
+    fn w292_normal_chat_compatibility_snapshot_retains_left_binding_for_later_daemon_policy_reload()
+    {
         let mut config = w292_normal_chat_config(
             crate::config::inference::InferenceProvider::ClaudeCli,
             W292_LEFT_MODEL,
@@ -19639,7 +19702,10 @@ modes:
         let binding = normal_chat_role_binding(&config, None)
             .expect("configured Left topology remains bindable without a current policy")
             .expect("normal chat retains the canonical Left origin for a later daemon reload");
-        assert_eq!(binding.provider, crate::config::inference::InferenceProvider::ClaudeCli);
+        assert_eq!(
+            binding.provider,
+            crate::config::inference::InferenceProvider::ClaudeCli
+        );
         assert!(binding.role_policy_reload.is_none());
     }
     #[tokio::test]
@@ -19653,28 +19719,44 @@ modes:
             .expect("mint W292 fallback binding")
             .expect("configured normal-chat Left binding");
         let segment = home.path().join("w292-fallback-000001.wal");
-        let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("spawn W292 fallback WAL");
+        let (writer, join) =
+            crate::wal::writer::spawn(segment.clone()).expect("spawn W292 fallback WAL");
         let fallback_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let chain = crate::providers::fallback::FallbackProvider::new_with_models_at(
             vec![
-                Box::new(QuotaErrorProvider { body: "W292 fixture 429".to_owned() }),
-                Box::new(W292CountingProvider { calls: std::sync::Arc::clone(&fallback_calls) }),
+                Box::new(QuotaErrorProvider {
+                    body: "W292 fixture 429".to_owned(),
+                }),
+                Box::new(W292CountingProvider {
+                    calls: std::sync::Arc::clone(&fallback_calls),
+                }),
             ],
-            vec![Some(W292_LEFT_MODEL.to_owned()), Some(W292_LEFT_MODEL.to_owned())],
+            vec![
+                Some(W292_LEFT_MODEL.to_owned()),
+                Some(W292_LEFT_MODEL.to_owned()),
+            ],
             1,
             None,
             home.path().join("quota.json"),
         );
         let authorizer = bind_normal_chat_role_authorizer(
             crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
-                UNPRICED_TEST_PROVIDER_AUTONOMY, Some(writer.clone()), config.tokens.max_per_request,
+                UNPRICED_TEST_PROVIDER_AUTONOMY,
+                Some(writer.clone()),
+                config.tokens.max_per_request,
             ),
             Some(&binding),
         );
         let provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
-            &chain, authorizer, Some(W292_LEFT_MODEL.to_owned()), "w292.fallback",
+            &chain,
+            authorizer,
+            Some(W292_LEFT_MODEL.to_owned()),
+            "w292.fallback",
         );
-        provider.complete(Request::default()).await.expect("429 fallback completes through the retained Left origin");
+        provider
+            .complete(Request::default())
+            .await
+            .expect("429 fallback completes through the retained Left origin");
         assert_eq!(fallback_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         drop(provider);
         drop(writer);
@@ -19683,13 +19765,18 @@ modes:
         let mut left_requests = 0;
         crate::wal::scan::for_each_frame(&bytes, |_, frame| {
             if frame.header.event_type == EVENT_TYPE_PROVIDER_REQUEST {
-                let payload: serde_json::Value = serde_json::from_slice(frame.payload).expect("decode W292 request");
+                let payload: serde_json::Value =
+                    serde_json::from_slice(frame.payload).expect("decode W292 request");
                 assert_eq!(payload["hemisphere_role"], "left");
                 left_requests += 1;
             }
             Ok(())
-        }).expect("scan W292 fallback WAL");
-        assert_eq!(left_requests, 2, "both the 429 and fallback leaves retain the normal Left origin");
+        })
+        .expect("scan W292 fallback WAL");
+        assert_eq!(
+            left_requests, 2,
+            "both the 429 and fallback leaves retain the normal Left origin"
+        );
     }
     #[tokio::test]
     async fn w292_daemon_compatibility_left_binding_rechecks_policy_enabled_after_admission() {
@@ -19700,28 +19787,40 @@ modes:
             W292_LEFT_MODEL,
         );
         initial.inference.role_policy = None;
-        std::fs::write(&config_path, serde_yaml::to_string(&initial).expect("serialize W292 compatibility config"))
-            .expect("write W292 compatibility config");
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&initial).expect("serialize W292 compatibility config"),
+        )
+        .expect("write W292 compatibility config");
         let reload = std::sync::Arc::new(crate::config::reload::ReloadController::new(
-            initial.clone(), config_path.clone(),
+            initial.clone(),
+            config_path.clone(),
         ));
         let binding = normal_chat_role_binding(&initial, Some(std::sync::Arc::clone(&reload)))
             .expect("mint W292 compatibility Left binding")
             .expect("normal topology remains bound before a later policy is enabled");
         let segment = home.path().join("w292-compatibility-reload-000001.wal");
-        let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("spawn W292 compatibility WAL");
+        let (writer, join) =
+            crate::wal::writer::spawn(segment.clone()).expect("spawn W292 compatibility WAL");
         let ack_gate = crate::wal::writer::TestAckGate::once(EVENT_TYPE_PROVIDER_REQUEST);
         let writer = writer.with_test_ack_gate(ack_gate.clone());
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let inner = W292CountingProvider { calls: std::sync::Arc::clone(&calls) };
+        let inner = W292CountingProvider {
+            calls: std::sync::Arc::clone(&calls),
+        };
         let authorizer = bind_normal_chat_role_authorizer(
             crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
-                UNPRICED_TEST_PROVIDER_AUTONOMY, Some(writer.clone()), initial.tokens.max_per_request,
+                UNPRICED_TEST_PROVIDER_AUTONOMY,
+                Some(writer.clone()),
+                initial.tokens.max_per_request,
             ),
             Some(&binding),
         );
         let provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
-            &inner, authorizer, None, "w292.daemon.compatibility_reload",
+            &inner,
+            authorizer,
+            None,
+            "w292.daemon.compatibility_reload",
         );
         let pending = provider.complete(Request::default());
         tokio::pin!(pending);
@@ -19739,15 +19838,27 @@ modes:
                 model: Some(W292_LEFT_MODEL.to_owned()),
             }],
         });
-        std::fs::write(&config_path, serde_yaml::to_string(&policy_enabled).expect("serialize W292 enabled policy"))
-            .expect("write W292 enabled policy");
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&policy_enabled).expect("serialize W292 enabled policy"),
+        )
+        .expect("write W292 enabled policy");
         assert!(matches!(
-            reload.try_reload().expect("accept compatibility-to-role-policy reload"),
+            reload
+                .try_reload()
+                .expect("accept compatibility-to-role-policy reload"),
             crate::config::reload::ReloadResult::Reloaded { .. }
         ));
         ack_gate.release();
-        let error = pending.await.expect_err("newly enabled mismatched Left policy blocks raw normal-chat transport");
-        assert!(error.to_string().contains("role dispatch policy changed after authorization"), "{error:#}");
+        let error = pending
+            .await
+            .expect_err("newly enabled mismatched Left policy blocks raw normal-chat transport");
+        assert!(
+            error
+                .to_string()
+                .contains("role dispatch policy changed after authorization"),
+            "{error:#}"
+        );
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         drop(provider);
         drop(writer);
@@ -19762,10 +19873,14 @@ modes:
             crate::config::inference::InferenceProvider::ClaudeCli,
             W292_LEFT_MODEL,
         );
-        std::fs::write(&config_path, serde_yaml::to_string(&initial).expect("serialize W292 initial config"))
-            .expect("write W292 initial config");
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&initial).expect("serialize W292 initial config"),
+        )
+        .expect("write W292 initial config");
         let reload = std::sync::Arc::new(crate::config::reload::ReloadController::new(
-            initial.clone(), config_path.clone(),
+            initial.clone(),
+            config_path.clone(),
         ));
         let binding = normal_chat_role_binding(&initial, Some(std::sync::Arc::clone(&reload)))
             .expect("mint daemon normal-chat Left binding")
@@ -19775,7 +19890,9 @@ modes:
         let ack_gate = crate::wal::writer::TestAckGate::once(EVENT_TYPE_PROVIDER_REQUEST);
         let writer = writer.with_test_ack_gate(ack_gate.clone());
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let inner = W292CountingProvider { calls: std::sync::Arc::clone(&calls) };
+        let inner = W292CountingProvider {
+            calls: std::sync::Arc::clone(&calls),
+        };
         let authorizer = bind_normal_chat_role_authorizer(
             crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
                 UNPRICED_TEST_PROVIDER_AUTONOMY,
@@ -19785,7 +19902,10 @@ modes:
             Some(&binding),
         );
         let provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
-            &inner, authorizer, None, "w292.daemon.reload",
+            &inner,
+            authorizer,
+            None,
+            "w292.daemon.reload",
         );
         let pending = provider.complete(Request::default());
         tokio::pin!(pending);
@@ -19796,22 +19916,36 @@ modes:
             }
         }
         let mut revoked = reload.latest().as_ref().clone();
-        revoked.inference.role_policy.as_mut().expect("active W292 policy").rules.push(
-            crate::config::role_policy::RolePolicyRule {
+        revoked
+            .inference
+            .role_policy
+            .as_mut()
+            .expect("active W292 policy")
+            .rules
+            .push(crate::config::role_policy::RolePolicyRule {
                 role: crate::config::inference::HemisphereRole::Right,
                 provider: crate::config::inference::InferenceProvider::OpenAi,
                 model: Some("w292-revocation-identity".to_owned()),
-            },
-        );
-        std::fs::write(&config_path, serde_yaml::to_string(&revoked).expect("serialize W292 revoked policy"))
-            .expect("write W292 revoked policy");
+            });
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&revoked).expect("serialize W292 revoked policy"),
+        )
+        .expect("write W292 revoked policy");
         assert!(matches!(
             reload.try_reload().expect("accept role-policy-only reload"),
             crate::config::reload::ReloadResult::Reloaded { .. }
         ));
         ack_gate.release();
-        let error = pending.await.expect_err("accepted role-policy change blocks raw normal-chat transport");
-        assert!(error.to_string().contains("role dispatch policy changed after authorization"), "{error:#}");
+        let error = pending
+            .await
+            .expect_err("accepted role-policy change blocks raw normal-chat transport");
+        assert!(
+            error
+                .to_string()
+                .contains("role dispatch policy changed after authorization"),
+            "{error:#}"
+        );
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         drop(provider);
         drop(writer);

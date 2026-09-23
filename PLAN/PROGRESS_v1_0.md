@@ -2,6 +2,11 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W292/W293 hosted formatting (2026-09-23):** Preflight424 run35826445977
+reported formatting only in chat.rs and chat_child_supervisor.rs. The exact
+hosted patch was imported after verifying SHA256 plus both Git pre/postimages.
+No local formatter ran. Core424 run35826459440, GUI128 run35826461386 and
+Group564452 run35826131329 are active; acceptance remains pending.
 **W292 normal-chat roles and W293 Linux containment staging (2026-09-23):**
 Normal chat now retains its configured Left origin through direct/fallback calls
 and the post-reply authorizer; daemon calls recheck accepted role-policy reloads.

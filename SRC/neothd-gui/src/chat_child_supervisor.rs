@@ -1832,7 +1832,9 @@ fn linux_cgroup_mount_flags(operation: LinuxCgroupMountOperation) -> libc::c_ulo
         | LinuxCgroupMountOperation::FreshNamespaceRootAtStaging => {
             (libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC) as libc::c_ulong
         }
-        LinuxCgroupMountOperation::BindStagingNamespaceRootAtPublicPath => libc::MS_BIND as libc::c_ulong,
+        LinuxCgroupMountOperation::BindStagingNamespaceRootAtPublicPath => {
+            libc::MS_BIND as libc::c_ulong
+        }
         LinuxCgroupMountOperation::BindRemountPublicNamespaceRootReadOnly => {
             (libc::MS_BIND
                 | libc::MS_REMOUNT
@@ -1863,8 +1865,12 @@ fn linux_cgroup_mount_operation_stage(operation: LinuxCgroupMountOperation) -> &
         LinuxCgroupMountOperation::UnmountStagingNamespaceRoot => {
             "unmount staged cgroup namespace root"
         }
-        LinuxCgroupMountOperation::RemoveStagingDirectory => "remove private cgroup staging directory",
-        LinuxCgroupMountOperation::UnmountPrivateStagingTmpfs => "unmount private cgroup staging tmpfs",
+        LinuxCgroupMountOperation::RemoveStagingDirectory => {
+            "remove private cgroup staging directory"
+        }
+        LinuxCgroupMountOperation::UnmountPrivateStagingTmpfs => {
+            "unmount private cgroup staging tmpfs"
+        }
     }
 }
 
@@ -2768,9 +2774,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            linux_cgroup_mount_operation_stage(
-                LinuxCgroupMountOperation::MountPrivateStagingTmpfs
-            ),
+            linux_cgroup_mount_operation_stage(LinuxCgroupMountOperation::MountPrivateStagingTmpfs),
             "mount private cgroup staging tmpfs"
         );
         assert_eq!(
@@ -2780,9 +2784,8 @@ mod tests {
             "mount cgroup namespace root at private staging path"
         );
 
-        let fresh = linux_cgroup_mount_flags(
-            LinuxCgroupMountOperation::FreshNamespaceRootAtStaging,
-        );
+        let fresh =
+            linux_cgroup_mount_flags(LinuxCgroupMountOperation::FreshNamespaceRootAtStaging);
         assert_eq!(
             fresh,
             (libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC) as libc::c_ulong
@@ -2822,9 +2825,7 @@ mod tests {
             "unmount staged cgroup namespace root"
         );
         assert_eq!(
-            linux_cgroup_mount_operation_stage(
-                LinuxCgroupMountOperation::RemoveStagingDirectory
-            ),
+            linux_cgroup_mount_operation_stage(LinuxCgroupMountOperation::RemoveStagingDirectory),
             "remove private cgroup staging directory"
         );
         assert_eq!(
@@ -2926,17 +2927,14 @@ mod tests {
             "read provider capability sets"
         );
         assert!(
-            capability_data.iter().all(|set| {
-                set.effective == 0 && set.permitted == 0 && set.inheritable == 0
-            }),
+            capability_data
+                .iter()
+                .all(|set| { set.effective == 0 && set.permitted == 0 && set.inheritable == 0 }),
             "provider retained a capability set after guardian setup"
         );
         let provider_status =
             std::fs::read_to_string("/proc/self/status").expect("read provider status");
-        for required in [
-            "CapAmb:\t0000000000000000",
-            "NoNewPrivs:\t1",
-        ] {
+        for required in ["CapAmb:\t0000000000000000", "NoNewPrivs:\t1"] {
             assert!(
                 provider_status.lines().any(|line| line == required),
                 "provider status omitted required containment field {required}"
