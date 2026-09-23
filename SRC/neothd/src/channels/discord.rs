@@ -170,7 +170,7 @@ impl DiscordChannel {
 
     /// Construct the receive-capable adapter with its mandatory exact-user
     /// authorization policy and audit sink bound for the whole gateway life.
-    pub fn new_inbound(
+    pub(crate) fn new_inbound(
         bot_token: SecretString,
         allowed_sender_id: &str,
         writer: crate::wal::writer::WalWriterHandle,

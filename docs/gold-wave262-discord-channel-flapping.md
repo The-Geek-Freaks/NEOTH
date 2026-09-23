@@ -38,3 +38,12 @@ This does not add Discord account maps, proactive Discord egress, retries,
 runtime-health authority, routing authority, generic outbound evidence, or a
 remote-delivery claim. Provider fields, free payload fields, current config, and
 historical unbound records cannot manufacture Discord Doctor observations.
+
+## W266 constructor visibility repair
+
+Coree802 run35809863646 rejected the new public constructor signature because
+its sealed startup provenance is intentionally crate-private. The inbound
+constructor is now crate-private too, matching its sole daemon startup caller.
+The provenance type remains private and no caller can manufacture it. This
+repairs the actual strict Clippy private-interfaces error without a lint waiver
+or a wider authority surface. Hosted verification is pending.

@@ -22,7 +22,10 @@ Inventory539sources/878universal native/98GUI; Group448/GUI124. Native extras
 remain Windows19/Linux29/macOS28. Road1017checked/305open/2partial is unchanged.
 Core70ef `35808923302` passed slimClippy, test-target checking and CLI build/export.
 Its source/SHA-bound reference now documents `fs grep` and is imported; W262/W264
-Core/Group448 one802 remain pending. GUI124a8 still runs
+Group448 one802 remains pending. Coree802 rejected a public constructor
+exposing crate-private provenance; W266 makes that daemon-only constructor
+crate-private, preserving the sealed authority. Fresh Core validation is required.
+GUI124a8 still runs
 with bounded test-only helper diagnostics. No local executable validation ran.
 See `docs/gold-wave262-discord-channel-flapping.md` and
 `docs/gold-wave264-paused-import-fixture.md`.
