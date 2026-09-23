@@ -2,6 +2,16 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**Canonical Road counter reconciliation (2026-09-23):** Preflight1d6ed46f
+run35824016807 reached the release-gate contract and caught a stale dashboard
+summary left at1019/303 after the already-evidenced P1-17/P2-05 acceptances.
+The published summary and WS-LF rollup now match actual unchanged checkboxes:
+1324 total,1021 done,301 open,2 partial;303 raw/302 pre-tag blockers;WS-LF14/104.
+No acceptance box changed. GUI1256dae evidence is now fully admitted against
+18 source files,5 input bindings and all125 ordered test terminals:123PASS/2FAIL.
+Admission: work/gold-20260906/wave293-gui6dae/ADMISSION.json,
+SHA2563670FD97A9E8EBEA84D3C3E44411EDA35B3C3E9EB78C0821B76211989C11DB16.
+
 **W294 strict lint and cadence-contract repair (2026-09-23):**
 Core62244 run35823363544 exposed three further strict lints after the earlier
 type repairs: unused journal display path, a test-only journal loader compiled

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T05:47:36.8722860Z",
-  "validationStatus": "W294 exact three strict-lint repairs and macOS cadence assertion sync; Group564 still pending successful Core test-target; GUI1256dae123/125 failed; absolute BSOD hold",
+  "capturedUtc": "2026-09-23T05:54:25.4598345Z",
+  "validationStatus": "Published Road counters reconciled with already accepted rows; GUI1256dae123/125 artifact-admitted; Core1d6active; Group564 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -473,18 +473,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 129497,
-      "sha256": "B67FD117DAF107DCCE5D1116CEADC45D886F8C13FD26C2ACE682CD61F3663DE4"
+      "bytes": 130180,
+      "sha256": "6E9260B67CCFC9A221A516EC2D2723BC51001523C9D664A353B4526398B29EBE"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1132475,
-      "sha256": "FFD281978007331279198C739A2639CC2C034A13E2DD5A730D30B895382C438F"
+      "bytes": 1133158,
+      "sha256": "2EE5DC025D021433E5522908D8A4F13E0CB04D2A45B18EA96CD6A638BFB71909"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1729038,
-      "sha256": "C9047D150BF07295415DBBB0DB2D482E2C0791B0E89C056DEC7F682EA2CEFA5E"
+      "bytes": 1729736,
+      "sha256": "D867EF5EBD3116F6A511E6FD43835B06C6514116E64D1D17681B2E913B7E3AB6"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",

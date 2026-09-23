@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W294 exact three strict-lint repairs and macOS cadence assertion sync; Group564 still pending successful Core test-target; GUI1256dae123/125 failed; absolute BSOD hold",
+  "status": "Published Road counters reconciled with already accepted rows; GUI1256dae123/125 artifact-admitted; Core1d6active; Group564 pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 98750,
-    "sha256": "2D6C406BD79DBFE2FA35D13C8B1754E9B67DED30D6C1F184F19D44F3172E85AE"
+    "bytes": 98714,
+    "sha256": "30909A7747D359888DC5BF72E305A52B19754517B3DE29C436148D341FA75910"
   },
   "sourceInputs": 570,
   "requiredNativeTests": [
@@ -18833,6 +18833,13 @@
       }
     ],
     "note": "Core62244 strict lints: unused journal path, cfg(test) loader, Unix tail return. Preflightea31 format passed but stale macOS100/140 expectation; updated150/190 retaining1job and30min execution. No suppression or semantic relaxation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave294RoadSummaryReconciliation": {
+    "base": "1d6ed46fc0aaa7a5fca862ddf5ed6e02d8fc029f",
+    "sources": [],
+    "note": "Actual unchanged boxes1021/301/2 confirmed by bounded text scan. Release marker/dashboard had stale1019/303; corrected rollup14/104. No new acceptance. GUI actual125terminals and18source+5input hashes match6dae.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
