@@ -6,6 +6,7 @@
 
 pub(crate) mod capabilities;
 pub(crate) mod cluster;
+pub(crate) mod context_import;
 pub(crate) mod config;
 pub(crate) mod integrations;
 pub(crate) mod live_probes;

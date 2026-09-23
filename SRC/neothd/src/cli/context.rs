@@ -349,12 +349,15 @@ mod windows_tests {
         assert_eq!(
             status,
             serde_json::json!({
-                "accounts": [{
-                    "connector": "local_import",
-                    "lifecycle": "active",
-                    "policy_revision": 7,
-                    "lifecycle_revision": 11,
-                }],
+                "ok": true,
+                "data": {
+                    "accounts": [{
+                        "connector": "local_import",
+                        "lifecycle": "active",
+                        "policy_revision": 7,
+                        "lifecycle_revision": 11,
+                    }],
+                },
             }),
             "status exposes the daemon-owned, content-free lifecycle contract"
         );
@@ -642,12 +645,15 @@ mod unix_tests {
         assert_eq!(
             status,
             serde_json::json!({
-                "accounts": [{
-                    "connector": "local_import",
-                    "lifecycle": "active",
-                    "policy_revision": 7,
-                    "lifecycle_revision": 11,
-                }],
+                "ok": true,
+                "data": {
+                    "accounts": [{
+                        "connector": "local_import",
+                        "lifecycle": "active",
+                        "policy_revision": 7,
+                        "lifecycle_revision": 11,
+                    }],
+                },
             }),
             "status exposes the daemon-owned, content-free lifecycle contract"
         );

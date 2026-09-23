@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T01:26:34.3031341Z",
-  "validationStatus": "Group42449 all passed; W253 exact Hosted format imported, Group432 and GUI124 running",
+  "capturedUtc": "2026-09-23T01:38:41.9320252Z",
+  "validationStatus": "W257 exact-envelope live Doctor reviewed; four native regressions, Hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -73,8 +73,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 12451,
-      "sha256": "C55C117E1332AA3B078DBDE6A9CB8DC499B498DD4B673F5F85B437D35E70ADFF"
+      "bytes": 12502,
+      "sha256": "0A23BDC99274A194FF688320F59E24594B57B426141C504BEE119B2E9DFAF5D9"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -438,18 +438,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 96441,
-      "sha256": "2BD9C1C6A804A77F553D33B0873B7BE3BD83194FD44EE2933E7004881190B5BE"
+      "bytes": 98033,
+      "sha256": "D198CBBB02F8AB1421A39FA9767D0A95512A970E90BE6D27EE4F7CCBAE80DC80"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1099376,
-      "sha256": "A4697DC25379944D795D41431E243F6689A6B001165D9783BC8F3B3653ABD55E"
+      "bytes": 1100968,
+      "sha256": "9368D1370618442307758F7C9683BDE5566D8ABC88FE105DD5E542B178A9D35C"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1694944,
-      "sha256": "E1C8BE9A7EFF592705C952268A289FFE718197FAFA7E30B5FA1EDEF51A2F3237"
+      "bytes": 1696536,
+      "sha256": "D43DB031900C9269C71C6A921B229052A2C2E1640E76BA36421612F16CE1180A"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1073,8 +1073,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/context.rs",
-      "bytes": 29233,
-      "sha256": "A54B84A78CF23994BC5C3A5961C08139D5B3B7A2AAB4C9415AFE5E7AC61494A1"
+      "bytes": 29427,
+      "sha256": "58C6DE14902A306D456B4840339CA9CC04FC97CD907546E33821848EC42754FF"
     },
     {
       "path": "SRC/neothd/src/cli/credential_transfer.rs",
@@ -1098,13 +1098,18 @@
     },
     {
       "path": "SRC/neothd/src/cli/doctor.rs",
-      "bytes": 92938,
-      "sha256": "FA1DC95CD5F8DCCF42449F120C03B99FC7605B93223B758A8C0A2B8753A38DC2"
+      "bytes": 93064,
+      "sha256": "401F07BD0C01B9BDFDC0B361249160EA4C67EE828991765FC4D5DC77D36900DF"
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/capabilities.rs",
       "bytes": 18538,
       "sha256": "1E0D6B8D6285A6D0336A4F4E2F12B57F3948DF7A8BF2179658ED6D58A05EC83F"
+    },
+    {
+      "path": "SRC/neothd/src/cli/doctor/checks/context_import.rs",
+      "bytes": 9628,
+      "sha256": "EDF1CE3A5686159CF5B0514CB2ADAF99FD7E6E365D9BF13CE6398C97557E6F55"
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/integrations.rs",

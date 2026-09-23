@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Group42449 all passed; W253 exact Hosted format imported, Group432 and GUI124 running",
+  "status": "W257 exact-envelope live Doctor reviewed; four native regressions, Hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 92857,
-    "sha256": "E21EFC251DD5939F08825B6D474FB876C48057BD21624AFF26922CB21A7FB9EC"
+    "bytes": 93038,
+    "sha256": "6ED40E41B140D1F2C53E50446B79C8F4175E3F6A48D8E2DADFCD13BE02E6771E"
   },
-  "sourceInputs": 537,
+  "sourceInputs": 538,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -3282,13 +3282,13 @@
     {
       "test": "cli::doctor::tests::check_docs_listed_count_matches_runtime_contract",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "FA1DC95CD5F8DCCF42449F120C03B99FC7605B93223B758A8C0A2B8753A38DC2",
+      "sourceSha256": "401F07BD0C01B9BDFDC0B361249160EA4C67EE828991765FC4D5DC77D36900DF",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::run_all_checks_returns_one_outcome_per_diagnostic",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "FA1DC95CD5F8DCCF42449F120C03B99FC7605B93223B758A8C0A2B8753A38DC2",
+      "sourceSha256": "401F07BD0C01B9BDFDC0B361249160EA4C67EE828991765FC4D5DC77D36900DF",
       "junitClass": "neoth"
     },
     {
@@ -5124,7 +5124,7 @@
     {
       "test": "cli::context::route_tests::context_import_status_parses_and_uses_the_existing_content_free_status_route",
       "sourcePath": "SRC/neothd/src/cli/context.rs",
-      "sourceSha256": "A54B84A78CF23994BC5C3A5961C08139D5B3B7A2AAB4C9415AFE5E7AC61494A1",
+      "sourceSha256": "58C6DE14902A306D456B4840339CA9CC04FC97CD907546E33821848EC42754FF",
       "junitClass": "neoth"
     },
     {
@@ -5172,13 +5172,37 @@
     {
       "test": "cli::context::route_tests::context_import_lifecycle_routes_bind_both_expected_revisions",
       "sourcePath": "SRC/neothd/src/cli/context.rs",
-      "sourceSha256": "A54B84A78CF23994BC5C3A5961C08139D5B3B7A2AAB4C9415AFE5E7AC61494A1",
+      "sourceSha256": "58C6DE14902A306D456B4840339CA9CC04FC97CD907546E33821848EC42754FF",
       "junitClass": "neoth"
     },
     {
       "test": "connectors::runtime_local_import::tests::plan_preview_is_exact_content_free_and_has_no_store_or_wal_effect",
       "sourcePath": "SRC/neothd/src/connectors/runtime_local_import.rs",
       "sourceSha256": "5971824B23F1FE9B94D88548B6E3499DB1EC36C46317AC4FC6370F8F509FA558",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::doctor::checks::context_import::tests::rpc_success_envelope_with_active_status_passes_without_claiming_an_import_succeeded",
+      "sourcePath": "SRC/neothd/src/cli/doctor/checks/context_import.rs",
+      "sourceSha256": "EDF1CE3A5686159CF5B0514CB2ADAF99FD7E6E365D9BF13CE6398C97557E6F55",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::doctor::checks::context_import::tests::paused_and_revoked_live_statuses_are_explicitly_unavailable",
+      "sourcePath": "SRC/neothd/src/cli/doctor/checks/context_import.rs",
+      "sourceSha256": "EDF1CE3A5686159CF5B0514CB2ADAF99FD7E6E365D9BF13CE6398C97557E6F55",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::doctor::checks::context_import::tests::missing_duplicate_malformed_and_zero_revision_statuses_never_pass",
+      "sourcePath": "SRC/neothd/src/cli/doctor/checks/context_import.rs",
+      "sourceSha256": "EDF1CE3A5686159CF5B0514CB2ADAF99FD7E6E365D9BF13CE6398C97557E6F55",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::doctor::checks::context_import::tests::error_envelope_and_unknown_lifecycle_fail_without_echoing_untrusted_text",
+      "sourcePath": "SRC/neothd/src/cli/doctor/checks/context_import.rs",
+      "sourceSha256": "EDF1CE3A5686159CF5B0514CB2ADAF99FD7E6E365D9BF13CE6398C97557E6F55",
       "junitClass": "neoth"
     }
   ],
@@ -6853,7 +6877,7 @@
       {
         "test": "cli::context::windows_tests::windows_context_cli_client_status_plan_apply_reopen_and_shutdown_are_bound_to_live_daemon",
         "sourcePath": "SRC/neothd/src/cli/context.rs",
-        "sourceSha256": "A54B84A78CF23994BC5C3A5961C08139D5B3B7A2AAB4C9415AFE5E7AC61494A1",
+        "sourceSha256": "58C6DE14902A306D456B4840339CA9CC04FC97CD907546E33821848EC42754FF",
         "junitClass": "neoth"
       },
       {
@@ -7035,7 +7059,7 @@
       {
         "test": "cli::context::unix_tests::unix_context_cli_client_status_plan_apply_pause_resume_reopen_and_shutdown_are_bound_to_live_daemon",
         "sourcePath": "SRC/neothd/src/cli/context.rs",
-        "sourceSha256": "A54B84A78CF23994BC5C3A5961C08139D5B3B7A2AAB4C9415AFE5E7AC61494A1",
+        "sourceSha256": "58C6DE14902A306D456B4840339CA9CC04FC97CD907546E33821848EC42754FF",
         "junitClass": "neoth"
       }
     ],
@@ -7205,7 +7229,7 @@
       {
         "test": "cli::context::unix_tests::unix_context_cli_client_status_plan_apply_pause_resume_reopen_and_shutdown_are_bound_to_live_daemon",
         "sourcePath": "SRC/neothd/src/cli/context.rs",
-        "sourceSha256": "A54B84A78CF23994BC5C3A5961C08139D5B3B7A2AAB4C9415AFE5E7AC61494A1",
+        "sourceSha256": "58C6DE14902A306D456B4840339CA9CC04FC97CD907546E33821848EC42754FF",
         "junitClass": "neoth"
       }
     ]
@@ -16869,6 +16893,49 @@
       }
     ],
     "note": "424/424 exact-source49e admission; later W253 one-path formatter imported with source/SHA/preimage/postimage checks, no local execution.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave257ContextDoctorAcceptance": {
+    "requiredTests": [
+      "cli::doctor::checks::context_import::tests::rpc_success_envelope_with_active_status_passes_without_claiming_an_import_succeeded",
+      "cli::doctor::checks::context_import::tests::paused_and_revoked_live_statuses_are_explicitly_unavailable",
+      "cli::doctor::checks::context_import::tests::missing_duplicate_malformed_and_zero_revision_statuses_never_pass",
+      "cli::doctor::checks::context_import::tests::error_envelope_and_unknown_lifecycle_fail_without_echoing_untrusted_text"
+    ],
+    "report": "docs/gold-wave257-context-doctor.md",
+    "localValidationRan": false,
+    "note": "Authenticated live status availability only, strict success envelope, generic malformed response, no config-ready or timestamp claims; Windows/Unix actual status assertions corrected to existing wire envelope"
+  },
+  "wave257ContextDoctorSource": {
+    "base": "f6348ad54a7afaafa5c1a368d021550788797913",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/context.rs",
+        "bytes": 29427,
+        "sha256": "58C6DE14902A306D456B4840339CA9CC04FC97CD907546E33821848EC42754FF",
+        "blob": "bba945e8a5cbce5372e37cb0d92d4b079884f524"
+      },
+      {
+        "path": "SRC/neothd/src/cli/doctor.rs",
+        "bytes": 93064,
+        "sha256": "401F07BD0C01B9BDFDC0B361249160EA4C67EE828991765FC4D5DC77D36900DF",
+        "blob": "a84c18674ba6429310d6bd20fd00741f74379a77"
+      },
+      {
+        "path": "SRC/neothd/src/cli/doctor/checks/context_import.rs",
+        "bytes": 9628,
+        "sha256": "EDF1CE3A5686159CF5B0514CB2ADAF99FD7E6E365D9BF13CE6398C97557E6F55",
+        "blob": "ff220bdc56e673b650a3d88ebe1ece0a9fd349ff"
+      },
+      {
+        "path": "SRC/neothd/src/cli/doctor/checks/mod.rs",
+        "bytes": 506,
+        "sha256": "F236A5307CE70C2CFCFC94F189A479BB800B75304EC7768B93A2DB3D53E937C2",
+        "blob": "f5f821ac7d993b9aefbd5b5b778f1e388e7b4bc6"
+      }
+    ],
+    "note": "538sources866native98GUI, Group436; real Windows/Unix status assertions match existing success envelope; Core342success and Audio49 19/19 perplatform admitted; no local validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -49,6 +49,7 @@ const DOMAIN_DOCS: &[&[CheckDoc]] = &[
     checks::integrations::DOCS,
     checks::providers::DOCS,
     checks::cluster::DOCS,
+    checks::context_import::DOCS,
     checks::capabilities::DOCS,
     checks::onboarding::DOCS,
 ];
@@ -178,6 +179,7 @@ pub async fn run_doctor(args: DoctorArgs) -> Result<()> {
         .unwrap_or_else(FreedomConfig::default_neoth_home);
     let mut outcomes = run_all_checks(&home);
     outcomes.push(checks::cluster::check_cluster_runtime_membership(&home).await);
+    outcomes.push(checks::context_import::check_context_import_control_plane(&home).await);
 
     // GOLD-ADAPT-ODY-22: append live network probes when --live is requested.
     if args.live {

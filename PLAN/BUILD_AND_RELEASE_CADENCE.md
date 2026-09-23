@@ -3,6 +3,27 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W257 authenticated Context Import Doctor (2026-09-23):** Doctor now reads
+live daemon control-plane status through the existing authenticated Context
+client. It reports status availability, pause/revocation, missing accounts or
+unavailable transport without claiming an import succeeded. Malformed, duplicate,
+zero-revision and unknown lifecycle data fail with content-free details.
+List/explain remain static; no repair, import or config-derived Ready is added.
+Review caught and corrected the raw success-envelope mismatch: the production
+writer returns `{ok:true,data:{accounts:...}}`. Doctor and both existing actual
+Windows/Unix client assertions now use that real wire form; product wire behavior
+is unchanged. No temporal-staleness claim is inferred from absent timestamps.
+Four native regressions are added. Inventory: 538 sources / 866 universal native /
+98 universal GUI; Group436 / GUI124; platform extras remain 19/29/28 native.
+
+Core `35805832718` on `3427d4b0` passed slim Clippy, test-target typecheck and
+CLI build/export. Its exact SHA-bound reference matches the committed snapshot.
+The current Group432/GUI124 runs on `d99d5c6c` remain pending; the status-assertion
+correction here still needs actual execution. FullCI49 W186 live-audio receipts now bind 19/19 passing hermetic fixtures
+on each of Windows, Linux and macOS, with five source paths and exact terminals.
+This does not establish real hardware, provider, package or release qualification. See `docs/gold-wave257-context-doctor.md`.
+Road counts stay unchanged and the absolute local BSOD hold remains active.
+
 **W251 Hosted acceptance (2026-09-23):** Group424 `35805034886` on `49e58dfb`
 passed **424/424**. All 91 selected source paths, matrix, lock and every actual
 test terminal were verified. The previously failing held-lease lifecycle case
