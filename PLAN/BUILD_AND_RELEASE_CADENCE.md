@@ -3,6 +3,15 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W545/W546 hosted gate follow-up (2026-09-24):**
+Core535 run35930665250 reached the new constructor and failed one Clippy
+too-many-arguments lint; its explicit authority inputs now use the established
+scoped documented exemption. Four exact Paperless hosted format files from
+35931033658/artifact10780488191 were source/SHA256/Gitblob-verified and imported.
+W547 additionally repairs an identified no-overwrite publication race; that
+follow-up is not yet accepted. No new behavior or Road closure is claimed.
+Inventory773/native1213/Group929; Road1044checked/278open/2partial unchanged.
+
 **W540 native Paperless preparation; W544 hosted format (2026-09-24):**
 Paperless prepare stages deterministic OCI-pinned Compose and a secret-free
 example, preserves operator env/state, refuses foreign or symlink paths, and

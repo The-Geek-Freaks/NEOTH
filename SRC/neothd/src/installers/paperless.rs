@@ -94,12 +94,21 @@ impl InstallStrategy {
         let env_file = format!("{work_dir}/paperless.env");
         match self {
             Self::DockerCompose => vec![vec![
-                "docker".into(), "compose".into(), "--env-file".into(), env_file,
-                "-f".into(), compose_file, "config".into(),
+                "docker".into(),
+                "compose".into(),
+                "--env-file".into(),
+                env_file,
+                "-f".into(),
+                compose_file,
+                "config".into(),
             ]],
             Self::DockerComposeLegacy => vec![vec![
-                "docker-compose".into(), "--env-file".into(), env_file,
-                "-f".into(), compose_file, "config".into(),
+                "docker-compose".into(),
+                "--env-file".into(),
+                env_file,
+                "-f".into(),
+                compose_file,
+                "config".into(),
             ]],
         }
     }
@@ -263,7 +272,10 @@ mod tests {
 
     #[test]
     fn recommend_uses_legacy_when_modern_absent() {
-        assert_eq!(InstallStrategy::recommend(false, true), Some(InstallStrategy::DockerComposeLegacy));
+        assert_eq!(
+            InstallStrategy::recommend(false, true),
+            Some(InstallStrategy::DockerComposeLegacy)
+        );
     }
 
     #[test]
@@ -278,7 +290,11 @@ mod tests {
         assert_eq!(cmds[0][0], "docker");
         assert!(cmds[0].iter().any(|a| a == "config"));
         assert!(cmds[0].iter().any(|a| a == "/tmp/paperless/paperless.env"));
-        assert!(!cmds[0].iter().any(|a| a == "up" || a == "pull" || a == "curl"));
+        assert!(
+            !cmds[0]
+                .iter()
+                .any(|a| a == "up" || a == "pull" || a == "curl")
+        );
     }
 
     #[test]
@@ -286,7 +302,11 @@ mod tests {
         let cmds = InstallStrategy::DockerComposeLegacy.install_commands("/tmp/paperless");
         assert_eq!(cmds[0][0], "docker-compose");
         assert!(cmds[0].iter().any(|arg| arg == "config"));
-        assert!(!cmds[0].iter().any(|arg| arg == "up" || arg == "pull" || arg == "curl"));
+        assert!(
+            !cmds[0]
+                .iter()
+                .any(|arg| arg == "up" || arg == "pull" || arg == "curl")
+        );
     }
 
     #[test]

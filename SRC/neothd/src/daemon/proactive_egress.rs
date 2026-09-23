@@ -4366,6 +4366,9 @@ fn new_claim_with_deadline_and_account_binding(
     Ok(claim)
 }
 
+// The connection-bound constructor keeps each authority input explicit; a
+// parameter object would obscure the account-to-connection binding transition.
+#[allow(clippy::too_many_arguments)]
 fn new_claim_with_deadline_and_connection_binding(
     item: ProactiveItem,
     queue_generation: &str,

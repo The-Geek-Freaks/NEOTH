@@ -171,9 +171,14 @@ fn render_paperless_status(status: &PaperlessReadiness, output: OutputFormat) ->
     }
 }
 
-fn render_paperless_staging(staging: &PaperlessStagingView, output: OutputFormat) -> Result<String> {
+fn render_paperless_staging(
+    staging: &PaperlessStagingView,
+    output: OutputFormat,
+) -> Result<String> {
     match output {
-        OutputFormat::Json | OutputFormat::Jsonl => Ok(format!("{}\n", serde_json::to_string(staging)?)),
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            Ok(format!("{}\n", serde_json::to_string(staging)?))
+        }
         OutputFormat::Table => Ok(format!(
             "Paperless preparation: {:?}\nprepared: {}\nartifact verified: false\nDocker was not executed.\n",
             staging.status, staging.prepared
@@ -424,7 +429,11 @@ mod tests {
         use clap::Parser;
 
         let cli = crate::cli::Cli::try_parse_from([
-            "neoth", "paperless", "prepare", "--directory", "D:/operator/paperless",
+            "neoth",
+            "paperless",
+            "prepare",
+            "--directory",
+            "D:/operator/paperless",
         ])
         .unwrap();
         assert!(matches!(
@@ -447,9 +456,11 @@ mod tests {
         assert!(json.contains("prepared_pinned"));
         assert!(!json.contains("PAPERLESS_SECRET_KEY"));
         assert!(!json.contains("operator-secret"));
-        assert!(render_paperless_staging(&view, OutputFormat::Table)
-            .unwrap()
-            .contains("artifact verified: false"));
+        assert!(
+            render_paperless_staging(&view, OutputFormat::Table)
+                .unwrap()
+                .contains("artifact verified: false")
+        );
     }
 
     #[tokio::test]

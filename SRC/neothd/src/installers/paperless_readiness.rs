@@ -51,11 +51,18 @@ pub async fn probe_configured_paperless_at(
     readiness.staging = match crate::installers::paperless_staging::inspect_at(
         &crate::config::InstancePaths::for_home(home).paperless_root,
     )
-    .status {
+    .status
+    {
         crate::installers::paperless_staging::PaperlessStagingStatus::NotPrepared => "not_prepared",
-        crate::installers::paperless_staging::PaperlessStagingStatus::PreparedPinned => "prepared_pinned",
-        crate::installers::paperless_staging::PaperlessStagingStatus::AlreadyPrepared => "already_prepared",
-        crate::installers::paperless_staging::PaperlessStagingStatus::UnownedOrMismatch => "unowned_or_mismatch",
+        crate::installers::paperless_staging::PaperlessStagingStatus::PreparedPinned => {
+            "prepared_pinned"
+        }
+        crate::installers::paperless_staging::PaperlessStagingStatus::AlreadyPrepared => {
+            "already_prepared"
+        }
+        crate::installers::paperless_staging::PaperlessStagingStatus::UnownedOrMismatch => {
+            "unowned_or_mismatch"
+        }
     };
     readiness.artifact_verified = false;
     readiness
