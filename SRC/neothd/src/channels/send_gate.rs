@@ -230,7 +230,7 @@ pub(crate) async fn emit_legacy_live_egress_intent(
     let channel_ref = provenance.channel_ref();
     if !matches!(
         channel_ref.channel_id,
-        ChannelKind::Telegram | ChannelKind::Slack | ChannelKind::Discord
+        ChannelKind::Telegram | ChannelKind::Slack | ChannelKind::Discord | ChannelKind::Signal
     ) || channel_ref
         != &crate::channels::registry::ChannelRef::default_account(channel_ref.channel_id)
         || channel != channel_ref.channel_id.as_str()
@@ -382,7 +382,7 @@ pub(crate) async fn emit_legacy_live_egress_result(
     let channel_ref = provenance.channel_ref();
     if !matches!(
         channel_ref.channel_id,
-        ChannelKind::Telegram | ChannelKind::Slack | ChannelKind::Discord
+        ChannelKind::Telegram | ChannelKind::Slack | ChannelKind::Discord | ChannelKind::Signal
     ) || channel_ref
         != &crate::channels::registry::ChannelRef::default_account(channel_ref.channel_id)
     {

@@ -126,6 +126,7 @@ jobs:
               "wave257ContextDoctorAcceptance": 4,
               "wave256NativeSearchAcceptance": 5,
               "wave262DiscordEgressAcceptance": 7,
+              "wave268SignalEgressAcceptance": 3,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():

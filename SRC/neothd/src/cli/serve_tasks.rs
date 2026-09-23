@@ -5364,7 +5364,7 @@ impl LegacyLiveEgressProvenance {
 fn legacy_live_egress_provenance(kind: ChannelKind) -> LegacyLiveEgressProvenance {
     debug_assert!(matches!(
         kind,
-        ChannelKind::Telegram | ChannelKind::Slack | ChannelKind::Discord
+        ChannelKind::Telegram | ChannelKind::Slack | ChannelKind::Discord | ChannelKind::Signal
     ));
     LegacyLiveEgressProvenance {
         channel_ref: ChannelRef::default_account(kind),
@@ -5377,7 +5377,7 @@ pub(crate) fn legacy_live_egress_provenance_for_test(
 ) -> Option<LegacyLiveEgressProvenance> {
     matches!(
         kind,
-        ChannelKind::Telegram | ChannelKind::Slack | ChannelKind::Discord
+        ChannelKind::Telegram | ChannelKind::Slack | ChannelKind::Discord | ChannelKind::Signal
     )
     .then(|| legacy_live_egress_provenance(kind))
 }
@@ -6347,6 +6347,7 @@ pub(crate) async fn spawn_channel_adapters(
                 number,
                 &allowed_sender,
                 writer.clone(),
+                legacy_live_egress_provenance(ChannelKind::Signal),
             ) {
                 Ok(channel) => {
                     let handler: PipelineHandler = build_channel_handler(
@@ -9258,6 +9259,7 @@ mod tests {
         let telegram = legacy_live_egress_provenance(ChannelKind::Telegram);
         let slack = legacy_live_egress_provenance(ChannelKind::Slack);
         let discord = legacy_live_egress_provenance(ChannelKind::Discord);
+        let signal = legacy_live_egress_provenance(ChannelKind::Signal);
         assert_eq!(
             telegram.channel_ref(),
             &ChannelRef::default_account(ChannelKind::Telegram)
@@ -9270,9 +9272,14 @@ mod tests {
             discord.channel_ref(),
             &ChannelRef::default_account(ChannelKind::Discord)
         );
+        assert_eq!(
+            signal.channel_ref(),
+            &ChannelRef::default_account(ChannelKind::Signal)
+        );
         assert_ne!(telegram.channel_ref(), slack.channel_ref());
         assert_ne!(telegram.channel_ref(), discord.channel_ref());
         assert_ne!(slack.channel_ref(), discord.channel_ref());
+        assert_ne!(discord.channel_ref(), signal.channel_ref());
     }
 
     #[cfg(feature = "cluster")]

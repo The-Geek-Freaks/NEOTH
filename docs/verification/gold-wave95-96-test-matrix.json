@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Group448e802 admitted448/448; Core0fb allsteps success; W267 hostformat imported; GUI124841 pending",
+  "status": "W268 source reviewed; Group451/Core/format hosted pending; GUI124841 and FullCI49 active",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 93227,
-    "sha256": "E8E80329BB8266318FBC32E47F38198D04780D23060AA036AE5093A548AEA3E1"
+    "bytes": 93385,
+    "sha256": "4E85C2AE932E08C6E764E2D072F31EEBD7ECCA46A3631D7935BE563B708F0A53"
   },
   "sourceInputs": 538,
   "requiredNativeTests": [
@@ -552,7 +552,7 @@
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::paired_reply_binding_releases_a_retired_telegram_adapter",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "798904298FF33F57209DE1B5AEFE82DEEF70988A430B0CF2D5BECA942A202313",
+      "sourceSha256": "FEFF3E7CEF4E338BA26C437A0FA3FFF95B7177307829D5E2DB0CB768CA013933",
       "junitClass": "neoth"
     },
     {
@@ -618,7 +618,7 @@
     {
       "test": "cli::serve_tasks::tests::readiness_publisher_revokes_on_false_and_cannot_republish_a_replaced_lease",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "798904298FF33F57209DE1B5AEFE82DEEF70988A430B0CF2D5BECA942A202313",
+      "sourceSha256": "FEFF3E7CEF4E338BA26C437A0FA3FFF95B7177307829D5E2DB0CB768CA013933",
       "junitClass": "neoth"
     },
     {
@@ -2532,7 +2532,7 @@
     {
       "test": "cli::serve_tasks::tests::write_usage_snapshot_roundtrips_json",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "798904298FF33F57209DE1B5AEFE82DEEF70988A430B0CF2D5BECA942A202313",
+      "sourceSha256": "FEFF3E7CEF4E338BA26C437A0FA3FFF95B7177307829D5E2DB0CB768CA013933",
       "junitClass": "neoth"
     },
     {
@@ -2916,13 +2916,13 @@
     {
       "test": "cli::serve_tasks::vault_mirror_scheduler_tests::vault_mirror_scheduler_requires_both_nightly_gates",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "798904298FF33F57209DE1B5AEFE82DEEF70988A430B0CF2D5BECA942A202313",
+      "sourceSha256": "FEFF3E7CEF4E338BA26C437A0FA3FFF95B7177307829D5E2DB0CB768CA013933",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::vault_mirror_scheduler_tests::accepted_reload_revoking_nightly_push_stops_scheduler",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "798904298FF33F57209DE1B5AEFE82DEEF70988A430B0CF2D5BECA942A202313",
+      "sourceSha256": "FEFF3E7CEF4E338BA26C437A0FA3FFF95B7177307829D5E2DB0CB768CA013933",
       "junitClass": "neoth"
     },
     {
@@ -3180,7 +3180,7 @@
     {
       "test": "cli::serve_tasks::local_models_lifecycle_tests::local_models_runtime_requires_active_native_ollama_provider",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "798904298FF33F57209DE1B5AEFE82DEEF70988A430B0CF2D5BECA942A202313",
+      "sourceSha256": "FEFF3E7CEF4E338BA26C437A0FA3FFF95B7177307829D5E2DB0CB768CA013933",
       "junitClass": "neoth"
     },
     {
@@ -5250,31 +5250,49 @@
     {
       "test": "channels::send_gate::intent_tests::sealed_default_discord_intent_and_result_are_authenticated_and_bound",
       "sourcePath": "SRC/neothd/src/channels/send_gate.rs",
-      "sourceSha256": "10692D47888592760477AEE302A6844DA8540E3D8B0E5C0BD3D178C28397797E",
+      "sourceSha256": "01BE022ED4D42234366891341BD259F3592C1921F71C9B4D6A2E12C88E3E2C1C",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::channel_transport_evidence::tests::live_provenance_grammar_admits_only_mapped_telegram_or_marked_default_singletons",
       "sourcePath": "SRC/neothd/src/daemon/channel_transport_evidence.rs",
-      "sourceSha256": "5C185FBCB3AEDBB1688C67EDBC0E4E22AF1E8640D695FDFB4F9C6849347B7405",
+      "sourceSha256": "B998B77A8CADEF7A9CE05140398F42EA3354873501E87F84746753CF536EEEA3",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::channel_transport_evidence::tests::authenticated_home_wal_keeps_equal_account_names_isolated_by_channel",
       "sourcePath": "SRC/neothd/src/daemon/channel_transport_evidence.rs",
-      "sourceSha256": "5C185FBCB3AEDBB1688C67EDBC0E4E22AF1E8640D695FDFB4F9C6849347B7405",
+      "sourceSha256": "B998B77A8CADEF7A9CE05140398F42EA3354873501E87F84746753CF536EEEA3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::checks::providers::tests::account_transport_flapping_keeps_default_discord_separate_from_default_telegram",
       "sourcePath": "SRC/neothd/src/cli/doctor/checks/providers.rs",
-      "sourceSha256": "5EEE3F830C2815C031D818453F23F779F7E050258B7E1E569AB50B82D6AD4AF9",
+      "sourceSha256": "74E4CF1E5C1F5C51BC879D5C527B2A852820464C5F8AA9FA2CE85FCE40DDA5EC",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::tests::admitted_legacy_live_factories_seal_distinct_default_capabilities",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "798904298FF33F57209DE1B5AEFE82DEEF70988A430B0CF2D5BECA942A202313",
+      "sourceSha256": "FEFF3E7CEF4E338BA26C437A0FA3FFF95B7177307829D5E2DB0CB768CA013933",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "channels::signal::tests::live_signal_reply_refuses_unrecorded_intent_and_records_one_terminal_per_effect",
+      "sourcePath": "SRC/neothd/src/channels/signal.rs",
+      "sourceSha256": "55EE8045BD55939838B3F590B58337ABC878FFF009167394B56F931DE0CE901C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "channels::signal::tests::live_signal_reply_reports_receipt_failure_without_replaying_accepted_effect",
+      "sourcePath": "SRC/neothd/src/channels/signal.rs",
+      "sourceSha256": "55EE8045BD55939838B3F590B58337ABC878FFF009167394B56F931DE0CE901C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::doctor::checks::providers::tests::account_transport_flapping_keeps_default_signal_separate_from_default_telegram",
+      "sourcePath": "SRC/neothd/src/cli/doctor/checks/providers.rs",
+      "sourceSha256": "74E4CF1E5C1F5C51BC879D5C527B2A852820464C5F8AA9FA2CE85FCE40DDA5EC",
       "junitClass": "neoth"
     }
   ],
@@ -17259,6 +17277,59 @@
       }
     ],
     "note": "Preflight35810916802 onepath GUI formatter exactsource/SHA/pre/postimage; Group35809861844 all448 with98sources admitted; Core35810433910 success unchangedCLIreference. No local execution.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave268SignalEgressAcceptance": {
+    "requiredTests": [
+      "channels::signal::tests::live_signal_reply_refuses_unrecorded_intent_and_records_one_terminal_per_effect",
+      "channels::signal::tests::live_signal_reply_reports_receipt_failure_without_replaying_accepted_effect",
+      "cli::doctor::checks::providers::tests::account_transport_flapping_keeps_default_signal_separate_from_default_telegram"
+    ],
+    "reusedTests": [
+      "daemon::channel_transport_evidence::tests::live_provenance_grammar_admits_only_mapped_telegram_or_marked_default_singletons",
+      "daemon::channel_transport_evidence::tests::authenticated_home_wal_keeps_equal_account_names_isolated_by_channel",
+      "cli::serve_tasks::tests::admitted_legacy_live_factories_seal_distinct_default_capabilities"
+    ],
+    "report": "docs/gold-wave268-signal-channel-flapping.md",
+    "localValidationRan": false,
+    "note": "Three new caller/Doctor identities plus three existing grouped identities now cover Signal; actual authenticated WAL sender outcomes and unresolved accepted effects; wider channel coverage remains open"
+  },
+  "wave268SignalSource": {
+    "base": "7d360c1c5e0a982d5fe030c2d1ade319e78725fd",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/channels/send_gate.rs",
+        "bytes": 33936,
+        "sha256": "01BE022ED4D42234366891341BD259F3592C1921F71C9B4D6A2E12C88E3E2C1C",
+        "blob": "d44e5bd3450176e0614a8852b29917c5666dfb75"
+      },
+      {
+        "path": "SRC/neothd/src/channels/signal.rs",
+        "bytes": 24476,
+        "sha256": "55EE8045BD55939838B3F590B58337ABC878FFF009167394B56F931DE0CE901C",
+        "blob": "b56c503e5bd7fd99f1ce2bde8e27a649d58c85f6"
+      },
+      {
+        "path": "SRC/neothd/src/cli/doctor/checks/providers.rs",
+        "bytes": 34710,
+        "sha256": "74E4CF1E5C1F5C51BC879D5C527B2A852820464C5F8AA9FA2CE85FCE40DDA5EC",
+        "blob": "3a01a9e56d1f590c195c01c04563db9d93951871"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_tasks.rs",
+        "bytes": 529306,
+        "sha256": "FEFF3E7CEF4E338BA26C437A0FA3FFF95B7177307829D5E2DB0CB768CA013933",
+        "blob": "c611cdac9d7cedda27b3fbe9c6088aec5fe99efa"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/channel_transport_evidence.rs",
+        "bytes": 54372,
+        "sha256": "B998B77A8CADEF7A9CE05140398F42EA3354873501E87F84746753CF536EEEA3",
+        "blob": "1f43ffc7aabbdca63a967ef7a71588466222496c"
+      }
+    ],
+    "note": "Signal default actual reply intent-before-effect, terminal-after-effect and no replay; startup sealed authority; exact generated authenticated WAL and Doctor isolation. Local executable validation prohibited.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

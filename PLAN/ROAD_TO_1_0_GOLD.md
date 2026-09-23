@@ -8,6 +8,26 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W268 Signal default reply evidence (2026-09-23):** the actual default Signal
+receive-to-reply path now records authenticated intent before its adapter call
+and terminal evidence afterward. Startup alone mints its sealed `signal/default`
+identity after URL, local number, exact allowed E.164 sender and provider checks.
+The strict historical collector and Doctor preserve channel/account isolation.
+Three new caller/Doctor fixtures plus three existing grouped identities cover
+intent refusal, adapter success/error, accepted effect with failed receipt and
+no retry, generated authenticated WAL and equal account names across channels.
+Independent source review found and corrected fixture binding and visibility
+issues. Hosted validation remains pending; P1-17 stays open. Inventory is now
+540 source paths, 881 universal native identities, Group451 and GUI124; platform
+extras unchanged. Road remains 1324=1018 checked/304 open/2 partial.
+
+FullCI49 Windows completed 17,576 tests: 17,575 passed, one failed and 24 skipped.
+The old source fails its first Context status-envelope assertion; W257 af0e056f
+fixes that assertion and W264 e802d74a separately fixes paused-plan refusal.
+Neither correction has a fresh Windows pass yet. macOS tests remain active;
+no replacement full-CI run is dispatched while that job is running.
+Local compiler, formatter, parser, tests and runtime execution remain prohibited.
+
 **Group448 accepted (2026-09-23):** hosted run35809861844 on e802d74a passed
 448/448 exact native fixtures. Root verified all98source paths against the
 selected Git blobs, matrix/lock inputs and every individual passing terminal.

@@ -46,6 +46,7 @@ pub struct SignalChannel {
 struct SignalInboundGate {
     allowed_sender: String,
     writer: crate::wal::writer::WalWriterHandle,
+    live_egress: crate::cli::serve_tasks::LegacyLiveEgressProvenance,
 }
 
 impl SignalChannel {
@@ -64,11 +65,12 @@ impl SignalChannel {
         })
     }
 
-    pub fn new_inbound(
+    pub(crate) fn new_inbound(
         cli_url: impl Into<String>,
         phone_number: impl Into<String>,
         allowed_sender: &str,
         writer: crate::wal::writer::WalWriterHandle,
+        live_egress: crate::cli::serve_tasks::LegacyLiveEgressProvenance,
     ) -> Result<Self> {
         let mut channel = Self::new(cli_url, phone_number)?;
         let allowed_sender = allowed_sender.trim();
@@ -76,6 +78,7 @@ impl SignalChannel {
         channel.inbound_gate = Some(SignalInboundGate {
             allowed_sender: allowed_sender.to_string(),
             writer,
+            live_egress,
         });
         Ok(channel)
     }
@@ -120,6 +123,7 @@ impl Channel for SignalChannel {
                             &self.phone_number,
                             &gate.allowed_sender,
                             Some(&gate.writer),
+                            Some(&gate.live_egress),
                             inbound,
                             &handler,
                         )
@@ -178,6 +182,7 @@ async fn dispatch_inbound_message(
     phone_number: &str,
     allowed_sender: &str,
     gate_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    live_egress: Option<&crate::cli::serve_tasks::LegacyLiveEgressProvenance>,
     inbound: crate::channels::InboundMessage,
     handler: &PipelineHandler,
 ) {
@@ -193,14 +198,86 @@ async fn dispatch_inbound_message(
     }
     match handler(inbound).await {
         Ok(Some(out)) => {
-            if let Err(e) =
-                send_signal_message(endpoint, phone_number, &out.recipient_id, &out.text).await
-            {
+            let result = match (gate_writer, live_egress) {
+                (Some(writer), Some(provenance)) => {
+                    send_live_signal_reply(writer, provenance, &out.recipient_id, &out.text, || {
+                        send_signal_message(endpoint, phone_number, &out.recipient_id, &out.text)
+                    })
+                    .await
+                }
+                _ => send_signal_message(endpoint, phone_number, &out.recipient_id, &out.text)
+                    .await
+                    .map(|_| ()),
+            };
+            if let Err(e) = result {
                 warn!(error = %e, "signal reply send failed (dropped)");
             }
         }
         Ok(None) => {} // pipeline chose to stay silent
         Err(e) => warn!(error = %e, "signal pipeline handler errored; skipping message"),
+    }
+}
+
+async fn send_live_signal_reply<F, Fut>(
+    writer: &crate::wal::writer::WalWriterHandle,
+    provenance: &crate::cli::serve_tasks::LegacyLiveEgressProvenance,
+    recipient: &str,
+    text: &str,
+    post: F,
+) -> std::result::Result<(), ChannelError>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<MessageId, ChannelError>>,
+{
+    let Some(intent_id) = crate::channels::send_gate::emit_legacy_live_egress_intent(
+        writer,
+        "signal",
+        recipient,
+        text,
+        crate::time::now_unix_secs(),
+        provenance,
+    )
+    .await else {
+        return Err(ChannelError::Transport(
+            "mandatory authenticated Signal egress intent could not be recorded".to_string(),
+        ));
+    };
+    match post().await {
+        Ok(message_id) => {
+            crate::channels::send_gate::emit_legacy_live_egress_result(
+                writer,
+                &intent_id,
+                "delivered",
+                Some(&message_id.0),
+                crate::time::now_unix_secs(),
+                provenance,
+            )
+            .await
+            .map_err(|()| ChannelError::Transport(
+                "mandatory authenticated Signal egress receipt could not be recorded".to_string(),
+            ))
+        }
+        Err(error) => {
+            let outcome = match &error {
+                ChannelError::Transport(_) => "transport",
+                ChannelError::NotSupported { .. } => "not_supported",
+                ChannelError::RateLimited { .. } => "rate_limited",
+                ChannelError::Auth(_) => "auth",
+            };
+            crate::channels::send_gate::emit_legacy_live_egress_result(
+                writer,
+                &intent_id,
+                outcome,
+                None,
+                crate::time::now_unix_secs(),
+                provenance,
+            )
+            .await
+            .map_err(|()| ChannelError::Transport(
+                "mandatory authenticated Signal egress receipt could not be recorded".to_string(),
+            ))?;
+            Err(error)
+        }
     }
 }
 
@@ -304,6 +381,7 @@ mod tests {
             &channel.phone_number,
             "+491702222222",
             None,
+            None,
             inbound("+491703333333"),
             &handler,
         )
@@ -315,10 +393,222 @@ mod tests {
             &channel.phone_number,
             "+491702222222",
             None,
+            None,
             inbound("+491702222222"),
             &handler,
         )
         .await;
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn live_signal_reply_refuses_unrecorded_intent_and_records_one_terminal_per_effect() {
+        let provenance = crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(
+            crate::channels::ChannelKind::Signal,
+        )
+        .expect("Signal has sealed default live provenance");
+        let refused_calls = Arc::new(AtomicUsize::new(0));
+        let refused_post = {
+            let refused_calls = Arc::clone(&refused_calls);
+            move || {
+                refused_calls.fetch_add(1, Ordering::SeqCst);
+                async { Ok::<MessageId, ChannelError>(MessageId("must-not-send".to_string())) }
+            }
+        };
+        assert!(
+            send_live_signal_reply(
+                &crate::wal::writer::closed_test_writer(),
+                &provenance,
+                "private-recipient",
+                "private-reply",
+                refused_post,
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(refused_calls.load(Ordering::SeqCst), 0);
+
+        let home = tempfile::tempdir().expect("create Signal live-reply WAL home");
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).expect("create Signal live-reply WAL");
+        let segment = wal.join("000001.wal");
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), home.path().to_path_buf())
+                .expect("spawn Signal live-reply WAL writer");
+        ready.wait().await.expect("initialize Signal live-reply WAL");
+        let delivered_calls = Arc::new(AtomicUsize::new(0));
+        send_live_signal_reply(
+            &writer,
+            &provenance,
+            "private-recipient",
+            "private-reply",
+            {
+                let delivered_calls = Arc::clone(&delivered_calls);
+                move || {
+                    delivered_calls.fetch_add(1, Ordering::SeqCst);
+                    async { Ok::<MessageId, ChannelError>(MessageId("accepted".to_string())) }
+                }
+            },
+        )
+        .await
+        .expect("accepted Signal reply records delivered terminal");
+        let failed_calls = Arc::new(AtomicUsize::new(0));
+        assert!(
+            send_live_signal_reply(
+                &writer,
+                &provenance,
+                "private-recipient",
+                "private-reply",
+                {
+                    let failed_calls = Arc::clone(&failed_calls);
+                    move || {
+                        failed_calls.fetch_add(1, Ordering::SeqCst);
+                        async {
+                            Err::<MessageId, ChannelError>(ChannelError::Transport(
+                                "fixture failure".to_string(),
+                            ))
+                        }
+                    }
+                },
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(delivered_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(failed_calls.load(Ordering::SeqCst), 1, "adapter errors do not retry");
+        drop(writer);
+        join.await
+            .expect("join Signal live-reply WAL writer")
+            .expect("close Signal live-reply WAL writer");
+
+        let bytes = tokio::fs::read(segment).await.expect("read Signal live-reply WAL");
+        let mut cursor = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        let mut outcomes = Vec::new();
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..])
+                .expect("complete Signal live-reply evidence frame");
+            if frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8
+            {
+                let payload: serde_json::Value =
+                    serde_json::from_slice(frame.payload).expect("Signal terminal JSON");
+                outcomes.push(payload["outcome"].as_str().map(str::to_string));
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        assert_eq!(outcomes, vec![Some("delivered".to_string()), Some("transport".to_string())]);
+        let counters = crate::daemon::channel_transport_evidence::read_account_transport_evidence(
+            home.path(),
+            crate::time::now_unix_secs() as i64,
+        )
+        .expect("read generated authenticated Signal live-reply evidence");
+        let signal_default = crate::channels::registry::ChannelRef::default_account(
+            crate::channels::ChannelKind::Signal,
+        );
+        assert_eq!(counters.len(), 1, "no other account may gain Signal evidence");
+        assert_eq!(counters.get(&signal_default).unwrap().accepted, 1);
+        assert_eq!(counters.get(&signal_default).unwrap().failed, 1);
+        assert_eq!(counters.get(&signal_default).unwrap().completed, 2);
+    }
+
+    #[tokio::test]
+    async fn live_signal_reply_reports_receipt_failure_without_replaying_accepted_effect() {
+        let provenance = crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(
+            crate::channels::ChannelKind::Signal,
+        )
+        .expect("Signal has sealed default live provenance");
+        let home = tempfile::tempdir().expect("create Signal unsettled-receipt WAL home");
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).expect("create Signal unsettled-receipt WAL");
+        let segment = wal.join("000001.wal");
+        let (writer, completion, ready) =
+            crate::wal::writer::spawn_for_home_ready_with_completion(
+                segment.clone(),
+                home.path().to_path_buf(),
+            )
+            .expect("spawn Signal unsettled-receipt WAL writer");
+        ready
+            .wait()
+            .await
+            .expect("initialize Signal unsettled-receipt WAL");
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let started_tx = Arc::new(std::sync::Mutex::new(Some(started_tx)));
+        let release_rx = Arc::new(tokio::sync::Mutex::new(Some(release_rx)));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let in_flight = {
+            let started_tx = Arc::clone(&started_tx);
+            let release_rx = Arc::clone(&release_rx);
+            let calls = Arc::clone(&calls);
+            let writer = writer.clone();
+            let provenance = provenance.clone();
+            tokio::spawn(async move {
+                send_live_signal_reply(
+                    &writer,
+                    &provenance,
+                    "private-recipient",
+                    "private-reply",
+                    move || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        started_tx
+                            .lock()
+                            .expect("lock Signal post-start sender")
+                            .take()
+                            .expect("one Signal adapter call")
+                            .send(())
+                            .expect("observe Signal adapter call");
+                        let release_rx = Arc::clone(&release_rx);
+                        async move {
+                            release_rx
+                                .lock()
+                                .await
+                                .take()
+                                .expect("one Signal adapter result")
+                                .await
+                                .expect("release accepted Signal adapter result");
+                            Ok::<MessageId, ChannelError>(MessageId("accepted".to_string()))
+                        }
+                    },
+                )
+                .await
+            })
+        };
+        started_rx
+            .await
+            .expect("authenticated intent persisted before Signal adapter call");
+        completion.abort_handle().abort();
+        assert!(completion.wait().await.is_err());
+        release_tx
+            .send(())
+            .expect("release accepted Signal adapter result after writer stop");
+        assert!(
+            in_flight
+                .await
+                .expect("join Signal live reply")
+                .is_err(),
+            "receipt failure is visible after the one accepted Signal effect"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "receipt failure never retries Signal");
+        drop(writer);
+
+        let bytes = tokio::fs::read(segment)
+            .await
+            .expect("read Signal unsettled-receipt WAL");
+        let mut cursor = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        let mut intents = 0;
+        let mut results = 0;
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..])
+                .expect("complete Signal unsettled-receipt evidence frame");
+            intents += (frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8)
+                as usize;
+            results += (frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8)
+                as usize;
+            cursor += frame.header.total_len as usize;
+        }
+        assert_eq!(intents, 1);
+        assert_eq!(results, 0, "the accepted Signal effect remains unsettled");
     }
 }

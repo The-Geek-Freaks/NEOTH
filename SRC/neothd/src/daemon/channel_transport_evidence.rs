@@ -362,6 +362,7 @@ fn validate_live_identity(intent: &BoundLiveIntentFrame, channel_ref: &ChannelRe
                 ChannelId::Telegram => "telegram",
                 ChannelId::Slack => "slack",
                 ChannelId::Discord => "discord",
+                ChannelId::Signal => "signal",
                 _ => anyhow::bail!("legacy singleton live evidence has unsupported channel kind"),
             };
             anyhow::ensure!(
@@ -550,6 +551,7 @@ mod tests {
     const LIVE_A: &str = "0123456789abcdef0123456789abcdef";
     const LIVE_B: &str = "fedcba9876543210fedcba9876543210";
     const LIVE_C: &str = "00112233445566778899aabbccddeeff";
+    const LIVE_D: &str = "11223344556677889900aabbccddeeff";
 
     fn account_ref(account_id: &str) -> ChannelRef {
         ChannelRef::new(
@@ -831,6 +833,7 @@ mod tests {
         let telegram_default = default_ref(ChannelId::Telegram);
         let slack_default = default_ref(ChannelId::Slack);
         let discord_default = default_ref(ChannelId::Discord);
+        let signal_default = default_ref(ChannelId::Signal);
         let mut accepted = BoundLiveCollector::default();
         accepted
             .observe_intent(
@@ -848,6 +851,12 @@ mod tests {
             .observe_intent(
                 &legacy_singleton_intent_json(LIVE_C, "discord", &discord_default, 100),
                 2,
+            )
+            .unwrap();
+        accepted
+            .observe_intent(
+                &legacy_singleton_intent_json(LIVE_D, "signal", &signal_default, 100),
+                3,
             )
             .unwrap();
 
@@ -885,6 +894,16 @@ mod tests {
             BoundLiveCollector::default()
                 .observe_intent(
                     &legacy_singleton_intent_json(LIVE_A, "discord", &nondefault_discord, 100),
+                    0,
+                )
+                .is_err()
+        );
+        let nondefault_signal =
+            ChannelRef::new(ChannelId::Signal, ChannelAccountId::new("work").unwrap());
+        assert!(
+            BoundLiveCollector::default()
+                .observe_intent(
+                    &legacy_singleton_intent_json(LIVE_A, "signal", &nondefault_signal, 100),
                     0,
                 )
                 .is_err()
@@ -1169,11 +1188,13 @@ mod tests {
         let telegram_default = default_ref(ChannelId::Telegram);
         let slack_default = default_ref(ChannelId::Slack);
         let discord_default = default_ref(ChannelId::Discord);
+        let signal_default = default_ref(ChannelId::Signal);
         assert_eq!(
             telegram_default.account_id, slack_default.account_id,
             "the fixture must prove that ChannelRef, not an account-id string, is the key"
         );
         assert_eq!(telegram_default.account_id, discord_default.account_id);
+        assert_eq!(telegram_default.account_id, signal_default.account_id);
         append_authenticated_live_frame(
             &writer,
             ExtendedSubtype::ChannelEgressIntent,
@@ -1210,6 +1231,18 @@ mod tests {
             result_json(LIVE_C, "delivered", 101),
         )
         .await;
+        append_authenticated_live_frame(
+            &writer,
+            ExtendedSubtype::ChannelEgressIntent,
+            legacy_singleton_intent_json(LIVE_D, "signal", &signal_default, 100),
+        )
+        .await;
+        append_authenticated_live_frame(
+            &writer,
+            ExtendedSubtype::ChannelEgressResult,
+            result_json(LIVE_D, "transport", 101),
+        )
+        .await;
         drop(writer);
         join.await
             .expect("join authenticated home WAL writer")
@@ -1217,13 +1250,15 @@ mod tests {
 
         let counters = read_account_transport_evidence(home.path(), 101)
             .expect("read complete authenticated channel-isolation evidence");
-        assert_eq!(counters.len(), 3);
+        assert_eq!(counters.len(), 4);
         assert_eq!(counters.get(&telegram_default).unwrap().accepted, 1);
         assert_eq!(counters.get(&telegram_default).unwrap().failed, 0);
         assert_eq!(counters.get(&slack_default).unwrap().accepted, 0);
         assert_eq!(counters.get(&slack_default).unwrap().failed, 1);
         assert_eq!(counters.get(&discord_default).unwrap().accepted, 1);
         assert_eq!(counters.get(&discord_default).unwrap().failed, 0);
+        assert_eq!(counters.get(&signal_default).unwrap().accepted, 0);
+        assert_eq!(counters.get(&signal_default).unwrap().failed, 1);
     }
 
     #[tokio::test]
