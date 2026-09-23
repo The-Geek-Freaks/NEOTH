@@ -88,14 +88,32 @@ pub fn reinforce_co_access(conn: &Connection, event_ids: &[i64], now_unix: i64) 
         return Ok(0);
     }
     let tx = conn.unchecked_transaction().context("begin co-access tx")?;
+    let mut pairs = Vec::new();
+    for (index, &left) in ids.iter().enumerate() {
+        for &right in &ids[index + 1..] {
+            pairs.push((left, right));
+        }
+    }
+    let n = reinforce_pairs_in_transaction(&tx, &pairs, now_unix)?;
+    tx.commit().context("commit co-access tx")?;
+    Ok(n)
+}
+
+/// Transaction-bound association upsert for receipt-owned derived effects.
+/// Callers supply only canonical Dream pairs after their own durable strength
+/// gate; this helper never opens or commits a transaction.
+pub fn reinforce_pairs_in_transaction(
+    tx: &Transaction<'_>,
+    pairs: &[(i64, i64)],
+    now_unix: i64,
+) -> Result<usize> {
+    let mut unique = std::collections::BTreeSet::new();
+    for &(a, b) in pairs {
+        anyhow::ensure!(a > 0 && b > 0 && a != b, "Dream REM pair endpoints must be distinct positive ids");
+        unique.insert(if a < b { (a, b) } else { (b, a) });
+    }
     let mut n = 0usize;
-    for i in 0..ids.len() {
-        for j in (i + 1)..ids.len() {
-            let (a, b) = (ids[i], ids[j]);
-            if a == b {
-                continue; // self-link guard (defensive; dedup already removes dups)
-            }
-            let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+    for (lo, hi) in unique {
             // Cepeda spacing: bump stability when the inter-access gap exceeds the
             // current stability window (?3 - last_co_access > stability * 86400).
             // All timestamps in Unix seconds; stability conceptually in days.
@@ -113,10 +131,8 @@ pub fn reinforce_co_access(conn: &Connection, event_ids: &[i64], now_unix: i64) 
                 params![lo, hi, now_unix],
             )
             .context("upsert co-access link")?;
-            n += 1;
-        }
+        n += 1;
     }
-    tx.commit().context("commit co-access tx")?;
     Ok(n)
 }
 

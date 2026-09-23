@@ -330,7 +330,22 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "W212: config-authoritative embedding generations with legacy quarantine",
         run: migration_v43_to_v44,
     },
+    Migration {
+        from: 44,
+        to: 45,
+        description: "W331: durable Dream Light/REM/Repair phase journal",
+        run: migration_v44_to_v45,
+    },
 ];
+
+pub(crate) fn migration_v44_to_v45(conn: &Connection) -> Result<()> {
+    conn.execute_batch("ALTER TABLE idx_consolidated ADD COLUMN trust INTEGER NOT NULL DEFAULT 1 CHECK(trust BETWEEN 0 AND 2); \
+                        ALTER TABLE idx_longterm ADD COLUMN trust INTEGER NOT NULL DEFAULT 1 CHECK(trust BETWEEN 0 AND 2);")
+        .context("v44→v45: preserve tier trust")?;
+    conn.execute_batch(crate::daemon::dream_phases::DREAM_PHASE_SCHEMA_SQL)
+        .context("v44→v45: create Dream phase journal")?;
+    Ok(())
+}
 
 /// W212 adds a generation label without interpreting historical provider
 /// provenance. In particular, equal model labels or dimensions never turn a
@@ -5242,6 +5257,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn v44_to_v45_preserves_existing_tier_rows_defaults_trust_and_creates_dream_schema() {
+        let mut conn = open_with_meta(44);
+        conn.execute_batch(
+            "CREATE TABLE idx_consolidated (id INTEGER PRIMARY KEY, event_id INTEGER, text TEXT NOT NULL, text_hash TEXT NOT NULL, importance REAL NOT NULL, consolidated_ts INTEGER NOT NULL, last_access_ts INTEGER NOT NULL);\
+             CREATE TABLE idx_longterm (id INTEGER PRIMARY KEY, event_id INTEGER NOT NULL UNIQUE, text TEXT NOT NULL, text_hash TEXT NOT NULL, importance REAL NOT NULL, promoted_ts INTEGER NOT NULL, last_access_ts INTEGER NOT NULL, archive_path TEXT);\
+             INSERT INTO idx_consolidated (id,event_id,text,text_hash,importance,consolidated_ts,last_access_ts) VALUES (1,11,'warm','w',0.7,1,1);\
+             INSERT INTO idx_longterm (id,event_id,text,text_hash,importance,promoted_ts,last_access_ts,archive_path) VALUES (2,12,'cold','c',0.8,2,2,NULL);",
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn, 44, 45).unwrap(), 45);
+        let trusts: (i64, i64) = conn
+            .query_row(
+                "SELECT (SELECT trust FROM idx_consolidated WHERE id=1), (SELECT trust FROM idx_longterm WHERE id=2)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(trusts, (1, 1), "existing v44 rows default to ordinary trust");
+        for table in ["dream_phase_run", "dream_phase_input", "dream_phase_receipt", "dream_rem_pair"] {
+            assert!(sqlite_object_exists(&conn, table), "{table} missing after v44->v45");
+        }
+        assert_eq!(current_version(&conn).unwrap(), 45);
+    }
+
+    #[test]
+    fn v44_to_v45_rolls_back_tier_columns_when_dream_schema_cannot_be_created() {
+        let mut conn = open_with_meta(44);
+        conn.execute_batch(
+            "CREATE TABLE idx_consolidated (id INTEGER PRIMARY KEY);\
+             CREATE TABLE idx_longterm (id INTEGER PRIMARY KEY);\
+             CREATE VIEW dream_phase_run AS SELECT 1 AS poisoned;",
+        )
+        .unwrap();
+
+        assert!(migrate(&mut conn, 44, 45).is_err());
+        for table in ["idx_consolidated", "idx_longterm"] {
+            let columns: Vec<String> = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .unwrap()
+                .query_map([], |row| row.get(1))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            assert!(!columns.iter().any(|column| column == "trust"), "{table} trust addition must roll back");
+        }
+        assert_eq!(current_version(&conn).unwrap(), 44, "failed migration must not advance meta version");
+    }
     #[test]
     fn v43_to_v44_preserves_every_historical_vector_as_legacy_unknown() {
         let mut conn = open_with_meta(43);

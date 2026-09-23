@@ -3,6 +3,30 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W331/W332/W341/W344 Dream integration and W342/W345/W346/W348 repairs
+(2026-09-23):** The opt-in scheduler now prepares bounded, consent-revision-bound
+inputs, resumes durable Light/REM/Repair effects and delivers authenticated
+append-once WAL audit receipts. Schema45 retains trust through ordinary and
+Dream tier movement and real Warm/Cold recall. Phase leases end at synchronous
+DB commits; only audit leases span WAL await. Independent integrated static
+review passed. Twenty-four new selected identities cover phases, audit,
+migration, real Cold reader, existing scheduler rails and Windows chat fixture.
+Native1056+Windows19/Linux33/macOS32; Group719; inventory635. Hosted checks
+remain pending; P2-01 stays open until its full behavioral acceptance.
+
+Group687 run35843153480 is source-admitted685PASS/2FAIL, all687 terminals and
+149source bindings checked. All five W336-W338 repairs passed. W348 repairs
+the two remaining Research fixture model/terminal expectations. W342 fixes
+Windows graph-generation and lock-snapshot setup; W346 canonicalizes four
+macOS fixture roots without changing production no-follow. W345 removes130
+unnecessary historic settlement setups while preserving131archives and the
+real64/64/2 retention proof under the unchanged watchdog. The old Linux750
+unused-unsafe error is already repaired in published supervisor source.
+Corec454 run35843801363 passed all four gates with unchanged CLI reference.
+The machine-readable Road summary marker is corrected to match the actual
+accepted rows:1324total/1026checked/296open/2partial;298raw/297pre-tag blockers.
+WS-LF19done/99open. No local executable validation ran.
+
 **W340 response-feedback acceptance (2026-09-23):** P2-28 is accepted with
 26/26 native feedback cases from admitted Group684 run35838862993 and5/5
 GUI/Main/Buddy cases from admitted GUI129 run35837802269. Required source

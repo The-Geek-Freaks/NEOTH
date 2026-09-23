@@ -1294,7 +1294,7 @@ fn recall_warm_like(conn: &Connection, query: &str, limit: usize) -> Result<Vec<
 fn recall_cold_like(conn: &Connection, query: &str, limit: usize) -> Result<Vec<EpisodeHit>> {
     let pattern = format!("%{query}%");
     let mut stmt = conn.prepare(
-        "SELECT event_id, promoted_ts AS ts_ns, text, text_hash, importance, access_count \
+        "SELECT event_id, promoted_ts AS ts_ns, text, text_hash, importance, access_count, trust \
          FROM idx_longterm \
          WHERE text LIKE ?1 COLLATE NOCASE \
          ORDER BY importance DESC, promoted_ts DESC \
@@ -1314,7 +1314,7 @@ fn recall_cold_like(conn: &Connection, query: &str, limit: usize) -> Result<Vec<
                 tier: "cold".to_string(),
                 importance: Some(r.get::<_, f64>(4)?),
                 access_count: r.get::<_, i64>(5)? as u32,
-                trust: 1,
+                trust: r.get(6)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -2526,8 +2526,8 @@ mod tests {
 
         conn.execute(
             "INSERT INTO idx_longterm \
-             (event_id, text, text_hash, importance, promoted_ts, last_access_ts) \
-             VALUES (200, 'never forget the keys are under the mat', 'h', 0.9, 1, 0)",
+             (event_id, text, text_hash, importance, trust, promoted_ts, last_access_ts) \
+             VALUES (200, 'never forget the keys are under the mat', 'h', 0.9, 0, 1, 0)",
             [],
         )
         .unwrap();
@@ -2545,6 +2545,7 @@ mod tests {
         assert_eq!(hits[0].tier, "cold");
         assert_eq!(hits[0].event_id, 200);
         assert_eq!(hits[0].importance, Some(0.9));
+        assert_eq!(hits[0].trust, 0, "cold RecallHit must expose stored trust=0");
     }
 
     #[test]

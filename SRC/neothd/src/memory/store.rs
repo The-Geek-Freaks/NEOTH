@@ -133,7 +133,8 @@ impl std::ops::DerefMut for PrivateHistoryConnection {
 /// v43: verified counterparty consent ceremony challenge reservations.
 /// v44: config-authoritative embedding generations; historical vectors stay
 ///      `legacy-unknown-v0` and are never inferred from model or dimension.
-pub const SCHEMA_VERSION: i64 = 44;
+/// v45: durable Dream Light/REM/Repair run, receipt, and observation journal.
+pub const SCHEMA_VERSION: i64 = 45;
 
 /// Current P1-08 metadata schema, split so the v36→v37 migration can rebuild
 /// the altered strict tables before the final trigger set is installed.  The
@@ -2209,6 +2210,7 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             text          TEXT NOT NULL,
             text_hash     TEXT NOT NULL,
             importance    REAL NOT NULL,
+            trust         INTEGER NOT NULL DEFAULT 1 CHECK(trust BETWEEN 0 AND 2),
             consolidated_ts INTEGER NOT NULL,
             last_access_ts  INTEGER NOT NULL,
             -- JV-MEM-09: access_count carried from idx_episode at hot→warm
@@ -2233,6 +2235,7 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             text            TEXT NOT NULL,
             text_hash       TEXT NOT NULL,
             importance      REAL NOT NULL,
+            trust           INTEGER NOT NULL DEFAULT 1 CHECK(trust BETWEEN 0 AND 2),
             promoted_ts     INTEGER NOT NULL,
             last_access_ts  INTEGER NOT NULL,
             archive_path    TEXT,                       -- pointer back to MD file
@@ -3020,6 +3023,9 @@ fn apply_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(crate::memory::counterparty_consent_ceremony::CHALLENGE_SCHEMA_SQL)
         .context("create W209 counterparty consent challenge reservations")?;
 
+    conn.execute_batch(crate::daemon::dream_phases::DREAM_PHASE_SCHEMA_SQL)
+        .context("create W331 Dream phase journal")?;
+
     // Stamp schema version (idempotent).
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
@@ -3592,6 +3598,18 @@ mod tests {
         // object, but neither W209 challenge table.  Stamping an older version
         // on a current schema leaves later tables behind and makes migration
         // fail before this test can exercise the final no-follow rebind.
+        if SCHEMA_VERSION >= 45 {
+            legacy
+                .execute_batch(
+                    "DROP TABLE dream_rem_pair;\
+                     DROP TABLE dream_phase_receipt;\
+                     DROP TABLE dream_phase_input;\
+                     DROP TABLE dream_phase_run;\
+                     ALTER TABLE idx_consolidated DROP COLUMN trust;\
+                     ALTER TABLE idx_longterm DROP COLUMN trust;",
+                )
+                .unwrap();
+        }
         if SCHEMA_VERSION >= 44 {
             legacy
                 .execute_batch(
@@ -3852,6 +3870,44 @@ mod tests {
         }
     }
 
+    #[test]
+    fn fresh_v45_schema_has_tier_trust_defaults_and_dream_phase_tables() {
+        let dir = tempdir().unwrap();
+        let conn = open(&dir.path().join("views.db")).unwrap();
+        for table in ["idx_consolidated", "idx_longterm"] {
+            let columns: Vec<String> = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .unwrap()
+                .query_map([], |row| row.get(1))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            assert!(columns.iter().any(|column| column == "trust"), "fresh {table} must carry trust");
+        }
+        for table in ["dream_phase_run", "dream_phase_input", "dream_phase_receipt", "dream_rem_pair"] {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "fresh v45 schema must create {table}");
+        }
+        conn.execute_batch(
+            "INSERT INTO idx_consolidated (kind,day,text,text_hash,importance,consolidated_ts,last_access_ts) VALUES ('retained','2026-01-01','fresh-warm','hash-warm',0.5,1,1);\
+             INSERT INTO idx_longterm (event_id,text,text_hash,importance,promoted_ts,last_access_ts) VALUES (1,'fresh-cold','hash-cold',0.5,1,1);",
+        )
+        .unwrap();
+        let trusts: (i64, i64) = conn
+            .query_row(
+                "SELECT (SELECT trust FROM idx_consolidated), (SELECT trust FROM idx_longterm WHERE event_id=1)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(trusts, (1, 1), "fresh warm and cold rows default to ordinary trust");
+    }
     #[test]
     fn open_is_idempotent() {
         let dir = tempdir().unwrap();

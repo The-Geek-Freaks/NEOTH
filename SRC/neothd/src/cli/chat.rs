@@ -24767,7 +24767,7 @@ modes:
     #[test]
     fn architecture_skill_appends_automatic_cycle_findings_without_repo_context_gate() {
         use crate::code_map::graph::{CodeEdge, EdgeKind};
-        use crate::code_map::persist::{open, persist_edges, persist_map};
+        use crate::code_map::persist::{open, persist_map_and_edges_bound};
         use crate::code_map::walker::{RepoMap, ScanReport};
 
         let dir = tempdir().unwrap();
@@ -24775,24 +24775,18 @@ modes:
         let unrelated_root = dir.path().join("unrelated");
         std::fs::create_dir_all(&repo_root).unwrap();
         std::fs::create_dir_all(&unrelated_root).unwrap();
-        let persisted_root = std::fs::canonicalize(&repo_root)
-            .unwrap()
-            .to_string_lossy()
-            .into_owned();
+        let canonical_root =
+            crate::code_map::root_identity::CanonicalRepoRoot::discover(&repo_root).unwrap();
+        let persisted_root = canonical_root.display().to_owned();
         let db = dir.path().join("code_map.db");
         let mut conn = open(&db).unwrap();
-        persist_map(
+        persist_map_and_edges_bound(
             &mut conn,
             &RepoMap {
                 root: persisted_root.clone(),
                 files: vec![],
                 report: ScanReport::default(),
             },
-        )
-        .unwrap();
-        persist_edges(
-            &mut conn,
-            &persisted_root,
             &[
                 CodeEdge {
                     from_file: "src/a.rs".into(),
@@ -24813,6 +24807,9 @@ modes:
                     confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
                 },
             ],
+            &[],
+            &crate::code_map::type_hierarchy::TypeHierarchy::default(),
+            &canonical_root,
         )
         .unwrap();
         drop(conn);

@@ -58,11 +58,11 @@ pub(crate) fn recall_warm_like_with_source(
 ) -> Result<Vec<RoutedRecallSourceRow>> {
     let pattern = format!("%{}%", crate::memory::escape_like(query));
     let sql = if min_importance.is_some() {
-        "SELECT id, kind, event_id, consolidated_ts, text, text_hash, importance, access_count \
+        "SELECT id, kind, event_id, consolidated_ts, text, text_hash, importance, access_count, trust \
          FROM idx_consolidated WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\' AND importance >= ?2 \
          ORDER BY importance DESC, consolidated_ts DESC LIMIT ?3"
     } else {
-        "SELECT id, kind, event_id, consolidated_ts, text, text_hash, importance, access_count \
+        "SELECT id, kind, event_id, consolidated_ts, text, text_hash, importance, access_count, trust \
          FROM idx_consolidated WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
          ORDER BY importance DESC, consolidated_ts DESC LIMIT ?2"
     };
@@ -102,7 +102,7 @@ pub(crate) fn recall_warm_like_with_source(
                 tier: "warm".to_owned(),
                 importance: Some(r.get(6)?),
                 access_count: r.get::<_, i64>(7)? as u32,
-                trust: 1,
+                trust: r.get(8)?,
             },
             source,
         })

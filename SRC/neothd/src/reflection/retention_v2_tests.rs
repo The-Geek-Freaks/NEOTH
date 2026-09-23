@@ -761,10 +761,21 @@ fn v2_bounded_batches_preserve_unselected_expired_records_for_later_ticks() {
     settle_daily_admission(home.path(), periods.first().unwrap(), None, None).unwrap();
     for age in 90..220 {
         let period = daily(age, &format!("historical-batch-{age}"));
-        settle_daily_admission(home.path(), &period, None, None).unwrap();
+        write_daily_retention_archive_fixture(home.path(), &period);
         periods.push(period);
     }
     preserve_period_inputs(home.path(), periods.clone());
+    let active_archive_count = |home: &Path| {
+        let archive = open_existing_daily_retention_archive(home)
+            .unwrap()
+            .expect("fixture Daily archive exists");
+        bounded_retention_child_names(&archive.daily, MAX_DAILY_RETENTION_ENTRIES)
+            .unwrap()
+            .into_iter()
+            .filter(|name| name != OsStr::new(".retention-v2"))
+            .count()
+    };
+    assert_eq!(active_archive_count(home.path()), 131);
     enforce_daily_retention_with_execution(
         home.path(),
         NOW,
@@ -779,6 +790,7 @@ fn v2_bounded_batches_preserve_unselected_expired_records_for_later_ticks() {
             .len(),
         64
     );
+    assert_eq!(active_archive_count(home.path()), 67);
     enforce_daily_retention_with_execution(
         home.path(),
         NOW,
@@ -793,6 +805,7 @@ fn v2_bounded_batches_preserve_unselected_expired_records_for_later_ticks() {
             .len(),
         128
     );
+    assert_eq!(active_archive_count(home.path()), 3);
     enforce_daily_retention_with_execution(
         home.path(),
         NOW,
@@ -805,6 +818,7 @@ fn v2_bounded_batches_preserve_unselected_expired_records_for_later_ticks() {
     let receipts =
         crate::reflection::retention_authority::list_effect_receipts(home.path()).unwrap();
     assert_eq!(receipts.len(), 130);
+    assert_eq!(active_archive_count(home.path()), 1);
     for period in periods.iter().skip(1) {
         assert!(!jsonl_file(home.path(), PeriodKind::Daily, &period.tag).exists());
     }

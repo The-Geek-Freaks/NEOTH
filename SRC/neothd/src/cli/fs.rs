@@ -1403,9 +1403,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("z.rs"), "secret source").unwrap();
         std::fs::write(root.path().join("a.rs"), "other source").unwrap();
-        let cap = crate::os_tools::gate::open_absolute_directory_no_follow(root.path()).unwrap();
+        let root_path = root.path().canonicalize().unwrap();
+        let cap = crate::os_tools::gate::open_absolute_directory_no_follow(&root_path).unwrap();
         let context = w279_context(
-            root.path(),
+            &root_path,
             crate::hooks::PreToolUseCancellation::unbound(),
             std::time::Duration::from_secs(1),
         );
@@ -1534,9 +1535,10 @@ mod tests {
     fn w279_empty_discovery_is_successful_and_not_truncated() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("only.txt"), "x").unwrap();
-        let cap = crate::os_tools::gate::open_absolute_directory_no_follow(root.path()).unwrap();
+        let root_path = root.path().canonicalize().unwrap();
+        let cap = crate::os_tools::gate::open_absolute_directory_no_follow(&root_path).unwrap();
         let context = w279_context(
-            root.path(),
+            &root_path,
             crate::hooks::PreToolUseCancellation::unbound(),
             std::time::Duration::from_secs(1),
         );
@@ -1549,22 +1551,23 @@ mod tests {
     fn w279_cancelled_or_expired_context_refuses_before_walk() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("x.rs"), "x").unwrap();
+        let root_path = root.path().canonicalize().unwrap();
         let cancelled = Arc::new(AtomicBool::new(false));
         let cancelled_context = w279_context(
-            root.path(),
+            &root_path,
             crate::hooks::PreToolUseCancellation::from_chat_turn(cancelled.clone()),
             std::time::Duration::from_secs(1),
         );
         cancelled.store(true, std::sync::atomic::Ordering::Release);
-        let cap = crate::os_tools::gate::open_absolute_directory_no_follow(root.path()).unwrap();
+        let cap = crate::os_tools::gate::open_absolute_directory_no_follow(&root_path).unwrap();
         assert!(discover_glob(cap, "*.rs", 20, 0, &cancelled_context).is_err());
         let expired = crate::hooks::PreToolUseContext::admitted(
             crate::hooks::PreToolUseOrigin::DirectCliOsDirectoryGlob,
             "native-os-directory-glob",
             "fs-glob",
-            &serde_json::json!({"root": root.path().display().to_string(), "pattern": "**/*.rs", "max_results": 20, "max_depth": 8}),
-            root.path(),
-            root.path(),
+            &serde_json::json!({"root": root_path.display().to_string(), "pattern": "**/*.rs", "max_results": 20, "max_depth": 8}),
+            &root_path,
+            &root_path,
             std::time::Duration::ZERO,
             crate::hooks::PreToolUseCancellation::unbound(),
             crate::hooks::PreToolUseReplay::direct_request(),
@@ -1584,9 +1587,10 @@ mod tests {
         let outside = tempfile::tempdir().unwrap();
         std::fs::write(outside.path().join("secret.rs"), "secret").unwrap();
         symlink(outside.path(), root.path().join("escape")).unwrap();
-        let cap = crate::os_tools::gate::open_absolute_directory_no_follow(root.path()).unwrap();
+        let root_path = root.path().canonicalize().unwrap();
+        let cap = crate::os_tools::gate::open_absolute_directory_no_follow(&root_path).unwrap();
         let context = w279_context(
-            root.path(),
+            &root_path,
             crate::hooks::PreToolUseCancellation::unbound(),
             std::time::Duration::from_secs(1),
         );

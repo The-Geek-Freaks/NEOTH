@@ -4030,6 +4030,12 @@ mod tests {
                     let path = entry.unwrap().path();
                     if path.is_dir() {
                         visit(root, &path, files);
+                    } else if path
+                        .file_name()
+                        .is_some_and(|name| name == std::ffi::OsStr::new(LOCK_FILE))
+                    {
+                        // The bound run owns this advisory lock while the snapshot is taken.
+                        continue;
                     } else {
                         files.insert(
                             path.strip_prefix(root).unwrap().to_path_buf(),

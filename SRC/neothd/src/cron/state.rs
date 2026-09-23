@@ -408,6 +408,13 @@ impl RuntimeState {
         self.dream.last_claimed_local_date = Some(local_date.to_string());
         true
     }
+
+    /// Calendar admission only.  Dream phase completion is stored separately
+    /// in `views.db`; callers use this predicate to avoid re-running a date
+    /// whose legacy composer admission has already been claimed.
+    pub fn dream_boundary_is_claimed(&self, local_date: &str) -> bool {
+        self.dream.last_claimed_local_date.as_deref().is_some_and(|last| last >= local_date)
+    }
 }
 
 /// Correlate the proactive dispatcher's final channel result back to the exact

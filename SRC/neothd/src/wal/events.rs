@@ -292,6 +292,8 @@ pub enum ExtendedSubtype {
     /// W209 — durable audit following the fail-closed revocation/quarantine
     /// commit for one exact counterparty scope.
     CounterpartyConsentRevoked = 0x31,
+    /// W331 — authenticated, content-free receipt for one completed Dream phase.
+    DreamPhaseAudit = 0x32,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -395,6 +397,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::CounterpartyConsentInput => "counterparty_consent_input",
             ExtendedSubtype::CounterpartyConsentGrant => "counterparty_consent_grant",
             ExtendedSubtype::CounterpartyConsentRevoked => "counterparty_consent_revoked",
+            ExtendedSubtype::DreamPhaseAudit => "dream_phase_audit",
         }
     }
 
@@ -450,6 +453,7 @@ impl ExtendedSubtype {
             0x2F => Some(ExtendedSubtype::CounterpartyConsentInput),
             0x30 => Some(ExtendedSubtype::CounterpartyConsentGrant),
             0x31 => Some(ExtendedSubtype::CounterpartyConsentRevoked),
+            0x32 => Some(ExtendedSubtype::DreamPhaseAudit),
             _ => None,
         }
     }
@@ -507,6 +511,7 @@ impl ExtendedSubtype {
             Self::CounterpartyConsentInput,
             Self::CounterpartyConsentGrant,
             Self::CounterpartyConsentRevoked,
+            Self::DreamPhaseAudit,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -4126,6 +4131,7 @@ mod tests {
             ExtendedSubtype::CounterpartyConsentInput,
             ExtendedSubtype::CounterpartyConsentGrant,
             ExtendedSubtype::CounterpartyConsentRevoked,
+            ExtendedSubtype::DreamPhaseAudit,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

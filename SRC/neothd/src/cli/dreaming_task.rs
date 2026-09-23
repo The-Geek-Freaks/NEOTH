@@ -10,8 +10,8 @@
 //! operators without local inference still get a daily dream record.
 //!
 //! Off by default — opt in via `freedom.yaml::dream.cron_enabled: true`.
-//! Boundaries are claimed durably before effects; boot never catches up an
-//! already-passed boundary.
+//! Boundaries are admitted only after the receipt-bound phase effects complete;
+//! boot never catches up an already-passed boundary.
 
 #[cfg(test)]
 use std::ffi::OsStr;
@@ -96,11 +96,15 @@ enum DreamCommitEffect {
     ProposalQueue,
     SelfImproveProposal,
     WalAppend,
+    PhasePrepare,
+    PhaseEffect,
+    PhaseComplete,
+    PhaseAudit,
 }
 
 impl DreamCommitEffect {
     #[cfg(test)]
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 12] = [
         Self::RuntimeSetup,
         Self::StateClaim,
         Self::ProviderDispatch,
@@ -109,6 +113,10 @@ impl DreamCommitEffect {
         Self::ProposalQueue,
         Self::SelfImproveProposal,
         Self::WalAppend,
+        Self::PhasePrepare,
+        Self::PhaseEffect,
+        Self::PhaseComplete,
+        Self::PhaseAudit,
     ];
 
     fn label(self) -> &'static str {
@@ -121,6 +129,10 @@ impl DreamCommitEffect {
             Self::ProposalQueue => "proposal/queue commit",
             Self::SelfImproveProposal => "self-improve proposal staging",
             Self::WalAppend => "DREAM_COMPOSED WAL append",
+            Self::PhasePrepare => "Dream phase prepare",
+            Self::PhaseEffect => "Dream phase effect",
+            Self::PhaseComplete => "Dream phase completion",
+            Self::PhaseAudit => "Dream phase audit",
         }
     }
 }
@@ -200,6 +212,8 @@ impl DreamEffectRail {
     pub(crate) fn retire_runtime_and_wait(&self) {
         self.reload_controller.retire_generation_effect_runtime();
     }
+
+    pub(crate) fn generation_identity(&self) -> String { self.accepted.epoch().to_string() }
 }
 
 /// Default window: last 24h. The composer reads `idx_episode` rows
@@ -452,24 +466,64 @@ async fn run(
         if now < due {
             continue;
         }
-        let _lease = effect_rail.acquire_commit_lease(DreamCommitEffect::StateClaim)?;
-        let claimed = match crate::cron::state::RuntimeState::modify(&home, |state| {
-            Ok(state.claim_dream_boundary(&local_date))
-        }) {
-            Ok(claimed) => claimed,
+        let already_claimed = match crate::cron::state::RuntimeState::load(&home) {
+            Ok(state) => state.dream_boundary_is_claimed(&local_date),
             Err(error) => {
                 warn!(
                     error = %error,
                     local_date = %local_date,
-                    "Dream boundary claim is not durable; effects blocked until the next poll"
+                    "Dream boundary admission state is unavailable; effects blocked until the next poll"
                 );
                 continue;
             }
         };
-        drop(_lease);
-        if !claimed {
+        if already_claimed {
+            let resumed_audits = {
+                let _phase_lease = effect_rail.acquire_commit_lease(DreamCommitEffect::PhaseEffect)?;
+                crate::daemon::dream_phases::resume_existing_for_day(
+                    &home,
+                    &local_date,
+                    &effect_rail.generation_identity(),
+                )
+            };
+            let resumed_audits = match resumed_audits {
+                Ok(audits) => audits,
+                Err(error) => {
+                    warn!(error = %error, local_date = %local_date, "Dream phase resume remains pending; no effect replay or new input selection");
+                    continue;
+                }
+            };
+            if let Some(writer) = writer.as_ref() {
+                for audit in resumed_audits {
+                    let _audit_lease = effect_rail.acquire_commit_lease(DreamCommitEffect::PhaseAudit)?;
+                    if let Err(error) = deliver_dream_phase_audit(writer, &home, &audit).await {
+                        warn!(error = %error, transition_id = %audit.transition_id, "Dream phase audit retry remains pending");
+                    }
+                }
+            }
             continue;
         }
+        // No eligible phase input intentionally leaves this as a legacy-only day.
+        // Both post-claim paths are resume-only and cannot select later inputs.
+        let prepared = {
+            let _prepare_lease = effect_rail.acquire_commit_lease(DreamCommitEffect::PhasePrepare)?;
+            crate::daemon::dream_phases::prepare_for_day(
+                &home,
+                &local_date,
+                &effect_rail.generation_identity(),
+            )
+        };
+        if let Err(error) = prepared {
+            warn!(error = %error, local_date = %local_date, "Dream phase admission was not prepared; legacy effects remain blocked");
+            continue;
+        }
+        let claimed = {
+            let _claim_lease = effect_rail.acquire_commit_lease(DreamCommitEffect::StateClaim)?;
+            crate::cron::state::RuntimeState::modify(&home, |state| {
+                Ok(state.claim_dream_boundary(&local_date))
+            })
+        };
+        if !matches!(claimed, Ok(true)) { continue; }
         effect_rail.ensure_current("scheduled pass dispatch")?;
         let pass = run_one_pass_for_day(
             &home,
@@ -488,6 +542,29 @@ async fn run(
         };
         match pass_result {
             Ok(report) => {
+                let phase_audits = {
+                    let _phase_lease = effect_rail.acquire_commit_lease(DreamCommitEffect::PhaseEffect)?;
+                    crate::daemon::dream_phases::resume_existing_for_day(
+                        &home,
+                        &local_date,
+                        &effect_rail.generation_identity(),
+                    )
+                };
+                let phase_audits = match phase_audits {
+                    Ok(audits) => audits,
+                    Err(error) => {
+                        warn!(error = %error, local_date = %local_date, "Dream phase protocol incomplete; prepared receipt remains resumable");
+                        continue;
+                    }
+                };
+                if let Some(writer) = writer.as_ref() {
+                    for audit in phase_audits {
+                        let _audit_lease = effect_rail.acquire_commit_lease(DreamCommitEffect::PhaseAudit)?;
+                        if let Err(error) = deliver_dream_phase_audit(writer, &home, &audit).await {
+                            warn!(error = %error, transition_id = %audit.transition_id, "Dream phase audit remains pending");
+                        }
+                    }
+                }
                 if report.dreams_written > 0 {
                     info!(
                         events = report.events_considered,
@@ -524,7 +601,7 @@ async fn run(
                 warn!(
                     error = %e,
                     local_date = %local_date,
-                    "dreaming pass failed after its durable boundary claim; not retrying automatically"
+                    "dreaming pass failed before calendar admission; retry remains available"
                 );
             }
         }
@@ -865,6 +942,34 @@ async fn emit_dream_composed_daemon(writer: &WalWriterHandle, report: &PassRepor
     if let Err(e) = writer.append(header, payload).await {
         warn!(error = %e, "dreaming: DREAM_COMPOSED frame append failed (audit gap)");
     }
+}
+
+fn dream_audit_bytes(value: &str) -> Result<[u8; 32]> {
+    let bytes = hex::decode(value).context("decode Dream audit hash")?;
+    bytes.try_into().map_err(|_| anyhow::anyhow!("Dream audit hash is not 32 bytes"))
+}
+
+async fn deliver_dream_phase_audit(
+    writer: &WalWriterHandle,
+    home: &Path,
+    audit: &crate::daemon::dream_phases::AuditOutbox,
+) -> Result<()> {
+    use crate::wal::dream_receipts::{DreamAuditDescriptor, DreamAuditOnceOutcome, DreamAuditState, DreamPhase};
+    let phase = match audit.phase.as_str() {
+        "light" => DreamPhase::Light,
+        "rem" => DreamPhase::Rem,
+        "repair" => DreamPhase::Repair,
+        _ => anyhow::bail!("unknown Dream audit phase"),
+    };
+    let descriptor = DreamAuditDescriptor::new(
+        dream_audit_bytes(&audit.transition_id)?, dream_audit_bytes(&audit.run_id)?, phase,
+        DreamAuditState::Completed, dream_audit_bytes(&audit.result_sha256)?,
+    )?;
+    let outcome = writer.append_dream_audit_once(home, descriptor).await?;
+    let receipt = match outcome {
+        DreamAuditOnceOutcome::ExistingExact(receipt) | DreamAuditOnceOutcome::AppendedExact(receipt) => receipt,
+    };
+    crate::daemon::dream_phases::mark_audit_delivered(home, &audit.transition_id, &hex::encode(receipt.frame_sha256()))
 }
 
 /// Which composer ran. Surfaces in the operator log so a sudden

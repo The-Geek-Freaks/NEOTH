@@ -622,6 +622,11 @@ mod tests {
         fn name(&self) -> &'static str {
             "research-call-cap-test"
         }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("research-fixture-model")
+        }
+
         async fn complete(
             &self,
             _req: crate::providers::Request,
@@ -648,6 +653,10 @@ mod tests {
     impl crate::providers::Provider for InterruptedProvider {
         fn name(&self) -> &'static str {
             "research-interrupted-provider-test"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("research-fixture-model")
         }
 
         async fn complete(
@@ -1140,7 +1149,8 @@ mod tests {
             interrupted
                 .audit
                 .iter()
-                .any(|entry| entry.event == "interrupted")
+                .any(|entry| entry.event == "interrupted_unknown_effect"),
+            "post-effect provider failure persists the durable unknown-interruption audit contract"
         );
         let events = deep_research_lifecycle_payloads(home.path());
         let topic_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(topic.as_bytes()));

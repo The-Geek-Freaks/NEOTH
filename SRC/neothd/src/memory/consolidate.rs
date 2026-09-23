@@ -18,12 +18,60 @@
 //! the WAL frame.
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use tracing::debug;
 
 use super::tiers::{FORGET_FLOOR, PROMOTION_THRESHOLD, Tier};
 
 const DAY_NS: i64 = 86_400 * 1_000_000_000;
+
+/// Move the exact Dream-bound hot inputs to the warm tier.  This deliberately
+/// shares the normal tier shape but not its age-based sweep: callers already
+/// hold the SQLite transaction that owns the immutable Dream receipt.
+pub fn promote_selected_hot_to_warm(
+    tx: &Transaction<'_>,
+    day: &str,
+    inputs: &[(i64, String)],
+    now_ns: i64,
+) -> Result<usize> {
+    let mut moved = 0;
+    for (event_id, expected_hash) in inputs {
+        let row: Option<(String, String, f64, i64, i64, i64)> = tx
+            .query_row(
+                "SELECT text, text_hash, importance, access_count, pinned, trust FROM idx_episode WHERE event_id = ?1",
+                params![event_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .optional()
+            .context("read Dream-selected hot episode")?;
+        let Some((text, text_hash, importance, access_count, pinned, trust)) = row else {
+            anyhow::bail!("Dream Light input {event_id} is no longer hot");
+        };
+        anyhow::ensure!(pinned == 0, "Dream Light input {event_id} became pinned");
+        anyhow::ensure!(text_hash == *expected_hash, "Dream Light input {event_id} text hash changed");
+        let collision: Option<String> = tx
+            .query_row(
+                "SELECT text_hash FROM idx_consolidated WHERE event_id = ?1",
+                params![event_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .context("inspect Dream Light warm collision")?;
+        anyhow::ensure!(collision.is_none(), "Dream Light input {event_id} already has a warm row");
+        tx.execute(
+            "INSERT INTO idx_consolidated (kind, day, event_id, text, text_hash, importance, trust, consolidated_ts, last_access_ts, access_count) \
+             VALUES ('retained', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8)",
+            params![day, event_id, text, text_hash, importance, trust, now_ns, access_count],
+        )
+        .context("insert Dream-selected warm episode")?;
+        anyhow::ensure!(
+            tx.execute("DELETE FROM idx_episode WHERE event_id = ?1", params![event_id])? == 1,
+            "Dream Light input {event_id} disappeared before delete"
+        );
+        moved += 1;
+    }
+    Ok(moved)
+}
 
 /// Summary of one consolidation pass for the audit log.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -189,11 +237,11 @@ pub fn run_consolidation_pass_with_hippocampus(
     let seven_days_ago = now_ns - 7 * DAY_NS;
 
     let mut select = tx.prepare(
-        "SELECT event_id, ts_ns, text, text_hash, importance, access_count \
+        "SELECT event_id, ts_ns, text, text_hash, importance, access_count, trust \
          FROM idx_episode \
          WHERE ts_ns < ?1 AND pinned = 0",
     )?;
-    let rows: Vec<(i64, i64, String, String, f64, i64)> = select
+    let rows: Vec<(i64, i64, String, String, f64, i64, i64)> = select
         .query_map(params![seven_days_ago], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
@@ -202,6 +250,7 @@ pub fn run_consolidation_pass_with_hippocampus(
                 r.get::<_, String>(3)?,
                 r.get::<_, f64>(4)?,
                 r.get::<_, i64>(5)?,
+                r.get::<_, i64>(6)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -211,7 +260,7 @@ pub fn run_consolidation_pass_with_hippocampus(
     // summarize them after this sync pass returns.
     let mut day_events: std::collections::HashMap<String, Vec<(i64, String)>> =
         std::collections::HashMap::new();
-    for (event_id, ts_ns, text, text_hash, importance, access_count) in rows {
+    for (event_id, ts_ns, text, text_hash, importance, access_count, trust) in rows {
         if importance < FORGET_FLOOR {
             // Below floor → drop without consolidating. Archive MD remains.
             // KF-10: capture the row BEFORE the DELETE for pre-decay export
@@ -236,9 +285,9 @@ pub fn run_consolidation_pass_with_hippocampus(
         let day = ts_to_day_string(ts_ns);
         tx.execute(
             "INSERT INTO idx_consolidated \
-             (kind, day, event_id, text, text_hash, importance, consolidated_ts, last_access_ts, access_count) \
-             VALUES ('retained', ?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7)",
-            params![day, event_id, text, text_hash, importance, now_ns, access_count],
+             (kind, day, event_id, text, text_hash, importance, trust, consolidated_ts, last_access_ts, access_count) \
+             VALUES ('retained', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8)",
+            params![day, event_id, text, text_hash, importance, trust, now_ns, access_count],
         )?;
         tx.execute(
             "DELETE FROM idx_episode WHERE event_id = ?1",
@@ -259,11 +308,11 @@ pub fn run_consolidation_pass_with_hippocampus(
     let ninety_days_ago_day = ts_to_day_string(ninety_days_ago);
 
     let mut select_warm = tx.prepare(
-        "SELECT id, event_id, text, text_hash, importance, access_count \
+        "SELECT id, event_id, text, text_hash, importance, access_count, trust \
          FROM idx_consolidated \
          WHERE day < ?1",
     )?;
-    let warm_rows: Vec<(i64, Option<i64>, String, String, f64, i64)> = select_warm
+    let warm_rows: Vec<(i64, Option<i64>, String, String, f64, i64, i64)> = select_warm
         .query_map(params![ninety_days_ago_day], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
@@ -272,12 +321,13 @@ pub fn run_consolidation_pass_with_hippocampus(
                 r.get::<_, String>(3)?,
                 r.get::<_, f64>(4)?,
                 r.get::<_, i64>(5)?,
+                r.get::<_, i64>(6)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     drop(select_warm);
 
-    for (row_id, maybe_event_id, text, text_hash, importance, access_count) in warm_rows {
+    for (row_id, maybe_event_id, text, text_hash, importance, access_count, trust) in warm_rows {
         if importance >= PROMOTION_THRESHOLD {
             // Promote to long-term. Use the original event_id if we have one,
             // otherwise synthesise from the warm row id (offset to avoid
@@ -285,9 +335,9 @@ pub fn run_consolidation_pass_with_hippocampus(
             let event_id = maybe_event_id.unwrap_or(-row_id - 1);
             tx.execute(
                 "INSERT OR REPLACE INTO idx_longterm \
-                 (event_id, text, text_hash, importance, promoted_ts, last_access_ts, archive_path, access_count) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?5, NULL, ?6)",
-                params![event_id, text, text_hash, importance, now_ns, access_count],
+                 (event_id, text, text_hash, importance, trust, promoted_ts, last_access_ts, archive_path, access_count) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, NULL, ?7)",
+                params![event_id, text, text_hash, importance, trust, now_ns, access_count],
             )?;
             report.promoted += 1;
         } else {
@@ -459,6 +509,41 @@ mod tests {
         assert_eq!(cold, 7, "access_count must survive warm→cold promotion");
     }
 
+    #[test]
+    fn ordinary_untrusted_trust_survives_hot_warm_cold_consolidation() {
+        // W344: trust=0 is an ordinary persisted source state. It must not be
+        // defaulted back to trusted while crossing either tier boundary.
+        let (_dir, mut conn) = open();
+        let now_ns: i64 = 400 * DAY_NS;
+        insert_episode(&conn, 91, 10, 0.9, now_ns);
+        conn.execute("UPDATE idx_episode SET trust = 0 WHERE event_id = 91", [])
+            .unwrap();
+
+        run_consolidation_pass(&mut conn, now_ns, None).unwrap();
+        let warm_trust: i64 = conn
+            .query_row(
+                "SELECT trust FROM idx_consolidated WHERE event_id = 91",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(warm_trust, 0, "hot->warm must preserve ordinary trust=0");
+
+        conn.execute(
+            "UPDATE idx_consolidated SET day = ?1, importance = 0.9 WHERE event_id = 91",
+            params![ts_to_day_string(now_ns - 120 * DAY_NS)],
+        )
+        .unwrap();
+        run_consolidation_pass(&mut conn, now_ns, None).unwrap();
+        let cold_trust: i64 = conn
+            .query_row(
+                "SELECT trust FROM idx_longterm WHERE event_id = 91",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(cold_trust, 0, "warm->cold must preserve ordinary trust=0");
+    }
     #[test]
     fn consolidation_refuses_on_integrity_corruption() {
         // JV-MEM-12: a cross-tier event_id collision trips the circuit-breaker,
