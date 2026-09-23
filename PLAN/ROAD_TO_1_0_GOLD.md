@@ -8,6 +8,31 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W286/W287 hosted-platform repair and exact CLI export (2026-09-23):**
+GUI125b7ca is fully source-bound:125 executed,123 passed, W153/W164 failed.
+W286 replaces the inherited cgroup mount after private propagation, then mounts
+inside the new cgroup namespace and makes that mount read-only. The required
+root=/, readonly and nsdelegate checks still precede provider/guardian readiness.
+Independent source review passed after adding the syscall safety justification;
+hosted GUI acceptance is pending. Its Linux plan identity was renamed, not added.
+The supervisor source is now explicitly included in the GUI receipt binding set.
+
+FullCIce0 Windows ran17595 tests with3 failures: doctor count63vs64, JSON-escaped
+Windows grep paths, and the pre-preview import method name in a source contract.
+W287 repairs these exact assertions; production behavior is unchanged. The Doctor
+case joins grouped selection505; the integration contract is explicitly required
+in full CI. FullCIce0 macOS remains active and is preserved.
+
+Coree700 run35819233475 passed slim Clippy, test-target typecheck, public CLI build
+and export. Its exact CLI reference (SHA256 F7E3604A1789839F87DD6A574E3D4987A98E4F4E599CB71179DC32C7ED2D6CFA)
+is imported, adding the native fs glob command. Preflight8afd supplied the exact
+bg_session/fs formatting patch; its pre/postimages were verified and W287's
+independent grep hunk preserved by replay comparison.
+Inventory563 paths/911 universal native identities; grouped505; GUI125 Linux
+with18 explicit GUI source bindings. Road1021/301/2 and WS-LF14/104 unchanged.
+W280 remains uncommitted while its actual recovery/provenance fixtures are reviewed.
+No local executable validation ran; no new Gold checkbox is closed.
+
 **W285 background role binding and W279 fixture repair (2026-09-23):**
 The detached background worker now carries its configured Left-role authority
 through the existing final provider authorization. Two new fixtures use the actual

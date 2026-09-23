@@ -1558,6 +1558,17 @@ Fetch a URL + return its text content (A-21)
 
 `fs read <path>` — read a file through the PC-01 OS-tool gate: allowlist (`freedom.yaml::tools.os.allowed_paths`, default deny-all) + autonomy gate + WAL audit (`0xA8`/`0xA9`). The gated alternative to an ungated filesystem read
 
+### `neoth fs glob`
+
+Enumerate bounded matching files below an allowlisted directory. This uses retained no-follow directory capabilities and never reads files
+
+- `<ROOT>` — Absolute allowlisted directory root
+- `<PATTERN>` — UTF-8 root-relative glob pattern (`*`, `?`, `[]`, `**`)
+- `--max-results <MAX_RESULTS>` — Maximum matches to return (1..=64)
+- `--max-depth <MAX_DEPTH>` — Maximum directory depth to traverse (0..=16)
+- `--codegraph-enrichment` — Add bounded indexed symbol summaries for returned paths
+- `--repository-root <ABSOLUTE_ROOT>` — Absolute indexed repository root required with codegraph enrichment
+
 ### `neoth fs grep`
 
 Search one allowlisted UTF-8 file for a literal string. This is never recursive, never invokes a shell, and does not interpret regex syntax

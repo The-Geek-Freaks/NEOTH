@@ -1789,12 +1789,14 @@ fn make_linux_mounts_private() -> Result<(), String> {
 #[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LinuxCgroupMountOperation {
+    UnmountInheritedNamespaceMount,
     FreshNamespaceRoot,
     BindRemountNamespaceRootReadOnly,
 }
 
 #[cfg(target_os = "linux")]
-const LINUX_CGROUP_MOUNT_PLAN: [LinuxCgroupMountOperation; 2] = [
+const LINUX_CGROUP_MOUNT_PLAN: [LinuxCgroupMountOperation; 3] = [
+    LinuxCgroupMountOperation::UnmountInheritedNamespaceMount,
     LinuxCgroupMountOperation::FreshNamespaceRoot,
     LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly,
 ];
@@ -1802,6 +1804,7 @@ const LINUX_CGROUP_MOUNT_PLAN: [LinuxCgroupMountOperation; 2] = [
 #[cfg(target_os = "linux")]
 fn linux_cgroup_mount_flags(operation: LinuxCgroupMountOperation) -> libc::c_ulong {
     match operation {
+        LinuxCgroupMountOperation::UnmountInheritedNamespaceMount => 0,
         LinuxCgroupMountOperation::FreshNamespaceRoot => {
             (libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC) as libc::c_ulong
         }
@@ -1819,6 +1822,7 @@ fn linux_cgroup_mount_flags(operation: LinuxCgroupMountOperation) -> libc::c_ulo
 #[cfg(target_os = "linux")]
 fn linux_cgroup_mount_operation_stage(operation: LinuxCgroupMountOperation) -> &'static str {
     match operation {
+        LinuxCgroupMountOperation::UnmountInheritedNamespaceMount => "unmount inherited cgroup mount",
         LinuxCgroupMountOperation::FreshNamespaceRoot => "mount cgroup namespace root",
         LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly => {
             "bind-remount cgroup namespace root read-only"
@@ -1833,8 +1837,17 @@ fn remount_linux_cgroup_at_namespace_root() -> Result<(), String> {
     let filesystem = std::ffi::CString::new("cgroup2").expect("static cgroup filesystem");
 
     for operation in LINUX_CGROUP_MOUNT_PLAN {
+        // SAFETY: All CString pointers remain live and NUL-terminated during
+        // each syscall. mount permits the null data/source/type pointers used
+        // for these operations; umount2 receives a valid target and zero flags.
         let result = unsafe {
             match operation {
+                // cgroup_namespaces(7) requires removing the inherited
+                // cgroupfs mount, whose root belongs to the parent cgroup
+                // namespace, before mounting the current namespace root.
+                LinuxCgroupMountOperation::UnmountInheritedNamespaceMount => {
+                    libc::umount2(target.as_ptr(), 0)
+                }
                 // A cgroup2 hierarchy already has a shared superblock. Keep it
                 // read-write while mounting the cgroup namespace root, then
                 // restrict only this namespace-private mount below.
@@ -2570,14 +2583,26 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn cgroup_namespace_root_mount_plan_keeps_superblock_rw_then_sets_private_ro() {
+    fn cgroup_namespace_root_mount_plan_replaces_inherited_mount_before_private_ro() {
         assert_eq!(
             LINUX_CGROUP_MOUNT_PLAN,
             [
+                LinuxCgroupMountOperation::UnmountInheritedNamespaceMount,
                 LinuxCgroupMountOperation::FreshNamespaceRoot,
                 LinuxCgroupMountOperation::BindRemountNamespaceRootReadOnly,
             ]
         );
+        assert_eq!(
+            linux_cgroup_mount_flags(LinuxCgroupMountOperation::UnmountInheritedNamespaceMount),
+            0
+        );
+        assert_eq!(
+            linux_cgroup_mount_operation_stage(
+                LinuxCgroupMountOperation::UnmountInheritedNamespaceMount
+            ),
+            "unmount inherited cgroup mount"
+        );
+
         let fresh = linux_cgroup_mount_flags(LinuxCgroupMountOperation::FreshNamespaceRoot);
         assert_eq!(
             fresh,

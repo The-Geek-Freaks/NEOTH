@@ -2796,7 +2796,8 @@ mod tests {
     async fn w285_background_left_role_binding_admits_exact_leaf_once() {
         let dir = tempfile::tempdir().expect("temporary W285 WAL directory");
         let segment = dir.path().join("w285-background-allowed-000001.wal");
-        let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("start W285 WAL writer");
+        let (writer, join) =
+            crate::wal::writer::spawn(segment.clone()).expect("start W285 WAL writer");
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let config = w285_background_role_config("qwen-background");
         let authorizer = background_role_authorizer(
@@ -2836,7 +2837,8 @@ mod tests {
     async fn w285_background_left_role_binding_denies_disallowed_model_before_effect() {
         let dir = tempfile::tempdir().expect("temporary W285 WAL directory");
         let segment = dir.path().join("w285-background-denied-000001.wal");
-        let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("start W285 WAL writer");
+        let (writer, join) =
+            crate::wal::writer::spawn(segment.clone()).expect("start W285 WAL writer");
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let config = w285_background_role_config("qwen-background");
         let authorizer = background_role_authorizer(
@@ -2862,7 +2864,10 @@ mod tests {
             .complete(request)
             .await
             .expect_err("Left policy must reject the final model before dispatch");
-        assert!(error.to_string().contains("role dispatch denied"), "{error:#}");
+        assert!(
+            error.to_string().contains("role dispatch denied"),
+            "{error:#}"
+        );
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         drop(provider);
         drop(writer);

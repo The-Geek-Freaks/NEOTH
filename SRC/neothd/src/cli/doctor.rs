@@ -837,7 +837,8 @@ mod tests {
         // + code-map bounded analysis-evidence readiness = 61;
         // + opt-in codegraph outline-enrichment readiness = 62.
         // + bounded authenticated capability-quality observation = 63.
-        assert_eq!(all_check_docs().count(), 63);
+        // + documented context import control-plane status = 64.
+        assert_eq!(all_check_docs().count(), 64);
     }
 
     // ── GOLD-WIRE-05: stuck claude-process check ──────────────────────

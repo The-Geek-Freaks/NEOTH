@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W285 actual background role binding and W279 fixture repairs; Group504 pending hosted validation; W280 excluded",
+  "status": "W286 cgroup mount repair source-reviewed; W287 three Windows assertions repaired; exact Coree700 CLI export imported; hostedpending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 97091,
-    "sha256": "0805962F078C843A550C2443B200F80F51B7754A8C419BBCFB6227B86AD3B4AF"
+    "bytes": 97472,
+    "sha256": "77B3049E9ED3392830B32FF9F2746C9AC3A6717897A6D162E750365954E74C1D"
   },
-  "sourceInputs": 561,
+  "sourceInputs": 563,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -3282,13 +3282,13 @@
     {
       "test": "cli::doctor::tests::check_docs_listed_count_matches_runtime_contract",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "401F07BD0C01B9BDFDC0B361249160EA4C67EE828991765FC4D5DC77D36900DF",
+      "sourceSha256": "CCFD50EEC1E2C318D27555575D4C5FDD3960F9F5FBA877E7882C4ADDB14137ED",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::tests::run_all_checks_returns_one_outcome_per_diagnostic",
       "sourcePath": "SRC/neothd/src/cli/doctor.rs",
-      "sourceSha256": "401F07BD0C01B9BDFDC0B361249160EA4C67EE828991765FC4D5DC77D36900DF",
+      "sourceSha256": "CCFD50EEC1E2C318D27555575D4C5FDD3960F9F5FBA877E7882C4ADDB14137ED",
       "junitClass": "neoth"
     },
     {
@@ -4895,13 +4895,13 @@
     },
     {
       "sourcePath": "SRC/neothd/src/cli/bg_session.rs",
-      "sourceSha256": "9A62629EC39C92656DAA042E2DD5A0AB8829FA3DA37C8C9E82B22115CC663E12",
+      "sourceSha256": "47D01054DCC146FAA19D0A865543FA3C8EF508C5736D6123F20BDB6E8867B104",
       "test": "cli::bg_session::tests::queued_background_request_keeps_real_registry_metadata_a_after_skill_b_publication",
       "junitClass": "neoth"
     },
     {
       "sourcePath": "SRC/neothd/src/cli/bg_session.rs",
-      "sourceSha256": "9A62629EC39C92656DAA042E2DD5A0AB8829FA3DA37C8C9E82B22115CC663E12",
+      "sourceSha256": "47D01054DCC146FAA19D0A865543FA3C8EF508C5736D6123F20BDB6E8867B104",
       "test": "cli::bg_session::tests::accepted_config_b_refuses_the_queued_background_worker_before_dispatch",
       "junitClass": "neoth"
     },
@@ -5082,31 +5082,31 @@
     {
       "test": "cli::fs::tests::w239_real_fs_caller_keeps_default_master_off_output_unenriched",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w239_real_fs_caller_appends_native_sidecar_only_for_fresh_indexed_target",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w239_real_fs_caller_denial_stops_before_typed_native_read",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w239_real_fs_caller_cancellation_stops_before_native_read",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w239_real_fs_caller_zero_deadline_drops_admission_without_consuming_bytes",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
@@ -5208,31 +5208,31 @@
     {
       "test": "cli::fs::tests::w256_grep_cli_parses_default_and_maximum_and_rejects_out_of_range_results",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w256_literal_search_reports_empty_line_numbers_and_bounded_truncation",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w256_actual_grep_search_origin_hook_enrichment_and_once_guard",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w256_actual_grep_no_hit_drops_codegraph_sidecar_after_retained_fd_scan",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w256_actual_grep_denial_and_cancellation_stop_before_search_output",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
@@ -5298,13 +5298,13 @@
     {
       "test": "cli::fs::tests::w269_enrichment_status_json_is_additive_and_bounded",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w269_actual_requested_enrichment_without_descriptor_is_unavailable",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
@@ -5388,43 +5388,43 @@
     {
       "test": "cli::fs::tests::w279_glob_cli_bounds_and_pattern_rejections",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w279_discovery_is_sorted_bounded_and_no_content",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w279_actual_glob_hook_blocks_before_enumeration_and_runs_without_enrichment_opt_in",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w279_actual_glob_attaches_fresh_db_symbol_sidecar",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w279_empty_discovery_is_successful_and_not_truncated",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w279_cancelled_or_expired_context_refuses_before_walk",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w279_required_audit_failure_refuses_glob_success",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+      "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
       "junitClass": "neoth"
     },
     {
@@ -5460,14 +5460,20 @@
     {
       "test": "cli::bg_session::tests::w285_background_left_role_binding_admits_exact_leaf_once",
       "sourcePath": "SRC/neothd/src/cli/bg_session.rs",
-      "sourceSha256": "9A62629EC39C92656DAA042E2DD5A0AB8829FA3DA37C8C9E82B22115CC663E12",
+      "sourceSha256": "47D01054DCC146FAA19D0A865543FA3C8EF508C5736D6123F20BDB6E8867B104",
       "junitClass": "neoth"
     },
     {
       "test": "cli::bg_session::tests::w285_background_left_role_binding_denies_disallowed_model_before_effect",
       "sourcePath": "SRC/neothd/src/cli/bg_session.rs",
-      "sourceSha256": "9A62629EC39C92656DAA042E2DD5A0AB8829FA3DA37C8C9E82B22115CC663E12",
+      "sourceSha256": "47D01054DCC146FAA19D0A865543FA3C8EF508C5736D6123F20BDB6E8867B104",
       "junitClass": "neoth"
+    },
+    {
+      "test": "durable_apply_is_reserved_before_read_and_recovered_before_consumption",
+      "sourcePath": "SRC/neothd/tests/connector_control_rpc_contract.rs",
+      "sourceSha256": "08956EE82DD19F126BC49092D45D8D91A4C6BA3F8C4F501C976B29439030DBD1",
+      "junitClass": "neoth::connector_control_rpc_contract"
     }
   ],
   "requiredGuiTests": [
@@ -6117,6 +6123,11 @@
       "path": "SRC/neothd-gui/src/wizard_session_controller.rs",
       "bytes": 15732,
       "sha256": "8C7A4C17C99B05F539D08903E86549A870F972C7B8A18D9F612BFE43CF54B20B"
+    },
+    {
+      "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
+      "bytes": 111791,
+      "sha256": "C78E1B4A09351839F28AAF4BD8179B76FFC9FE092E21AA20854B784F8544AA8F"
     }
   ],
   "remoteFormatCorrection": {
@@ -6443,7 +6454,7 @@
       "w58_gui_callback_runtime_tests::w233_invalid_fresh_readback_keeps_committed_receipt_and_fences_mutation",
       "w58_gui_callback_runtime_tests::w233_task_delegate_callback_fixture_covers_conflict_receipt_and_newer_readback",
       "w58_gui_callback_runtime_tests::w233_task_delegate_inspect_null_projects_effective_default_deny",
-      "chat_child_supervisor::tests::cgroup_namespace_root_mount_plan_keeps_superblock_rw_then_sets_private_ro"
+      "chat_child_supervisor::tests::cgroup_namespace_root_mount_plan_replaces_inherited_mount_before_private_ro"
     ],
     "macOS": [
       "w58_gui_callback_runtime_tests::w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt",
@@ -7330,7 +7341,7 @@
       {
         "test": "cli::fs::tests::w279_symlink_entries_are_never_returned_or_traversed",
         "sourcePath": "SRC/neothd/src/cli/fs.rs",
-        "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+        "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
         "junitClass": "neoth"
       }
     ],
@@ -7506,7 +7517,7 @@
       {
         "test": "cli::fs::tests::w279_symlink_entries_are_never_returned_or_traversed",
         "sourcePath": "SRC/neothd/src/cli/fs.rs",
-        "sourceSha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1",
+        "sourceSha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
         "junitClass": "neoth"
       }
     ]
@@ -17922,7 +17933,7 @@
     "platform": "Linux",
     "report": "docs/gold-wave281-cgroup-mount.md",
     "localValidationRan": false,
-    "hosted": "pending",
+    "hosted": "GUI125b7ca123/125; superseded mount plan identity by W286; W153EBUSY W164unknown retained",
     "note": "Production two-step freshcgroup2 then per-mountreadonly. Finalnamespace/root/ro/nsdelegate checks unchanged. PriorGUI8f16 admitted122/124."
   },
   "wave281CgroupMountSource": {
@@ -18203,6 +18214,62 @@
       }
     ],
     "note": "Two actual AuthorizedProvider/WAL tests added; prior Group502 has500PASS2fixturefail, repaired. Exact e700 hosted format imported. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave286CgroupMountAcceptance": {
+    "requiredTests": [
+      "chat_child_supervisor::tests::cgroup_namespace_root_mount_plan_replaces_inherited_mount_before_private_ro"
+    ],
+    "platform": "Linux",
+    "report": "docs/gold-wave286-cgroup-namespace-remount.md",
+    "localValidationRan": false,
+    "hosted": "pending",
+    "scope": "Private unmount/fresh namespace mount/readonly remount; final root=/ro/nsdelegate required before READY"
+  },
+  "wave287DoctorContractRepair": {
+    "requiredTests": [
+      "cli::doctor::tests::check_docs_listed_count_matches_runtime_contract"
+    ],
+    "report": "docs/gold-wave287-windows-contract-fixtures.md",
+    "localValidationRan": false,
+    "hosted": "pending"
+  },
+  "wave286287PlatformRepairPublication": {
+    "base": "8afdfee510413badcf9871fa0237329f4fcbdb0a",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
+        "bytes": 111791,
+        "sha256": "C78E1B4A09351839F28AAF4BD8179B76FFC9FE092E21AA20854B784F8544AA8F",
+        "blob": "856f40c3026ed1258c6dadbb069460d36ca1e302"
+      },
+      {
+        "path": "SRC/neothd/src/cli/bg_session.rs",
+        "bytes": 131961,
+        "sha256": "47D01054DCC146FAA19D0A865543FA3C8EF508C5736D6123F20BDB6E8867B104",
+        "blob": "a01dfbf0c40d1c88d118c77a420353120a3e362c"
+      },
+      {
+        "path": "SRC/neothd/src/cli/doctor.rs",
+        "bytes": 93130,
+        "sha256": "CCFD50EEC1E2C318D27555575D4C5FDD3960F9F5FBA877E7882C4ADDB14137ED",
+        "blob": "9b0de1cfa9fa8d11f833399e31ef1cea6c743773"
+      },
+      {
+        "path": "SRC/neothd/src/cli/fs.rs",
+        "bytes": 77630,
+        "sha256": "3DE8D39C27DD66BBB688DF765D8E6A3C961102C95F29858D306150F5037961FD",
+        "blob": "cc1362082cbcc7ae08efb6756016f0a723df48a0"
+      },
+      {
+        "path": "SRC/neothd/tests/connector_control_rpc_contract.rs",
+        "bytes": 12343,
+        "sha256": "08956EE82DD19F126BC49092D45D8D91A4C6BA3F8C4F501C976B29439030DBD1",
+        "blob": "11ec469716c9410a0aa1085b584a6057f82b8434"
+      }
+    ],
+    "note": "No new Gold acceptance. GUI125 remains123PASS2FAIL until rerun; FullCIce0 Windows17595tests3fail repaired. Group505 selected. Source review and static diffs only, no local execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

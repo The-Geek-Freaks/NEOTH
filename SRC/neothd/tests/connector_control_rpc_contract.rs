@@ -159,7 +159,7 @@ fn durable_apply_is_reserved_before_read_and_recovered_before_consumption() {
         .find("runtime.reserve_apply_outcome(apply_key)")
         .expect("outer operation must be durably reserved");
     let read = RPC[build..apply]
-        .find("runtime.plan_import(Path::new(&request.relative_path))")
+        .find("runtime.plan_import_with_preview(Path::new(&request.relative_path))")
         .expect("capability-bound source read must exist");
     assert!(
         reserve < read,

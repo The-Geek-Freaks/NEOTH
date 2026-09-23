@@ -1467,8 +1467,7 @@ mod tests {
         .to_string()
         .replacen("\"max_results\":20", "[glob-hook]", 1);
         assert_eq!(
-            output["hook_enrichment"],
-            expected_hook_enrichment,
+            output["hook_enrichment"], expected_hook_enrichment,
             "the replace hook transforms its matching argument substring exactly once"
         );
         let nohit = glob_with_pre_tool_use(
@@ -1809,21 +1808,18 @@ template = "[native-search-hook]"
                 .summary()
                 .contains(r#""max_results":20"#)
         );
+        let canonical_file = file.canonicalize().unwrap().display().to_string();
+        let expected_file_json = serde_json::to_string(&canonical_file).unwrap();
+        let canonical_repository = repository.path().canonicalize().unwrap().display().to_string();
+        let expected_repository_json = serde_json::to_string(&canonical_repository).unwrap();
+        let summary = context.arguments().summary();
         assert!(
-            context
-                .arguments()
-                .summary()
-                .contains(file.canonicalize().unwrap().to_string_lossy().as_ref())
+            summary.contains(&expected_file_json),
+            "hook arguments omit JSON-encoded admitted file path: expected fragment {expected_file_json:?}, summary={summary:?}"
         );
         assert!(
-            context.arguments().summary().contains(
-                repository
-                    .path()
-                    .canonicalize()
-                    .unwrap()
-                    .to_string_lossy()
-                    .as_ref()
-            )
+            summary.contains(&expected_repository_json),
+            "hook arguments omit JSON-encoded repository root: expected fragment {expected_repository_json:?}, summary={summary:?}"
         );
         assert!(!context.arguments().was_truncated());
 
