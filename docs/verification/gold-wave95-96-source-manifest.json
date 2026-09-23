@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T00:02:31.7178180Z",
-  "validationStatus": "W239-W243 source reviewed and exactHostedformatted; executable gates pending",
+  "capturedUtc": "2026-09-23T00:07:55.7520651Z",
+  "validationStatus": "W244 missing-field repair; Hosted execution pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -438,18 +438,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 84638,
-      "sha256": "7435C8699D9890E84D66B0112299D143BF267F32BD15B66D1BEA32C7DBB0E9D3"
+      "bytes": 85257,
+      "sha256": "D90C6BF2AA82DC932BE036CF43CB2C58FEBCA160A91975519D51CCB599FCB98F"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1087573,
-      "sha256": "E7A0B5F5036EFE353823C2237AA8502B826C96AAEC5F0033AC5CF0BA9C9D9A21"
+      "bytes": 1088192,
+      "sha256": "37D3B88129A56EF2B698421F4C60A431CF4A81A26056FB8FE4EA1E7F323EFE54"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1683141,
-      "sha256": "B31EFC29F8B5C19D5E48B637AE923DBF8904D0386AD1962541720E53A0A11B97"
+      "bytes": 1683760,
+      "sha256": "DB2CCB9DB257AB8B75C9D6A4C57E8931C5DD03CA8B3A452209319810C5C1FBCE"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1073,8 +1073,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/context.rs",
-      "bytes": 11423,
-      "sha256": "C5E0400F42AA1DB131E83286E9CA5371052B8610A59C4873C3F5B5891253B6DD"
+      "bytes": 11412,
+      "sha256": "A4A414C03658E527EE5BC3A45A33BFE643D0F507E482928A1D40BCB386F1BC13"
     },
     {
       "path": "SRC/neothd/src/cli/credential_transfer.rs",
@@ -1128,8 +1128,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/fs.rs",
-      "bytes": 23508,
-      "sha256": "042C6A0F6119069D9AD6F1B18898FC1932EDFF22D45F93CB18ACAEBDA5B118C4"
+      "bytes": 23546,
+      "sha256": "59C5CE95690504D2CF99166838C01D2E9D888655BBA418D979104CF12C00D7A7"
     },
     {
       "path": "SRC/neothd/src/cli/gui_stream.rs",
@@ -1873,8 +1873,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "bytes": 218633,
-      "sha256": "EEFA8E5A9A09157474DCDE543DB7FED6DCE2BC5D090E1DA0E17EA18C9097D514"
+      "bytes": 218671,
+      "sha256": "855C94E3CB5E6A6267B6DD79C3C16B6A7578507C0E30CF8CB9FDB1E839932AB6"
     },
     {
       "path": "SRC/neothd/src/mcp/config.rs",

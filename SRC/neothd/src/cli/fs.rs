@@ -506,6 +506,7 @@ mod tests {
             home.join("mcp_servers.yaml"),
             serde_yaml::to_string(&crate::mcp::McpServers {
                 servers: vec![descriptor],
+                smart_loading: false,
             })
             .unwrap(),
         )

@@ -114,7 +114,7 @@ fn request_route_and_body(args: &ContextArgs) -> Result<(&'static str, Vec<u8>)>
 #[cfg(test)]
 mod route_tests {
     use super::*;
-    use clap::{Args as _, Command, FromArgMatches};
+    use clap::{Command, FromArgMatches};
 
     #[test]
     fn context_import_status_parses_and_uses_the_existing_content_free_status_route() {

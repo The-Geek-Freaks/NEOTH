@@ -8,6 +8,15 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W244 Hosted fixture compile repair (2026-09-23):** Group41335800207400 on
+a7f3e225 binds all88 selected source paths plus matrix/lock, but compiled no
+fixture successfully: two new `McpServers` fixtures omitted `smart_loading`.
+Both now explicitly use false, matching the existing default; one redundant
+Clap trait import is removed. This is a narrow source repair, not413 passing
+cases. Preflight35800382671 passed on18619269 after the exact Hosted-format
+import. Inventory537/853/97 and Road1016checked/306open/2partial stay unchanged.
+See `docs/gold-wave244-native-fixture-compile.md`. Local BSOD hold unchanged.
+
 **W239–W243 continuation (2026-09-23):** native `fs read` now has an explicit
 opt-in codegraph/PreToolUse route with a retained no-follow descriptor, bounded
 read and post-read freshness check. Seven universal and three Unix regressions

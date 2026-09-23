@@ -5591,6 +5591,7 @@ fn root() { alpha(); beta(); }
             home.path().join("mcp_servers.yaml"),
             serde_yaml::to_string(&McpServers {
                 servers: vec![descriptor],
+                smart_loading: false,
             })
             .unwrap(),
         )

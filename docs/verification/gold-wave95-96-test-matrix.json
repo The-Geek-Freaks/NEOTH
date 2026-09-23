@@ -1,18 +1,18 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W239-W243 source reviewed and exactHostedformatted; executable gates pending",
+  "status": "W244 missing-field repair; Hosted execution pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 92848,
-    "sha256": "3D5673FBA5EDB84A10D3B165DACC579B52642E2BA67A586FF1C388BB645A63A0"
+    "bytes": 92823,
+    "sha256": "0794D92BD278975C5D25435FA70F0B65E7DDB6243B8E97A54264E0E079AD18E6"
   },
   "sourceInputs": 537,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
       "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "sourceSha256": "EEFA8E5A9A09157474DCDE543DB7FED6DCE2BC5D090E1DA0E17EA18C9097D514",
+      "sourceSha256": "855C94E3CB5E6A6267B6DD79C3C16B6A7578507C0E30CF8CB9FDB1E839932AB6",
       "junitClass": "neoth"
     },
     {
@@ -378,7 +378,7 @@
     {
       "test": "mcp::codegraph_server::tests::w100_diagnostic_identity_accepts_expected_cli_and_rejects_gui_lookalike",
       "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "sourceSha256": "EEFA8E5A9A09157474DCDE543DB7FED6DCE2BC5D090E1DA0E17EA18C9097D514",
+      "sourceSha256": "855C94E3CB5E6A6267B6DD79C3C16B6A7578507C0E30CF8CB9FDB1E839932AB6",
       "junitClass": "neoth"
     },
     {
@@ -696,13 +696,13 @@
     {
       "test": "mcp::codegraph_server::tests::dispatch_codegraph_imports_reads_current_root_local_snapshot",
       "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "sourceSha256": "EEFA8E5A9A09157474DCDE543DB7FED6DCE2BC5D090E1DA0E17EA18C9097D514",
+      "sourceSha256": "855C94E3CB5E6A6267B6DD79C3C16B6A7578507C0E30CF8CB9FDB1E839932AB6",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::codegraph_server::tests::stdio_imports_call_has_bound_receipt_and_rejects_stale_generation",
       "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "sourceSha256": "EEFA8E5A9A09157474DCDE543DB7FED6DCE2BC5D090E1DA0E17EA18C9097D514",
+      "sourceSha256": "855C94E3CB5E6A6267B6DD79C3C16B6A7578507C0E30CF8CB9FDB1E839932AB6",
       "junitClass": "neoth"
     },
     {
@@ -786,19 +786,19 @@
     {
       "test": "mcp::codegraph_server::tests::dispatch_codegraph_types_distinguishes_known_leaf_from_unknown_endpoint",
       "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "sourceSha256": "EEFA8E5A9A09157474DCDE543DB7FED6DCE2BC5D090E1DA0E17EA18C9097D514",
+      "sourceSha256": "855C94E3CB5E6A6267B6DD79C3C16B6A7578507C0E30CF8CB9FDB1E839932AB6",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::codegraph_server::tests::dispatch_codegraph_types_rejects_source_mutation_and_bounded_query_overflow",
       "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "sourceSha256": "EEFA8E5A9A09157474DCDE543DB7FED6DCE2BC5D090E1DA0E17EA18C9097D514",
+      "sourceSha256": "855C94E3CB5E6A6267B6DD79C3C16B6A7578507C0E30CF8CB9FDB1E839932AB6",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::codegraph_server::tests::stdio_types_call_has_bound_receipt_and_rejects_stale_type_generation",
       "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "sourceSha256": "EEFA8E5A9A09157474DCDE543DB7FED6DCE2BC5D090E1DA0E17EA18C9097D514",
+      "sourceSha256": "855C94E3CB5E6A6267B6DD79C3C16B6A7578507C0E30CF8CB9FDB1E839932AB6",
       "junitClass": "neoth"
     },
     {
@@ -5082,31 +5082,31 @@
     {
       "test": "cli::fs::tests::w239_real_fs_caller_keeps_default_master_off_output_unenriched",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "042C6A0F6119069D9AD6F1B18898FC1932EDFF22D45F93CB18ACAEBDA5B118C4",
+      "sourceSha256": "59C5CE95690504D2CF99166838C01D2E9D888655BBA418D979104CF12C00D7A7",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w239_real_fs_caller_appends_native_sidecar_only_for_fresh_indexed_target",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "042C6A0F6119069D9AD6F1B18898FC1932EDFF22D45F93CB18ACAEBDA5B118C4",
+      "sourceSha256": "59C5CE95690504D2CF99166838C01D2E9D888655BBA418D979104CF12C00D7A7",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w239_real_fs_caller_denial_stops_before_typed_native_read",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "042C6A0F6119069D9AD6F1B18898FC1932EDFF22D45F93CB18ACAEBDA5B118C4",
+      "sourceSha256": "59C5CE95690504D2CF99166838C01D2E9D888655BBA418D979104CF12C00D7A7",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w239_real_fs_caller_cancellation_stops_before_native_read",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "042C6A0F6119069D9AD6F1B18898FC1932EDFF22D45F93CB18ACAEBDA5B118C4",
+      "sourceSha256": "59C5CE95690504D2CF99166838C01D2E9D888655BBA418D979104CF12C00D7A7",
       "junitClass": "neoth"
     },
     {
       "test": "cli::fs::tests::w239_real_fs_caller_zero_deadline_drops_admission_without_consuming_bytes",
       "sourcePath": "SRC/neothd/src/cli/fs.rs",
-      "sourceSha256": "042C6A0F6119069D9AD6F1B18898FC1932EDFF22D45F93CB18ACAEBDA5B118C4",
+      "sourceSha256": "59C5CE95690504D2CF99166838C01D2E9D888655BBA418D979104CF12C00D7A7",
       "junitClass": "neoth"
     },
     {
@@ -5118,13 +5118,13 @@
     {
       "test": "mcp::codegraph_server::tests::w239_native_fs_read_plan_uses_real_descriptor_and_drops_stale_sidecar",
       "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "sourceSha256": "EEFA8E5A9A09157474DCDE543DB7FED6DCE2BC5D090E1DA0E17EA18C9097D514",
+      "sourceSha256": "855C94E3CB5E6A6267B6DD79C3C16B6A7578507C0E30CF8CB9FDB1E839932AB6",
       "junitClass": "neoth"
     },
     {
       "test": "cli::context::route_tests::context_import_status_parses_and_uses_the_existing_content_free_status_route",
       "sourcePath": "SRC/neothd/src/cli/context.rs",
-      "sourceSha256": "C5E0400F42AA1DB131E83286E9CA5371052B8610A59C4873C3F5B5891253B6DD",
+      "sourceSha256": "A4A414C03658E527EE5BC3A45A33BFE643D0F507E482928A1D40BCB386F1BC13",
       "junitClass": "neoth"
     }
   ],
@@ -6798,7 +6798,7 @@
       {
         "test": "cli::context::windows_tests::windows_context_cli_client_status_plan_apply_reopen_and_shutdown_are_bound_to_live_daemon",
         "sourcePath": "SRC/neothd/src/cli/context.rs",
-        "sourceSha256": "C5E0400F42AA1DB131E83286E9CA5371052B8610A59C4873C3F5B5891253B6DD",
+        "sourceSha256": "A4A414C03658E527EE5BC3A45A33BFE643D0F507E482928A1D40BCB386F1BC13",
         "junitClass": "neoth"
       }
     ],
@@ -16277,6 +16277,32 @@
       }
     ],
     "note": "Imported exact7path patch from Preflight35800178743 sourcea7f3 after SHA256SUMS/preimage/applycheck/postimage verification; local executable validation prohibited.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave244NativeFixtureCompileRepair": {
+    "base": "18619269c6a15aba6ed776689f345023e7a52e5d",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/context.rs",
+        "bytes": 11412,
+        "sha256": "A4A414C03658E527EE5BC3A45A33BFE643D0F507E482928A1D40BCB386F1BC13",
+        "blob": "5983c836c2039e51dfdb7bd2df09d652e95e2623"
+      },
+      {
+        "path": "SRC/neothd/src/cli/fs.rs",
+        "bytes": 23546,
+        "sha256": "59C5CE95690504D2CF99166838C01D2E9D888655BBA418D979104CF12C00D7A7",
+        "blob": "05726eb216a04fc7056a32e744b89af2a305c509"
+      },
+      {
+        "path": "SRC/neothd/src/mcp/codegraph_server.rs",
+        "bytes": 218671,
+        "sha256": "855C94E3CB5E6A6267B6DD79C3C16B6A7578507C0E30CF8CB9FDB1E839932AB6",
+        "blob": "910ebe5022f875f084b708c7c2b4a4619491c19a"
+      }
+    ],
+    "note": "Bound Group41335800207400 sourcea7f3 failed before first discovery:2E0063 missingMcpServers.smart_loading. Exact fixture fields/defaultfalse and unusedClap import repaired; no runtime claims.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
