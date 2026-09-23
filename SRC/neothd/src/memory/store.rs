@@ -3882,9 +3882,17 @@ mod tests {
                 .unwrap()
                 .collect::<rusqlite::Result<_>>()
                 .unwrap();
-            assert!(columns.iter().any(|column| column == "trust"), "fresh {table} must carry trust");
+            assert!(
+                columns.iter().any(|column| column == "trust"),
+                "fresh {table} must carry trust"
+            );
         }
-        for table in ["dream_phase_run", "dream_phase_input", "dream_phase_receipt", "dream_rem_pair"] {
+        for table in [
+            "dream_phase_run",
+            "dream_phase_input",
+            "dream_phase_receipt",
+            "dream_rem_pair",
+        ] {
             let count: i64 = conn
                 .query_row(
                     "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
@@ -3906,7 +3914,11 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(trusts, (1, 1), "fresh warm and cold rows default to ordinary trust");
+        assert_eq!(
+            trusts,
+            (1, 1),
+            "fresh warm and cold rows default to ordinary trust"
+        );
     }
     #[test]
     fn open_is_idempotent() {

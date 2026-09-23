@@ -2545,7 +2545,10 @@ mod tests {
         assert_eq!(hits[0].tier, "cold");
         assert_eq!(hits[0].event_id, 200);
         assert_eq!(hits[0].importance, Some(0.9));
-        assert_eq!(hits[0].trust, 0, "cold RecallHit must expose stored trust=0");
+        assert_eq!(
+            hits[0].trust, 0,
+            "cold RecallHit must expose stored trust=0"
+        );
     }
 
     #[test]

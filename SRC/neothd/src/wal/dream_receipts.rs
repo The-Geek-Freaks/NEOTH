@@ -8,7 +8,7 @@ use std::path::Path;
 
 use sha2::{Digest as _, Sha256};
 
-use super::events::{ExtendedSubtype, EVENT_TYPE_EXTENDED};
+use super::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
 use super::frame::encode_frame;
 use super::header::EventHeaderV2;
 
@@ -69,14 +69,27 @@ impl DreamAuditDescriptor {
         if transition_id == [0; 32] || run_id_hash == [0; 32] || result_sha256 == [0; 32] {
             return Err(DreamAuditOnceError::InvalidDescriptor);
         }
-        Ok(Self { transition_id, run_id_hash, phase, state, result_sha256 })
+        Ok(Self {
+            transition_id,
+            run_id_hash,
+            phase,
+            state,
+            result_sha256,
+        })
     }
 
-    pub(crate) const fn transition_id(&self) -> [u8; 32] { self.transition_id }
+    pub(crate) const fn transition_id(&self) -> [u8; 32] {
+        self.transition_id
+    }
 
     pub(crate) fn encode(&self) -> Vec<u8> {
         let mut payload = Vec::with_capacity(PAYLOAD_LEN);
-        payload.extend_from_slice(&[DREAM_AUDIT_SCHEMA_VERSION, self.phase as u8, self.state as u8, 0]);
+        payload.extend_from_slice(&[
+            DREAM_AUDIT_SCHEMA_VERSION,
+            self.phase as u8,
+            self.state as u8,
+            0,
+        ]);
         payload.extend_from_slice(&self.transition_id);
         payload.extend_from_slice(&self.run_id_hash);
         payload.extend_from_slice(&self.result_sha256);
@@ -122,9 +135,15 @@ pub(crate) struct DreamAuditFrameReceipt {
 }
 
 impl DreamAuditFrameReceipt {
-    pub(crate) const fn frame_sha256(&self) -> [u8; 32] { self.frame_sha256 }
-    pub(crate) const fn payload_sha256(&self) -> [u8; 32] { self.payload_sha256 }
-    pub(crate) const fn location_sha256(&self) -> [u8; 32] { self.location_sha256 }
+    pub(crate) const fn frame_sha256(&self) -> [u8; 32] {
+        self.frame_sha256
+    }
+    pub(crate) const fn payload_sha256(&self) -> [u8; 32] {
+        self.payload_sha256
+    }
+    pub(crate) const fn location_sha256(&self) -> [u8; 32] {
+        self.location_sha256
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,7 +183,11 @@ fn receipt_for(
     location_digest.update(location.segment_node_id);
     location_digest.update(location.logical_offset.to_be_bytes());
     location_digest.update(frame_sha256);
-    DreamAuditFrameReceipt { frame_sha256, payload_sha256, location_sha256: location_digest.finalize().into() }
+    DreamAuditFrameReceipt {
+        frame_sha256,
+        payload_sha256,
+        location_sha256: location_digest.finalize().into(),
+    }
 }
 
 pub(crate) enum Lookup {
@@ -197,18 +220,28 @@ pub(crate) fn lookup_exact_at_home(home: &Path, expected: &DreamAuditDescriptor)
             }
             if observed == *expected {
                 count = count.saturating_add(1);
-                if exact.is_none() { exact = Some(receipt_for(location, &frame.header, frame.payload)); }
+                if exact.is_none() {
+                    exact = Some(receipt_for(location, &frame.header, frame.payload));
+                }
             } else {
                 conflict = true;
             }
             Ok(())
         },
-    ) else { return Lookup::Indeterminate; };
-    if conflict { Lookup::Conflict }
-    else if count > 1 { Lookup::Duplicate }
-    else if let Some(receipt) = exact { Lookup::Exact(receipt) }
-    else if scan.complete { Lookup::AbsentComplete }
-    else { Lookup::Indeterminate }
+    ) else {
+        return Lookup::Indeterminate;
+    };
+    if conflict {
+        Lookup::Conflict
+    } else if count > 1 {
+        Lookup::Duplicate
+    } else if let Some(receipt) = exact {
+        Lookup::Exact(receipt)
+    } else if scan.complete {
+        Lookup::AbsentComplete
+    } else {
+        Lookup::Indeterminate
+    }
 }
 
 #[cfg(test)]
@@ -216,7 +249,14 @@ mod tests {
     use super::*;
 
     fn descriptor() -> DreamAuditDescriptor {
-        DreamAuditDescriptor::new([1; 32], [2; 32], DreamPhase::Light, DreamAuditState::Completed, [3; 32]).unwrap()
+        DreamAuditDescriptor::new(
+            [1; 32],
+            [2; 32],
+            DreamPhase::Light,
+            DreamAuditState::Completed,
+            [3; 32],
+        )
+        .unwrap()
     }
 
     #[test]
@@ -225,14 +265,30 @@ mod tests {
         let payload = descriptor.encode();
         assert_eq!(payload.len(), PAYLOAD_LEN);
         assert_eq!(DreamAuditDescriptor::decode(&payload).unwrap(), descriptor);
-        assert!(!payload.windows(b"sender".len()).any(|bytes| bytes == b"sender"));
+        assert!(
+            !payload
+                .windows(b"sender".len())
+                .any(|bytes| bytes == b"sender")
+        );
     }
 
     #[test]
     fn descriptor_rejects_zero_identity_or_noncanonical_reserved_byte() {
-        assert!(DreamAuditDescriptor::new([0; 32], [2; 32], DreamPhase::Light, DreamAuditState::Completed, [3; 32]).is_err());
+        assert!(
+            DreamAuditDescriptor::new(
+                [0; 32],
+                [2; 32],
+                DreamPhase::Light,
+                DreamAuditState::Completed,
+                [3; 32]
+            )
+            .is_err()
+        );
         let mut payload = descriptor().encode();
         payload[3] = 1;
-        assert_eq!(DreamAuditDescriptor::decode(&payload), Err(DreamAuditOnceError::InvalidDescriptor));
+        assert_eq!(
+            DreamAuditDescriptor::decode(&payload),
+            Err(DreamAuditOnceError::InvalidDescriptor)
+        );
     }
 }

@@ -58,9 +58,8 @@ static TRANSCRIPT_MINING_PROCESS_AUTHORITY: std::sync::LazyLock<
 static COUNTERPARTY_CONSENT_PROCESS_AUTHORITY: std::sync::LazyLock<
     std::sync::Arc<tokio::sync::Mutex<()>>,
 > = std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
-static DREAM_AUDIT_PROCESS_AUTHORITY: std::sync::LazyLock<
-    std::sync::Arc<tokio::sync::Mutex<()>>,
-> = std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
+static DREAM_AUDIT_PROCESS_AUTHORITY: std::sync::LazyLock<std::sync::Arc<tokio::sync::Mutex<()>>> =
+    std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
 // Marker JSON uses only bounded integers plus a fixed 64-byte HMAC hex tag.
 // Keep a conservative envelope so operator-frame admission can reserve the
 // mandatory authentication record before acknowledging the operator frame.
@@ -634,17 +633,36 @@ struct TranscriptMiningOnce {
 struct DreamAuditOnce {
     home: PathBuf,
     expected: crate::wal::dream_receipts::DreamAuditDescriptor,
-    reply: Option<oneshot::Sender<std::result::Result<crate::wal::dream_receipts::DreamAuditOnceOutcome, crate::wal::dream_receipts::DreamAuditOnceError>>>,
+    reply: Option<
+        oneshot::Sender<
+            std::result::Result<
+                crate::wal::dream_receipts::DreamAuditOnceOutcome,
+                crate::wal::dream_receipts::DreamAuditOnceError,
+            >,
+        >,
+    >,
 }
 
 impl DreamAuditOnce {
-    fn finish(mut self, outcome: std::result::Result<crate::wal::dream_receipts::DreamAuditOnceOutcome, crate::wal::dream_receipts::DreamAuditOnceError>) {
-        if let Some(reply) = self.reply.take() { let _ = reply.send(outcome); }
+    fn finish(
+        mut self,
+        outcome: std::result::Result<
+            crate::wal::dream_receipts::DreamAuditOnceOutcome,
+            crate::wal::dream_receipts::DreamAuditOnceError,
+        >,
+    ) {
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(outcome);
+        }
     }
 }
 impl Drop for DreamAuditOnce {
     fn drop(&mut self) {
-        if let Some(reply) = self.reply.take() { let _ = reply.send(Err(crate::wal::dream_receipts::DreamAuditOnceError::Indeterminate)); }
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(Err(
+                crate::wal::dream_receipts::DreamAuditOnceError::Indeterminate,
+            ));
+        }
     }
 }
 
@@ -1836,10 +1854,17 @@ impl WalWriterHandle {
         &self,
         home: &Path,
         expected: crate::wal::dream_receipts::DreamAuditDescriptor,
-    ) -> std::result::Result<crate::wal::dream_receipts::DreamAuditOnceOutcome, crate::wal::dream_receipts::DreamAuditOnceError> {
+    ) -> std::result::Result<
+        crate::wal::dream_receipts::DreamAuditOnceOutcome,
+        crate::wal::dream_receipts::DreamAuditOnceError,
+    > {
         let writer = self.clone();
         let home = home.to_path_buf();
-        match tokio::task::spawn_blocking(move || writer.append_dream_audit_once_blocking(&home, expected)).await {
+        match tokio::task::spawn_blocking(move || {
+            writer.append_dream_audit_once_blocking(&home, expected)
+        })
+        .await
+        {
             Ok(outcome) => outcome,
             Err(_) => Err(crate::wal::dream_receipts::DreamAuditOnceError::Indeterminate),
         }
@@ -1849,28 +1874,49 @@ impl WalWriterHandle {
         &self,
         home: &Path,
         expected: crate::wal::dream_receipts::DreamAuditDescriptor,
-    ) -> std::result::Result<crate::wal::dream_receipts::DreamAuditOnceOutcome, crate::wal::dream_receipts::DreamAuditOnceError> {
+    ) -> std::result::Result<
+        crate::wal::dream_receipts::DreamAuditOnceOutcome,
+        crate::wal::dream_receipts::DreamAuditOnceError,
+    > {
         use crate::wal::dream_receipts::DreamAuditOnceError;
-        if !self.authentication_markers_enabled { return Err(DreamAuditOnceError::Indeterminate); }
+        if !self.authentication_markers_enabled {
+            return Err(DreamAuditOnceError::Indeterminate);
+        }
         let header = expected.header();
         let payload = expected.encode();
         let (ack_tx, _ack_rx_drop) = oneshot::channel();
         let (reply_tx, reply_rx) = oneshot::channel();
         let request = WriteRequest {
-            header, payload, ack: ack_tx, force_authentication_marker: true,
-            context_evidence_receipt_once: None, trust_decision_once: None,
-            transcript_mining_once: None, counterparty_consent_once: None,
-            dream_audit_once: Some(DreamAuditOnce { home: home.to_path_buf(), expected, reply: Some(reply_tx) }),
+            header,
+            payload,
+            ack: ack_tx,
+            force_authentication_marker: true,
+            context_evidence_receipt_once: None,
+            trust_decision_once: None,
+            transcript_mining_once: None,
+            counterparty_consent_once: None,
+            dream_audit_once: Some(DreamAuditOnce {
+                home: home.to_path_buf(),
+                expected,
+                reply: Some(reply_tx),
+            }),
             quota_admission: None,
-            #[cfg(test)] test_ack_gate: self.test_ack_gate.clone(),
-            #[cfg(test)] test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
+            #[cfg(test)]
+            test_ack_gate: self.test_ack_gate.clone(),
+            #[cfg(test)]
+            test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(Box::new(request)))
+        if let Err(error) = self
+            .tx
+            .blocking_send(WriterRequest::Append(Box::new(request)))
             && let WriterRequest::Append(mut request) = error.0
-            && let Some(once) = request.dream_audit_once.take() {
+            && let Some(once) = request.dream_audit_once.take()
+        {
             once.finish(Err(DreamAuditOnceError::Indeterminate));
         }
-        reply_rx.blocking_recv().unwrap_or(Err(DreamAuditOnceError::Indeterminate))
+        reply_rx
+            .blocking_recv()
+            .unwrap_or(Err(DreamAuditOnceError::Indeterminate))
     }
 
     /// Append or authenticated-recover one sealed W209 ceremony input. The
@@ -2220,7 +2266,7 @@ impl WalWriterHandle {
                 trust_decision_once: None,
                 transcript_mining_once: None,
                 counterparty_consent_once: None,
-            dream_audit_once: None,
+                dream_audit_once: None,
                 quota_admission,
                 #[cfg(test)]
                 test_ack_gate: self.test_ack_gate.clone(),
@@ -3764,20 +3810,40 @@ struct CounterpartyConsentAuthority {
     _file_guard: std::fs::File,
 }
 
-fn dream_audit_authority_sentinel(home: &Path) -> PathBuf { home.join("wal").join(DREAM_AUDIT_AUTHORITY_SENTINEL) }
+fn dream_audit_authority_sentinel(home: &Path) -> PathBuf {
+    home.join("wal").join(DREAM_AUDIT_AUTHORITY_SENTINEL)
+}
 
 async fn acquire_dream_audit_authority(home: &Path) -> Result<DreamAuditAuthority, WalError> {
     let process_authority = std::sync::Arc::clone(&*DREAM_AUDIT_PROCESS_AUTHORITY);
-    let process_guard = tokio::time::timeout(std::time::Duration::from_secs(5), process_authority.lock_owned()).await
-        .map_err(|_| compaction_recovery_error("DreamAudit process authority remained busy for >5s"))?;
+    let process_guard = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        process_authority.lock_owned(),
+    )
+    .await
+    .map_err(|_| compaction_recovery_error("DreamAudit process authority remained busy for >5s"))?;
     let sentinel = dream_audit_authority_sentinel(home);
-    let file_guard = tokio::task::spawn_blocking(move || super::redact::lock_segment_for_rewrite(&sentinel)).await
-        .map_err(|error| compaction_recovery_error(format!("DreamAudit authority task failed: {error}")))?
-        .map_err(|error| compaction_recovery_error(format!("acquire capability-bound DreamAudit authority: {error:#}")))?;
-    Ok(DreamAuditAuthority { _process_guard: process_guard, _file_guard: file_guard })
+    let file_guard =
+        tokio::task::spawn_blocking(move || super::redact::lock_segment_for_rewrite(&sentinel))
+            .await
+            .map_err(|error| {
+                compaction_recovery_error(format!("DreamAudit authority task failed: {error}"))
+            })?
+            .map_err(|error| {
+                compaction_recovery_error(format!(
+                    "acquire capability-bound DreamAudit authority: {error:#}"
+                ))
+            })?;
+    Ok(DreamAuditAuthority {
+        _process_guard: process_guard,
+        _file_guard: file_guard,
+    })
 }
 
-struct DreamAuditAuthority { _process_guard: tokio::sync::OwnedMutexGuard<()>, _file_guard: std::fs::File }
+struct DreamAuditAuthority {
+    _process_guard: tokio::sync::OwnedMutexGuard<()>,
+    _file_guard: std::fs::File,
+}
 
 fn canonical_home_matches(expected: &Path, authoritative: &Path) -> Result<bool, WalError> {
     let expected = std::fs::canonicalize(expected).map_err(WalError::Io)?;
@@ -4959,22 +5025,94 @@ async fn run_writer(
             }
         }
         if let Some(once) = dream_audit_once.take() {
-            let requested_home = once.home.clone(); let authoritative_home = hmac_home.clone();
-            let homes_match = match tokio::task::spawn_blocking(move || canonical_home_matches(&requested_home, &authoritative_home)).await { Ok(Ok(value)) => value, _ => false };
-            let expected_header = once.expected.header(); let expected_payload = once.expected.encode();
-            if !homes_match || expected_header != req.header || expected_payload != req.payload { once.finish(Err(crate::wal::dream_receipts::DreamAuditOnceError::Indeterminate)); continue; }
-            let authority = match acquire_dream_audit_authority(&hmac_home).await { Ok(authority) => authority, Err(_) => { once.finish(Err(crate::wal::dream_receipts::DreamAuditOnceError::Indeterminate)); continue; } };
-            let (Some(compaction_state), Some(key)) = (compaction_state.as_mut(), hmac_key) else { once.finish(Err(crate::wal::dream_receipts::DreamAuditOnceError::Indeterminate)); drop(authority); continue; };
+            let requested_home = once.home.clone();
+            let authoritative_home = hmac_home.clone();
+            let homes_match = match tokio::task::spawn_blocking(move || {
+                canonical_home_matches(&requested_home, &authoritative_home)
+            })
+            .await
+            {
+                Ok(Ok(value)) => value,
+                _ => false,
+            };
+            let expected_header = once.expected.header();
+            let expected_payload = once.expected.encode();
+            if !homes_match || expected_header != req.header || expected_payload != req.payload {
+                once.finish(Err(
+                    crate::wal::dream_receipts::DreamAuditOnceError::Indeterminate,
+                ));
+                continue;
+            }
+            let authority = match acquire_dream_audit_authority(&hmac_home).await {
+                Ok(authority) => authority,
+                Err(_) => {
+                    once.finish(Err(
+                        crate::wal::dream_receipts::DreamAuditOnceError::Indeterminate,
+                    ));
+                    continue;
+                }
+            };
+            let (Some(compaction_state), Some(key)) = (compaction_state.as_mut(), hmac_key) else {
+                once.finish(Err(
+                    crate::wal::dream_receipts::DreamAuditOnceError::Indeterminate,
+                ));
+                drop(authority);
+                continue;
+            };
             validate_hmac_writer_authority(hmac_authority.as_ref())?;
-            if compaction_state.frames() > 0 && emit_compaction_marker(&mut state, compaction_state, key, None).await.is_err() { once.finish(Err(crate::wal::dream_receipts::DreamAuditOnceError::Indeterminate)); drop(authority); return Err(compaction_recovery_error("DreamAudit authority could not close owned HMAC tail")); }
+            if compaction_state.frames() > 0
+                && emit_compaction_marker(&mut state, compaction_state, key, None)
+                    .await
+                    .is_err()
+            {
+                once.finish(Err(
+                    crate::wal::dream_receipts::DreamAuditOnceError::Indeterminate,
+                ));
+                drop(authority);
+                return Err(compaction_recovery_error(
+                    "DreamAudit authority could not close owned HMAC tail",
+                ));
+            }
             pending_unsynced = false;
-            let lookup_home = hmac_home.clone(); let lookup_expected = once.expected;
-            match tokio::task::spawn_blocking(move || crate::wal::dream_receipts::lookup_exact_at_home(&lookup_home, &lookup_expected)).await {
-                Ok(crate::wal::dream_receipts::Lookup::Exact(receipt)) => { once.finish(Ok(crate::wal::dream_receipts::DreamAuditOnceOutcome::ExistingExact(receipt))); drop(authority); continue; }
-                Ok(crate::wal::dream_receipts::Lookup::Conflict) => { once.finish(Err(crate::wal::dream_receipts::DreamAuditOnceError::Conflict)); drop(authority); continue; }
-                Ok(crate::wal::dream_receipts::Lookup::Duplicate) => { once.finish(Err(crate::wal::dream_receipts::DreamAuditOnceError::Duplicate)); drop(authority); continue; }
-                Ok(crate::wal::dream_receipts::Lookup::AbsentComplete) => { req.dream_audit_once = Some(once); dream_audit_authority = Some(authority); }
-                _ => { once.finish(Err(crate::wal::dream_receipts::DreamAuditOnceError::Indeterminate)); drop(authority); continue; }
+            let lookup_home = hmac_home.clone();
+            let lookup_expected = once.expected;
+            match tokio::task::spawn_blocking(move || {
+                crate::wal::dream_receipts::lookup_exact_at_home(&lookup_home, &lookup_expected)
+            })
+            .await
+            {
+                Ok(crate::wal::dream_receipts::Lookup::Exact(receipt)) => {
+                    once.finish(Ok(
+                        crate::wal::dream_receipts::DreamAuditOnceOutcome::ExistingExact(receipt),
+                    ));
+                    drop(authority);
+                    continue;
+                }
+                Ok(crate::wal::dream_receipts::Lookup::Conflict) => {
+                    once.finish(Err(
+                        crate::wal::dream_receipts::DreamAuditOnceError::Conflict,
+                    ));
+                    drop(authority);
+                    continue;
+                }
+                Ok(crate::wal::dream_receipts::Lookup::Duplicate) => {
+                    once.finish(Err(
+                        crate::wal::dream_receipts::DreamAuditOnceError::Duplicate,
+                    ));
+                    drop(authority);
+                    continue;
+                }
+                Ok(crate::wal::dream_receipts::Lookup::AbsentComplete) => {
+                    req.dream_audit_once = Some(once);
+                    dream_audit_authority = Some(authority);
+                }
+                _ => {
+                    once.finish(Err(
+                        crate::wal::dream_receipts::DreamAuditOnceError::Indeterminate,
+                    ));
+                    drop(authority);
+                    continue;
+                }
             }
         }
 
@@ -5483,11 +5621,27 @@ async fn run_writer(
                     once.finish(outcome);
                 }
                 if let Some(once) = req.dream_audit_once.take() {
-                    let lookup_home = hmac_home.clone(); let lookup_expected = once.expected;
-                    let outcome = match tokio::task::spawn_blocking(move || crate::wal::dream_receipts::lookup_exact_at_home(&lookup_home, &lookup_expected)).await {
-                        Ok(crate::wal::dream_receipts::Lookup::Exact(receipt)) => Ok(crate::wal::dream_receipts::DreamAuditOnceOutcome::AppendedExact(receipt)),
-                        Ok(crate::wal::dream_receipts::Lookup::Conflict) => Err(crate::wal::dream_receipts::DreamAuditOnceError::Conflict),
-                        Ok(crate::wal::dream_receipts::Lookup::Duplicate) => Err(crate::wal::dream_receipts::DreamAuditOnceError::Duplicate),
+                    let lookup_home = hmac_home.clone();
+                    let lookup_expected = once.expected;
+                    let outcome = match tokio::task::spawn_blocking(move || {
+                        crate::wal::dream_receipts::lookup_exact_at_home(
+                            &lookup_home,
+                            &lookup_expected,
+                        )
+                    })
+                    .await
+                    {
+                        Ok(crate::wal::dream_receipts::Lookup::Exact(receipt)) => Ok(
+                            crate::wal::dream_receipts::DreamAuditOnceOutcome::AppendedExact(
+                                receipt,
+                            ),
+                        ),
+                        Ok(crate::wal::dream_receipts::Lookup::Conflict) => {
+                            Err(crate::wal::dream_receipts::DreamAuditOnceError::Conflict)
+                        }
+                        Ok(crate::wal::dream_receipts::Lookup::Duplicate) => {
+                            Err(crate::wal::dream_receipts::DreamAuditOnceError::Duplicate)
+                        }
                         _ => Err(crate::wal::dream_receipts::DreamAuditOnceError::Indeterminate),
                     };
                     once.finish(outcome);
@@ -5843,67 +5997,193 @@ mod tests {
 
     fn dream_audit_descriptor(result: u8) -> crate::wal::dream_receipts::DreamAuditDescriptor {
         crate::wal::dream_receipts::DreamAuditDescriptor::new(
-            [7; 32], [8; 32], crate::wal::dream_receipts::DreamPhase::Light,
-            crate::wal::dream_receipts::DreamAuditState::Completed, [result; 32],
-        ).expect("bounded Dream audit descriptor")
+            [7; 32],
+            [8; 32],
+            crate::wal::dream_receipts::DreamPhase::Light,
+            crate::wal::dream_receipts::DreamAuditState::Completed,
+            [result; 32],
+        )
+        .expect("bounded Dream audit descriptor")
     }
 
     #[test]
     fn dream_audit_subtype_refuses_generic_writer_entry() {
-        let descriptor = dream_audit_descriptor(9); let header = descriptor.header();
+        let descriptor = dream_audit_descriptor(9);
+        let header = descriptor.header();
         assert!(refuse_generic_dream_audit(&header).is_err());
     }
 
     #[tokio::test]
     async fn dream_audit_once_returns_existing_exact_and_conflict_without_second_append() {
         use crate::wal::dream_receipts::{DreamAuditOnceError, DreamAuditOnceOutcome};
-        let home = tempdir().unwrap(); let wal = home.path().join("wal"); std::fs::create_dir(&wal).unwrap();
-        let (writer, join) = spawn_test_writer_at_home(wal.join("dream-audit-once-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
-        let first = writer.append_dream_audit_once(home.path(), dream_audit_descriptor(9)).await.unwrap();
-        let frame_sha = match first { DreamAuditOnceOutcome::AppendedExact(receipt) => receipt.frame_sha256(), DreamAuditOnceOutcome::ExistingExact(_) => panic!("first audit must append") };
-        match writer.append_dream_audit_once(home.path(), dream_audit_descriptor(9)).await.unwrap() { DreamAuditOnceOutcome::ExistingExact(receipt) => assert_eq!(receipt.frame_sha256(), frame_sha), DreamAuditOnceOutcome::AppendedExact(_) => panic!("duplicate audit appended") }
-        assert_eq!(writer.append_dream_audit_once(home.path(), dream_audit_descriptor(10)).await, Err(DreamAuditOnceError::Conflict));
-        drop(writer); join.await.unwrap();
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("dream-audit-once-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        let first = writer
+            .append_dream_audit_once(home.path(), dream_audit_descriptor(9))
+            .await
+            .unwrap();
+        let frame_sha = match first {
+            DreamAuditOnceOutcome::AppendedExact(receipt) => receipt.frame_sha256(),
+            DreamAuditOnceOutcome::ExistingExact(_) => panic!("first audit must append"),
+        };
+        match writer
+            .append_dream_audit_once(home.path(), dream_audit_descriptor(9))
+            .await
+            .unwrap()
+        {
+            DreamAuditOnceOutcome::ExistingExact(receipt) => {
+                assert_eq!(receipt.frame_sha256(), frame_sha)
+            }
+            DreamAuditOnceOutcome::AppendedExact(_) => panic!("duplicate audit appended"),
+        }
+        assert_eq!(
+            writer
+                .append_dream_audit_once(home.path(), dream_audit_descriptor(10))
+                .await,
+            Err(DreamAuditOnceError::Conflict)
+        );
+        drop(writer);
+        join.await.unwrap();
     }
 
     #[tokio::test]
     async fn dream_audit_reserved_subtype_rejects_all_real_generic_handle_entrypoints() {
-        let home = tempdir().unwrap(); let wal = home.path().join("wal"); std::fs::create_dir(&wal).unwrap();
-        let (writer, join) = spawn_test_writer_at_home(wal.join("dream-audit-bypass-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
-        let descriptor = dream_audit_descriptor(9); let header = descriptor.header(); let payload = descriptor.encode();
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("dream-audit-bypass-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        let descriptor = dream_audit_descriptor(9);
+        let header = descriptor.header();
+        let payload = descriptor.encode();
         assert!(writer.append(header, payload.clone()).await.is_err());
-        assert!(writer.append_authenticated(header, payload.clone()).await.is_err());
+        assert!(
+            writer
+                .append_authenticated(header, payload.clone())
+                .await
+                .is_err()
+        );
         assert!(writer.try_append_sync(header, payload.clone()).is_err());
         assert!(writer.append_no_ack(header, payload).await.is_err());
-        drop(writer); join.await.unwrap();
+        drop(writer);
+        join.await.unwrap();
     }
 
     #[tokio::test]
     async fn dream_audit_durable_before_ack_loss_recovers_exactly_once_after_restart() {
         use crate::wal::dream_receipts::DreamAuditOnceOutcome;
-        let home = tempdir().unwrap(); let wal = home.path().join("wal"); std::fs::create_dir(&wal).unwrap(); let segment = wal.join("dream-audit-ack-loss-000001.wal");
-        let (writer, join) = spawn_test_writer_at_home(segment.clone(), home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
-        let gate = TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED); let writer = writer.with_test_ack_gate(gate.clone()); let descriptor = dream_audit_descriptor(9);
-        let caller_writer = writer.clone(); let caller_home = home.path().to_path_buf();
-        let caller = tokio::spawn(async move { caller_writer.append_dream_audit_once(&caller_home, descriptor).await });
-        tokio::time::timeout(std::time::Duration::from_secs(10), gate.wait_until_durable()).await.expect("Dream audit reached durable-before-ack"); caller.abort(); gate.release(); drop(writer); join.await.unwrap();
-        let (writer, join) = spawn_test_writer_at_home(segment, home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
-        assert!(matches!(writer.append_dream_audit_once(home.path(), dream_audit_descriptor(9)).await, Ok(DreamAuditOnceOutcome::ExistingExact(_))));
-        drop(writer); join.await.unwrap();
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let segment = wal.join("dream-audit-ack-loss-000001.wal");
+        let (writer, join) = spawn_test_writer_at_home(
+            segment.clone(),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        let gate = TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+        let writer = writer.with_test_ack_gate(gate.clone());
+        let descriptor = dream_audit_descriptor(9);
+        let caller_writer = writer.clone();
+        let caller_home = home.path().to_path_buf();
+        let caller = tokio::spawn(async move {
+            caller_writer
+                .append_dream_audit_once(&caller_home, descriptor)
+                .await
+        });
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            gate.wait_until_durable(),
+        )
+        .await
+        .expect("Dream audit reached durable-before-ack");
+        caller.abort();
+        gate.release();
+        drop(writer);
+        join.await.unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            segment,
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        assert!(matches!(
+            writer
+                .append_dream_audit_once(home.path(), dream_audit_descriptor(9))
+                .await,
+            Ok(DreamAuditOnceOutcome::ExistingExact(_))
+        ));
+        drop(writer);
+        join.await.unwrap();
     }
 
     #[tokio::test]
     async fn dream_audit_rejects_different_home_and_incomplete_authenticated_scan_without_append() {
         use crate::wal::dream_receipts::DreamAuditOnceError;
-        let home = tempdir().unwrap(); let other = tempdir().unwrap(); std::fs::create_dir(other.path().join("wal")).unwrap(); let wal = home.path().join("wal"); std::fs::create_dir(&wal).unwrap();
-        let (writer, join) = spawn_test_writer_at_home(wal.join("dream-audit-home-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
-        assert_eq!(writer.append_dream_audit_once(other.path(), dream_audit_descriptor(9)).await, Err(DreamAuditOnceError::Indeterminate));
-        drop(writer); join.await.unwrap();
-        let (foreign, foreign_join) = spawn_test_writer_at_home(wal.join("dream-audit-foreign-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
-        let (writer, join) = spawn_test_writer_at_home(wal.join("dream-audit-owned-000001.wal"), home.path(), RotationPolicy::default(), CompressionPolicy::None).unwrap();
-        foreign.append(batchable_header_for(1, 991), vec![b"x"[0]]).await.unwrap();
-        assert_eq!(writer.append_dream_audit_once(home.path(), dream_audit_descriptor(9)).await, Err(DreamAuditOnceError::Indeterminate));
-        drop(writer); drop(foreign); join.await.unwrap(); foreign_join.await.unwrap();
+        let home = tempdir().unwrap();
+        let other = tempdir().unwrap();
+        std::fs::create_dir(other.path().join("wal")).unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("dream-audit-home-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        assert_eq!(
+            writer
+                .append_dream_audit_once(other.path(), dream_audit_descriptor(9))
+                .await,
+            Err(DreamAuditOnceError::Indeterminate)
+        );
+        drop(writer);
+        join.await.unwrap();
+        let (foreign, foreign_join) = spawn_test_writer_at_home(
+            wal.join("dream-audit-foreign-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("dream-audit-owned-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        foreign
+            .append(batchable_header_for(1, 991), vec![b"x"[0]])
+            .await
+            .unwrap();
+        assert_eq!(
+            writer
+                .append_dream_audit_once(home.path(), dream_audit_descriptor(9))
+                .await,
+            Err(DreamAuditOnceError::Indeterminate)
+        );
+        drop(writer);
+        drop(foreign);
+        join.await.unwrap();
+        foreign_join.await.unwrap();
     }
 
     #[test]
@@ -8298,7 +8578,7 @@ mod tests {
                 trust_decision_once: None,
                 transcript_mining_once: None,
                 counterparty_consent_once: None,
-            dream_audit_once: None,
+                dream_audit_once: None,
                 quota_admission: Some(quota_admission),
                 test_ack_gate: None,
                 test_receipt_decision_gate: None,

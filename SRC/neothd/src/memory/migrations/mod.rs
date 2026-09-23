@@ -5276,9 +5276,21 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(trusts, (1, 1), "existing v44 rows default to ordinary trust");
-        for table in ["dream_phase_run", "dream_phase_input", "dream_phase_receipt", "dream_rem_pair"] {
-            assert!(sqlite_object_exists(&conn, table), "{table} missing after v44->v45");
+        assert_eq!(
+            trusts,
+            (1, 1),
+            "existing v44 rows default to ordinary trust"
+        );
+        for table in [
+            "dream_phase_run",
+            "dream_phase_input",
+            "dream_phase_receipt",
+            "dream_rem_pair",
+        ] {
+            assert!(
+                sqlite_object_exists(&conn, table),
+                "{table} missing after v44->v45"
+            );
         }
         assert_eq!(current_version(&conn).unwrap(), 45);
     }
@@ -5302,9 +5314,16 @@ mod tests {
                 .unwrap()
                 .collect::<rusqlite::Result<_>>()
                 .unwrap();
-            assert!(!columns.iter().any(|column| column == "trust"), "{table} trust addition must roll back");
+            assert!(
+                !columns.iter().any(|column| column == "trust"),
+                "{table} trust addition must roll back"
+            );
         }
-        assert_eq!(current_version(&conn).unwrap(), 44, "failed migration must not advance meta version");
+        assert_eq!(
+            current_version(&conn).unwrap(),
+            44,
+            "failed migration must not advance meta version"
+        );
     }
     #[test]
     fn v43_to_v44_preserves_every_historical_vector_as_legacy_unknown() {

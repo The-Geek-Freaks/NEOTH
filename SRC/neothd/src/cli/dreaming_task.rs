@@ -213,7 +213,9 @@ impl DreamEffectRail {
         self.reload_controller.retire_generation_effect_runtime();
     }
 
-    pub(crate) fn generation_identity(&self) -> String { self.accepted.epoch().to_string() }
+    pub(crate) fn generation_identity(&self) -> String {
+        self.accepted.epoch().to_string()
+    }
 }
 
 /// Default window: last 24h. The composer reads `idx_episode` rows
@@ -479,7 +481,8 @@ async fn run(
         };
         if already_claimed {
             let resumed_audits = {
-                let _phase_lease = effect_rail.acquire_commit_lease(DreamCommitEffect::PhaseEffect)?;
+                let _phase_lease =
+                    effect_rail.acquire_commit_lease(DreamCommitEffect::PhaseEffect)?;
                 crate::daemon::dream_phases::resume_existing_for_day(
                     &home,
                     &local_date,
@@ -495,7 +498,8 @@ async fn run(
             };
             if let Some(writer) = writer.as_ref() {
                 for audit in resumed_audits {
-                    let _audit_lease = effect_rail.acquire_commit_lease(DreamCommitEffect::PhaseAudit)?;
+                    let _audit_lease =
+                        effect_rail.acquire_commit_lease(DreamCommitEffect::PhaseAudit)?;
                     if let Err(error) = deliver_dream_phase_audit(writer, &home, &audit).await {
                         warn!(error = %error, transition_id = %audit.transition_id, "Dream phase audit retry remains pending");
                     }
@@ -506,7 +510,8 @@ async fn run(
         // No eligible phase input intentionally leaves this as a legacy-only day.
         // Both post-claim paths are resume-only and cannot select later inputs.
         let prepared = {
-            let _prepare_lease = effect_rail.acquire_commit_lease(DreamCommitEffect::PhasePrepare)?;
+            let _prepare_lease =
+                effect_rail.acquire_commit_lease(DreamCommitEffect::PhasePrepare)?;
             crate::daemon::dream_phases::prepare_for_day(
                 &home,
                 &local_date,
@@ -523,7 +528,9 @@ async fn run(
                 Ok(state.claim_dream_boundary(&local_date))
             })
         };
-        if !matches!(claimed, Ok(true)) { continue; }
+        if !matches!(claimed, Ok(true)) {
+            continue;
+        }
         effect_rail.ensure_current("scheduled pass dispatch")?;
         let pass = run_one_pass_for_day(
             &home,
@@ -543,7 +550,8 @@ async fn run(
         match pass_result {
             Ok(report) => {
                 let phase_audits = {
-                    let _phase_lease = effect_rail.acquire_commit_lease(DreamCommitEffect::PhaseEffect)?;
+                    let _phase_lease =
+                        effect_rail.acquire_commit_lease(DreamCommitEffect::PhaseEffect)?;
                     crate::daemon::dream_phases::resume_existing_for_day(
                         &home,
                         &local_date,
@@ -559,7 +567,8 @@ async fn run(
                 };
                 if let Some(writer) = writer.as_ref() {
                     for audit in phase_audits {
-                        let _audit_lease = effect_rail.acquire_commit_lease(DreamCommitEffect::PhaseAudit)?;
+                        let _audit_lease =
+                            effect_rail.acquire_commit_lease(DreamCommitEffect::PhaseAudit)?;
                         if let Err(error) = deliver_dream_phase_audit(writer, &home, &audit).await {
                             warn!(error = %error, transition_id = %audit.transition_id, "Dream phase audit remains pending");
                         }
@@ -946,7 +955,9 @@ async fn emit_dream_composed_daemon(writer: &WalWriterHandle, report: &PassRepor
 
 fn dream_audit_bytes(value: &str) -> Result<[u8; 32]> {
     let bytes = hex::decode(value).context("decode Dream audit hash")?;
-    bytes.try_into().map_err(|_| anyhow::anyhow!("Dream audit hash is not 32 bytes"))
+    bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Dream audit hash is not 32 bytes"))
 }
 
 async fn deliver_dream_phase_audit(
@@ -954,7 +965,9 @@ async fn deliver_dream_phase_audit(
     home: &Path,
     audit: &crate::daemon::dream_phases::AuditOutbox,
 ) -> Result<()> {
-    use crate::wal::dream_receipts::{DreamAuditDescriptor, DreamAuditOnceOutcome, DreamAuditState, DreamPhase};
+    use crate::wal::dream_receipts::{
+        DreamAuditDescriptor, DreamAuditOnceOutcome, DreamAuditState, DreamPhase,
+    };
     let phase = match audit.phase.as_str() {
         "light" => DreamPhase::Light,
         "rem" => DreamPhase::Rem,
@@ -962,14 +975,22 @@ async fn deliver_dream_phase_audit(
         _ => anyhow::bail!("unknown Dream audit phase"),
     };
     let descriptor = DreamAuditDescriptor::new(
-        dream_audit_bytes(&audit.transition_id)?, dream_audit_bytes(&audit.run_id)?, phase,
-        DreamAuditState::Completed, dream_audit_bytes(&audit.result_sha256)?,
+        dream_audit_bytes(&audit.transition_id)?,
+        dream_audit_bytes(&audit.run_id)?,
+        phase,
+        DreamAuditState::Completed,
+        dream_audit_bytes(&audit.result_sha256)?,
     )?;
     let outcome = writer.append_dream_audit_once(home, descriptor).await?;
     let receipt = match outcome {
-        DreamAuditOnceOutcome::ExistingExact(receipt) | DreamAuditOnceOutcome::AppendedExact(receipt) => receipt,
+        DreamAuditOnceOutcome::ExistingExact(receipt)
+        | DreamAuditOnceOutcome::AppendedExact(receipt) => receipt,
     };
-    crate::daemon::dream_phases::mark_audit_delivered(home, &audit.transition_id, &hex::encode(receipt.frame_sha256()))
+    crate::daemon::dream_phases::mark_audit_delivered(
+        home,
+        &audit.transition_id,
+        &hex::encode(receipt.frame_sha256()),
+    )
 }
 
 /// Which composer ran. Surfaces in the operator log so a sudden

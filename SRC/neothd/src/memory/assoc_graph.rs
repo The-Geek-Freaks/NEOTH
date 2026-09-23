@@ -109,16 +109,19 @@ pub fn reinforce_pairs_in_transaction(
 ) -> Result<usize> {
     let mut unique = std::collections::BTreeSet::new();
     for &(a, b) in pairs {
-        anyhow::ensure!(a > 0 && b > 0 && a != b, "Dream REM pair endpoints must be distinct positive ids");
+        anyhow::ensure!(
+            a > 0 && b > 0 && a != b,
+            "Dream REM pair endpoints must be distinct positive ids"
+        );
         unique.insert(if a < b { (a, b) } else { (b, a) });
     }
     let mut n = 0usize;
     for (lo, hi) in unique {
-            // Cepeda spacing: bump stability when the inter-access gap exceeds the
-            // current stability window (?3 - last_co_access > stability * 86400).
-            // All timestamps in Unix seconds; stability conceptually in days.
-            tx.execute(
-                "INSERT INTO idx_memory_links (lo_id, hi_id, weight, last_co_access, stability) \
+        // Cepeda spacing: bump stability when the inter-access gap exceeds the
+        // current stability window (?3 - last_co_access > stability * 86400).
+        // All timestamps in Unix seconds; stability conceptually in days.
+        tx.execute(
+            "INSERT INTO idx_memory_links (lo_id, hi_id, weight, last_co_access, stability) \
                  VALUES (?1, ?2, 1.0, ?3, 1.0) \
                  ON CONFLICT(lo_id, hi_id) DO UPDATE SET \
                      weight = weight + 1.0, \
@@ -128,9 +131,9 @@ pub fn reinforce_pairs_in_transaction(
                          THEN stability + 0.1 \
                          ELSE stability \
                      END",
-                params![lo, hi, now_unix],
-            )
-            .context("upsert co-access link")?;
+            params![lo, hi, now_unix],
+        )
+        .context("upsert co-access link")?;
         n += 1;
     }
     Ok(n)

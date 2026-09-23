@@ -48,7 +48,10 @@ pub fn promote_selected_hot_to_warm(
             anyhow::bail!("Dream Light input {event_id} is no longer hot");
         };
         anyhow::ensure!(pinned == 0, "Dream Light input {event_id} became pinned");
-        anyhow::ensure!(text_hash == *expected_hash, "Dream Light input {event_id} text hash changed");
+        anyhow::ensure!(
+            text_hash == *expected_hash,
+            "Dream Light input {event_id} text hash changed"
+        );
         let collision: Option<String> = tx
             .query_row(
                 "SELECT text_hash FROM idx_consolidated WHERE event_id = ?1",
@@ -57,7 +60,10 @@ pub fn promote_selected_hot_to_warm(
             )
             .optional()
             .context("inspect Dream Light warm collision")?;
-        anyhow::ensure!(collision.is_none(), "Dream Light input {event_id} already has a warm row");
+        anyhow::ensure!(
+            collision.is_none(),
+            "Dream Light input {event_id} already has a warm row"
+        );
         tx.execute(
             "INSERT INTO idx_consolidated (kind, day, event_id, text, text_hash, importance, trust, consolidated_ts, last_access_ts, access_count) \
              VALUES ('retained', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8)",
@@ -65,7 +71,10 @@ pub fn promote_selected_hot_to_warm(
         )
         .context("insert Dream-selected warm episode")?;
         anyhow::ensure!(
-            tx.execute("DELETE FROM idx_episode WHERE event_id = ?1", params![event_id])? == 1,
+            tx.execute(
+                "DELETE FROM idx_episode WHERE event_id = ?1",
+                params![event_id]
+            )? == 1,
             "Dream Light input {event_id} disappeared before delete"
         );
         moved += 1;

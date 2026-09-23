@@ -413,7 +413,10 @@ impl RuntimeState {
     /// in `views.db`; callers use this predicate to avoid re-running a date
     /// whose legacy composer admission has already been claimed.
     pub fn dream_boundary_is_claimed(&self, local_date: &str) -> bool {
-        self.dream.last_claimed_local_date.as_deref().is_some_and(|last| last >= local_date)
+        self.dream
+            .last_claimed_local_date
+            .as_deref()
+            .is_some_and(|last| last >= local_date)
     }
 }
 

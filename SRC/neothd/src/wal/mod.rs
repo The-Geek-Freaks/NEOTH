@@ -16,8 +16,6 @@ pub mod compress;
 pub(crate) mod context_evidence_receipts;
 /// W209 closed consent ceremony receipts. Generic WAL append paths reject its subtypes.
 pub(crate) mod counterparty_consent_once;
-/// W331 closed append-once receipts for completed Dream phase transitions.
-pub(crate) mod dream_receipts;
 /// ADV-01 (F4 finding, SPEC §4.3) — HMAC-SHA256 authenticator + .cpt
 /// file format + crash-recovery apply path. Closes the pre-placed-
 /// .cpt-injection attack window on the WAL recovery boundary.
@@ -30,6 +28,8 @@ pub mod cpt_recovery;
 pub mod crypto;
 #[cfg(windows)]
 pub mod dpapi;
+/// W331 closed append-once receipts for completed Dream phase transitions.
+pub(crate) mod dream_receipts;
 pub mod error;
 pub mod events;
 pub mod frame;

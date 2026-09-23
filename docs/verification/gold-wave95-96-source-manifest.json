@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T09:58:32.7251715Z",
-  "validationStatus": "W331332341344Dream+W342345346348repairs source-reviewed; hostedpending;Group687admitted685PASS2FAIL",
+  "capturedUtc": "2026-09-23T10:01:00.6582138Z",
+  "validationStatus": "Exact hosted formatting imported W331348; Core4ea5 pending;24new tests selected Group719",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1298,8 +1298,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/recall.rs",
-      "bytes": 140360,
-      "sha256": "B9C76B492E1452A39F007A7715F9A1EB3711D259F9C3DADED7D56A2B3E84B5DF"
+      "bytes": 140394,
+      "sha256": "F44295CF945B8F8D2A807358692D4AE9E93BA9235168B45512D778DF9775BCB5"
     },
     {
       "path": "SRC/neothd/src/cli/recipe.rs",
@@ -1628,8 +1628,8 @@
     },
     {
       "path": "SRC/neothd/src/cron/state.rs",
-      "bytes": 25369,
-      "sha256": "0D15C4CA2B1650A8F7DA973AB5E756A97B99BEF1EED58742689769F49DA5A0E3"
+      "bytes": 25408,
+      "sha256": "DBA63F35FB6F3A2D7D4EEDB3DF3F3F4E49B72545DF16B0FBAB1D43E7E7E6FA6A"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
@@ -1744,7 +1744,7 @@
     {
       "path": "SRC/neothd/src/daemon/mod.rs",
       "bytes": 18799,
-      "sha256": "51CAC44D96792F1E6D1C4F2B6F7FE8B4B177DA71204634C3AA8B1252A883A926"
+      "sha256": "4A97CF3145D2CED529FC161C2EC667A06C2F324BB761332438ABA7D5BA6CFF7E"
     },
     {
       "path": "SRC/neothd/src/daemon/omi_native_ingest.rs",
@@ -2048,8 +2048,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/consolidate.rs",
-      "bytes": 39855,
-      "sha256": "FD7492A8FAB43579293857514FDB0082109C4056CF1A58E0814EFCA41B928429"
+      "bytes": 39969,
+      "sha256": "A2F94426C357D36F2E0FC04BD694AB6BA5C14311A110D8BB86A3EF8568A6075A"
     },
     {
       "path": "SRC/neothd/src/memory/consolidation_sweep.rs",
@@ -2088,8 +2088,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/migrations/mod.rs",
-      "bytes": 237340,
-      "sha256": "83B1378D6ADC85E7CDD466EEB50A2AE944C0968679477E23D428EB89F13B47F6"
+      "bytes": 237583,
+      "sha256": "E379297E1055BF334546D6D3EE837B0C34F865783FB2CAA807CF09282164C2F7"
     },
     {
       "path": "SRC/neothd/src/memory/mod.rs",
@@ -2123,8 +2123,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/store.rs",
-      "bytes": 202433,
-      "sha256": "632FC38AEF3970554CA50D4FFE0B17A18E5A76A46AFB838C60C864F7B24D1448"
+      "bytes": 202584,
+      "sha256": "880EB5F7569A3F581E462C81AB56D4346C6488E07E9155A77EBEF0A9678AAF9F"
     },
     {
       "path": "SRC/neothd/src/memory/transcript_mining_provenance.rs",
@@ -2639,7 +2639,7 @@
     {
       "path": "SRC/neothd/src/wal/mod.rs",
       "bytes": 6259,
-      "sha256": "AA28AEEE7D3A3228BAFB3ADCC4630D8F42E60CDB9F7747FD3CCC093D37C57245"
+      "sha256": "5281A86DA2CF2DE29C1D46ABD7073AC07AA2DC7DE71AFCE73D8AC28F65629E84"
     },
     {
       "path": "SRC/neothd/src/wal/payloads_u04.rs",
@@ -2683,8 +2683,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",
-      "bytes": 426437,
-      "sha256": "6A697C0E958C0D457C8D084730B322BA127C710C22487778C63D3E266FD9E663"
+      "bytes": 430276,
+      "sha256": "86634853F6776279A8928757C142BEFEF576C75206AF43D79C31F33A70D1572A"
     },
     {
       "path": "SRC/neothd/src/wizard/ipc.rs",
@@ -3128,23 +3128,23 @@
     },
     {
       "path": "SRC/neothd/src/cli/dreaming_task.rs",
-      "bytes": 75683,
-      "sha256": "FD7F1A41AC3227E03E8BC552833E8261FA4040532DCA93306E138AB3B62013FD"
+      "bytes": 75923,
+      "sha256": "C55462EDC65606B7F93F64921E42B8B0158A1612B531E66D020B30D5544D380C"
     },
     {
       "path": "SRC/neothd/src/daemon/dream_phases.rs",
-      "bytes": 34856,
-      "sha256": "B40D4CC96D52740E9F0BBE53A87B59EF8DE720F2745E2BF8FF4D90448DDC4D57"
+      "bytes": 39661,
+      "sha256": "63E7CFCC38B6CE0245D26B8025197B7C9609A85C9278C9EA8107BB9F2DDE7EBE"
     },
     {
       "path": "SRC/neothd/src/memory/assoc_graph.rs",
-      "bytes": 56019,
-      "sha256": "A30BAD748495F06D69A9ABD62E7F77FF343451547177E0F2AB8534BC36D845FF"
+      "bytes": 56021,
+      "sha256": "3308DFB0F0A2B5A69AD706B73D116DF3CBDE087D644B13C34DCD23782708A716"
     },
     {
       "path": "SRC/neothd/src/wal/dream_receipts.rs",
-      "bytes": 8603,
-      "sha256": "9982D67F34F6C997ED9A190CB95B4FF0F6170DB2C7E7F52F2291352C9F92DE2D"
+      "bytes": 9199,
+      "sha256": "7FEB66391EC1722FD0AF00C19F4010EF7B4ADD81323D06A59AE8BD902DF09221"
     },
     {
       "path": "docs/gold-wave331-dream-phases.md",
