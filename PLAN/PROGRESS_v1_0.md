@@ -2,6 +2,15 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W535 connection-bound durable delivery (2026-09-24):**
+Opaque one-shot live permits now bind v6 Claim/Intent/Armed/Result/history to
+the exact ChannelRef, generation and fingerprint. Expired Armed recovery
+records CrashUnknown without reacquiring or resending. Two new regressions and
+ten existing live-route cases enter Group915; native1200, source771.
+Independent static review complete; hosted format/build/behavior pending.
+P1-14 remains open. Road1044checked/278open/2partial, GUI148Linux144macOS unchanged.
+Evidence:docs/gold-wave535-connection-bound-egress.md.
+
 **W543 hosted CLI reference (2026-09-24):**
 Core35928759424 at96f86a92 passed core test-target typechecking and CLI build.
 The source- and SHA256-bound export (artifact10780089697, reference62d831c4)

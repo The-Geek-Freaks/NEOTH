@@ -4,10 +4,10 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 135109,
-    "sha256": "B29C4D9586D2BECD6F38CA367EDBC7B055D8373167AA48970D9962F924587F9D"
+    "bytes": 135288,
+    "sha256": "B0712EBE3A662AA4A0815F68499BA968374664B52221967C0CA54096006157A3"
   },
-  "sourceInputs": 770,
+  "sourceInputs": 771,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -558,61 +558,61 @@
     {
       "test": "daemon::channel_live_registry::tests::acquire_returns_only_matching_published_generation",
       "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
-      "sourceSha256": "82C26B7151AA4EC2D67A722A4A34A4573345EDBD913C474FE0E5674A6E6795BA",
+      "sourceSha256": "0B19D7E981C0614C6D36DA88B8AD77000FB2CDAD05002C24FCD12E4B1F712A80",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::channel_live_registry::tests::stale_publication_cannot_reanimate_replaced_adapter",
       "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
-      "sourceSha256": "82C26B7151AA4EC2D67A722A4A34A4573345EDBD913C474FE0E5674A6E6795BA",
+      "sourceSha256": "0B19D7E981C0614C6D36DA88B8AD77000FB2CDAD05002C24FCD12E4B1F712A80",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::channel_live_registry::tests::shutdown_rejects_even_a_previously_uncreated_channel_reference",
       "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
-      "sourceSha256": "82C26B7151AA4EC2D67A722A4A34A4573345EDBD913C474FE0E5674A6E6795BA",
+      "sourceSha256": "0B19D7E981C0614C6D36DA88B8AD77000FB2CDAD05002C24FCD12E4B1F712A80",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::channel_live_registry::tests::revocation_waits_for_an_acquired_lease_then_refuses_new_egress",
       "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
-      "sourceSha256": "82C26B7151AA4EC2D67A722A4A34A4573345EDBD913C474FE0E5674A6E6795BA",
+      "sourceSha256": "0B19D7E981C0614C6D36DA88B8AD77000FB2CDAD05002C24FCD12E4B1F712A80",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::channel_live_registry::tests::shutdown_waits_for_an_effect_already_inside_the_real_send_boundary",
       "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
-      "sourceSha256": "82C26B7151AA4EC2D67A722A4A34A4573345EDBD913C474FE0E5674A6E6795BA",
+      "sourceSha256": "0B19D7E981C0614C6D36DA88B8AD77000FB2CDAD05002C24FCD12E4B1F712A80",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::connection_bound_delivery_uses_only_the_exact_live_channel_ref",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "B4CBFC25F203C23AE2B721BFD263AE33CCC198E2DF09E8F737EC8CDB43A3E077",
+      "sourceSha256": "96E9B8AA3E1E0866AE1DE23C0845AFA1F4904EB2DF7B5DE12D19FDF0C6B613B9",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::unavailable_connection_bound_handles_settle_sidecar_before_transport",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "B4CBFC25F203C23AE2B721BFD263AE33CCC198E2DF09E8F737EC8CDB43A3E077",
+      "sourceSha256": "96E9B8AA3E1E0866AE1DE23C0845AFA1F4904EB2DF7B5DE12D19FDF0C6B613B9",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::malformed_connection_bound_targets_never_acquire_or_arm_live_transport",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "B4CBFC25F203C23AE2B721BFD263AE33CCC198E2DF09E8F737EC8CDB43A3E077",
+      "sourceSha256": "96E9B8AA3E1E0866AE1DE23C0845AFA1F4904EB2DF7B5DE12D19FDF0C6B613B9",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::failed_connection_bound_adapter_never_records_delivered",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "B4CBFC25F203C23AE2B721BFD263AE33CCC198E2DF09E8F737EC8CDB43A3E077",
+      "sourceSha256": "96E9B8AA3E1E0866AE1DE23C0845AFA1F4904EB2DF7B5DE12D19FDF0C6B613B9",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::plan_delivery_connection_bound_channels_require_the_live_registry",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "B4CBFC25F203C23AE2B721BFD263AE33CCC198E2DF09E8F737EC8CDB43A3E077",
+      "sourceSha256": "96E9B8AA3E1E0866AE1DE23C0845AFA1F4904EB2DF7B5DE12D19FDF0C6B613B9",
       "junitClass": "neoth"
     },
     {
@@ -7195,6 +7195,18 @@
       "test": "installers::paperless::tests::scan_struct_does_not_treat_open_port_as_running",
       "sourcePath": "SRC/neothd/src/installers/paperless.rs",
       "sourceSha256": "5C49EFC483A295922ED35DF2D7B35CE10484660CA7270F1A14FC29C7A0081E09",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::proactive_egress::tests::v6_connection_binding_authenticates_exact_live_identity_without_raw_body",
+      "sourcePath": "SRC/neothd/src/daemon/proactive_egress.rs",
+      "sourceSha256": "8F1C73D1DA71807243575AA9B0F8F12A61AEEB09B2F0D30885E961FC72E27D71",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::proactive_egress::tests::expired_v6_armed_recovery_records_crash_unknown_without_live_reacquire",
+      "sourcePath": "SRC/neothd/src/daemon/proactive_egress.rs",
+      "sourceSha256": "8F1C73D1DA71807243575AA9B0F8F12A61AEEB09B2F0D30885E961FC72E27D71",
       "junitClass": "neoth"
     }
   ],
@@ -24894,6 +24906,80 @@
       }
     ],
     "note": "CLI export35928759424 at96f86a92 admitted source/archive/reference SHA256; core testtarget and CLI build passed; no native behavior inferred",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave535ConnectionBoundEgressAcceptance": {
+    "requiredTests": [
+      "daemon::channel_live_registry::tests::acquire_returns_only_matching_published_generation",
+      "daemon::channel_live_registry::tests::stale_publication_cannot_reanimate_replaced_adapter",
+      "daemon::channel_live_registry::tests::shutdown_rejects_even_a_previously_uncreated_channel_reference",
+      "daemon::channel_live_registry::tests::revocation_waits_for_an_acquired_lease_then_refuses_new_egress",
+      "daemon::channel_live_registry::tests::shutdown_waits_for_an_effect_already_inside_the_real_send_boundary",
+      "daemon::proactive_dispatcher::tests::connection_bound_delivery_uses_only_the_exact_live_channel_ref",
+      "daemon::proactive_dispatcher::tests::unavailable_connection_bound_handles_settle_sidecar_before_transport",
+      "daemon::proactive_dispatcher::tests::malformed_connection_bound_targets_never_acquire_or_arm_live_transport",
+      "daemon::proactive_dispatcher::tests::failed_connection_bound_adapter_never_records_delivered",
+      "daemon::proactive_dispatcher::tests::plan_delivery_connection_bound_channels_require_the_live_registry",
+      "daemon::proactive_egress::tests::v6_connection_binding_authenticates_exact_live_identity_without_raw_body",
+      "daemon::proactive_egress::tests::expired_v6_armed_recovery_records_crash_unknown_without_live_reacquire"
+    ],
+    "status": "source-reviewed hosted-pending",
+    "scope": "Opaque one-shot live permits; v6 authenticated durable identity; no resend on Armed recovery"
+  },
+  "wave535ConnectionBoundEgressEvidence": {
+    "base": "a53a95f426607b476b6d9ac1937e26c871b8244e",
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 20803,
+        "sha256": "909A0F39AE2C073E0898F51F46DD6BD44979043CDED491AACA2683B9CEE7DC79",
+        "blob": "489167de16f0e36dc56eea3582dd372c70424d2d"
+      },
+      {
+        "path": "docs/gold-wave535-connection-bound-egress.md",
+        "bytes": 1302,
+        "sha256": "DF19F9279B534B39475E70B714519749B6E96FDEEF7274C2C13D7E713D982521",
+        "blob": "a73bbd39315961a8ba91ef06613d44dfefbc53b3"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 195727,
+        "sha256": "EE466AA1C4ED4112A39BA9FB3D94E24FE0D357233A786C0F8F1E93BE51569DA6",
+        "blob": "3aa0701569ab71bf1d50b83c1fc0df612a16587c"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1206051,
+        "sha256": "8225CE0E0C90A0D4C979F742D6B7BA69F2397CB84511C4D3EFDE99EAACF87000",
+        "blob": "1fe1cfcec5b1bf6a77a49fe0c9cefa46bdd26b71"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1804684,
+        "sha256": "C2349A71DE35E90F443C37260EC5FE858C1765C307A5F4FA77B34651AE22379D",
+        "blob": "ccbcfd9a3e27883b3349f8cc8c3eadbcfe632a96"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/channel_live_registry.rs",
+        "bytes": 17771,
+        "sha256": "0B19D7E981C0614C6D36DA88B8AD77000FB2CDAD05002C24FCD12E4B1F712A80",
+        "blob": "69b64b49c781591228644e9b628ac5e5c064f3a8"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+        "bytes": 119349,
+        "sha256": "96E9B8AA3E1E0866AE1DE23C0845AFA1F4904EB2DF7B5DE12D19FDF0C6B613B9",
+        "blob": "6e6dcbbb70021653bbb149015b2b8a8c515d9846"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/proactive_egress.rs",
+        "bytes": 407351,
+        "sha256": "8F1C73D1DA71807243575AA9B0F8F12A61AEEB09B2F0D30885E961FC72E27D71",
+        "blob": "583fa39bf3fb40367e45cabea4213464b015c92a"
+      }
+    ],
+    "note": "Independent reviewed durable one-shot connection permits and v6 bindings;2newnative+10existingGroup;format/build/behavior pending",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

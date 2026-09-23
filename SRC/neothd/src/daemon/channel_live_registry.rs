@@ -9,11 +9,10 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 
 use crate::channels::registry::ChannelRef;
-use crate::channels::{Channel, ChannelError, PipelineHandler};
+use crate::channels::{Channel, ChannelError};
 
 #[derive(Default)]
 pub struct ChannelLiveRegistry {
@@ -176,14 +175,13 @@ impl ChannelLiveRegistry {
         true
     }
 
-    /// Acquire a proactive-only wrapper.  It owns an active-work count until
-    /// the durable egress executor drops it, and checks current authority again
-    /// at the underlying `send_proactive` invocation.
-    pub async fn acquire(
+    /// Acquire one opaque proactive permit. It owns active-work until it is
+    /// consumed or dropped and rechecks current authority at the raw effect.
+    pub(super) async fn acquire(
         &self,
         channel_ref: &ChannelRef,
         fingerprint: u64,
-    ) -> Option<Arc<dyn Channel>> {
+    ) -> Option<ConnectionBoundProactivePermit> {
         if self.closed.load(Ordering::Acquire) {
             return None;
         }
@@ -199,14 +197,15 @@ impl ChannelLiveRegistry {
         let generation = state.generation;
         entry.active.fetch_add(1, Ordering::AcqRel);
         drop(state);
-        Some(Arc::new(LeasedProactiveChannel {
+        Some(ConnectionBoundProactivePermit {
             channel,
             entry,
+            channel_ref: channel_ref.clone(),
             generation,
             fingerprint,
             closed: Arc::clone(&self.closed),
             closing_gate: Arc::clone(&self.closing_gate),
-        }))
+        })
     }
 
     /// Refuse future acquisitions for one reference, retain already-acquired
@@ -240,43 +239,41 @@ impl ChannelLiveRegistry {
     }
 }
 
-struct LeasedProactiveChannel {
+/// Non-cloneable authority for one connection-owned proactive effect.  It is
+/// intentionally not a `Channel`: handing out an `Arc<dyn Channel>` would
+/// let callers duplicate the capability and later send outside the durable
+/// claim path.  The egress executor consumes this permit exactly once after
+/// its Prepared, Intent and Armed records have all been acknowledged.
+pub(super) struct ConnectionBoundProactivePermit {
     channel: Arc<dyn Channel>,
     entry: Arc<LiveEntry>,
+    channel_ref: ChannelRef,
     generation: u64,
     fingerprint: u64,
     closed: Arc<std::sync::atomic::AtomicBool>,
     closing_gate: Arc<AsyncMutex<()>>,
 }
 
-impl Drop for LeasedProactiveChannel {
-    fn drop(&mut self) {
-        if self.entry.active.fetch_sub(1, Ordering::AcqRel) == 1 {
-            self.entry.drained.notify_waiters();
-        }
-    }
-}
-
-#[async_trait]
-impl Channel for LeasedProactiveChannel {
-    fn name(&self) -> &'static str {
-        self.channel.name()
+impl ConnectionBoundProactivePermit {
+    pub(super) fn channel_ref(&self) -> &ChannelRef {
+        &self.channel_ref
     }
 
-    async fn run(&self, _handler: PipelineHandler) -> anyhow::Result<()> {
-        anyhow::bail!("a leased proactive channel cannot own an inbound receive loop")
+    pub(super) fn generation(&self) -> u64 {
+        self.generation
     }
 
-    async fn send_proactive(
-        &self,
-        chat_id: &str,
-        text: &str,
+    pub(super) fn fingerprint(&self) -> u64 {
+        self.fingerprint
+    }
+
+    /// Consume this sole permit at the actual provider boundary.  No caller
+    /// can retain a raw channel or retry a second send after this future.
+    pub(super) async fn send_once(
+        self,
+        chat_id: String,
+        text: String,
     ) -> std::result::Result<crate::channels::MessageId, ChannelError> {
-        // The global gate spans the raw transport effect so shutdown cannot
-        // cross the final closed check.  The entry gate only linearizes the
-        // per-reference authority check, then releases immediately: reload can
-        // close admission and drain the already-counted lease while this send
-        // is in flight without deadlocking on the raw transport await.
         let _closing = Arc::clone(&self.closing_gate).lock_owned().await;
         {
             let state = Arc::clone(&self.entry.state).lock_owned().await;
@@ -294,13 +291,23 @@ impl Channel for LeasedProactiveChannel {
                 ));
             }
         }
-        self.channel.send_proactive(chat_id, text).await
+        self.channel.send_proactive(&chat_id, &text).await
     }
 }
+
+impl Drop for ConnectionBoundProactivePermit {
+    fn drop(&mut self) {
+        if self.entry.active.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.entry.drained.notify_waiters();
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use crate::channels::{ChannelKind, MessageId, PipelineHandler};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -372,7 +379,10 @@ mod tests {
         assert!(registry.publish(&lease, channel.clone()).await);
         assert!(registry.acquire(&irc_ref(), 40).await.is_none());
         let acquired = registry.acquire(&irc_ref(), 41).await.unwrap();
-        acquired.send_proactive("#ops", "hello").await.unwrap();
+        acquired
+            .send_once("#ops".to_string(), "hello".to_string())
+            .await
+            .unwrap();
         assert_eq!(channel.0.load(Ordering::SeqCst), 1);
     }
 
@@ -442,7 +452,7 @@ mod tests {
         );
         assert!(
             acquired
-                .send_proactive("#ops", "must not send")
+                .send_once("#ops".to_string(), "must not send".to_string())
                 .await
                 .is_err(),
             "the acquired wrapper must recheck revocation at the effect boundary"
@@ -472,7 +482,11 @@ mod tests {
         let acquired = registry.acquire(&irc_ref(), 41).await.unwrap();
         let entered = channel.entered.notified();
         let sending =
-            tokio::spawn(async move { acquired.send_proactive("#ops", "in flight").await });
+            tokio::spawn(async move {
+                acquired
+                    .send_once("#ops".to_string(), "in flight".to_string())
+                    .await
+            });
         entered.await;
 
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();

@@ -531,7 +531,16 @@ async fn deliver_live_route(
                 .map_err(LiveRouteError::Durability);
             };
             match live.live_channels.acquire(&channel_ref, fingerprint).await {
-                Some(channel) => execute!(&recipient, channel),
+                Some(permit) => crate::daemon::proactive_egress::execute_claimed_once_connection_bound(
+                    egress,
+                    item,
+                    queue_generation,
+                    target_channel,
+                    recipient,
+                    permit,
+                )
+                .await
+                .map_err(LiveRouteError::Durability),
                 None => crate::daemon::proactive_egress::record_sidecar_only_once(
                     egress,
                     item,
@@ -1925,8 +1934,9 @@ mod tests {
         let registry = empty_live_channels();
         let irc = Arc::new(CountingConnectionChannel::new("irc"));
         let twitch = Arc::new(CountingConnectionChannel::new("twitch"));
+        let irc_fingerprint = *fingerprints.get(&irc_ref).unwrap();
         let irc_lease = registry
-            .begin_replacement(irc_ref.clone(), *fingerprints.get(&irc_ref).unwrap())
+            .begin_replacement(irc_ref.clone(), irc_fingerprint)
             .await;
         let twitch_lease = registry
             .begin_replacement(twitch_ref.clone(), *fingerprints.get(&twitch_ref).unwrap())
@@ -1955,6 +1965,21 @@ mod tests {
             .unwrap(),
             1
         );
+        assert_eq!(
+            run_proactive_delivery_tick(
+                tmp.path(),
+                &segment,
+                &config,
+                &credentials,
+                &writer,
+                1_700_000_001,
+                Arc::clone(&registry),
+            )
+            .await
+            .unwrap(),
+            0,
+            "terminal v6 evidence must make a repeated tick a zero-send no-op"
+        );
         drop(writer);
         join.await.unwrap().unwrap();
 
@@ -1970,6 +1995,22 @@ mod tests {
             history[0].outcome(),
             crate::daemon::proactive_egress::ProactiveEgressOutcome::Delivered
         );
+        assert_eq!(
+            history[0].connection_binding_identity_for_test(),
+            Some((&irc_ref, 1, irc_fingerprint)),
+            "history must retain the exact live adapter identity"
+        );
+        assert_eq!(
+            crate::daemon::proactive_egress::authenticated_connection_binding_for_test(
+                tmp.path(),
+                &segment,
+                history[0].intent_id(),
+            )
+            .unwrap(),
+            Some((irc_ref.clone(), 1, irc_fingerprint)),
+            "authenticated Intent and Result must agree with the history identity"
+        );
+        assert_eq!(irc.sends(), 1, "repeated tick must not reach the live adapter");
     }
 
     #[tokio::test]
