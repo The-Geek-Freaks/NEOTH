@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T08:37:59.0195523Z",
-  "validationStatus": "Exact hosted formatting imported for W318-W323; P222 accepted; Core1a17 and GUI1291a17 active; Group684 pending",
+  "capturedUtc": "2026-09-23T08:41:52.2566114Z",
+  "validationStatus": "P222 accepted; canonical PROGRESS WS-LF count corrected15done103open after hosted preflight diagnostic",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -478,8 +478,8 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1146769,
-      "sha256": "834E924DA0BC4A96625C5297122A222787A3C29AFF421B9337F550CE2849C22F"
+      "bytes": 1146797,
+      "sha256": "5C69C62E1B924337F3E7E0C7E519EF40C294CFF87879E94214CB847FD20A3BA2"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",

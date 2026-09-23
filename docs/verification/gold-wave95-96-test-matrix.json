@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Exact hosted formatting imported for W318-W323; P222 accepted; Core1a17 and GUI1291a17 active; Group684 pending",
+  "status": "P222 accepted; canonical PROGRESS WS-LF count corrected15done103open after hosted preflight diagnostic",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 105458,
-    "sha256": "1FB2D630BBEFF1CF28B8E821A1234C1CA2EFC2BF0369691DEE692200BD3C6198"
+    "bytes": 105449,
+    "sha256": "D4DFF8ED07AD790616156CFBC80B9BA9022AD6561EFF63B6482DAC611F9F2D1E"
   },
   "sourceInputs": 608,
   "requiredNativeTests": [
@@ -20307,6 +20307,13 @@
       }
     ],
     "note": "Preflight35837779652 patch SHA2567F25D287BB14A8C89D0E9AFBC3EEE173915D62ADB14379F340D065C47812BACD exact Git pre/postimage verified in3sourcepaths; no local formatter",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave323CanonicalProgressCount": {
+    "base": "737ba7b9ee32cce141358961ee1a998fc01530bc",
+    "sources": [],
+    "note": "Preflight73735838445075 passed formatting, identified old14/104 canonical quoted progress section; corrected to actual Road15/103 and named P222. Source/tests unchanged.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
