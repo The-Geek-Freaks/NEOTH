@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W267 bounded test-only stderr capture bypasses UI truncation; fresh GUI124 pending",
+  "status": "Group448e802 admitted448/448; Core0fb allsteps success; W267 hostformat imported; GUI124841 pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 93210,
-    "sha256": "C937B8CFB1C6DEDA726A28B528D649941C468D78F2AC8B69E36899D3DD55C74D"
+    "bytes": 93227,
+    "sha256": "E8E80329BB8266318FBC32E47F38198D04780D23060AA036AE5093A548AEA3E1"
   },
   "sourceInputs": 538,
   "requiredNativeTests": [
@@ -17245,6 +17245,20 @@
       }
     ],
     "note": "GUIa8 helper error suffix truncated in UI; emit bounded nonblocking diagnostic directly to fixture stderr, preserve original activation error. No production behavior changed.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave267FormatGroup448Admission": {
+    "base": "841ff5cc6d98b246ac09b133de84f38087f3809a",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
+        "bytes": 106385,
+        "sha256": "EACB34D78B2E112AC12933E88F28844F9A1E35634F902CBE01ECE4017B460674",
+        "blob": "f9880a89dcb0e4980e450673949eab43fe592dbb"
+      }
+    ],
+    "note": "Preflight35810916802 onepath GUI formatter exactsource/SHA/pre/postimage; Group35809861844 all448 with98sources admitted; Core35810433910 success unchangedCLIreference. No local execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

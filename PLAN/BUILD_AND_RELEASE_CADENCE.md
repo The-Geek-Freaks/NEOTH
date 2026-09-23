@@ -3,6 +3,18 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**Group448 accepted (2026-09-23):** hosted run35809861844 on e802d74a passed
+448/448 exact native fixtures. Root verified all98source paths against the
+selected Git blobs, matrix/lock inputs and every individual passing terminal.
+The real Unix Context Import Status/Plan/Apply/Pause/refusal/Resume/reopen/shutdown
+roundtrip now passes. All seven Discord sender/provenance/collector/Doctor cases
+pass, including accepted effect with a failed receipt writer and no retry.
+This is focused native evidence; W153/W164 GUI startup and all-OS/release gates
+remain separate. Core0fb35810433910 passed slimClippy, test-target checking,
+CLI build/export; its SHA-bound reference matches the committed snapshot.
+The one-path W267 hosted formatter receipt was verified and
+imported. Inventory and Road counts remain unchanged; no local execution ran.
+
 **W267 GUI diagnostic capture correction (2026-09-23):** GUI124a8 reached
 the same W153/W164 helper exit125 before provider startup. W260 appended the
 bounded helper stderr to a UI error that was then truncated, so the actual
