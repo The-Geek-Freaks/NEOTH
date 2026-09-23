@@ -2,6 +2,29 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W262 Discord evidence / W264 actual paused-import refusal (2026-09-23):**
+The real default Discord Gateway reply sender now records an authenticated,
+account-bound intent before its adapter call and a terminal result afterward.
+Its closed startup provenance, historical WAL collector and Doctor keep
+`discord/default` separate from same-named Telegram/Slack accounts. Caller
+fixtures cover missing intent, adapter error, accepted delivery and an accepted
+effect whose result writer fails, without retry or hidden success. Seven exact
+native identities are selected; wider channel/account-map coverage stays open.
+
+Group441 `35808222289` on `85c87f57` is admitted at440/441 with93source paths,
+matrix/lock and all actual terminals verified. W256 search, W257 Doctor and
+W258 socket repair passed. The sole failure occurred after successful import
+Status/Plan/Apply/Pause: the fixture incorrectly unwrapped a paused Plan's
+expected HTTP422 client refusal as success. W264 fixes both Unix and Windows
+fixture expectations while preserving production rejection and the subsequent
+Resume/reopen/shutdown assertions. Fresh execution remains required.
+Inventory539sources/878universal native/98GUI; Group448/GUI124. Native extras
+remain Windows19/Linux29/macOS28. Road1017checked/305open/2partial is unchanged.
+Core70ef passed slimClippy and is checking test targets; GUI124a8 still runs
+with bounded test-only helper diagnostics. No local executable validation ran.
+See `docs/gold-wave262-discord-channel-flapping.md` and
+`docs/gold-wave264-paused-import-fixture.md`.
+
 **W260 startup diagnostics / W261 throughput accepted (2026-09-23):**
 P2-29 is accepted from its 12 native/CLI/daemon and seven GUI/Main/Buddy
 individually passing, source-bound terminals on `d99d5c6c`. The display uses

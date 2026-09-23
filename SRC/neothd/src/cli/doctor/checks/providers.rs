@@ -573,8 +573,8 @@ pub(crate) const DOCS: &[CheckDoc] = &[
     },
     CheckDoc {
         name: "channel transport flapping",
-        purpose: "Reads authenticated, typed channel/account outbound evidence from the last 24 hours. It accepts only the closed live grammar (mapped Telegram or marked default Telegram/Slack) and account-bound proactive v4/v5 grammar. Warns per ChannelRef at five or more completed attempts and twenty percent or more failures. An adapter acceptance confirms only that adapter call, never recipient delivery or a read receipt.",
-        common_failures: "An authenticated mapped Telegram, marked default Telegram/Slack live account, or account-bound proactive Telegram attempt has repeated adapter failures. Armed/unsettled or malformed/incomplete evidence remains inconclusive or unavailable rather than being attributed from current routing.",
+        purpose: "Reads authenticated, typed channel/account outbound evidence from the last 24 hours. It accepts only the closed live grammar (mapped Telegram or marked default Telegram/Slack/Discord) and account-bound proactive v4/v5 grammar. Warns per ChannelRef at five or more completed attempts and twenty percent or more failures. An adapter acceptance confirms only that adapter call, never recipient delivery or a read receipt.",
+        common_failures: "An authenticated mapped Telegram, marked default Telegram/Slack/Discord live account, or account-bound proactive Telegram attempt has repeated adapter failures. Armed/unsettled or malformed/incomplete evidence remains inconclusive or unavailable rather than being attributed from current routing.",
         fix: "Inspect the named channel/account's credentials and adapter logs. Resolve inconclusive records before treating failure percentages as complete; this check does not retry, probe, consult current routing, or change delivery state.",
     },
     CheckDoc {
@@ -694,6 +694,22 @@ mod tests {
 
         assert_eq!(outcome.status, CheckStatus::Warn);
         assert!(outcome.detail.contains("slack/default: 2/5 failed (40%)"));
+        assert!(!outcome.detail.contains("telegram/default"));
+    }
+
+    #[test]
+    fn account_transport_flapping_keeps_default_discord_separate_from_default_telegram() {
+        let telegram_default = ChannelRef::default_account(ChannelId::Telegram);
+        let discord_default = ChannelRef::default_account(ChannelId::Discord);
+        let evidence = BTreeMap::from([
+            (telegram_default, counters(5, 5, 0, 0, 0)),
+            (discord_default, counters(5, 3, 2, 0, 0)),
+        ]);
+
+        let outcome = classify_channel_transport_evidence(Ok(evidence));
+
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("discord/default: 2/5 failed (40%)"));
         assert!(!outcome.detail.contains("telegram/default"));
     }
 

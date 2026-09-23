@@ -230,7 +230,7 @@ pub(crate) async fn emit_legacy_live_egress_intent(
     let channel_ref = provenance.channel_ref();
     if !matches!(
         channel_ref.channel_id,
-        ChannelKind::Telegram | ChannelKind::Slack
+        ChannelKind::Telegram | ChannelKind::Slack | ChannelKind::Discord
     ) || channel_ref
         != &crate::channels::registry::ChannelRef::default_account(channel_ref.channel_id)
         || channel != channel_ref.channel_id.as_str()
@@ -382,7 +382,7 @@ pub(crate) async fn emit_legacy_live_egress_result(
     let channel_ref = provenance.channel_ref();
     if !matches!(
         channel_ref.channel_id,
-        ChannelKind::Telegram | ChannelKind::Slack
+        ChannelKind::Telegram | ChannelKind::Slack | ChannelKind::Discord
     ) || channel_ref
         != &crate::channels::registry::ChannelRef::default_account(channel_ref.channel_id)
     {
@@ -607,6 +607,75 @@ mod intent_tests {
         }
         assert_eq!(id_a.len(), 32);
         assert_eq!(id_default.len(), 32);
+    }
+
+    #[tokio::test]
+    async fn sealed_default_discord_intent_and_result_are_authenticated_and_bound() {
+        let home = tempfile::tempdir().expect("create Discord live-evidence home");
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).expect("create Discord live-evidence WAL");
+        let segment = wal.join("000001.wal");
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), home.path().to_path_buf())
+                .expect("spawn Discord live-evidence WAL writer");
+        ready
+            .wait()
+            .await
+            .expect("initialize Discord live-evidence WAL writer");
+        let provenance = crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(
+            ChannelKind::Discord,
+        )
+        .expect("Discord belongs to the closed default live-evidence family");
+        let intent_id = emit_legacy_live_egress_intent(
+            &writer,
+            "discord",
+            "private-discord-channel",
+            "private-discord-reply",
+            1_700_000_000,
+            &provenance,
+        )
+        .await
+        .expect("sealed Discord intent");
+        emit_legacy_live_egress_result(
+            &writer,
+            &intent_id,
+            "delivered",
+            Some("discord-message-id"),
+            1_700_000_001,
+            &provenance,
+        )
+        .await
+        .expect("sealed Discord terminal result");
+        drop(writer);
+        join.await
+            .expect("join Discord live-evidence WAL writer")
+            .expect("close Discord live-evidence WAL writer");
+
+        let bytes = tokio::fs::read(segment).await.expect("read Discord WAL");
+        let mut cursor = SEGMENT_HEADER_LEN;
+        let mut frames = Vec::new();
+        while cursor < bytes.len() {
+            let frame = decode_frame(&bytes[cursor..]).expect("complete Discord evidence frame");
+            if frame.header.event_subtype == ExtendedSubtype::ChannelEgressIntent as u8
+                || frame.header.event_subtype == ExtendedSubtype::ChannelEgressResult as u8
+            {
+                frames.push((
+                    frame.header.event_subtype,
+                    serde_json::from_slice::<serde_json::Value>(frame.payload)
+                        .expect("Discord evidence JSON"),
+                ));
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].0, ExtendedSubtype::ChannelEgressIntent as u8);
+        assert_eq!(frames[0].1["channel"], "discord");
+        assert_eq!(frames[0].1["channel_ref"]["channel_id"], "discord");
+        assert_eq!(frames[0].1["channel_ref"]["account_id"], "default");
+        assert_eq!(frames[0].1["live_provenance"], "legacy_singleton_v2");
+        assert_eq!(frames[1].0, ExtendedSubtype::ChannelEgressResult as u8);
+        assert_eq!(frames[1].1["intent_id"], frames[0].1["intent_id"]);
+        assert_eq!(frames[1].1["outcome"], "delivered");
     }
 
     #[tokio::test]

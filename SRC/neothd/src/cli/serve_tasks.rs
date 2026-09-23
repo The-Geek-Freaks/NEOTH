@@ -5347,9 +5347,9 @@ impl MappedTelegramLiveEgressProvenance {
     }
 }
 
-/// Startup-only proof for the two legacy adapters that actually construct a
-/// live send/edit handler. Its fields are private and no inbound envelope or
-/// loose `ChannelRef` can mint it.
+/// Startup-only proof for the closed default adapters that construct a live
+/// send/edit handler. Its fields are private and no inbound envelope or loose
+/// `ChannelRef` can mint it.
 #[derive(Clone)]
 pub(crate) struct LegacyLiveEgressProvenance {
     channel_ref: ChannelRef,
@@ -5362,7 +5362,10 @@ impl LegacyLiveEgressProvenance {
 }
 
 fn legacy_live_egress_provenance(kind: ChannelKind) -> LegacyLiveEgressProvenance {
-    debug_assert!(matches!(kind, ChannelKind::Telegram | ChannelKind::Slack));
+    debug_assert!(matches!(
+        kind,
+        ChannelKind::Telegram | ChannelKind::Slack | ChannelKind::Discord
+    ));
     LegacyLiveEgressProvenance {
         channel_ref: ChannelRef::default_account(kind),
     }
@@ -5372,7 +5375,10 @@ fn legacy_live_egress_provenance(kind: ChannelKind) -> LegacyLiveEgressProvenanc
 pub(crate) fn legacy_live_egress_provenance_for_test(
     kind: ChannelKind,
 ) -> Option<LegacyLiveEgressProvenance> {
-    matches!(kind, ChannelKind::Telegram | ChannelKind::Slack)
+    matches!(
+        kind,
+        ChannelKind::Telegram | ChannelKind::Slack | ChannelKind::Discord
+    )
         .then(|| legacy_live_egress_provenance(kind))
 }
 
@@ -6261,6 +6267,7 @@ pub(crate) async fn spawn_channel_adapters(
                 token,
                 &allowed_sender,
                 writer.clone(),
+                legacy_live_egress_provenance(ChannelKind::Discord),
             ) {
                 Ok(channel) => {
                     let handler: PipelineHandler = build_channel_handler(
@@ -9245,11 +9252,12 @@ mod tests {
 
     #[test]
     fn admitted_legacy_live_factories_seal_distinct_default_capabilities() {
-        // This calls the same production constructor used by the Telegram and
-        // Slack startup branches. It must remain a closed capability family:
+        // This calls the same production constructor used by the Telegram,
+        // Slack, and Discord startup branches. It must remain a closed capability family:
         // no arbitrary channel can opt into authenticated legacy egress.
         let telegram = legacy_live_egress_provenance(ChannelKind::Telegram);
         let slack = legacy_live_egress_provenance(ChannelKind::Slack);
+        let discord = legacy_live_egress_provenance(ChannelKind::Discord);
         assert_eq!(
             telegram.channel_ref(),
             &ChannelRef::default_account(ChannelKind::Telegram)
@@ -9258,8 +9266,13 @@ mod tests {
             slack.channel_ref(),
             &ChannelRef::default_account(ChannelKind::Slack)
         );
+        assert_eq!(
+            discord.channel_ref(),
+            &ChannelRef::default_account(ChannelKind::Discord)
+        );
         assert_ne!(telegram.channel_ref(), slack.channel_ref());
-        assert!(legacy_live_egress_provenance_for_test(ChannelKind::Discord).is_none());
+        assert_ne!(telegram.channel_ref(), discord.channel_ref());
+        assert_ne!(slack.channel_ref(), discord.channel_ref());
     }
 
     #[cfg(feature = "cluster")]

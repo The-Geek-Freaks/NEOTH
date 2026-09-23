@@ -72,10 +72,13 @@ binary-swap path; SelfStageAllowed and self-probe do not authorize CLI, npm,
 Git, OSV, installer, or Skill lanes. Runtime execution remains pending the
 enabled production outer/helper-route proof. R3-18B remains open.
 
-## W34 legacy factory provenance (validation pending)
+## W34/W262 default-live factory provenance (implementation; hosted validation pending)
 
-Only legacy Telegram and Slack factories receive sealed startup provenance;
-mapped Telegram remains a separate variant. P1-17 remains open for all other
+Legacy Telegram and Slack factories, plus the exact default Discord Gateway
+reply factory, receive sealed startup provenance. Discord is limited to a
+token, normalized allowlisted sender snowflake, and provider-bound startup
+adapter with `discord/default`; mapped Telegram remains a separate variant.
+P1-17 remains open for Discord account maps, proactive egress, and all other
 channel provenance surfaces.
 
 ## OpenClaw account import (W26; locally validated)

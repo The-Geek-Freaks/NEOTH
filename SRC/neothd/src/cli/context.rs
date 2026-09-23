@@ -448,11 +448,11 @@ mod windows_tests {
             }),
         )
         .await
-        .unwrap();
+        .unwrap_err();
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&paused_plan).unwrap(),
-            serde_json::json!({"ok": false, "code": "local_import_unavailable"}),
-            "paused lifecycle must block new Context Import planning"
+            paused_plan.to_string(),
+            "connector-control daemon rejected request",
+            "paused lifecycle must refuse new Context Import planning at the client boundary"
         );
 
         let resumed = request_at(
@@ -744,11 +744,11 @@ mod unix_tests {
             }),
         )
         .await
-        .unwrap();
+        .unwrap_err();
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&paused_plan).unwrap(),
-            serde_json::json!({"ok": false, "code": "local_import_unavailable"}),
-            "paused lifecycle must block new Context Import planning"
+            paused_plan.to_string(),
+            "connector-control daemon rejected request with HTTP 422",
+            "paused lifecycle must refuse new Context Import planning at the client boundary"
         );
 
         let resumed = request_at(

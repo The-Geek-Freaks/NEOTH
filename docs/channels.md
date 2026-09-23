@@ -213,11 +213,15 @@ Skill update lanes remain denied. Production runtime execution is pending the
 proof that an enabled outer/helper route produces the required ordered receipts.
 R3-18B remains open.
 
-### Legacy Telegram and Slack provenance (W34; validation pending)
+### Legacy Telegram, Slack, and Discord default provenance (W34/W262; validation pending)
 
-W34 adds sealed startup provenance only for legacy Telegram and Slack live
-delivery. Mapped Telegram remains separate. This limited source-admitted slice
-does not establish provenance for other channels or close P1-17.
+W34 adds sealed startup provenance for legacy Telegram and Slack live delivery.
+W262 extends that closed default-live family to Discord Gateway replies only:
+the adapter starts only with its bot token, normalized immutable allowlisted
+sender snowflake, and provider, then receives the exact `discord/default`
+provenance. Mapped Telegram remains separate. This limited source-admitted slice
+does not establish Discord account-map or proactive provenance, provenance for
+other channels, or close P1-17.
 
 ### OpenClaw account import (W26; locally validated)
 

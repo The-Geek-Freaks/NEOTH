@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T02:02:42.6771067Z",
-  "validationStatus": "W263 actual Core85c lint repair; W260 hosted formatting imported; hosted behavior pending",
+  "capturedUtc": "2026-09-23T02:16:37.2088781Z",
+  "validationStatus": "W262 Discord default Gateway evidence and W264 paused Plan fixture reviewed; Group448/core pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -73,8 +73,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 12552,
-      "sha256": "C8139333A7F2C72AF88F6097982ABC254AF0B75B6D3126A119D76A00BA38D2BE"
+      "bytes": 12603,
+      "sha256": "2D9CD1BC5F1FD055B37D45D56412CA94A7BBBC91C1DF9DBEFB3956684ECDFA92"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -93,8 +93,8 @@
     },
     {
       "path": "docs/channels.md",
-      "bytes": 44383,
-      "sha256": "D2EC42BD9E29CB4D3D095FE0231E4C99052F0FC00A1FD7A9C6B86A95FDC056B5"
+      "bytes": 44688,
+      "sha256": "EE8A50487F6DACEECA61C0ADDE9AE7250A40414204503FF62930ECB6DC62C1F5"
     },
     {
       "path": "docs/cli-commands.md",
@@ -438,18 +438,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 101255,
-      "sha256": "A9B2CB4323F22D953B92A1C3F65DCB110019DC477BF601A41097080509974F76"
+      "bytes": 102820,
+      "sha256": "408F0EF6308E1BC291C84C1288134BEA2E6D4883A39D92F2ED333A124D0E2F03"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1104203,
-      "sha256": "D5450CD3C4418BC4B71F097A867C6D141811290B37F54FB1AD8555D69E358055"
+      "bytes": 1105768,
+      "sha256": "DACCED726E4C13AE267386402B899FAEE055759F5C22B6C40C5ABE47E16AF40B"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1700133,
-      "sha256": "E9F1C3B8A3B8A8D50FB85BDFB382F585601FF46BA6183621A208D8A576E3B822"
+      "bytes": 1701698,
+      "sha256": "9A2E3662155D0BA91B12EF1A5551B90EED8056F386A13FEB700E19FB986780B2"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -968,8 +968,8 @@
     },
     {
       "path": "SRC/neothd/src/channels/send_gate.rs",
-      "bytes": 30809,
-      "sha256": "CDC2F3E3139BB56E08D2861639E607EB2EA6518BACC22074C75435F35FA86694"
+      "bytes": 33895,
+      "sha256": "0B6FF80C919B9FAC14BE578AA8E4F08F221099434E1126B71F50C0CCCBBD0191"
     },
     {
       "path": "SRC/neothd/src/channels/telegram.rs",
@@ -1073,8 +1073,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/context.rs",
-      "bytes": 29427,
-      "sha256": "58C6DE14902A306D456B4840339CA9CC04FC97CD907546E33821848EC42754FF"
+      "bytes": 29365,
+      "sha256": "C574221866A8CF1A7FA45EB9FA2B96863CA0D0117587B096B34FBF2C91771891"
     },
     {
       "path": "SRC/neothd/src/cli/credential_transfer.rs",
@@ -1118,8 +1118,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/providers.rs",
-      "bytes": 33271,
-      "sha256": "DD5611C3C341A1F645229AC3C130567A093D391ADC01774072E5CDCB39826F70"
+      "bytes": 33994,
+      "sha256": "5EEE3F830C2815C031D818453F23F779F7E050258B7E1E569AB50B82D6AD4AF9"
     },
     {
       "path": "SRC/neothd/src/cli/export.rs",
@@ -1278,8 +1278,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
-      "bytes": 528523,
-      "sha256": "B8A5AA25DC6B0AB1F119155739DF63E8B251B280021EAB232A562870148D88CF"
+      "bytes": 528933,
+      "sha256": "D6862C4BBAA5246484C9184CC96C69238E82D2A1C688CDB3D16E3EFCD075C0A5"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tests.rs",
@@ -1628,8 +1628,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/channel_transport_evidence.rs",
-      "bytes": 51821,
-      "sha256": "D03E60632A2E92479010708EA05E7A13AA05C90F55CA487CEDF532DB5EFAB26E"
+      "bytes": 52942,
+      "sha256": "5C185FBCB3AEDBB1688C67EDBC0E4E22AF1E8640D695FDFB4F9C6849347B7405"
     },
     {
       "path": "SRC/neothd/src/daemon/chat_runtime.rs",
@@ -2695,6 +2695,11 @@
       "path": "THIRD_PARTY_LICENSES",
       "bytes": 2299156,
       "sha256": "A2F73733618DE347F4876EDD4325391DB8C2F11D853614CC4D8EDC2A82CA497D"
+    },
+    {
+      "path": "SRC/neothd/src/channels/discord.rs",
+      "bytes": 38507,
+      "sha256": "1CF3A47B52CA936144748D951EB17395280A21772C36798C22A1693633967966"
     }
   ]
 }

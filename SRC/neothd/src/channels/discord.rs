@@ -70,6 +70,83 @@ pub struct DiscordChannel {
 struct DiscordInboundGate {
     allowed_sender_id: String,
     writer: crate::wal::writer::WalWriterHandle,
+    live_egress: crate::cli::serve_tasks::LegacyLiveEgressProvenance,
+}
+
+type DiscordGatewayReplyPoster = std::sync::Arc<
+    dyn Fn(
+            String,
+            String,
+        ) -> futures_util::future::BoxFuture<'static, std::result::Result<MessageId, ChannelError>>
+        + Send
+        + Sync,
+>;
+
+/// Build the one default-Discord Gateway reply path. Its opaque startup
+/// provenance must record an authenticated intent before the adapter call and
+/// a terminal result after it; an unrecordable intent refuses the call.
+fn authenticated_gateway_reply_sender(
+    writer: crate::wal::writer::WalWriterHandle,
+    live_egress: crate::cli::serve_tasks::LegacyLiveEgressProvenance,
+    post: DiscordGatewayReplyPoster,
+) -> crate::channels::discord_gateway_loop::OutboundSender {
+    std::sync::Arc::new(move |out: crate::channels::OutboundMessage| {
+        let writer = writer.clone();
+        let live_egress = live_egress.clone();
+        let post = std::sync::Arc::clone(&post);
+        Box::pin(async move {
+            let Some(intent_id) = crate::channels::send_gate::emit_legacy_live_egress_intent(
+                &writer,
+                "discord",
+                &out.recipient_id,
+                &out.text,
+                crate::time::now_unix_secs(),
+                &live_egress,
+            )
+            .await else {
+                anyhow::bail!("mandatory authenticated Discord egress intent could not be recorded");
+            };
+
+            match post(out.recipient_id, out.text).await {
+                Ok(message_id) => {
+                    crate::channels::send_gate::emit_legacy_live_egress_result(
+                        &writer,
+                        &intent_id,
+                        "delivered",
+                        Some(&message_id.0),
+                        crate::time::now_unix_secs(),
+                        &live_egress,
+                    )
+                    .await
+                    .map_err(|()| anyhow::anyhow!(
+                        "mandatory authenticated Discord egress receipt could not be recorded"
+                    ))?;
+                    Ok(())
+                }
+                Err(error) => {
+                    let outcome = match &error {
+                        ChannelError::Transport(_) => "transport",
+                        ChannelError::NotSupported { .. } => "not_supported",
+                        ChannelError::RateLimited { .. } => "rate_limited",
+                        ChannelError::Auth(_) => "auth",
+                    };
+                    crate::channels::send_gate::emit_legacy_live_egress_result(
+                        &writer,
+                        &intent_id,
+                        outcome,
+                        None,
+                        crate::time::now_unix_secs(),
+                        &live_egress,
+                    )
+                    .await
+                    .map_err(|()| anyhow::anyhow!(
+                        "mandatory authenticated Discord egress receipt could not be recorded"
+                    ))?;
+                    Err(anyhow::anyhow!("discord reply send: {error}"))
+                }
+            }
+        })
+    })
 }
 
 impl DiscordChannel {
@@ -89,11 +166,13 @@ impl DiscordChannel {
         bot_token: SecretString,
         allowed_sender_id: &str,
         writer: crate::wal::writer::WalWriterHandle,
+        live_egress: crate::cli::serve_tasks::LegacyLiveEgressProvenance,
     ) -> Result<Self> {
         let mut channel = Self::new(bot_token)?;
         channel.inbound_gate = Some(DiscordInboundGate {
             allowed_sender_id: normalize_allowed_sender_id(allowed_sender_id)?,
             writer,
+            live_egress,
         });
         Ok(channel)
     }
@@ -210,28 +289,28 @@ impl Channel for DiscordChannel {
     /// already shipped. `Deferred` flag from Phase 1 is gone —
     /// the receive loop is live as of 2026-05-21.
     async fn run(&self, handler: PipelineHandler) -> Result<()> {
-        use crate::channels::discord_gateway_loop::{
-            OutboundSender, default_intents, run_gateway_loop,
-        };
+        use crate::channels::discord_gateway_loop::{default_intents, run_gateway_loop};
 
         let inbound_gate = self.inbound_gate.as_ref().context(
             "Discord inbound is fail-closed: construct with an allowed sender id and WAL writer",
         )?;
         let http = self.http.clone();
         let token = std::sync::Arc::new(self.bot_token.clone());
-        let sender: OutboundSender = {
+        let sender = {
             let http = http.clone();
             let token = std::sync::Arc::clone(&token);
-            std::sync::Arc::new(move |out: crate::channels::OutboundMessage| {
+            let post: DiscordGatewayReplyPoster = std::sync::Arc::new(move |recipient, text| {
                 let http = http.clone();
                 let token = std::sync::Arc::clone(&token);
                 Box::pin(async move {
-                    post_to_discord(&http, &token, &out.recipient_id, &out.text)
-                        .await
-                        .map(|_| ())
-                        .map_err(|e| anyhow::anyhow!("discord reply send: {e}"))
+                    post_to_discord(&http, &token, &recipient, &text).await
                 })
-            })
+            });
+            authenticated_gateway_reply_sender(
+                inbound_gate.writer.clone(),
+                inbound_gate.live_egress.clone(),
+                post,
+            )
         };
         run_gateway_loop(
             self.bot_token.clone(),
@@ -428,6 +507,7 @@ struct MessageCreateResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn adapter_reports_discord_name() {
@@ -496,6 +576,287 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ChannelError::Transport(_)));
+    }
+
+    #[tokio::test]
+    async fn gateway_reply_sender_refuses_missing_intent_and_never_retries_adapter_error() {
+        let provenance = crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(
+            crate::channels::ChannelKind::Discord,
+        )
+        .expect("Discord has sealed default live provenance");
+        let refused_calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let refused_post: DiscordGatewayReplyPoster = {
+            let refused_calls = std::sync::Arc::clone(&refused_calls);
+            std::sync::Arc::new(move |_recipient, _text| {
+                refused_calls.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Ok(MessageId("must-not-send".to_string())) })
+            })
+        };
+        let refused = authenticated_gateway_reply_sender(
+            crate::wal::writer::closed_test_writer(),
+            provenance.clone(),
+            refused_post,
+        );
+        assert!(
+            refused(crate::channels::OutboundMessage {
+                recipient_id: "private-channel".to_string(),
+                text: "private-reply".to_string(),
+            })
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            refused_calls.load(Ordering::SeqCst),
+            0,
+            "an unrecordable authenticated intent refuses the adapter call"
+        );
+
+        let home = tempfile::tempdir().expect("create gateway sender WAL home");
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).expect("create gateway sender WAL");
+        let segment = wal.join("000001.wal");
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), home.path().to_path_buf())
+                .expect("spawn gateway sender WAL writer");
+        ready
+            .wait()
+            .await
+            .expect("initialize gateway sender WAL writer");
+        let failed_calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let failed_post: DiscordGatewayReplyPoster = {
+            let failed_calls = std::sync::Arc::clone(&failed_calls);
+            std::sync::Arc::new(move |_recipient, _text| {
+                failed_calls.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Err(ChannelError::Transport("fixture failure".to_string())) })
+            })
+        };
+        let failed = authenticated_gateway_reply_sender(writer.clone(), provenance, failed_post);
+        assert!(
+            failed(crate::channels::OutboundMessage {
+                recipient_id: "private-channel".to_string(),
+                text: "private-reply".to_string(),
+            })
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            failed_calls.load(Ordering::SeqCst),
+            1,
+            "a terminal adapter error is recorded without a retry"
+        );
+        drop(failed);
+        drop(writer);
+        join.await
+            .expect("join gateway sender WAL writer")
+            .expect("close gateway sender WAL writer");
+
+        let bytes = tokio::fs::read(segment).await.expect("read gateway sender WAL");
+        let mut cursor = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        let mut outcome = None;
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..])
+                .expect("complete gateway sender evidence frame");
+            if frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8
+            {
+                let payload: serde_json::Value =
+                    serde_json::from_slice(frame.payload).expect("gateway terminal JSON");
+                outcome = payload["outcome"].as_str().map(str::to_string);
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        assert_eq!(outcome.as_deref(), Some("transport"));
+    }
+
+    #[tokio::test]
+    async fn gateway_reply_sender_records_delivery_and_leaves_one_effect_unsettled_when_receipt_writer_stops(
+    ) {
+        let provenance = crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(
+            crate::channels::ChannelKind::Discord,
+        )
+        .expect("Discord has sealed default live provenance");
+
+        let delivered_home = tempfile::tempdir().expect("create delivered gateway sender WAL home");
+        let delivered_wal = delivered_home.path().join("wal");
+        std::fs::create_dir_all(&delivered_wal).expect("create delivered gateway sender WAL");
+        let delivered_segment = delivered_wal.join("000001.wal");
+        let (delivered_writer, delivered_join, delivered_ready) =
+            crate::wal::writer::spawn_for_home_ready(
+                delivered_segment.clone(),
+                delivered_home.path().to_path_buf(),
+            )
+            .expect("spawn delivered gateway sender WAL writer");
+        delivered_ready
+            .wait()
+            .await
+            .expect("initialize delivered gateway sender WAL writer");
+        let delivered_calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let delivered_post: DiscordGatewayReplyPoster = {
+            let delivered_calls = std::sync::Arc::clone(&delivered_calls);
+            std::sync::Arc::new(move |_recipient, _text| {
+                delivered_calls.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Ok(MessageId("accepted-message".to_string())) })
+            })
+        };
+        let delivered = authenticated_gateway_reply_sender(
+            delivered_writer.clone(),
+            provenance.clone(),
+            delivered_post,
+        );
+        delivered(crate::channels::OutboundMessage {
+            recipient_id: "private-channel".to_string(),
+            text: "private-reply".to_string(),
+        })
+        .await
+        .expect("accepted Discord post records a delivered terminal");
+        assert_eq!(delivered_calls.load(Ordering::SeqCst), 1);
+        drop(delivered);
+        drop(delivered_writer);
+        delivered_join
+            .await
+            .expect("join delivered gateway sender WAL writer")
+            .expect("close delivered gateway sender WAL writer");
+
+        let delivered_bytes = tokio::fs::read(&delivered_segment)
+            .await
+            .expect("read delivered gateway sender WAL");
+        let mut cursor = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        let mut delivered_intent = None;
+        let mut delivered_outcome = None;
+        while cursor < delivered_bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&delivered_bytes[cursor..])
+                .expect("complete delivered gateway sender evidence frame");
+            let payload: serde_json::Value =
+                serde_json::from_slice(frame.payload).expect("delivered gateway sender JSON");
+            if frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8
+            {
+                delivered_intent = payload["intent_id"].as_str().map(str::to_string);
+            }
+            if frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8
+            {
+                delivered_outcome = Some((
+                    payload["intent_id"].as_str().map(str::to_string),
+                    payload["outcome"].as_str().map(str::to_string),
+                ));
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        assert_eq!(
+            delivered_outcome,
+            Some((delivered_intent, Some("delivered".to_string())))
+        );
+
+        let unsettled_home = tempfile::tempdir().expect("create unsettled gateway sender WAL home");
+        let unsettled_wal = unsettled_home.path().join("wal");
+        std::fs::create_dir_all(&unsettled_wal).expect("create unsettled gateway sender WAL");
+        let unsettled_segment = unsettled_wal.join("000001.wal");
+        let (unsettled_writer, unsettled_completion, unsettled_ready) =
+            crate::wal::writer::spawn_for_home_ready_with_completion(
+                unsettled_segment.clone(),
+                unsettled_home.path().to_path_buf(),
+            )
+            .expect("spawn unsettled gateway sender WAL writer");
+        unsettled_ready
+            .wait()
+            .await
+            .expect("initialize unsettled gateway sender WAL writer");
+        let (post_started_tx, post_started_rx) = tokio::sync::oneshot::channel();
+        let (post_release_tx, post_release_rx) = tokio::sync::oneshot::channel();
+        let post_started_tx = std::sync::Arc::new(std::sync::Mutex::new(Some(post_started_tx)));
+        let post_release_rx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(post_release_rx)));
+        let unsettled_calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let unsettled_post: DiscordGatewayReplyPoster = {
+            let post_started_tx = std::sync::Arc::clone(&post_started_tx);
+            let post_release_rx = std::sync::Arc::clone(&post_release_rx);
+            let unsettled_calls = std::sync::Arc::clone(&unsettled_calls);
+            std::sync::Arc::new(move |_recipient, _text| {
+                unsettled_calls.fetch_add(1, Ordering::SeqCst);
+                post_started_tx
+                    .lock()
+                    .expect("lock post-start sender")
+                    .take()
+                    .expect("one production adapter call")
+                    .send(())
+                    .expect("test observes production adapter call");
+                let post_release_rx = std::sync::Arc::clone(&post_release_rx);
+                Box::pin(async move {
+                    post_release_rx
+                        .lock()
+                        .await
+                        .take()
+                        .expect("one production adapter result")
+                        .await
+                        .expect("test releases accepted adapter result");
+                    Ok(MessageId("accepted-before-receipt-failure".to_string()))
+                })
+            })
+        };
+        let unsettled = authenticated_gateway_reply_sender(
+            unsettled_writer.clone(),
+            provenance,
+            unsettled_post,
+        );
+        let in_flight = {
+            let unsettled = unsettled.clone();
+            tokio::spawn(async move {
+                unsettled(crate::channels::OutboundMessage {
+                    recipient_id: "private-channel".to_string(),
+                    text: "private-reply".to_string(),
+                })
+                .await
+            })
+        };
+        post_started_rx
+            .await
+            .expect("intent persisted before adapter call is observed");
+        unsettled_completion.abort_handle().abort();
+        assert!(
+            unsettled_completion.wait().await.is_err(),
+            "the result writer stops before the accepted adapter result"
+        );
+        post_release_tx
+            .send(())
+            .expect("release accepted adapter result after writer stops");
+        assert!(
+            in_flight
+                .await
+                .expect("join unsettled production sender")
+                .is_err(),
+            "receipt write failure is visible to the caller after one adapter effect"
+        );
+        assert_eq!(
+            unsettled_calls.load(Ordering::SeqCst),
+            1,
+            "a receipt failure never replays the accepted adapter effect"
+        );
+        drop(unsettled);
+        drop(unsettled_writer);
+
+        let unsettled_bytes = tokio::fs::read(unsettled_segment)
+            .await
+            .expect("read unsettled gateway sender WAL");
+        let mut cursor = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        let mut intent_count = 0;
+        let mut result_count = 0;
+        while cursor < unsettled_bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&unsettled_bytes[cursor..])
+                .expect("complete unsettled gateway sender evidence frame");
+            if frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8
+            {
+                intent_count += 1;
+            }
+            if frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8
+            {
+                result_count += 1;
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        assert_eq!(intent_count, 1, "the accepted effect retains its intent");
+        assert_eq!(result_count, 0, "the stopped writer leaves the intent unsettled");
     }
 
     #[test]
