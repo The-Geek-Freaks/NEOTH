@@ -589,7 +589,11 @@ async fn concurrent_followers_cannot_overspend_or_reuse_shared_cap() {
         .into_iter()
         .filter(|node| *node != leader)
         .collect::<Vec<_>>();
-    assert_eq!(followers.len(), 2, "three voters must leave two live followers");
+    assert_eq!(
+        followers.len(),
+        2,
+        "three voters must leave two live followers"
+    );
 
     let left_node = followers[0];
     let right_node = followers[1];
@@ -615,26 +619,18 @@ async fn concurrent_followers_cannot_overspend_or_reuse_shared_cap() {
         )
     };
 
-    let (winner_node, winner_request, winner_grant, loser_node, loser_request) =
-        match (left, right) {
-            (Ok(grant), Err(BudgetServiceError::Rejected(BudgetRejection::CapExceeded))) => (
-                left_node,
-                left_request,
-                grant,
-                right_node,
-                right_request,
-            ),
-            (Err(BudgetServiceError::Rejected(BudgetRejection::CapExceeded)), Ok(grant)) => (
-                right_node,
-                right_request,
-                grant,
-                left_node,
-                left_request,
-            ),
-            (left, right) => panic!(
-                "exactly one concurrent full-cap reservation must commit; left={left:?}, right={right:?}"
-            ),
-        };
+    let (winner_node, winner_request, winner_grant, loser_node, loser_request) = match (left, right)
+    {
+        (Ok(grant), Err(BudgetServiceError::Rejected(BudgetRejection::CapExceeded))) => {
+            (left_node, left_request, grant, right_node, right_request)
+        }
+        (Err(BudgetServiceError::Rejected(BudgetRejection::CapExceeded)), Ok(grant)) => {
+            (right_node, right_request, grant, left_node, left_request)
+        }
+        (left, right) => panic!(
+            "exactly one concurrent full-cap reservation must commit; left={left:?}, right={right:?}"
+        ),
+    };
     assert_eq!(winner_grant.grant_id, winner_request.grant_id);
     assert_eq!(winner_grant.reserved_usd_nanos, SHARED_CAP);
 
@@ -646,11 +642,17 @@ async fn concurrent_followers_cannot_overspend_or_reuse_shared_cap() {
         )
         .await
         .unwrap();
-    assert_eq!(winner_permit.claim_receipt().grant_id, winner_grant.grant_id);
+    assert_eq!(
+        winner_permit.claim_receipt().grant_id,
+        winner_grant.grant_id
+    );
     drop(winner_permit);
 
     assert!(matches!(
-        fixture.service_for(loser_node).reserve(loser_request.clone()).await,
+        fixture
+            .service_for(loser_node)
+            .reserve(loser_request.clone())
+            .await,
         Err(BudgetServiceError::Rejected(BudgetRejection::CapExceeded))
     ));
     fixture.restart(loser_node).await;

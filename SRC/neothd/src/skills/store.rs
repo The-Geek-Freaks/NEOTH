@@ -1061,9 +1061,7 @@ fn walk_bound_directory_descendants(
                 current = next;
                 current_display = next_display;
             }
-            Err(error)
-                if error_has_io_kind(&error, std::io::ErrorKind::NotFound) && !create =>
-            {
+            Err(error) if error_has_io_kind(&error, std::io::ErrorKind::NotFound) && !create => {
                 return Ok(None);
             }
             Err(error) if error_has_io_kind(&error, std::io::ErrorKind::NotFound) => {

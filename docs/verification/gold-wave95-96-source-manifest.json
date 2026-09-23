@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T19:42:47.2698003Z",
-  "validationStatus": "W479 P122 functional acceptance; W474-W478 reviewed hosted failure repairs; inventory733/native1181/Group886/GUI145Linux141macOS; fresh hosted repair gates pending",
+  "capturedUtc": "2026-09-23T19:46:55.4582881Z",
+  "validationStatus": "W482 exact hosted formatting import; inventory733/native1181/Group886; P122 accepted; W479 core/group/windows runs active",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1158,18 +1158,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 180602,
-      "sha256": "BB65B4813BA466D31C7C5FA3A1BA01B99D975E1438D8576C3DC8C5CAB21E6251"
+      "bytes": 181234,
+      "sha256": "5CEE6E3BABDF6D156518CE21AAEDB25862D4D4A3DEA4B123FB06F53EB95F3F61"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1190815,
-      "sha256": "FC10167980AEF0CA894B74883DDC5786805CA2E8087E45A8AC4DDFFBED41EA91"
+      "bytes": 1191447,
+      "sha256": "91774FE4EDA6CA7FEAA79E90C5DDB57ADA35BF787B74A6957D77E96C7E4A3847"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1789148,
-      "sha256": "AA9F4243BDCA9B64CD914E8BA2E85874FB4F1745793B891B76FEC4CA8806BB22"
+      "bytes": 1789780,
+      "sha256": "B2E5E66633A70F7E95D1D4A440EB29634747F8B0DD5D9F4B00345DD0E43CEEF5"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -2103,13 +2103,13 @@
     },
     {
       "path": "SRC/neothd/src/cluster/budget_raft/service_tests.rs",
-      "bytes": 27712,
-      "sha256": "E3A40D381B48D021F21CB8A6F748FB964C3C2919FDE14372F7413D8D60ABC3E4"
+      "bytes": 27631,
+      "sha256": "BE767C08C71650D14B3B001A406A4CE215A3CD19DB4ECDE369DB37ADC80B8F8B"
     },
     {
       "path": "SRC/neothd/src/cluster/budget_raft/service.rs",
-      "bytes": 30158,
-      "sha256": "24BBAD2DB63A97F4EFF37200A19ECDF568DCB0A71017D90C89A7644FE38C4550"
+      "bytes": 30189,
+      "sha256": "92C5B0E36B98C9A320DD202411CB04C8ECDED614A1692EEA9D9876C7629ED3CE"
     },
     {
       "path": "SRC/neothd/src/cluster/budget_raft/state_machine.rs",
@@ -3343,8 +3343,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/store.rs",
-      "bytes": 248565,
-      "sha256": "35F1435DE5054A0FF7F1F5954F0769033751F072564882BA7ED32A47775E20B3"
+      "bytes": 248537,
+      "sha256": "7D744A136D87CE2490EA94BE558348F2B87821EBAD69C5B88BB47316AB429804"
     },
     {
       "path": "SRC/neothd/src/slash/schema.rs",

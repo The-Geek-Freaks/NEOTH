@@ -452,7 +452,9 @@ impl BudgetRaftService {
         actual_usd_nanos: Option<u64>,
     ) -> Result<GrantReceipt, BudgetServiceError> {
         if permit.provider_intent_id != permit.claim_receipt.provider_intent_id {
-            return Err(BudgetServiceError::Rejected(BudgetRejection::IntentMismatch));
+            return Err(BudgetServiceError::Rejected(
+                BudgetRejection::IntentMismatch,
+            ));
         }
         let request = SettleBudget {
             grant_id: permit.grant_id,

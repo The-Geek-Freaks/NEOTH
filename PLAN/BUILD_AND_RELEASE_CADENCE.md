@@ -3,6 +3,16 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W482 hosted formatting import (2026-09-23):**
+W479 is published as 9abb52d5. Preflight 35911416396 exported formatting for
+three Rust files; artifact 10772743046, both SHA256 entries and all complete
+before/after Gitblob pairs were verified before import. No local formatter ran.
+Core 35911452930, Group886 35911456591 and Windows16 35911460507 continue at
+9abb52d5; formatting is the only source carry in this follow-up. W480 connects
+the real producer capture to the desktop consumers. Counts remain
+Inventory733/native1181/Group886; Road1039checked/283open/2partial;
+WS-LF32done/86open. All executable gates remain on GitHub.
+
 **W479 wizard acceptance and hosted repairs (2026-09-23):**
 P1-22 is functionally accepted at d9382041: 18 required baseline identities
 passed on both macOS and Windows, plus the real GUI prepare/commit/rerun test
