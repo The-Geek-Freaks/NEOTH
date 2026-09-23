@@ -330,33 +330,40 @@ fn open_no_follow_read_descriptor(canonical: &Path) -> std::io::Result<std::fs::
     Ok(file)
 }
 
+#[cfg(windows)]
+fn windows_read_capability_root(path: &Path) -> std::io::Result<PathBuf> {
+    use std::path::Prefix;
+
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "absolute Windows path has no filesystem prefix",
+        ));
+    };
+    if !matches!(
+        prefix.kind(),
+        Prefix::Disk(_) | Prefix::VerbatimDisk(_) | Prefix::UNC(_, _) | Prefix::VerbatimUNC(_, _)
+    ) || !matches!(components.next(), Some(Component::RootDir))
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "unsupported or relative Windows filesystem namespace",
+        ));
+    }
+    // Preserve the exact drive/share and canonical verbatim namespace. A UNC
+    // allowlist remains usable; device/pipe namespaces never become file roots.
+    Ok(path.components().take(2).collect())
+}
+
 fn open_absolute_directory_no_follow(path: &Path) -> std::io::Result<Dir> {
     #[cfg(unix)]
     let mut current = Dir::open_ambient_dir(Path::new("/"), cap_std::ambient_authority())?;
     #[cfg(windows)]
-    let mut current = {
-        use std::path::Prefix;
-        let Some(Component::Prefix(prefix)) = path.components().next() else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "absolute Windows path has no drive prefix",
-            ));
-        };
-        let root = match prefix.kind() {
-            Prefix::Disk(letter) => PathBuf::from(format!("{}:\\", char::from(letter))),
-            // `std::fs::canonicalize` normally returns this spelling. Keep the
-            // verbatim prefix when opening the capability root so the later
-            // component walk remains in the same Windows namespace.
-            Prefix::VerbatimDisk(letter) => PathBuf::from(format!(r"\\?\{}:\", char::from(letter))),
-            _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "unsupported Windows root namespace",
-                ));
-            }
-        };
-        Dir::open_ambient_dir(root, cap_std::ambient_authority())?
-    };
+    let mut current = Dir::open_ambient_dir(
+        windows_read_capability_root(path)?,
+        cap_std::ambient_authority(),
+    )?;
     #[cfg(not(any(unix, windows)))]
     return Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
@@ -1402,6 +1409,25 @@ mod tests {
             invoke_preflighted_os_file_read(admitted, AuditSink::None, 0).await,
             Err(OsGateError::ReadFailed(reason)) if reason.contains("exceeds")
         ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn read_capability_root_preserves_windows_drive_and_share_namespaces() {
+        for (path, expected) in [
+            (r"C:\allowed\file.txt", r"C:\"),
+            (r"\\?\C:\allowed\file.txt", r"\\?\C:\"),
+            (r"\\server\share\allowed\file.txt", r"\\server\share\"),
+            (r"\\?\UNC\server\share\allowed\file.txt", r"\\?\UNC\server\share\"),
+        ] {
+            assert_eq!(
+                windows_read_capability_root(Path::new(path)).unwrap(),
+                PathBuf::from(expected),
+            );
+        }
+        for path in [r"C:relative.txt", r"\rooted-without-drive", r"\\.\pipe\private"] {
+            assert!(windows_read_capability_root(Path::new(path)).is_err());
+        }
     }
 
     #[cfg(windows)]

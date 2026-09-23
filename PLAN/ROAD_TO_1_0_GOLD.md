@@ -8,8 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W245 Windows read-root compatibility (2026-09-23):** the descriptor-bound
+reader retains ordinary and verbatim UNC roots as well as drive roots, avoiding
+an unintended regression for existing allowlisted shares. Device/pipe and relative
+namespaces remain refused; component/leaf no-follow checks are unchanged. One
+Windows-only path-contract regression is added; live SMB behavior is not claimed.
+Inventory537sources/853universal native/97GUI, Windows native extras19 (Linux22,
+macOS21), Group413 unchanged. Root also corrects W244's selected source-path count
+to the actually verified89. Road1016checked/306open/2partial remains unchanged.
+See `docs/gold-wave245-windows-read-roots.md`; actual Windows execution pending.
+
 **W244 Hosted fixture compile repair (2026-09-23):** Group41335800207400 on
-a7f3e225 binds all88 selected source paths plus matrix/lock, but compiled no
+a7f3e225 binds all89 selected source paths plus matrix/lock, but compiled no
 fixture successfully: two new `McpServers` fixtures omitted `smart_loading`.
 Both now explicitly use false, matching the existing default; one redundant
 Clap trait import is removed. This is a narrow source repair, not413 passing

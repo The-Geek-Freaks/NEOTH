@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T00:07:55.7520651Z",
-  "validationStatus": "W244 missing-field repair; Hosted execution pending",
+  "capturedUtc": "2026-09-23T00:12:32.6755599Z",
+  "validationStatus": "W245 Windows drive/share root compatibility independently source-reviewed; Hosted native pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -438,18 +438,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 85257,
-      "sha256": "D90C6BF2AA82DC932BE036CF43CB2C58FEBCA160A91975519D51CCB599FCB98F"
+      "bytes": 85982,
+      "sha256": "8A2D8BCB35F6FDC1CE990FBD84F7F7100F461BE00A5306D03E662E745C81ED9B"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1088192,
-      "sha256": "37D3B88129A56EF2B698421F4C60A431CF4A81A26056FB8FE4EA1E7F323EFE54"
+      "bytes": 1088917,
+      "sha256": "86F6CF675B49612A797C84A1C2639754F92F92267C247821231863E1AC75E69E"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1683760,
-      "sha256": "DB2CCB9DB257AB8B75C9D6A4C57E8931C5DD03CA8B3A452209319810C5C1FBCE"
+      "bytes": 1684485,
+      "sha256": "124CA29B8F7C8FFF48B66FCC46B00A789982D71DA0287AB41FE09EA4759E2923"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -2093,8 +2093,8 @@
     },
     {
       "path": "SRC/neothd/src/os_tools/gate.rs",
-      "bytes": 92570,
-      "sha256": "D7A62375B7D56DF5959DB45B5C8D772AB9E484ADE1C72D318F329DBC9615B750"
+      "bytes": 93372,
+      "sha256": "9EE36452940C357BA4E2E497C2D98703AC5EF3DBF1E59359A59E9D2845057BD5"
     },
     {
       "path": "SRC/neothd/src/permissions/gate.rs",
