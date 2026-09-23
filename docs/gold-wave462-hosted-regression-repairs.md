@@ -61,3 +61,18 @@ tests and the existing low-debug-info cache profile.
 All repairs have static review and text-diff validation only until the new
 hosted runs return. This document does not close P2-19 or claim Windows runtime,
 complete workspace or release success. The absolute local BSOD hold remains.
+
+## W467 hosted follow-up
+
+Core run `35889966328` at `a96eeba5ad380cd60ee2d6f3a98fd42e3fccf054`
+passed slim production Clippy, then reported two OpenRaft attribute panics,
+an `anyhow::Error: StdError` conversion failure and three cascading missing
+factory trait diagnostics. The earlier static review did not establish API
+compatibility. The impls now express the network futures directly, without
+applying OpenRaft's trait-definition macro to impl blocks. The store conversion
+uses the supported dynamic-error conversion in pinned AnyError0.1.13; it retains
+the source chain without adding an anyhow feature.
+
+These are repairs to actual compiler output; fresh hosted compilation and
+behavioral execution remain required. Pending live-assignment, runtime-stream
+and wizard regressions are separate uncommitted batches at this checkpoint.

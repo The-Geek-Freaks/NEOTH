@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W467 actual hosted core diagnostics (2026-09-23):**
+Preflight76e4 run35890366917 passed. Corea96 run35889966328 passed slim
+production Clippy but failed the test-target check: two impl-level OpenRaft
+macro panics, one anyhow/AnyError conversion error and three cascading factory
+trait errors. The narrow repairs target these exact diagnostics; no hosted
+behavioral pass is inferred. Group882, GUI144 and Windows16 await core readiness.
+W465/W466 live assignments and the W458 real two-stream runtime regression are
+under independent review. P1-22 remains open because existing passing wizard
+terminals do not cover shared-executor persistence followed by topology reload;
+W468 adds that missing regression. No Road checkbox changes in this checkpoint.
+Inventory730/native1177/Group882/GUI144Linux140macOS; Road1038checked/284open/
+2partial and WS-LF31done/87open remain unchanged. Absolute local BSOD hold stays.
+
 **W463 hosted format import (2026-09-23):**
 W462 is published as a96eeba5. Preflight35889935674 reported only formatting;
 its five-file patch was imported after verifying both artifact hashes, source

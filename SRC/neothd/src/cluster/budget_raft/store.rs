@@ -213,7 +213,7 @@ impl BudgetRaftStore {
         F: FnOnce(&mut Connection) -> Result<T> + Send + 'static,
     {
         self.blocking(f).await.map_err(|e| StorageError::IO {
-            source: StorageIOError::new(subject, verb, AnyError::new(&e)),
+            source: StorageIOError::new(subject, verb, AnyError::from_dyn(e.as_ref(), None)),
         })
     }
 }

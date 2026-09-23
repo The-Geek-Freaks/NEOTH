@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Five source-bound hosted rustfmt outputs imported; Corea96 running; behavior gates pending",
+  "status": "W467 narrow repair of actual hosted OpenRaft macro and anyhow conversion diagnostics; local text-only checks; fresh hosted gates pending; inventory730",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 127199,
-    "sha256": "140728AB0A19E131103D4EE27BD0BD48EB5370F674B36DC2BC43E3F23E13FF53"
+    "bytes": 127259,
+    "sha256": "2C3D68BE6AA6A58B5AC4A7E1008CD46B67E59E628968D639A591AB1CE36D5AF3"
   },
   "sourceInputs": 730,
   "requiredNativeTests": [
@@ -23396,6 +23396,26 @@
       }
     ],
     "note": "Run35889935674 sourcea96eeba5;5 full before/after Gitblobs and artifact/source hashes verified. No local formatter/executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave467ActualCoreRepair": {
+    "base": "76e4ab07bcc6d9ab767f11f9de99f604af570e1b",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cluster/budget_raft/network.rs",
+        "bytes": 7507,
+        "sha256": "E4B4F0BF02CFC7FBCAF51CBC722B5604D6FFE8C99EA8E968D33DB2F06127F5C5",
+        "blob": "bd58e8b5957c5ae104b3baee8a674e6a4a5c784e"
+      },
+      {
+        "path": "SRC/neothd/src/cluster/budget_raft/store.rs",
+        "bytes": 28417,
+        "sha256": "69E2FE6C958C6C2C20C64E7253C6725E92EC1DD513C3EEF31A031CB3A0EEC5D6",
+        "blob": "8edfc504b5ce8e6c500d00a7bd4a5aa44791bcbd"
+      }
+    ],
+    "note": "Core35889966328 at a96 passed slim Clippy but failed test-target check. Network impl futures omit trait-only macro; AnyError::from_dyn preserves dyn error chain without dependency changes. Independent Root static diff review; no functional acceptance claimed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

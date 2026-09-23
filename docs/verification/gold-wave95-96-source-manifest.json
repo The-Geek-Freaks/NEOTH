@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T16:37:52.1510270Z",
-  "validationStatus": "Five source-bound hosted rustfmt outputs imported; Corea96 running; behavior gates pending",
+  "capturedUtc": "2026-09-23T16:55:52.4151101Z",
+  "validationStatus": "W467 narrow repair of actual hosted OpenRaft macro and anyhow conversion diagnostics; local text-only checks; fresh hosted gates pending; inventory730",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -938,8 +938,8 @@
     },
     {
       "path": "docs/gold-wave462-hosted-regression-repairs.md",
-      "bytes": 3586,
-      "sha256": "D59E837045FFCDEA6F29B0B213B127BCD435F1F430F831C4DA480A353E1C90EC"
+      "bytes": 4425,
+      "sha256": "81AB19AE3E4D7960D4B91F000B4ADC4889936ECE35EB083C4A1A56EDB05F54CD"
     },
     {
       "path": "docs/install.md",
@@ -1143,18 +1143,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 177084,
-      "sha256": "F648BEBD86A22564CCF189F69332BF803CD300AC131026E01FE12A488F3987BF"
+      "bytes": 178000,
+      "sha256": "87085CB9E1647F08896D09922163F682B5E838DDD2131F6A58304538F67FFB90"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1187271,
-      "sha256": "EA0AB1C4BFA4616CBB952B550150975C39A68597835938940CEEAF0403A68381"
+      "bytes": 1188187,
+      "sha256": "211C41E722B56E7F6B849EAFBB6FC5FAA50F42A9B4A24055E812519503FD5211"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1785463,
-      "sha256": "D3840A07A0A5A5F38F46E68D036283461DDCC997F49988988FA6544D7F08F102"
+      "bytes": 1786379,
+      "sha256": "7A5D964ADFC37511CABF621EA7631FE6BAF43EF3F9DE9477696992C96A05294D"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -2078,8 +2078,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/budget_raft/network.rs",
-      "bytes": 6774,
-      "sha256": "9679A6A4AB531586EBCF431DC6F6BEB683E204166520821CD2D6BBA5B2EECE3C"
+      "bytes": 7507,
+      "sha256": "E4B4F0BF02CFC7FBCAF51CBC722B5604D6FFE8C99EA8E968D33DB2F06127F5C5"
     },
     {
       "path": "SRC/neothd/src/cluster/budget_raft/raft_types.rs",
@@ -2108,8 +2108,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/budget_raft/store.rs",
-      "bytes": 28398,
-      "sha256": "E92E2F99D0AE071CD9EBF52C8B12EDB488BBC391FA523445D8B34299DE69AB73"
+      "bytes": 28417,
+      "sha256": "69E2FE6C958C6C2C20C64E7253C6725E92EC1DD513C3EEF31A031CB3A0EEC5D6"
     },
     {
       "path": "SRC/neothd/src/cluster/budget_raft/tests.rs",

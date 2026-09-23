@@ -120,61 +120,85 @@ pub struct BudgetRaftNetwork {
     request_timeout: Duration,
 }
 
-#[openraft::add_async_trait]
 impl RaftNetworkFactory<BudgetTypeConfig> for BudgetRaftNetworkFactory {
     type Network = BudgetRaftNetwork;
 
-    async fn new_client(&mut self, target: u64, _node: &openraft::BasicNode) -> Self::Network {
-        BudgetRaftNetwork {
-            carrier: Arc::clone(&self.carrier),
-            route: self.routes.get(&target).cloned(),
-            request_timeout: self.request_timeout,
+    fn new_client(
+        &mut self,
+        target: u64,
+        _node: &openraft::BasicNode,
+    ) -> impl std::future::Future<Output = Self::Network> + Send {
+        let carrier = Arc::clone(&self.carrier);
+        let route = self.routes.get(&target).cloned();
+        let request_timeout = self.request_timeout;
+
+        async move {
+            BudgetRaftNetwork {
+                carrier,
+                route,
+                request_timeout,
+            }
         }
     }
 }
 
-#[openraft::add_async_trait]
 impl RaftNetwork<BudgetTypeConfig> for BudgetRaftNetwork {
-    async fn append_entries(
+    fn append_entries(
         &mut self,
         rpc: AppendEntriesRequest<BudgetTypeConfig>,
         option: RPCOption,
-    ) -> Result<AppendEntriesResponse<u64>, BudgetRpcError> {
-        let route = self
-            .route
-            .as_ref()
-            .ok_or_else(|| unreachable_error("unknown frozen budget voter"))?;
-        self.carrier
-            .append_entries(route, rpc, option, self.request_timeout)
-            .await
+    ) -> impl std::future::Future<Output = Result<AppendEntriesResponse<u64>, BudgetRpcError>> + Send
+    {
+        let carrier = Arc::clone(&self.carrier);
+        let route = self.route.clone();
+        let request_timeout = self.request_timeout;
+
+        async move {
+            let route = route
+                .as_ref()
+                .ok_or_else(|| unreachable_error("unknown frozen budget voter"))?;
+            carrier
+                .append_entries(route, rpc, option, request_timeout)
+                .await
+        }
     }
 
-    async fn install_snapshot(
+    fn install_snapshot(
         &mut self,
         rpc: InstallSnapshotRequest<BudgetTypeConfig>,
         option: RPCOption,
-    ) -> Result<InstallSnapshotResponse<u64>, BudgetSnapshotRpcError> {
-        let route = self
-            .route
-            .as_ref()
-            .ok_or_else(|| snapshot_unreachable_error("unknown frozen budget voter"))?;
-        self.carrier
-            .install_snapshot(route, rpc, option, self.request_timeout)
-            .await
+    ) -> impl std::future::Future<
+        Output = Result<InstallSnapshotResponse<u64>, BudgetSnapshotRpcError>,
+    > + Send {
+        let carrier = Arc::clone(&self.carrier);
+        let route = self.route.clone();
+        let request_timeout = self.request_timeout;
+
+        async move {
+            let route = route
+                .as_ref()
+                .ok_or_else(|| snapshot_unreachable_error("unknown frozen budget voter"))?;
+            carrier
+                .install_snapshot(route, rpc, option, request_timeout)
+                .await
+        }
     }
 
-    async fn vote(
+    fn vote(
         &mut self,
         rpc: VoteRequest<u64>,
         option: RPCOption,
-    ) -> Result<VoteResponse<u64>, BudgetRpcError> {
-        let route = self
-            .route
-            .as_ref()
-            .ok_or_else(|| unreachable_error("unknown frozen budget voter"))?;
-        self.carrier
-            .vote(route, rpc, option, self.request_timeout)
-            .await
+    ) -> impl std::future::Future<Output = Result<VoteResponse<u64>, BudgetRpcError>> + Send {
+        let carrier = Arc::clone(&self.carrier);
+        let route = self.route.clone();
+        let request_timeout = self.request_timeout;
+
+        async move {
+            let route = route
+                .as_ref()
+                .ok_or_else(|| unreachable_error("unknown frozen budget voter"))?;
+            carrier.vote(route, rpc, option, request_timeout).await
+        }
     }
 }
 
