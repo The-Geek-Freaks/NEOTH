@@ -106,6 +106,9 @@ struct Turn {
     request_id: GuiChatRequestId,
     intent: GuiChatDigest,
     session: String,
+    message: String,
+    model: Option<String>,
+    skill: Option<String>,
     incognito: bool,
     reasoning_display: bool,
     next_reasoning_sequence: u32,
@@ -627,33 +630,14 @@ impl DaemonGuiChatRuntime {
                     ephemeral,
                 ) = {
                     let mut state = runtime.state.lock().await;
-                    let request_id = match state.turns.get(&turn_id) {
-                        Some(turn) => turn.request_id,
-                        None => return turn_id,
-                    };
-                    // The canonical descriptor remains only in the preflight entry until
-                    // this point. It is removed immediately after the engine takes it.
-                    let preflight = match state
-                        .preflights
-                        .values()
-                        .find(|p| p.request.request_id == request_id)
-                    {
-                        Some(p) => p,
-                        None => return turn_id,
-                    };
-                    let (message, model, skill) = (
-                        preflight.request.message.clone(),
-                        preflight.request.model.clone(),
-                        preflight.request.skill_id.clone(),
-                    );
                     let turn = match state.turns.get_mut(&turn_id) {
                         Some(turn) => turn,
                         None => return turn_id,
                     };
                     (
-                        message,
-                        model,
-                        skill,
+                        turn.message.clone(),
+                        turn.model.clone(),
+                        turn.skill.clone(),
                         turn.incognito,
                         turn.reasoning_display,
                         turn.staged.clone(),
@@ -1795,6 +1779,9 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
                 request_id: request.request_id,
                 intent: request.turn_intent_digest.clone(),
                 session: request.session_id.clone(),
+                message: preflight.request.message.clone(),
+                model: preflight.request.model.clone(),
+                skill: preflight.request.skill_id.clone(),
                 incognito: preflight.request.incognito,
                 reasoning_display: preflight.request.reasoning_display,
                 next_reasoning_sequence: 1,
@@ -2849,6 +2836,9 @@ mod lifecycle_tests {
                 request_id,
                 intent: GuiChatDigest("0".repeat(64)),
                 session: "fixture".into(),
+                message: "fixture message".into(),
+                model: None,
+                skill: None,
                 incognito: false,
                 reasoning_display: false,
                 next_reasoning_sequence: 1,

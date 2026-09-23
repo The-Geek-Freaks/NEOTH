@@ -87,6 +87,13 @@ jobs:
           skills::store::reported_commit_tests::private_stage_replaces_a_delete_sharing_bound_target_without_closing_it	neothd/src/skills/store.rs
           skills::store::reported_commit_tests::live_bound_parent_native_rename_is_denied	neothd/src/skills/store.rs
           skills::store::reported_commit_tests::private_stage_publishes_through_bound_parent_despite_mismatched_display_path	neothd/src/skills/store.rs
+          reflection::periodic::tests::windows_retention_reads_through_a_handle_withholding_delete_share	neothd/src/reflection/periodic.rs
+          reflection::periodic::retention_v2_tests::v2_enabled_quarantines_real_archive_and_receipt_owned_note_without_losing_period_input	neothd/src/reflection/retention_v2_tests.rs
+          reflection::periodic::retention_v2_tests::v2_identical_byte_note_replacement_refuses_receipt_owned_quarantine	neothd/src/reflection/retention_v2_tests.rs
+          reflection::periodic::retention_v2_tests::v2_post_archive_rename_before_transition_reconciles_source_identity	neothd/src/reflection/retention_v2_tests.rs
+          reflection::periodic::retention_v2_tests::v2_post_note_rename_before_transition_reconciles_deterministic_destination	neothd/src/reflection/retention_v2_tests.rs
+          reflection::periodic::retention_v2_tests::v2_receipt_before_committed_ordering_is_idempotent_after_restart	neothd/src/reflection/retention_v2_tests.rs
+          reflection::periodic::retention_v2_tests::v2_unlink_attempted_after_partial_unlink_is_reconciled_truthfully	neothd/src/reflection/retention_v2_tests.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -103,7 +110,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 17 ]]; then
+          if [[ "$expected" -ne 24 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -113,7 +120,7 @@ jobs:
             cargo test -p neoth --lib --locked --no-run > "$evidence/compile.log" 2>&1 || compile_status=$?
           else
             compile_status=64
-            printf 'selection is not the required 17 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 24 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

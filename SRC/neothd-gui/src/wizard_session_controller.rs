@@ -408,5 +408,4 @@ mod tests {
         stop_send.send(()).unwrap();
         server_thread.join().unwrap();
     }
-
 }

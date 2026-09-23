@@ -8,6 +8,24 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W502-W508 Q8 acceptance and hosted regression repair (2026-09-23):**
+P1-09 is accepted from13 exact test/class terminals (6Windows+7macOS)
+and10 scoped source paths, including the actual macOS-native W151 callback.
+Group89042 is admitted888PASS/2FAIL/0missing with176source/input bindings;
+both real-consent grammar regressions pass. W507 decodes the required
+control-frame prefix without weakening the CLI stream assertions. W508 moves
+admitted execution inputs into Turn: schedule_turn previously searched the
+preflight map after start had removed the entry, so the provider never opened.
+GUIc7 compiled unsuccessfully (11type errors,0executed); W504 fixes the two
+causes. W503 imports source-bound hosted formatting only. P1-18 and P2-26a
+remain open for fresh behavior results. Windows selection grows17to24 to
+cover the seven concrete retention/quarantine/recovery gaps after the real
+Windows store changes; P2-04 remains open until these pass.
+Inventory746sources,1185native+Win25Linux33mac32,Group890;
+GUI148Linux144macOS,macNative33. Road1043checked/279open/2partial,
+281raw/280pre-tag;WS-LF36done/82open. No local executable checks ran.
+Details:docs/gold-wave502-ouro-q8-acceptance.md and
+ docs/gold-wave503-508-hosted-regression-repairs.md.
 **W494/W499/W500 consent, streams and wizard; W495/W498 acceptance (2026-09-23):**
 Group888c7 is admitted885PASS/3FAIL/0missing with176bindings. W500 repairs
 an actual wire mismatch: real request-bound consent proofs use UUID.dot64hex,
@@ -9346,7 +9364,7 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
 - [x] **GOLD-LF-P1-06 — AgreementDimension council scoring:** accepted 2026-09-13 (Wave 9). Factual claims, recommendations and risk assessment use explicit 50/30/20 weights, bounded model declarations and deterministic pairwise textual identity. Missing, malformed, empty or mixed-applicability evidence cannot produce V1 consensus. The production and recursive paths parse before refusal/dissent/factual/winner consumers, preserve shared budgets and carry transient declarations only between internal adapters; metadata-only WAL, CLI replay and Incognito behavior are verified. Final source review is clear and 470 selected behavior tests pass with Core/Clippy/format gates. Contract: `docs/council-agreement-v1.md`; evidence: `docs/gold-wave9-verification.md` and `docs/verification/gold-wave9-{source-manifest,test-matrix}.json`. This is textual identity, not semantic or factual correctness proof; full release and live-provider gates remain separate. Source: BLUEPRINT_v06_synthesis.md §8.
 - [x] **GOLD-LF-P1-07 — External-family grader parity gate:** accepted 2026-09-13. Existing versioned grader configuration validates family against its provider enum; complete matrix validation requires an independent external participant and binds that requirement into the parity verdict. Fresh goldset 21/21 and parity-run 15/15 tests cover spoofed, missing, duplicate and mixed-family cases. No duplicate implementation was added. Evidence: `docs/gold-p1-07-acceptance.md` and `docs/verification/gold-p1-07-acceptance.json`, verified against `1f2860cd`. Live provider-origin and P1-08 transcript/attested-workflow acceptance remain separate. Source: 00_DESIGN_v1.1_FINAL.md H7.
 - [ ] **GOLD-LF-P1-08 — Recall-parity evaluation harness:** ship transcript/WAL goldset mining, operator labeling, four-grader batch orchestration and family-bias clustering as one reproducible workflow with resumable artifacts, provenance and a release-gating report. Stage 3b authenticated local transcript ingress accepted 2026-09-13 (Wave 10): finite opt-in, exact RAW/Bound delivery and recovery, guarded V38 leases, monotonic expiry/revocation and live WAL proof reads; 242 selected tests plus one parent-owned child, compiler/format gates and independent review pass. Full item stays OPEN for the local candidate/label/grader workflow and reproducible acceptance. Evidence: `docs/gold-wave10-verification.md`. Source: SPEC_recall_parity_methodology.md.
-- [ ] **GOLD-LF-P1-09 — Ouro O-5c quantized forward pass:** implement QuantizedOuroLayer and QuantizedOuroModel end-to-end inference on the retained Candle primitives, validate exact model/artifact binding, and prove deterministic Q8 execution plus bounded failure/progress behavior in CLI and GUI consumers. Source: SPEC_ouro_thinking_provider_2026-05-23.md.
+- [x] **GOLD-LF-P1-09 — Ouro O-5c quantized forward pass:** implement QuantizedOuroLayer and QuantizedOuroModel end-to-end inference on the retained Candle primitives, validate exact model/artifact binding, and prove deterministic Q8 execution plus bounded failure/progress behavior in CLI and GUI consumers. Source: SPEC_ouro_thinking_provider_2026-05-23.md.
 - [x] **GOLD-LF-P1-10 — Inner-monologue audit/streaming reasoning surface:** carry provider reasoning events through the authorized streaming pipeline into explicit operator-controlled CLI/GUI/Buddy presentation and audit, with unsupported/redacted/cancelled states and no hidden persistence. Source: FEATURE_EVAL.md C-16.
 - [x] **GOLD-LF-P1-11 — Proactive context preparation:** accepted 2026-09-13 (Wave 13). A bounded existing-only local recall preload starts after RAW delivery, binds prompt/session/subject before one consumption, validates reader identity/data-version, and is consumed by the first provider request under the fresh recall policy. It has visible loading/ready/no-data/stale/failed notices; stale or failed work does not trigger a second prompt-path read. Incognito constructs neither the reader nor the notice. Selected03: 265/0/0; evidence: `docs/gold-wave13-verification.md`. Source: FEATURE_EVAL.md C-6.
 - [x] **GOLD-LF-P1-12 — Citation live lookup:** add allowlisted Crossref/OpenAlex/Semantic Scholar resolution with typed provenance, caching, timeout/rate-limit/offline behavior and citation chips/CLI parity; tests must prove the cited record and displayed claim remain bound. Source: QUELLEN_ADOPT_academic_2026-05-21 §3.2.

@@ -38613,7 +38613,7 @@ mod interface_preference_tests {
             })
             .expect("admitted GUI wizard choice before completion");
 
-        let state = WizardSnapshot {
+        let mut state = WizardSnapshot {
             operator_id: "sam".into(),
             provider_kind: "claude_cli".into(),
             autonomy: "standard".into(),
@@ -47554,7 +47554,10 @@ exit 0
             let mut slot = wizard_daemon_session()
                 .lock()
                 .expect("install exclusive P118 wizard daemon session");
-            assert!(slot.is_none(), "P118 requires an unbound GUI wizard session");
+            assert!(
+                slot.is_none(),
+                "P118 requires an unbound GUI wizard session"
+            );
             *slot = Some(session);
             WIZARD_DAEMON_FROZEN.store(false, std::sync::atomic::Ordering::Release);
             Self {
@@ -47595,7 +47598,11 @@ exit 0
             let Some(child) = child.as_mut() else {
                 panic!("P118 bootstrap child was never started");
             };
-            if child.try_wait().expect("query P118 bootstrap child").is_none() {
+            if child
+                .try_wait()
+                .expect("query P118 bootstrap child")
+                .is_none()
+            {
                 child.kill().expect("terminate owned P118 bootstrap child");
                 assert!(
                     p118_wait_for_child_exit(child),
@@ -47626,8 +47633,7 @@ exit 0
         home: &Path,
         child: &P118WizardBootstrapChild,
     ) -> wizard_session_controller::WizardSessionController {
-        let bin = which_neothd()
-            .expect("hosted P118 fixture requires the built neoth CLI on PATH");
+        let bin = which_neothd().expect("hosted P118 fixture requires the built neoth CLI on PATH");
         let child_slot = std::sync::Arc::clone(&child.0);
         wizard_session_controller::WizardSessionController::open_or_start(
             home,
@@ -47681,15 +47687,21 @@ exit 0
         });
 
         window.invoke_cancel_clicked();
-        w153_pump_until(&window, "P118 daemon cancellation acknowledgement", |window| {
-            !window.get_wizard_daemon_operation_in_flight()
-                && !window.get_wizard_daemon_available()
-                && window
-                    .get_status_line()
-                    .as_str()
-                    .starts_with("Setup cancelled by the daemon.")
+        w153_pump_until(
+            &window,
+            "P118 daemon cancellation acknowledgement",
+            |window| {
+                !window.get_wizard_daemon_operation_in_flight()
+                    && !window.get_wizard_daemon_available()
+                    && window
+                        .get_status_line()
+                        .as_str()
+                        .starts_with("Setup cancelled by the daemon.")
+            },
+        );
+        w153_pump_until(&window, "P118 bootstrap listener drain", move |_| {
+            child.exited()
         });
-        w153_pump_until(&window, "P118 bootstrap listener drain", move |_| child.exited());
         assert!(
             neothd::daemon::wizard_ipc::WizardIpcClient::discover(&home).is_err(),
             "the cancelled bootstrap listener must not remain discoverable for replay",
@@ -49229,7 +49241,7 @@ exit 0
                 .iter()
                 .map(|row| row.last_message.to_string()),
         );
-        text.extend(overlay.get_recent_lines().iter().map(ToString::to_string));
+        text.extend(overlay.get_recent_lines().iter().map(|line| line.to_string()));
         text.join("\n")
     }
 

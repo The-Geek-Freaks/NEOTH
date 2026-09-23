@@ -21488,8 +21488,11 @@ template = "[REDACTED]"
                 continue;
             };
             for line in frames.lines().filter(|line| !line.trim().is_empty()) {
-                let frame: serde_json::Value =
-                    serde_json::from_str(line).expect("decode W458 deferred stream frame");
+                let frame: serde_json::Value = serde_json::from_str(
+                    line.strip_prefix(CHAT_STREAM_CONTROL_PREFIX)
+                        .expect("W458 deferred stream frame must be authenticated"),
+                )
+                .expect("decode W458 deferred stream frame");
                 match frame["neoth_stream"].as_str() {
                     Some("provider_delta") => provider_deltas.push(frame),
                     Some("provider_done") => provider_done.push(frame),

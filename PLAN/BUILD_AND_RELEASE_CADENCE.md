@@ -3,6 +3,24 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W502-W508 Q8 acceptance and hosted regression repair (2026-09-23):**
+P1-09 is accepted from13 exact test/class terminals (6Windows+7macOS)
+and10 scoped source paths, including the actual macOS-native W151 callback.
+Group89042 is admitted888PASS/2FAIL/0missing with176source/input bindings;
+both real-consent grammar regressions pass. W507 decodes the required
+control-frame prefix without weakening the CLI stream assertions. W508 moves
+admitted execution inputs into Turn: schedule_turn previously searched the
+preflight map after start had removed the entry, so the provider never opened.
+GUIc7 compiled unsuccessfully (11type errors,0executed); W504 fixes the two
+causes. W503 imports source-bound hosted formatting only. P1-18 and P2-26a
+remain open for fresh behavior results. Windows selection grows17to24 to
+cover the seven concrete retention/quarantine/recovery gaps after the real
+Windows store changes; P2-04 remains open until these pass.
+Inventory746sources,1185native+Win25Linux33mac32,Group890;
+GUI148Linux144macOS,macNative33. Road1043checked/279open/2partial,
+281raw/280pre-tag;WS-LF36done/82open. No local executable checks ran.
+Details:docs/gold-wave502-ouro-q8-acceptance.md and
+ docs/gold-wave503-508-hosted-regression-repairs.md.
 **W494/W499/W500 consent, streams and wizard; W495/W498 acceptance (2026-09-23):**
 Group888c7 is admitted885PASS/3FAIL/0missing with176bindings. W500 repairs
 an actual wire mismatch: real request-bound consent proofs use UUID.dot64hex,

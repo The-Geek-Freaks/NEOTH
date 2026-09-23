@@ -1558,15 +1558,14 @@ mod tests {
         .expect("prepare ready consent")
         .commit()
         .expect("commit ready consent");
-        let ready_proof =
-            crate::cli::consent_challenge::mint_ready_request_bound_gui_chat_consent(
-                ready_home.path(),
-                &descriptor_digest,
-                "ready-daemon-challenge",
-                "ready-session",
-                crate::time::now_unix_secs(),
-            )
-            .expect("mint ready request-bound proof");
+        let ready_proof = crate::cli::consent_challenge::mint_ready_request_bound_gui_chat_consent(
+            ready_home.path(),
+            &descriptor_digest,
+            "ready-daemon-challenge",
+            "ready-session",
+            crate::time::now_unix_secs(),
+        )
+        .expect("mint ready request-bound proof");
         validate_consent_proof(&GuiChatConsentProof(ready_proof.to_string()))
             .expect("ready producer proof matches the wire grammar");
 
@@ -1603,8 +1602,7 @@ mod tests {
 
     #[test]
     fn request_bound_consent_proof_rejects_noncanonical_and_oversized_shapes() {
-        let canonical =
-            "018f1234-5678-7abc-8def-0123456789ab.".to_owned() + &"a".repeat(64);
+        let canonical = "018f1234-5678-7abc-8def-0123456789ab.".to_owned() + &"a".repeat(64);
         validate_consent_proof(&GuiChatConsentProof(canonical.clone()))
             .expect("canonical request-bound proof");
 

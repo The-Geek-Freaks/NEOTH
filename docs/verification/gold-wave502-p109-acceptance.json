@@ -1,0 +1,179 @@
+{
+  "schema": "neoth-functional-acceptance/v1",
+  "roadItem": "GOLD-LF-P1-09",
+  "verdict": "ACCEPTED_FUNCTIONAL",
+  "baselineSource": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+  "acceptedSource": "42d455ea7dfcebd9c6cbf3de160b495a66842c45",
+  "criteria": "Implement QuantizedOuroLayer and QuantizedOuroModel end-to-end inference on retained Candle primitives, validate exact model/artifact binding, and prove deterministic Q8 execution plus bounded failure/progress behavior in CLI and GUI consumers.",
+  "selection": {
+    "Windows": 6,
+    "uniqueIdentities": 7,
+    "macOS": 7
+  },
+  "artifacts": [
+    {
+      "path": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "sha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8",
+      "run": 35871801240,
+      "platform": "Windows"
+    },
+    {
+      "path": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "sha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726",
+      "run": 35871801240,
+      "platform": "macOS"
+    }
+  ],
+  "terminals": [
+    {
+      "platform": "Windows",
+      "test": "providers::ouro::adapter::tests::q8_cache_only_verifier_rejects_unpublished_cache_without_promoting_it",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "Windows",
+      "test": "providers::ouro::adapter::tests::q8_cache_only_verifier_loads_the_published_fixture_through_receipt_and_lease",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "Windows",
+      "test": "providers::ouro::adapter::tests::q8_cache_only_verifier_never_reports_native_fallback_on_bad_quantized_artifacts",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "Windows",
+      "test": "providers::ouro::model_trait::tests::native_and_quantized_forward_agree_on_same_weights",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "Windows",
+      "test": "providers::ouro::quantized_forward::tests::quantized_per_loop_cache_decode_matches_full_resequence_baseline",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "Windows",
+      "test": "cli::ouro::tests::q8_verify_timeout_returns_while_a_held_worker_remains_in_flight",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "providers::ouro::adapter::tests::q8_cache_only_verifier_rejects_unpublished_cache_without_promoting_it",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "providers::ouro::adapter::tests::q8_cache_only_verifier_loads_the_published_fixture_through_receipt_and_lease",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "providers::ouro::adapter::tests::q8_cache_only_verifier_never_reports_native_fallback_on_bad_quantized_artifacts",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "providers::ouro::model_trait::tests::native_and_quantized_forward_agree_on_same_weights",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "providers::ouro::quantized_forward::tests::quantized_per_loop_cache_decode_matches_full_resequence_baseline",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "cli::ouro::tests::q8_verify_timeout_returns_while_a_held_worker_remains_in_flight",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight",
+      "junitClass": "neothd-gui::neothd-gui-macos-native",
+      "status": "passed"
+    }
+  ],
+  "sourceCarry": [
+    {
+      "path": "SRC/neothd/src/providers/ouro/adapter.rs",
+      "baselineBlob": "dd1bfb92420532ce33a5f8a33af2842b79f8dbb7",
+      "acceptedBlob": "dd1bfb92420532ce33a5f8a33af2842b79f8dbb7",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/providers/ouro/model_trait.rs",
+      "baselineBlob": "76e3afd4668e3828ed69e1571b10302df8118068",
+      "acceptedBlob": "76e3afd4668e3828ed69e1571b10302df8118068",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/providers/ouro/quantized_forward.rs",
+      "baselineBlob": "ba7476b3cada7d61acd09ef3bcbf63260ec3238a",
+      "acceptedBlob": "ba7476b3cada7d61acd09ef3bcbf63260ec3238a",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/providers/ouro/quantized_layers.rs",
+      "baselineBlob": "c2cb14224d95b84180e25bf328212e220767032a",
+      "acceptedBlob": "c2cb14224d95b84180e25bf328212e220767032a",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/providers/ouro/artifacts.rs",
+      "baselineBlob": "bb7b898203f46ff8cc292adb97297a666b85c7a1",
+      "acceptedBlob": "bb7b898203f46ff8cc292adb97297a666b85c7a1",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/providers/ouro/mod.rs",
+      "baselineBlob": "9b9818f64db13085aa45b73df21ee100605f319d",
+      "acceptedBlob": "9b9818f64db13085aa45b73df21ee100605f319d",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/cli/ouro.rs",
+      "baselineBlob": "99fc7c8d44fc2a2b7e3974d855d13fd99a5fa15b",
+      "acceptedBlob": "99fc7c8d44fc2a2b7e3974d855d13fd99a5fa15b",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd-gui/src/ouro_gui.rs",
+      "baselineBlob": "f5bf3bbb4580dd309bac7996f7a24ca61cac2f9e",
+      "acceptedBlob": "f5bf3bbb4580dd309bac7996f7a24ca61cac2f9e",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd-gui/src/gui_action/ouro_q8.rs",
+      "baselineBlob": "4d34dc10a383f7f5db109441a35208c9eeefebec",
+      "acceptedBlob": "4d34dc10a383f7f5db109441a35208c9eeefebec",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd-gui/src/main.rs",
+      "baselineBlob": "0705853e795bb1a9a52693daa0449435e65aa306",
+      "acceptedBlob": "d434e83784ab8e870fef3852a9c1d3283c46eaea",
+      "reason": "Reviewed complete relevant Ouro-Q8/W151 delta: test-only Slint string comparison simplification; product callback unchanged. Unrelated GUI changes excluded."
+    }
+  ],
+  "coverage": {
+    "layerModelAndDeterminism": "Same-weight native/Q8 forward parity plus retained Q8 cache resequence behavior.",
+    "artifactBinding": "Published immutable fixture reaches receipt, read lease, QuantizedOuroModel and two deterministic context-sensitive Q8 forwards.",
+    "failureBoundary": "Unpublished generations are refused without promotion; malformed Q8 artifacts cannot report native fallback success.",
+    "cliProgressBoundary": "The Q8 observer returns a bounded timeout observation while a held worker remains in flight.",
+    "guiConsumerBoundary": "The macOS native callback validates typed receipt/failure projection, clears stale verified state, and holds a single in-flight child action."
+  },
+  "review": "W477 independent criterion, source-carry and exact-class terminal review. Root independently verified all13 terminals and artifact hashes.",
+  "limitations": "This does not prove download or inference with a production multi-GB checkpoint, nor a rendered visual-accessibility audit. The Road criterion requires retained-Candle Q8 behavior and CLI/GUI consumers; the hosted tiny immutable artifact fixture and macOS native GUI callback are the bounded evidence for that scope.",
+  "localExecutableValidationRan": false
+}
