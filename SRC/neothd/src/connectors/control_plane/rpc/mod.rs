@@ -763,14 +763,14 @@ fn read_unix_private_regular_file_bounded(
     // retained directory capability with no-follow and O_NONBLOCK on Unix.
     // Classify and bound-read that same descriptor; never validate an ambient
     // path and then reopen its name.
-    let (mut file, _binding) = crate::skills::store::open_bound_regular_file(
-        parent,
-        name,
-        display_path,
-    )?;
-    let metadata = file
-        .metadata()
-        .with_context(|| format!("inspect connector-control Unix file {}", display_path.display()))?;
+    let (mut file, _binding) =
+        crate::skills::store::open_bound_regular_file(parent, name, display_path)?;
+    let metadata = file.metadata().with_context(|| {
+        format!(
+            "inspect connector-control Unix file {}",
+            display_path.display()
+        )
+    })?;
     ensure!(
         metadata.is_file()
             && metadata.uid() == unsafe { libc::geteuid() }
@@ -783,7 +783,12 @@ fn read_unix_private_regular_file_bounded(
     let mut body = Vec::with_capacity(max_bytes);
     file.take(sentinel as u64)
         .read_to_end(&mut body)
-        .with_context(|| format!("read connector-control Unix file {}", display_path.display()))?;
+        .with_context(|| {
+            format!(
+                "read connector-control Unix file {}",
+                display_path.display()
+            )
+        })?;
     ensure!(
         body.len() <= max_bytes,
         "connector-control Unix discovery file exceeds cap"
@@ -819,7 +824,9 @@ impl UnixClient {
             let Endpoint::UnixSocket { path, .. } = &self.endpoint;
             let mut stream = tokio::net::UnixStream::connect(path)
                 .await
-                .with_context(|| format!("connect connector-control Unix socket {}", path.display()))?;
+                .with_context(|| {
+                    format!("connect connector-control Unix socket {}", path.display())
+                })?;
             ensure!(
                 same_effective_uid(&stream),
                 "connector-control Unix peer UID does not match the effective UID"
@@ -2701,13 +2708,14 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn unix_client_response_parser_rejects_ambiguous_and_truncated_envelopes() {
-        assert!(validate_unix_success_response(
-            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"
-        )
-        .is_ok());
+        assert!(
+            validate_unix_success_response(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"
+            )
+            .is_ok()
+        );
         for response in [
-            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n{}"
-                .as_slice(),
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n{}".as_slice(),
             b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 2\r\n\r\n{}"
                 .as_slice(),
             b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\n{}".as_slice(),
@@ -3199,7 +3207,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn unix_client_discovery_rejects_wrong_cc_nonce_pid_lock_nonce_and_runtime_nonce_before_connect()
-    {
+     {
         use crate::daemon::pidfile;
 
         // A sidecar that names any CC endpoint other than the one derived
@@ -3300,37 +3308,43 @@ mod tests {
         );
 
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
-        assert!(read_unix_private_regular_file_bounded(
-            &bound.dir,
-            OsStr::new("discovery"),
-            &path,
-            MAX_RESPONSE_BYTES,
-        )
-        .is_err());
+        assert!(
+            read_unix_private_regular_file_bounded(
+                &bound.dir,
+                OsStr::new("discovery"),
+                &path,
+                MAX_RESPONSE_BYTES,
+            )
+            .is_err()
+        );
 
         std::fs::remove_file(&path).unwrap();
         let target = home.path().join("discovery-target");
         std::fs::write(&target, b"ok").unwrap();
         std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
         symlink(&target, &path).unwrap();
-        assert!(read_unix_private_regular_file_bounded(
-            &bound.dir,
-            OsStr::new("discovery"),
-            &path,
-            MAX_RESPONSE_BYTES,
-        )
-        .is_err());
+        assert!(
+            read_unix_private_regular_file_bounded(
+                &bound.dir,
+                OsStr::new("discovery"),
+                &path,
+                MAX_RESPONSE_BYTES,
+            )
+            .is_err()
+        );
 
         std::fs::remove_file(&path).unwrap();
         std::fs::write(&path, vec![b'x'; MAX_RESPONSE_BYTES + 1]).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-        assert!(read_unix_private_regular_file_bounded(
-            &bound.dir,
-            OsStr::new("discovery"),
-            &path,
-            MAX_RESPONSE_BYTES,
-        )
-        .is_err());
+        assert!(
+            read_unix_private_regular_file_bounded(
+                &bound.dir,
+                OsStr::new("discovery"),
+                &path,
+                MAX_RESPONSE_BYTES,
+            )
+            .is_err()
+        );
     }
 
     #[cfg(unix)]
@@ -3344,7 +3358,10 @@ mod tests {
         std::fs::remove_file(path).unwrap();
         bind_fixture_socket(&endpoint);
         let after = verify_unix_client_endpoint(&endpoint).unwrap();
-        assert_ne!(before, after, "a replaced socket leaf must change the attested identity");
+        assert_ne!(
+            before, after,
+            "a replaced socket leaf must change the attested identity"
+        );
     }
 
     #[cfg(unix)]

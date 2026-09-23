@@ -572,11 +572,7 @@ mod unix_tests {
         let home = crate::test_env::canonical_tempdir().unwrap();
         let source = crate::test_env::canonical_tempdir().unwrap();
         write_active_config(home.path());
-        std::fs::write(
-            source.path().join("selected.txt"),
-            "Unix CC VFS evidence",
-        )
-        .unwrap();
+        std::fs::write(source.path().join("selected.txt"), "Unix CC VFS evidence").unwrap();
         let master_key = load_or_init_master_key(&master_key_path(home.path())).unwrap();
         let wal_dir = home.path().join("wal");
         std::fs::create_dir_all(&wal_dir).unwrap();
@@ -610,8 +606,7 @@ mod unix_tests {
         .unwrap();
 
         let authenticated =
-            crate::connectors::control_plane::rpc::unix_client(home.path(), audit_nonce)
-                .unwrap();
+            crate::connectors::control_plane::rpc::unix_client(home.path(), audit_nonce).unwrap();
         let rejected = crate::connectors::control_plane::rpc::unix_client_with_token_for_test(
             home.path(),
             audit_nonce,

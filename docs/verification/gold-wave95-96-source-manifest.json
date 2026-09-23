@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T01:09:10.2767975Z",
-  "validationStatus": "W249 static reviewed Unix client; seven native cases added, Group431; Hosted execution pending",
+  "capturedUtc": "2026-09-23T01:11:10.8309122Z",
+  "validationStatus": "W249 exact Hosted formatter imported; core execution pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1073,8 +1073,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/context.rs",
-      "bytes": 27888,
-      "sha256": "24CA6412579998B8A85AC4403A953606BBE3A14F5D217687B29F18D4495421AB"
+      "bytes": 27827,
+      "sha256": "E3CA430F921180E8E6151C4EB44FEC78A6D47D68DB58730EDECF0CA44007C770"
     },
     {
       "path": "SRC/neothd/src/cli/credential_transfer.rs",
@@ -1533,8 +1533,8 @@
     },
     {
       "path": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-      "bytes": 135771,
-      "sha256": "5662A1D6036946E2F95D48D38CEFC3388E835683FC9F1A0985C7A2339286C9E6"
+      "bytes": 136080,
+      "sha256": "80A3A7B4B0B49852BCDD8181C53A3B39ACEE3DFE15F38919487B79435ABBF440"
     },
     {
       "path": "SRC/neothd/src/context_graph/mod.rs",
