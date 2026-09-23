@@ -2,6 +2,14 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W539 Paperless metadata admission (2026-09-24):**
+Hosted35928756605 at96f86a92 passed8/8contract tests and acquired9raw OCI
+manifests. Root verified receipt/source hashes, all3indexes,6platform children
+and every retained config/layer descriptor; permanent provenance is committed
+under docs/verification/paperless-oci-v3.2.1. No layer/runtime or Ready claim.
+Preflight35928755304 and CodeQL35928755635 passed. Inventory770sources;
+native1198/Group903/GUI148Linux144macOS and Road1044checked/278open/2partial
+remain unchanged. P2-20 stays open for consumed staging and lifecycle work.
 **W537/W538 hosted correction (2026-09-24):**
 Paperless acquisition's7contract tests passed; remote acquisition failed before
 any admitted receipt. Verified upstream Docker metadata uses3.2.1 without the

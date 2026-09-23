@@ -47,3 +47,14 @@ found one remaining stale Credentials path in the CLI's test fixture; its type
 now uses config::credentials::Credentials. GUI formatting artifact10779923485
 from35928270572 was imported with source/hash/before-after Gitblob checks.
 These narrow repairs await fresh hosted execution; all counts remain unchanged.
+
+W539 metadata admission: run35928756605 at96f86a92 completed successfully,
+including8/8 actual contract tests. Artifact10779819979 contains the receipt
+and nine exact raw manifests. Root independently verified the receipt checksum,
+both acquisition source Gitblobs/SHA256s, the exact3selector/2platform sets,
+every raw manifest SHA256/size, all parent-child bindings and every config/layer
+descriptor against those raw bytes. Permanent admitted metadata is retained in
+verification/paperless-oci-v3.2.1/. These are immutable metadata pins, not proof
+of layer contents, an installed image, a running container or Paperless Ready.
+Preflight35928755304 and CodeQL35928755635 at96f86a92 also passed.
+The manifest now contains770paths; native/GUI/Road counts are unchanged.

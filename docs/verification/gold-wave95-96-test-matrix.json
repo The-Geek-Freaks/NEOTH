@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W537_W538_SOURCE_REVIEWED_HOSTED_PENDING",
+  "status": "W539_OCI_METADATA_ADMITTED_RUNTIME_NOT_VERIFIED",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 132367,
-    "sha256": "D355BE457A33AE876DC53CA230D6D23AEE6C5029555D8724FF2350E53ADE5A44"
+    "bytes": 135126,
+    "sha256": "E5B378F08D5484065450CD3BD15AC2CC5D48358FD2741DECF7755548C74CF6BC"
   },
-  "sourceInputs": 759,
+  "sourceInputs": 770,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -24732,6 +24732,104 @@
       }
     ],
     "note": "Verified upstream OCI selector3.2.1, bounded HTTP diagnostics8fixtures, canonicalCredentialsCLItest, exacthostedGUIformat. SlimprodClippy atd2f4 passed; receipt/runtime pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave539Evidence": {
+    "base": "96f86a92c526275a97b2c1e44c3040ba3af55f43",
+    "sources": [
+      {
+        "path": "docs/gold-wave531-paperless-provenance.md",
+        "bytes": 4081,
+        "sha256": "611604537ECE2C4CF467363EF31C3D0BC05CB2683B3C290A9C289369256D1365",
+        "blob": "a445ed9a9c94f342942ea2fcb5029f5c08af0ac8"
+      },
+      {
+        "path": "docs/verification/paperless-oci-v3.2.1/ADMISSION.json",
+        "bytes": 2898,
+        "sha256": "7B61F6BFC73AECFB82DB743DA6D33209D6B913375E46DAF21B628584BF2E4E25",
+        "blob": "0543e287ff872792f09e50332fe355e69d7b034b"
+      },
+      {
+        "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/0377e72c5289ed2f98cf61b1a9c2db9eb9d300317fe14244492fbc94343b3d04.json",
+        "bytes": 3439,
+        "sha256": "0377E72C5289ED2F98CF61B1A9C2DB9EB9D300317FE14244492FBC94343B3D04",
+        "blob": "d95e27447df68a227e1518433f4c9221347d6a37"
+      },
+      {
+        "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/2459d860e4e936c26c34a3ff58ede53487a9116202db78a1262c44f68f746196.json",
+        "bytes": 3164,
+        "sha256": "2459D860E4E936C26C34A3FF58EDE53487A9116202DB78A1262C44F68F746196",
+        "blob": "83fa5ef51ae68176d05f61e0aaceaf3b1f8ad119"
+      },
+      {
+        "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/27fa8b70ab57b4387b9ed2cba492380eb756e62a4e2a7d0575278d5ecfd42379.json",
+        "bytes": 3164,
+        "sha256": "27FA8B70AB57B4387B9ED2CBA492380EB756E62A4E2A7D0575278D5ECFD42379",
+        "blob": "7726a1e8f907ac39729a785bb638ede8b24a3610"
+      },
+      {
+        "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/3b83b0b6a598bb390c8186a408a69949772f439548a81c5ea0ab7ccf102c248d.json",
+        "bytes": 1616,
+        "sha256": "3B83B0B6A598BB390C8186A408A69949772F439548A81C5EA0AB7CCF102C248D",
+        "blob": "f28e647b49a48eefd263ebcedf58c26f9976f5be"
+      },
+      {
+        "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11.json",
+        "bytes": 1216,
+        "sha256": "48332870AF354A799964C0012AE1194A0BF2BF894EB508F945810596DC2D8D11",
+        "blob": "8f74b96e69319cf028a625c077c89daa9c39bb0d"
+      },
+      {
+        "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/5fa76604a81df6945086e0837b14b56543d137e8ce4f311cc5d9ebe907e74e79.json",
+        "bytes": 1609,
+        "sha256": "5FA76604A81DF6945086E0837B14B56543D137E8CE4F311CC5D9EBE907E74E79",
+        "blob": "78384dd3710eb41c10ea085d28a79859e98d6d6c"
+      },
+      {
+        "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae.json",
+        "bytes": 10229,
+        "sha256": "86C951E05BF56C93D95D397747FB8820AC76CC3BEDB78F43ABD83EEDBE3666AE",
+        "blob": "ef69465e0d849a29df2cb22ece62690dae70ee82"
+      },
+      {
+        "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/eb5a657e070199befde516f47a1015338b752f083e09c7736cb8c07d9ec99bdd.json",
+        "bytes": 1616,
+        "sha256": "EB5A657E070199BEFDE516F47A1015338B752F083E09C7736CB8C07D9EC99BDD",
+        "blob": "62fc8687d784c4ea459c53599867bb27278d31c7"
+      },
+      {
+        "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/f4fcd2b983483177b15d72d94fb3614736211554f7cac5c2cc54a05c75110b90.json",
+        "bytes": 3441,
+        "sha256": "F4FCD2B983483177B15D72D94FB3614736211554F7CAC5C2CC54A05C75110B90",
+        "blob": "ece0f12a88eaa185b574a0733587003c1752f529"
+      },
+      {
+        "path": "docs/verification/paperless-oci-v3.2.1/receipt.json",
+        "bytes": 24099,
+        "sha256": "3C8CABBAAE8B77AE48E707447FE6440C9511711F199FF924BDA1094801309931",
+        "blob": "e7ab25ad296fc1bbc75d0971514844723652865c"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 194354,
+        "sha256": "F97F3A46A2667AB6848E645C6FFE95C8E2EA9B002FC650ECE230AB04183CEA4A",
+        "blob": "8d03bddcb5ca667f8315b8d1cd0f0ce706afe775"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1204678,
+        "sha256": "890D033D8B53977BDB0AC45458438D435E1AAABCBD9357B375C2DCB8E757F382",
+        "blob": "943ac8016cbd8c16fdb28e0fcde3b7982be96803"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1803311,
+        "sha256": "D5E3D4FA47E39A707F139AB23B51DC38F3CEF8C88EF46B1293030899AE1FB91C",
+        "blob": "1d7512056f7db3859d737ce7c031dbcd6c6bda04"
+      }
+    ],
+    "note": "Run35928756605 8PASS,9raw manifests admitted+2sourcehashes+receiptchecksum+allindexeddescriptors. No image/layer/runtime acceptance; P220open.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

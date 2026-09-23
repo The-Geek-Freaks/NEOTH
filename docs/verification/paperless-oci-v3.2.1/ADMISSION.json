@@ -1,0 +1,60 @@
+{
+  "run": 35928756605,
+  "artifact": 10779819979,
+  "source": "96f86a92c526275a97b2c1e44c3040ba3af55f43",
+  "status": "ADMITTED_OCI_INDEX_AND_CHILD_METADATA_ONLY",
+  "testsPassed": 8,
+  "receiptSha256": "3c8cabbaae8b77ae48e707447fe6440c9511711f199ff924bda1094801309931",
+  "sourceInputs": [
+    {
+      "blob": "1a4a4ac375d52daa808ff3e4f19097929af81cb7",
+      "path": "scripts/acquire_paperless_provenance.py",
+      "sha256": "2b0be4c8f24ae8ab64b9c49754b297dae2d355d7e496be3dab3fef6c99d91c74"
+    },
+    {
+      "blob": "2bfb04dddbe0bff929f523261b8c28736707638f",
+      "path": ".github/workflows/paperless-provenance.yml",
+      "sha256": "db8466f7248a98726c97ee72d92194aa077fb7508440bb736a25395d4db7f4be"
+    }
+  ],
+  "rawManifestPaths": [
+    "raw-manifests/sha256/5fa76604a81df6945086e0837b14b56543d137e8ce4f311cc5d9ebe907e74e79.json",
+    "raw-manifests/sha256/2459d860e4e936c26c34a3ff58ede53487a9116202db78a1262c44f68f746196.json",
+    "raw-manifests/sha256/27fa8b70ab57b4387b9ed2cba492380eb756e62a4e2a7d0575278d5ecfd42379.json",
+    "raw-manifests/sha256/48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11.json",
+    "raw-manifests/sha256/3b83b0b6a598bb390c8186a408a69949772f439548a81c5ea0ab7ccf102c248d.json",
+    "raw-manifests/sha256/eb5a657e070199befde516f47a1015338b752f083e09c7736cb8c07d9ec99bdd.json",
+    "raw-manifests/sha256/86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae.json",
+    "raw-manifests/sha256/0377e72c5289ed2f98cf61b1a9c2db9eb9d300317fe14244492fbc94343b3d04.json",
+    "raw-manifests/sha256/f4fcd2b983483177b15d72d94fb3614736211554f7cac5c2cc54a05c75110b90.json"
+  ],
+  "pins": [
+    {
+      "name": "paperless",
+      "image": "ghcr.io/paperless-ngx/paperless-ngx@sha256:5fa76604a81df6945086e0837b14b56543d137e8ce4f311cc5d9ebe907e74e79",
+      "platforms": {
+        "linux/amd64": "sha256:2459d860e4e936c26c34a3ff58ede53487a9116202db78a1262c44f68f746196",
+        "linux/arm64": "sha256:27fa8b70ab57b4387b9ed2cba492380eb756e62a4e2a7d0575278d5ecfd42379"
+      }
+    },
+    {
+      "name": "valkey",
+      "image": "registry-1.docker.io/valkey/valkey@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11",
+      "platforms": {
+        "linux/amd64": "sha256:3b83b0b6a598bb390c8186a408a69949772f439548a81c5ea0ab7ccf102c248d",
+        "linux/arm64": "sha256:eb5a657e070199befde516f47a1015338b752f083e09c7736cb8c07d9ec99bdd"
+      }
+    },
+    {
+      "name": "postgres",
+      "image": "registry-1.docker.io/library/postgres@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae",
+      "platforms": {
+        "linux/amd64": "sha256:0377e72c5289ed2f98cf61b1a9c2db9eb9d300317fe14244492fbc94343b3d04",
+        "linux/arm64": "sha256:f4fcd2b983483177b15d72d94fb3614736211554f7cac5c2cc54a05c75110b90"
+      }
+    }
+  ],
+  "artifactVerified": false,
+  "layersFetched": false,
+  "runtimeVerified": false
+}

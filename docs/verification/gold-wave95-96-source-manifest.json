@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T22:28:53.9538135Z",
-  "validationStatus": "W537_W538_SOURCE_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-09-23T22:32:44.6006079Z",
+  "validationStatus": "W539_OCI_METADATA_ADMITTED_RUNTIME_NOT_VERIFIED",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1008,8 +1008,8 @@
     },
     {
       "path": "docs/gold-wave531-paperless-provenance.md",
-      "bytes": 3311,
-      "sha256": "85DC00187879AE99B6A83B2B7BE14105CAD423F66E1383599F036D4B98F5C419"
+      "bytes": 4081,
+      "sha256": "611604537ECE2C4CF467363EF31C3D0BC05CB2683B3C290A9C289369256D1365"
     },
     {
       "path": "docs/install.md",
@@ -1182,6 +1182,61 @@
       "sha256": "80443D2F6E6A6E226F1617F7F5463017071D9D21130D1FCD116470F147455337"
     },
     {
+      "path": "docs/verification/paperless-oci-v3.2.1/ADMISSION.json",
+      "bytes": 2898,
+      "sha256": "7B61F6BFC73AECFB82DB743DA6D33209D6B913375E46DAF21B628584BF2E4E25"
+    },
+    {
+      "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/0377e72c5289ed2f98cf61b1a9c2db9eb9d300317fe14244492fbc94343b3d04.json",
+      "bytes": 3439,
+      "sha256": "0377E72C5289ED2F98CF61B1A9C2DB9EB9D300317FE14244492FBC94343B3D04"
+    },
+    {
+      "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/2459d860e4e936c26c34a3ff58ede53487a9116202db78a1262c44f68f746196.json",
+      "bytes": 3164,
+      "sha256": "2459D860E4E936C26C34A3FF58EDE53487A9116202DB78A1262C44F68F746196"
+    },
+    {
+      "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/27fa8b70ab57b4387b9ed2cba492380eb756e62a4e2a7d0575278d5ecfd42379.json",
+      "bytes": 3164,
+      "sha256": "27FA8B70AB57B4387B9ED2CBA492380EB756E62A4E2A7D0575278D5ECFD42379"
+    },
+    {
+      "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/3b83b0b6a598bb390c8186a408a69949772f439548a81c5ea0ab7ccf102c248d.json",
+      "bytes": 1616,
+      "sha256": "3B83B0B6A598BB390C8186A408A69949772F439548A81C5EA0AB7CCF102C248D"
+    },
+    {
+      "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11.json",
+      "bytes": 1216,
+      "sha256": "48332870AF354A799964C0012AE1194A0BF2BF894EB508F945810596DC2D8D11"
+    },
+    {
+      "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/5fa76604a81df6945086e0837b14b56543d137e8ce4f311cc5d9ebe907e74e79.json",
+      "bytes": 1609,
+      "sha256": "5FA76604A81DF6945086E0837B14B56543D137E8CE4F311CC5D9EBE907E74E79"
+    },
+    {
+      "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae.json",
+      "bytes": 10229,
+      "sha256": "86C951E05BF56C93D95D397747FB8820AC76CC3BEDB78F43ABD83EEDBE3666AE"
+    },
+    {
+      "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/eb5a657e070199befde516f47a1015338b752f083e09c7736cb8c07d9ec99bdd.json",
+      "bytes": 1616,
+      "sha256": "EB5A657E070199BEFDE516F47A1015338B752F083E09C7736CB8C07D9EC99BDD"
+    },
+    {
+      "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/f4fcd2b983483177b15d72d94fb3614736211554f7cac5c2cc54a05c75110b90.json",
+      "bytes": 3441,
+      "sha256": "F4FCD2B983483177B15D72D94FB3614736211554F7CAC5C2CC54A05C75110B90"
+    },
+    {
+      "path": "docs/verification/paperless-oci-v3.2.1/receipt.json",
+      "bytes": 24099,
+      "sha256": "3C8CABBAAE8B77AE48E707447FE6440C9511711F199FF924BDA1094801309931"
+    },
+    {
       "path": "packaging/linux/build-packages.sh",
       "bytes": 17526,
       "sha256": "DDD7CECB8194FFBC853D2B07AB11798D45283359701D7CB7D915B740A70A7182"
@@ -1248,18 +1303,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 193767,
-      "sha256": "1E678CFB5E79E9ADC8FA5C6A0B1B6D51CA18B4893737EE91886D89100C5E019A"
+      "bytes": 194354,
+      "sha256": "F97F3A46A2667AB6848E645C6FFE95C8E2EA9B002FC650ECE230AB04183CEA4A"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1204091,
-      "sha256": "229FFB2D136EE34C7D6CEFD02F487A2AEE9B3E0ADFBA7F7A79C07AECF697E47F"
+      "bytes": 1204678,
+      "sha256": "890D033D8B53977BDB0AC45458438D435E1AAABCBD9357B375C2DCB8E757F382"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1802724,
-      "sha256": "3D86B1CD5B59EDAB50959E77EC36CF50103C16D02770D35EE84048C68794E981"
+      "bytes": 1803311,
+      "sha256": "D5E3D4FA47E39A707F139AB23B51DC38F3CEF8C88EF46B1293030899AE1FB91C"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
