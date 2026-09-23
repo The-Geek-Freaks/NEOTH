@@ -1418,14 +1418,21 @@ mod tests {
             (r"C:\allowed\file.txt", r"C:\"),
             (r"\\?\C:\allowed\file.txt", r"\\?\C:\"),
             (r"\\server\share\allowed\file.txt", r"\\server\share\"),
-            (r"\\?\UNC\server\share\allowed\file.txt", r"\\?\UNC\server\share\"),
+            (
+                r"\\?\UNC\server\share\allowed\file.txt",
+                r"\\?\UNC\server\share\",
+            ),
         ] {
             assert_eq!(
                 windows_read_capability_root(Path::new(path)).unwrap(),
                 PathBuf::from(expected),
             );
         }
-        for path in [r"C:relative.txt", r"\rooted-without-drive", r"\\.\pipe\private"] {
+        for path in [
+            r"C:relative.txt",
+            r"\rooted-without-drive",
+            r"\\.\pipe\private",
+        ] {
             assert!(windows_read_capability_root(Path::new(path)).is_err());
         }
     }

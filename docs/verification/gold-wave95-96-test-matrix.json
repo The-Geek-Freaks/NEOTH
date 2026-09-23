@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W245 Windows drive/share root compatibility independently source-reviewed; Hosted native pending",
+  "status": "W245 source reviewed; verified Hosted format patch imported; execution pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 92868,
-    "sha256": "AE022D26C51F2FA41709274A23B12891AA6EA38452649FF3DFBACCE6E2D54397"
+    "bytes": 92850,
+    "sha256": "7EB0BFD69A76DBA1ED0D53A06AE2EAB5B37197CABC9DD22D9EFEA505F27AED90"
   },
   "sourceInputs": 537,
   "requiredNativeTests": [
@@ -5112,7 +5112,7 @@
     {
       "test": "os_tools::gate::tests::read_preflight_binds_descriptor_then_invoke_enforces_same_fd_budget",
       "sourcePath": "SRC/neothd/src/os_tools/gate.rs",
-      "sourceSha256": "9EE36452940C357BA4E2E497C2D98703AC5EF3DBF1E59359A59E9D2845057BD5",
+      "sourceSha256": "BF5B9E02768958239219323ABB3632EA692B448F28DF290205C221DED5399BFC",
       "junitClass": "neoth"
     },
     {
@@ -6792,7 +6792,7 @@
       {
         "test": "os_tools::gate::tests::preflight_reads_canonicalized_windows_drive_path",
         "sourcePath": "SRC/neothd/src/os_tools/gate.rs",
-        "sourceSha256": "9EE36452940C357BA4E2E497C2D98703AC5EF3DBF1E59359A59E9D2845057BD5",
+        "sourceSha256": "BF5B9E02768958239219323ABB3632EA692B448F28DF290205C221DED5399BFC",
         "junitClass": "neoth"
       },
       {
@@ -6804,7 +6804,7 @@
       {
         "test": "os_tools::gate::tests::read_capability_root_preserves_windows_drive_and_share_namespaces",
         "sourcePath": "SRC/neothd/src/os_tools/gate.rs",
-        "sourceSha256": "9EE36452940C357BA4E2E497C2D98703AC5EF3DBF1E59359A59E9D2845057BD5",
+        "sourceSha256": "BF5B9E02768958239219323ABB3632EA692B448F28DF290205C221DED5399BFC",
         "junitClass": "neoth"
       }
     ],
@@ -6926,19 +6926,19 @@
       {
         "test": "os_tools::gate::tests::admitted_read_consumes_original_descriptor_after_path_replaced",
         "sourcePath": "SRC/neothd/src/os_tools/gate.rs",
-        "sourceSha256": "9EE36452940C357BA4E2E497C2D98703AC5EF3DBF1E59359A59E9D2845057BD5",
+        "sourceSha256": "BF5B9E02768958239219323ABB3632EA692B448F28DF290205C221DED5399BFC",
         "junitClass": "neoth"
       },
       {
         "test": "os_tools::gate::tests::preflight_refuses_final_symlink_swap_before_descriptor_open",
         "sourcePath": "SRC/neothd/src/os_tools/gate.rs",
-        "sourceSha256": "9EE36452940C357BA4E2E497C2D98703AC5EF3DBF1E59359A59E9D2845057BD5",
+        "sourceSha256": "BF5B9E02768958239219323ABB3632EA692B448F28DF290205C221DED5399BFC",
         "junitClass": "neoth"
       },
       {
         "test": "os_tools::gate::tests::preflight_refuses_parent_symlink_swap_before_descriptor_open",
         "sourcePath": "SRC/neothd/src/os_tools/gate.rs",
-        "sourceSha256": "9EE36452940C357BA4E2E497C2D98703AC5EF3DBF1E59359A59E9D2845057BD5",
+        "sourceSha256": "BF5B9E02768958239219323ABB3632EA692B448F28DF290205C221DED5399BFC",
         "junitClass": "neoth"
       }
     ],
@@ -7054,19 +7054,19 @@
       {
         "test": "os_tools::gate::tests::admitted_read_consumes_original_descriptor_after_path_replaced",
         "sourcePath": "SRC/neothd/src/os_tools/gate.rs",
-        "sourceSha256": "9EE36452940C357BA4E2E497C2D98703AC5EF3DBF1E59359A59E9D2845057BD5",
+        "sourceSha256": "BF5B9E02768958239219323ABB3632EA692B448F28DF290205C221DED5399BFC",
         "junitClass": "neoth"
       },
       {
         "test": "os_tools::gate::tests::preflight_refuses_final_symlink_swap_before_descriptor_open",
         "sourcePath": "SRC/neothd/src/os_tools/gate.rs",
-        "sourceSha256": "9EE36452940C357BA4E2E497C2D98703AC5EF3DBF1E59359A59E9D2845057BD5",
+        "sourceSha256": "BF5B9E02768958239219323ABB3632EA692B448F28DF290205C221DED5399BFC",
         "junitClass": "neoth"
       },
       {
         "test": "os_tools::gate::tests::preflight_refuses_parent_symlink_swap_before_descriptor_open",
         "sourcePath": "SRC/neothd/src/os_tools/gate.rs",
-        "sourceSha256": "9EE36452940C357BA4E2E497C2D98703AC5EF3DBF1E59359A59E9D2845057BD5",
+        "sourceSha256": "BF5B9E02768958239219323ABB3632EA692B448F28DF290205C221DED5399BFC",
         "junitClass": "neoth"
       }
     ]
@@ -16332,6 +16332,20 @@
       }
     ],
     "note": "Retain Disk/VerbatimDisk/UNC/VerbatimUNC roots without weakening no-follow component/leaf checks; Windows-only positive/rejection namespace test; Group413 unchanged; evidencecountcorrected89.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave245HostedFormat": {
+    "base": "b4b08b748dbec09d3ad26382b24ef82656865fdc",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/os_tools/gate.rs",
+        "bytes": 93466,
+        "sha256": "BF5B9E02768958239219323ABB3632EA692B448F28DF290205C221DED5399BFC",
+        "blob": "db82f546b85c38d0adf037a09eccbace51411cf4"
+      }
+    ],
+    "note": "Preflight35801172065 sourceb4b08b74: one-path rustfmt patch source/SHA256/preimage/postimage verified, no local formatter",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

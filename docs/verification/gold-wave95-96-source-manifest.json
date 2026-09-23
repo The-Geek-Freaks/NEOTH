@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T00:12:32.6755599Z",
-  "validationStatus": "W245 Windows drive/share root compatibility independently source-reviewed; Hosted native pending",
+  "capturedUtc": "2026-09-23T00:18:35.9673425Z",
+  "validationStatus": "W245 source reviewed; verified Hosted format patch imported; execution pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2093,8 +2093,8 @@
     },
     {
       "path": "SRC/neothd/src/os_tools/gate.rs",
-      "bytes": 93372,
-      "sha256": "9EE36452940C357BA4E2E497C2D98703AC5EF3DBF1E59359A59E9D2845057BD5"
+      "bytes": 93466,
+      "sha256": "BF5B9E02768958239219323ABB3632EA692B448F28DF290205C221DED5399BFC"
     },
     {
       "path": "SRC/neothd/src/permissions/gate.rs",
