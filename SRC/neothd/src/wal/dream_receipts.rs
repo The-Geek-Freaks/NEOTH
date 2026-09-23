@@ -78,10 +78,6 @@ impl DreamAuditDescriptor {
         })
     }
 
-    pub(crate) const fn transition_id(&self) -> [u8; 32] {
-        self.transition_id
-    }
-
     pub(crate) fn encode(&self) -> Vec<u8> {
         let mut payload = Vec::with_capacity(PAYLOAD_LEN);
         payload.extend_from_slice(&[
@@ -137,12 +133,6 @@ pub(crate) struct DreamAuditFrameReceipt {
 impl DreamAuditFrameReceipt {
     pub(crate) const fn frame_sha256(&self) -> [u8; 32] {
         self.frame_sha256
-    }
-    pub(crate) const fn payload_sha256(&self) -> [u8; 32] {
-        self.payload_sha256
-    }
-    pub(crate) const fn location_sha256(&self) -> [u8; 32] {
-        self.location_sha256
     }
 }
 

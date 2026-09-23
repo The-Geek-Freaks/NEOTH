@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W354 hosted Dream lint repair (2026-09-23):** Core32bc run35847289447
+reached Clippy and reported four complex SQL row annotations plus three
+unused-API diagnostics. Private row aliases preserve SQL/field order; the
+unused PhaseComplete enum value and three unused receipt accessors are removed.
+Actual completion remains inside the PhaseEffect transaction; receipt contents
+and the consumed frame hash stay intact. No suppressions were added.
+Preflight1c21 run35847553367 passed. Current compiler/test-target rerun is
+pending; Group721 and fullCI remain gated on readiness. Inventory640;
+native1058+Windows19/Linux33/macOS32. Road1027checked/295open/2partial and
+WS-LF20done/98open unchanged. No local executable validation ran.
+
 **W349 role acceptance and W351 Dream compile repair (2026-09-23):** P2-15
 is accepted after all50 required role cases and13 supporting direct-retry
 cases passed in source-admitted Group687 run35843153480. Relevant role code

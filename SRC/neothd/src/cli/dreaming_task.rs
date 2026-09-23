@@ -98,13 +98,12 @@ enum DreamCommitEffect {
     WalAppend,
     PhasePrepare,
     PhaseEffect,
-    PhaseComplete,
     PhaseAudit,
 }
 
 impl DreamCommitEffect {
     #[cfg(test)]
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 11] = [
         Self::RuntimeSetup,
         Self::StateClaim,
         Self::ProviderDispatch,
@@ -115,7 +114,6 @@ impl DreamCommitEffect {
         Self::WalAppend,
         Self::PhasePrepare,
         Self::PhaseEffect,
-        Self::PhaseComplete,
         Self::PhaseAudit,
     ];
 
@@ -131,7 +129,6 @@ impl DreamCommitEffect {
             Self::WalAppend => "DREAM_COMPOSED WAL append",
             Self::PhasePrepare => "Dream phase prepare",
             Self::PhaseEffect => "Dream phase effect",
-            Self::PhaseComplete => "Dream phase completion",
             Self::PhaseAudit => "Dream phase audit",
         }
     }

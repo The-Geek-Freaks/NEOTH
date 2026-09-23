@@ -62,6 +62,31 @@ struct Input {
     source_trust: i64,
 }
 
+/// Source fields rechecked before a Dream phase uses a hot or warm input.
+type EligibleSourceRow = (
+    String,
+    i64,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+    Option<i64>,
+);
+
+/// A retained warm anchor plus its source eligibility fields.
+type WarmAnchorRow = (
+    i64,
+    String,
+    i64,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+    Option<i64>,
+);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuditOutbox {
     pub transition_id: String,
@@ -200,7 +225,7 @@ fn prepare_or_load(
     }
     let mut inputs = Vec::new();
     for id in ids {
-        let row: Option<(String, i64, String, Option<String>, Option<String>, Option<String>, String, Option<i64>)> = tx.query_row(
+        let row: Option<EligibleSourceRow> = tx.query_row(
             "SELECT ep.text_hash, ep.trust, o.origin_kind, o.channel_id, o.account_id, o.scoped_sender_hash, \
              COALESCE(c.state, ''), c.revision FROM idx_episode ep JOIN idx_episode_origin_v2 o ON o.raw_event_id=ep.event_id \
              LEFT JOIN idx_counterparty_clustering_consent_v1 c ON c.channel_id=o.channel_id AND c.account_id=o.account_id AND c.scoped_sender_hash=o.scoped_sender_hash \
@@ -228,17 +253,7 @@ fn prepare_or_load(
     // Retained warm anchors are deliberately repeatable REM evidence. The
     // bounded stable order lets two distinct Dream runs observe a real pair
     // even after Light moved its original hot sources out of the hot tier.
-    let warm_rows: Vec<(
-        i64,
-        String,
-        i64,
-        String,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        String,
-        Option<i64>,
-    )> = {
+    let warm_rows: Vec<WarmAnchorRow> = {
         let mut warm = tx.prepare(
             "SELECT warm.event_id, warm.text_hash, warm.trust, o.origin_kind, o.channel_id, o.account_id, o.scoped_sender_hash, COALESCE(c.state, ''), c.revision \
              FROM idx_consolidated warm JOIN idx_episode_origin_v2 o ON o.raw_event_id=warm.event_id \
@@ -347,16 +362,7 @@ fn revalidate_input_at(
     let sql = format!(
         "SELECT source.text_hash, source.trust, o.origin_kind, o.channel_id, o.account_id, o.scoped_sender_hash, COALESCE(c.state, ''), c.revision FROM {table} source JOIN idx_episode_origin_v2 o ON o.raw_event_id=source.event_id LEFT JOIN idx_counterparty_clustering_consent_v1 c ON c.channel_id=o.channel_id AND c.account_id=o.account_id AND c.scoped_sender_hash=o.scoped_sender_hash WHERE source.event_id=?1 AND (o.origin_kind='local_attested' OR (o.origin_kind='channel_bound' AND c.state='verified_granted'))"
     );
-    let row: Option<(
-        String,
-        i64,
-        String,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        String,
-        Option<i64>,
-    )> = tx
+    let row: Option<EligibleSourceRow> = tx
         .query_row(&sql, [input.event_id], |r| {
             Ok((
                 r.get(0)?,

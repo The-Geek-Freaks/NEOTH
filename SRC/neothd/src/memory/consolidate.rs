@@ -25,6 +25,9 @@ use super::tiers::{FORGET_FLOOR, PROMOTION_THRESHOLD, Tier};
 
 const DAY_NS: i64 = 86_400 * 1_000_000_000;
 
+/// A warm-tier row eligible for promotion to long-term storage or archive.
+type AgedWarmRow = (i64, Option<i64>, String, String, f64, i64, i64);
+
 /// Move the exact Dream-bound hot inputs to the warm tier.  This deliberately
 /// shares the normal tier shape but not its age-based sweep: callers already
 /// hold the SQLite transaction that owns the immutable Dream receipt.
@@ -330,7 +333,7 @@ pub fn run_consolidation_pass_with_hippocampus(
          FROM idx_consolidated \
          WHERE day < ?1",
     )?;
-    let warm_rows: Vec<(i64, Option<i64>, String, String, f64, i64, i64)> = select_warm
+    let warm_rows: Vec<AgedWarmRow> = select_warm
         .query_map(params![ninety_days_ago_day], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
