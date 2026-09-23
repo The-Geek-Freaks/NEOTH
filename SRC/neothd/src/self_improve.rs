@@ -4768,7 +4768,7 @@ fn command_contains_token(haystack: &str, tok: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     struct NeothHomeRestore(Option<std::ffi::OsString>);
@@ -5809,6 +5809,44 @@ mod tests {
         let verifier = w142_write_verifier(home, &proposal, serde_json::json!({}));
         w142_enable_verifier(home, &verifier);
         evaluate_proposal_quality_with_approved_verifier(home, id, &verifier).unwrap();
+    }
+
+    /// W275's CLI acceptance test owns staging, review, acceptance, and
+    /// readback through the real handler.  This deliberately supplies only
+    /// the existing core-only quality + approval boundary: `Execute` also
+    /// allocates a configured provider-backed QA loop, which is outside this
+    /// hermetic command-handler fixture.
+    pub(crate) async fn w275_prepare_current_verified_approval(
+        home: &Path,
+        id: &str,
+    ) -> Result<(String, PathBuf)> {
+        let proposal = unique_proposal_by_id(&load_proposals(home)?, id)?.clone();
+        w142_write_fixed_corpus(home, &proposal.skill);
+        let verifier = w142_write_verifier(home, &proposal, serde_json::json!({}));
+        w142_enable_verifier(home, &verifier);
+        let evidence = evaluate_proposal_quality_with_approved_verifier(home, id, &verifier)?;
+
+        let proposal = unique_proposal_by_id(&load_proposals(home)?, id)?.clone();
+        let analysis = proposal.code_map_analysis.clone();
+        let advisor = passing_advisor();
+        let (verdict, _) = execute_proposal_with_prepared_code_map_analysis(
+            home,
+            id,
+            1,
+            crate::permissions::AutonomyLevel::Standard,
+            &analysis,
+            &advisor,
+        )
+        .await?;
+        anyhow::ensure!(
+            verdict == ExecutionVerdict::Approved,
+            "W275 fixed advisor must approve the current-quality proposal"
+        );
+        persist_verified_approval_after_audit(home, id, &analysis)?;
+        let corpus_case = quality::fixed_skill_corpus_root(home, &proposal.skill)?
+            .join("cases")
+            .join("case-1.json");
+        Ok((evidence.evidence_sha256, corpus_case))
     }
 
     #[tokio::test]

@@ -41,6 +41,7 @@ use crate::recall::{
         ingest_attested_four_grader_batch_results_with_context, ingest_offline_grades_with_context,
         ingest_operator_anchor_evidence_with_context, plan_four_grader_batch_with_context,
         plan_run_with_context, read_offline_input,
+        resume_status_with_context,
         summarize_attested_four_grader_family_bias_with_context,
         validate_attested_four_grader_batch_results_with_context,
     },
@@ -284,11 +285,35 @@ pub enum RecallParityHarnessOperation {
         #[arg(long = "expected-receipt-pubkey", value_name = "BASE64")]
         expected_receipt_pubkey: String,
     },
+    /// Inspect only existing P1-08 artifacts and show the next manual resume
+    /// step. This never creates a run or lockfile, calls a provider, imports
+    /// grades, or publishes a report. Output is redacted to statuses, hashes,
+    /// and counts.
+    ResumeStatus {
+        #[arg(long, value_name = "DIR")]
+        run_dir: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        grader_config: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        goldset: PathBuf,
+        /// Optional detached receipt to verify readiness for the separate
+        /// manual attested-gate-report transition.
+        #[arg(long = "import-receipt", value_name = "PATH")]
+        import_receipt: Option<PathBuf>,
+        /// Out-of-band public key for --import-receipt. It is required when a
+        /// receipt is supplied and is never persisted by this command.
+        #[arg(long = "expected-receipt-pubkey", value_name = "BASE64")]
+        expected_receipt_pubkey: Option<String>,
+    },
 }
 
 pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<()> {
     let output = args.output;
     let operation = args.operation;
+    let redact_resume_status_errors = matches!(
+        &operation,
+        RecallParityHarnessOperation::ResumeStatus { .. }
+    );
     if let RecallParityHarnessOperation::ReconcileTranscripts { home } = &operation {
         let subject = LocalTranscriptRecoverySubject::mint();
         let report =
@@ -297,7 +322,14 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
         render_harness_json(&report, &output)?;
         return Ok(());
     }
-    let context = CandidateEvidenceUseContext::open(args.local_evidence_home.as_deref())?;
+    let context = CandidateEvidenceUseContext::open(args.local_evidence_home.as_deref())
+        .map_err(|error| {
+            if redact_resume_status_errors {
+                anyhow::anyhow!("open resume-status custody context")
+            } else {
+                error
+            }
+        })?;
     match &operation {
         RecallParityHarnessOperation::ListLocalCandidates { limit } => {
             let candidates = list_local_candidates(&context, *limit)?;
@@ -395,6 +427,11 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
             grader_config,
             goldset,
             ..
+        }
+        | RecallParityHarnessOperation::ResumeStatus {
+            grader_config,
+            goldset,
+            ..
         } => (grader_config, goldset),
         RecallParityHarnessOperation::CandidateEvidenceValidate { .. }
         | RecallParityHarnessOperation::ReconcileTranscripts { .. }
@@ -403,11 +440,40 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
             unreachable!("standalone operation returns before config/goldset input loading")
         }
     };
-    let config_bytes = read_offline_input(grader_config, MAX_GRADER_CONFIG_BYTES, "grader config")?;
-    let goldset_bytes = read_offline_input(goldset, MAX_GOLDSET_BYTES, "goldset")?;
-    let config =
-        crate::recall::goldset::load_grader_config_bytes(&config_bytes, "harness --grader-config")?;
-    let entries = crate::recall::goldset::load_goldset_bytes(&goldset_bytes, "harness --goldset")?;
+    let config_bytes = read_offline_input(grader_config, MAX_GRADER_CONFIG_BYTES, "grader config")
+        .map_err(|error| {
+            if redact_resume_status_errors {
+                anyhow::anyhow!("read resume-status grader configuration")
+            } else {
+                error
+            }
+        })?;
+    let goldset_bytes = read_offline_input(goldset, MAX_GOLDSET_BYTES, "goldset").map_err(|error| {
+        if redact_resume_status_errors {
+            anyhow::anyhow!("read resume-status goldset")
+        } else {
+            error
+        }
+    })?;
+    let config = crate::recall::goldset::load_grader_config_bytes(
+        &config_bytes,
+        "harness --grader-config",
+    )
+    .map_err(|error| {
+        if redact_resume_status_errors {
+            anyhow::anyhow!("validate resume-status grader configuration")
+        } else {
+            error
+        }
+    })?;
+    let entries = crate::recall::goldset::load_goldset_bytes(&goldset_bytes, "harness --goldset")
+        .map_err(|error| {
+            if redact_resume_status_errors {
+                anyhow::anyhow!("validate resume-status goldset")
+            } else {
+                error
+            }
+        })?;
     match operation {
         RecallParityHarnessOperation::Plan { run_dir, .. } => {
             let manifest = plan_run_with_context(
@@ -668,6 +734,35 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                 &context,
             )?;
             render_harness_json(&report, &output)?;
+        }
+        RecallParityHarnessOperation::ResumeStatus {
+            run_dir,
+            import_receipt,
+            expected_receipt_pubkey,
+            ..
+        } => {
+            let receipt_bytes = import_receipt
+                .as_ref()
+                .map(|path| {
+                    read_offline_input(
+                        path,
+                        MAX_PARITY_IMPORT_RECEIPT_BYTES as u64,
+                        "resume-status import receipt",
+                    )
+                    .map_err(|_| anyhow::anyhow!("read resume-status import receipt"))
+                })
+                .transpose()?;
+            let status = resume_status_with_context(
+                &run_dir,
+                &config,
+                &config_bytes,
+                &entries,
+                &goldset_bytes,
+                receipt_bytes.as_deref(),
+                expected_receipt_pubkey.as_deref(),
+                &context,
+            );
+            render_harness_json(&status, &output)?;
         }
         RecallParityHarnessOperation::CandidateEvidenceValidate { .. }
         | RecallParityHarnessOperation::ReconcileTranscripts { .. }

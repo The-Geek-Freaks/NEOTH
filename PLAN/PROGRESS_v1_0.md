@@ -2,6 +2,29 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W275–W277 CLI acceptance, recall resume and Doctor qualification (2026-09-23):**
+W275 exercises real self-improve staging, review, exact-digest acceptance and
+accepted readback. Its separate corpus-drift leg calls review first and proves
+acceptance refusal without changing the target, proposals or ledger. Evaluator
+and audited approval use the existing hermetic core path; full CLI Execute
+provider QA is not claimed. Independent source review passed.
+
+W276 adds the read-only recall-parity resume-status command. Existing run,
+anchor custody, four-grader plan, attested results and receipt are revalidated;
+missing inputs, revocation, malformed receipts and an active writer cannot
+produce report readiness or create artifacts. The existing lock is opened,
+never created, and custody/artifacts are rechecked after receipt verification.
+Independent final review passed. This reports readiness for a separate manual
+gate report, not a parity pass. The P1-08 parent remains open.
+
+W277 selects nine additional account-health tests beside the already-selected
+equal-account-name case and actual Discord/Signal/Doctor callers. This qualifies
+authenticated transport-health diagnosis; provider usage attribution and
+recipient delivery are not inferred. Grouped selection is now 484; native
+inventory is 895 universal identities. Hosted execution of these changes is
+pending. Road remains 1324 = 1019 checked / 303 open / 2 partial, with 305 raw
+and 304 release-tag blockers; WS-LF remains 12 done / 106 open. GUI124 and the
+active FullCI ce0ecba2 are preserved. No local executable validation ran.
 **W270 Hippocampus accepted; Group465 all green (2026-09-23):** P2-02 is
 closed from eleven actual passing tests, including WAL-indexed importance
 through the accepted task tick to CLI readback, threshold/idempotency, rejected

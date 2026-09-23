@@ -516,6 +516,269 @@ pub struct FamilyBiasDimension {
     pub signed_bias: f64,
 }
 
+/// Redacted, read-only checkpoint for resuming one explicitly selected P1-08
+/// run.  It deliberately exposes only stable state names, digests, and counts:
+/// no paths, raw candidate spans, labels, grade contents, provider declarations,
+/// or error strings are allowed to cross this boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RecallParityResumeStatus {
+    pub schema_version: u32,
+    pub run: RecallParityResumeStage,
+    pub operator_anchor: RecallParityResumeStage,
+    pub four_grader_batch: RecallParityResumeStage,
+    pub attested_results: RecallParityResumeStage,
+    pub family_bias: RecallParityResumeStage,
+    pub manual_gate_report: RecallParityResumeStage,
+    pub manual_gate_report_ready: bool,
+}
+
+/// One redacted resume checkpoint. `state` is one of `missing`, `valid`,
+/// `invalid`, or `blocked`; `error_category`, when present, is intentionally a
+/// fixed category rather than the underlying filesystem or validation error.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RecallParityResumeStage {
+    pub state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_category: Option<&'static str>,
+}
+
+impl RecallParityResumeStage {
+    fn missing() -> Self {
+        Self {
+            state: "missing",
+            sha256: None,
+            record_count: None,
+            error_category: None,
+        }
+    }
+
+    fn blocked() -> Self {
+        Self {
+            state: "blocked",
+            sha256: None,
+            record_count: None,
+            error_category: None,
+        }
+    }
+
+    fn invalid(category: &'static str) -> Self {
+        Self {
+            state: "invalid",
+            sha256: None,
+            record_count: None,
+            error_category: Some(category),
+        }
+    }
+
+    fn valid(sha256: String, record_count: Option<usize>) -> Self {
+        Self {
+            state: "valid",
+            sha256: Some(sha256),
+            record_count,
+            error_category: None,
+        }
+    }
+}
+
+/// Inspect retained P1-08 artifacts without creating a directory, lockfile,
+/// state, report, or provider request. A detached import receipt is optional so
+/// incomplete runs can be resumed; a ready result only authorizes the separate
+/// manual `attested-gate-report` transition.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The status reader binds the same explicit inputs as every existing run reader"
+)]
+pub(crate) fn resume_status_with_context(
+    run_dir: &Path,
+    grader_config: &ValidatedGraderConfigFile,
+    config_bytes: &[u8],
+    goldset: &[GoldsetEntry],
+    goldset_bytes: &[u8],
+    import_receipt_bytes: Option<&[u8]>,
+    expected_import_receipt_pubkey_b64: Option<&str>,
+    context: &CandidateEvidenceUseContext,
+) -> RecallParityResumeStatus {
+    let blocked = RecallParityResumeStage::blocked();
+    let mut status = RecallParityResumeStatus {
+        schema_version: 1,
+        run: RecallParityResumeStage::missing(),
+        operator_anchor: blocked.clone(),
+        four_grader_batch: blocked.clone(),
+        attested_results: blocked.clone(),
+        family_bias: blocked.clone(),
+        manual_gate_report: blocked,
+        manual_gate_report_ready: false,
+    };
+
+    let run = match BoundParityRun::open_existing(run_dir) {
+        Ok(run) => run,
+        Err(_) if run_dir.exists() => {
+            status.run = RecallParityResumeStage::invalid("run_unreadable");
+            return status;
+        }
+        Err(_) => return status,
+    };
+    let manifest = match load_existing_run_manifest(
+        &run,
+        grader_config,
+        config_bytes,
+        goldset,
+        goldset_bytes,
+    ) {
+        Ok(manifest) => manifest,
+        Err(_) => {
+            status.run = RecallParityResumeStage::invalid("run_validation_failed");
+            return status;
+        }
+    };
+    let manifest_sha256 = match sha256_json(&manifest) {
+        Ok(value) => value,
+        Err(_) => {
+            status.run = RecallParityResumeStage::invalid("run_validation_failed");
+            return status;
+        }
+    };
+    status.run = RecallParityResumeStage::valid(manifest_sha256, None);
+
+    let anchor = match load_validated_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    ) {
+        Ok(Some(anchor)) => {
+            status.operator_anchor = RecallParityResumeStage::valid(
+                sha256_bytes(&anchor.binding_artifact.bytes),
+                Some(anchor.binding.label_record_count),
+            );
+            anchor
+        }
+        Ok(None) => {
+            status.operator_anchor = RecallParityResumeStage::missing();
+            return status;
+        }
+        Err(_) => {
+            status.operator_anchor = RecallParityResumeStage::invalid("custody_or_anchor_invalid");
+            return status;
+        }
+    };
+
+    match validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config) {
+        Ok(Some(plan)) => {
+            status.four_grader_batch = RecallParityResumeStage::valid(
+                sha256_bytes(&plan.plan_bytes),
+                Some(plan.plan.items.len()),
+            );
+        }
+        Ok(None) => {
+            status.four_grader_batch = RecallParityResumeStage::missing();
+            return status;
+        }
+        Err(_) => {
+            status.four_grader_batch = RecallParityResumeStage::invalid("batch_plan_invalid");
+            return status;
+        }
+    }
+
+    let results = match load_validated_four_grader_batch_result_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    ) {
+        Ok(Some(results)) => {
+            status.attested_results = RecallParityResumeStage::valid(
+                sha256_bytes(&results.binding_artifact.bytes),
+                Some(results.result_artifacts.len()),
+            );
+            results
+        }
+        Ok(None) => {
+            status.attested_results = RecallParityResumeStage::missing();
+            return status;
+        }
+        Err(_) => {
+            status.attested_results = RecallParityResumeStage::invalid("attested_results_invalid");
+            return status;
+        }
+    };
+
+    let family_bias = match attested_family_bias_summary_from_validated(
+        &manifest,
+        grader_config,
+        &anchor,
+        &results,
+    ) {
+        Ok(summary) => summary,
+        Err(_) => {
+            status.family_bias = RecallParityResumeStage::invalid("family_bias_invalid");
+            return status;
+        }
+    };
+    if anchor.revalidate(&run, context).is_err() || results.revalidate(&run).is_err() {
+        status.family_bias = RecallParityResumeStage::invalid("custody_or_artifact_changed");
+        return status;
+    }
+    let family_bias_sha256 = match sha256_json(&family_bias) {
+        Ok(value) => value,
+        Err(_) => {
+            status.family_bias = RecallParityResumeStage::invalid("family_bias_invalid");
+            return status;
+        }
+    };
+    status.family_bias =
+        RecallParityResumeStage::valid(family_bias_sha256, Some(family_bias.clusters.len()));
+
+    let (receipt_bytes, receipt_pubkey) =
+        match (import_receipt_bytes, expected_import_receipt_pubkey_b64) {
+            (None, None) => {
+                status.manual_gate_report = RecallParityResumeStage::missing();
+                return status;
+            }
+            (Some(receipt), Some(pubkey)) => (receipt, pubkey),
+            _ => {
+                status.manual_gate_report =
+                    RecallParityResumeStage::invalid("incomplete_manual_input");
+                return status;
+            }
+        };
+    let receipt = match parse_signed_parity_import_receipt(receipt_bytes) {
+        Ok(receipt) => receipt,
+        Err(_) => {
+            status.manual_gate_report = RecallParityResumeStage::invalid("import_receipt_invalid");
+            return status;
+        }
+    };
+    if verify_external_import_receipt(
+        &manifest,
+        &results.state.imported_grades,
+        &receipt,
+        receipt_pubkey,
+    )
+    .is_err()
+    {
+        status.manual_gate_report = RecallParityResumeStage::invalid("import_receipt_invalid");
+        return status;
+    }
+    if anchor.revalidate(&run, context).is_err() || results.revalidate(&run).is_err() {
+        status.manual_gate_report =
+            RecallParityResumeStage::invalid("custody_or_artifact_changed");
+        return status;
+    }
+    status.manual_gate_report = RecallParityResumeStage::valid(
+        sha256_bytes(receipt_bytes),
+        Some(results.state.imported_grades.len()),
+    );
+    status.manual_gate_report_ready = true;
+    status
+}
+
 /// Create an immutable plan, or return the identical existing plan unchanged.
 pub fn plan_run(
     run_dir: &Path,
@@ -3828,6 +4091,27 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n")
             .into_bytes();
+        let missing_parent = tempfile::tempdir().unwrap();
+        let missing_run = missing_parent.path().join("not-created");
+        let missing_before = snapshot(missing_parent.path());
+        let missing_resume = resume_status_with_context(
+            &missing_run,
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            None,
+            None,
+            &fixture.context,
+        );
+        assert_eq!(missing_resume.run.state, "missing");
+        assert!(!missing_resume.manual_gate_report_ready);
+        assert!(!missing_run.exists());
+        assert_eq!(
+            snapshot(missing_parent.path()),
+            missing_before,
+            "missing-run resume status must not create a directory, lock, or artifact"
+        );
         let (anchor_bytes, link_bytes) = operator_anchor_inputs(&evidence);
         let rejected_parent = tempfile::tempdir().unwrap();
         let rejected_run = rejected_parent.path().join("must-not-exist");
@@ -4033,9 +4317,115 @@ mod tests {
             !gate.gate_eligible,
             "fixture graders disagree with operator calibration; valid custody cannot override quality policy"
         );
+        let before_resume_status = snapshot(run.path());
+        let incomplete_resume = resume_status_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            None,
+            None,
+            &fixture.context,
+        );
+        assert_eq!(incomplete_resume.manual_gate_report.state, "missing");
+        assert!(!incomplete_resume.manual_gate_report_ready);
+        assert_eq!(
+            snapshot(run.path()),
+            before_resume_status,
+            "incomplete resume status must not create or change any run artifact"
+        );
+        let invalid_receipt_resume = resume_status_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            Some(b"{}"),
+            Some(&import_key),
+            &fixture.context,
+        );
+        assert_eq!(invalid_receipt_resume.manual_gate_report.state, "invalid");
+        assert_eq!(
+            invalid_receipt_resume.manual_gate_report.error_category,
+            Some("import_receipt_invalid")
+        );
+        assert!(!invalid_receipt_resume.manual_gate_report_ready);
+        assert_eq!(
+            snapshot(run.path()),
+            before_resume_status,
+            "invalid receipt resume status must not create or change any run artifact"
+        );
+        let held_writer = BoundParityRun::open_or_create(run.path()).unwrap();
+        let writer_locked_resume = resume_status_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            Some(&import_bytes),
+            Some(&import_key),
+            &fixture.context,
+        );
+        assert_eq!(writer_locked_resume.run.state, "invalid");
+        assert_eq!(
+            writer_locked_resume.run.error_category,
+            Some("run_unreadable")
+        );
+        assert!(!writer_locked_resume.manual_gate_report_ready);
+        assert_eq!(
+            snapshot(run.path()),
+            before_resume_status,
+            "writer-locked resume status must not change any run artifact"
+        );
+        drop(held_writer);
+        let resume = resume_status_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            Some(&import_bytes),
+            Some(&import_key),
+            &fixture.context,
+        );
+        assert_eq!(resume.run.state, "valid");
+        assert_eq!(resume.operator_anchor.state, "valid");
+        assert_eq!(resume.four_grader_batch.state, "valid");
+        assert_eq!(resume.attested_results.state, "valid");
+        assert_eq!(resume.family_bias.state, "valid");
+        assert_eq!(resume.manual_gate_report.state, "valid");
+        assert!(resume.manual_gate_report_ready);
+        assert_eq!(
+            snapshot(run.path()),
+            before_resume_status,
+            "resume status must not create or change any run artifact"
+        );
         let before = snapshot(run.path());
         let legacy_before = snapshot(legacy_run.path());
         fixture.revoke().await;
+        let revoked_resume_before = snapshot(run.path());
+        let revoked_resume = resume_status_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            Some(&import_bytes),
+            Some(&import_key),
+            &fixture.context,
+        );
+        assert_eq!(revoked_resume.operator_anchor.state, "invalid");
+        assert_eq!(
+            revoked_resume.operator_anchor.error_category,
+            Some("custody_or_anchor_invalid")
+        );
+        assert!(!revoked_resume.manual_gate_report_ready);
+        assert_eq!(
+            snapshot(run.path()),
+            revoked_resume_before,
+            "revoked resume status must not alter existing artifacts"
+        );
         assert_local_rejection(ingest_operator_anchor_evidence_with_context(
             &rejected_run,
             &config,

@@ -1297,7 +1297,64 @@ fn log(home: &std::path::Path, output: OutputFormat) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::public_status_text;
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    struct NeothHomeRestore(Option<std::ffi::OsString>);
+
+    impl Drop for NeothHomeRestore {
+        fn drop(&mut self) {
+            unsafe {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("NEOTH_HOME", value),
+                    None => std::env::remove_var("NEOTH_HOME"),
+                }
+            }
+        }
+    }
+
+    fn set_test_neoth_home(home: &Path) -> NeothHomeRestore {
+        let restore = NeothHomeRestore(std::env::var_os("NEOTH_HOME"));
+        unsafe { std::env::set_var("NEOTH_HOME", home) };
+        restore
+    }
+
+    async fn w275_stage_and_approve(home: &Path, label: &str) -> (String, PathBuf, String, PathBuf) {
+        let skill = home.join(format!("{label}-skill.md"));
+        let candidate = home.join(format!("{label}-candidate.md"));
+        std::fs::write(&skill, "baseline CLI quality document\n").unwrap();
+        std::fs::write(&candidate, "candidate CLI quality document\n").unwrap();
+
+        let mut config = si::SelfImproveConfig::default();
+        config.enabled = true;
+        config.asked = true;
+        config.save(home).unwrap();
+        run_self_improve(
+            SelfImproveArgs {
+                action: SelfImproveAction::Run {
+                    persona: format!("w275-{label}"),
+                    skill: Some(skill.clone()),
+                    from: Some(candidate),
+                    why: Some("deterministic W275 candidate".into()),
+                    risk: Some("hermetic fixture".into()),
+                    dry_run: false,
+                },
+            },
+            OutputFormat::Json,
+        )
+        .await
+        .expect("real CLI Run --from must stage the proposal");
+
+        let mut staged = si::load_proposals(home).unwrap();
+        assert_eq!(staged.len(), 1, "CLI Run must persist exactly one proposal");
+        let staged = staged.pop().unwrap();
+        let id = staged.id;
+        let (evidence_sha256, corpus_case) =
+            crate::self_improve::tests::w275_prepare_current_verified_approval(home, &id)
+                .await
+                .expect("W275 core fixture must mint current evidence and persist audited approval");
+        (id, skill, evidence_sha256, corpus_case)
+    }
 
     fn unmapped_analysis() -> crate::self_improve::ProposalCodeMapAnalysis {
         crate::self_improve::ProposalCodeMapAnalysis::Unmapped {
@@ -1382,6 +1439,107 @@ mod tests {
         assert!(
             !candidate.contains("<proposal_code_map_analysis>"),
             "only the runtime may render the typed QA prompt envelope"
+        );
+    }
+
+    #[tokio::test]
+    async fn w275_cli_run_review_exact_digest_accept_readback_and_corpus_drift_refuses_before_mutation() {
+        let _env = crate::test_env::lock();
+        let accepted_home = crate::test_env::canonical_tempdir().unwrap();
+        let _restore = set_test_neoth_home(accepted_home.path());
+        let (id, skill, evidence_sha256, _) = w275_stage_and_approve(accepted_home.path(), "accept").await;
+
+        // Invoke the real CLI JSON review route before selecting the receipt.
+        run_self_improve(
+            SelfImproveArgs {
+                action: SelfImproveAction::Review,
+            },
+            OutputFormat::Json,
+        )
+        .await
+        .expect("CLI Review must project current typed quality evidence");
+        let reviewed = si::load_proposals(accepted_home.path()).unwrap().remove(0);
+        let review = si::proposal_quality_readback(accepted_home.path(), &reviewed);
+        assert_eq!(review.state, si::ProposalQualityState::Current);
+        assert_eq!(review.evidence_sha256.as_deref(), Some(evidence_sha256.as_str()));
+
+        run_self_improve(
+            SelfImproveArgs {
+                action: SelfImproveAction::Accept {
+                    id: id.clone(),
+                    expected_evidence_sha256: Some(evidence_sha256.clone()),
+                },
+            },
+            OutputFormat::Json,
+        )
+        .await
+        .expect("CLI Accept must accept the exact fresh review digest");
+        assert_eq!(
+            std::fs::read_to_string(&skill).unwrap(),
+            "candidate CLI quality document\n"
+        );
+
+        run_self_improve(
+            SelfImproveArgs {
+                action: SelfImproveAction::Review,
+            },
+            OutputFormat::Json,
+        )
+        .await
+        .expect("CLI Review must reread the accepted proposal");
+        let accepted = si::load_proposals(accepted_home.path()).unwrap().remove(0);
+        assert_eq!(accepted.status, si::ProposalStatus::Accepted);
+        assert_eq!(
+            si::proposal_quality_readback(accepted_home.path(), &accepted)
+                .evidence_sha256
+                .as_deref(),
+            Some(evidence_sha256.as_str())
+        );
+
+        let stale_home = crate::test_env::canonical_tempdir().unwrap();
+        let _stale_restore = set_test_neoth_home(stale_home.path());
+        let (stale_id, stale_skill, stale_digest, corpus_case) =
+            w275_stage_and_approve(stale_home.path(), "stale").await;
+        run_self_improve(
+            SelfImproveArgs {
+                action: SelfImproveAction::Review,
+            },
+            OutputFormat::Json,
+        )
+        .await
+        .expect("CLI Review must project the drift candidate before digest selection");
+        let stale_reviewed = si::load_proposals(stale_home.path()).unwrap().remove(0);
+        let stale_quality = si::proposal_quality_readback(stale_home.path(), &stale_reviewed);
+        assert_eq!(stale_quality.state, si::ProposalQualityState::Current);
+        assert_eq!(
+            stale_quality.evidence_sha256.as_deref(),
+            Some(stale_digest.as_str())
+        );
+        let before_skill = std::fs::read(&stale_skill).unwrap();
+        let before_proposals = std::fs::read(si::proposals_path(stale_home.path())).unwrap();
+        let before_ledger = std::fs::read(si::ledger_path(stale_home.path())).unwrap_or_default();
+        std::fs::write(&corpus_case, "corpus drift after reviewed evidence\n").unwrap();
+
+        let error = run_self_improve(
+            SelfImproveArgs {
+                action: SelfImproveAction::Accept {
+                    id: stale_id,
+                    expected_evidence_sha256: Some(stale_digest),
+                },
+            },
+            OutputFormat::Json,
+        )
+        .await
+        .expect_err("CLI Accept must refuse corpus-stale evidence before mutation");
+        assert!(format!("{error:#}").contains("stale"));
+        assert_eq!(std::fs::read(&stale_skill).unwrap(), before_skill);
+        assert_eq!(
+            std::fs::read(si::proposals_path(stale_home.path())).unwrap(),
+            before_proposals
+        );
+        assert_eq!(
+            std::fs::read(si::ledger_path(stale_home.path())).unwrap_or_default(),
+            before_ledger
         );
     }
 }
