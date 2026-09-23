@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W333 resolver reviewed source PASS hosted pending; Group695; P213 open",
+  "status": "W333 exact hosted formatting imported; Corec454 pending; Coredecb and GUI129 admitted",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 107949,
-    "sha256": "4CF00CA4069F6E4916484B53FE1D49606DDE8572B6C4849EAAD43E6DF14DF864"
+    "bytes": 107964,
+    "sha256": "49653408FC696CD9AEF494010FF7C47E3745C2F989A48DD4A6CE44ED7B7D53F1"
   },
   "sourceInputs": 622,
   "requiredNativeTests": [
@@ -306,7 +306,7 @@
     {
       "test": "config::code_map_config_tests::configured_mcp_read_path_selectors_are_exact_and_bounded",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A",
+      "sourceSha256": "2AA8B8691C9E1449FB9A4395D39CA9E8FF7177B07A0BE40D641856EA5AE5F6AC",
       "junitClass": "neoth"
     },
     {
@@ -876,25 +876,25 @@
     {
       "test": "config::skill_autonomy_config_tests::public_config_load_rejects_invalid_skill_id",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A",
+      "sourceSha256": "2AA8B8691C9E1449FB9A4395D39CA9E8FF7177B07A0BE40D641856EA5AE5F6AC",
       "junitClass": "neoth"
     },
     {
       "test": "config::skill_autonomy_config_tests::public_config_load_rejects_malformed_or_non_custom_skill_action_maps",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A",
+      "sourceSha256": "2AA8B8691C9E1449FB9A4395D39CA9E8FF7177B07A0BE40D641856EA5AE5F6AC",
       "junitClass": "neoth"
     },
     {
       "test": "config::skill_autonomy_config_tests::public_config_load_rejects_more_than_128_skill_overrides",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A",
+      "sourceSha256": "2AA8B8691C9E1449FB9A4395D39CA9E8FF7177B07A0BE40D641856EA5AE5F6AC",
       "junitClass": "neoth"
     },
     {
       "test": "config::skill_autonomy_config_tests::public_config_load_preserves_legacy_absence_of_skill_overrides",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A",
+      "sourceSha256": "2AA8B8691C9E1449FB9A4395D39CA9E8FF7177B07A0BE40D641856EA5AE5F6AC",
       "junitClass": "neoth"
     },
     {
@@ -2874,13 +2874,13 @@
     {
       "test": "config::vault_mirror_config_boundary_tests::vault_mirror_defaults_roundtrip_through_public_config_boundary",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A",
+      "sourceSha256": "2AA8B8691C9E1449FB9A4395D39CA9E8FF7177B07A0BE40D641856EA5AE5F6AC",
       "junitClass": "neoth"
     },
     {
       "test": "config::vault_mirror_config_boundary_tests::public_config_boundary_rejects_invalid_enabled_vault_mirror",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A",
+      "sourceSha256": "2AA8B8691C9E1449FB9A4395D39CA9E8FF7177B07A0BE40D641856EA5AE5F6AC",
       "junitClass": "neoth"
     },
     {
@@ -6162,43 +6162,43 @@
     {
       "test": "tools::managed_browser::tests::config_defaults_disabled",
       "sourcePath": "SRC/neothd/src/tools/managed_browser.rs",
-      "sourceSha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D",
+      "sourceSha256": "F23998E879B5AA60B2327E8C2B42D381E6E1FAC008ED04BA162CC597E6F685B7",
       "junitClass": "neoth"
     },
     {
       "test": "tools::managed_browser::tests::forged_manifest_and_nonexact_target_url_are_rejected",
       "sourcePath": "SRC/neothd/src/tools/managed_browser.rs",
-      "sourceSha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D",
+      "sourceSha256": "F23998E879B5AA60B2327E8C2B42D381E6E1FAC008ED04BA162CC597E6F685B7",
       "junitClass": "neoth"
     },
     {
       "test": "tools::managed_browser::tests::disabled_policy_refuses_before_home_inspection",
       "sourcePath": "SRC/neothd/src/tools/managed_browser.rs",
-      "sourceSha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D",
+      "sourceSha256": "F23998E879B5AA60B2327E8C2B42D381E6E1FAC008ED04BA162CC597E6F685B7",
       "junitClass": "neoth"
     },
     {
       "test": "tools::managed_browser::tests::missing_generation_fails_closed_without_ambient_fallback",
       "sourcePath": "SRC/neothd/src/tools/managed_browser.rs",
-      "sourceSha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D",
+      "sourceSha256": "F23998E879B5AA60B2327E8C2B42D381E6E1FAC008ED04BA162CC597E6F685B7",
       "junitClass": "neoth"
     },
     {
       "test": "tools::managed_browser::tests::exact_marker_and_executable_resolve_and_revalidate",
       "sourcePath": "SRC/neothd/src/tools/managed_browser.rs",
-      "sourceSha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D",
+      "sourceSha256": "F23998E879B5AA60B2327E8C2B42D381E6E1FAC008ED04BA162CC597E6F685B7",
       "junitClass": "neoth"
     },
     {
       "test": "tools::managed_browser::tests::forged_marker_digest_and_path_are_rejected",
       "sourcePath": "SRC/neothd/src/tools/managed_browser.rs",
-      "sourceSha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D",
+      "sourceSha256": "F23998E879B5AA60B2327E8C2B42D381E6E1FAC008ED04BA162CC597E6F685B7",
       "junitClass": "neoth"
     },
     {
       "test": "config::managed_browser_config_tests::managed_browser_defaults_disabled_and_roundtrips",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A",
+      "sourceSha256": "2AA8B8691C9E1449FB9A4395D39CA9E8FF7177B07A0BE40D641856EA5AE5F6AC",
       "junitClass": "neoth"
     }
   ],
@@ -8089,7 +8089,7 @@
       {
         "test": "tools::managed_browser::tests::retained_binding_detects_executable_replacement_and_symlink_parent",
         "sourcePath": "SRC/neothd/src/tools/managed_browser.rs",
-        "sourceSha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D",
+        "sourceSha256": "F23998E879B5AA60B2327E8C2B42D381E6E1FAC008ED04BA162CC597E6F685B7",
         "junitClass": "neoth"
       }
     ],
@@ -8283,7 +8283,7 @@
       {
         "test": "tools::managed_browser::tests::retained_binding_detects_executable_replacement_and_symlink_parent",
         "sourcePath": "SRC/neothd/src/tools/managed_browser.rs",
-        "sourceSha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D",
+        "sourceSha256": "F23998E879B5AA60B2327E8C2B42D381E6E1FAC008ED04BA162CC597E6F685B7",
         "junitClass": "neoth"
       }
     ]
@@ -20534,6 +20534,32 @@
       }
     ],
     "note": "W330 exact CFT manifest compiled in, default-off capability-bound pure resolver. Seven universal+oneUnix fixtures registered. W331/W332 excluded. GUI129 admitted129PASS, W329 Core admitted. No local execution.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave333HostedFormat": {
+    "base": "c4548c8ed37639b82d846a1bfdba7459447ad3c3",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/config/mod.rs",
+        "bytes": 150737,
+        "sha256": "2AA8B8691C9E1449FB9A4395D39CA9E8FF7177B07A0BE40D641856EA5AE5F6AC",
+        "blob": "4c30ba907566a8011a4f8efd35e718ffeef90e94"
+      },
+      {
+        "path": "SRC/neothd/src/tools/managed_browser.rs",
+        "bytes": 25049,
+        "sha256": "F23998E879B5AA60B2327E8C2B42D381E6E1FAC008ED04BA162CC597E6F685B7",
+        "blob": "e4a14b62202693d2ab22462fedbdf5c322a48000"
+      },
+      {
+        "path": "SRC/neothd/src/tools/mod.rs",
+        "bytes": 3500,
+        "sha256": "23DEF042DB9A06464043F88A5D4577B319544552FA3482EB04705BB1416FDB0E",
+        "blob": "865fc1296a8400e9c9f560bd06f0e606d600c3ac"
+      }
+    ],
+    "note": "Preflight35843800726 exact3file patch SHA/pre-postimage verified. Coredecb35842087666 all4steps admitted; Group687571b35843153480 pending. No local formatter or execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -3318,10 +3318,8 @@ mod managed_browser_config_tests {
         let config: FreedomConfig = serde_yaml::from_str("operator_id: sam\n")
             .expect("legacy freedom config must deserialize");
         assert!(!config.managed_browser.enabled);
-        let configured: FreedomConfig = serde_yaml::from_str(
-            "managed_browser:\n  enabled: true\n",
-        )
-        .expect("typed managed browser config must deserialize");
+        let configured: FreedomConfig = serde_yaml::from_str("managed_browser:\n  enabled: true\n")
+            .expect("typed managed browser config must deserialize");
         assert!(configured.managed_browser.enabled);
     }
 }

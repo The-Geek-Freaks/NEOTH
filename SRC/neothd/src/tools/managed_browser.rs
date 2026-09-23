@@ -217,11 +217,12 @@ impl RuntimeBinding {
             "managed-browser executable parent changed after resolution"
         );
         ensure!(
-            self.executable_binding.matches_regular_file_child_readonly(
-                &self.executable_parent,
-                &self.executable_name,
-                &self.executable_display,
-            )?,
+            self.executable_binding
+                .matches_regular_file_child_readonly(
+                    &self.executable_parent,
+                    &self.executable_name,
+                    &self.executable_display,
+                )?,
             "managed-browser executable changed after resolution"
         );
         Ok(())
@@ -249,7 +250,10 @@ impl<'a> ManagedBrowserRuntimeResolver<'a> {
     }
 
     pub fn resolve(&self) -> Result<ResolvedManagedBrowser> {
-        ensure!(self.config.enabled, "managed browser is disabled by configuration");
+        ensure!(
+            self.config.enabled,
+            "managed browser is disabled by configuration"
+        );
         let manifest = reviewed_manifest()?;
         resolve_from_manifest(self.home, self.platform, &manifest)
     }
@@ -262,13 +266,22 @@ fn reviewed_manifest() -> Result<ReviewedManifest> {
 fn parse_reviewed_manifest(bytes: &str) -> Result<ReviewedManifest> {
     let manifest: ReviewedManifest =
         serde_json::from_str(bytes).context("parse compiled-in managed-browser manifest")?;
-    ensure!(manifest.schema == MANIFEST_SCHEMA, "managed-browser manifest schema is unsupported");
+    ensure!(
+        manifest.schema == MANIFEST_SCHEMA,
+        "managed-browser manifest schema is unsupported"
+    );
     ensure!(
         manifest.product == "chrome-headless-shell",
         "managed-browser manifest product is unsupported"
     );
-    ensure!(!manifest.version.is_empty(), "managed-browser manifest has no version");
-    ensure!(!manifest.revision.is_empty(), "managed-browser manifest has no revision");
+    ensure!(
+        !manifest.version.is_empty(),
+        "managed-browser manifest has no version"
+    );
+    ensure!(
+        !manifest.revision.is_empty(),
+        "managed-browser manifest has no revision"
+    );
     ensure!(
         manifest.provenance.hosted_run > 0
             && is_sha256(&manifest.provenance.receipt_sha256)
@@ -283,8 +296,10 @@ fn parse_reviewed_manifest(bytes: &str) -> Result<ReviewedManifest> {
     let mut seen = std::collections::BTreeSet::new();
     for target in &manifest.targets {
         ensure!(
-            matches!(target.platform.as_str(), "win64" | "linux64" | "mac-x64" | "mac-arm64")
-                && seen.insert(target.platform.as_str()),
+            matches!(
+                target.platform.as_str(),
+                "win64" | "linux64" | "mac-x64" | "mac-arm64"
+            ) && seen.insert(target.platform.as_str()),
             "managed-browser manifest has duplicate or unsupported platform"
         );
         ensure!(
@@ -293,7 +308,8 @@ fn parse_reviewed_manifest(bytes: &str) -> Result<ReviewedManifest> {
             target.platform
         );
         ensure!(
-            target.expected_executable_bytes > 0 && is_fixed_executable_path(&target.expected_executable),
+            target.expected_executable_bytes > 0
+                && is_fixed_executable_path(&target.expected_executable),
             "managed-browser manifest executable path is malformed for {}",
             target.platform
         );
@@ -316,25 +332,24 @@ fn resolve_from_manifest(
         .targets
         .iter()
         .find(|target| target.platform == platform.as_str())
-        .ok_or_else(|| anyhow::anyhow!("managed-browser platform {} is not admitted", platform.as_str()))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "managed-browser platform {} is not admitted",
+                platform.as_str()
+            )
+        })?;
     let home = open_absolute_bound_directory(home_path, false, "managed-browser explicit home")?
         .ok_or_else(|| anyhow::anyhow!("managed-browser explicit home is missing"))?;
 
     let managed_root_name = OsString::from(MANAGED_BROWSER_DIR);
     let managed_root_display = home.physical_display_path.join(&managed_root_name);
-    let (managed_root, managed_root_binding) = open_bound_real_child_dir(
-        &home.dir,
-        &managed_root_name,
-        &managed_root_display,
-    )?;
+    let (managed_root, managed_root_binding) =
+        open_bound_real_child_dir(&home.dir, &managed_root_name, &managed_root_display)?;
 
     let generations_name = OsString::from(GENERATIONS_DIR);
     let generations_display = managed_root_display.join(&generations_name);
-    let (generations, generations_binding) = open_bound_real_child_dir(
-        &managed_root,
-        &generations_name,
-        &generations_display,
-    )?;
+    let (generations, generations_binding) =
+        open_bound_real_child_dir(&managed_root, &generations_name, &generations_display)?;
 
     let generation_name = OsString::from(format!(
         "{}-{}-{}",
@@ -345,11 +360,8 @@ fn resolve_from_manifest(
         "managed-browser generation name is unsafe"
     );
     let generation_display = generations_display.join(&generation_name);
-    let (generation, generation_binding) = open_bound_real_child_dir(
-        &generations,
-        &generation_name,
-        &generation_display,
-    )?;
+    let (generation, generation_binding) =
+        open_bound_real_child_dir(&generations, &generation_name, &generation_display)?;
 
     let marker_name = OsString::from(GENERATION_MARKER);
     let marker_display = generation_display.join(&marker_name);
@@ -444,16 +456,15 @@ fn is_fixed_executable_path(path: &str) -> bool {
     fixed_executable_components(path).is_ok()
 }
 
-fn read_bounded(
-    file: &mut cap_std::fs::File,
-    max_bytes: u64,
-    label: &str,
-) -> Result<Vec<u8>> {
+fn read_bounded(file: &mut cap_std::fs::File, max_bytes: u64, label: &str) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     file.take(max_bytes + 1)
         .read_to_end(&mut bytes)
         .with_context(|| format!("read {label}"))?;
-    ensure!(bytes.len() as u64 <= max_bytes, "{label} exceeds byte limit");
+    ensure!(
+        bytes.len() as u64 <= max_bytes,
+        "{label} exceeds byte limit"
+    );
     Ok(bytes)
 }
 
@@ -466,14 +477,19 @@ fn hash_regular_file_exact(
     let mut total = 0_u64;
     let mut buffer = [0_u8; 64 * 1024];
     loop {
-        let read = file.read(&mut buffer).with_context(|| format!("read {label}"))?;
+        let read = file
+            .read(&mut buffer)
+            .with_context(|| format!("read {label}"))?;
         if read == 0 {
             break;
         }
         total = total
             .checked_add(read as u64)
             .ok_or_else(|| anyhow::anyhow!("{label} byte count overflow"))?;
-        ensure!(total <= expected_bytes, "{label} exceeds reviewed byte length");
+        ensure!(
+            total <= expected_bytes,
+            "{label} exceeds reviewed byte length"
+        );
         digest.update(&buffer[..read]);
     }
     ensure!(
@@ -526,9 +542,16 @@ mod tests {
         let generation = home
             .join(MANAGED_BROWSER_DIR)
             .join(GENERATIONS_DIR)
-            .join(format!("{}-{}-{}", target.platform, manifest.version, target.archive_sha256));
+            .join(format!(
+                "{}-{}-{}",
+                target.platform, manifest.version, target.archive_sha256
+            ));
         std::fs::create_dir_all(generation.join("shell")).unwrap();
-        std::fs::write(generation.join("shell").join("browser.exe"), [1_u8, 2, 3, 4]).unwrap();
+        std::fs::write(
+            generation.join("shell").join("browser.exe"),
+            [1_u8, 2, 3, 4],
+        )
+        .unwrap();
         std::fs::write(
             generation.join(GENERATION_MARKER),
             r#"{"schema":"neoth.managed_browser.generation.v1","platform":"win64","version":"test-1","revision":"test-r","archive_sha256":"1111111111111111111111111111111111111111111111111111111111111111","executable_sha256":"9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a","executable_bytes":4}"#,
@@ -545,7 +568,9 @@ mod tests {
     #[test]
     fn forged_manifest_and_nonexact_target_url_are_rejected() {
         assert!(parse_reviewed_manifest(TEST_MANIFEST.replace("test-1", "").as_str()).is_err());
-        assert!(parse_reviewed_manifest(TEST_MANIFEST.replace("111111", "nothex").as_str()).is_err());
+        assert!(
+            parse_reviewed_manifest(TEST_MANIFEST.replace("111111", "nothex").as_str()).is_err()
+        );
         assert!(parse_reviewed_manifest(
             TEST_MANIFEST.replace(
                 "https://storage.googleapis.com/chrome-for-testing-public/test-1/win64/chrome-headless-shell-win64.zip",
@@ -584,7 +609,10 @@ mod tests {
         let generation = fixture_generation(home.path(), &manifest);
         let resolved = resolve_from_manifest(home.path(), ManagedBrowserPlatform::Win64, &manifest)
             .expect("exact immutable fixture resolves");
-        assert_eq!(resolved.executable(), generation.join("shell").join("browser.exe"));
+        assert_eq!(
+            resolved.executable(),
+            generation.join("shell").join("browser.exe")
+        );
         resolved
             .revalidate_for_launch()
             .expect("retained fixture binding remains current");
@@ -600,7 +628,9 @@ mod tests {
             r#"{"schema":"neoth.managed_browser.generation.v1","platform":"win64","version":"test-1","revision":"test-r","archive_sha256":"1111111111111111111111111111111111111111111111111111111111111111","executable_sha256":"0000000000000000000000000000000000000000000000000000000000000000","executable_bytes":4}"#,
         )
         .unwrap();
-        assert!(resolve_from_manifest(home.path(), ManagedBrowserPlatform::Win64, &manifest).is_err());
+        assert!(
+            resolve_from_manifest(home.path(), ManagedBrowserPlatform::Win64, &manifest).is_err()
+        );
 
         let malicious = TEST_MANIFEST.replace("shell/browser.exe", "../ambient-browser.exe");
         assert!(parse_reviewed_manifest(&malicious).is_err());
@@ -628,7 +658,8 @@ mod tests {
         let link_home = tempfile::tempdir().unwrap();
         symlink(hostile.path(), link_home.path().join(MANAGED_BROWSER_DIR)).unwrap();
         assert!(
-            resolve_from_manifest(link_home.path(), ManagedBrowserPlatform::Win64, &manifest).is_err(),
+            resolve_from_manifest(link_home.path(), ManagedBrowserPlatform::Win64, &manifest)
+                .is_err(),
             "no-follow capability walk must reject a symlink managed root"
         );
     }

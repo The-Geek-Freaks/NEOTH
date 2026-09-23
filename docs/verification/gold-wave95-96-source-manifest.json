@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T09:33:08.9291388Z",
-  "validationStatus": "W333 resolver reviewed source PASS hosted pending; Group695; P213 open",
+  "capturedUtc": "2026-09-23T09:35:39.6277289Z",
+  "validationStatus": "W333 exact hosted formatting imported; Corec454 pending; Coredecb and GUI129 admitted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1568,8 +1568,8 @@
     },
     {
       "path": "SRC/neothd/src/config/mod.rs",
-      "bytes": 150756,
-      "sha256": "F413B71AD5B3CD26D7364EBE5202C88AD151A1EBA291534E41E6736938CF0B5A"
+      "bytes": 150737,
+      "sha256": "2AA8B8691C9E1449FB9A4395D39CA9E8FF7177B07A0BE40D641856EA5AE5F6AC"
     },
     {
       "path": "SRC/neothd/src/config/ops.rs",
@@ -2559,7 +2559,7 @@
     {
       "path": "SRC/neothd/src/tools/mod.rs",
       "bytes": 3500,
-      "sha256": "DC2613212A98689626432EF685C733C6C94F8738D9505312DEAFD50BEA1EB74F"
+      "sha256": "23DEF042DB9A06464043F88A5D4577B319544552FA3482EB04705BB1416FDB0E"
     },
     {
       "path": "SRC/neothd/src/tools/web_doc_cache.rs",
@@ -3103,8 +3103,8 @@
     },
     {
       "path": "SRC/neothd/src/tools/managed_browser.rs",
-      "bytes": 24617,
-      "sha256": "94DC943B6D05E187214FE127E689264835144E00A53A551AAD7D9ECE6516872D"
+      "bytes": 25049,
+      "sha256": "F23998E879B5AA60B2327E8C2B42D381E6E1FAC008ED04BA162CC597E6F685B7"
     },
     {
       "path": "docs/verification/managed-browser-cft154.json",

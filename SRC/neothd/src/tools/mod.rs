@@ -41,9 +41,9 @@ pub mod google_tasks;
 /// GOLD-ADOPT-26 — zero-config web-to-Markdown via https://r.jina.ai/<url>.
 /// Last-resort URL fetcher for the ingest pipeline; no API key required.
 pub mod jina_reader;
-pub mod microsoft_todo;
 /// W333 — default-off managed-browser policy and pure local runtime resolver.
 pub mod managed_browser;
+pub mod microsoft_todo;
 /// GOLD-ADAPT-ODY-30 — on-disk `web_search` usage analytics (normalized-query
 /// frequency + success/fail/cache-hit counters). Surfaced via
 /// `neoth search --stats`.
