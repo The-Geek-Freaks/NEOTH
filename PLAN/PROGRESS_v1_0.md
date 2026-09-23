@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W325/W330 managed-browser prerequisite (2026-09-23):** The reviewed
+engine decision selects chromiumoxide0.9.1 only as a CDP client after NEOTH's
+own contained launch. Externally rendered navigation still requires enforced
+browser-wide egress mediation; no runtime, dependency or navigation is enabled.
+A reviewed manual main-only hosted lane acquires the exact CFT154.0.8037.57 /
+revision1689415 archives for four platforms, verifies bounded ZIP inventory,
+and exports only hashes, notices and UTC/GitHub-bound provenance receipts.
+This is official-TLS acquisition evidence, not vendor signatures or runtime
+acceptance. Hosted acquisition is pending; P2-13 remains open. Inventory611.
+Core1a1735837799526 is now source-admitted four-step SUCCESS; Preflightb609
+35838777616 passed. Group684b60935838862993, GUI1291a1735837802269 and
+fullCI75035833337095 continue. Road/WS-LF counts unchanged. No local executable
+validation or browser/archive download ran.
+
 **W318-W323 exact hosted formatting (2026-09-23):** Preflight1a17
 run35837779652 produced a three-file format patch. SHA2567F25D287 and every
 Git pre/postimage were verified before import. Core1a1735837799526 and

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "P222 accepted; canonical PROGRESS WS-LF count corrected15done103open after hosted preflight diagnostic",
+  "status": "W325 reviewed engine decision; W330 SOURCE PASS hosted acquisition pending; browser remains unimplemented, P213 open",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 105449,
-    "sha256": "D4DFF8ED07AD790616156CFBC80B9BA9022AD6561EFF63B6482DAC611F9F2D1E"
+    "bytes": 106013,
+    "sha256": "993E5AF102843B79E51B04130844FCAF50C7C6B62400BB43FBF9CD7C50226E25"
   },
-  "sourceInputs": 608,
+  "sourceInputs": 611,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -20314,6 +20314,13 @@
     "base": "737ba7b9ee32cce141358961ee1a998fc01530bc",
     "sources": [],
     "note": "Preflight73735838445075 passed formatting, identified old14/104 canonical quoted progress section; corrected to actual Road15/103 and named P222. Source/tests unchanged.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave325330BrowserProvenance": {
+    "base": "b6090b1f71ce4ca2926494b9f77389c56ecdb7d9",
+    "sources": [],
+    "note": "Independent review accepted explicit contained launch+CDP client, browserwide egress boundary and provenance acquisition with four pinned platforms, UTC/GitHub identity, bounded ZIP and notice hashes; no local executable/download. Core1a17 admitted4steps.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

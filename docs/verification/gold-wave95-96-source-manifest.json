@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T08:41:52.2566114Z",
-  "validationStatus": "P222 accepted; canonical PROGRESS WS-LF count corrected15done103open after hosted preflight diagnostic",
+  "capturedUtc": "2026-09-23T08:50:55.3571063Z",
+  "validationStatus": "W325 reviewed engine decision; W330 SOURCE PASS hosted acquisition pending; browser remains unimplemented, P213 open",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -473,18 +473,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 143745,
-      "sha256": "B4051E93F4E6AA973C16EFFDB8439E82060E5CE51265F9C016B785BCFA0A834B"
+      "bytes": 144705,
+      "sha256": "74F500009E0AC8AEE19FCE58A2B0FA2199BBEC098B8DB5EF2AE8BD21364BEBF4"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1146797,
-      "sha256": "5C69C62E1B924337F3E7E0C7E519EF40C294CFF87879E94214CB847FD20A3BA2"
+      "bytes": 1147757,
+      "sha256": "A73F2E3D9F883067DA5DEB50134F3CD4F49F289FF994295E9808E91262519F41"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1743286,
-      "sha256": "0357A990C32FBE80AE0447807C404265546BF06FD8AF046D18A8B9B5061FC0FA"
+      "bytes": 1744246,
+      "sha256": "525BE0A72869763FD7559084675FC4D72DB09736863084715C29EBF889819144"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -3045,6 +3045,21 @@
       "path": "docs/verification/gold-wave323-p222-acceptance.json",
       "bytes": 8479,
       "sha256": "BAB7E1ED82B5C6B2D5A44878FC4F8BFB20C4E11ECB43E499C94D493A46C93198"
+    },
+    {
+      "path": ".github/workflows/managed-browser-provenance.yml",
+      "bytes": 17337,
+      "sha256": "94E4597AF87EE91EF422753839D1515F6A54FABBDEAC4DA2A3E5750C97EF2306"
+    },
+    {
+      "path": "docs/gold-wave325-managed-browser-decision.md",
+      "bytes": 8170,
+      "sha256": "86163E48407F30E054D921961229B58C4F5E6BAAE7B2F6E0298E806AFA08D3F0"
+    },
+    {
+      "path": "docs/gold-wave330-browser-provenance-acquisition.md",
+      "bytes": 1954,
+      "sha256": "96D73672472CF9FB255D08F30FB2842295F69B9843A4776D12FD2203858E6F3C"
     }
   ]
 }
