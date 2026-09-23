@@ -8,6 +8,14 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W471 hosted formatting import (2026-09-23):**
+W469 is published asf1c67422. Preflight35893107024 exported formatting for
+six Rust files; artifact10766031308, both SHA256 entries and every complete
+before/after Gitblob match before import. No local formatter ran. Core8ec
+35892417444 continues. Group885/GUI145/Windows16 await core readiness.
+Inventory731/native1180/Group885/GUI145Linux141macOS; Road and WS-LF counts
+remain unchanged. All behavioral acceptance boundaries remain explicit.
+
 **W469 live assignments and integrated regressions (2026-09-23):**
 W467 is published as8ec8bf6a; Preflight35892387374 passed. Core35892417444
 is checking its exact source. W465/W466 add daemon-owned authenticated scoped

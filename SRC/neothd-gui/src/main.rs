@@ -38726,18 +38726,36 @@ mod interface_preference_tests {
             .prepare_for_commit(config_hash)
             .expect("daemon-owned prepared-hash completion acknowledgement");
         assert_eq!(acknowledgement.terminal, WizardTerminalState::Completed);
-        assert_eq!(acknowledgement.last_message, Some(WizardIpcMessage::Finished));
+        assert_eq!(
+            acknowledgement.last_message,
+            Some(WizardIpcMessage::Finished)
+        );
         assert!(home.path().join(".initialized").is_file());
 
         let reentry = read_freedom_yaml(&prepared.freedom_path).expect("GUI re-entry projection");
         let reentry_topology = reentry.inference.expect("GUI re-entry topology");
         assert_eq!(reentry_topology.mode, TopologyMode::Custom);
-        assert_eq!(reentry_topology.left.provider, Some(InferenceProvider::AnthropicApi));
-        assert_eq!(reentry_topology.left.model.as_deref(), Some("claude-opus-4-6"));
-        assert_eq!(reentry_topology.right.provider, Some(InferenceProvider::OpenAi));
+        assert_eq!(
+            reentry_topology.left.provider,
+            Some(InferenceProvider::AnthropicApi)
+        );
+        assert_eq!(
+            reentry_topology.left.model.as_deref(),
+            Some("claude-opus-4-6")
+        );
+        assert_eq!(
+            reentry_topology.right.provider,
+            Some(InferenceProvider::OpenAi)
+        );
         assert_eq!(reentry_topology.right.model.as_deref(), Some("gpt-5.5"));
-        assert_eq!(reentry_topology.cerebellum.provider, Some(InferenceProvider::LocalOllama));
-        assert_eq!(reentry_topology.cerebellum.model.as_deref(), Some("qwen3:8b"));
+        assert_eq!(
+            reentry_topology.cerebellum.provider,
+            Some(InferenceProvider::LocalOllama)
+        );
+        assert_eq!(
+            reentry_topology.cerebellum.model.as_deref(),
+            Some("qwen3:8b")
+        );
 
         // Mirror the production re-entry projection back into a new Finish
         // state, then rerun without touching the completed transaction.
@@ -38778,12 +38796,27 @@ mod interface_preference_tests {
         let reloaded = neothd::config::FreedomConfig::load_from_path(&rerun.freedom_path)
             .expect("daemon config reload after GUI rerun");
         assert_eq!(reloaded.inference.mode, TopologyMode::Custom);
-        assert_eq!(reloaded.inference.left.provider, Some(InferenceProvider::AnthropicApi));
-        assert_eq!(reloaded.inference.left.model.as_deref(), Some("claude-opus-4-6"));
-        assert_eq!(reloaded.inference.right.provider, Some(InferenceProvider::OpenAi));
+        assert_eq!(
+            reloaded.inference.left.provider,
+            Some(InferenceProvider::AnthropicApi)
+        );
+        assert_eq!(
+            reloaded.inference.left.model.as_deref(),
+            Some("claude-opus-4-6")
+        );
+        assert_eq!(
+            reloaded.inference.right.provider,
+            Some(InferenceProvider::OpenAi)
+        );
         assert_eq!(reloaded.inference.right.model.as_deref(), Some("gpt-5.5"));
-        assert_eq!(reloaded.inference.cerebellum.provider, Some(InferenceProvider::LocalOllama));
-        assert_eq!(reloaded.inference.cerebellum.model.as_deref(), Some("qwen3:8b"));
+        assert_eq!(
+            reloaded.inference.cerebellum.provider,
+            Some(InferenceProvider::LocalOllama)
+        );
+        assert_eq!(
+            reloaded.inference.cerebellum.model.as_deref(),
+            Some("qwen3:8b")
+        );
 
         server_thread
             .join()

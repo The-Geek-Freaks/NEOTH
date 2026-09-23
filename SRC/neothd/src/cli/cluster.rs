@@ -5988,15 +5988,9 @@ mod tests {
         };
 
         assert!(
-            task_delegate_scope_set_live_or_offline_at(
-                home.path(),
-                &peer_key,
-                &scope,
-                true,
-                0,
-            )
-            .await
-            .is_err(),
+            task_delegate_scope_set_live_or_offline_at(home.path(), &peer_key, &scope, true, 0,)
+                .await
+                .is_err(),
             "a live daemon with no reachable RPC must refuse scoped assignment"
         );
         assert!(
@@ -6013,10 +6007,7 @@ mod tests {
             "a live daemon with no reachable RPC must refuse outbound assignment"
         );
         assert!(
-            !home
-                .path()
-                .join("cluster-membership.db")
-                .exists(),
+            !home.path().join("cluster-membership.db").exists(),
             "live RPC failures must not open or mutate the offline authority"
         );
     }

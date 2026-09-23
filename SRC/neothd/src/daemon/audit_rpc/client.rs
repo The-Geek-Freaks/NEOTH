@@ -994,12 +994,8 @@ pub async fn membership_set_task_delegate_outbound_assignment(
 > {
     let body = serde_json::to_string(request)
         .map_err(|error| AuditRpcClientError::Unavailable(error.to_string()))?;
-    let (status, response) = post_rpc(
-        home,
-        "/membership/task-delegate/outbound-assignment",
-        &body,
-    )
-    .await?;
+    let (status, response) =
+        post_rpc(home, "/membership/task-delegate/outbound-assignment", &body).await?;
     response_json(status, &response)
 }
 

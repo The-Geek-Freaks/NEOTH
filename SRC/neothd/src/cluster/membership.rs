@@ -3422,14 +3422,15 @@ impl MembershipStore {
                 model_hint: None,
                 scope: Some(scope.clone()),
             },
-    )?;
-    let channel = scope.channel_id.as_deref().unwrap_or("");
-    let account = scope.account_id.as_deref().unwrap_or("");
+        )?;
+        let channel = scope.channel_id.as_deref().unwrap_or("");
+        let account = scope.account_id.as_deref().unwrap_or("");
         #[cfg(test)]
         if self.effects.task_delegate_start.try_lock().is_err() {
-            self.effects.observe_task_delegate_outbound_setter_contention();
+            self.effects
+                .observe_task_delegate_outbound_setter_contention();
         }
-    let _authority_gate = self
+        let _authority_gate = self
             .effects
             .task_delegate_start
             .lock()

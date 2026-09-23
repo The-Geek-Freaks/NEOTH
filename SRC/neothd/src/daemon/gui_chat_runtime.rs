@@ -2316,41 +2316,43 @@ mod lifecycle_tests {
             _permit: &crate::providers::ProviderDispatchPermit,
         ) -> anyhow::Result<ChunkStream> {
             W458_STREAM_OPENS.fetch_add(1, Ordering::SeqCst);
-            Ok(Box::pin(stream::iter(vec![
-                Ok(CompletionChunk {
-                    delta: "first ordinary chunk; ".into(),
-                    done: false,
-                    termination: Default::default(),
-                    identity: Default::default(),
-                    input_tokens: None,
-                    output_tokens: None,
-                    cache_creation_tokens: None,
-                    cache_read_tokens: None,
+            Ok(Box::pin(
+                stream::iter(vec![
+                    Ok(CompletionChunk {
+                        delta: "first ordinary chunk; ".into(),
+                        done: false,
+                        termination: Default::default(),
+                        identity: Default::default(),
+                        input_tokens: None,
+                        output_tokens: None,
+                        cache_creation_tokens: None,
+                        cache_read_tokens: None,
+                    }),
+                    Ok(CompletionChunk {
+                        delta: "sk-w458-never-visible".into(),
+                        done: false,
+                        termination: Default::default(),
+                        identity: Default::default(),
+                        input_tokens: None,
+                        output_tokens: None,
+                        cache_creation_tokens: None,
+                        cache_read_tokens: None,
+                    }),
+                    Ok(CompletionChunk {
+                        delta: "; third ordinary chunk".into(),
+                        done: true,
+                        termination: Default::default(),
+                        identity: Default::default(),
+                        input_tokens: Some(5),
+                        output_tokens: Some(3),
+                        cache_creation_tokens: None,
+                        cache_read_tokens: None,
+                    }),
+                ])
+                .inspect(|_| {
+                    W458_STREAM_ITEMS_POLLED.fetch_add(1, Ordering::SeqCst);
                 }),
-                Ok(CompletionChunk {
-                    delta: "sk-w458-never-visible".into(),
-                    done: false,
-                    termination: Default::default(),
-                    identity: Default::default(),
-                    input_tokens: None,
-                    output_tokens: None,
-                    cache_creation_tokens: None,
-                    cache_read_tokens: None,
-                }),
-                Ok(CompletionChunk {
-                    delta: "; third ordinary chunk".into(),
-                    done: true,
-                    termination: Default::default(),
-                    identity: Default::default(),
-                    input_tokens: Some(5),
-                    output_tokens: Some(3),
-                    cache_creation_tokens: None,
-                    cache_read_tokens: None,
-                }),
-            ])
-            .inspect(|_| {
-                W458_STREAM_ITEMS_POLLED.fetch_add(1, Ordering::SeqCst);
-            })))
+            ))
         }
     }
 
@@ -2887,7 +2889,9 @@ mod lifecycle_tests {
         let (main_server, mut main_client) = tokio::io::duplex(128 * 1024);
         let main_runtime = runtime.clone();
         let main_task = tokio::spawn(async move {
-            main_runtime.attach(Box::new(main_server), attach_request(&main)).await
+            main_runtime
+                .attach(Box::new(main_server), attach_request(&main))
+                .await
         });
         let (buddy_server, mut buddy_client) = tokio::io::duplex(128 * 1024);
         let buddy_runtime = runtime.clone();
@@ -2949,7 +2953,8 @@ template = "[REDACTED]"
             W458_STREAM_OPENS.store(0, Ordering::SeqCst);
             W458_STREAM_ITEMS_POLLED.store(0, Ordering::SeqCst);
             let (runtime, turn_id, completion, _home) = w458_runtime_with_admitted_turn(hook).await;
-            let (mut main, mut buddy, main_task, buddy_task) = w458_attach_pair(&runtime, turn_id).await;
+            let (mut main, mut buddy, main_task, buddy_task) =
+                w458_attach_pair(&runtime, turn_id).await;
             runtime.schedule_turn(turn_id);
             let main_frames = read_w458_terminal_frames(&mut main).await;
             let buddy_frames = read_w458_terminal_frames(&mut buddy).await;
@@ -2974,7 +2979,10 @@ template = "[REDACTED]"
 
             for frames in [&main_frames, &buddy_frames] {
                 let serialized = serde_json::to_string(frames).expect("serialize W458 frames");
-                assert!(!serialized.contains(SECRET), "{name} never transports the source secret");
+                assert!(
+                    !serialized.contains(SECRET),
+                    "{name} never transports the source secret"
+                );
                 let deltas = frames
                     .iter()
                     .filter(|frame| frame["payload"]["type"] == "delta")

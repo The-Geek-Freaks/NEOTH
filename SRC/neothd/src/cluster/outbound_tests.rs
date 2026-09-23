@@ -662,7 +662,9 @@ fn deny_that_wins_outbound_authority_gate_sends_nothing_and_leaves_no_replayable
             .is_err(),
         "a deny committed before admission must refuse dispatch"
     );
-    membership.store().set_task_delegate_gate_observers(None, None);
+    membership
+        .store()
+        .set_task_delegate_gate_observers(None, None);
     assert!(
         receiver.try_recv().is_err(),
         "the denied dispatch must enqueue no frame"
@@ -687,7 +689,11 @@ fn deny_that_wins_outbound_authority_gate_sends_nothing_and_leaves_no_replayable
             .state,
         OutboundTaskDelegateState::Accepted
     );
-    drop(receiver.try_recv().expect("restored route receives exactly one frame"));
+    drop(
+        receiver
+            .try_recv()
+            .expect("restored route receives exactly one frame"),
+    );
     assert!(
         controller
             .dispatch(&dispatch_request("op-deny-wins", "task-deny-wins", scope()))
@@ -752,7 +758,9 @@ fn deny_that_wins_outbound_authority_gate_sends_nothing_and_leaves_no_replayable
                 expected_revision: restored.committed.revision,
             },
         );
-        deny_tx.send(result).expect("report dispatch-first deny result");
+        deny_tx
+            .send(result)
+            .expect("report dispatch-first deny result");
     });
     deny_started_rx
         .recv_timeout(std::time::Duration::from_secs(1))
@@ -783,7 +791,9 @@ fn deny_that_wins_outbound_authority_gate_sends_nothing_and_leaves_no_replayable
             .committed
             .allowed
     );
-    membership.store().set_task_delegate_outbound_gate_held_observer(None);
+    membership
+        .store()
+        .set_task_delegate_outbound_gate_held_observer(None);
     membership
         .store()
         .set_task_delegate_outbound_setter_contention_observer(None);
@@ -794,7 +804,11 @@ fn deny_that_wins_outbound_authority_gate_sends_nothing_and_leaves_no_replayable
     );
     assert!(
         controller
-            .dispatch(&dispatch_request("op-dispatch-wins", "task-dispatch-wins", scope()))
+            .dispatch(&dispatch_request(
+                "op-dispatch-wins",
+                "task-dispatch-wins",
+                scope()
+            ))
             .is_err(),
         "the accepted dispatch-first operation must remain non-replayable after deny"
     );
