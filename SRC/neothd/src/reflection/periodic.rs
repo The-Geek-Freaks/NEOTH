@@ -2302,6 +2302,13 @@ fn reconcile_retention_effect_journals(
     use crate::reflection::retention_authority::{
         RetentionEffectPhaseV2 as Phase, RetentionEffectReceiptV2,
     };
+    // Load receipts when the first committed journal needs them, preserving
+    // the prior error order for earlier nonterminal recovery. A recovered
+    // journal can create only its own same-tag receipt below; the journal
+    // namespace has one durable record per tag. Reuse this bounded inventory
+    // so a full retention batch does not rescan every receipt for every
+    // already-committed journal.
+    let mut receipts = None;
     for mut journal in
         crate::reflection::retention_authority::list_effect_journals(home).map_err(|_| {
             DailyRetentionError {
@@ -2313,10 +2320,18 @@ fn reconcile_retention_effect_journals(
             continue;
         }
         if matches!(journal.phase, Phase::Committed) {
-            let receipts = crate::reflection::retention_authority::list_effect_receipts(home)
-                .map_err(|_| DailyRetentionError {
-                    reason: "retention receipt inventory unavailable",
-                })?;
+            if receipts.is_none() {
+                receipts = Some(
+                    crate::reflection::retention_authority::list_effect_receipts(home).map_err(
+                        |_| DailyRetentionError {
+                            reason: "retention receipt inventory unavailable",
+                        },
+                    )?,
+                );
+            }
+            let receipts = receipts.as_ref().ok_or(DailyRetentionError {
+                reason: "retention receipt inventory unavailable",
+            })?;
             if receipts
                 .iter()
                 .any(|receipt| retention_receipt_matches_journal(receipt, &journal))

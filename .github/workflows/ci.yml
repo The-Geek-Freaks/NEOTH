@@ -313,16 +313,16 @@ jobs:
             # Run 35113128375 then reached the old 50-minute bound while
             # compiling at one job.  Keep that memory boundary and allow the
             # restored interrupted target plus the current GUI/lib changes to
-            # finish building before the separate 30-minute test window.
+            # finish building before the separate 60-minute test window.
             build_jobs: 1
             # Localhost port-binding tests race on Windows under parallel
             # process execution; serial execution preserves the real contract.
             test_threads: 1
             junit_name: windows
             test_build_timeout_minutes: 80
-            test_execution_timeout_minutes: 30
-            # 80-minute compile + 30-minute execution + 10-minute setup/cache margin.
-            job_timeout_minutes: 120
+            test_execution_timeout_minutes: 60
+            # 80-minute compile + 60-minute execution + 10-minute setup/cache margin.
+            job_timeout_minutes: 150
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

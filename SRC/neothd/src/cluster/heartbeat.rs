@@ -1064,3 +1064,4 @@ mod tests {
         assert_eq!(ONCHANGE_PUSH_MIN_INTERVAL_MS, 1_000);
         assert_eq!(MAX_CAPABILITIES, 64);
     }
+}

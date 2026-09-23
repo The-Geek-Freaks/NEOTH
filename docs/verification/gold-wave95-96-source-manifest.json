@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T12:04:10.6975124Z",
-  "validationStatus": "W374/W380 scoped cluster + W379 macOS GUI static reviewed; Group786/Core/new CLI export/GUI behavior pending",
+  "capturedUtc": "2026-09-23T12:18:56.0486221Z",
+  "validationStatus": "W383 error-aware retry + W384 parser + W385 Windows window + W386 retention scan reviewed; hosted validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -29,7 +29,7 @@
     {
       "path": ".github/workflows/ci.yml",
       "bytes": 39544,
-      "sha256": "873B4FABF9C71E43E914AEEED1AC37AB70A6F64A9F92B57C575D318A8CA50362"
+      "sha256": "0BAF2E9F97341D5AB3411C5843993011CA5153B12D454ECD9D7CF7613B85B4A0"
     },
     {
       "path": ".github/workflows/cli-reference.yml",
@@ -78,8 +78,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 14578,
-      "sha256": "D70614311765B155802C7ABABA427CD17588D22E46105EE645D1162599423DE2"
+      "bytes": 14631,
+      "sha256": "72363D2B78154BD1AE8A55A2F5B68BF3564576D26E537235F59B8B37578807DC"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -769,7 +769,7 @@
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
       "bytes": 44579,
-      "sha256": "E0604B93091DD0A1D3E0F62B17D22A06EC0AF5ABD55FDCFB08130BC704697D1B"
+      "sha256": "4F8AF39A4BF74552045ACC09CF1A9D37B21D4BECD7AE8A43799DF51249FB61FB"
     },
     {
       "path": "packaging/tests/test_preview_windows_workflow_contract.py",
@@ -813,13 +813,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1163608,
-      "sha256": "4A480640F189BFDA81C1D01C29D16743804B68CC685385FE2C295D7CE9FFB104"
+      "bytes": 1165079,
+      "sha256": "43BDD5BB4EDA98E9DEF5D94CEBBECABE81C787F5BD2A0CAFC0F3DD9D58E6BD01"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1761057,
-      "sha256": "6C92B1383F61DF20E78AC61CF4FB270A5B02B27072C17A2D88D2893100DF09E5"
+      "bytes": 1762528,
+      "sha256": "DB847EB4A762C1086490906C38840037977610CC736D294FB8BDBF6E40C6A9E0"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -2658,8 +2658,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "bytes": 333908,
-      "sha256": "2DA14A467171B2E7A8993BDFCFBBFA8BCF1DF7AA15B441541344E8105DAB834B"
+      "bytes": 340435,
+      "sha256": "F9210370ACC44BB722A6107ACFC86F0695B77038C3075A9024C3B89DF21F8696"
     },
     {
       "path": "SRC/neothd/src/providers/fallback.rs",
@@ -2683,8 +2683,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/mod.rs",
-      "bytes": 271171,
-      "sha256": "59F48F5E65DCD6DC840F1408D07E99067436CD15E8DE474DBCA3BFEFFEEC16A4"
+      "bytes": 276329,
+      "sha256": "3B641C8F8910D7D624A61CCBC4189AACDC95604C16F492DB5204AA5DD4DCD153"
     },
     {
       "path": "SRC/neothd/src/providers/ollama_api.rs",
@@ -2788,8 +2788,8 @@
     },
     {
       "path": "SRC/neothd/src/reflection/periodic.rs",
-      "bytes": 243288,
-      "sha256": "85362BAA1F038F5BEF7376B2331D7BBF620C283741775A91AA8CCC3E1D4E6893"
+      "bytes": 244027,
+      "sha256": "168AC0E1905D4352D234738FCB0E4A3538974B1CDB07B8F7C0532A3F03814A7F"
     },
     {
       "path": "SRC/neothd/src/reflection/retention_authority.rs",
@@ -3293,8 +3293,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/heartbeat.rs",
-      "bytes": 41252,
-      "sha256": "163EE02C08032D4D48833771945CC0F9A4D904BDC909004B4C3575E2C37F8FDD"
+      "bytes": 41254,
+      "sha256": "2A556B43FE6144211F6B2656243992BD52991FF5846CE01EAA1A96FA295A05DD"
     },
     {
       "path": "docs/gold-wave374-cluster-scoped-assignments.md",
@@ -3305,6 +3305,21 @@
       "path": "docs/gold-wave379-macos-gui-fixtures.md",
       "bytes": 1316,
       "sha256": "6AD6E40DEAB8008FD7B3B647207CFA44DB995B617BDCF6C9F1E04965D5458CE8"
+    },
+    {
+      "path": "docs/gold-wave383-error-aware-llm-retry.md",
+      "bytes": 3408,
+      "sha256": "7F4C327ABFF6BEE4AF90B2153DA3603BB17D3EB0A6DD484B8703553EF88E8F2B"
+    },
+    {
+      "path": "docs/gold-wave385-windows-test-window.md",
+      "bytes": 919,
+      "sha256": "7D890B4763C1DE879FF3BBF21D5FA4A1C953560AC13422018937FCE859E12458"
+    },
+    {
+      "path": "docs/gold-wave386-windows-retention-timeout.md",
+      "bytes": 2391,
+      "sha256": "B1C28FDD642F3AD3CAFC76CED6B483CFB694E47D7994B7E24C0F810E3606DD5E"
     }
   ]
 }

@@ -2,6 +2,26 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W383-W386 retry and hosted recovery batch (2026-09-23):**
+W383 sends bounded typed error facts to the real direct-chat LLM retry and
+reauthorizes the changed request. Two new caller tests cover context delivery
+and the increased input cap; existing stop/consent/budget tests remain selected.
+W384 restores the single missing test-module closing brace found by hosted
+Preflight35858450606 and Core35858449658 on f823cb67. Slim Clippy passed there;
+core test-target parsing failed. W385 gives serial Windows tests60minutes
+inside a150minute job; compile80minutes, concurrency and per-test limits stay
+unchanged. FullCI954 Windows hit its old30minute step limit without a JUnit.
+W386 removes repeated receipt-directory scans during retention reconciliation,
+under the existing admission lock. The real64/64/2 fixture and120second timeout
+remain; all four source changes passed independent static review.
+BGE216 run35856967745 is admitted: official pinned product CLI acquisition,
+both exact named PASS terminals and all9 source bindings. Group780/GUI135 are
+still active; FullCI954 Linux alone is being retried after runner shutdown143.
+Inventory663;native1100+Windows19/Linux33/macOS32;Group788;GUI135Linux/131macOS.
+Road1324=1027checked/295open/2partial;WS-LF20done/98open unchanged.
+Hosted format/core/new CLI reference and affected behavior remain pending.
+W373 is separate integrated source awaiting final receipt/recovery review.
+No local executable validation ran.
 **W382 scoped cluster and macOS GUI source batch (2026-09-23):**
 W374/W380 add exact peer/skill/channel/account assignments with revision CAS,
 default deny, schema6 migration and checks through the final provider-start

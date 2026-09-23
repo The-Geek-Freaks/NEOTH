@@ -164,6 +164,7 @@ jobs:
               "wave363NightlyBackupAcceptance": 26,
               "wave366CliReferenceAcceptance": 1,
               "wave374ScopedClusterAcceptance": 6,
+              "wave383ErrorAwareRetryAcceptance": 2,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():

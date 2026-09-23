@@ -4160,6 +4160,7 @@ mod tests {
         retryable_failure: bool,
         typed_http_auth_failure: bool,
         attempts: AtomicUsize,
+        observed_systems: Option<Arc<Mutex<Vec<Option<String>>>>>,
     }
 
     #[async_trait]
@@ -4178,9 +4179,15 @@ mod tests {
 
         async fn complete_raw(
             &self,
-            _req: Request,
+            req: Request,
             _permit: &ProviderDispatchPermit,
         ) -> Result<Completion> {
+            if let Some(observed_systems) = &self.observed_systems {
+                observed_systems
+                    .lock()
+                    .expect("direct retry request capture is not poisoned")
+                    .push(req.system.clone());
+            }
             let attempt = self.attempts.fetch_add(1, Ordering::SeqCst);
             if self.typed_http_auth_failure {
                 return Err(anyhow::Error::new(
@@ -4461,15 +4468,18 @@ mod tests {
         usize,
         crate::council::BudgetToken,
         Vec<(u8, serde_json::Value)>,
+        Vec<Option<String>>,
     ) {
         let dir = tempfile::tempdir().unwrap();
         let segment = dir.path().join("direct-retry-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let observed_systems = Arc::new(Mutex::new(Vec::new()));
         let inner = DirectRetryProvider {
             failures_before_success,
             retryable_failure,
             typed_http_auth_failure,
             attempts: AtomicUsize::new(0),
+            observed_systems: Some(Arc::clone(&observed_systems)),
         };
         let provider = CostAuthorizingProvider::new(
             &inner,
@@ -4492,12 +4502,17 @@ mod tests {
         drop(provider);
         drop(writer);
         join.await.unwrap();
-        (result, attempts, budget, wal_frames(&segment))
+        let observed_systems = observed_systems
+            .lock()
+            .expect("direct retry request capture is not poisoned")
+            .clone();
+        (result, attempts, budget, wal_frames(&segment), observed_systems)
     }
 
     #[tokio::test]
     async fn direct_retry_closes_first_terminal_then_reauthorizes_before_success() {
-        let (result, attempts, budget, frames) = run_direct_retry(1, true, false, 2).await;
+        let (result, attempts, budget, frames, _observed_systems) =
+            run_direct_retry(1, true, false, 2).await;
         result.unwrap();
         assert_eq!(attempts, 2);
         assert_eq!(budget.used(), 2);
@@ -4530,8 +4545,134 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn direct_retry_reauthorizes_a_bounded_typed_error_correction_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("direct-retry-context-000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let observed_systems = Arc::new(Mutex::new(Vec::new()));
+        let inner = DirectRetryProvider {
+            failures_before_success: 1,
+            retryable_failure: true,
+            typed_http_auth_failure: false,
+            attempts: AtomicUsize::new(0),
+            observed_systems: Some(Arc::clone(&observed_systems)),
+        };
+        let provider = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Strict,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            ),
+            None,
+            "test.direct_retry_context",
+        );
+        let budget = crate::council::BudgetToken::new(2);
+        budget.charge().expect("caller pre-charges the first leaf");
+        precharged_council_attempt_scope(
+            budget.clone(),
+            provider.complete_direct_retry(Request {
+                prompt: "repair the answer".to_owned(),
+                ..Request::default()
+            }),
+        )
+        .await
+        .expect("typed 500 must reach one reauthorized correction attempt");
+        assert_eq!(budget.used(), 2, "correction request needs a second admission");
+        assert_eq!(inner.attempts.load(Ordering::SeqCst), 2);
+        let observed = observed_systems
+            .lock()
+            .expect("direct retry request capture is not poisoned")
+            .clone();
+        assert_eq!(observed.len(), 2);
+        assert_eq!(observed[0], None, "initial request stays unchanged");
+        let correction = observed[1]
+            .as_deref()
+            .expect("admitted retry must receive correction context");
+        assert!(correction.contains("[retry-correction-context]"));
+        assert!(correction.contains("kind=http_status status=500"));
+        assert!(!correction.contains("untrusted fixture upstream body"));
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+        assert!(
+            !wal_frames(&segment).iter().any(|frame| frame
+                .1
+                .to_string()
+                .contains("retry-correction-context")),
+            "correction context must not enter lifecycle receipts or WAL payloads"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_retry_context_over_input_cap_is_denied_before_a_second_raw_send() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("direct-retry-context-cap-000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let observed_systems = Arc::new(Mutex::new(Vec::new()));
+        let inner = DirectRetryProvider {
+            failures_before_success: 1,
+            retryable_failure: true,
+            typed_http_auth_failure: false,
+            attempts: AtomicUsize::new(0),
+            observed_systems: Some(Arc::clone(&observed_systems)),
+        };
+        let initial = Request {
+            prompt: "x".to_owned(),
+            model: Some("qwen-direct-retry-test".to_owned()),
+            ..Request::default()
+        };
+        let exact_initial_cap = crate::providers::token_cap::request_token_upper_bound(&initial);
+        let provider = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Strict,
+                Some(writer.clone()),
+                exact_initial_cap,
+            ),
+            None,
+            "test.direct_retry_context_cap",
+        );
+        let budget = crate::council::BudgetToken::new(2);
+        budget.charge().expect("caller pre-charges the first leaf");
+        let error = precharged_council_attempt_scope(
+            budget.clone(),
+            provider.complete_direct_retry(initial),
+        )
+        .await
+        .expect_err("the augmented correction request must be rejected at the input cap");
+        assert!(error.to_string().contains("above the effective cap"));
+        assert_eq!(inner.attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(budget.used(), 1, "denied retry must not charge a second Council leaf");
+        assert_eq!(
+            observed_systems
+                .lock()
+                .expect("direct retry request capture is not poisoned")
+                .as_slice(),
+            [None],
+            "the oversized correction request must never reach raw transport"
+        );
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+        let lifecycle = wal_frames(&segment);
+        assert_eq!(
+            lifecycle.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+            ]
+        );
+        assert_eq!(
+            lifecycle[1].1["retry_receipt"]["disposition"],
+            "retry_intent_closed",
+            "the closed first attempt remains the durable truthful terminal"
+        );
+    }
+
+    #[tokio::test]
     async fn direct_retry_untyped_failure_is_terminal_without_a_second_raw_call() {
-        let (result, attempts, _budget, frames) =
+        let (result, attempts, _budget, frames, _observed_systems) =
             run_direct_retry(usize::MAX, false, false, 1).await;
         assert!(result.is_err());
         assert_eq!(attempts, 1);
@@ -4548,7 +4689,8 @@ mod tests {
 
     #[tokio::test]
     async fn direct_retry_typed_http_auth_is_terminal_without_a_second_raw_call() {
-        let (result, attempts, _budget, frames) = run_direct_retry(0, false, true, 1).await;
+        let (result, attempts, _budget, frames, _observed_systems) =
+            run_direct_retry(0, false, true, 1).await;
         assert!(result.is_err());
         assert_eq!(attempts, 1);
         assert_eq!(
@@ -4567,13 +4709,25 @@ mod tests {
 
     #[tokio::test]
     async fn direct_retry_stops_at_the_shared_transient_bound() {
-        let (result, attempts, budget, frames) = run_direct_retry(usize::MAX, true, false, 4).await;
+        let (result, attempts, budget, frames, observed_systems) =
+            run_direct_retry(usize::MAX, true, false, 4).await;
         assert!(result.is_err());
         assert_eq!(attempts, 4, "original call plus the three bounded retries");
         assert_eq!(budget.used(), 4);
         assert_eq!(frames.len(), 8);
         assert_eq!(frames[7].1["retry_receipt"]["class"], "transient");
         assert_eq!(frames[7].1["retry_receipt"]["disposition"], "exhausted");
+        assert_eq!(observed_systems.len(), 4);
+        assert_eq!(observed_systems[0], None);
+        assert!(observed_systems[1].is_some());
+        assert_eq!(
+            observed_systems[1], observed_systems[2],
+            "each retry must be reconstructed from the original request"
+        );
+        assert_eq!(
+            observed_systems[2], observed_systems[3],
+            "correction context must not accumulate across bounded retries"
+        );
     }
 
     #[tokio::test]
