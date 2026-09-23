@@ -78,9 +78,10 @@ pub mod writer;
 pub(crate) use builder::make_header_in;
 pub use builder::{HeaderBuilder, make_header};
 pub(crate) use redaction_rewrite_receipts::{
-    RedactionRewriteFrameReceipt, RedactionRewriteOnceError, RedactionRewriteOnceOutcome,
-    RedactionRewriteReceiptDescriptor,
+    RedactionRewriteOnceOutcome, RedactionRewriteReceiptDescriptor,
 };
+#[cfg(test)]
+pub(crate) use redaction_rewrite_receipts::RedactionRewriteOnceError;
 #[allow(unused_imports)]
 pub(crate) use transcript_mining_once::{
     ExpiredMiningFrameReceipt, PlannedMiningOutboxDescriptor, PlannedRawTextDescriptor,

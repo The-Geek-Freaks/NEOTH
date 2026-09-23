@@ -198,12 +198,6 @@ impl RedactionRewriteFrameReceipt {
     pub(crate) const fn frame_sha256(&self) -> [u8; 32] {
         self.frame_sha256
     }
-    pub(crate) const fn payload_sha256(&self) -> [u8; 32] {
-        self.payload_sha256
-    }
-    pub(crate) const fn location_sha256(&self) -> [u8; 32] {
-        self.location_sha256
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

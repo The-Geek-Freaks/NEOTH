@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W394 WAL lint repair and admitted GUI135 (2026-09-23):**
+Core8ac run35861027738 failed on unused receipt exports/accessors. The narrow,
+independently reviewed repair removes unused production surface and retains
+the test-only error import; receipt bytes, hashes and proof checks are unchanged.
+Its hosted compiler and behavioral reruns remain pending.
+GUI135216 run35856964423 is now source-admitted:135/135 PASS, all23 source/input
+bindings, ordered selection and actual individual terminals verified. This
+includes the six Dream settings cases; later W379 macOS fixtures still need
+their own platform proof. Preflightc1 and CodeQualityc1 both passed.
+Inventory670;native1122+Windows19/Linux33/macOS32;Group810;GUI135Linux/131macOS.
+Road1324=1027checked/295open/2partial;WS-LF20done/98open unchanged.
+No local executable validation or model archive download ran.
+
 **W393 hosted Linux bound and accepted cluster CLI reference (2026-09-23):**
 Core64835859898574 passed all4gates: slim Clippy, core test-target checking,
 public CLI build and exact-source reference export. Imported54491B95 adds only

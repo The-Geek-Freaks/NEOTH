@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T12:39:23.4900426Z",
-  "validationStatus": "Core648 all4gates admitted + scoped cluster CLI reference; W373 Core8ac pending; Linux serial frontend mitigation awaits hosted proof",
+  "capturedUtc": "2026-09-23T12:50:20.9062460Z",
+  "validationStatus": "W394 static reviewed WAL lint repair; GUI135216 source-admitted135PASS; current hosted Core/Group810 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -808,18 +808,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 159336,
-      "sha256": "3F4922C081D5989D8179AB233B59A6E99886CE49C4276F54DF432F1B6282B502"
+      "bytes": 160203,
+      "sha256": "0B245CF559005E16C402F1AC4A1ABA11837A727A435A7B22D556CBEDE9582B66"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1168211,
-      "sha256": "E69C7EAD33B7EF81F7C04A6C585B04B2B063B189F7139FE1FC256ECD08E00BE4"
+      "bytes": 1169078,
+      "sha256": "DC80682D0B63FCDD8E909ED0504B50CDC96C84DD657C7E128681A2CE7302BC02"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1765660,
-      "sha256": "871EBFEB86A947A4D36B14DD9D3147137A37BC53BAC645B983929E8F336FF9D8"
+      "bytes": 1766527,
+      "sha256": "2527915136A8C7709216B60C07EBF5C524666A4680136A0A3B3D6CBDE9BFC5AD"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -3038,8 +3038,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/mod.rs",
-      "bytes": 6605,
-      "sha256": "805C728A0AC5D11F104D9DD6FBD9BC8830173177AB790C167165B522862C7110"
+      "bytes": 6627,
+      "sha256": "87FC70F972B54E629B375DC8B079DCF56F906FD0F7AB9FC162D3D371CAD4639E"
     },
     {
       "path": "SRC/neothd/src/wal/payloads_u04.rs",
@@ -3323,8 +3323,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/redaction_rewrite_receipts.rs",
-      "bytes": 13832,
-      "sha256": "CF95DA04C548EDF172884914EA4A3BB4EBCF71A951CDC55C4B87F5474661AC64"
+      "bytes": 13642,
+      "sha256": "9D4DACD10F90650790A7383FD13809E23EE72F0969D81A3B9C4FF7BB38F49F23"
     },
     {
       "path": "SRC/neothd/src/wal/redaction_rewrite_journal.rs",
@@ -3350,6 +3350,11 @@
       "path": "docs/gold-wave393-linux-hosted-memory-bound.md",
       "bytes": 749,
       "sha256": "04A81DBE8828E4F3CBAEC03DD368984BEB4FC6EE13A8368C404CC11305C67405"
+    },
+    {
+      "path": "docs/gold-wave394-wal-receipt-lint.md",
+      "bytes": 880,
+      "sha256": "4FD227A95A5538FD0F0DEBC8EAF976EA8A0833AC9142CE6B834A7108D368B1AF"
     }
   ]
 }
