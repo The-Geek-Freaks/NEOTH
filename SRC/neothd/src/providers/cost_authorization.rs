@@ -237,6 +237,36 @@ fn finish_sha256(hasher: Sha256) -> String {
         .collect()
 }
 
+/// Convert the reviewed USD authorization bound into the authority's integral
+/// storage unit. Rounding upward prevents a float representation from buying
+/// extra provider work; zero, non-finite and overflowing bounds cannot enter
+/// a replicated grant.
+#[cfg(feature = "cluster")]
+fn cluster_budget_usd_to_nanos_ceil(bound_usd: f64) -> Result<u64> {
+    const USD_NANOS_PER_USD: f64 = 1_000_000_000.0;
+    if !bound_usd.is_finite() || bound_usd <= 0.0 {
+        anyhow::bail!("cluster budget requires a positive finite reviewed provider cost bound");
+    }
+    let nanos = bound_usd * USD_NANOS_PER_USD;
+    if !nanos.is_finite() || nanos >= (u64::MAX as f64) + 1.0 {
+        anyhow::bail!("cluster budget provider cost bound is too large");
+    }
+    Ok(nanos.ceil() as u64)
+}
+
+#[cfg(feature = "cluster")]
+fn cluster_budget_actual_usd_to_nanos_ceil(actual_usd: f64) -> Result<u64> {
+    const USD_NANOS_PER_USD: f64 = 1_000_000_000.0;
+    if !actual_usd.is_finite() || actual_usd < 0.0 {
+        anyhow::bail!("cluster budget actual provider cost must be finite and non-negative");
+    }
+    let nanos = actual_usd * USD_NANOS_PER_USD;
+    if !nanos.is_finite() || nanos >= (u64::MAX as f64) + 1.0 {
+        anyhow::bail!("cluster budget actual provider cost is too large");
+    }
+    Ok(nanos.ceil() as u64)
+}
+
 /// Cryptographically bind every request/control field that can alter the
 /// concrete provider invocation or its reviewed cost ceiling. Length-prefixing
 /// each field prevents concatenation ambiguity and keeps the digest stable.
@@ -626,10 +656,28 @@ struct ProviderCallAuditTicket {
     daily_budget_plan: Option<crate::council::daily_budget::DailyBudgetReservationPlan>,
     daily_budget_reservation: Option<crate::council::daily_budget::DailyBudgetReservation>,
     operation_budget_plan: Option<OperationBudgetReservationPlan>,
+    /// Immutable reserve inputs for one concrete paid cluster leaf.  The
+    /// reservation is not a provider permit; it is claimed only after the
+    /// normal 0x20 provider intent has become durable.
+    #[cfg(feature = "cluster")]
+    cluster_budget_plan: Option<ClusterBudgetPlan>,
+    /// The sole move-only claim capability.  It reaches this terminal owner
+    /// before any raw transport is permitted and is consumed exactly once by
+    /// settlement, including the unknown-cost path on failures and drops.
+    #[cfg(feature = "cluster")]
+    cluster_budget_dispatch: Option<crate::cluster::budget_raft::service::ProviderDispatchTicket>,
+    #[cfg(feature = "cluster")]
+    cluster_budget_permit: Option<crate::cluster::budget_raft::service::NewDispatchPermit>,
     retry_chain_id: Option<String>,
     retry_attempt: Option<u32>,
     retry_receipt: Option<super::claude_retry::RetryOperatorReceipt>,
     started: Instant,
+}
+
+#[cfg(feature = "cluster")]
+struct ClusterBudgetPlan {
+    service: Arc<crate::cluster::budget_raft::BudgetRaftService>,
+    reserve: crate::cluster::budget_raft::service::BudgetProviderRequest,
 }
 
 impl ProviderCallAuditTicket {
@@ -858,6 +906,53 @@ impl ProviderCallAuditTicket {
                     self.call_scope
                 )))
             })?;
+        }
+        #[cfg(feature = "cluster")]
+        if let Some(dispatch) = self.cluster_budget_dispatch.take() {
+            // The permit is held only inside this terminal owner throughout
+            // the raw call. It was consumed from the service ticket before
+            // transport, so settlement can use the durable claim receipt but
+            // can never mint another provider capability.
+            if self.cluster_budget_permit.take().is_none() {
+                tracing::error!(
+                    invocation_id = %self.invocation_id,
+                    provider = self.provider,
+                    model = %self.wire_model,
+                    "cluster budget terminal lacks its consumed dispatch permit; retained claim requires reconciliation"
+                );
+            } else {
+                let actual_usd_nanos = match settlement_cost_usd {
+                    Some(actual) => match cluster_budget_actual_usd_to_nanos_ceil(actual) {
+                        Ok(actual) => Some(actual),
+                        Err(error) => {
+                            tracing::error!(
+                                error = %error,
+                                invocation_id = %self.invocation_id,
+                                "cluster budget could not encode actual provider cost; retaining full reserved bound"
+                            );
+                            None
+                        }
+                    },
+                    None => None,
+                };
+                if let Err(error) = dispatch.settle_after_provider_call(actual_usd_nanos).await {
+                // A terminal quorum failure after a provider effect must keep
+                // the committed claim/bound for reconciliation. Returning an
+                // error here would make a paid invocation look retryable.
+                    tracing::error!(
+                        error = %error,
+                        invocation_id = %self.invocation_id,
+                        provider = self.provider,
+                        model = %self.wire_model,
+                        "cluster budget settlement failed; full claimed bound remains fail-closed"
+                    );
+                }
+            }
+        } else if self.cluster_budget_permit.take().is_some() {
+            tracing::error!(
+                invocation_id = %self.invocation_id,
+                "cluster budget permit was detached from its settlement ticket; reconciliation required"
+            );
         }
         if let Some(reservation) = self.daily_budget_reservation.take()
             // spawn_blocking: settle takes the cross-process ledger file lock
@@ -1139,6 +1234,10 @@ impl ProviderIntentLifecycle {
     fn into_guard(
         mut self,
         reservation: Option<crate::council::daily_budget::DailyBudgetReservation>,
+        #[cfg(feature = "cluster")]
+        cluster_budget_dispatch: Option<crate::cluster::budget_raft::service::ProviderDispatchTicket>,
+        #[cfg(feature = "cluster")]
+        cluster_budget_permit: Option<crate::cluster::budget_raft::service::NewDispatchPermit>,
     ) -> ProviderCallAuditGuard {
         debug_assert!(match &self.state {
             ProviderIntentState::Durable => true,
@@ -1152,6 +1251,10 @@ impl ProviderIntentLifecycle {
             .take()
             .expect("provider intent lifecycle ticket already consumed");
         ticket.daily_budget_reservation = reservation;
+        #[cfg(feature = "cluster")]
+        ticket.cluster_budget_dispatch = cluster_budget_dispatch;
+        #[cfg(feature = "cluster")]
+        ticket.cluster_budget_permit = cluster_budget_permit;
         ticket.started = Instant::now();
         ProviderCallAuditGuard {
             ticket: Some(ticket),
@@ -1299,6 +1402,41 @@ impl AuthorizedLeafCall {
             }
             return Err(intent_error);
         }
+        #[cfg(feature = "cluster")]
+        // The lifecycle intent is durable, but there is still no provider
+        // transport capability. Cluster workers now require a quorum reserve
+        // and first committed claim; a replay or unavailable quorum cannot
+        // fall through to the ordinary provider path.
+        #[cfg(feature = "cluster")]
+        let (cluster_budget_dispatch, cluster_budget_permit) = match intent
+            .ticket
+            .as_ref()
+            .and_then(|ticket| ticket.cluster_budget_plan.as_ref())
+        {
+            None => (None, None),
+            Some(plan) => {
+                let mut dispatch = plan
+                    .service
+                    .reserve_and_begin_provider_dispatch(plan.reserve.clone())
+                    .await
+                    .map_err(|error| anyhow::anyhow!(ProviderAuthorizationError(format!(
+                        "cluster budget authority denied provider dispatch: {error}"
+                    ))))?;
+                let permit = dispatch.take_provider_permit().map_err(|error| {
+                    anyhow::anyhow!(ProviderAuthorizationError(format!(
+                        "cluster budget authority could not consume provider dispatch permit: {error}"
+                    )))
+                })?;
+                (Some(dispatch), Some(permit))
+            }
+        };
+        #[cfg(feature = "cluster")]
+        return Ok(intent.into_guard(
+            reservation_guard.map(BeforeDispatchReservation::into_dispatched),
+            cluster_budget_dispatch,
+            cluster_budget_permit,
+        ));
+        #[cfg(not(feature = "cluster"))]
         Ok(intent.into_guard(reservation_guard.map(BeforeDispatchReservation::into_dispatched)))
     }
 }
@@ -1708,6 +1846,12 @@ pub struct ProviderCallAuthorizer {
     usage_automated: bool,
     council_daily_budget: Option<crate::council::daily_budget::DailyBudgetPolicy>,
     operation_budget: Option<OperationBudget>,
+    #[cfg(feature = "cluster")]
+    /// Set only on the authenticated cluster-worker provider boundary after
+    /// the runtime has recovered all fixed voters.  It is deliberately part
+    /// of the leaf authorizer so decorators cannot reuse an outer receipt for
+    /// a later concrete provider hop.
+    cluster_budget: Option<Arc<crate::cluster::budget_raft::BudgetRaftService>>,
     ephemeral_consent: crate::consent::EphemeralConsent,
     turn_effect_gate: Option<Arc<dyn ChatTurnEffectGate>>,
     #[cfg(test)]
@@ -2095,6 +2239,8 @@ impl ProviderCallAuthorizer {
             usage_automated: false,
             council_daily_budget: None,
             operation_budget: None,
+            #[cfg(feature = "cluster")]
+            cluster_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
             turn_effect_gate: None,
             #[cfg(test)]
@@ -2124,6 +2270,8 @@ impl ProviderCallAuthorizer {
             usage_automated: true,
             council_daily_budget: None,
             operation_budget: None,
+            #[cfg(feature = "cluster")]
+            cluster_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
             turn_effect_gate: None,
             #[cfg(test)]
@@ -2157,6 +2305,8 @@ impl ProviderCallAuthorizer {
             usage_automated: true,
             council_daily_budget: None,
             operation_budget: None,
+            #[cfg(feature = "cluster")]
+            cluster_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
             turn_effect_gate: None,
             #[cfg(test)]
@@ -2187,6 +2337,8 @@ impl ProviderCallAuthorizer {
             usage_automated: true,
             council_daily_budget: None,
             operation_budget: None,
+            #[cfg(feature = "cluster")]
+            cluster_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
             turn_effect_gate: None,
             #[cfg(test)]
@@ -2222,6 +2374,8 @@ impl ProviderCallAuthorizer {
             usage_automated: true,
             council_daily_budget: None,
             operation_budget: None,
+            #[cfg(feature = "cluster")]
+            cluster_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
             turn_effect_gate: None,
             #[cfg(test)]
@@ -2253,6 +2407,8 @@ impl ProviderCallAuthorizer {
             usage_automated: true,
             council_daily_budget: None,
             operation_budget: None,
+            #[cfg(feature = "cluster")]
+            cluster_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
             turn_effect_gate: None,
             #[cfg(test)]
@@ -2283,6 +2439,8 @@ impl ProviderCallAuthorizer {
             usage_automated: false,
             council_daily_budget: None,
             operation_budget: None,
+            #[cfg(feature = "cluster")]
+            cluster_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
             turn_effect_gate: None,
             allow_missing_writer: true,
@@ -2304,6 +2462,8 @@ impl ProviderCallAuthorizer {
             usage_automated: false,
             council_daily_budget: None,
             operation_budget: None,
+            #[cfg(feature = "cluster")]
+            cluster_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
             turn_effect_gate: None,
             allow_missing_writer: true,
@@ -2337,6 +2497,20 @@ impl ProviderCallAuthorizer {
     /// this authorizer. Only the typed content-free fields above are accepted.
     pub fn with_audit_context(mut self, context: ProviderCallAuditContext) -> Self {
         self.audit_context = context;
+        self
+    }
+
+    #[cfg(feature = "cluster")]
+    /// Bind concrete provider leaves to the recovered, fixed-voter cluster
+    /// budget authority.  The service is optional at the authorizer level so
+    /// standalone and local-only routes retain their independent policies;
+    /// the cluster runtime only constructs this authorizer after authority
+    /// recovery succeeded.
+    pub(crate) fn with_cluster_budget(
+        mut self,
+        budget: Arc<crate::cluster::budget_raft::BudgetRaftService>,
+    ) -> Self {
+        self.cluster_budget = Some(budget);
         self
     }
 
@@ -2654,6 +2828,52 @@ impl ProviderCallAuthorizer {
                 Some(policy.plan(invocation_id.clone(), provider, model.to_owned(), bound_usd)?)
             }
         };
+        #[cfg(feature = "cluster")]
+        // Cluster budget authority applies to every remote concrete leaf of
+        // the dedicated worker provider. It derives its bound from the same
+        // reviewed-price authorization calculation as the existing daily
+        // ledger; unknown pricing or an unbounded output cannot become a
+        // quorum reservation by guessing a number.
+        #[cfg(feature = "cluster")]
+        let cluster_budget_plan = match (&self.cluster_budget, super::is_local_provider(provider)) {
+            (Some(_), true) => None,
+            (None, _) => None,
+            (Some(service), false) => {
+                let Some(output_token_ceiling) = output_token_ceiling else {
+                    return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
+                        "{call_scope} ({provider}/{model}): cluster budget blocks an unbounded provider invocation"
+                    ))));
+                };
+                let Some(bound_usd) = crate::providers::cost::authorization_bound_usd(
+                    provider,
+                    model,
+                    req,
+                    output_token_ceiling,
+                ) else {
+                    return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
+                        "{call_scope} ({provider}/{model}): cluster budget blocks unknown provider pricing"
+                    ))));
+                };
+                let bound_usd_nanos = cluster_budget_usd_to_nanos_ceil(bound_usd)?;
+                let task_id = audit_context.task_id.clone().ok_or_else(|| {
+                    anyhow::anyhow!(ProviderAuthorizationError(format!(
+                        "{call_scope} ({provider}/{model}): cluster budget requires the authenticated delegated task id"
+                    )))
+                })?;
+                Some(ClusterBudgetPlan {
+                    service: Arc::clone(service),
+                    reserve: crate::cluster::budget_raft::service::BudgetProviderRequest {
+                        invocation_id: invocation_id.clone(),
+                        provider_intent_id: invocation_id.clone(),
+                        provider: provider.to_owned(),
+                        model: model.to_owned(),
+                        task_id,
+                        request_binding_sha256: request_binding_sha256.clone(),
+                        bound_usd_nanos,
+                    },
+                })
+            }
+        };
         if super::is_local_provider(provider) {
             return Ok(AuthorizedLeafCall {
                 role_dispatch: role_dispatch.clone(),
@@ -2681,6 +2901,12 @@ impl ProviderCallAuthorizer {
                     daily_budget_plan,
                     daily_budget_reservation: None,
                     operation_budget_plan,
+                    #[cfg(feature = "cluster")]
+                    cluster_budget_plan: None,
+                    #[cfg(feature = "cluster")]
+                    cluster_budget_dispatch: None,
+                    #[cfg(feature = "cluster")]
+                    cluster_budget_permit: None,
                     retry_chain_id: None,
                     retry_attempt: None,
                     retry_receipt: None,
@@ -2881,6 +3107,12 @@ impl ProviderCallAuthorizer {
                 daily_budget_plan,
                 daily_budget_reservation: None,
                 operation_budget_plan,
+                #[cfg(feature = "cluster")]
+                cluster_budget_plan,
+                #[cfg(feature = "cluster")]
+                cluster_budget_dispatch: None,
+                #[cfg(feature = "cluster")]
+                cluster_budget_permit: None,
                 retry_chain_id: None,
                 retry_attempt: None,
                 retry_receipt: None,
@@ -3397,6 +3629,138 @@ mod tests {
 
     fn test_input_token_cap() -> u32 {
         crate::config::TokensConfig::default_max_per_request()
+    }
+
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn cluster_budget_rounds_positive_reserves_up_but_allows_zero_actual_cost() {
+        assert_eq!(cluster_budget_usd_to_nanos_ceil(0.000_000_000_1).unwrap(), 1);
+        assert_eq!(cluster_budget_actual_usd_to_nanos_ceil(0.0).unwrap(), 0);
+        assert!(cluster_budget_usd_to_nanos_ceil(0.0).is_err());
+        assert!(cluster_budget_actual_usd_to_nanos_ceil(-0.1).is_err());
+    }
+
+    #[cfg(feature = "cluster")]
+    fn cluster_budget_leaf_provider(
+        inner: Arc<CountingProvider>,
+        service: Arc<crate::cluster::budget_raft::BudgetRaftService>,
+        home: &std::path::Path,
+        writer: crate::wal::writer::WalWriterHandle,
+        task_id: &str,
+    ) -> AuthorizedProvider {
+        crate::consent::grant(home, crate::cli::init::ProviderKind::OpenaiApi).unwrap();
+        AuthorizedProvider::from_arc(
+            inner,
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Full,
+                Some(writer),
+                test_input_token_cap(),
+            )
+            .with_usage_home(home)
+            .with_audit_context(ProviderCallAuditContext {
+                source: Some("cluster_budget_leaf_test"),
+                call_type: Some("cluster_delegated"),
+                task_id: Some(task_id.to_owned()),
+                cluster_delegated: true,
+                ..Default::default()
+            })
+            .with_cluster_budget(service),
+            None,
+            "test.cluster_budget_leaf",
+        )
+    }
+
+    #[cfg(feature = "cluster")]
+    #[tokio::test]
+    async fn cluster_budget_quorum_leaf_dispatches_exactly_once() {
+        let fixture = crate::cluster::budget_raft::service_tests::ThreeNodeFixture::start_with_cap(1_000_000_000).await;
+        let home = tempfile::tempdir().unwrap();
+        let (writer, join) = crate::wal::writer::spawn(home.path().join("cluster-budget-ok.wal")).unwrap();
+        let inner = Arc::new(CountingProvider {
+            name: "openai_api",
+            calls: AtomicUsize::new(0),
+            default_model: Some("gpt-4o".into()),
+        });
+        let provider = cluster_budget_leaf_provider(
+            Arc::clone(&inner),
+            fixture.follower_service().await,
+            home.path(),
+            writer.clone(),
+            "cluster-budget-quorum-task",
+        );
+
+        provider.complete(Request::default()).await.unwrap();
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 1);
+
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+        fixture.shutdown().await;
+    }
+
+    #[cfg(feature = "cluster")]
+    #[tokio::test]
+    async fn cluster_budget_no_quorum_blocks_before_raw_provider_dispatch() {
+        let fixture = crate::cluster::budget_raft::service_tests::ThreeNodeFixture::start_with_cap(1_000_000_000).await;
+        let isolated_leader = fixture.isolate_leader_both_directions().await;
+        let home = tempfile::tempdir().unwrap();
+        let (writer, join) = crate::wal::writer::spawn(home.path().join("cluster-budget-no-quorum.wal")).unwrap();
+        let inner = Arc::new(CountingProvider {
+            name: "openai_api",
+            calls: AtomicUsize::new(0),
+            default_model: Some("gpt-4o".into()),
+        });
+        let provider = cluster_budget_leaf_provider(
+            Arc::clone(&inner),
+            isolated_leader,
+            home.path(),
+            writer.clone(),
+            "cluster-budget-no-quorum-task",
+        );
+
+        let error = provider.complete(Request::default()).await.unwrap_err();
+        assert!(error.to_string().contains("cluster budget authority denied provider dispatch"));
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
+
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+        fixture.shutdown().await;
+    }
+
+    #[cfg(feature = "cluster")]
+    #[tokio::test]
+    async fn cluster_budget_unknown_price_blocks_before_raft_or_raw_provider_dispatch() {
+        let fixture = crate::cluster::budget_raft::service_tests::ThreeNodeFixture::start_with_cap(1_000_000_000).await;
+        let home = tempfile::tempdir().unwrap();
+        let (writer, join) = crate::wal::writer::spawn(home.path().join("cluster-budget-unknown-price.wal")).unwrap();
+        let inner = Arc::new(CountingProvider {
+            name: "future_cloud",
+            calls: AtomicUsize::new(0),
+            default_model: Some("future-model".into()),
+        });
+        let provider = cluster_budget_leaf_provider(
+            Arc::clone(&inner),
+            fixture.follower_service().await,
+            home.path(),
+            writer.clone(),
+            "cluster-budget-unknown-price-task",
+        );
+
+        let error = provider.complete(Request::default()).await.unwrap_err();
+        assert!(error.to_string().contains("cluster budget blocks unknown provider pricing"));
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
+
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+        fixture.shutdown().await;
+    }
+
+    #[cfg(not(feature = "cluster"))]
+    #[test]
+    fn non_cluster_authorizer_constructs_without_budget_authority_types() {
+        let _authorizer = ProviderCallAuthorizer::test_only(AutonomyLevel::Full);
     }
 
     #[test]

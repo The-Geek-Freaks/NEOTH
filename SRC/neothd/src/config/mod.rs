@@ -2193,6 +2193,50 @@ pub struct ClusterGossipPolicy {
     pub replay_budget_days: u32,
 }
 
+/// Immutable voter binding for the optional quorum-backed provider budget.
+///
+/// The stable id is the Ed25519-derived `StableNodeId`; `peeroxide_key` is
+/// the canonical hexadecimal Noise/Peeroxide public key. They are deliberately
+/// strings here so malformed operator input is rejected by `ClusterConfig`
+/// before it can become an authority configuration.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BudgetRaftVoterConfig {
+    pub stable_node_id: String,
+    pub peeroxide_key: String,
+}
+
+/// Default-disabled configuration for the three-voter budget authority.
+///
+/// This is intentionally a frozen policy: membership changes, a changed cap,
+/// or a changed UTC window cause the runtime to stop and recover a new
+/// authority. It never edits or resets an existing budget database.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct BudgetRaftConfig {
+    pub enabled: bool,
+    /// Positive integer USD nanos reserved per UTC window.
+    pub cap_usd_nanos: u64,
+    /// Positive UTC window identifier/policy version, included in the frozen
+    /// scope hash rather than inferred from local time zone settings.
+    pub utc_window: i64,
+    /// Exact authority epoch accepted for all three frozen voter bindings.
+    pub membership_epoch: u64,
+    pub voters: Vec<BudgetRaftVoterConfig>,
+}
+
+impl Default for BudgetRaftConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cap_usd_nanos: 0,
+            utc_window: 0,
+            membership_epoch: 0,
+            voters: Vec::new(),
+        }
+    }
+}
+
 impl Default for ClusterGossipPolicy {
     fn default() -> Self {
         Self {
@@ -2230,6 +2274,8 @@ pub struct ClusterConfig {
     pub policy: ClusterAnnouncePolicy,
     /// Hot-reloadable WAL gossip/privacy policy.
     pub gossip: ClusterGossipPolicy,
+    /// Optional fixed-membership quorum budget authority. Default off.
+    pub budget_raft: BudgetRaftConfig,
     /// Shared mDNS/Tailscale probe port. Zero is invalid.
     pub listen_port: u16,
 }
@@ -2244,6 +2290,7 @@ impl Default for ClusterConfig {
             mdns: ClusterMdnsConfig::default(),
             policy: ClusterAnnouncePolicy::default(),
             gossip: ClusterGossipPolicy::default(),
+            budget_raft: BudgetRaftConfig::default(),
             listen_port: DEFAULT_CLUSTER_LISTEN_PORT,
         }
     }
@@ -2259,6 +2306,38 @@ impl ClusterConfig {
         }
         if !(1..=90).contains(&self.gossip.replay_budget_days) {
             return Err("gossip.replay_budget_days must be between 1 and 90 days".to_string());
+        }
+        if self.budget_raft.enabled {
+            if !self.enabled {
+                return Err("cluster.budget_raft.enabled requires cluster.enabled".to_string());
+            }
+            if self.transport != ClusterTransport::Peeroxide {
+                return Err("cluster.budget_raft requires cluster.transport `peeroxide`; iroh has no authenticated budget carrier".to_string());
+            }
+            if self.budget_raft.cap_usd_nanos == 0 || self.budget_raft.utc_window <= 0 || self.budget_raft.membership_epoch == 0 {
+                return Err("cluster.budget_raft requires a positive cap_usd_nanos, utc_window, and membership_epoch".to_string());
+            }
+            if self.budget_raft.voters.len() != 3 {
+                return Err("cluster.budget_raft requires exactly three frozen voters".to_string());
+            }
+            let mut stable_ids = std::collections::BTreeSet::new();
+            let mut peeroxide_keys = std::collections::BTreeSet::new();
+            for voter in &self.budget_raft.voters {
+                if voter.stable_node_id.len() != 64
+                    || !voter.stable_node_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    || voter.stable_node_id != voter.stable_node_id.to_ascii_lowercase()
+                    || voter.peeroxide_key.len() != 64
+                    || !voter.peeroxide_key.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    || voter.peeroxide_key != voter.peeroxide_key.to_ascii_lowercase()
+                {
+                    return Err("cluster.budget_raft voters must use canonical 32-byte hexadecimal stable ids and peeroxide keys".to_string());
+                }
+                if !stable_ids.insert(voter.stable_node_id.to_ascii_lowercase())
+                    || !peeroxide_keys.insert(voter.peeroxide_key.to_ascii_lowercase())
+                {
+                    return Err("cluster.budget_raft voters must have distinct stable ids and peeroxide keys".to_string());
+                }
+            }
         }
         if self.enabled
             && self
@@ -2294,6 +2373,56 @@ impl ClusterConfig {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod budget_raft_config_tests {
+    use super::{BudgetRaftVoterConfig, ClusterConfig, ClusterTransport};
+
+    fn voter(byte: char, key: char) -> BudgetRaftVoterConfig {
+        BudgetRaftVoterConfig {
+            stable_node_id: byte.to_string().repeat(64),
+            peeroxide_key: key.to_string().repeat(64),
+        }
+    }
+
+    #[test]
+    fn budget_raft_is_default_disabled_and_has_no_implicit_authority() {
+        let config = ClusterConfig::default();
+        assert!(!config.budget_raft.enabled);
+        assert!(config.budget_raft.voters.is_empty());
+        assert_eq!(config.budget_raft.cap_usd_nanos, 0);
+    }
+
+    #[test]
+    fn enabled_budget_raft_requires_exact_peeroxide_three_voter_policy() {
+        let mut config = ClusterConfig::default();
+        config.enabled = true;
+        config.name = Some("budget-test".into());
+        config.transport = ClusterTransport::Peeroxide;
+        config.budget_raft.enabled = true;
+        config.budget_raft.cap_usd_nanos = 1;
+        config.budget_raft.utc_window = 1;
+        config.budget_raft.membership_epoch = 1;
+        config.budget_raft.voters = vec![voter('a', 'd'), voter('b', 'e'), voter('c', 'f')];
+        assert!(config.validate().is_ok());
+        config.budget_raft.voters[2].peeroxide_key = "e".repeat(64);
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn enabled_budget_raft_refuses_iroh_until_authenticated_budget_carrier_exists() {
+        let mut config = ClusterConfig::default();
+        config.enabled = true;
+        config.name = Some("budget-test".into());
+        config.transport = ClusterTransport::Iroh;
+        config.budget_raft.enabled = true;
+        config.budget_raft.cap_usd_nanos = 1;
+        config.budget_raft.utc_window = 1;
+        config.budget_raft.membership_epoch = 1;
+        config.budget_raft.voters = vec![voter('a', 'd'), voter('b', 'e'), voter('c', 'f')];
+        assert!(config.validate().is_err());
     }
 }
 

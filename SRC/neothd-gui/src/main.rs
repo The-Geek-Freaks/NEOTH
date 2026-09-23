@@ -11447,14 +11447,12 @@ fn main() -> Result<()> {
                                         .load(std::sync::atomic::Ordering::Acquire)
                                         == embedding_models_revision
                                 {
-                                        match result {
-                                            Ok((presentation, _)) => {
-                                                apply_embedding_models(&w, presentation)
-                                            }
-                                            Err(error) => {
-                                                mark_embedding_models_unverified(&w, &error)
-                                            }
+                                    match result {
+                                        Ok((presentation, _)) => {
+                                            apply_embedding_models(&w, presentation)
                                         }
+                                        Err(error) => mark_embedding_models_unverified(&w, &error),
+                                    }
                                 }
                                 apply_usage_meter(&w, usage);
                             }

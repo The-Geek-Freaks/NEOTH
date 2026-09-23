@@ -19,7 +19,7 @@ use tracing::{info, warn};
 use crate::cluster::discovery::ClusterKey;
 use crate::config::credentials::Credentials;
 use crate::config::{
-    ClusterAnnouncePolicy, ClusterConfig, ClusterMdnsConfig, ClusterTransport, FreedomConfig,
+    BudgetRaftConfig, ClusterAnnouncePolicy, ClusterConfig, ClusterMdnsConfig, ClusterTransport, FreedomConfig,
 };
 use crate::providers::Provider;
 use crate::wal::writer::WalWriterHandle;
@@ -226,6 +226,7 @@ struct RuntimeSpec {
     mdns: ClusterMdnsConfig,
     announce_policy: ClusterAnnouncePolicy,
     listen_port: u16,
+    budget_raft: BudgetRaftConfig,
     network: NetworkFingerprint,
 }
 
@@ -275,6 +276,7 @@ impl RuntimeSpec {
             mdns,
             announce_policy,
             listen_port,
+            budget_raft: config.cluster.budget_raft.clone(),
             network,
         }
     }
@@ -609,6 +611,11 @@ enum CarrierRuntime {
         gossip: Option<tokio::task::JoinHandle<()>>,
         swarm: Option<crate::cluster::hyperswarm::SwarmHandle>,
         executor: Option<crate::cluster::executor::ClusterExecutorHandle>,
+        /// Kept alive only after swarm startup and fixed-voter bootstrap. Stop
+        /// it before executor/carrier teardown so no budget ingress races a
+        /// retained provider sender during reload.
+        budget_service: Option<Arc<crate::cluster::budget_raft::BudgetRaftService>>,
+        budget_carrier: Option<Arc<crate::cluster::budget_raft::BudgetPeerCarrier>>,
     },
     #[cfg(feature = "cluster-iroh")]
     Iroh {
@@ -625,6 +632,7 @@ impl CarrierRuntime {
                 gossip,
                 swarm,
                 executor,
+                ..
             } => {
                 gossip.as_ref().is_some_and(|task| !task.is_finished())
                     && swarm
@@ -652,7 +660,7 @@ impl CarrierRuntime {
     }
 
     async fn start_peeroxide(
-        _spec: &RuntimeSpec,
+        spec: &RuntimeSpec,
         identity: &RuntimeIdentitySpec,
         deps: &RuntimeDeps,
     ) -> Result<Self> {
@@ -668,18 +676,59 @@ impl CarrierRuntime {
         let live_adapter: Arc<dyn crate::cluster::membership::LiveCarrierSessions> =
             peer_streams.clone();
         deps.live_sessions.register(live_adapter);
+        let (budget_config, budget_carrier, budget_service) = if spec.budget_raft.enabled {
+            let local_identity = crate::cluster::membership::LocalNodeIdentity::load_existing(&deps.home)
+                .context("load existing local identity before enabling budget raft")?;
+            let local_identity = local_identity.as_ref().context(
+                "cluster budget raft requires an existing local stable identity; refusing to mint one during authority recovery",
+            )?;
+            let validator = Arc::new(
+                crate::cluster::budget_raft::DurableBudgetMembershipValidator::new(
+                    &deps.home,
+                    local_identity,
+                ),
+            );
+            let config = validator
+                .derive_frozen_config(identity.name.clone(), &spec.budget_raft, local_identity)
+                .await
+                .context("derive exact budget voters from durable membership authority")?;
+            let carrier = crate::cluster::budget_raft::BudgetPeerCarrier::new(
+                Arc::downgrade(&peer_streams),
+                config.clone(),
+                local_identity.stable_node_id().clone(),
+            );
+            let service = Arc::new(
+                crate::cluster::budget_raft::BudgetRaftService::recover(
+                    &deps.home,
+                    config.clone(),
+                    local_identity,
+                    carrier.clone(),
+                    validator,
+                )
+                .await
+                .context("recover budget raft durable authority")?,
+            );
+            (Some(config), Some(carrier), Some(service))
+        } else {
+            (None, None, None)
+        };
         let gossip_state = Arc::new(std::sync::Mutex::new(
             crate::cluster::wal_sync::GossipState::new(),
         ));
         let cluster_provider = deps.shared_provider.clone().map(|provider| {
+            let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
+                Arc::clone(&deps.reload_controller),
+                Some(deps.writer.clone()),
+                deps.home.clone(),
+            );
+            let authorizer = match budget_service.as_ref() {
+                Some(service) => authorizer.with_cluster_budget(Arc::clone(service)),
+                None => authorizer,
+            };
             Arc::new(
                 crate::providers::cost_authorization::AuthorizedProvider::from_arc(
                     provider,
-                    crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
-                        Arc::clone(&deps.reload_controller),
-                        Some(deps.writer.clone()),
-                        deps.home.clone(),
-                    ),
+                    authorizer,
                     None,
                     "cluster.delegated_task",
                 ),
@@ -704,15 +753,31 @@ impl CarrierRuntime {
             Arc::clone(&deps.reload_controller),
             deps.home.clone(),
             Some(dispatch_tx),
+            budget_carrier.clone(),
         )
         .await
         {
             Ok(swarm) => swarm,
             Err(error) => {
                 executor.shutdown().await;
+                if let Some(carrier) = budget_carrier.as_ref() { carrier.stop(); }
+                if let Some(service) = budget_service.as_ref() { let _ = service.shutdown().await; }
                 return Err(error).context("start configured peeroxide cluster transport");
             }
         };
+        // The carrier cannot route ingress while its weak service target is
+        // empty. Bootstrap is after Peeroxide is alive, but before the service
+        // is published to that carrier or the provider executor can issue work.
+        if let (Some(service), Some(carrier), Some(_config)) = (&budget_service, &budget_carrier, &budget_config) {
+            if let Err(error) = service.bootstrap_fixed_voters().await {
+                carrier.stop();
+                let _ = swarm.shutdown().await;
+                executor.shutdown().await;
+                let _ = service.shutdown().await;
+                return Err(error).context("bootstrap fixed budget raft voters");
+            }
+            carrier.bind_service(Arc::downgrade(service));
+        }
         let own_peer_id = crate::cluster::PeerPubkey::new(
             crate::cluster::membership::LocalNodeIdentity::load_or_create(&deps.home)
                 .context("load local stable node identity")?
@@ -737,6 +802,8 @@ impl CarrierRuntime {
             gossip: Some(gossip),
             swarm: Some(swarm),
             executor: Some(executor),
+            budget_service,
+            budget_carrier,
         })
     }
 
@@ -822,7 +889,19 @@ impl CarrierRuntime {
                 gossip,
                 swarm,
                 executor,
+                budget_service,
+                budget_carrier,
             } => {
+                // First close the authenticated Raft ingress, then stop its
+                // OpenRaft task before the executor or live carrier can accept
+                // another provider-bound request.
+                if let Some(carrier) = budget_carrier.take() {
+                    carrier.stop();
+                }
+                let budget_result = match budget_service.take() {
+                    Some(service) => service.shutdown().await.map_err(anyhow::Error::from),
+                    None => Ok(()),
+                };
                 abort_and_await(gossip.take()).await;
                 let swarm_result = match swarm.take() {
                     Some(swarm) => swarm.shutdown().await,
@@ -831,7 +910,7 @@ impl CarrierRuntime {
                 if let Some(executor) = executor.take() {
                     executor.shutdown().await;
                 }
-                swarm_result
+                budget_result.and(swarm_result)
             }
             #[cfg(feature = "cluster-iroh")]
             Self::Iroh {

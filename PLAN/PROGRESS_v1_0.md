@@ -2,6 +2,27 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W449 fixed-voter quorum budget integration; W446/W447 hosted follow-ups (2026-09-23):**
+The default-off cluster budget now connects the reviewed domain ledger, real
+OpenRaft0.9.25 SQLite storage, authenticated Peeroxide replication/client lane,
+fresh membership validation, runtime ownership and each actual provider leaf.
+A follower submits once to its known frozen leader; only the first committed
+claim produces a local move-only provider permit. Lost replies, partition,
+unknown costs and restart retain conservative accounting without a local fallback.
+37 focused native tests cover domain, store, three real voters, membership,
+transport stop/cancellation and actual paid-leaf admission. Static independent
+reviews passed their scopes; hosted compilation and behavior remain pending.
+W447 accepts canonical local Windows verbatim-drive roots through the existing
+capability walk and adds two Windows-only regression cases; UNC/device refusal
+is unchanged. W446 adds exact OpenRaft/macros license snapshot export. The GUI
+formatting patch from35883870476 was imported with full before/after blob checks.
+Windowsbc9 completed17773tests with19failures:7oldSQL,8browser-root,4WALpublish.
+P203 Windows containment passed; macOS continues. W448's unsafe handle-close-only
+proposal was rejected and reverted; journal-backed repair remains separate WIP.
+Inventory723;native1173+Windows21/Linux33/macOS32;Group878;GUI143/139.
+Road1034checked/288open/2partial andWS-LF27done/91open remain unchanged;P2-19open.
+No local executable validation; absolute BSOD hold remains in force.
+
 **W444 pinned OpenRaft input admission and GUI syntax follow-up (2026-09-23):**
 W439 run35882637851 on4d4f59f5 passed: Rust1.91 compiled the pinned OpenRaft0.9.25
 minimal serde/storage-v2 probe. All26 artifact SHA256 bindings and both complete

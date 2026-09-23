@@ -60,6 +60,7 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tracing::{debug, error, info, warn};
 
 use super::discovery::ClusterKey;
+use super::budget_raft::carrier::BudgetPeerCarrier;
 use super::executor::ClusterTaskJob;
 use super::gossip_wire::GossipAcceptance;
 use super::heartbeat::{
@@ -594,6 +595,9 @@ pub async fn spawn_discovery_with_wal(
     reload_controller: Arc<crate::config::reload::ReloadController>,
     neoth_home: std::path::PathBuf,
     dispatch_tx: Option<tokio::sync::mpsc::Sender<ClusterTaskJob>>,
+    /// Recovered budget authority, if the runtime has enabled the fixed-voter
+    /// budget mode. `None` means budget frames are not accepted.
+    budget_carrier: Option<Arc<BudgetPeerCarrier>>,
 ) -> Result<SwarmHandle> {
     let topic = derive_topic(cluster_name);
     // Transport identity is node identity, not rendezvous-key identity.
@@ -725,6 +729,7 @@ pub async fn spawn_discovery_with_wal(
             let home = neoth_home.clone();
             let dtx = dispatch_tx.clone();
             let reload = Arc::clone(&reload_controller);
+            let budget = budget_carrier.clone();
             peer_sessions.spawn(async move {
                 // Hold the permit until this session ends.
                 let _permit = permit;
@@ -742,6 +747,7 @@ pub async fn spawn_discovery_with_wal(
                     reload,
                     home,
                     dtx,
+                    budget,
                 )
                 .await
                 {
@@ -856,6 +862,7 @@ async fn handle_peeroxide_connection(
     reload_controller: Arc<crate::config::reload::ReloadController>,
     neoth_home: std::path::PathBuf,
     dispatch_tx: Option<tokio::sync::mpsc::Sender<ClusterTaskJob>>,
+    budget_carrier: Option<Arc<BudgetPeerCarrier>>,
 ) -> Result<()> {
     let remote_pk_hex = hex_encode(conn.remote_public_key());
     // Peer's Noise static key from the authenticated channel — the identity
@@ -1329,6 +1336,24 @@ async fn handle_peeroxide_connection(
         membership_grant
             .revalidate(now_unix_secs() as i64)
             .context("membership revoked before inbound effect")?;
+
+        // Budget Raft is intercepted before every generic/task/gossip route.
+        // The carrier rebuilds a context for this exact live generation and
+        // checks the envelope claim against the Noise-bound membership grant.
+        if frame.kind == FrameKind::BudgetRaft {
+            if let (Some(carrier), FrameBody::BudgetRaft(envelope)) =
+                (budget_carrier.as_ref(), frame.body)
+                && let Some(session) = carrier.inbound_session(
+                    &peer_streams,
+                    &remote_pk_hex,
+                    session_generation,
+                    &membership_grant,
+                )
+            {
+                carrier.accept_envelope(session, *envelope);
+            }
+            continue;
+        }
 
         // ── SL-01: intercept task frames BEFORE the sync handler (which has no
         // provider / lease / autonomy access). TaskDelegate runs the accept

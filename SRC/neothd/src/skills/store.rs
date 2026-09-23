@@ -871,29 +871,7 @@ pub(crate) fn open_absolute_bound_directory(
     #[cfg(unix)]
     let root = PathBuf::from("/");
     #[cfg(windows)]
-    let root = {
-        use std::path::Prefix;
-
-        let mut components = absolute.components();
-        let Some(Component::Prefix(prefix)) = components.next() else {
-            anyhow::bail!(
-                "{label} path has no supported disk root: {}",
-                path.display()
-            );
-        };
-        let Prefix::Disk(letter) = prefix.kind() else {
-            anyhow::bail!(
-                "{label} path has no supported disk root: {}",
-                path.display()
-            );
-        };
-        anyhow::ensure!(
-            matches!(components.next(), Some(Component::RootDir)),
-            "{label} path must be absolute beneath a disk root: {}",
-            path.display()
-        );
-        PathBuf::from(format!("{}:\\", char::from(letter)))
-    };
+    let root = windows_absolute_disk_root(&absolute, label, path)?;
     #[cfg(not(any(unix, windows)))]
     {
         let _ = (create, label, absolute);
@@ -923,6 +901,39 @@ pub(crate) fn open_absolute_bound_directory(
 
     #[cfg(not(any(unix, windows)))]
     unreachable!("unsupported platform returned above");
+}
+
+#[cfg(windows)]
+fn windows_absolute_disk_root(
+    absolute: &Path,
+    label: &str,
+    display_path: &Path,
+) -> Result<PathBuf> {
+    use std::path::Prefix;
+
+    let mut components = absolute.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        anyhow::bail!(
+            "{label} path has no supported disk root: {}",
+            display_path.display()
+        );
+    };
+    let root = match prefix.kind() {
+        Prefix::Disk(letter) => PathBuf::from(format!("{}:\\", char::from(letter))),
+        Prefix::VerbatimDisk(letter) => {
+            PathBuf::from(format!("\\\\?\\{}:\\", char::from(letter)))
+        }
+        _ => anyhow::bail!(
+            "{label} path has no supported disk root: {}",
+            display_path.display()
+        ),
+    };
+    anyhow::ensure!(
+        matches!(components.next(), Some(Component::RootDir)),
+        "{label} path must be absolute beneath a disk root: {}",
+        display_path.display()
+    );
+    Ok(root)
 }
 
 /// Open or create `path` below an explicit, already-existing trust anchor.
@@ -4411,6 +4422,29 @@ fn std_metadata_is_link_like(metadata: &std::fs::Metadata) -> bool {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_verbatim_local_disk_root_remains_capability_walkable() {
+        let absolute = Path::new(r"\\?\C:\Users\operator\NEOTH");
+        let root = windows_absolute_disk_root(absolute, "test home", absolute)
+            .expect("verbatim local disk paths retain a fixed local root");
+        assert_eq!(root, PathBuf::from(r"\\?\C:\"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_unc_and_device_prefixes_remain_outside_local_capability_walks() {
+        for unsupported in [
+            Path::new(r"\\server\share\NEOTH"),
+            Path::new(r"\\?\UNC\server\share\NEOTH"),
+            Path::new(r"\\.\COM1"),
+        ] {
+            let error = windows_absolute_disk_root(unsupported, "test home", unsupported)
+                .expect_err("UNC and device namespaces have no local disk authority");
+            assert!(error.to_string().contains("no supported disk root"));
+        }
+    }
 
     #[cfg(unix)]
     fn try_link_dir(source: &Path, target: &Path) -> std::io::Result<()> {

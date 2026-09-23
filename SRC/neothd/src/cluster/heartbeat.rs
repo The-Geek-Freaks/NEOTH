@@ -74,7 +74,11 @@ pub const PROTOCOL_NAME: &str = "neoth-r7-heartbeat";
 ///
 /// v6 (GOLD-WIRE-09): vector time is node-global and durable, independent from
 /// each destination's contiguous delivery sequence. v5 peers are rejected.
-pub const PROTOCOL_VERSION: u16 = 6;
+///
+/// v7 (GOLD-W429): adds the authenticated, bounded BudgetRaft request/reply
+/// lane.  It has no downgrade because an older peer cannot safely ignore a
+/// quorum-control frame.
+pub const PROTOCOL_VERSION: u16 = 7;
 
 /// Frame-size hard cap. Per Codex Q2 verdict: a malformed
 /// length-prefix can lead to a denial-of-memory before any
@@ -142,6 +146,10 @@ pub enum FrameKind {
     Gossip,
     /// GOLD-R3-09: receiver commit acknowledgement for one exact gossip frame.
     GossipAck,
+    /// GOLD-W429: OpenRaft budget replication carried only on an authenticated
+    /// Peeroxide session.  The body is protocol data; its sender claim is
+    /// compared to the Noise-bound membership grant by the session router.
+    BudgetRaft,
 }
 
 /// Wire envelope every frame carries. Body varies per kind;
@@ -180,6 +188,88 @@ pub enum FrameBody {
     TaskResult(TaskResultBody),
     Gossip(Box<super::gossip_wire::GossipFrame>),
     GossipAck(super::gossip_wire::GossipAck),
+    BudgetRaft(Box<BudgetRaftEnvelope>),
+}
+
+/// Independent version for the budget envelope.  A future Raft wire revision
+/// can fail closed without changing unrelated heartbeat semantics.
+pub const BUDGET_RAFT_ENVELOPE_VERSION: u16 = 1;
+/// The outer frame remains capped by `MAX_FRAME_BYTES`; this smaller cap is
+/// enforced before any nested OpenRaft CBOR decode.
+pub const MAX_BUDGET_RAFT_PAYLOAD_BYTES: usize = 512 * 1024;
+pub const MAX_BUDGET_RAFT_CLUSTER_ID_BYTES: usize = 128;
+pub const MAX_BUDGET_RAFT_SENDER_BYTES: usize = 128;
+
+/// Exact request/reply families.  A response never shares a tag with its
+/// request, preventing a decoded request from being correlated as a reply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BudgetRaftMessageKind {
+    /// A follower forwards one already-authorized budget command to the single
+    /// selected frozen leader. The payload is `BudgetCommand`, never a permit.
+    CommandRequest,
+    /// The leader's typed `BudgetReply` for `CommandRequest`.
+    CommandResponse,
+    AppendEntriesRequest,
+    AppendEntriesResponse,
+    VoteRequest,
+    VoteResponse,
+    InstallSnapshotRequest,
+    InstallSnapshotResponse,
+}
+
+impl BudgetRaftMessageKind {
+    pub fn is_response(self) -> bool {
+        matches!(
+            self,
+            Self::CommandResponse
+                | Self::AppendEntriesResponse
+                | Self::VoteResponse
+                | Self::InstallSnapshotResponse
+        )
+    }
+}
+
+/// Bounded wire contract for budget Raft. `payload` is a second CBOR object
+/// decoded only after this envelope is matched to a current authenticated
+/// session and frozen configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BudgetRaftEnvelope {
+    pub version: u16,
+    pub request_id: u64,
+    pub cluster_id: String,
+    pub membership_epoch: u64,
+    /// Canonical lowercase SHA-256 hex of the frozen voter configuration.
+    pub scope_hash: String,
+    pub asserted_sender: String,
+    pub kind: BudgetRaftMessageKind,
+    pub payload: Vec<u8>,
+}
+
+pub fn validate_budget_raft_envelope(envelope: &BudgetRaftEnvelope) -> Result<()> {
+    anyhow::ensure!(
+        envelope.version == BUDGET_RAFT_ENVELOPE_VERSION,
+        "budget raft envelope version {} does not match expected {BUDGET_RAFT_ENVELOPE_VERSION}",
+        envelope.version
+    );
+    anyhow::ensure!(envelope.request_id != 0, "budget raft request id is zero");
+    anyhow::ensure!(
+        !envelope.cluster_id.is_empty() && envelope.cluster_id.len() <= MAX_BUDGET_RAFT_CLUSTER_ID_BYTES,
+        "budget raft cluster id is empty or exceeds cap"
+    );
+    anyhow::ensure!(
+        !envelope.asserted_sender.is_empty() && envelope.asserted_sender.len() <= MAX_BUDGET_RAFT_SENDER_BYTES,
+        "budget raft asserted sender is empty or exceeds cap"
+    );
+    anyhow::ensure!(
+        envelope.scope_hash.len() == 64 && envelope.scope_hash.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "budget raft scope hash is not canonical SHA-256 hex"
+    );
+    anyhow::ensure!(
+        envelope.payload.len() <= MAX_BUDGET_RAFT_PAYLOAD_BYTES,
+        "budget raft payload {} exceeds cap {MAX_BUDGET_RAFT_PAYLOAD_BYTES}", envelope.payload.len()
+    );
+    Ok(())
 }
 
 /// Hello body — sent first on each connection.
@@ -1078,12 +1168,74 @@ mod tests {
         // values is intentional + needs a Chorus re-review.
         assert_eq!(PROTOCOL_NAME, "neoth-r7-heartbeat");
         // v2: SL-00(1b) added the mandatory cluster_key_proof to the Hello.
-        assert_eq!(PROTOCOL_VERSION, 6);
+        assert_eq!(PROTOCOL_VERSION, 7);
         assert_eq!(MAX_FRAME_BYTES, 4 * 1024 * 1024);
         assert_eq!(HEARTBEAT_INTERVAL_MS, 5_000);
         assert_eq!(HEARTBEAT_JITTER_PCT, 20);
         assert_eq!(UNHEALTHY_AFTER_MS, 15_000);
         assert_eq!(ONCHANGE_PUSH_MIN_INTERVAL_MS, 1_000);
         assert_eq!(MAX_CAPABILITIES, 64);
+    }
+
+    #[test]
+    fn budget_raft_envelope_rejects_wrong_version_and_oversized_nested_payload() {
+        let mut envelope = BudgetRaftEnvelope {
+            version: BUDGET_RAFT_ENVELOPE_VERSION,
+            request_id: 7,
+            cluster_id: "cluster-a".into(),
+            membership_epoch: 1,
+            scope_hash: "a".repeat(64),
+            asserted_sender: "a".repeat(64),
+            kind: BudgetRaftMessageKind::VoteRequest,
+            payload: vec![1, 2, 3],
+        };
+        assert!(validate_budget_raft_envelope(&envelope).is_ok());
+        envelope.version += 1;
+        assert!(validate_budget_raft_envelope(&envelope).is_err());
+        envelope.version = BUDGET_RAFT_ENVELOPE_VERSION;
+        envelope.payload = vec![0; MAX_BUDGET_RAFT_PAYLOAD_BYTES + 1];
+        assert!(validate_budget_raft_envelope(&envelope).is_err());
+    }
+
+    #[test]
+    fn budget_raft_response_tags_cannot_be_confused_with_requests() {
+        assert!(!BudgetRaftMessageKind::CommandRequest.is_response());
+        assert!(!BudgetRaftMessageKind::AppendEntriesRequest.is_response());
+        assert!(!BudgetRaftMessageKind::VoteRequest.is_response());
+        assert!(!BudgetRaftMessageKind::InstallSnapshotRequest.is_response());
+        assert!(BudgetRaftMessageKind::CommandResponse.is_response());
+        assert!(BudgetRaftMessageKind::AppendEntriesResponse.is_response());
+        assert!(BudgetRaftMessageKind::VoteResponse.is_response());
+        assert!(BudgetRaftMessageKind::InstallSnapshotResponse.is_response());
+    }
+
+    #[test]
+    fn budget_command_lane_round_trips_as_a_distinct_typed_budget_frame() {
+        let frame = WireFrame {
+            kind: FrameKind::BudgetRaft,
+            sequence: 41,
+            sent_unix_ms: 1,
+            peer_id: "local-frozen-voter".into(),
+            body: FrameBody::BudgetRaft(Box::new(BudgetRaftEnvelope {
+                version: BUDGET_RAFT_ENVELOPE_VERSION,
+                request_id: 41,
+                cluster_id: "cluster-a".into(),
+                membership_epoch: 1,
+                scope_hash: "b".repeat(64),
+                asserted_sender: "a".repeat(64),
+                kind: BudgetRaftMessageKind::CommandRequest,
+                payload: vec![0xa0],
+            })),
+        };
+        let decoded = decode_frame(&encode_frame(&frame).expect("encode command frame"))
+            .expect("decode command frame");
+        match decoded.body {
+            FrameBody::BudgetRaft(envelope) => {
+                assert_eq!(envelope.kind, BudgetRaftMessageKind::CommandRequest);
+                assert_eq!(envelope.request_id, 41);
+                assert!(!envelope.kind.is_response());
+            }
+            body => panic!("expected budget command frame, got {body:?}"),
+        }
     }
 }

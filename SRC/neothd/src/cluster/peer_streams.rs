@@ -23,7 +23,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::heartbeat::WireFrame;
-use super::membership::{AuthEpoch, MembershipEffectGuard, MembershipGrant, StableNodeId};
+use super::membership::{AuthEpoch, CarrierKind, MembershipEffectGuard, MembershipGrant, StableNodeId};
 
 /// Bounded outbound queue per peer. Big enough to absorb a burst of replies /
 /// gossip without backpressure on the sender, small enough that a wedged peer
@@ -72,6 +72,27 @@ struct LiveSender {
 pub(crate) struct AuthorizedWireFrame {
     frame: WireFrame,
     effect_guard: Option<MembershipEffectGuard>,
+}
+
+/// A single live, authenticated generation reserved for budget-Raft traffic.
+/// It deliberately contains no dial target: reconnecting or revoking the
+/// route invalidates the generation and callers must fail rather than route to
+/// a different session.
+#[derive(Clone)]
+pub(crate) struct BudgetSession {
+    transport_identity: String,
+    generation: u64,
+    stable_node_id: StableNodeId,
+    grant: MembershipGrant,
+    sender: tokio::sync::mpsc::Sender<AuthorizedWireFrame>,
+    cancel: tokio::sync::watch::Receiver<bool>,
+}
+
+impl BudgetSession {
+    pub(crate) fn generation(&self) -> u64 { self.generation }
+    pub(crate) fn stable_node_id(&self) -> &StableNodeId { &self.stable_node_id }
+    pub(crate) fn grant(&self) -> &MembershipGrant { &self.grant }
+    pub(crate) fn cancellation(&self) -> tokio::sync::watch::Receiver<bool> { self.cancel.clone() }
 }
 
 impl AuthorizedWireFrame {
@@ -304,6 +325,113 @@ impl PeerStreamRegistry {
                 effect_guard,
             })
             .map_err(|e| match e {
+                tokio::sync::mpsc::error::TrySendError::Full(_) => SendError::QueueFull,
+                tokio::sync::mpsc::error::TrySendError::Closed(_) => SendError::Closed,
+            })
+    }
+
+    /// Obtain the exact current Peeroxide generation for a frozen budget voter.
+    /// The lookup key, stable identity, membership epoch and transport identity
+    /// all originate from the accepted membership grant; the caller-supplied
+    /// route/config are comparisons only.
+    pub(crate) fn budget_session(
+        &self,
+        route: &super::budget_raft::network::BudgetPeerRoute,
+        config: &super::budget_raft::types::BudgetClusterConfig,
+    ) -> Result<BudgetSession, SendError> {
+        let now = crate::time::now_unix_i64();
+        let entry = {
+            let map = self.guard();
+            map.get(route.transport_identity.as_str()).map(|entry| {
+                (
+                    entry.generation,
+                    entry.stable_node_id.clone(),
+                    entry.membership_grant.clone(),
+                    entry.sender.clone(),
+                    entry.cancel.subscribe(),
+                )
+            })
+        };
+        let Some((generation, stable_node_id, grant, sender, cancel)) = entry else {
+            return Err(SendError::UnknownPeer);
+        };
+        let (Some(stable_node_id), Some(grant)) = (stable_node_id, grant) else {
+            return Err(SendError::MembershipRevoked);
+        };
+        if grant.carrier() != CarrierKind::Peeroxide
+            || grant.stable_node_id() != &route.stable_node_id
+            || &stable_node_id != &route.stable_node_id
+            || grant.transport_identity() != &route.transport_identity
+            || grant.membership_epoch() != config.membership_epoch
+            || config.voters.get(&route.stable_node_id) != Some(&route.transport_identity)
+            || grant.revalidate(now).is_err()
+        {
+            return Err(SendError::MembershipRevoked);
+        }
+        Ok(BudgetSession { transport_identity: route.transport_identity.as_str().to_owned(), generation, stable_node_id, grant, sender, cancel })
+    }
+
+    /// Construct the inbound session context only for the generation owned by
+    /// the current connection loop.  A reconnect therefore cannot make an old
+    /// stream's inbound frame look current.
+    pub(crate) fn budget_session_for_generation(
+        &self,
+        transport_identity: &str,
+        generation: u64,
+        grant: &MembershipGrant,
+        config: &super::budget_raft::types::BudgetClusterConfig,
+    ) -> Result<BudgetSession, SendError> {
+        let route = super::budget_raft::network::BudgetPeerRoute {
+            node_id: config.raft_node_id(grant.stable_node_id()).ok_or(SendError::MembershipRevoked)?,
+            stable_node_id: grant.stable_node_id().clone(),
+            transport_identity: grant.transport_identity().clone(),
+        };
+        let session = self.budget_session(&route, config)?;
+        if session.generation != generation || session.transport_identity != transport_identity {
+            return Err(SendError::MembershipRevoked);
+        }
+        Ok(session)
+    }
+
+    /// Queue a budget frame only if the session is still the current identical
+    /// authenticated generation.  This mirrors `send_to`'s external-effect
+    /// permit and refuses a reconnect, revocation, full queue, or closed loop.
+    pub(crate) fn send_budget_on_session(
+        &self,
+        session: &BudgetSession,
+        frame: WireFrame,
+    ) -> Result<(), SendError> {
+        let current = {
+            let map = self.guard();
+            map.get(&session.transport_identity).map(|entry| {
+                (
+                    entry.generation,
+                    entry.stable_node_id.clone(),
+                    entry.membership_grant.clone(),
+                )
+            })
+        };
+        let Some((generation, stable_node_id, grant)) = current else {
+            return Err(SendError::UnknownPeer);
+        };
+        if generation != session.generation
+            || stable_node_id.as_ref() != Some(&session.stable_node_id)
+            || grant.as_ref().is_none_or(|current_grant|
+                current_grant.stable_node_id() != session.grant.stable_node_id()
+                    || current_grant.transport_identity() != session.grant.transport_identity()
+                    || current_grant.auth_epoch() != session.grant.auth_epoch()
+                    || current_grant.membership_epoch() != session.grant.membership_epoch()
+                    || current_grant.carrier() != session.grant.carrier())
+            || session.grant.revalidate(crate::time::now_unix_i64()).is_err()
+        {
+            return Err(SendError::MembershipRevoked);
+        }
+        let effect_guard = session
+            .grant
+            .begin_effect(crate::time::now_unix_i64())
+            .map_err(|_| SendError::MembershipRevoked)?;
+        session.sender.try_send(AuthorizedWireFrame { frame, effect_guard: Some(effect_guard) })
+            .map_err(|error| match error {
                 tokio::sync::mpsc::error::TrySendError::Full(_) => SendError::QueueFull,
                 tokio::sync::mpsc::error::TrySendError::Closed(_) => SendError::Closed,
             })

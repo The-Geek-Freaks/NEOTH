@@ -37,9 +37,11 @@ use serde::{Deserialize, Serialize};
 use super::PeerPubkey;
 use super::gossip::GossipTag;
 
-/// Breaking durable-sync envelope version. Transport handshakes reject old
-/// peers before these fields can be decoded.
-pub const SYNC_PROTOCOL_VERSION: u16 = 6;
+/// Breaking durable-sync protocol version. v7 adds the typed budget-Raft frame
+/// to the shared authenticated transport contract. Transport handshakes reject
+/// v6 peers before either gossip or budget-control data can be decoded; there
+/// is no downgrade lane.
+pub const SYNC_PROTOCOL_VERSION: u16 = 7;
 pub const SYNC_ENVELOPE_VERSION: u16 = 1;
 
 /// Canonical restore content. The type intentionally has no representation
