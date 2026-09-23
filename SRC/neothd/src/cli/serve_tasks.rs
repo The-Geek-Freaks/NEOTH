@@ -7066,12 +7066,10 @@ pub(crate) async fn spawn_channel_adapters(
                     subscription,
                 ) {
                     Ok(channel) => {
-                        let channel = Arc::new(
-                            channel.with_allowlist(Some(allowed_sender), writer.clone()),
-                        );
+                        let channel =
+                            Arc::new(channel.with_allowlist(Some(allowed_sender), writer.clone()));
                         let channel_ref = ChannelRef::default_account(ChannelKind::GoogleChat);
-                        if let Some(fingerprint) = channel_fingerprints.get(&channel_ref).copied()
-                        {
+                        if let Some(fingerprint) = channel_fingerprints.get(&channel_ref).copied() {
                             let lease = live_channels
                                 .begin_replacement(channel_ref.clone(), fingerprint)
                                 .await;

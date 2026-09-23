@@ -3,6 +3,15 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W555/W556 hosted compile and format follow-up (2026-09-24):**
+GChat35933359541 stopped before discovery at a Paperless test E0382; W555
+clones the moved fixture path while preserving the final directory assertion.
+W556 imports6exact hosted format files from35933358886 after ZIP, SHA256 and
+before/after Gitblob checks. GUI1486146 reports145PASS/3FAIL; W480 is covered
+by the pending W550 rerun, while two P118 failures remain under diagnosis.
+No new Road closure; native1215/Group934+GChat4 and GUI148Linux144macOS
+unchanged. No local executable validation. Details:docs/gold-wave555-556-compile-followup.md.
+
 **W552 GChat workflow dispatch correction (2026-09-24):**
 W547-W551 is published asa7019b9e; core35933302798 dispatched. GitHub rejected
 the GChat lane before execution because runner.temp is unavailable in job-level

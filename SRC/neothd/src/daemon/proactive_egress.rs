@@ -1551,9 +1551,7 @@ fn validate_connection_bound_frame_binding(
         _ => false,
     };
     anyhow::ensure!(
-        &binding.channel_ref == channel_ref
-            && names_exact_live_route
-            && binding.generation != 0,
+        &binding.channel_ref == channel_ref && names_exact_live_route && binding.generation != 0,
         "v6 proactive frame has an invalid connection binding"
     );
     Ok(())

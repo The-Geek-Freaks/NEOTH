@@ -1252,7 +1252,8 @@ fn every_live_route_uses_the_choke_point_and_keet_binds_raw_capability() {
         "DeliveryRoute::Telegram",
     );
     assert!(
-        connection_bound_arm.contains("live.live_channels.acquire(&channel_ref, fingerprint).await")
+        connection_bound_arm
+            .contains("live.live_channels.acquire(&channel_ref, fingerprint).await")
     );
     assert!(connection_bound_arm.contains("execute_claimed_once_connection_bound("));
     assert!(!connection_bound_arm.contains(".send_proactive("));

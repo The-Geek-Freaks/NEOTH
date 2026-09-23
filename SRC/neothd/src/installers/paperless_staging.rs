@@ -4,12 +4,7 @@
 //! pulls or starts images, creates secrets, or treats preparation as artifact
 //! or runtime verification.
 
-use std::{
-    ffi::OsStr,
-    fmt, fs,
-    io,
-    path::Path,
-};
+use std::{ffi::OsStr, fmt, fs, io, path::Path};
 
 use serde::Serialize;
 
@@ -125,18 +120,12 @@ pub fn prepare_at(root: &Path) -> Result<PaperlessStagingView, PaperlessStagingE
         .dir
         .create_dir(&stage_name)
         .map_err(|_| PaperlessStagingError::Io)?;
-    let (stage_dir, _stage_directory_binding) = crate::skills::store::open_bound_real_child_dir(
-        &parent.dir,
-        &stage_name,
-        &stage_display,
-    )
-    .map_err(|_| PaperlessStagingError::Io)?;
-    let stage_binding = crate::skills::store::bind_child_object(
-        &parent.dir,
-        &stage_name,
-        &stage_display,
-    )
-    .map_err(|_| PaperlessStagingError::Io)?;
+    let (stage_dir, _stage_directory_binding) =
+        crate::skills::store::open_bound_real_child_dir(&parent.dir, &stage_name, &stage_display)
+            .map_err(|_| PaperlessStagingError::Io)?;
+    let stage_binding =
+        crate::skills::store::bind_child_object(&parent.dir, &stage_name, &stage_display)
+            .map_err(|_| PaperlessStagingError::Io)?;
     for (name, bytes) in expected_files() {
         let file_display = stage_display.join(name);
         if crate::skills::store::atomic_write_private_child_create_new(
@@ -190,15 +179,15 @@ fn requested_namespace_still_names_stage(root: &Path, expected_identity: &str) -
     let Some(root_name) = root.file_name() else {
         return false;
     };
-    let Ok(Some(parent)) = crate::skills::store::open_absolute_bound_directory(parent_path, false, "paperless") else {
+    let Ok(Some(parent)) =
+        crate::skills::store::open_absolute_bound_directory(parent_path, false, "paperless")
+    else {
         return false;
     };
     let display = parent.physical_display_path.join(root_name);
-    let Ok((_root_dir, binding)) = crate::skills::store::open_bound_real_child_dir(
-        &parent.dir,
-        root_name,
-        &display,
-    ) else {
+    let Ok((_root_dir, binding)) =
+        crate::skills::store::open_bound_real_child_dir(&parent.dir, root_name, &display)
+    else {
         return false;
     };
     binding.identity_token() == expected_identity
@@ -245,18 +234,19 @@ fn inspect_owned(root: &Path) -> Result<bool, PaperlessStagingError> {
         Ok(None) => return Ok(false),
         Err(_) => return Err(PaperlessStagingError::Io),
     };
-    let (root_dir, root_binding) = match crate::skills::store::open_bound_real_child_dir(&parent.dir, root_name, root) {
-        Ok(bound) => bound,
-        Err(error)
-            if error
-                .root_cause()
-                .downcast_ref::<io::Error>()
-                .is_some_and(|cause| cause.kind() == io::ErrorKind::NotFound) =>
-        {
-            return Ok(false);
-        }
-        Err(_) => return Err(PaperlessStagingError::UnsafePath),
-    };
+    let (root_dir, root_binding) =
+        match crate::skills::store::open_bound_real_child_dir(&parent.dir, root_name, root) {
+            Ok(bound) => bound,
+            Err(error)
+                if error
+                    .root_cause()
+                    .downcast_ref::<io::Error>()
+                    .is_some_and(|cause| cause.kind() == io::ErrorKind::NotFound) =>
+            {
+                return Ok(false);
+            }
+            Err(_) => return Err(PaperlessStagingError::UnsafePath),
+        };
     for (name, expected) in expected_files() {
         let bytes = crate::skills::store::read_regular_file_bounded(
             &root_dir,
@@ -471,11 +461,13 @@ mod tests {
             *competitor_identity.borrow()
         );
         assert!(fs::read_dir(&root).unwrap().next().is_none());
-        assert!(!root
-            .parent()
-            .unwrap()
-            .join(staging_child_name(OsStr::new("paperless")))
-            .exists());
+        assert!(
+            !root
+                .parent()
+                .unwrap()
+                .join(staging_child_name(OsStr::new("paperless")))
+                .exists()
+        );
     }
 
     #[test]
@@ -486,8 +478,9 @@ mod tests {
         let stage = parent_root.join(staging_child_name(OsStr::new("paperless")));
         let displaced = parent_root.join("displaced-stage");
         let swapped_stage = stage.clone();
+        let displaced_by_swap = displaced.clone();
         set_before_publication_for_test(move || {
-            fs::rename(&swapped_stage, &displaced).unwrap();
+            fs::rename(&swapped_stage, &displaced_by_swap).unwrap();
             fs::create_dir(&swapped_stage).unwrap();
             fs::write(swapped_stage.join("attacker"), b"preserve").unwrap();
         });

@@ -2016,11 +2016,9 @@ mod tests {
             let wal_dir = tmp.path().join("wal");
             std::fs::create_dir_all(&wal_dir).unwrap();
             let segment = wal_dir.join("000001.wal");
-            let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
-                segment.clone(),
-                tmp.path().to_path_buf(),
-            )
-            .unwrap();
+            let (writer, join, ready) =
+                crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
+                    .unwrap();
             ready.wait().await.unwrap();
             assert_eq!(
                 run_proactive_delivery_tick(
@@ -2055,11 +2053,7 @@ mod tests {
             drop(writer);
             join.await.unwrap().unwrap();
 
-            assert_eq!(
-                gchat.sends(),
-                1,
-                "{alias} must not construct a replacement"
-            );
+            assert_eq!(gchat.sends(), 1, "{alias} must not construct a replacement");
             let history =
                 crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
             assert_eq!(history.len(), 1);
@@ -2116,11 +2110,9 @@ mod tests {
             let wal_dir = tmp.path().join("wal");
             std::fs::create_dir_all(&wal_dir).unwrap();
             let segment = wal_dir.join("000001.wal");
-            let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
-                segment.clone(),
-                tmp.path().to_path_buf(),
-            )
-            .unwrap();
+            let (writer, join, ready) =
+                crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
+                    .unwrap();
             ready.wait().await.unwrap();
             assert_eq!(
                 run_proactive_delivery_tick(
