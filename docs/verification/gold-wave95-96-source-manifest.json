@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T11:23:55.1068542Z",
-  "validationStatus": "W367-370 reviewed repairs; source/hash-bound hosted rustfmt imported; behavior rerun pending",
+  "capturedUtc": "2026-09-23T11:36:05.7115422Z",
+  "validationStatus": "W377 ZIP fixture E0505 repair statically reviewed; hosted testtarget rerun pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -808,18 +808,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 157476,
-      "sha256": "770DE60071B8267A3FC684330CAF9A8A16DB97F919F6F21B64C78F1A787FADB4"
+      "bytes": 158290,
+      "sha256": "CA40AE8B7FB622E515E681A596B84CB8F9F76E7A0E30D20D4135A248B706BCF7"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1160635,
-      "sha256": "25EA5C1EF3CC523E453D60E925F371FE0BA243BB5134C062AB0C6DDAD6608927"
+      "bytes": 1161449,
+      "sha256": "85BDDA5A177928A63577A2443ADDC2F932B50215A710ED290111C690823A257B"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1758084,
-      "sha256": "67AB0A01A719CFE4E19AB9DC7E9D7C988C8752AC134BB2B1EE185B557A91445C"
+      "bytes": 1758898,
+      "sha256": "DB991D0E165756D45EFE3B03B8AF1BB03279374C2FB7F3FE35F41928F692AD48"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -2948,8 +2948,8 @@
     },
     {
       "path": "SRC/neothd/src/tools/managed_browser.rs",
-      "bytes": 64744,
-      "sha256": "4074A3FDA444320F8BB1978AF53D8EBFDB889F51CC233FE4BB63BBE2B9C66C82"
+      "bytes": 64800,
+      "sha256": "2F2D9A6B351D74A1A076FD8756169BDA170ADC06BEA24EF698FE821F5C8A02B7"
     },
     {
       "path": "SRC/neothd/src/tools/mod.rs",
@@ -3275,6 +3275,11 @@
       "path": "docs/gold-wave370-dream-audit-runtime.md",
       "bytes": 749,
       "sha256": "4764D8D3EBD904A428ADE580EF93A0ED7BC702F5C51CA87CA12AB07FFFAB603F"
+    },
+    {
+      "path": "docs/gold-wave377-browser-fixture-borrow.md",
+      "bytes": 709,
+      "sha256": "726D503716D4A15F08958722DD2846DFB3DEB9417E38587D4651CE9EBF3FB124"
     }
   ]
 }

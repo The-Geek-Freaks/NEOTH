@@ -1248,15 +1248,17 @@ mod tests {
         use std::io::{Cursor, Write as _};
 
         let mut bytes = Vec::new();
-        let cursor = Cursor::new(&mut bytes);
-        let mut writer = zip::ZipWriter::new(cursor);
-        for (name, body) in members {
-            writer
-                .start_file::<_, ()>(*name, zip::write::SimpleFileOptions::default())
-                .unwrap();
-            writer.write_all(body).unwrap();
+        {
+            let cursor = Cursor::new(&mut bytes);
+            let mut writer = zip::ZipWriter::new(cursor);
+            for (name, body) in members {
+                writer
+                    .start_file::<_, ()>(*name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                writer.write_all(body).unwrap();
+            }
+            writer.finish().unwrap();
         }
-        writer.finish().unwrap();
         bytes
     }
 

@@ -2,6 +2,18 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W377 browser archive fixture lifetime repair (2026-09-23):**
+Corebb1 run35854299629 passed production slim Clippy, then found one E0505
+in the ZIP fixture: ZipWriter's Drop kept its mutable byte-vector borrow
+alive at return. A lexical scope now ends after checked finish and before
+the vector move. No clone, weaker assertion or production change is needed.
+Independent static review passed; hosted compiler rerun remains pending.
+Preflightf52 run35854483418 passed all static contracts.
+Inventory655;native1092+Windows19/Linux33/macOS32;Group780;GUI135Linux/131macOS.
+Road1027checked/295open/2partial;WS-LF20done/98open unchanged.
+W373 authenticated compressed-leaf redaction and W374 scoped cluster
+assignments are separate unaccepted implementation work, not this commit.
+No local executable validation ran.
 **W367-W370 Group721 failure repair (2026-09-23):** Source-bound run
 35850850940 on954f838a executed all721 selected identities:711passed/10failed;
 all153source bindings, matrix/lock and individual terminals were admitted.
