@@ -2001,7 +2001,9 @@ impl WalWriterHandle {
         .await
         {
             Ok(outcome) => outcome,
-            Err(_) => Err(crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError::Indeterminate),
+            Err(_) => Err(
+                crate::wal::redaction_rewrite_receipts::RedactionRewriteOnceError::Indeterminate,
+            ),
         }
     }
 
@@ -2407,7 +2409,7 @@ impl WalWriterHandle {
                 transcript_mining_once: None,
                 counterparty_consent_once: None,
                 dream_audit_once: None,
-            redaction_rewrite_once: None,
+                redaction_rewrite_once: None,
                 quota_admission,
                 #[cfg(test)]
                 test_ack_gate: self.test_ack_gate.clone(),
@@ -3992,20 +3994,26 @@ fn redaction_rewrite_authority_sentinel(home: &Path) -> PathBuf {
     home.join("wal").join(REDACTION_REWRITE_AUTHORITY_SENTINEL)
 }
 
-async fn acquire_redaction_rewrite_authority(home: &Path) -> Result<RedactionRewriteAuthority, WalError> {
+async fn acquire_redaction_rewrite_authority(
+    home: &Path,
+) -> Result<RedactionRewriteAuthority, WalError> {
     let process_authority = std::sync::Arc::clone(&*REDACTION_REWRITE_PROCESS_AUTHORITY);
     let process_guard = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         process_authority.lock_owned(),
     )
     .await
-    .map_err(|_| compaction_recovery_error("RedactionRewrite process authority remained busy for >5s"))?;
+    .map_err(|_| {
+        compaction_recovery_error("RedactionRewrite process authority remained busy for >5s")
+    })?;
     let sentinel = redaction_rewrite_authority_sentinel(home);
     let file_guard =
         tokio::task::spawn_blocking(move || super::redact::lock_segment_for_rewrite(&sentinel))
             .await
             .map_err(|error| {
-                compaction_recovery_error(format!("RedactionRewrite authority task failed: {error}"))
+                compaction_recovery_error(format!(
+                    "RedactionRewrite authority task failed: {error}"
+                ))
             })?
             .map_err(|error| {
                 compaction_recovery_error(format!(
@@ -5356,7 +5364,10 @@ async fn run_writer(
             let lookup_home = hmac_home.clone();
             let lookup_expected = once.expected;
             match tokio::task::spawn_blocking(move || {
-                crate::wal::redaction_rewrite_receipts::lookup_exact_at_home(&lookup_home, &lookup_expected)
+                crate::wal::redaction_rewrite_receipts::lookup_exact_at_home(
+                    &lookup_home,
+                    &lookup_expected,
+                )
             })
             .await
             {
@@ -6348,8 +6359,9 @@ mod tests {
                 if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
                     && frame.header.event_subtype
                         == crate::wal::events::ExtendedSubtype::RedactionRewriteReceipt as u8
-                    && crate::wal::RedactionRewriteReceiptDescriptor::decode_canonical(frame.payload)?
-                        == expected
+                    && crate::wal::RedactionRewriteReceiptDescriptor::decode_canonical(
+                        frame.payload,
+                    )? == expected
                 {
                     count = count.saturating_add(1);
                 }
@@ -6433,7 +6445,9 @@ mod tests {
             .unwrap();
         let frame_sha = match first {
             RedactionRewriteOnceOutcome::AppendedExact(receipt) => receipt.frame_sha256(),
-            RedactionRewriteOnceOutcome::ExistingExact(_) => panic!("first rewrite receipt must append"),
+            RedactionRewriteOnceOutcome::ExistingExact(_) => {
+                panic!("first rewrite receipt must append")
+            }
         };
         match writer
             .append_redaction_rewrite_once(home.path(), redaction_rewrite_descriptor(25))
@@ -6443,7 +6457,9 @@ mod tests {
             RedactionRewriteOnceOutcome::ExistingExact(receipt) => {
                 assert_eq!(receipt.frame_sha256(), frame_sha)
             }
-            RedactionRewriteOnceOutcome::AppendedExact(_) => panic!("duplicate rewrite receipt appended"),
+            RedactionRewriteOnceOutcome::AppendedExact(_) => {
+                panic!("duplicate rewrite receipt appended")
+            }
         }
         assert_eq!(
             writer
@@ -6471,7 +6487,12 @@ mod tests {
         let header = descriptor.header();
         let payload = descriptor.encode();
         assert!(writer.append(header, payload.clone()).await.is_err());
-        assert!(writer.append_authenticated(header, payload.clone()).await.is_err());
+        assert!(
+            writer
+                .append_authenticated(header, payload.clone())
+                .await
+                .is_err()
+        );
         assert!(writer.try_append_sync(header, payload.clone()).is_err());
         assert!(writer.append_no_ack(header, payload).await.is_err());
         drop(writer);
@@ -6537,7 +6558,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn redaction_rewrite_rejects_different_home_and_incomplete_authenticated_scan_without_append() {
+    async fn redaction_rewrite_rejects_different_home_and_incomplete_authenticated_scan_without_append()
+     {
         use crate::wal::RedactionRewriteOnceError;
         let home = tempdir().unwrap();
         let other = tempdir().unwrap();
@@ -9121,7 +9143,7 @@ mod tests {
                 transcript_mining_once: None,
                 counterparty_consent_once: None,
                 dream_audit_once: None,
-            redaction_rewrite_once: None,
+                redaction_rewrite_once: None,
                 quota_admission: Some(quota_admission),
                 test_ack_gate: None,
                 test_receipt_decision_gate: None,

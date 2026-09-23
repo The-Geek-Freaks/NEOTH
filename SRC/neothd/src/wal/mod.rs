@@ -77,14 +77,14 @@ pub mod writer;
 // regressions. Re-exports get added here as wired-up Day-by-Day.
 pub(crate) use builder::make_header_in;
 pub use builder::{HeaderBuilder, make_header};
+pub(crate) use redaction_rewrite_receipts::{
+    RedactionRewriteFrameReceipt, RedactionRewriteOnceError, RedactionRewriteOnceOutcome,
+    RedactionRewriteReceiptDescriptor,
+};
 #[allow(unused_imports)]
 pub(crate) use transcript_mining_once::{
     ExpiredMiningFrameReceipt, PlannedMiningOutboxDescriptor, PlannedRawTextDescriptor,
     TranscriptMiningFrameReceipt, TranscriptMiningOnceError,
-};
-pub(crate) use redaction_rewrite_receipts::{
-    RedactionRewriteFrameReceipt, RedactionRewriteOnceError, RedactionRewriteOnceOutcome,
-    RedactionRewriteReceiptDescriptor,
 };
 pub use types::EventFlags;
 #[cfg(test)]

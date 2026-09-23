@@ -1195,7 +1195,9 @@ pub(crate) fn rebind_marker_hmacs(
         let decoded = decode_frame(&logical[cursor..])
             .with_context(|| format!("decode frame at logical offset {cursor}"))?;
         let total = decoded.header.total_len as usize;
-        let end = cursor.checked_add(total).context("marker frame offset overflow")?;
+        let end = cursor
+            .checked_add(total)
+            .context("marker frame offset overflow")?;
         if end > logical.len() {
             anyhow::bail!("marker frame at {cursor} runs beyond logical segment");
         }
@@ -1221,27 +1223,34 @@ pub(crate) fn rebind_marker_hmacs(
             {
                 anyhow::bail!("compaction marker at {cursor} has an invalid fixed-layout window");
             }
-            let mut mac = HmacSha256::new_from_slice(key).expect("HMAC-SHA256 accepts any key length");
+            let mut mac =
+                HmacSha256::new_from_slice(key).expect("HMAC-SHA256 accepts any key length");
             mac.update(&logical[expected_window_start..cursor]);
             let tag = mac.finalize().into_bytes();
             let hmac_hex: String = tag.iter().map(|b| format!("{b:02x}")).collect();
-            let payload_start = cursor + PREAMBLE_LEN + HEADER_BODY_LEN + decoded.header.reserved_len as usize;
+            let payload_start =
+                cursor + PREAMBLE_LEN + HEADER_BODY_LEN + decoded.header.reserved_len as usize;
             let payload_end = payload_start + decoded.header.payload_len as usize;
             if marker.hmac_hex.len() != 64 {
                 anyhow::bail!("compaction marker at {cursor} has non-canonical HMAC length");
             }
-            let object = marker_value.as_object_mut()
+            let object = marker_value
+                .as_object_mut()
                 .context("compaction marker must be a JSON object")?;
             let Some(value) = object.get_mut("hmac_hex") else {
                 anyhow::bail!("compaction marker at {cursor} has no typed hmac_hex field");
             };
-            anyhow::ensure!(value.as_str() == Some(marker.hmac_hex.as_str()),
-                "compaction marker at {cursor} has a non-string hmac_hex field");
+            anyhow::ensure!(
+                value.as_str() == Some(marker.hmac_hex.as_str()),
+                "compaction marker at {cursor} has a non-string hmac_hex field"
+            );
             *value = serde_json::Value::String(hmac_hex);
-            let rebound_payload = serde_json::to_vec(&marker_value)
-                .context("encode rebound compaction marker")?;
+            let rebound_payload =
+                serde_json::to_vec(&marker_value).context("encode rebound compaction marker")?;
             if rebound_payload.len() != decoded.payload.len() {
-                anyhow::bail!("compaction marker at {cursor} cannot be patched without changing layout");
+                anyhow::bail!(
+                    "compaction marker at {cursor} cannot be patched without changing layout"
+                );
             }
             // Re-serialize the complete, typed JSON marker.  Do not search for
             // the old hex text: an attacker could place it in an unknown field

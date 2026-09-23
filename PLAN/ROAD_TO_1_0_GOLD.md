@@ -8,6 +8,15 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W391 hosted WAL formatting (2026-09-23):**
+Imported the exact7path rustfmt patch from Preflight8ac35861028535 after
+verifying source HEAD, artifact hashes and every before/after Git blob.
+Core64835859898574 passed slim Clippy and all core test-target typechecks;
+its public CLI build remains active. W373 Core8ac35861027738 is queued behind
+that run. Format changes preserve behavior; W373's own hosted compiler/tests
+remain pending. Inventory668;native1122;Group810;GUI135Linux/131macOS.
+Road1027checked/295open/2partial and WS-LF20done/98open remain unchanged.
+No local executable validation ran.
 **W373/W388-W390 authenticated leaf and Group780 follow-up (2026-09-23):**
 W373 integrates the signed Prepared/Delivered journal with bounded no-follow
 staging, authenticated namespace-leaf proof, normal marker-HMAC rebinding,

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T12:29:24.6894171Z",
-  "validationStatus": "W373 integrated22tests plus Group780 twofailures/discovery correction and hosted format; runtime pending",
+  "capturedUtc": "2026-09-23T12:32:44.6397837Z",
+  "validationStatus": "W373 sevenpath hosted-format import; Core8ac and Group810 behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -813,13 +813,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1166667,
-      "sha256": "3B6889A56585493936B40B91915747F54349F8E1F826ADAD64D5FE11E0DC96E7"
+      "bytes": 1167268,
+      "sha256": "17FFF98C7A1013C4AECBE245E63C2931F1D7EF27BEFCE3D654C44805F949EA22"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1764116,
-      "sha256": "B9391229433F209997D0BFAFE6D3431A9150BB009F68F19E5013080D5F4C26B2"
+      "bytes": 1764717,
+      "sha256": "A65110674C4762A1FB82A7DC64DF809A833F93BAA105A7F0C78B55A4D2D3D2B0"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1598,8 +1598,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/memory.rs",
-      "bytes": 131063,
-      "sha256": "78AB8E694760B5986FEB01B4A61BB657C08A70BD8548981DE85459609F87387A"
+      "bytes": 132164,
+      "sha256": "6C15D18471A562E777C806F53B4DEA6617961E26E5673493604EAA7755A662C5"
     },
     {
       "path": "SRC/neothd/src/cli/meter.rs",
@@ -3039,7 +3039,7 @@
     {
       "path": "SRC/neothd/src/wal/mod.rs",
       "bytes": 6605,
-      "sha256": "65D68D7CBD46F77C66815A0C712BA6D9B0FB487DD1B404EB5C70FB4045CF3850"
+      "sha256": "805C728A0AC5D11F104D9DD6FBD9BC8830173177AB790C167165B522862C7110"
     },
     {
       "path": "SRC/neothd/src/wal/payloads_u04.rs",
@@ -3083,8 +3083,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",
-      "bytes": 452169,
-      "sha256": "C265F43310048D6F2A9F59A3F59AAAD594FB4B3AED5EA2C54BD28B02D7AC8C6E"
+      "bytes": 452491,
+      "sha256": "A96BF3DF2098206E623596D1EB5B23CA949576A9289E2CA49EAD292937AD1B80"
     },
     {
       "path": "SRC/neothd/src/wiki/ingest.rs",
@@ -3323,13 +3323,13 @@
     },
     {
       "path": "SRC/neothd/src/wal/redaction_rewrite_receipts.rs",
-      "bytes": 12599,
-      "sha256": "F06B2FB21B105F2599268ABCC5C3CE366580568155B10362767B24898AA0937B"
+      "bytes": 13832,
+      "sha256": "CF95DA04C548EDF172884914EA4A3BB4EBCF71A951CDC55C4B87F5474661AC64"
     },
     {
       "path": "SRC/neothd/src/wal/redaction_rewrite_journal.rs",
-      "bytes": 24777,
-      "sha256": "2A8B60B5FB88F4256BB03A8EAE3598E68878FD374C74331FDF34AE02DD30F5A8"
+      "bytes": 28053,
+      "sha256": "F71D9603B3ECC04AE7BAA4DBF70D4FA3AFBA23F631145DD2B0066ECAA7C77284"
     },
     {
       "path": "docs/gold-wave373-authenticated-leaf-redaction.md",
