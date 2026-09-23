@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T03:05:05.3258131Z",
-  "validationStatus": "W269/W271 hostedformat imported; Group465/Core180 pending; GUI841122/124 and FullCI49 failure admitted",
+  "capturedUtc": "2026-09-23T03:14:15.8292217Z",
+  "validationStatus": "W272 reviewed production early-main helper for GUI fixtures; GUI124 pending; Group451/Corecbae admitted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -38,8 +38,8 @@
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
-      "bytes": 36390,
-      "sha256": "287503AA29B386CE2AE4A05A8AE814191508149CE7093A4D01D87BF755555C53"
+      "bytes": 39347,
+      "sha256": "D6ADC6E2760BF649D151798034437DD9CA4B6BCD8F958AF3F114663CB4B8E7AF"
     },
     {
       "path": ".github/workflows/live-audio.yml",
@@ -438,18 +438,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 109188,
-      "sha256": "DF30EF168B7FDD71D1B059FBEEE24E057998240A08EF7F5D1BC7F65B77494A37"
+      "bytes": 110436,
+      "sha256": "CBE7827DF13D9C92386F187FC1245FC809ABE19E67B4BD7FA6BD1243C4157EB3"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1112147,
-      "sha256": "D3B636D5BFC96CA550E6BE9E43F5579AA3ABD098307103999167619C45FCFFE7"
+      "bytes": 1113395,
+      "sha256": "CD634474914E249C1F9FB76DFB219E50A12235A74489A077A9464844E70DD8C0"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1708367,
-      "sha256": "BD4B1B71F156CA5E7DE81CC0ED9883F9CB29102C3108205E5C810DDC5FB78FEF"
+      "bytes": 1709615,
+      "sha256": "9CAC9323A7311D97ED0BA45D91C58F9435231AA72BA2B44A8CFA40DA2A762C39"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -583,8 +583,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
-      "bytes": 106385,
-      "sha256": "EACB34D78B2E112AC12933E88F28844F9A1E35634F902CBE01ECE4017B460674"
+      "bytes": 106757,
+      "sha256": "F174FBD25B78BB0918F0C9230215A16DA2171A471A7F9D4E16E04755A2F967EB"
     },
     {
       "path": "SRC/neothd-gui/src/chat_reasoning.rs",

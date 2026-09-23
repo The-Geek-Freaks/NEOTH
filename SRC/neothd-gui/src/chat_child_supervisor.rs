@@ -598,13 +598,7 @@ impl LinuxChatUnitSetup {
 
         let systemd_run = trusted_linux_systemd_tool("systemd-run")?;
         let systemctl = trusted_linux_systemd_tool("systemctl")?;
-        let helper = validate_linux_executable(
-            &std::env::current_exe().map_err(|error| {
-                format!("{LINUX_SYSTEMD_TOOL_ERROR}: locate GUI binary: {error}")
-            })?,
-            false,
-            "GUI containment helper",
-        )?;
+        let helper = linux_containment_helper_executable()?;
         if helper.as_os_str().as_bytes().contains(&b'$') {
             return Err(format!(
                 "{LINUX_SYSTEMD_TOOL_ERROR}: GUI helper path contains '$', which the service manager expands"
@@ -647,20 +641,6 @@ impl LinuxChatUnitSetup {
             "--".into(),
             helper.as_os_str().to_owned(),
         ];
-        #[cfg(test)]
-        {
-            let separator = argv
-                .iter()
-                .position(|argument| argument == std::ffi::OsStr::new("--"))
-                .expect("systemd-run argv has a command separator");
-            argv.insert(separator, "--setenv=NEOTH_GUI_CHAT_TEST_HELPER=1".into());
-            argv.extend([
-                "--exact".into(),
-                "chat_child_supervisor::tests::linux_systemd_helper_fixture_entry".into(),
-                "--nocapture".into(),
-            ]);
-        }
-        #[cfg(not(test))]
         argv.push(LINUX_INTERNAL_HELPER_FLAG.into());
         let exec_argv = LinuxExecArgv::new(argv)?;
         let expected_parent = unsafe { libc::getpid() };
@@ -1126,6 +1106,36 @@ fn verify_linux_unit_binding(
     Ok(())
 }
 
+/// Resolve the manager-owned helper without letting test harness threads become
+/// the service MainPID. Hosted containment fixtures must supply the separately
+/// built product binary; production continues to use its own executable.
+#[cfg(all(target_os = "linux", test))]
+fn linux_containment_helper_executable() -> Result<std::path::PathBuf, String> {
+    const TEST_HELPER_ENV: &str = "NEOTH_GUI_TEST_SYSTEMD_HELPER";
+
+    let helper = std::env::var_os(TEST_HELPER_ENV).ok_or_else(|| {
+        format!(
+            "{LINUX_SYSTEMD_TOOL_ERROR}: required test helper environment {TEST_HELPER_ENV} is missing"
+        )
+    })?;
+    if helper.is_empty() {
+        return Err(format!(
+            "{LINUX_SYSTEMD_TOOL_ERROR}: required test helper environment {TEST_HELPER_ENV} is empty"
+        ));
+    }
+    validate_linux_executable(
+        std::path::Path::new(&helper),
+        false,
+        "GUI containment test helper",
+    )
+}
+
+#[cfg(all(target_os = "linux", not(test)))]
+fn linux_containment_helper_executable() -> Result<std::path::PathBuf, String> {
+    let helper = std::env::current_exe()
+        .map_err(|error| format!("{LINUX_SYSTEMD_TOOL_ERROR}: locate GUI binary: {error}"))?;
+    validate_linux_executable(&helper, false, "GUI containment helper")
+}
 #[cfg(target_os = "linux")]
 fn validate_linux_executable(
     path: &std::path::Path,
@@ -2382,6 +2392,15 @@ mod tests {
         ] {
             assert!(source.contains(required), "missing contract: {required}");
         }
+        assert!(source.contains("NEOTH_GUI_TEST_SYSTEMD_HELPER"));
+        assert!(
+            !source.contains(concat!("NEOTH_GUI_CHAT_", "TEST_HELPER")),
+            "test containment must use the dedicated production helper"
+        );
+        assert!(
+            !source.contains(concat!("linux_systemd_helper_", "fixture_entry")),
+            "test containment must not route through the libtest fixture entry"
+        );
         assert!(
             !source.contains("Command::new(\"sh\")"),
             "containment must never route trusted control through a shell"
@@ -2534,24 +2553,6 @@ mod tests {
         );
     }
 
-    /// The Rust test harness, not a shell, is the transient service MainPID.
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_systemd_helper_fixture_entry() {
-        if std::env::var_os("NEOTH_GUI_CHAT_TEST_HELPER").as_deref()
-            != Some(std::ffi::OsStr::new("1"))
-        {
-            return;
-        }
-        let code = match linux_manager_helper_main() {
-            Ok(code) => code,
-            Err(error) => {
-                eprintln!("{error}");
-                125
-            }
-        };
-        std::process::exit(code);
-    }
 
     /// Malicious provider fixture: create a new session plus a double-forked
     /// descendant, then stay alive until the manager kills the entire unit.

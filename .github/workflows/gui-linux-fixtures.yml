@@ -426,48 +426,26 @@ jobs:
 
           if [[ "$build_status" -eq 0 ]]; then
             export PATH="$PWD/target/debug:$PATH"
-            # Compile every exact harness selected by the canonical class
-            # mapping once. Later discovery and execution reuse this target
-            # directory; a cold compile failure is terminal and is never
-            # retried for every fixture.
-            mapfile -t harness_kinds < <(cut -f3 "$plan" | sort -u)
             gui_build_status=0
-            for harness_kind in "${harness_kinds[@]}"; do
-              case "$harness_kind" in
-                bin)
-                  selector=(--bin neothd-gui)
-                  log_suffix=bin-neothd-gui
-                  ;;
-                integration)
-                  selector=(--test gui_chat_bridge_public_api)
-                  log_suffix=integration-gui-chat-bridge-public-api
-                  ;;
-                *)
-                  echo "unsupported GUI fixture harness kind: $harness_kind" >&2
-                  printf '%s\n' "__unsupported_gui_harness_${harness_kind}__" >> "$failed"
-                  gui_build_status=125
-                  overall=1
-                  continue
-                  ;;
-              esac
-              if reserve_timeout 1500 "GUI ${harness_kind} harness build"; then
-                timeout --preserve-status "$command_timeout" cargo test -p neothd-gui "${selector[@]}" --locked --no-run --message-format=json 2>&1 | tee "$evidence_root/log/build-gui-test-harness-${log_suffix}.log"
-                harness_build_status=${PIPESTATUS[0]}
-              else
-                harness_build_status=124
-              fi
-              if [[ "$harness_build_status" -ne 0 ]]; then
-                printf '%s\n' "__build_neothd_gui_${log_suffix}__" >> "$failed"
-                gui_build_status="$harness_build_status"
-                overall=1
-              else
-                helper_path="$evidence_root/receipt/contained-gui-helper-${harness_kind}.path"
-                python3 - "$evidence_root/log/build-gui-test-harness-${log_suffix}.log" "$harness_kind" > "$helper_path" <<'PY'
+            contained_gui_helper_path="$evidence_root/receipt/contained-gui-helper.path"
+            contained_gui_helper_receipt="$evidence_root/receipt/contained-gui-helper.json"
+            if reserve_timeout 1500 'production GUI helper build'; then
+              timeout --preserve-status "$command_timeout" cargo build -p neothd-gui --bin neothd-gui --locked --message-format=json 2>&1 | tee "$evidence_root/log/build-neothd-gui-helper.log"
+              helper_build_status=${PIPESTATUS[0]}
+            else
+              helper_build_status=124
+            fi
+            if [[ "$helper_build_status" -ne 0 ]]; then
+              printf '%s\n' '__build_neothd_gui_production_helper__' >> "$failed"
+              gui_build_status="$helper_build_status"
+              overall=1
+            else
+              if ! python3 - "$evidence_root/log/build-neothd-gui-helper.log" > "$contained_gui_helper_path" <<'PY'
           import json
+          import os
           import sys
 
-          log_path, harness_kind = sys.argv[1:]
-          expected_target = "neothd-gui" if harness_kind == "bin" else "gui_chat_bridge_public_api"
+          log_path = sys.argv[1]
           executables = []
           for raw_line in open(log_path, encoding="utf-8", errors="replace"):
               try:
@@ -477,27 +455,110 @@ jobs:
               if not isinstance(event, dict):
                   continue
               target = event.get("target")
+              profile = event.get("profile")
               executable = event.get("executable")
-              if (event.get("reason") == "compiler-artifact" and isinstance(target, dict)
-                      and target.get("name") == expected_target and target.get("test") is True
-                      and isinstance(executable, str)):
-                  executables.append(executable)
+              if (
+                  event.get("reason") == "compiler-artifact"
+                  and isinstance(target, dict)
+                  and target.get("name") == "neothd-gui"
+                  and target.get("kind") == ["bin"]
+                  and isinstance(profile, dict)
+                  and profile.get("test") is False
+                  and isinstance(executable, str)
+              ):
+                  executables.append(os.path.realpath(executable))
           if len(executables) != 1:
-              raise SystemExit(f"expected one {harness_kind} fixture executable, found {len(executables)}")
+              raise SystemExit(
+                  f"expected one production neothd-gui helper executable, found {len(executables)}"
+              )
           print(executables[0])
           PY
-                helper_path_value="$(cat "$helper_path")" || { gui_build_status=125; overall=1; continue; }
-                if ! install_containment_apparmor_profile "neoth-w252-${harness_kind}" "$helper_path_value"; then
-                  printf '%s\n' "__apparmor_neothd_gui_${log_suffix}__" >> "$failed"
+              then
+                printf '%s\n' '__discover_neothd_gui_production_helper__' >> "$failed"
+                gui_build_status=125
+                overall=1
+              else
+                contained_gui_helper="$(cat "$contained_gui_helper_path")" || contained_gui_helper=""
+                if [[ ! -f "$contained_gui_helper" || ! -x "$contained_gui_helper" ]]; then
+                  printf '%s\n' '__validate_neothd_gui_production_helper__' >> "$failed"
                   gui_build_status=125
                   overall=1
+                else
+                  helper_sha256="$(sha256sum "$contained_gui_helper" | awk '{print $1}')" || helper_sha256=""
+                  helper_bytes="$(stat -c '%s' "$contained_gui_helper")" || helper_bytes=""
+                  helper_source_head="$(git rev-parse HEAD)" || helper_source_head=""
+                  if [[ ! "$helper_sha256" =~ ^[0-9a-f]{64}$ || ! "$helper_bytes" =~ ^[0-9]+$ || ! "$helper_source_head" =~ ^[0-9a-f]{40}$ ]]; then
+                    printf '%s\n' '__receipt_neothd_gui_production_helper__' >> "$failed"
+                    gui_build_status=125
+                    overall=1
+                  elif ! python3 - "$contained_gui_helper_receipt" "$contained_gui_helper" "$helper_sha256" "$helper_bytes" "$helper_source_head" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          receipt, executable, sha256, byte_count, source_head = sys.argv[1:]
+          Path(receipt).write_text(json.dumps({
+              "schema": "neoth-w272-linux-gui-helper/v1",
+              "sourceHead": source_head,
+              "executable": executable,
+              "sha256": sha256,
+              "bytes": int(byte_count),
+          }, indent=2) + "\n", encoding="utf-8")
+          PY
+                  then
+                    printf '%s\n' '__receipt_neothd_gui_production_helper__' >> "$failed"
+                    gui_build_status=125
+                    overall=1
+                  elif ! install_containment_apparmor_profile 'neoth-w272-neothd-gui' "$contained_gui_helper"; then
+                    printf '%s\n' '__apparmor_neothd_gui_production_helper__' >> "$failed"
+                    gui_build_status=125
+                    overall=1
+                  else
+                    export NEOTH_GUI_TEST_SYSTEMD_HELPER="$contained_gui_helper"
+                  fi
                 fi
               fi
-            done
+            fi
+
+            if [[ "$gui_build_status" -eq 0 ]]; then
+              # Compile every exact harness selected by the canonical class
+              # mapping once. The built production helper above is shared by
+              # both harness classes during fixture execution.
+              mapfile -t harness_kinds < <(cut -f3 "$plan" | sort -u)
+              for harness_kind in "${harness_kinds[@]}"; do
+                case "$harness_kind" in
+                  bin)
+                    selector=(--bin neothd-gui)
+                    log_suffix=bin-neothd-gui
+                    ;;
+                  integration)
+                    selector=(--test gui_chat_bridge_public_api)
+                    log_suffix=integration-gui-chat-bridge-public-api
+                    ;;
+                  *)
+                    echo "unsupported GUI fixture harness kind: $harness_kind" >&2
+                    printf '%s\n' "__unsupported_gui_harness_${harness_kind}__" >> "$failed"
+                    gui_build_status=125
+                    overall=1
+                    continue
+                    ;;
+                esac
+                if reserve_timeout 1500 "GUI ${harness_kind} harness build"; then
+                  timeout --preserve-status "$command_timeout" cargo test -p neothd-gui "${selector[@]}" --locked --no-run --message-format=json 2>&1 | tee "$evidence_root/log/build-gui-test-harness-${log_suffix}.log"
+                  harness_build_status=${PIPESTATUS[0]}
+                else
+                  harness_build_status=124
+                fi
+                if [[ "$harness_build_status" -ne 0 ]]; then
+                  printf '%s\n' "__build_neothd_gui_${log_suffix}__" >> "$failed"
+                  gui_build_status="$harness_build_status"
+                  overall=1
+                fi
+              done
+            fi
           else
             gui_build_status=125
           fi
-
           if [[ "$build_status" -eq 0 && "$gui_build_status" -eq 0 ]]; then
             printf '%s\n' 'compile_ready=true' >> "$GITHUB_OUTPUT"
             mapfile -t tests < "$names"

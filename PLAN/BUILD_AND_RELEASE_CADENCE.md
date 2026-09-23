@@ -3,6 +3,24 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W272 Linux production helper entry (2026-09-23):** the hosted containment
+fixtures now build and launch the real `neothd-gui` executable through its early
+internal-helper entry, before runtime/GUI threads. The former libtest helper
+entry ran namespace setup inside harness thread state; the actual W153 error
+was `unshare(...): EINVAL`. Production namespace flags and all systemd checks
+remain unchanged. Both GUI harnesses share the explicit validated helper;
+missing build/discovery/receipt/profile setup fails before fixture execution.
+Cargo artifact selection uses `profile.test=false`, with exact binary name/kind,
+source HEAD and executable hash/size receipt. Independent source review passed;
+a fresh hosted run must prove the fix. GUI124 and Road counts remain unchanged.
+
+Group451cbae35812250221 is fully admitted at451/451 with99source bindings,
+matrix/lock and every actual terminal. Corecbae35812252104 passed slim Clippy,
+core test-target typecheck, CLI build and reference export. Its SHA-bound CLI
+reference remains identical to the committed file. W268 Signal is therefore
+focused-native validated; unrelated all-platform/release work remains open.
+The matrix sourceInputs count is synchronized to its540actual manifest entries.
+
 **Hosted GUI/FullCI failure evidence (2026-09-23):** GUI841 run35810916881
 is fully admitted at122/124 (17 source bindings, 276 artifact hashes, every
 ordered terminal). W153 now exposes the actual helper syscall failure:
