@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W433citation50PASS+2live+1rate_limitednoncoverage;W430sourceboundhostedformat;W431minimalRaftinputqualificationrepair",
+  "status": "W437 canonical progress repaired; hosted verification pending; no local executable validation",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 122365,
-    "sha256": "BDA4E00C28C7B52A3EABE945669F26433261AB679D84DEB4039DD330FBF9F73E"
+    "bytes": 122341,
+    "sha256": "FDA4F898BD2E93A23437261CF3F53B64E2239DD7388CEC43AB3BE8B2745A6019"
   },
   "sourceInputs": 703,
   "requiredNativeTests": [
@@ -22587,6 +22587,13 @@
       }
     ],
     "note": "All9 citationbindings50terminals and2actualCLIclaim/recorddigests verified. P112pending presentation/thirdprovider. Native1136 Group841 unchanged. ProductionRaftunpublished. LocalBSODhold.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave437CanonicalProgressRepair": {
+    "base": "6afba7c9cba34f29a6d5bd035daa4dc383285ccd",
+    "sources": [],
+    "note": "Canonical PROGRESS now agrees with admitted W425/W426: WS-LF27done91open. No additional Road closure. Core d083 slim Clippy/test typecheck PASS, workspace GUI Clippy FAIL; raft metadata graph report failed. Absolute BSOD hold.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

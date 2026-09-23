@@ -3,6 +3,17 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W437 canonical progress-counter repair and reboot recovery (2026-09-23):**
+Preflight6afba7c9 run35877975301 passed formatting and metadata, then correctly
+rejected the stale canonical PROGRESS WS-LF counter (25/93 versus ROAD27/91).
+The canonical count and its stale P1-20 paragraph are now updated to the already
+admitted W425/W426 evidence; no new Road checkbox is closed by this repair.
+A new workstation boot at2026-09-23 16:57:38 Europe/Berlin is confirmed; cause
+remains unproven. No local compiler or product process was observed. The absolute
+local execution hold continues; GitHub auth recovered without a new login.
+W431 minimal Raft qualification35879202289 failed in the metadata graph report; W439 repairs that workflow. Core35876182651 passed slim Clippy and test typechecking, then reported24 GUI workspace-Clippy errors (W438).
+Inventory703;Road1034checked/288open/2partial;WS-LF27done/91open unchanged.
+
 **W430 hosted formatting, W431 minimal Raft qualification and W433 citation results (2026-09-23):**
 Citation010d run35874789863 is admitted:50/50 native PASS, all9source/input
 bindings and actual ordered terminals verified. Crossref/OpenAlex ordinary CLI

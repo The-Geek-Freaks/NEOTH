@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W437 canonical progress-counter repair and reboot recovery (2026-09-23):**
+Preflight6afba7c9 run35877975301 passed formatting and metadata, then correctly
+rejected the stale canonical PROGRESS WS-LF counter (25/93 versus ROAD27/91).
+The canonical count and its stale P1-20 paragraph are now updated to the already
+admitted W425/W426 evidence; no new Road checkbox is closed by this repair.
+A new workstation boot at2026-09-23 16:57:38 Europe/Berlin is confirmed; cause
+remains unproven. No local compiler or product process was observed. The absolute
+local execution hold continues; GitHub auth recovered without a new login.
+W431 minimal Raft qualification35879202289 failed in the metadata graph report; W439 repairs that workflow. Core35876182651 passed slim Clippy and test typechecking, then reported24 GUI workspace-Clippy errors (W438).
+Inventory703;Road1034checked/288open/2partial;WS-LF27done/91open unchanged.
+
 **W430 hosted formatting, W431 minimal Raft qualification and W433 citation results (2026-09-23):**
 Citation010d run35874789863 is admitted:50/50 native PASS, all9source/input
 bindings and actual ordered terminals verified. Crossref/OpenAlex ordinary CLI
@@ -4982,15 +4993,15 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry accepted: **25 done / 93
+> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay and P1-20 sidebar preview accepted: **27 done / 91
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable
 > patches before persistence or apply. No other recovered feature or
 > Plan-001/002/003 leaf was closed by the inventory repair.
 >
-> `GOLD-LF-P1-20` is implemented but deliberately remains one of those 106
-> open tasks until exact-head CI proves the cross-platform/release boundary.
+> `GOLD-LF-P1-20` is accepted by W426: four native Group841 and eight GUI143
+> actual source-bound terminals cover its functional sidebar contract.
 > The desktop derives sidebar previews and selected-session history from the
 > canonical read-only `raw_turns` store, re-sanitizes every displayed role,
 > truncates previews by extended grapheme cluster and updates the live preview
