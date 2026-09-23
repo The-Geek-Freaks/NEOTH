@@ -53,3 +53,28 @@ The selected tests exercise the existing production chain; no test-only replacem
 - `SRC/neothd/src/wal/writer.rs` and the authenticated WAL reader dependencies — writer completion must be awaited by the async WAL tests before inspection.
 
 Acceptance must record the exact commit, each individual terminal, and the W262/W268/W271 evidence. This selection proves adapter-transport health only: an accepted terminal is neither recipient delivery nor a read receipt.
+
+## Hosted acceptance — 2026-09-23
+
+GOLD-LF-P1-17 is accepted for authenticated adapter transport-health.
+Run [35815551129](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35815551129)
+passed all 484 selected tests at 2b0c6f300b156954f8a634e58f097e2ec399f476.
+The retained admission verifies all 106 source bindings, matrix/lock hashes,
+selection order and every individual successful terminal.
+
+The acceptance cases include W262 positions 442–448 (Discord, channel grammar,
+equal account names and admitted factory identities), W268 positions 449–451
+(Signal), W271 position 465 (the registered Doctor caller) and W277 positions
+476–484 (historical account isolation and classification/refusal boundaries).
+Thirteen production dependencies, including the four-file authenticated WAL
+reader/writer chain, retain identical Git blobs through b7ca8bf49ef16ea29589a108667f8855b9e3349f.
+
+Retained records:
+work/gold-20260906/wave275-277-cli-resume-doctor/grouped484-2b0/ADMISSION.json
+(SHA256 22e3472dadf5cb008af2b61447ffbb9b3aea771badbed8d9448a1b81b6365f22) and
+work/gold-20260906/wave277-doctor-closure/CLOSURE.json
+(SHA256 2c2301c6c4890063c42361c8180cacc4acdee5ee186b12043582a747b861182d).
+
+These are hermetic native production-path fixtures. They do not establish
+live provider behavior, provider-usage attribution, recipient delivery or
+read receipts. No local executable validation was run.

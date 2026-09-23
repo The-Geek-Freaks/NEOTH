@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W281 two-step privatecgroup readonlyrepair independently reviewed; GUI125 pending; W278 hostedformat imported",
+  "status": "P1-17 accepted from exact Group484 tests and unchanged13 dependencies; Core3903 passed4steps and exactCLI reference imported; W279 remains uncommitted",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 96397,
-    "sha256": "FC79CB3D3A4B42492F9C8CD2ADAB9342BD77EB54233838D9EAFB6BBF2F67AC37"
+    "bytes": 96438,
+    "sha256": "0DC082E3A92D7220A6666E0589D49209009B6659D5C131A6572A7AB24412A3A7"
   },
   "sourceInputs": 557,
   "requiredNativeTests": [
@@ -17611,7 +17611,7 @@
     ],
     "report": "docs/gold-wave275-self-improve-cli-acceptance.md",
     "localValidationRan": false,
-    "hosted": "pending"
+    "hosted": "PASS Group484 exact9 CLI/core cases;4 passive quality cases remain pending in Group489"
   },
   "wave276RecallResumeAcceptance": {
     "requiredTests": [
@@ -17619,7 +17619,7 @@
     ],
     "report": "docs/gold-wave276-parity-resume-status.md",
     "localValidationRan": false,
-    "hosted": "pending",
+    "hosted": "PASS Group484 run35815551129 exact local-anchor resume fixture; Core3903 all4 steps PASS; parent P1-08 remains open",
     "dependencyPaths": [
       "SRC/neothd/src/recall/goldset.rs",
       "SRC/neothd/src/recall/local_candidate_evidence.rs",
@@ -17647,7 +17647,7 @@
     ],
     "report": "docs/gold-wave277-channel-doctor-acceptance.md",
     "localValidationRan": false,
-    "hosted": "pending"
+    "hosted": "PASS Group484 run35815551129 exact9 plus W262/W268/W271;13 dependency blobs unchanged through b7ca; P1-17 accepted transport-health only"
   },
   "wave275277Source": {
     "base": "ce0ecba215e40a2233a08f178bb60223ab1901bc",
@@ -17846,6 +17846,92 @@
       }
     ],
     "note": "Prior GUI8f16 fullyadmitted122/124. W153 cgroupfreshreadonlymount EBUSY; no stronger W164cause. Finalnamespace/root/ro/nsdelegate checks unchanged. Linuxonly newfixture, no local runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave277AcceptedAndCore3903Reference": {
+    "base": "b7ca8bf49ef16ea29589a108667f8855b9e3349f",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/channels/discord.rs",
+        "bytes": 38712,
+        "sha256": "8528B3745A9B8E769614D5BDBE11CD2C4D0118125B00F2F1820002A574B97F77",
+        "blob": "6418ff2b34d53355f480e4a3cea1e0406e45ee1a"
+      },
+      {
+        "path": "SRC/neothd/src/channels/registry.rs",
+        "bytes": 37680,
+        "sha256": "7299A05F3B0C34DC9F732E7A01F0530B17F19D75C5709B0FC8246B33F29CE394",
+        "blob": "40b7034f7ab303f0e40d9c322f510a8160beb791"
+      },
+      {
+        "path": "SRC/neothd/src/channels/send_gate.rs",
+        "bytes": 33936,
+        "sha256": "01BE022ED4D42234366891341BD259F3592C1921F71C9B4D6A2E12C88E3E2C1C",
+        "blob": "d44e5bd3450176e0614a8852b29917c5666dfb75"
+      },
+      {
+        "path": "SRC/neothd/src/channels/signal.rs",
+        "bytes": 24668,
+        "sha256": "823F9325F27F5CBE10001BC94D00C921972A9818423A0F20360FF0983BE5F304",
+        "blob": "6b0eda4180ee52bd1efb73a254758c16b035dfd6"
+      },
+      {
+        "path": "SRC/neothd/src/cli/doctor.rs",
+        "bytes": 93064,
+        "sha256": "401F07BD0C01B9BDFDC0B361249160EA4C67EE828991765FC4D5DC77D36900DF",
+        "blob": "a84c18674ba6429310d6bd20fd00741f74379a77"
+      },
+      {
+        "path": "SRC/neothd/src/cli/doctor/checks/providers.rs",
+        "bytes": 37892,
+        "sha256": "B89EE451B046E449B731E6CDF53FD6674F9115D768C58E96514A95D522A23BD7",
+        "blob": "588ac07275b0db1bcb7d75ff863d57b5a0167403"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_tasks.rs",
+        "bytes": 529306,
+        "sha256": "FEFF3E7CEF4E338BA26C437A0FA3FFF95B7177307829D5E2DB0CB768CA013933",
+        "blob": "c611cdac9d7cedda27b3fbe9c6088aec5fe99efa"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/channel_transport_evidence.rs",
+        "bytes": 54372,
+        "sha256": "B998B77A8CADEF7A9CE05140398F42EA3354873501E87F84746753CF536EEEA3",
+        "blob": "1f43ffc7aabbdca63a967ef7a71588466222496c"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/proactive_egress.rs",
+        "bytes": 382280,
+        "sha256": "C49EF55D9961F980A9D2C59F912BD752C05CFF9EA157160AC97B83BA35F2DFD2",
+        "blob": "75c422af95219cc068a2d7a17ae7d56233fac2c0"
+      },
+      {
+        "path": "SRC/neothd/src/wal/events.rs",
+        "bytes": 270725,
+        "sha256": "5012FD91EAC958643F177DAF4994B812B3E56997B864DEC5ADEF34D233B32263",
+        "blob": "9d7f1a159d2cd073b7fb4945ad6500850dd9a224"
+      },
+      {
+        "path": "SRC/neothd/src/wal/frame.rs",
+        "bytes": 8079,
+        "sha256": "9DEE3F7555A4EAB11EAA12A10DAADF4EC250A4473001040E8D24802B86E916DF",
+        "blob": "cfb5da20619158e2a046d6cd029e93cce090301f"
+      },
+      {
+        "path": "SRC/neothd/src/wal/scan.rs",
+        "bytes": 140625,
+        "sha256": "36515C1B65C36FB1B056E0DE62429F0E1B4BFA587AD71218DD954A0FBF05684E",
+        "blob": "7caf7f72f53ed9847330550cc7f52901e26b1bef"
+      },
+      {
+        "path": "SRC/neothd/src/wal/writer.rs",
+        "bytes": 411247,
+        "sha256": "8E82353B6F1801A347002323243E0A70CA18CE150967EB6AF2DA15EDF8BCD806",
+        "blob": "b244e64458758eca4b2e61bd81d47c08ee1d7bd5"
+      }
+    ],
+    "note": "Road1324=1020checked/302open/2partial; WS-LF13done/105open. Native484/484admitted; Group489/GUI125/FullCIce0 active. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

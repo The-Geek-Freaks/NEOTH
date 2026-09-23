@@ -8,6 +8,25 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W277 Doctor accepted; W275/W276 hosted proof (2026-09-23):**
+Group484 run35815551129 passed all484 exact tests on2b0c6f30. Admission binds
+106 source paths, matrix/lock and every ordered test terminal. W275's actual
+CLI stage/review/exact-digest accept/readback and corpus-drift refusal passed;
+W276's existing-run resume/receipt/lock/revocation fixture passed.
+
+P1-17 is closed for authenticated channel/account transport-health diagnosis:
+Discord, Signal, the actual Doctor caller, cross-account/channel isolation,
+thresholds, incomplete evidence and tampered/unreadable WAL are covered.
+All13 production dependencies remain byte-identical through b7ca8bf4.
+Provider-usage attribution and recipient delivery are outside this acceptance.
+
+Core3903 run35816349028 passed slim Clippy, core test-target typecheck,
+public CLI build and reference export. Its exact generated resume-status
+reference is imported (SHA25685d02ff6). Group489b7ca and GUI125b7ca remain
+active; FullCIce0 is preserved. Road1324 =1020 checked/302 open/2 partial;
+raw blockers304/release-tag blockers303. WS-LF118 =13 done/105 open.
+W279 is under final source review; no local executable validation ran.
+
 **W281 actual Linux containment repair (2026-09-23):** GUI8f16 is fully
 admitted at122/124, with17 source bindings and all124 ordered terminals; no
 fixture was unstarted. The exact production helper receipt binds HEAD, path,
@@ -8246,7 +8265,7 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
   - **Partial exact-egress delivery (2026-08-01; remains OPEN):** Telegram, Slack, Discord, WhatsApp Cloud, WhatsApp/Baileys, Keet, Signal, LINE, Mattermost, iMessage and feature-gated Matrix now share one recoverable `Prepared → Intent ACK → Armed ACK → one transport invocation through the sole seam → authenticated Result → idempotent projection` path. CLI history, GUI feed and Buddy consume the same verified WAL-bound history. Windows file and directory namespace pins now use data/list access so retained handles really deny same-name rename/delete; legacy queue DACL migration is identity-bound, and private zero-share atomic stages are write-through across replacement. Final focused evidence on this blob is egress **35/35**, queue/CLI admission **45/45**, dispatcher **26/26**, GUI stream **20/20**, Windows DACL bridges **7/7**, private create/replace/write **8/8**, source contract **17/17**, strict library Clippy and GUI all-features check green, with final review **0 Critical / 0 High / 0 Medium / 0 Low**. The box stays open for IRC/Twitch/Nostr/GoogleChat live sharing, canonical `ChannelAccountId`, a claim-bound typed one-shot permit, uniform intent-bound retry/attempt budgets and exact-head platform/channel-contract evidence. `Armed` without `Result` becomes visible `CrashUnknown`; no physical exactly-once external-effect claim is made across a crash.
 - [ ] **GOLD-LF-P1-15 — First-class WebChat surface:** implement the authenticated HTTP/WebSocket adapter, registry/config/credential/health/message lifecycle, account routing and CLI/GUI/Buddy onboarding; clean-machine and migration fixtures must include it. Source: Plan 001 channel ledger.
 - [ ] **GOLD-LF-P1-16 — ChannelAccountId end to end:** thread the canonical account identity through config, credentials, inbound/outbound messages, sessions, routes, pairing, queues, runtime health, permits, WAL, all surfaces and importer; multi-account isolation and migration tests are required. Source: Plan 001 gap F-01.
-- [ ] **GOLD-LF-P1-17 — Channel-aware flapping Doctor check:** add the channel/account dimension to usage/health events and compute flapping per channel rather than provider; prove independent channels do not contaminate each other's diagnosis. Source: REEVALUATION R7 P1.
+- [x] **GOLD-LF-P1-17 — Channel-aware flapping Doctor check:** add the channel/account dimension to usage/health events and compute flapping per channel rather than provider; prove independent channels do not contaminate each other's diagnosis. Source: REEVALUATION R7 P1. Accepted 2026-09-23: W277, Group484 run35815551129, authenticated transport-health scope; see docs/gold-wave277-channel-doctor-acceptance.md.
 - [ ] **GOLD-LF-P1-18 — Real wizard GUI↔daemon IPC:** replace the documented stub with bounded authenticated MPSC/session wiring opened by serve and consumed by GUI, including reconnect, cancellation, ordered progress and fail-closed daemon-loss behavior. Source: Plan 003 gap SURF-01.
 - [ ] **GOLD-LF-P1-19 — Local-LLM resource tab:** add daemon-backed Ollama/local-model polling and an operator GUI/CLI/Buddy view for artifact download, disk/RAM/VRAM use, load/readiness, progress, cancellation, errors, update and prune; displayed Ready must be probe-backed. Source: v1_0_OPERATOR_WISHLIST_2026-05-24 §X.
 - [ ] **GOLD-LF-P1-20 — Sidebar last-message preview:** populate each session preview from the canonical latest visible message, update it on send/stream completion/reload, and test redaction, empty, truncation, Unicode and session-switch behavior. Source: GUI_BEAT_OPENHUMAN.md.

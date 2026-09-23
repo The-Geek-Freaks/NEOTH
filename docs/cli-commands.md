@@ -3534,6 +3534,16 @@ Compute the deterministic family-bias report once all graders are imported
 - `--import-receipt <PATH>` — Externally held signed receipt binding the complete import vector
 - `--expected-receipt-pubkey <BASE64>` — Out-of-band Ed25519 receipt public key (base64); never read from run state
 
+### `neoth recall-parity-harness resume-status`
+
+Inspect only existing P1-08 artifacts and show the next manual resume step. This never creates a run or lockfile, calls a provider, imports grades, or publishes a report. Output is redacted to statuses, hashes, and counts
+
+- `--run-dir <DIR>`
+- `--grader-config <PATH>`
+- `--goldset <PATH>`
+- `--import-receipt <PATH>` — Optional detached receipt to verify readiness for the separate manual attested-gate-report transition
+- `--expected-receipt-pubkey <BASE64>` — Out-of-band public key for --import-receipt. It is required when a receipt is supplied and is never persisted by this command
+
 ### `neoth recall-parity-harness show`
 
 Recompute and render a run from trusted config/goldset inputs. The operation remains offline and never changes the established gate

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T04:03:38.0267492Z",
-  "validationStatus": "W281 two-step privatecgroup readonlyrepair independently reviewed; GUI125 pending; W278 hostedformat imported",
+  "capturedUtc": "2026-09-23T04:17:33.5510735Z",
+  "validationStatus": "P1-17 accepted from exact Group484 tests and unchanged13 dependencies; Core3903 passed4steps and exactCLI reference imported; W279 remains uncommitted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -98,8 +98,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 240005,
-      "sha256": "EC9A3A37A15240A5781882B8928753466C5AE46D0B26ADBFEA9928A561C883C0"
+      "bytes": 240649,
+      "sha256": "85D02FF686963D342F6664AE569A2F752C32D7B7F80A59489A29509992FCC3E9"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -348,8 +348,8 @@
     },
     {
       "path": "docs/gold-wave277-channel-doctor-acceptance.md",
-      "bytes": 4656,
-      "sha256": "B326ED669E66411E6DB59C46F7CEF60B87D4EB52B823B8482EDE70015E3AB618"
+      "bytes": 6062,
+      "sha256": "CE13EE7BCA6BCAD33A3DD7B62959E602B4E68F840402866D219C8942F5FE139D"
     },
     {
       "path": "docs/gold-wave278-retry-role-receipt.md",
@@ -468,18 +468,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 116868,
-      "sha256": "3645439681273CF14A282449E6EF56543FC3BF564D636C8CEDF0BDEB592242D8"
+      "bytes": 118046,
+      "sha256": "DA38C347B4F6641A2398146ECE21D1FB660D8E94F49600A0C642926C158B12D2"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1119846,
-      "sha256": "D86CAF86F1EF08C696D94517042CDB7356177BD7C9DDB7173883A2419DC60BB0"
+      "bytes": 1121024,
+      "sha256": "B9116D24B4E1823CFA14D9496DE00F4E30DFB0A83105916943011D61CB56EAC9"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1716121,
-      "sha256": "9E4D3D295AA284B2A6048DD141C788E12598FB5014A32C65C4D18AB54A3233AD"
+      "bytes": 1717441,
+      "sha256": "832126A4E37D4FDB9010341A26117F2C859E0CE80719E9AA5E02F74C84A045BA"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",

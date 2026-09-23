@@ -3,6 +3,25 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W277 Doctor accepted; W275/W276 hosted proof (2026-09-23):**
+Group484 run35815551129 passed all484 exact tests on2b0c6f30. Admission binds
+106 source paths, matrix/lock and every ordered test terminal. W275's actual
+CLI stage/review/exact-digest accept/readback and corpus-drift refusal passed;
+W276's existing-run resume/receipt/lock/revocation fixture passed.
+
+P1-17 is closed for authenticated channel/account transport-health diagnosis:
+Discord, Signal, the actual Doctor caller, cross-account/channel isolation,
+thresholds, incomplete evidence and tampered/unreadable WAL are covered.
+All13 production dependencies remain byte-identical through b7ca8bf4.
+Provider-usage attribution and recipient delivery are outside this acceptance.
+
+Core3903 run35816349028 passed slim Clippy, core test-target typecheck,
+public CLI build and reference export. Its exact generated resume-status
+reference is imported (SHA25685d02ff6). Group489b7ca and GUI125b7ca remain
+active; FullCIce0 is preserved. Road1324 =1020 checked/302 open/2 partial;
+raw blockers304/release-tag blockers303. WS-LF118 =13 done/105 open.
+W279 is under final source review; no local executable validation ran.
+
 **W281 actual Linux containment repair (2026-09-23):** GUI8f16 is fully
 admitted at122/124, with17 source bindings and all124 ordered terminals; no
 fixture was unstarted. The exact production helper receipt binds HEAD, path,
