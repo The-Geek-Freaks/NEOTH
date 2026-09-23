@@ -1,0 +1,70 @@
+{
+  "schema": "neoth-plugin-artifact-admission/v1",
+  "run": 35935325488,
+  "source": "77d914b7eafa52b0eea785f32b17f017f1d95ebb",
+  "status": "ADMITTED",
+  "sourceBindings": [
+    {
+      "sha256": "a328ef541cccf8d13d0c87ad33c0bef6fb797b7e85a64383b19f3ee054d011f6",
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/package.json"
+    },
+    {
+      "sha256": "e1ede62b44c7df043a8cef2e335c68724628b6f313832674ac7f5de4f7cbc0b5",
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/tsconfig.json"
+    },
+    {
+      "sha256": "1ce56b6932804f962b8be7ff09393eb4ca2760fd626273b04c6878b89801b232",
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/manifest.json"
+    },
+    {
+      "sha256": "e589737ff519a82d840539d2eb7eb8e95bf77c379c4965040ce08614bbe99f3f",
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/src/main.ts"
+    },
+    {
+      "sha256": "b1dd4fd4ca949edecd4f2bba4c123b8a07912d3f9aae0113ae8fae31330c26f6",
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/test/plugin-contract.mjs"
+    },
+    {
+      "sha256": "ccbde9534ce3b2734dacad9ec9958ceb397cb44f03aa30eaad902d0599fc636d",
+      "path": ".github/workflows/obsidian-bridge-artifact.yml"
+    }
+  ],
+  "bundleBindings": [
+    {
+      "sha256": "1ce56b6932804f962b8be7ff09393eb4ca2760fd626273b04c6878b89801b232",
+      "name": "manifest.json"
+    },
+    {
+      "sha256": "81e476084a0376c8f298e0d5a28bab2bea90eebccee5e99cd5ed7cb6bbcb6bcd",
+      "name": "package-lock.json"
+    },
+    {
+      "sha256": "8ee567873369753ca47608765ff1c694a5cce6efff14dfabe4ad29a088e78e89",
+      "name": "main.js"
+    }
+  ],
+  "artifactDigests": [
+    {
+      "id": 10782642225,
+      "digest": "sha256:f67e28f2f8c8c0f13c004c0621d9f6a84040c202f9f7c2a292c7b82cc2e29dad",
+      "name": "w558-obsidian-bridge-bundle-77d914b7eafa52b0eea785f32b17f017f1d95ebb"
+    },
+    {
+      "id": 10782008916,
+      "digest": "sha256:426b22a893a0ed338ba98da755ed01975ea768829de45b68903a723f08bafc13",
+      "name": "w558-obsidian-bridge-log-receipt-77d914b7eafa52b0eea785f32b17f017f1d95ebb"
+    },
+    {
+      "id": 10781789385,
+      "digest": "sha256:8403cd03f0f6807d298f71a58f83dac44502935093f7f7607443aebc672622a0",
+      "name": "w558-obsidian-bridge-source-77d914b7eafa52b0eea785f32b17f017f1d95ebb"
+    }
+  ],
+  "hostedTypecheck": 0,
+  "hostedBuild": 0,
+  "contractTestsPassed": 3,
+  "contractTestsFailed": 0,
+  "actualObsidianAppAccepted": false,
+  "pairingOrSyncAccepted": false,
+  "localExecutableValidationRan": false
+}

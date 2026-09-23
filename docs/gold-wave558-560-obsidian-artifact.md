@@ -34,3 +34,21 @@ P2-21 and the full Road remain open at1044checked/278open/2partial; WS-LF37/81.
 Native1215, Group934+GChat4, GUI148Linux/144macOS are unchanged. A source package,
 mocked plugin test or installer status cannot by itself close pairing, sync,
 offline or clean-machine Obsidian acceptance.
+
+## Hosted artifact admission and W562 reference
+
+Run35935325488 at77d914b7 passed typecheck, bundle build and3/3contract tests.
+Root verified six source identities, three artifact ZIP hashes, seven zero exit
+receipts, three actual TAP terminals, and manifest/lock/bundle hashes before
+import. The permanent receipt is verification/gold-wave558-obsidian-artifact.json.
+Generated main.js SHA256:8ee567873369753ca47608765ff1c694a5cce6efff14dfabe4ad29a088e78e89.
+Generated lock SHA256:81e476084a0376c8f298e0d5a28bab2bea90eebccee5e99cd5ed7cb6bbcb6bcd.
+
+Core35934260205 atce7394ba passed slimClippy, core test-target check and CLI
+build/export. Artifact10783021689 ZIP SHA256
+ca1f9eb7eaaaca43d3e88cf1d90ea65e5c604a01bb4d5529c5c1303622e4c74d
+contains reference20f8b75b1a14adbf026b81fec8f43d0e5ac4104a0cf9b2a05cd6faee953d091f,
+now imported with paperless prepare. The entire published neoth source tree,
+Cargo manifest and lock are unchanged through77d914b7, so scoped CLI carry is
+verified. Native lifecycle edits in the working tree were excluded from this
+publication and need their own updated export after completion.

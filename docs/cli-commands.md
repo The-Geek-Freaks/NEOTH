@@ -3085,6 +3085,12 @@ Ingest one OCR document through the SC-16 sanitizer + write the Obsidian note un
 - `--text-file <PATH>` — Path to a file containing the OCR text
 - `--source <SOURCE>` — Source enum: `paperless_ngx` / `tesseract_direct` / `paperless_ai` / `manual_upload`. Default `paperless_ngx`
 
+### `neoth paperless prepare`
+
+Prepare a pinned, local Compose directory. This does not pull or start Docker
+
+- `--directory <PATH>` — Exact destination; without it NEOTH uses the selected instance home
+
 ### `neoth paperless quarantine`
 
 GOLD-ADAPT-JV-PAPERLESS-01 — review emails quarantined by the content scanner. Items land here when the scanner finds HIGH-severity patterns (prompt-injection, malware indicators) or when the scanner itself errors (fail-closed). Operator reviews + decides to discard

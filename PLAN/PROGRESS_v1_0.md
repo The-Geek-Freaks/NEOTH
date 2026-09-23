@@ -2,6 +2,16 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W558 artifact admission; W562 current CLI reference (2026-09-24):**
+Hosted35935325488 at77d914b7 passed TypeScript, bundle build and3/3plugin
+contract tests. Root admitted6source hashes,3artifact ZIP digests, all exit
+receipts and the exact manifest/lock/bundle; generated files are now imported.
+This proves package behavior against a fake API, not live Obsidian pairing/sync.
+Core35934260205 atce7394ba passed slimClippy, test-target typechecking and CLI
+build; its source/SHA256-bound paperless prepare reference is imported. Group934
+can now run without the known stale CLI snapshot. New lifecycle code remains
+separately reviewed/pending; Road and native/GUI counts remain unchanged.
+
 **W558 pinned Obsidian artifact source; W560 hosted format (2026-09-24):**
 The Archive Bridge now has a real TypeScript Obsidian Plugin entry, manifest,
 pinned SDK/compiler/bundler and a main-only hosted artifact lane. Version0.1.0

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "status": "SOURCE_BOUND_ARTIFACTS_ADMITTED",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 138032,
-    "sha256": "20CBF1EC40DF12AF82381EF5EE6D9E1BE50EF6769B4F9490375E80F98367B788"
+    "bytes": 138600,
+    "sha256": "E6C47CD3323660EDB874E6FD52768D104D4D11E3AF7CD4418ED858C0149A8325"
   },
-  "sourceInputs": 786,
+  "sourceInputs": 789,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -25621,6 +25621,62 @@
       }
     ],
     "note": "Pinned read-only Obsidian Plugin0.1.0 artifact source and hosted build/receipts; actual artifact build/import pending. Exact W560 GUI format admitted. No pairing/sync/road acceptance",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave558562Evidence": {
+    "base": "77d914b7eafa52b0eea785f32b17f017f1d95ebb",
+    "sources": [
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 246625,
+        "sha256": "20F8B75B1A14ADBF026B81FEC8F43D0E5AC4104A0CF9B2A05CD6FAEE953D091F",
+        "blob": "96d62d3b74dc0eb1bb04836d82ab2e2cd05ac6b3"
+      },
+      {
+        "path": "docs/gold-wave558-560-obsidian-artifact.md",
+        "bytes": 3366,
+        "sha256": "8FF8A08B750D88A68A913BFEF7466668A7295A8FB7050A6F216D929488AD7703",
+        "blob": "76dc3e5ba1aaa58fd575bdf31b5f6bccb273faa9"
+      },
+      {
+        "path": "docs/verification/gold-wave558-obsidian-artifact.json",
+        "bytes": 2486,
+        "sha256": "3121E1B30AC869DA6F6EAAC729694231C8F7376C23E6E5609BA3286554B9F129",
+        "blob": "9e0b6dc6887725329176053c5a58974930e82c28"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 201441,
+        "sha256": "C25B934F79206761802C87BE31D217081E9E517FA1EB0A073068983FDA50781B",
+        "blob": "974a5734870b4dfc7d352ec58d861d2c42f8c93b"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1211765,
+        "sha256": "D916AF9DA77651EC6E764EABBEB6A6A265D8945C414DDF3A7B8985BBA468B491",
+        "blob": "4ac7acf41aa76e609521014e95a45438f63cf11a"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1810398,
+        "sha256": "5DB4A317623AAFBCF3E514D8A90D840B9556597FE58D90C5CD87D44BFB3D62A2",
+        "blob": "b42c99414d7a2a3fd8bdbcce4feecd7f79554aac"
+      },
+      {
+        "path": "SRC/neothd/assets/obsidian_archive_bridge/main.js",
+        "bytes": 1963,
+        "sha256": "8EE567873369753CA47608765FF1C694A5CCE6EFFF14DFABE4AD29A088E78E89",
+        "blob": "0872282789c70ab455a4a28c4beb888e017399d8"
+      },
+      {
+        "path": "SRC/neothd/assets/obsidian_archive_bridge/package-lock.json",
+        "bytes": 19256,
+        "sha256": "81E476084A0376C8F298E0D5A28BAB2BEA90EEBCCEE5E99CD5ED7CB6BBCB6BCD",
+        "blob": "f3f182aa92c18541ca933f1c869d84a58475fd92"
+      }
+    ],
+    "note": "Hosted Obsidian3/3+typecheck/build admitted6sources3zips; imported real JS+lock. Corece7394passedClippy/typecheck/CLI; source-bound paperlessprepare reference imported. Native lifecycle not in index.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
