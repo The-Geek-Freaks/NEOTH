@@ -26,6 +26,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tempfile::TempDir;
+use tokio::sync::Barrier;
 
 const FIXTURE_EPOCH: u64 = 41;
 const FIXTURE_WINDOW: i64 = 20_260_923;
@@ -575,6 +576,88 @@ async fn three_voter_quorum_reserves_claims_once_releases_and_settles() {
         .await
         .unwrap();
     assert_eq!(released.grant_id, releasable.grant_id);
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn concurrent_followers_cannot_overspend_or_reuse_shared_cap() {
+    const SHARED_CAP: u64 = 20;
+    let mut fixture = ThreeNodeFixture::start_with_cap(SHARED_CAP).await;
+    let leader = fixture.wait_for_leader().await;
+    let followers = fixture
+        .node_ids()
+        .into_iter()
+        .filter(|node| *node != leader)
+        .collect::<Vec<_>>();
+    assert_eq!(followers.len(), 2, "three voters must leave two live followers");
+
+    let left_node = followers[0];
+    let right_node = followers[1];
+    let left_request = reserve(&fixture.config, 50, SHARED_CAP);
+    let right_request = reserve(&fixture.config, 51, SHARED_CAP);
+    let (left, right) = {
+        let barrier = Arc::new(Barrier::new(2));
+        let left_service = Arc::clone(fixture.service_for(left_node));
+        let right_service = Arc::clone(fixture.service_for(right_node));
+        let left_barrier = Arc::clone(&barrier);
+        let right_barrier = Arc::clone(&barrier);
+        let left_attempt = left_request.clone();
+        let right_attempt = right_request.clone();
+        tokio::join!(
+            async move {
+                left_barrier.wait().await;
+                left_service.reserve(left_attempt).await
+            },
+            async move {
+                right_barrier.wait().await;
+                right_service.reserve(right_attempt).await
+            },
+        )
+    };
+
+    let (winner_node, winner_request, winner_grant, loser_node, loser_request) =
+        match (left, right) {
+            (Ok(grant), Err(BudgetServiceError::Rejected(BudgetRejection::CapExceeded))) => (
+                left_node,
+                left_request,
+                grant,
+                right_node,
+                right_request,
+            ),
+            (Err(BudgetServiceError::Rejected(BudgetRejection::CapExceeded)), Ok(grant)) => (
+                right_node,
+                right_request,
+                grant,
+                left_node,
+                left_request,
+            ),
+            (left, right) => panic!(
+                "exactly one concurrent full-cap reservation must commit; left={left:?}, right={right:?}"
+            ),
+        };
+    assert_eq!(winner_grant.grant_id, winner_request.grant_id);
+    assert_eq!(winner_grant.reserved_usd_nanos, SHARED_CAP);
+
+    let winner_permit = fixture
+        .service_for(winner_node)
+        .begin_dispatch(
+            &fixture.origin_for(winner_node),
+            begin(&winner_grant, &fixture.stable_for(winner_node)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(winner_permit.claim_receipt().grant_id, winner_grant.grant_id);
+    drop(winner_permit);
+
+    assert!(matches!(
+        fixture.service_for(loser_node).reserve(loser_request.clone()).await,
+        Err(BudgetServiceError::Rejected(BudgetRejection::CapExceeded))
+    ));
+    fixture.restart(loser_node).await;
+    assert!(matches!(
+        fixture.service_for(loser_node).reserve(loser_request).await,
+        Err(BudgetServiceError::Rejected(BudgetRejection::CapExceeded))
+    ));
     fixture.shutdown().await;
 }
 

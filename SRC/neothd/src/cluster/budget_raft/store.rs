@@ -31,6 +31,11 @@ const SNAPSHOT_ROW: i64 = 1;
 
 type RaftEntry = Entry<BudgetTypeConfig>;
 type RaftSnapshot = SnapshotMeta<u64, openraft::BasicNode>;
+type RaftState = (
+    Option<LogId<u64>>,
+    StoredMembership<u64, openraft::BasicNode>,
+    BudgetLedger,
+);
 
 /// A cloneable value given to OpenRaft as both its log store and state machine.
 /// It intentionally has no cached mutable ledger: SQLite is recovery truth.
@@ -225,7 +230,7 @@ fn from_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     Ok(serde_json::from_slice(bytes)?)
 }
 fn sql_index(index: u64) -> Result<i64> {
-    Ok(i64::try_from(index).map_err(|_| anyhow!("raft index exceeds SQLite INTEGER range"))?)
+    i64::try_from(index).map_err(|_| anyhow!("raft index exceeds SQLite INTEGER range"))
 }
 
 fn read_meta<T: DeserializeOwned>(conn: &Connection, key: &str) -> Result<Option<T>> {
@@ -246,13 +251,7 @@ fn write_meta<T: Serialize>(tx: &Transaction<'_>, key: &str, value: &T) -> Resul
     Ok(())
 }
 
-fn state(
-    conn: &Connection,
-) -> Result<(
-    Option<LogId<u64>>,
-    StoredMembership<u64, openraft::BasicNode>,
-    BudgetLedger,
-)> {
+fn state(conn: &Connection) -> Result<RaftState> {
     let (last, membership, ledger): (Option<Vec<u8>>, Vec<u8>, Vec<u8>) = conn.query_row(
         "SELECT last_applied, membership, ledger FROM raft_state WHERE singleton = ?1",
         [STATE_ROW],
@@ -407,7 +406,7 @@ impl RaftLogStorage<BudgetTypeConfig> for BudgetRaftStore {
             let last_log_id = bytes
                 .map(|b| from_json::<RaftEntry>(&b).map(|e| e.log_id))
                 .transpose()?
-                .or_else(|| purged.clone());
+                .or(purged);
             Ok(LogState {
                 last_purged_log_id: purged,
                 last_log_id,
@@ -419,7 +418,7 @@ impl RaftLogStorage<BudgetTypeConfig> for BudgetRaftStore {
         self.clone()
     }
     async fn save_vote(&mut self, vote: &Vote<u64>) -> Result<(), StorageError<u64>> {
-        let vote = vote.clone();
+        let vote = *vote;
         self.storage(ErrorSubject::Vote, ErrorVerb::Write, move |conn| {
             let tx = conn.transaction()?;
             write_meta(&tx, META_VOTE, &vote)?;
@@ -466,11 +465,15 @@ impl RaftLogStorage<BudgetTypeConfig> for BudgetRaftStore {
             let tx = conn.transaction()?;
             let purged: Option<LogId<u64>> = read_meta(&tx, META_PURGED)?;
             let last: Option<Vec<u8>> = tx.query_row("SELECT entry FROM raft_log ORDER BY log_index DESC LIMIT 1", [], |row| row.get(0)).optional()?;
-            let mut previous = last.map(|b| from_json::<RaftEntry>(&b).map(|e| e.log_id)).transpose()?.or(purged.clone());
+            let mut previous = last.map(|b| from_json::<RaftEntry>(&b).map(|e| e.log_id)).transpose()?.or(purged);
             for entry in &entries {
                 if purged.as_ref().is_some_and(|p| entry.log_id.index <= p.index) { bail!("append would restore a purged Raft log"); }
-                if let Some(prev) = &previous { if entry.log_id.index > prev.index.saturating_add(1) { bail!("Raft append would leave a log hole"); } }
-                previous = Some(entry.log_id.clone());
+                if let Some(prev) = &previous
+                    && entry.log_id.index > prev.index.saturating_add(1)
+                {
+                    bail!("Raft append would leave a log hole");
+                }
+                previous = Some(entry.log_id);
             }
             for entry in entries {
                 tx.execute(
@@ -580,7 +583,7 @@ impl RaftStateMachine<BudgetTypeConfig> for BudgetRaftStore {
                         ledger.apply(entry.log_id.leader_id.term, entry.log_id.index, command)
                     }
                     EntryPayload::Membership(config) => {
-                        membership = StoredMembership::new(Some(entry.log_id.clone()), config);
+                        membership = StoredMembership::new(Some(entry.log_id), config);
                         BudgetReply::Rejected(BudgetRejection::InvalidConfig)
                     }
                 };
@@ -653,7 +656,7 @@ impl RaftSnapshotBuilder<BudgetTypeConfig> for BudgetRaftStore {
     async fn build_snapshot(&mut self) -> Result<Snapshot<BudgetTypeConfig>, StorageError<u64>> {
         self.storage(ErrorSubject::Snapshot(None), ErrorVerb::Write, |conn| {
             let (last, membership, ledger) = state(conn)?;
-            let bytes = to_json(&(last.clone(), membership.clone(), ledger))?;
+            let bytes = to_json(&(last, membership.clone(), ledger))?;
             if bytes.len() > MAX_BUDGET_SNAPSHOT_BYTES { bail!("built budget raft snapshot exceeds byte bound"); }
             let snapshot_id = match &last { Some(log) => format!("budget-{}-{}", log.leader_id.term, log.index), None => "budget-empty".to_owned() };
             let meta = SnapshotMeta { last_log_id: last, last_membership: membership, snapshot_id };

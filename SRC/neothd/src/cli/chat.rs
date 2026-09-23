@@ -21358,6 +21358,11 @@ reason = "synthetic secret"
             n8n_api: crate::config::N8nApiConfig::default(),
             ..Default::default()
         };
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            serde_yaml::to_string(&config).expect("serialize W458 stream config"),
+        )
+        .expect("write W458 stream config");
         let args = ChatArgs {
             attach: Vec::new(),
             repository_root: None,
@@ -21407,7 +21412,7 @@ reason = "synthetic secret"
             format!("{blocked_error:#}").contains(
                 "hook `w458-post-provider-block` blocked the reply at post_provider_call: synthetic secret"
             ),
-            "an unrelated preparation error is not post-provider block evidence"
+            "an unrelated preparation error is not post-provider block evidence: {blocked_error:#}"
         );
         assert!(
             !blocked_output.0.iter().any(|event| matches!(

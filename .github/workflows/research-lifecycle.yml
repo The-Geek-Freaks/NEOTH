@@ -172,6 +172,7 @@ jobs:
               "wave449QuorumBudgetAcceptance": 37,
               "wave462RepairAcceptance": 4,
               "wave469LiveAuthorityStreamWizardAcceptance": 3,
+              "wave478ConcurrentBudgetAcceptance": 1,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():

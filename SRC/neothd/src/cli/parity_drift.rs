@@ -1155,7 +1155,7 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("finish-clicked"),
         rust_handler: Some("window.on_finish_clicked"),
         dispatch_token: Some("finish(&state)"),
-        receipt: Evidence::Untyped("fn finish(", "persist_omi_credentials_via_cli"),
+        receipt: Evidence::Untyped("fn finish_in_home(", "persist_omi_credentials_via_cli"),
         readback: Evidence::Missing,
         state: OperationState::Partial(
             "the compatibility leaf is still used by first-run setup and checks only process exit; day-two settings use the stronger typed configure transaction",

@@ -1038,7 +1038,12 @@ fn walk_bound_directory_descendants(
             );
         };
         let next_display = current_display.join(name);
-        match current.open_dir_nofollow(name) {
+        #[cfg(windows)]
+        let opened = open_windows_shared_real_child_dir(&current, name, &next_display)
+            .map(|(child, _identity)| Dir::from_std_file(child.into_std()));
+        #[cfg(not(windows))]
+        let opened = current.open_dir_nofollow(name).map_err(anyhow::Error::from);
+        match opened {
             Ok(next) => {
                 ensure_cap_directory_is_real(&next, label, absolute)?;
                 if create {
@@ -1056,10 +1061,12 @@ fn walk_bound_directory_descendants(
                 current = next;
                 current_display = next_display;
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create => {
+            Err(error)
+                if error_has_io_kind(&error, std::io::ErrorKind::NotFound) && !create =>
+            {
                 return Ok(None);
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(error) if error_has_io_kind(&error, std::io::ErrorKind::NotFound) => {
                 match create_private_child_directory(&current, name) {
                     Ok(()) => {}
                     Err(create_error)
@@ -1079,7 +1086,12 @@ fn walk_bound_directory_descendants(
                         name.to_string_lossy()
                     )
                 })?;
-                let next = current.open_dir_nofollow(name).with_context(|| {
+                #[cfg(windows)]
+                let opened = open_windows_shared_real_child_dir(&current, name, &next_display)
+                    .map(|(child, _identity)| Dir::from_std_file(child.into_std()));
+                #[cfg(not(windows))]
+                let opened = current.open_dir_nofollow(name).map_err(anyhow::Error::from);
+                let next = opened.with_context(|| {
                     format!(
                         "open newly-created {label} component `{}` without following links",
                         name.to_string_lossy()
@@ -2754,7 +2766,6 @@ fn ensure_directory_is_empty(directory: &Dir, display_path: &Path) -> Result<()>
     }
 }
 
-#[cfg(windows)]
 fn error_has_io_kind(error: &anyhow::Error, kind: std::io::ErrorKind) -> bool {
     error
         .chain()

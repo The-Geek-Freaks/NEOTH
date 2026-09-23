@@ -3,6 +3,20 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W479 wizard acceptance and hosted repairs (2026-09-23):**
+P1-22 is functionally accepted at d9382041: 18 required baseline identities
+passed on both macOS and Windows, plus the real GUI prepare/commit/rerun test
+passed in GUI145. All 145 GUI terminals and 24 source/input bindings are admitted.
+Group885 completed with 882 PASS, two FAIL and one timeout; Windows16 completed
+with 15 PASS and one retained-parent swap FAIL. Core8ec passed slim Clippy and
+core test-target compilation; workspace Clippy found 11 diagnostics. W474-W478
+repair those concrete failures and add the missing simultaneous two-follower
+budget regression. The runtime lock repair requires no state guard over a WAL
+await and preserves start/shutdown ordering. Fresh hosted results remain pending.
+P2-19 and P2-26a remain open. Inventory733/native1181/Group886; GUI145Linux141macOS.
+Road1324=1039checked/283open/2partial;285raw/284pre-tag;WS-LF32done/86open.
+Evidence: docs/gold-wave479-wizard-acceptance-and-hosted-repairs.md. BSOD hold stays.
+
 **W471 hosted formatting import (2026-09-23):**
 W469 is published asf1c67422. Preflight35893107024 exported formatting for
 six Rust files; artifact10766031308, both SHA256 entries and every complete

@@ -42,7 +42,13 @@ pub(crate) struct DaemonGuiChatRuntime {
     home: Arc<PathBuf>,
     config_path: Arc<PathBuf>,
     boot_id: Arc<String>,
-    state: Arc<Mutex<GuiRuntimeState>>,
+    // GUI state is only ever held for synchronous map/replay mutations. Keep
+    // it synchronously lockable because ChatTurnEventSink::emit is synchronous
+    // and runs inside the producer task.
+    state: Arc<GuiRuntimeStateMutex>,
+    // Serializes the asynchronous durable-start boundary with shutdown. State
+    // itself is never held while the lifecycle WAL acknowledgement is pending.
+    start_admission: Arc<Mutex<()>>,
     changed: Arc<Notify>,
     // This is synchronous because effect owners may be transferred from Drop.
     // Every such owner still lands in this same JoinSet and shutdown drains it.
@@ -54,6 +60,29 @@ struct GuiRuntimeState {
     preflights: HashMap<String, Preflight>,
     turns: HashMap<Uuid, Turn>,
     ledger: BTreeMap<Uuid, LedgerRow>,
+}
+
+/// A synchronous mutex with an async-shaped accessor for the runtime's short,
+/// non-awaiting critical sections. Poison means a prior state mutation panicked,
+/// so continuing could expose an incoherent turn; fail closed at that boundary.
+struct GuiRuntimeStateMutex(StdMutex<GuiRuntimeState>);
+
+impl GuiRuntimeStateMutex {
+    fn new(state: GuiRuntimeState) -> Self {
+        Self(StdMutex::new(state))
+    }
+
+    async fn lock(&self) -> std::sync::MutexGuard<'_, GuiRuntimeState> {
+        self.0
+            .lock()
+            .expect("GUI runtime state poisoned; refusing to continue")
+    }
+
+    fn lock_sync(&self) -> anyhow::Result<std::sync::MutexGuard<'_, GuiRuntimeState>> {
+        self.0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("GUI runtime state poisoned; refusing event delivery"))
+    }
 }
 
 struct Preflight {
@@ -151,12 +180,13 @@ impl DaemonGuiChatRuntime {
             home: Arc::new(home),
             config_path: Arc::new(config_path),
             boot_id: Arc::new(boot_id),
-            state: Arc::new(Mutex::new(GuiRuntimeState {
+            state: Arc::new(GuiRuntimeStateMutex::new(GuiRuntimeState {
                 accepting: true,
                 preflights: HashMap::new(),
                 turns: HashMap::new(),
                 ledger: BTreeMap::new(),
             })),
+            start_admission: Arc::new(Mutex::new(())),
             changed: Arc::new(Notify::new()),
             tasks: Arc::new(StdMutex::new(tokio::task::JoinSet::new())),
         }
@@ -1418,7 +1448,11 @@ fn map_live_throughput_state(
 
 impl ChatTurnEventSink for RuntimeSink {
     fn emit(&mut self, event: ChatTurnEvent) -> anyhow::Result<()> {
-        let mut state = self.runtime.state.blocking_lock();
+        // This sink runs in the producer task. The runtime state uses the
+        // same synchronous lock as its short async mutation sections, so a
+        // concurrent attach/status RPC waits for ordering instead of turning
+        // ordinary contention into a provider-turn failure.
+        let mut state = self.runtime.state.lock_sync()?;
         let Some(turn) = state.turns.get_mut(&self.turn_id) else {
             anyhow::bail!("GUI turn was removed")
         };
@@ -1660,7 +1694,11 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
     async fn start(&self, request: GuiChatStartRequest) -> GuiChatResult<GuiChatStartResponse> {
         validate_start_request(&request)?;
         self.require_boot(&request.expected_boot_id)?;
-        let response = {
+        // This remains held through the durable lifecycle ACK so shutdown
+        // cannot publish `accepting = false` between preflight consumption and
+        // producer registration. The state mutex itself is released first.
+        let _start_admission = self.start_admission.lock().await;
+        let (id, grant, row, preflight) = {
             let mut state = self.state.lock().await;
             if !state.accepting {
                 return Err(Self::reject(
@@ -1747,7 +1785,11 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
                 receipt: Self::capability(),
                 terminal: None,
             };
-            self.durable_lifecycle(&row).await?;
+            (id, grant, row, preflight)
+        };
+        self.durable_lifecycle(&row).await?;
+        let response = {
+            let mut state = self.state.lock().await;
             state.ledger.insert(request.request_id.0, row);
             let turn = Turn {
                 request_id: request.request_id,
@@ -2095,11 +2137,17 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
         })
     }
     async fn close_and_drain(&self) {
+        // Hold the same admission gate as `start` until `accepting` is
+        // durably observed closed. A start that already consumed preflight
+        // authority must finish producer registration before shutdown can
+        // collect the turn set.
+        let start_admission = self.start_admission.lock().await;
         let turn_ids = {
             let mut state = self.state.lock().await;
             state.accepting = false;
             state.turns.keys().copied().collect::<Vec<_>>()
         };
+        drop(start_admission);
         for turn_id in turn_ids {
             // The same close path serializes cancellation with a preparing
             // lease and owns bounded settlement before any producer join.
@@ -2906,11 +2954,35 @@ mod lifecycle_tests {
     }
 
     async fn read_w458_terminal_frames(
+        runtime: &DaemonGuiChatRuntime,
+        turn_id: Uuid,
+        name: &str,
         stream: &mut tokio::io::DuplexStream,
     ) -> Vec<serde_json::Value> {
         let mut frames = Vec::new();
         for _ in 0..8 {
-            let frame = read_attach_frame(stream).await;
+            let frame = match tokio::time::timeout(
+                Duration::from_secs(10),
+                read_attach_frame(stream),
+            )
+            .await
+            {
+                Ok(frame) => frame,
+                Err(_) => {
+                    let state = runtime.state.lock().await;
+                    let turn = state.turns.get(&turn_id);
+                    panic!(
+                        "W458 {name} attach did not receive a frame within 10s: \
+                         provider_opens={} source_items={} turn_present={} phase={:?} terminal={} replay_frames={}",
+                        W458_STREAM_OPENS.load(Ordering::SeqCst),
+                        W458_STREAM_ITEMS_POLLED.load(Ordering::SeqCst),
+                        turn.is_some(),
+                        turn.map(|turn| turn.phase),
+                        turn.is_some_and(|turn| turn.terminal.is_some()),
+                        turn.map_or(0, |turn| turn.replay.len()),
+                    );
+                }
+            };
             let terminal = frame["payload"]["type"] == "terminal";
             frames.push(frame);
             if terminal {
@@ -2956,8 +3028,8 @@ template = "[REDACTED]"
             let (mut main, mut buddy, main_task, buddy_task) =
                 w458_attach_pair(&runtime, turn_id).await;
             runtime.schedule_turn(turn_id);
-            let main_frames = read_w458_terminal_frames(&mut main).await;
-            let buddy_frames = read_w458_terminal_frames(&mut buddy).await;
+            let main_frames = read_w458_terminal_frames(&runtime, turn_id, name, &mut main).await;
+            let buddy_frames = read_w458_terminal_frames(&runtime, turn_id, name, &mut buddy).await;
             main_task
                 .await
                 .expect("W458 main attach task joins")

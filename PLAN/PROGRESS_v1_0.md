@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W479 wizard acceptance and hosted repairs (2026-09-23):**
+P1-22 is functionally accepted at d9382041: 18 required baseline identities
+passed on both macOS and Windows, plus the real GUI prepare/commit/rerun test
+passed in GUI145. All 145 GUI terminals and 24 source/input bindings are admitted.
+Group885 completed with 882 PASS, two FAIL and one timeout; Windows16 completed
+with 15 PASS and one retained-parent swap FAIL. Core8ec passed slim Clippy and
+core test-target compilation; workspace Clippy found 11 diagnostics. W474-W478
+repair those concrete failures and add the missing simultaneous two-follower
+budget regression. The runtime lock repair requires no state guard over a WAL
+await and preserves start/shutdown ordering. Fresh hosted results remain pending.
+P2-19 and P2-26a remain open. Inventory733/native1181/Group886; GUI145Linux141macOS.
+Road1324=1039checked/283open/2partial;285raw/284pre-tag;WS-LF32done/86open.
+Evidence: docs/gold-wave479-wizard-acceptance-and-hosted-repairs.md. BSOD hold stays.
+
 **W471 hosted formatting import (2026-09-23):**
 W469 is published asf1c67422. Preflight35893107024 exported formatting for
 six Rust files; artifact10766031308, both SHA256 entries and every complete
@@ -5132,7 +5146,7 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay, P1-20 sidebar preview, P2-03 vault, P1-10 reasoning, P1-12 citation and P2-17 recorded skip decision accepted: **31 done / 87
+> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay, P1-20 sidebar preview, P2-03 vault, P1-10 reasoning, P1-12 citation and P2-17 recorded skip decision and P1-22 provider wizard accepted: **32 done / 86
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

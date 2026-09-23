@@ -1,0 +1,435 @@
+{
+  "schema": "neoth-functional-acceptance/v1",
+  "roadItem": "GOLD-LF-P1-22",
+  "verdict": "ACCEPTED_FUNCTIONAL",
+  "acceptedSource": "d93820411a27eec2126cfae81011cdd901807de1",
+  "baselineSource": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+  "criteria": [
+    "canonical distinct role choices",
+    "invalid-provider and readiness receipts",
+    "shared GUI prepare and daemon hash-bound commit",
+    "GUI reentry/rerun and effective config reload"
+  ],
+  "selection": {
+    "uniqueIdentities": 19,
+    "macOSBaselinePasses": 18,
+    "WindowsBaselinePasses": 18,
+    "LinuxNewIntegrationPasses": 1
+  },
+  "baselineTerminals": [
+    {
+      "platform": "macOS",
+      "name": "cli::hemispheres::tests::parse_role_rejects_unknown",
+      "junitClass": "neoth",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "macOS",
+      "name": "cli::hemispheres::tests::run_test_live_call_routes_question_to_provider",
+      "junitClass": "neoth",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "macOS",
+      "name": "cli::hemispheres::tests::run_test_live_call_surfaces_provider_error",
+      "junitClass": "neoth",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "macOS",
+      "name": "cli::hemispheres::tests::run_test_live_call_records_completion_latency_and_tokens",
+      "junitClass": "neoth",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "macOS",
+      "name": "cli::hemispheres::tests::rebind_migrates_legacy_inline_key_and_preserves_unknown_slot_fields",
+      "junitClass": "neoth",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "macOS",
+      "name": "cli::hemispheres::tests::emit_rebind_audit_writes_0x1f_frame_with_payload",
+      "junitClass": "neoth",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "macOS",
+      "name": "cli::hemispheres::tests::emit_rebind_audit_records_null_prior_when_inheriting_default",
+      "junitClass": "neoth",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "macOS",
+      "name": "gui_action::tests::hemisphere_ack_confirms_matching_rebind_and_audit_segment",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "macOS",
+      "name": "gui_action::tests::hemisphere_ack_rejects_absent_audit_segment",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "macOS",
+      "name": "gui_action::tests::hemisphere_ack_rejects_role_provider_model_mismatch",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "macOS",
+      "name": "gui_action::tests::hemisphere_readiness_ack_requires_build_only_receipt",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "macOS",
+      "name": "gui_action::tests::hemisphere_rebind_stays_on_the_typed_receipt_boundary",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "macOS",
+      "name": "tests::wizard_topology_rejects_stale_provider_tokens",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "macOS",
+      "name": "tests::wizard_topology_uses_canonical_custom_role_bindings",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "macOS",
+      "name": "tests::wizard_topology_single_has_only_shared_default_slot",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "macOS",
+      "name": "tests::wizard_serializes_cohere_topology_and_legacy_provider_kind_separately",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "macOS",
+      "name": "tests::wizard_migrates_inline_slot_key_and_clears_key_after_provider_change",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "macOS",
+      "name": "tests::wizard_custom_topology_keeps_public_slots_and_secret_keys_separate",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "artifactSha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726"
+    },
+    {
+      "platform": "Windows",
+      "name": "cli::hemispheres::tests::parse_role_rejects_unknown",
+      "junitClass": "neoth",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    },
+    {
+      "platform": "Windows",
+      "name": "cli::hemispheres::tests::run_test_live_call_routes_question_to_provider",
+      "junitClass": "neoth",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    },
+    {
+      "platform": "Windows",
+      "name": "cli::hemispheres::tests::run_test_live_call_surfaces_provider_error",
+      "junitClass": "neoth",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    },
+    {
+      "platform": "Windows",
+      "name": "cli::hemispheres::tests::run_test_live_call_records_completion_latency_and_tokens",
+      "junitClass": "neoth",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    },
+    {
+      "platform": "Windows",
+      "name": "cli::hemispheres::tests::rebind_migrates_legacy_inline_key_and_preserves_unknown_slot_fields",
+      "junitClass": "neoth",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    },
+    {
+      "platform": "Windows",
+      "name": "cli::hemispheres::tests::emit_rebind_audit_writes_0x1f_frame_with_payload",
+      "junitClass": "neoth",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    },
+    {
+      "platform": "Windows",
+      "name": "cli::hemispheres::tests::emit_rebind_audit_records_null_prior_when_inheriting_default",
+      "junitClass": "neoth",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    },
+    {
+      "platform": "Windows",
+      "name": "gui_action::tests::hemisphere_ack_confirms_matching_rebind_and_audit_segment",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    },
+    {
+      "platform": "Windows",
+      "name": "gui_action::tests::hemisphere_ack_rejects_absent_audit_segment",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    },
+    {
+      "platform": "Windows",
+      "name": "gui_action::tests::hemisphere_ack_rejects_role_provider_model_mismatch",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    },
+    {
+      "platform": "Windows",
+      "name": "gui_action::tests::hemisphere_readiness_ack_requires_build_only_receipt",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    },
+    {
+      "platform": "Windows",
+      "name": "gui_action::tests::hemisphere_rebind_stays_on_the_typed_receipt_boundary",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    },
+    {
+      "platform": "Windows",
+      "name": "tests::wizard_topology_rejects_stale_provider_tokens",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    },
+    {
+      "platform": "Windows",
+      "name": "tests::wizard_topology_uses_canonical_custom_role_bindings",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    },
+    {
+      "platform": "Windows",
+      "name": "tests::wizard_topology_single_has_only_shared_default_slot",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    },
+    {
+      "platform": "Windows",
+      "name": "tests::wizard_serializes_cohere_topology_and_legacy_provider_kind_separately",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    },
+    {
+      "platform": "Windows",
+      "name": "tests::wizard_migrates_inline_slot_key_and_clears_key_after_provider_change",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    },
+    {
+      "platform": "Windows",
+      "name": "tests::wizard_custom_topology_keeps_public_slots_and_secret_keys_separate",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "source": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+      "artifactPath": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "artifactSha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8"
+    }
+  ],
+  "integrationRun": 35893808092,
+  "integrationTerminal": {
+    "name": "interface_preference_tests::p122_custom_topology_survives_shared_commit_and_gui_rerun",
+    "junitClass": "neothd-gui::bin/neothd-gui",
+    "log": "work/gold-20260906/wave473-hosted-results/gui145/w228-linux-gui-fixtures-log-d93820411a27eec2126cfae81011cdd901807de1/test-115.log",
+    "sha256": "EE3CB81594229EE994AA5EBF7F5B9A6DEA9810E5D0E61E98D57AD0820EDB25D1"
+  },
+  "guiAdmissionSha256": "56E21753EABA9F2DB13BAB5A79E58F4E74D06D59B584ABDD97E11FB99E7AE30A",
+  "sourceCarry": [
+    {
+      "path": "SRC/neothd/src/config/inference.rs",
+      "baselineBlob": "ad1c6fc7c646e13d695bd65373c3309b906eae11",
+      "acceptedBlob": "ad1c6fc7c646e13d695bd65373c3309b906eae11",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/cli/hemispheres.rs",
+      "baselineBlob": "a19e52d91f6b7c350b0219fc7b3efb14fe769d61",
+      "acceptedBlob": "a19e52d91f6b7c350b0219fc7b3efb14fe769d61",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/types.rs",
+      "baselineBlob": "497ac95ced4af7f542b5734753c5dca20fa8a2f4",
+      "acceptedBlob": "497ac95ced4af7f542b5734753c5dca20fa8a2f4",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/catalog.rs",
+      "baselineBlob": "30ffb1aaaa1bd01acf9e4c297997b9d1f6718dc5",
+      "acceptedBlob": "30ffb1aaaa1bd01acf9e4c297997b9d1f6718dc5",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/steps_topology.rs",
+      "baselineBlob": "3349fa5891ceba2462a12c33caf490648df0291d",
+      "acceptedBlob": "3349fa5891ceba2462a12c33caf490648df0291d",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init.rs",
+      "baselineBlob": "9ec89945b9c2f2b1f929541c80d6980a99ec3289",
+      "acceptedBlob": "9ec89945b9c2f2b1f929541c80d6980a99ec3289",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/io.rs",
+      "baselineBlob": "d7646518596245a7c86137fd46f6e7619a73cc90",
+      "acceptedBlob": "d7646518596245a7c86137fd46f6e7619a73cc90",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/wizard_ipc.rs",
+      "baselineBlob": "a079b9908f03f46ba464df49a4e3c72a95f0a88c",
+      "acceptedBlob": "a079b9908f03f46ba464df49a4e3c72a95f0a88c",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
+      "baselineBlob": "541d3cc708ce1f0da6cdd733ca9eae92b89bc530",
+      "acceptedBlob": "541d3cc708ce1f0da6cdd733ca9eae92b89bc530",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd-gui/src/main.rs",
+      "baselineBlob": "0705853e795bb1a9a52693daa0449435e65aa306",
+      "acceptedBlob": "03ef66d17de45be534606e554f8b564b105f1b74",
+      "reason": "Prior W464 unrelated carry plus W468 extraction/shared-commit regression now actually passes atd938; topology selection and prior tests unchanged"
+    },
+    {
+      "path": "SRC/neothd-gui/src/gui_action.rs",
+      "baselineBlob": "88e61cd6c08893bcc8765e6f433f69a5ce93a838",
+      "acceptedBlob": "9ce964c9369eeddb63ec85c4945f0dfbbd2708bc",
+      "reason": "Prior W464 reviewed carry: unrelated cluster-budget typed receipt and formatting; hemisphere receipt/readiness unchanged"
+    },
+    {
+      "path": "SRC/neothd-gui/src/wizard_session_controller.rs",
+      "baselineBlob": "28465b47436a5f324732afa050a57c2fb24cbf94",
+      "acceptedBlob": "28f018c16b46ca185cd4f7b3c12b5b701b871fd7",
+      "reason": "Root inspected full bc9..d938 diff: three tail returns simplified and nested discovery if collapsed only; new d938 P122 test executes actual private controller"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/main.slint",
+      "baselineBlob": "37622ca1054ae04bb35dd23bc3807f27a4570c86",
+      "acceptedBlob": "37622ca1054ae04bb35dd23bc3807f27a4570c86",
+      "reason": "exact"
+    }
+  ],
+  "limitations": "Functional acceptance only. No blanket current-head/all-OS/full-release or installed-package claim. Unrelated Group885/Windows16/Clippy failures remain separately open.",
+  "localExecutableValidationRan": false
+}
