@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W554/W557 real Wizard callback and GUI evidence (2026-09-24):**
+GUI1486146 run35929972686 is source-admitted:148executed/145PASS/3FAIL/0missing,
+with28input/source bindings and148actual test terminals. Cancellation reached
+its terminal state but its fixture never registered the production Finish
+callback. Daemon-loss incorrectly required stale descriptor files to vanish.
+Production and tests now share the real frozen Finish registration; the two
+cases require zero normal completion calls, no replacement operation and the
+exact reconciliation status, plus actual same-boot connection failure after
+process loss. Independent review approved; corrected execution remains pending.
+W480 failed before provider start and is covered by the pending W550 rerun.
+No Road closure:1044checked/278open/2partial; WS-LF37/81 unchanged.
+Details:docs/gold-wave554-557-wizard-evidence.md.
+
 **W555/W556 hosted compile and format follow-up (2026-09-24):**
 GChat35933359541 stopped before discovery at a Paperless test E0382; W555
 clones the moved fixture path while preserving the final directory assertion.

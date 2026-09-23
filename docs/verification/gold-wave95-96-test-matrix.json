@@ -4,10 +4,10 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 136356,
-    "sha256": "3A3E1D6BF8863BB80DDE7C29B1DE8C2D494951EBE67D7D9D1826FE4707DBFD4E"
+    "bytes": 136719,
+    "sha256": "A291791D12B73F4102E6CC91E59F540E65F31D5892B7DB1C58B4C0835A5C3397"
   },
-  "sourceInputs": 777,
+  "sourceInputs": 779,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -7917,8 +7917,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2209228,
-      "sha256": "BA812F76CD7255F52B22AEBFF93B5EF212E5805C3DFDED81DFDAB877B484FB83"
+      "bytes": 2211547,
+      "sha256": "B55E3F9F17841D40B55B27353811EB46326C01FE7DEAF55C489501F4CB1B86FA"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -25503,6 +25503,50 @@
       }
     ],
     "note": "W555 moved PathBuf fixture clone; W556 six exact source/SHA256/Gitblob-bound hosted rustfmt files. GUI/P118 diagnosis remains open; no Road closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave554557Evidence": {
+    "base": "ce7394bad50c274e50f5e6d0b8ce60577431f286",
+    "sources": [
+      {
+        "path": "docs/gold-wave554-557-wizard-evidence.md",
+        "bytes": 2312,
+        "sha256": "98D0667346164EF9EBBC22770A7270954E79971073E17457085522B31D1E2026",
+        "blob": "e7a2fce9fffa8eae6fe831e4392031338aa714ee"
+      },
+      {
+        "path": "docs/verification/gold-wave557-gui148-terminals.json",
+        "bytes": 41032,
+        "sha256": "FE4B3D0CCE1550E7FE3D5754DFB86E12D4581D266EC152C5F8B8F0B25FE76A00",
+        "blob": "9ae8201d71a951b55abece11f03f7d7432f58a0c"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 199913,
+        "sha256": "18D5F51DA8F00F35CBEF4F9D6A8E99A1C26543EE3C8D24B12F454D5269ED08CD",
+        "blob": "cd8ee8b6d251485e701de5c3066cb638ca39e823"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1210237,
+        "sha256": "9F57B5FC91D35F7FE732475F4203D028AB4832488ED46C101309A154E99E4474",
+        "blob": "3c5ce3b2c528ca5c154e5635eaefd6f72b6dbd9a"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1808870,
+        "sha256": "7257102A0F2BB9E40CBD6C8CC194762DED5790C714C40E33C3709C9DBA3A6CB8",
+        "blob": "80258fdfcb9dc507276e026296481d38f98c6e30"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2211547,
+        "sha256": "B55E3F9F17841D40B55B27353811EB46326C01FE7DEAF55C489501F4CB1B86FA",
+        "blob": "14c81a2892c16fea12d27e001674764a94d7bc05"
+      }
+    ],
+    "note": "GUI1486146 admitted145PASS3FAIL28bindings148terminals; P118 production/test shared Finish guard and true same-boot liveness repair reviewed, rerun pending",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

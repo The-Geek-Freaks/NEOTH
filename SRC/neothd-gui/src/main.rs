@@ -13395,19 +13395,13 @@ fn main() -> Result<()> {
 
     register_wizard_daemon_callbacks(&window);
 
-    let weak = window.as_weak();
-    // GUI-REENTRY-PRESET fix: clone the flag into the closure so on_finish_clicked
-    // can refuse to overwrite an existing config when read_freedom_yaml failed on
+    // GUI-REENTRY-PRESET fix: clone the flag into the Finish body so it can
+    // refuse to overwrite an existing config when read_freedom_yaml failed on
     // re-entry (prevents Slint type defaults — "standard"/"claude_cli" — from
     // silently clobbering the operator's real freedom.yaml as if "balanced" was
     // explicitly chosen).
     let reentry_config_ok_for_finish = std::sync::Arc::clone(&reentry_config_ok);
-    window.on_finish_clicked(move || {
-        if let Some(w) = weak.upgrade() {
-            if WIZARD_DAEMON_FROZEN.load(std::sync::atomic::Ordering::Acquire) {
-                w.set_status_line("Setup daemon state must be reconciled by reopening NEOTH before another Finish attempt.".into());
-                return;
-            }
+    register_wizard_finish_callback(&window, move |w| {
             // Re-entry guard: if freedom.yaml already existed but could not be
             // parsed, refuse to write rather than stomp it with type defaults.
             // The operator must fix / inspect the YAML manually first.
@@ -13571,7 +13565,6 @@ fn main() -> Result<()> {
                     }
                 });
             });
-        }
     });
 
     // ── Companion overlay wiring ──────────────────────────────────────────────
@@ -19369,6 +19362,25 @@ fn spawn_neothd_plain(bin: &Path) -> std::process::Command {
     cmd
 }
 
+fn register_wizard_finish_callback(
+    window: &MainWindow,
+    on_finish: impl Fn(MainWindow) + 'static,
+) {
+    let weak = window.as_weak();
+    window.on_finish_clicked(move || {
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+        if WIZARD_DAEMON_FROZEN.load(std::sync::atomic::Ordering::Acquire) {
+            window.set_status_line(
+                "Setup daemon state must be reconciled by reopening NEOTH before another Finish attempt."
+                    .into(),
+            );
+            return;
+        }
+        on_finish(window);
+    });
+}
 fn register_wizard_daemon_callbacks(window: &MainWindow) {
     let weak_wizard_channel = window.as_weak();
     window.on_wizard_channel_changed(move |enabled| {
@@ -43407,7 +43419,7 @@ mod dream_cron_gui_tests {
     #[test]
     fn wizard_completion_is_daemon_acknowledged_and_fails_closed_on_loss() {
         let source = include_str!("main.rs");
-        let start = source.find("window.on_finish_clicked(move || {").unwrap();
+        let start = source.find("register_wizard_finish_callback(&window, move |w| {").unwrap();
         let end = source[start..]
             .find("// ── Companion overlay wiring")
             .unwrap()
@@ -43429,7 +43441,7 @@ mod dream_cron_gui_tests {
     #[test]
     fn daemon_completion_failure_retains_existing_dream_readback_and_revision_order() {
         let source = include_str!("main.rs");
-        let start = source.find("window.on_finish_clicked(move || {").unwrap();
+        let start = source.find("register_wizard_finish_callback(&window, move |w| {").unwrap();
         let end = source[start..]
             .find("// ── Companion overlay wiring")
             .unwrap()
@@ -43478,7 +43490,7 @@ mod dream_cron_gui_tests {
         assert_eq!(ui.matches("root.finish-clicked();").count(), 1);
 
         let source = include_str!("main.rs");
-        let handler_start = source.find("window.on_finish_clicked(move || {").unwrap();
+        let handler_start = source.find("register_wizard_finish_callback(&window, move |w| {").unwrap();
         let handler_end = source[handler_start..]
             .find("// ── Companion overlay wiring")
             .unwrap()
@@ -43615,7 +43627,7 @@ mod w58_gui_callback_runtime_tests {
         project_chat_recall_chip_snapshot, project_chat_throughput_snapshot,
         provider_done_chat_recall_chip_projection, provider_done_chat_throughput_projection,
         register_citation_gui_callbacks, register_response_feedback_callbacks,
-        register_wizard_daemon_callbacks, spawn_neothd_plain, start_wizard_session_projection,
+        register_wizard_daemon_callbacks, register_wizard_finish_callback, spawn_neothd_plain, start_wizard_session_projection,
         wizard_daemon_session,
     };
 
@@ -47569,6 +47581,19 @@ exit 0
                 frozen_before_install,
             }
         }
+
+        fn assert_same_boot_reconciliation_fails(&self) {
+            let mut slot = wizard_daemon_session()
+                .lock()
+                .expect("inspect P118 wizard daemon session after daemon loss");
+            let session = slot
+                .as_mut()
+                .expect("retain the P118 wizard daemon session after daemon loss");
+            assert!(
+                session.reconcile_same_boot().is_err(),
+                "a stale wizard descriptor must fail an actual same-boot reconciliation"
+            );
+        }
     }
 
     #[cfg(not(windows))]
@@ -47685,6 +47710,11 @@ exit 0
         window.set_wizard_daemon_available(true);
         window.set_wizard_daemon_operation_in_flight(false);
         register_wizard_daemon_callbacks(&window);
+        let finish_fallback_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed_finish_fallback_calls = std::sync::Arc::clone(&finish_fallback_calls);
+        register_wizard_finish_callback(&window, move |_| {
+            observed_finish_fallback_calls.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        });
 
         window.invoke_wizard_channel_changed(true);
         w153_pump_until(&window, "P118 channel acknowledgement", |window| {
@@ -47720,11 +47750,18 @@ exit 0
         window.invoke_finish_clicked();
         assert!(!window.get_wizard_daemon_available());
         assert!(
-            window
-                .get_status_line()
-                .as_str()
-                .contains("must be reconciled"),
-            "a frozen Finish must not reopen or replay the cancelled daemon session"
+            !window.get_wizard_daemon_operation_in_flight(),
+            "a frozen Finish must not schedule a replacement daemon operation"
+        );
+        assert_eq!(
+            finish_fallback_calls.load(std::sync::atomic::Ordering::Acquire),
+            0,
+            "a frozen Finish must not invoke its normal completion body"
+        );
+        assert_eq!(
+            window.get_status_line().as_str(),
+            "Setup daemon state must be reconciled by reopening NEOTH before another Finish attempt.",
+            "the shared production Finish freeze callback must own the terminal reconciliation status"
         );
         assert!(
             WIZARD_DAEMON_FROZEN.load(std::sync::atomic::Ordering::Acquire),
@@ -47747,9 +47784,14 @@ exit 0
         let _home = NeothHomeGuard::install(&home);
         let _bootstrap_attempt = wizard_session_controller::isolate_bootstrap_attempt_for_test();
         let child = P118WizardBootstrapChild(std::sync::Arc::new(std::sync::Mutex::new(None)));
-        let _session = P118WizardSessionGuard::install(p118_open_hosted_bootstrap(&home, &child));
+        let session = P118WizardSessionGuard::install(p118_open_hosted_bootstrap(&home, &child));
         let window = MainWindow::new().expect("construct P118 daemon-loss MainWindow");
         window.set_wizard_daemon_available(true);
+        let finish_fallback_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed_finish_fallback_calls = std::sync::Arc::clone(&finish_fallback_calls);
+        register_wizard_finish_callback(&window, move |_| {
+            observed_finish_fallback_calls.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        });
         start_wizard_session_projection(window.as_weak());
 
         child.terminate();
@@ -47764,17 +47806,21 @@ exit 0
             WIZARD_DAEMON_FROZEN.load(std::sync::atomic::Ordering::Acquire),
             "daemon loss must freeze this GUI boot"
         );
-        assert!(
-            neothd::daemon::wizard_ipc::WizardIpcClient::discover(&home).is_err(),
-            "lost daemon endpoint must not remain a replay target",
-        );
+        session.assert_same_boot_reconciliation_fails();
         window.invoke_finish_clicked();
         assert!(
-            window
-                .get_status_line()
-                .as_str()
-                .contains("must be reconciled"),
-            "Finish after daemon loss must not bootstrap or replay an action"
+            !window.get_wizard_daemon_operation_in_flight(),
+            "Finish after daemon loss must not schedule a replacement daemon operation"
+        );
+        assert_eq!(
+            finish_fallback_calls.load(std::sync::atomic::Ordering::Acquire),
+            0,
+            "Finish after daemon loss must not invoke its normal completion body"
+        );
+        assert_eq!(
+            window.get_status_line().as_str(),
+            "Setup daemon state must be reconciled by reopening NEOTH before another Finish attempt.",
+            "the shared production Finish freeze callback must own the terminal reconciliation status"
         );
     }
 

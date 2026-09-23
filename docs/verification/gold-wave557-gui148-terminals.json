@@ -1,0 +1,900 @@
+{
+  "schema": "neoth-gui-source-admission/v1",
+  "run": 35929972686,
+  "source": "6146f6a4becf780a035e087aa4ac4f15d07284bf",
+  "status": "SOURCE_ADMITTED_PARTIAL_FAILURE",
+  "executed": 148,
+  "passed": 145,
+  "failed": 3,
+  "missing": 0,
+  "sourceBindings": [
+    {
+      "path": "docs/verification/gold-wave95-96-test-matrix.json",
+      "sha256": "615A1FB0E0DDF5439B6EE9A30F6780F8D531B842C358F0BD981CA618883B0C89",
+      "blob": "cd25c24e70a160381eed41a47cdefabe76e8a8e3"
+    },
+    {
+      "path": "docs/verification/gold-wave95-96-source-manifest.json",
+      "sha256": "02119C68C3F955F415762F9195E41BF641A5E933A89716BE64E44406FC56DEC5",
+      "blob": "7dcd9c539fd3b41b2d39030e5a996c69e8ad754e"
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "sha256": "722EE0446DBAC05B3E7D4EB9D44C7174E98E6E6FFF5B633B5A30993EDBCB61F0",
+      "blob": "a49b0e51cbc8d33d1f351352e856fc89961f02e1"
+    },
+    {
+      "path": "SRC/neothd-gui/Cargo.toml",
+      "sha256": "296EF213746C9DD31CD818112BA546F21425B870120181058152B277AEAD6261",
+      "blob": "4f00623499277291ee417933c54331f392340f0e"
+    },
+    {
+      "path": ".github/workflows/gui-linux-fixtures.yml",
+      "sha256": "740FA90803CBA6E77ECA89734292EB7E28AE808CD809D59563AC9DF5BE856438",
+      "blob": "1e77c27debd2fb87be89352a81d778885464623d"
+    },
+    {
+      "path": "SRC/neothd-gui/src/chat_reasoning.rs",
+      "sha256": "561D447519555E023FC0FC4A3675B26636989792BD10CD6101B29C970FFAAEA9",
+      "blob": "5e6666e5e317f29bbb94a58bb9006e176b2a17ce"
+    },
+    {
+      "path": "SRC/neothd-gui/src/chat_response_feedback.rs",
+      "sha256": "D363B974B807A0F4EEBDACA0296BF8E1E8F5DB95F457599131BCEC95895F2FDA",
+      "blob": "c8b45d206e4b30d630d0918ae67e60cee50db3fe"
+    },
+    {
+      "path": "SRC/neothd-gui/src/chat_stream_phase.rs",
+      "sha256": "280F37D2500FE57CFA421F978D283ED749B52E9C72250B7119035C83BCEDA8F6",
+      "blob": "c768af1745df268c2e45a4599ec7f423122c1bb5"
+    },
+    {
+      "path": "SRC/neothd-gui/src/citation_gui.rs",
+      "sha256": "DAF70ECCC97106319F68524EE8B173D734C4A9338ABE572E242C0373789826AC",
+      "blob": "fefbfdcaa522c08234f7bd2f0b7913c7681cd584"
+    },
+    {
+      "path": "SRC/neothd-gui/src/coding_controller.rs",
+      "sha256": "3ED2CD5BE7F325761922C7151E03CC53B6F61D5C32C49450E6C83F8E140A5336",
+      "blob": "73b659d4f6a153acdfbab2beb414b745d0feaf66"
+    },
+    {
+      "path": "SRC/neothd-gui/src/gui_action/ouro_q8.rs",
+      "sha256": "8A6164EFB6434B6BA9CAADD92B5E31548BE3867E6C932433F23A97A23F125948",
+      "blob": "4d34dc10a383f7f5db109441a35208c9eeefebec"
+    },
+    {
+      "path": "SRC/neothd-gui/src/gui_chat_bridge_controller.rs",
+      "sha256": "5FAE51AED73C26FD96143D1F22772543B10CF42130F057ABA4A839CE0E449AB1",
+      "blob": "b132cafd6f1f2c53337c3e7537a9745bf8d61f8c"
+    },
+    {
+      "path": "SRC/neothd-gui/src/main.rs",
+      "sha256": "BA812F76CD7255F52B22AEBFF93B5EF212E5805C3DFDED81DFDAB877B484FB83",
+      "blob": "0954c32ba76f07e20962b2419758288c746c9518"
+    },
+    {
+      "path": "SRC/neothd-gui/src/ouro_gui.rs",
+      "sha256": "8CCBED4C9249EEEF0E5C008B87FDEF3C2169315191330A9676FB3DC831B8CC3E",
+      "blob": "f5bf3bbb4580dd309bac7996f7a24ca61cac2f9e"
+    },
+    {
+      "path": "SRC/neothd-gui/src/panel_logic.rs",
+      "sha256": "8482856452414A3EC61E20A069317A2F901D4D95EB57441691BD04194A5BCE1C",
+      "blob": "6bcd0468e6bcc5cf0014610ef68995d13ef7d495"
+    },
+    {
+      "path": "SRC/neothd-gui/tests/gui_chat_bridge_public_api.rs",
+      "sha256": "B0B3C160376AD869FCA6BB92937CACE6261B5C5C09F4862761E214D19E923E06",
+      "blob": "4819b614deae9550d2340b9a5e132e11922a0c85"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/chat.slint",
+      "sha256": "C96A4B63B1E1B0506E1A21A29CCE1F83616D194F158A1673ECA1B4346810DD2B",
+      "blob": "8fcb49123283f93c16017c075928d4f211bb5759"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/citation.slint",
+      "sha256": "D50C1A0B7E87A3C03D1FE89F46CD35AEE08AEE73D00B5ED0C4D5BADADC968668",
+      "blob": "e4093144ac60a950e555298eb2500592a5e0dfbd"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/main.slint",
+      "sha256": "BF507E76100283D4FB210E1599E4197230974F068538F863A6256251F192C3F1",
+      "blob": "37622ca1054ae04bb35dd23bc3807f27a4570c86"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/overlay.slint",
+      "sha256": "CF1101496E4C3DA3D3D8B3A799E96313C20A18AB5E50EFAED2818CABC41A3CAE",
+      "blob": "8e7b0647940925bcfb2ea9660c12b1389416270a"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/tabs.slint",
+      "sha256": "A0AF943FAA3AA9C42B2C3862502FD53781C79AF145445E2F39FA8A227ED98D32",
+      "blob": "aa1b83ce8187ec5d7982462b093c2654f651281c"
+    },
+    {
+      "path": "SRC/neothd-gui/src/wizard_session_controller.rs",
+      "sha256": "BCB65A6A479AD2CFFA823B77E089857B4AD6FF39CEB360EA10C715558A927FF0",
+      "blob": "3d5e41261270c1053b505817b6d1b47594066d88"
+    },
+    {
+      "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
+      "sha256": "9614E23D8D8BF435B37BBF7B2E5446AFDACDC7E6AA499E607245C3CD1E9DCB04",
+      "blob": "6616090c5a203a4da3f76011f47710f8412b15c5"
+    },
+    {
+      "path": "SRC/neothd-gui/src/gui_action.rs",
+      "sha256": "3B438B538F4EC3E822D31D73F9F27164EB7CCD281B7BF108027A40F394C7AB46",
+      "blob": "9ce964c9369eeddb63ec85c4945f0dfbbd2708bc"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+      "sha256": "90C9B8DC3447108B47049B5AA2ED50D07CADF13C835097AE7E711AC854765566",
+      "blob": "6927c9fac7f5f1a409088bb8bb065d9f60f6ae26"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_bridge.rs",
+      "sha256": "44D4C241AC248249AFC4F510AB1DBBE1928209893EEA604B5D76F04DCFB75597",
+      "blob": "789db2102c877dd2f1e98695014e60ad5f82e14d"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/chat_runtime.rs",
+      "sha256": "A4A95415E3B7733EBF0600D683DA7D50D919779495F9FA2FCDBB0FE026346658",
+      "blob": "397489b41f6d994d67471e7676922e754d886b26"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "sha256": "EE8874B04744BC1CBC221B2786E95A16038E72A9C8B665B0B7B9EE2D94CD2265",
+      "blob": "66ee2773a83cf4f1ea2a0b0e63cb6e117a34c2a5"
+    }
+  ],
+  "terminals": [
+    {
+      "name": "coding_controller::tests::gui_reserved_start_reaches_real_provider_worker_with_prepared_code_map_context",
+      "receiptSha256": "BD432FF601EF248DCDC43008D0F76845A837163881E5C64E341B65ED40EADB32",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
+      "receiptSha256": "CF805DDDF1EF4BE6543781F30E178CF7866A50F55E916E7DF38C1486315B8B3C",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
+      "receiptSha256": "F8C33D869D607F05904E9F9956C49DF909932308FFF8041F6CAD5CC8C050675F",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w73_buddy_cancel_joins_real_blocked_provider_without_success_repaint",
+      "receiptSha256": "9DDAF62BDE1EF881D0AEE7795CE530BD75CB537D0A6B345993F13C3FB1E694F3",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it",
+      "receiptSha256": "116990798ABDA7BFC7B808C78320CC17A7214BF6CEE5AF859494A15ADD02FB73",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
+      "receiptSha256": "E48EFAA40A35B9D1D20C67BD4D106C1768167A91D45535E29720265158E3E93B",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::lifecycle_impact_identity_uses_the_redacted_digest_and_rejects_another_root",
+      "receiptSha256": "45D95EEBAB6BD942E84C7E69A8D4956AABFA8A58F0ED1EFBF1CFD670DDF46E9B",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::private_channel_builder_preserves_typed_fields_without_cli_flags",
+      "receiptSha256": "33D7242D3BA2564C51D8760E68D32109F611328427D25C9C623FE1BA6B315CD9",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::private_channel_builder_routes_matrix_store_path_without_changing_secret_slots",
+      "receiptSha256": "F5764417AF6C0779B5DBE2968DA00B01BB48559D473A21078B78B72E34113B2C",
+      "status": "ok"
+    },
+    {
+      "name": "tests::matrix_store_path_request_uses_private_stdin_without_path_or_secret_in_argv",
+      "receiptSha256": "40E26D45B4A25A56FD5187D34FBECE5F0C08F29FD17F1146D2E9AEBF0D12143A",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::private_channel_builder_routes_line_webhook_port_as_typed_private_stdin_state",
+      "receiptSha256": "39A6C498AB70CE7180C9BC8D4E402755F69538C8B0D72E46DEE6D947FBAE583E",
+      "status": "ok"
+    },
+    {
+      "name": "tests::line_port_request_uses_private_stdin_without_port_or_secrets_in_argv",
+      "receiptSha256": "4DF4D8B253A972A41BACC457CC67E105DCB40745CACA14E6AB29AC32EA4F11E6",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::private_channel_builder_routes_irc_public_settings_without_weakening_account_requirement",
+      "receiptSha256": "38A20C82FC7C60319B86F4A68BF988288D9BF5724128F6CD39BF5160B26BA70B",
+      "status": "ok"
+    },
+    {
+      "name": "tests::irc_public_settings_request_uses_private_stdin_without_settings_or_secret_in_argv",
+      "receiptSha256": "0ECBA12FE15408EA375F9CA9BB880D5D8BFD0D1D98EA26A576928BA9EB503CE5",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::named_telegram_account_retirement_command_and_ack_bind_the_exact_account",
+      "receiptSha256": "85EBE5A7A0B1AD703A1BA565A780D7E9D04CF6DE61CD171B9202B3AFCC544AF4",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::required_sender_form_slots_map_to_private_allowed_sender_and_reject_blank",
+      "receiptSha256": "1AEC475B99EE871168BEC82A4946E20EB218F9AB91AA6FCA55D9CA79810ED234",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::bluebubbles_chat_guid_form_slot_trims_or_clears_without_weakening_sender",
+      "receiptSha256": "980BAA611E1153685DFA46D558113315706484B7846B3B9D914FAEF7EBEE1C2F",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::parse_channel_status_requires_boolean_dm_pairing_for_mapped_accounts",
+      "receiptSha256": "D46082E7F64B36F0825996516627D017E54499F536588CE989FE5E2F8B0682C3",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::named_telegram_account_dm_pairing_command_and_ack_bind_the_exact_policy",
+      "receiptSha256": "3E84658C93B486B345FBC233C8434825F8989BAF1974E43EFAF9DC6C96A9BBAB",
+      "status": "ok"
+    },
+    {
+      "name": "gui_action::tests::skill_autonomy_receipts_are_strict_and_bind_exact_desired_config",
+      "receiptSha256": "5AD503A72F4CB70653768CFCABBB0FE7F30F16C7950041F67171C4EE3C3B40E5",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::parse_buddy_status_happy_path",
+      "receiptSha256": "37FFDEF3B3C0F2512CCAD73FAFFE69668AB84EFC5E1F3408653A30A2469E9201",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::parse_buddy_status_rejects_malformed_or_lossy_payloads",
+      "receiptSha256": "AF76EDA025005B15280DB95DEF1C536F2B3895893B9B869868C22A7AB67C1CA0",
+      "status": "ok"
+    },
+    {
+      "name": "gui_action::tests::w142_selfimprove_accept_ack_requires_selected_current_evidence",
+      "receiptSha256": "9A7B1C34DC0917B592546E79CC3634613B1F83A9021D866565B8F0BCFC38B001",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::w142_selfimprove_review_projects_only_current_verified_evidence",
+      "receiptSha256": "BC56FF78CB7636901A9945E22AAFD6CC23721DB94EF966D738D40E8A2247B145",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::w142_selfimprove_review_rejects_stale_or_mismatched_quality_without_false_success",
+      "receiptSha256": "9DE2D71B58DC25EC54F84C5CB77095A4F35C1B94F7481BF09AC0D9037875465F",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::w142_selfimprove_review_rejects_missing_or_unknown_quality_fields",
+      "receiptSha256": "8388D1648DBAD470764A325B1659A44F224861D7C430638F3677853612E47DF9",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::w149_buddy_quality_rejects_partial_evidence_and_keeps_unavailable_explicit",
+      "receiptSha256": "73AB7EFB703F9F65DE45B464D6ABA15DEECDD2C5710C3EC38B624958BEB4C9E1",
+      "status": "ok"
+    },
+    {
+      "name": "gui_action::ouro_q8::tests::accepts_verified_q8_even_when_configured_none",
+      "receiptSha256": "63D5A7CFB92B070BD53B26736E6575E7B99DA058384381D707B47819F5D79665",
+      "status": "ok"
+    },
+    {
+      "name": "gui_action::ouro_q8::tests::accepts_typed_nonzero_failure_without_success_identity",
+      "receiptSha256": "57D17E10061358AAA92F5E795F16D43F537715D9E795F23014488C2AC299F37F",
+      "status": "ok"
+    },
+    {
+      "name": "gui_action::ouro_q8::tests::rejects_crossed_exit_and_verification_claims",
+      "receiptSha256": "E59F27B91B8A31A35B53FB9516A2DE0FE5AF2D514AD89D50968DD26A1BAC08F1",
+      "status": "ok"
+    },
+    {
+      "name": "gui_action::ouro_q8::tests::rejects_missing_nullable_key_and_unknown_fields",
+      "receiptSha256": "AB69A7EFDB16125F8F7950572608C909C78EE77D788A6E41AFF7957DB273EDBD",
+      "status": "ok"
+    },
+    {
+      "name": "gui_action::ouro_q8::tests::rejects_duplicate_wire_keys",
+      "receiptSha256": "722C6AB7B286A6BE6A955E8BC8BDA9750B2DF4A5F06CBC3DD1B5C67FAC8FB32A",
+      "status": "ok"
+    },
+    {
+      "name": "gui_action::ouro_q8::tests::rejects_wrong_loop_mode_and_context_claims",
+      "receiptSha256": "1438E964A2D7B549E86FF32D33D8466C3F7244399D512F2AD67AAD571D7E6D31",
+      "status": "ok"
+    },
+    {
+      "name": "gui_action::ouro_q8::tests::rejects_success_data_on_typed_failure_and_normalizes_detail",
+      "receiptSha256": "67E8DB5E7831352981A540F54A628B66C9E3832F39980AC07D5E828CE337C02D",
+      "status": "ok"
+    },
+    {
+      "name": "gui_action::ouro_q8::tests::capture_receive_returns_while_the_reader_is_still_held",
+      "receiptSha256": "A18D07B1E2AC28ACBA5F12DB4E240A3E640C68314F9515E60C8B6D4B9543D84A",
+      "status": "ok"
+    },
+    {
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_is_grant_bound_and_never_enters_visible_reply_or_preview",
+      "receiptSha256": "0CBFA17E23DD5E12B1ADDA44A2428273DB06A79895B24961E27E3823AE560A07",
+      "status": "ok"
+    },
+    {
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_is_bounded_zeroized_on_terminal_and_uses_an_independent_sequence",
+      "receiptSha256": "4F5AF60726A2A3C08FE6B53E14F693A00C88FA4DCF6697AE011AC928272D1FF3",
+      "status": "ok"
+    },
+    {
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::actual_redacted_terminal_zeroizes_and_rejects_later_delta",
+      "receiptSha256": "7CD8ACD4B5526F108F1B16765FDFAA51686E2DCFD6BF380696CE2D6EF1F6746C",
+      "status": "ok"
+    },
+    {
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_delta_state_and_checkpoint_are_rejected_after_provider_done",
+      "receiptSha256": "D388E02147F85F31F8BEB175ADBCE0E3AFC59ED17C3F562A91006193806FB9C5",
+      "status": "ok"
+    },
+    {
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_buffer_rejects_bytes_beyond_sixty_four_kib",
+      "receiptSha256": "B95E74E6C8AF2D399B955260F455D1A5C159EBDF5C15EF151A218F7B37505292",
+      "status": "ok"
+    },
+    {
+      "name": "chat_reasoning::tests::strict_sequence_limit_and_terminal_clear",
+      "receiptSha256": "3A5A4DF2FC162C66DCF4ADA8F280F04370569C9CFD75EAD6B58AF6EB590C674A",
+      "status": "ok"
+    },
+    {
+      "name": "chat_reasoning::tests::duplicate_or_forged_frame_clears_the_exact_projection",
+      "receiptSha256": "DCDB694187E467FBCA1B55ADE1536675F2E59709B0C2DB589BE64ABCBCDEE2B0",
+      "status": "ok"
+    },
+    {
+      "name": "chat_reasoning::tests::default_off_counts_controls_without_retaining_text",
+      "receiptSha256": "E2DEF4B3CC72AA88B6796021BF3DA0CFB4510021A838C799F48E2CF5CDD0EFEC",
+      "status": "ok"
+    },
+    {
+      "name": "gui_chat_bridge_controller::tests::reopen_none_or_error_settles_only_the_current_main_handoff",
+      "receiptSha256": "C3DF4C3CA4FF446A6BBA67BD3C533F51EAE9B14FC4D1A25958A6A6DCE4BA0542",
+      "status": "ok"
+    },
+    {
+      "name": "gui_crate_has_non_authorizing_reducer_fixtures_and_explicit_consent_types",
+      "receiptSha256": "E50ED82BA59717BE5218C61BACA5BF49C29C29A06DFBEE95F8D49EDFAFB7F0BF",
+      "status": "ok"
+    },
+    {
+      "name": "gui_action::tests::targeted_gui_mutations_cannot_regress_to_the_unchecked_probe",
+      "receiptSha256": "C8CB6E9EAF31DF1413D694B645E98A437735E6B0BA87932C32C51DD7B25E567B",
+      "status": "ok"
+    },
+    {
+      "name": "citation_gui::tests::explicit_request_rejects_model_style_or_untrimmed_claims",
+      "receiptSha256": "E485179FFC5A324C8FF050EC124B9BCE7EABBF4B33F1DB69400020EB48F933B8",
+      "status": "ok"
+    },
+    {
+      "name": "citation_gui::tests::provider_indices_are_closed",
+      "receiptSha256": "A154B18F9A4DAF6330B7A610B6883B4CC823616ECB95399BDCF5364F53A63C66",
+      "status": "ok"
+    },
+    {
+      "name": "citation_gui::tests::citation_child_policy_is_bounded_and_cancellation_is_shared",
+      "receiptSha256": "02AD65AD168FF65B0A348618D645DAEEA4379EEF8575227845EC7FF878C10E71",
+      "status": "ok"
+    },
+    {
+      "name": "citation_gui::tests::gui_preflight_requires_the_current_request_hash_and_nonterminal_cache_state",
+      "receiptSha256": "065EECB4E2F0744FF506370ECD4B3E22CC447B11C9D72AE755C119A768FBDC01",
+      "status": "ok"
+    },
+    {
+      "name": "citation_gui::tests::gui_decision_receipts_reject_unknown_or_inconsistent_proofs",
+      "receiptSha256": "8FFE234CE05A1EECE6439900EF2A889F223AB263DCDA59E44012CEE712D3C984",
+      "status": "ok"
+    },
+    {
+      "name": "citation_gui::tests::gui_command_builders_bind_only_request_data_and_validate_ids",
+      "receiptSha256": "A8138FF3D16A1177A41AC589A2191153736A8103887578C5E51C0C9B47F528E9",
+      "status": "ok"
+    },
+    {
+      "name": "citation_gui::tests::stale_or_historical_detail_never_survives",
+      "receiptSha256": "799DC60A49D3280F020B5A1763031C4D0960996F060DCE9DF282965EBD785D30",
+      "status": "ok"
+    },
+    {
+      "name": "citation_gui::tests::typed_unavailable_cannot_carry_a_chip",
+      "receiptSha256": "26A6D6C7E483CFEC7E59623653567EE71652D4E2AE66F01E4E4A9711B3AF3ABA",
+      "status": "ok"
+    },
+    {
+      "name": "citation_gui::tests::current_core_bound_result_opens_only_its_own_in_app_detail",
+      "receiptSha256": "7FD9940B8D7F53EF74387A1B77020C746F4A4BF0357A7934A32B40CC7676F9EF",
+      "status": "ok"
+    },
+    {
+      "name": "citation_gui::tests::forged_display_binding_and_replayed_child_result_are_rejected",
+      "receiptSha256": "400B95D24A3DA68D8BED9CE0041F3A87132E88764426B7751A1079D89621AED5",
+      "status": "ok"
+    },
+    {
+      "name": "chat_throughput::tests::visible_event_rate_preserves_its_actual_unit",
+      "receiptSha256": "7CEC782D2286EEF63C6B9DC8D9F0C79757B76739D32B6464E1DDA39623FC5019",
+      "status": "ok"
+    },
+    {
+      "name": "chat_throughput::tests::paused_state_requires_null_rate_but_keeps_the_explicit_basis",
+      "receiptSha256": "1CE6632B2BB91A9BFC67B42F86CD93F8D346CE2FC09DA13356A0E49B9BFD691F",
+      "status": "ok"
+    },
+    {
+      "name": "chat_throughput::tests::invalid_unit_and_final_usage_field_fail_closed",
+      "receiptSha256": "5EC63E1AF0D3BFC919DA3CDCE806CBF7B8B41C9667A37A3368CA53A84027FF29",
+      "status": "ok"
+    },
+    {
+      "name": "chat_throughput::tests::stale_gap_and_provider_done_cannot_repaint_a_request",
+      "receiptSha256": "25C6DB1966F22501FB7EA4ADC472EDAFE38EEE27674C54B11A4A0DC66BC8EEBB",
+      "status": "ok"
+    },
+    {
+      "name": "chat_throughput::tests::cancellation_is_terminal_until_the_request_is_replaced",
+      "receiptSha256": "E12E5F155E04655C5987720DA17B286933379839672D7234C7B1FEB2C0A48076",
+      "status": "ok"
+    },
+    {
+      "name": "chat_recall_chips::tests::accepts_only_reduced_ready_rows_without_any_text_or_identity",
+      "receiptSha256": "91C4B9C1797DEACCE13B304CB72A5F1D527BA25B7485AA533A189FE02CE1F253",
+      "status": "ok"
+    },
+    {
+      "name": "chat_recall_chips::tests::unknown_fields_and_non_warm_scores_fail_closed",
+      "receiptSha256": "1A427AB95EC4E440B675170F008DBAA8FA7E6AFA4C1CD2D662EBA926E26A529E",
+      "status": "ok"
+    },
+    {
+      "name": "chat_recall_chips::tests::wrong_binding_gap_and_over_cap_cannot_publish_rows",
+      "receiptSha256": "35C976B99E427D18FDDD90B89D8D31C4251CA5171A53F82CE453D56FF594AC83",
+      "status": "ok"
+    },
+    {
+      "name": "chat_recall_chips::tests::successful_boundaries_freeze_accepted_rows_but_late_frames_do_not_erase_them",
+      "receiptSha256": "589DBAB0364BBA659F2F5C847FC7394FC03CDA05DE09AD7B82547DA3AEBD3F01",
+      "status": "ok"
+    },
+    {
+      "name": "chat_recall_chips::tests::final_sentinel_replacement_and_clear_remove_only_the_owned_snapshot",
+      "receiptSha256": "5AB52330149A000106E8917AAC884416661B5495D4180548792D48C8206EE4FA",
+      "status": "ok"
+    },
+    {
+      "name": "chat_recall_chips::tests::no_recall_and_missing_are_explicit_empty_batches",
+      "receiptSha256": "2C6E8B486A8943C48EBE39DA63DD1B21F3713CB506D273F567597764219D7C13",
+      "status": "ok"
+    },
+    {
+      "name": "chat_response_feedback::tests::target_becomes_actionable_only_after_done_then_exact_authenticated_frame",
+      "receiptSha256": "A439DA1619B3C832A90B020F66A9265A9C318193336633D0FD11A2E92643277C",
+      "status": "ok"
+    },
+    {
+      "name": "chat_response_feedback::tests::malformed_forged_and_unavailable_frames_never_publish_an_id",
+      "receiptSha256": "A41643F0DEC1069241A7B150712CE55D7BA17EC47CCC92E14B95ABCD8B88FF63",
+      "status": "ok"
+    },
+    {
+      "name": "chat_response_feedback::tests::action_is_singleflight_and_only_exact_fresh_readback_can_repaint_it",
+      "receiptSha256": "A9FF9F70196C57F1216B75E20EC379ACBF3402492B0274FAE998C7EA4320E095",
+      "status": "ok"
+    },
+    {
+      "name": "gui_chat_bridge_controller::tests::daemon_terminal_target_reaches_the_shared_action_map_only_for_the_current_turn",
+      "receiptSha256": "6ADE7C2CC1C03942505D697A3E529B661FB40F7C565C0147E01972769F4F2514",
+      "status": "ok"
+    },
+    {
+      "name": "chat_recall_chips::tests::typed_daemon_batch_reuses_closed_validation_and_provider_done_freeze",
+      "receiptSha256": "3CB8DC45976693DA6AF74E77FFC1A037A1DDA2ABCE504E1BFE8BBE296471511E",
+      "status": "ok"
+    },
+    {
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::recall_batch_is_cursor_bound_and_rejected_after_provider_done_or_cancel",
+      "receiptSha256": "E0982B10324A7694920CDB4D7619552364D0A42B5240942439CCB8AF7983B91F",
+      "status": "ok"
+    },
+    {
+      "name": "chat_throughput::tests::typed_daemon_state_preserves_inner_sequence_and_terminal_fence",
+      "receiptSha256": "00BF5DE473C97962CA99F75AF214E901977E469D80F0C6EFFC086997877DA4A8",
+      "status": "ok"
+    },
+    {
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::throughput_state_is_cursor_bound_and_rejected_after_provider_done_or_cancel",
+      "receiptSha256": "830D5E50DB09E4E9314D7F4CA6ABE98AA16D3C81FAD920D83430D1C3D775FF5B",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::w184_vault_mirror_parser_rejects_forged_verified_receipt",
+      "receiptSha256": "14780E8E848D1B883C306D4F7D08C2E8DFB7F4329E90E1247E1E0D20907F3F6C",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::w184_vault_mirror_parser_keeps_indeterminate_repairable",
+      "receiptSha256": "ECBD5590184243F7E557664CA4040CF6F5557F2AD51D590F0C36529D99C6DE21",
+      "status": "ok"
+    },
+    {
+      "name": "vault_mirror_gui_tests::w184_repair_reducer_requires_fresh_matching_status",
+      "receiptSha256": "E17BE0A65B1F4E450BA9697754E7E09E1878FD67366F4C56245D60C74D39B7D0",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::local_models_ready_requires_the_core_ready_variant",
+      "receiptSha256": "7DD485761BC1D38150D4C228F103D584988C823DBAC0D8052AA7462145B4C1BF",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::local_models_reject_unknown_readiness_schema",
+      "receiptSha256": "4814482DE4259F0F6969C5A0A41832805F043E23AF5791E162EA0180BBD384CA",
+      "status": "ok"
+    },
+    {
+      "name": "dream_cron_gui_tests::wizard_completion_is_daemon_acknowledged_and_fails_closed_on_loss",
+      "receiptSha256": "613D90EC2045B0EFCA643E73E5068AB8273495B3AD995AFB1F00AB9239BA1F9E",
+      "status": "ok"
+    },
+    {
+      "name": "dream_cron_gui_tests::daemon_completion_failure_retains_existing_dream_readback_and_revision_order",
+      "receiptSha256": "FD9925991A8F2A0E9A9ECE26D47C8F9CB11698F86F08CFC8878074010D1340DC",
+      "status": "ok"
+    },
+    {
+      "name": "dream_cron_gui_tests::observer_uses_a_separate_read_only_handle_without_holding_mutation_lock",
+      "receiptSha256": "52893D3E685C9CDB2A22C596EB5EBE09DA92C1CA3B84C1724B91668FA5236DF6",
+      "status": "ok"
+    },
+    {
+      "name": "dream_cron_gui_tests::finish_navigation_is_owned_by_verified_rust_completion",
+      "receiptSha256": "32683302776F85663499CC7D51B5A704DEF9102DBAD2CABE90365B24FC612B98",
+      "status": "ok"
+    },
+    {
+      "name": "wizard_session_controller::tests::prepared_config_hash_is_stable_and_content_bound",
+      "receiptSha256": "B4DA24228F34CAD68DEC2D764E481561194E3E03998A6C27F81CB53527D2C123",
+      "status": "ok"
+    },
+    {
+      "name": "wizard_session_controller::tests::binding_uses_exact_next_sequence_and_never_wraps",
+      "receiptSha256": "C592C45ED80B2E82C7781FC603B814181639A8DCC9913B14C2098134E392B440",
+      "status": "ok"
+    },
+    {
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::timeout_guidance_survives_failed_terminal_and_cannot_cross_generation",
+      "receiptSha256": "A2F27EF2B5E1A9F855ECEF39C15B9AF55C8BE30CC1D65592B8C719AD14154C4C",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_unknown_fields_and_bad_row_contract",
+      "receiptSha256": "DA53619040C24034D2766CBC9CE808769904DFDC9BC81DD66653432B9B45B528",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::embedding_models_contract_tests::only_fresh_exact_ready_bge_snapshot_passes_buddy_gate",
+      "receiptSha256": "6FB41C9F1D3E4CE149C23D8C3314E17D516428B3B9A2B13ACD4AB7343C0FE7CF",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_actions_for_unselected_or_qwen_rows",
+      "receiptSha256": "6B4DF140C093DA2CF640588E9076FABF37E9971E1C3E7C4D63777E01BA3C9BB7",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::embedding_models_contract_tests::buddy_gate_rejects_cache_source_even_with_ready_bge",
+      "receiptSha256": "19F1F9F6BD3F97E38D07CE240A0462975A6C093EAE4BE19DE814435F804BC795",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_wrong_pin_and_impossible_observation",
+      "receiptSha256": "FE88809D2490A3B8C626B84FCA8EECA5969765129177D1A2D95D6C6093796B2C",
+      "status": "ok"
+    },
+    {
+      "name": "buddy_wiring_tests::w218_buddy_embedding_callbacks_use_instance_config_and_shared_freshness_fence",
+      "receiptSha256": "59F209D7A9D5F5D9A027021CA3FCA3200B3D9CCC796C5D4088309544740D6D99",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::w219_provider_retry_is_strict_bounded_redacted_and_absence_compatible",
+      "receiptSha256": "FD7964BC20C35ECBE31916205A399A11D735CA35C583DDC15F97FF9E2C8C2291",
+      "status": "ok"
+    },
+    {
+      "name": "gui_action::task_delegate_assignment_tests::task_delegate_assignment_rejects_unknown_zero_and_mismatched_receipts",
+      "receiptSha256": "4C8E271672E6D00B7AF55B741B0A4D14615E7820F5A857242D50FF13F431DF3D",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::task_delegate_projection_tests::task_delegate_null_projects_absence_as_effective_default_deny",
+      "receiptSha256": "E0DFBA8925428EE3B5988D1EEDA18A321AAC0587A7E6B879F475977AE55E6E84",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::task_delegate_projection_tests::task_delegate_projection_rejects_mismatched_or_zero_revision_object",
+      "receiptSha256": "D32C10E1EC8F010390BB018B09BF878894DA5CD32666DFEBE1D656CA09F83BF5",
+      "status": "ok"
+    },
+    {
+      "name": "chat_recall_chips::tests::citations_are_closed_available_source_labels_with_positive_matching_ids",
+      "receiptSha256": "AF7DFF1D8EBA405C3E3ED175D1A6C63486AF48659B1C4033D17B899A1BC8AB86",
+      "status": "ok"
+    },
+    {
+      "name": "chat_child_supervisor::tests::staged_cgroup_final_mount_contract_allows_only_a_read_only_public_top_mount",
+      "receiptSha256": "D77442E5A5B35F4D9E61074E6E321265F7043844D2E4E1D3BCEA42888FB4B031",
+      "status": "ok"
+    },
+    {
+      "name": "dream_cron_gui_tests::mutation_requires_reload_receipt_then_matching_readback",
+      "receiptSha256": "339449003B14662DB09E201E605F4D96B680D36EFC1A2D786180BA151FA5ADAE",
+      "status": "ok"
+    },
+    {
+      "name": "dream_cron_gui_tests::mutation_rejects_acknowledged_but_mismatched_readback",
+      "receiptSha256": "115DD2BDA193C968601DB40A1CE6CF31F374FABD729478CE362435BA3CB69B64",
+      "status": "ok"
+    },
+    {
+      "name": "dream_cron_gui_tests::settings_dream_control_is_command_only_and_never_flips_verified_state",
+      "receiptSha256": "C82781865EA927764A6C20C82D308D6ADBD88326DD5C56F9D2866EF80BEBB187",
+      "status": "ok"
+    },
+    {
+      "name": "dream_cron_gui_tests::only_verified_readback_publishes_visible_dream_state",
+      "receiptSha256": "CDA1FFA6AEA0B738CA3D48AEB5F34D7451EFB346AFED000CFA5000C09E89E5AF",
+      "status": "ok"
+    },
+    {
+      "name": "dream_cron_gui_tests::refresh_mutation_error_and_concurrency_keep_readback_authoritative",
+      "receiptSha256": "B5BF5214E0BB77BE5AB117D8065E72DAEB3855EE81F5BAE7FDAF1905EDABCE1B",
+      "status": "ok"
+    },
+    {
+      "name": "dream_cron_gui_tests::late_status_refresh_cannot_overwrite_the_onboarding_draft",
+      "receiptSha256": "36C1B7D090A7F6D3D33B997F165C5F3A76092AC899DFE0798DA3074E1B4A237F",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::lf_p1_20_preview_redacts_normalizes_and_truncates_graphemes_once",
+      "receiptSha256": "1C91897CAB0CB1DCDDAE03F927AC2A7533EFAB5F431E6AF108A7402EBACF8BB1",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::lf_p1_20_send_completion_delete_recomputes_to_previous_visible_message",
+      "receiptSha256": "F7CA664F7893E27626E5D5B4EC996C2EB63133C2627A4CAF6D62DCDD1EA7188D",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::lf_p1_20_reload_and_session_switch_keep_a_b_isolated",
+      "receiptSha256": "8BCFE1408BDA2AF23A72999543084C5E07A5714DE929CE99F65131A15A635204",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::lf_p1_20_session_label_sanitizes_legacy_titles_and_controls",
+      "receiptSha256": "4CAF5CF5F490DB2EFEAC9EA10EA42A6857CEE149F90EB0D7622348A4A05693D7",
+      "status": "ok"
+    },
+    {
+      "name": "panel_logic::tests::lf_p1_20_session_history_propagates_corrupt_database_errors",
+      "receiptSha256": "2E378C4FD146962F2681819F9E01A6479A3A26363611B15EC8FF49E737AF4530",
+      "status": "ok"
+    },
+    {
+      "name": "chat_subprocess_tests::lf_p1_20_send_before_channel_probe_hydrates_live_preview",
+      "receiptSha256": "7059C3E4148EF0C631BE53B73BF5D31E2068B8A4D83EC87F84BCB8DEC1756A3E",
+      "status": "ok"
+    },
+    {
+      "name": "chat_subprocess_tests::lf_p1_20_session_load_generation_rejects_a_after_b_and_return_to_live",
+      "receiptSha256": "30FF2951780C2F2118F8A9237A2862F30365ED44B83D5A930FC3824F76063AFA",
+      "status": "ok"
+    },
+    {
+      "name": "chat_subprocess_tests::lf_p1_20_chat_sidebar_session_selection_is_readonly_and_fully_wired",
+      "receiptSha256": "E2D0AE3A854B9B34A88BC341860D1E01EDD4848E972BBE7C4E9D56915CEB8CAB",
+      "status": "ok"
+    },
+    {
+      "name": "gui_action::tests::cluster_configure_receipt_binds_every_submitted_field_and_path",
+      "receiptSha256": "68E4BD86806EE2033F1DC6B16DC9492BE1E63D91119059AD495A55506C8ED5E5",
+      "status": "ok"
+    },
+    {
+      "name": "interface_preference_tests::p122_custom_topology_survives_shared_commit_and_gui_rerun",
+      "receiptSha256": "F3C304A0B10E8C9BADA92F01A195945486A9FC432C9BF1E370D63E8EEBB86540",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt",
+      "receiptSha256": "18727E3BB865207AE3CB63C094D4C175E88B0B1354ECD716E77D3C58647FBFBE",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w121_channel_pairing_request_callbacks_require_exact_receipts_before_relisting",
+      "receiptSha256": "35E73D40B9964143C4F8FC174D43891049ACEACFFCA069D5E968001CA6D0BBE0",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w122_channel_account_dm_pairing_callback_preserves_projection_until_exact_receipt",
+      "receiptSha256": "79B54F76B764AFF23750B26E914B630CCFE9D9403974C23D33B19898D918F617",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt",
+      "receiptSha256": "C81BA6C96717D62F14EDBC10B45F638EE1CC718E2411DE9EE780F52D299B5312",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w130_channel_legacy_migration_callback_preserves_legacy_projection_until_exact_receipt",
+      "receiptSha256": "CAA2B8B7F278DE1AA575E55A30A7031D7D052713EE5BE8F3920C8762FD96971F",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback",
+      "receiptSha256": "0662FD06B29365E83DF3052771783544428247210461C6A0F8A8C086331BD20F",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w142_selfimprove_accept_requires_exact_bound_receipt_and_fresh_readback",
+      "receiptSha256": "3E8FFAEA570D9928B9902AA0F5F162B61E3A08FC27041A9DEF1FB3DDFA6AC2B7",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w149_buddy_quality_handoff_selects_the_exact_selfimprove_proposal",
+      "receiptSha256": "5069453071C77482DD2CEF25A258594438626C1190D10C62A1DBA6AAC4D49843",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight",
+      "receiptSha256": "1D6D6F91926C65AD85EFC9D51AC09C1F0DB76B11EE587B82F9FD960FEC37CB45",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w153_legacy_child_callbacks_project_only_transient_reasoning",
+      "receiptSha256": "C8FC83983308ABB797EEC2DB43657EF8AF271033E4F352AC1627D042E71A93E7",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w153_reasoning_child_controls_are_transient_and_history_excluded",
+      "receiptSha256": "B3894BA1A8098FF14383FC61226040FF7F3968478373C95663D3B42D29101DA9",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts",
+      "receiptSha256": "B7458CDEC2E37381C62DE90DCE4CDEB7D01DA9432BF0D382E78073779E4B085B",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w162_throughput_controls_are_transient_and_provider_done_fenced",
+      "receiptSha256": "52DF612E2CA6BC1C351BE737BBF0319EB144F29586101A8C07EEDB0DBAC49DBB",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w163_recall_chip_controls_freeze_current_response_and_clear_on_turn_change",
+      "receiptSha256": "288573A6A6AD2F00945CC8E02B8DD870A3A46A076946E7044E1B17390B5E812A",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w164_response_feedback_callback_requires_post_done_target_and_verified_readback",
+      "receiptSha256": "84A0332EC12F11B30CBD9695CDDC37CA3738E3C9A7805FC7EEAEC79FB54D3A84",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w167_daemon_recall_chip_batch_projects_current_surface_and_fences_terminals",
+      "receiptSha256": "DA998BCBF3C4BE89F764201780F18476E8D1E8DA402755B4D07C06665BA0DDE5",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w168_daemon_throughput_state_projects_main_and_buddy_then_fences_boundaries",
+      "receiptSha256": "1EF95C2E92B546DB17C19F5C85BC097372ADDFB1A5C6CB6B6EE6E4878350B3E0",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback",
+      "receiptSha256": "6AC5037186FF88CFB9F9BE8550CB7CB02C6330CA9C6500972DF680B8592F465C",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w185_local_model_callbacks_require_typed_ack_and_fresh_readback",
+      "receiptSha256": "50B76CA89A3C15DCFE600302A67F56821A11F35E2CBC5231EDB7B546CE0E34A7",
+      "status": "ok"
+    },
+    {
+      "name": "wizard_session_controller::tests::private_server_controller_observer_and_mutation_progress_concurrently",
+      "receiptSha256": "84F068239A2E024E2603E008BCD780D2290C6AB44801678C8AC9E487C5173033",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe",
+      "receiptSha256": "680F527B46737FEDF5678474703FEA4DE377786CC5124B79526FB79FD6683C87",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good",
+      "receiptSha256": "2EE887534A15B64E69CF6276989056FB82CE562C599BB9CBF17F66A3263E80FA",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w233_task_delegate_set_owns_busy_across_edits_and_fences_stale_completion",
+      "receiptSha256": "CBFDEEA15C44568EF186190AF9EA6D2AD7A7D8D5B10163486149A3D040579483",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w233_invalid_fresh_readback_keeps_committed_receipt_and_fences_mutation",
+      "receiptSha256": "3310311738FDB06F58A284E1B2FA6FC006EBB017C51F5D274688B0DBAB6FD479",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w233_task_delegate_callback_fixture_covers_conflict_receipt_and_newer_readback",
+      "receiptSha256": "19F10873846D656EDBC4D5013FA52F7DFD0ED62D8866A52ACF591A0E0946C2E1",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w233_task_delegate_inspect_null_projects_effective_default_deny",
+      "receiptSha256": "17D1682949D9CC5CDF0CEFC9A32F99FAE206EB8B5E25372A0B97086B06E98EF0",
+      "status": "ok"
+    },
+    {
+      "name": "chat_child_supervisor::tests::cgroup_namespace_root_mount_plan_stages_without_unmounting_inherited_mount",
+      "receiptSha256": "817FD36347A573E2807F428414D8EB12FD5DF7296218811A36384821B48AB8B1",
+      "status": "ok"
+    },
+    {
+      "name": "chat_child_supervisor::tests::linux_manager_stop_reaps_setsid_and_double_fork_tree",
+      "receiptSha256": "C293AE0BD0234D83C898DD9E77E973463B269063F6A33111F19C1985DAB01296",
+      "status": "ok"
+    },
+    {
+      "name": "chat_child_supervisor::tests::linux_gui_crash_kills_complete_manager_unit",
+      "receiptSha256": "77D8B15C9F7B010D6B0CABE17A245C27F64E5963F5B1292C9B5B621FB303E555",
+      "status": "ok"
+    },
+    {
+      "name": "chat_child_supervisor::tests::linux_unit_snapshot_pins_manager_owned_kill_contract",
+      "receiptSha256": "51028F7E555D410ACEC8DAAE9D3A717AD6E17CDC65E8CB49FDC64DAC361EEEAB",
+      "status": "ok"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::w480_real_producer_post_provider_outcomes_replay_through_main_and_buddy",
+      "receiptSha256": "C7B9F4C07B5A7E6EA8936469F8AA6774586324ECE3E59D07F344E9B0FCFEEC8B",
+      "status": "FAILED"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::p118_gui_callbacks_cancel_real_bootstrap_without_replay",
+      "receiptSha256": "67E3CA266D5F97AE8F2A0A0C827A790147B95B7CCB67E457650A4FB8190F4BA5",
+      "status": "FAILED"
+    },
+    {
+      "name": "w58_gui_callback_runtime_tests::p118_projection_freezes_after_hosted_bootstrap_loss_without_replay",
+      "receiptSha256": "ACB9ED3B3259536971FB2308286149810898F537C781D704F6A5173D9F1D63F3",
+      "status": "FAILED"
+    }
+  ],
+  "artifactZipSha256": {
+    "log": "bf4b4083e120f337c714881282d9eaedafd693316410c5e5f067114f2ce612e1",
+    "source": "81861b0ea44440074d35f675fbbc31c0c6ce04bae33c58fecdab0e4289df0817",
+    "receipt": "a73f1eff08f5c0fc4e1b603a76fb2a6124ee1f54fb8523fea5654fbb37dc1afc"
+  },
+  "localExecutableValidationRan": false
+}
