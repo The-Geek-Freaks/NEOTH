@@ -634,14 +634,16 @@ class CiCadenceContractTests(unittest.TestCase):
             "\n".join(
                 [
                     "          - os: macos-14",
-                    "            # CI 35070262418 reached the 100-minute compile boundary under sustained paging; one job bounds the next experiment.",
+                    "            # CI 35814256249 was still compiling at the 100-minute bound,",
+                    "            # with no Rust diagnostic. Keep one job under paging pressure and",
+                    "            # leave a separate 30-minute window for actual test execution.",
                     "            build_jobs: 1",
                     "            test_threads: 4",
                     "            junit_name: macos",
-                    "            test_build_timeout_minutes: 100",
+                    "            test_build_timeout_minutes: 150",
                     "            test_execution_timeout_minutes: 30",
                     "            # Compile + execute bounds plus checkout/toolchain/cache/setup.",
-                    "            job_timeout_minutes: 140",
+                    "            job_timeout_minutes: 190",
                 ]
             ),
             platform_tests,

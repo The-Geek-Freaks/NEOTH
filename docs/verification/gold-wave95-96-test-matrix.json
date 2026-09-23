@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Exact hosted two-file formatter patch imported; Core62244 active; Group564 and full CI pending core test-target; no local executable validation",
+  "status": "W294 exact three strict-lint repairs and macOS cadence assertion sync; Group564 still pending successful Core test-target; GUI1256dae123/125 failed; absolute BSOD hold",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 98550,
-    "sha256": "AC57E26C0BB31E5C30A5005A8DECBEF37F8B7427EF4F93FD43C9A5EE73FAC2DB"
+    "bytes": 98750,
+    "sha256": "2D6C406BD79DBFE2FA35D13C8B1754E9B67DED30D6C1F184F19D44F3172E85AE"
   },
-  "sourceInputs": 569,
+  "sourceInputs": 570,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -5706,19 +5706,19 @@
     {
       "test": "reflection::retention_authority::tests::default_execution_fixture_is_explicitly_off_and_does_not_inherit_v1_horizon",
       "sourcePath": "SRC/neothd/src/reflection/retention_authority.rs",
-      "sourceSha256": "3FD6D12AE82612592C6FD273EF606DE66D6C7B675D426AD823574D3B16134594",
+      "sourceSha256": "38251C3C353852D4A48BA4EDCAF3DC8301AED4C4B5CDEFA3A4A7528DA0CA2597",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::retention_authority::tests::settlement_note_fixture_has_an_explicit_ownership_boundary",
       "sourcePath": "SRC/neothd/src/reflection/retention_authority.rs",
-      "sourceSha256": "3FD6D12AE82612592C6FD273EF606DE66D6C7B675D426AD823574D3B16134594",
+      "sourceSha256": "38251C3C353852D4A48BA4EDCAF3DC8301AED4C4B5CDEFA3A4A7528DA0CA2597",
       "junitClass": "neoth"
     },
     {
       "test": "skills::store::tests::bound_rename_refuses_same_byte_source_replacement_before_namespace_effect",
       "sourcePath": "SRC/neothd/src/skills/store.rs",
-      "sourceSha256": "5A28A58F589CC9CD83CDCF002B15C87535AEBA8CB1CF7A47AC24A457906BE783",
+      "sourceSha256": "638A98219B6AF442185603DE15BE1C64F0B4BB0E923F1B4F9F82A6B45071AC12",
       "junitClass": "neoth"
     },
     {
@@ -7503,7 +7503,7 @@
       {
         "test": "skills::store::tests::existing_nonprivate_child_is_rejected_without_permission_mutation",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "5A28A58F589CC9CD83CDCF002B15C87535AEBA8CB1CF7A47AC24A457906BE783",
+        "sourceSha256": "638A98219B6AF442185603DE15BE1C64F0B4BB0E923F1B4F9F82A6B45071AC12",
         "junitClass": "neoth"
       },
       {
@@ -7641,7 +7641,7 @@
       {
         "test": "skills::store::tests::bound_rename_unix_race_restores_foreign_replacement_and_keeps_original",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "5A28A58F589CC9CD83CDCF002B15C87535AEBA8CB1CF7A47AC24A457906BE783",
+        "sourceSha256": "638A98219B6AF442185603DE15BE1C64F0B4BB0E923F1B4F9F82A6B45071AC12",
         "junitClass": "neoth"
       }
     ],
@@ -7685,7 +7685,7 @@
       {
         "test": "skills::store::tests::existing_nonprivate_child_is_rejected_without_permission_mutation",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "5A28A58F589CC9CD83CDCF002B15C87535AEBA8CB1CF7A47AC24A457906BE783",
+        "sourceSha256": "638A98219B6AF442185603DE15BE1C64F0B4BB0E923F1B4F9F82A6B45071AC12",
         "junitClass": "neoth"
       },
       {
@@ -7823,7 +7823,7 @@
       {
         "test": "skills::store::tests::bound_rename_unix_race_restores_foreign_replacement_and_keeps_original",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "5A28A58F589CC9CD83CDCF002B15C87535AEBA8CB1CF7A47AC24A457906BE783",
+        "sourceSha256": "638A98219B6AF442185603DE15BE1C64F0B4BB0E923F1B4F9F82A6B45071AC12",
         "junitClass": "neoth"
       }
     ]
@@ -18813,6 +18813,26 @@
       }
     ],
     "note": "Preflight35823362619 on62244f25 formatter artifact SHA256 and full Git pre/postimages verified. Only cron/runner.rs and reflection/periodic.rs format; no behavioral change.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave294RetentionLintAndCadenceRepair": {
+    "base": "ea31f84f10e5c979b22adba3aee51c1e103a91bd",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/reflection/retention_authority.rs",
+        "bytes": 13284,
+        "sha256": "38251C3C353852D4A48BA4EDCAF3DC8301AED4C4B5CDEFA3A4A7528DA0CA2597",
+        "blob": "c52bad9a728e72adc5f6cdeba08c62d89088143f"
+      },
+      {
+        "path": "SRC/neothd/src/skills/store.rs",
+        "bytes": 239397,
+        "sha256": "638A98219B6AF442185603DE15BE1C64F0B4BB0E923F1B4F9F82A6B45071AC12",
+        "blob": "d9d1ed8883c34351e82c4bb61eefde54e302bd0c"
+      }
+    ],
+    "note": "Core62244 strict lints: unused journal path, cfg(test) loader, Unix tail return. Preflightea31 format passed but stale macOS100/140 expectation; updated150/190 retaining1job and30min execution. No suppression or semantic relaxation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

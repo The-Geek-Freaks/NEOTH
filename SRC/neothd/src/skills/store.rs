@@ -2194,12 +2194,12 @@ pub(crate) fn rename_bound_child(
             target_display,
             source_display,
         );
-        return Err(restore.err().unwrap_or_else(|| {
+        Err(restore.err().unwrap_or_else(|| {
             anyhow::anyhow!(
                 "bound rename identity mismatch; object restored for recovery: {}",
                 source_display.display()
             )
-        }));
+        }))
     }
 }
 

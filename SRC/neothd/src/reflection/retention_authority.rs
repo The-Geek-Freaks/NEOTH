@@ -266,6 +266,7 @@ pub(crate) fn save_effect_receipt(
     write_record(home, "receipts", &receipt.tag, receipt)
 }
 
+#[cfg(test)]
 pub(crate) fn load_effect_journal(
     home: &Path,
     tag: &str,
@@ -273,7 +274,7 @@ pub(crate) fn load_effect_journal(
     read_record(home, "journals", tag)
 }
 pub(crate) fn list_effect_journals(home: &Path) -> std::io::Result<Vec<RetentionEffectJournalV2>> {
-    let (dir, path) = state_dir(home, "journals")?;
+    let (dir, _) = state_dir(home, "journals")?;
     let mut records: Vec<RetentionEffectJournalV2> = Vec::new();
     for entry in dir.entries()? {
         if records.len() == MAX_RETENTION_EFFECT_RECORDS {

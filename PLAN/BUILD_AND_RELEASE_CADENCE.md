@@ -3,6 +3,18 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W294 strict lint and cadence-contract repair (2026-09-23):**
+Core62244 run35823363544 exposed three further strict lints after the earlier
+type repairs: unused journal display path, a test-only journal loader compiled
+in production, and a redundant final return. W294 removes only those diagnostics.
+Preflightea31 run35823617595 passed formatting, then found the cadence fixture
+still expecting macOS compile100/job140. Its assertion now verifies the published
+compile150/job190 budget while retaining one build job and separate execution30.
+GUI1256dae completed123/125; W153 fails at inherited-cgroup unmount with EINVAL,
+W164 exits before provider startup without a captured underlying cause. Both
+remain unaccepted. Manifest570; other inventory/road counts unchanged.
+No local compiler, formatter, parser, tests or runtime were used.
+
 **W289/W290 hosted formatting follow-up (2026-09-23):** Preflight62244
 run35823362619 produced only Cron-runner and retention-read formatting changes.
 Both exact pre/postimage Gitblobs and the artifact SHA256 were verified before

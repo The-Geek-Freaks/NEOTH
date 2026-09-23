@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T05:41:55.3350291Z",
-  "validationStatus": "Exact hosted two-file formatter patch imported; Core62244 active; Group564 and full CI pending core test-target; no local executable validation",
+  "capturedUtc": "2026-09-23T05:47:36.8722860Z",
+  "validationStatus": "W294 exact three strict-lint repairs and macOS cadence assertion sync; Group564 still pending successful Core test-target; GUI1256dae123/125 failed; absolute BSOD hold",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -433,8 +433,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 44435,
-      "sha256": "582E1F581CB30143958EA5990F09036386D066F3B4B84458ACBA78614CE8EA43"
+      "bytes": 44579,
+      "sha256": "E0604B93091DD0A1D3E0F62B17D22A06EC0AF5ABD55FDCFB08130BC704697D1B"
     },
     {
       "path": "packaging/tests/test_preview_windows_workflow_contract.py",
@@ -473,18 +473,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 128657,
-      "sha256": "89A9317BC065F4FD726E9A69BBE17ECA43C9295F8D5D5D9CD437C4CCD4BB9C30"
+      "bytes": 129497,
+      "sha256": "B67FD117DAF107DCCE5D1116CEADC45D886F8C13FD26C2ACE682CD61F3663DE4"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1131635,
-      "sha256": "0D54AD3F7315EAEE48D247A0528FD6986FEF0CD8768C42A0A97C0E04E6291FF6"
+      "bytes": 1132475,
+      "sha256": "FFD281978007331279198C739A2639CC2C034A13E2DD5A730D30B895382C438F"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1728198,
-      "sha256": "CAEFCD5C09E41E0014610A1FBF3AB7220E7DB2131C60D0F691569269D0CB54F9"
+      "bytes": 1729038,
+      "sha256": "C9047D150BF07295415DBBB0DB2D482E2C0791B0E89C056DEC7F682EA2CEFA5E"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -2503,8 +2503,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/store.rs",
-      "bytes": 239405,
-      "sha256": "5A28A58F589CC9CD83CDCF002B15C87535AEBA8CB1CF7A47AC24A457906BE783"
+      "bytes": 239397,
+      "sha256": "638A98219B6AF442185603DE15BE1C64F0B4BB0E923F1B4F9F82A6B45071AC12"
     },
     {
       "path": "SRC/neothd/src/slash/schema.rs",
@@ -2823,8 +2823,8 @@
     },
     {
       "path": "SRC/neothd/src/reflection/retention_authority.rs",
-      "bytes": 13274,
-      "sha256": "3FD6D12AE82612592C6FD273EF606DE66D6C7B675D426AD823574D3B16134594"
+      "bytes": 13284,
+      "sha256": "38251C3C353852D4A48BA4EDCAF3DC8301AED4C4B5CDEFA3A4A7528DA0CA2597"
     },
     {
       "path": "SRC/neothd/src/reflection/retention_v2_tests.rs",
@@ -2850,6 +2850,11 @@
       "path": "docs/gold-wave290-retention-hosted-repair.md",
       "bytes": 1190,
       "sha256": "E1A579CB1E4DAFBFBF63E1515292A9F9E0C4FA30C5F1F337EABA652B48BC2842"
+    },
+    {
+      "path": "docs/gold-wave294-retention-lint-repair.md",
+      "bytes": 732,
+      "sha256": "AA79E34AE5CCA9DF75280527BB034452E5A8FF70A9DF9869221D25831C0E8588"
     }
   ]
 }
