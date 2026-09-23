@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W247 independently reviewed durable lifecycle; fresh Group424 and native Windows pending",
+  "status": "W247 reviewed source with exact Hosted formatting; runtime pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 92860,
-    "sha256": "65B74EB7AE8FABFE6BC32335AE18CBAC56831FD47DA1CCB2C996E39678E0C5F6"
+    "bytes": 92838,
+    "sha256": "DFC2A057C942A1D8257A4BA048D1F17091E6DE9656C2C789A1B6D5292D5009F5"
   },
   "sourceInputs": 537,
   "requiredNativeTests": [
@@ -5124,7 +5124,7 @@
     {
       "test": "cli::context::route_tests::context_import_status_parses_and_uses_the_existing_content_free_status_route",
       "sourcePath": "SRC/neothd/src/cli/context.rs",
-      "sourceSha256": "C1F64EBDC481369C6AA7C5C8CF7E6F201D306B53F8EEB8C06276A5542D9E1471",
+      "sourceSha256": "450D23750638F771AF74670F5B2143D080494EA24904DA241B438D411F3276BF",
       "junitClass": "neoth"
     },
     {
@@ -5142,37 +5142,37 @@
     {
       "test": "connectors::control_plane::tests::authenticated_lifecycle_successor_is_revision_fenced_and_never_uses_import_admission",
       "sourcePath": "SRC/neothd/src/connectors/control_plane.rs",
-      "sourceSha256": "D658F628C82FFAD7216510A637B4DFE6064D9C9D29C5AC4C1F962662DE5ED866",
+      "sourceSha256": "F3AA5C2C671AE2E4C85CE0C3D81DDA407676DCD3DC0B0412A570688BDD49C8DF",
       "junitClass": "neoth"
     },
     {
       "test": "connectors::control_plane::tests::lifecycle_transition_cas_failure_reopens_the_unpublished_active_authority",
       "sourcePath": "SRC/neothd/src/connectors/control_plane.rs",
-      "sourceSha256": "D658F628C82FFAD7216510A637B4DFE6064D9C9D29C5AC4C1F962662DE5ED866",
+      "sourceSha256": "F3AA5C2C671AE2E4C85CE0C3D81DDA407676DCD3DC0B0412A570688BDD49C8DF",
       "junitClass": "neoth"
     },
     {
       "test": "connectors::control_plane::tests::lifecycle_drain_timeout_preserves_the_live_lease_and_prior_authority",
       "sourcePath": "SRC/neothd/src/connectors/control_plane.rs",
-      "sourceSha256": "D658F628C82FFAD7216510A637B4DFE6064D9C9D29C5AC4C1F962662DE5ED866",
+      "sourceSha256": "F3AA5C2C671AE2E4C85CE0C3D81DDA407676DCD3DC0B0412A570688BDD49C8DF",
       "junitClass": "neoth"
     },
     {
       "test": "connectors::control_plane::tests::lifecycle_drain_commits_after_the_held_lease_releases",
       "sourcePath": "SRC/neothd/src/connectors/control_plane.rs",
-      "sourceSha256": "D658F628C82FFAD7216510A637B4DFE6064D9C9D29C5AC4C1F962662DE5ED866",
+      "sourceSha256": "F3AA5C2C671AE2E4C85CE0C3D81DDA407676DCD3DC0B0412A570688BDD49C8DF",
       "junitClass": "neoth"
     },
     {
       "test": "connectors::control_plane::rpc::tests::lifecycle_request_requires_exact_revision_fields",
       "sourcePath": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-      "sourceSha256": "C6BCC64359E88FE96DC56DAB55A824663C0B1DB01AD297BC931FE3B3B9174DB4",
+      "sourceSha256": "67D7C5148B32CD4E69914EA371449F1CCDF3FF7005FC80E5E2208818B09E62F8",
       "junitClass": "neoth"
     },
     {
       "test": "cli::context::route_tests::context_import_lifecycle_routes_bind_both_expected_revisions",
       "sourcePath": "SRC/neothd/src/cli/context.rs",
-      "sourceSha256": "C1F64EBDC481369C6AA7C5C8CF7E6F201D306B53F8EEB8C06276A5542D9E1471",
+      "sourceSha256": "450D23750638F771AF74670F5B2143D080494EA24904DA241B438D411F3276BF",
       "junitClass": "neoth"
     }
   ],
@@ -6847,7 +6847,7 @@
       {
         "test": "cli::context::windows_tests::windows_context_cli_client_status_plan_apply_reopen_and_shutdown_are_bound_to_live_daemon",
         "sourcePath": "SRC/neothd/src/cli/context.rs",
-        "sourceSha256": "C1F64EBDC481369C6AA7C5C8CF7E6F201D306B53F8EEB8C06276A5542D9E1471",
+        "sourceSha256": "450D23750638F771AF74670F5B2143D080494EA24904DA241B438D411F3276BF",
         "junitClass": "neoth"
       },
       {
@@ -16570,6 +16570,32 @@
       }
     ],
     "note": "Five lifecycle source paths plus seven verified W246 format imports. Root exact whitelist excludes W248 active workflow. Six new core identities, existing Windows integration strengthened; no local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave247HostedFormat": {
+    "base": "13dc7c6077875197875bfc4970c5295797b6b06c",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/context.rs",
+        "bytes": 17195,
+        "sha256": "450D23750638F771AF74670F5B2143D080494EA24904DA241B438D411F3276BF",
+        "blob": "96c924718061d706ad514aa19c76ac52131140ac"
+      },
+      {
+        "path": "SRC/neothd/src/connectors/control_plane.rs",
+        "bytes": 77402,
+        "sha256": "F3AA5C2C671AE2E4C85CE0C3D81DDA407676DCD3DC0B0412A570688BDD49C8DF",
+        "blob": "b2c1a8efaa2a09ac9d3df1b9851c3835197cbe73"
+      },
+      {
+        "path": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
+        "bytes": 114247,
+        "sha256": "67D7C5148B32CD4E69914EA371449F1CCDF3FF7005FC80E5E2208818B09E62F8",
+        "blob": "7bd0c21b48b05d967bcc0b64d8d394e2531e59da"
+      }
+    ],
+    "note": "Preflight35802983602 source13dc7c60 verified3path patch imported without local formatter",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

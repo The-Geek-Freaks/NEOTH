@@ -1312,11 +1312,11 @@ mod tests {
     };
 
     use super::*;
+    use crate::config::FreedomConfig;
     use crate::connectors::{
         ConnectorConfiguration, ConnectorId, ConnectorPolicySnapshot,
         control_state::{CONNECTOR_CONTROL_STATE_SCHEMA_VERSION, RegisteredConnectorAccount},
     };
-    use crate::config::FreedomConfig;
 
     fn account(
         subject: &str,
@@ -1391,19 +1391,43 @@ mod tests {
         let (current, paused) = active_plane
             .prepare_lifecycle_successor(&session(), &instance, 7, 11, ConnectorLifecycle::Paused)
             .unwrap();
-        assert_eq!(current.registered_accounts[0].lifecycle, ConnectorLifecycle::Active);
-        assert_eq!(paused.registered_accounts[0].lifecycle, ConnectorLifecycle::Paused);
+        assert_eq!(
+            current.registered_accounts[0].lifecycle,
+            ConnectorLifecycle::Active
+        );
+        assert_eq!(
+            paused.registered_accounts[0].lifecycle,
+            ConnectorLifecycle::Paused
+        );
         assert_eq!(paused.registered_accounts[0].lifecycle_revision, 12);
         assert!(matches!(
-            active_plane.prepare_lifecycle_successor(&session(), &instance, 7, 10, ConnectorLifecycle::Paused),
+            active_plane.prepare_lifecycle_successor(
+                &session(),
+                &instance,
+                7,
+                10,
+                ConnectorLifecycle::Paused
+            ),
             Err(ConnectorControlPlaneError::StaleLifecycleRevision { .. })
         ));
         assert!(matches!(
-            active_plane.prepare_lifecycle_successor(&session(), &instance, 6, 11, ConnectorLifecycle::Paused),
+            active_plane.prepare_lifecycle_successor(
+                &session(),
+                &instance,
+                6,
+                11,
+                ConnectorLifecycle::Paused
+            ),
             Err(ConnectorControlPlaneError::StalePolicyRevision { .. })
         ));
         assert!(matches!(
-            active_plane.prepare_lifecycle_successor(&session(), &instance, 7, 11, ConnectorLifecycle::Active),
+            active_plane.prepare_lifecycle_successor(
+                &session(),
+                &instance,
+                7,
+                11,
+                ConnectorLifecycle::Active
+            ),
             Err(ConnectorControlPlaneError::LifecycleTransitionRejected { .. })
         ));
         assert!(matches!(
@@ -1421,10 +1445,15 @@ mod tests {
         let (_, resumed) = paused_plane
             .prepare_lifecycle_successor(&session(), &instance, 7, 11, ConnectorLifecycle::Active)
             .unwrap();
-        assert_eq!(resumed.registered_accounts[0].lifecycle, ConnectorLifecycle::Active);
+        assert_eq!(
+            resumed.registered_accounts[0].lifecycle,
+            ConnectorLifecycle::Active
+        );
         assert!(matches!(
             paused_plane.authorize_context_import(&session(), &instance),
-            Err(ConnectorControlPlaneError::AccountNotActive(ConnectorLifecycle::Paused))
+            Err(ConnectorControlPlaneError::AccountNotActive(
+                ConnectorLifecycle::Paused
+            ))
         ));
 
         let revoked_plane = plane(ConnectorLifecycle::Revoked);
@@ -1485,7 +1514,9 @@ mod tests {
             Err(ConnectorControlPlaneError::DurablePublication(_))
         ));
         assert!(
-            plane.authorize_context_import(&session(), &instance).is_ok(),
+            plane
+                .authorize_context_import(&session(), &instance)
+                .is_ok(),
             "a failed pre-publication CAS must restore the prior active authority"
         );
     }
@@ -1541,10 +1572,8 @@ mod tests {
         let worker = std::thread::spawn(move || {
             started_tx.send(()).unwrap();
             transition_tx.send(
-                transition_plane.begin_lifecycle_transition(
-                    next,
-                    Instant::now() + Duration::from_secs(1),
-                ),
+                transition_plane
+                    .begin_lifecycle_transition(next, Instant::now() + Duration::from_secs(1)),
             )
         });
         started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
@@ -1561,7 +1590,10 @@ mod tests {
             .unwrap();
         worker.join().unwrap().unwrap();
         transition.commit_durable_update(update).unwrap();
-        assert_eq!(plane.status().unwrap()[0].lifecycle, ConnectorLifecycle::Paused);
+        assert_eq!(
+            plane.status().unwrap()[0].lifecycle,
+            ConnectorLifecycle::Paused
+        );
     }
 
     #[test]

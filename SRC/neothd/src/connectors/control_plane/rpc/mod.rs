@@ -1913,17 +1913,15 @@ fn transition_lifecycle(
         .cloned()
         .context("prepared local-import lifecycle is absent from its successor")?;
     let next_for_config = next.clone();
-    let (update, ()) = crate::config::FreedomConfig::prepare_update_at(
-        &state.config_path,
-        move |config| {
+    let (update, ()) =
+        crate::config::FreedomConfig::prepare_update_at(&state.config_path, move |config| {
             ensure!(
                 config.context_connectors == current,
                 "freedom.yaml connector-control state differs from the live daemon projection"
             );
             config.context_connectors = next_for_config;
             Ok(())
-        },
-    )?;
+        })?;
     let deadline = Instant::now()
         .checked_add(CONNECTION_TIMEOUT)
         .context("connector lifecycle drain deadline overflow")?;
@@ -2363,10 +2361,12 @@ mod tests {
     #[cfg(any(unix, windows))]
     #[test]
     fn lifecycle_request_requires_exact_revision_fields() {
-        assert!(serde_json::from_slice::<LifecycleRequest>(
-            br#"{"policy_revision":7,"lifecycle_revision":11}"#,
-        )
-        .is_ok());
+        assert!(
+            serde_json::from_slice::<LifecycleRequest>(
+                br#"{"policy_revision":7,"lifecycle_revision":11}"#,
+            )
+            .is_ok()
+        );
         for body in [
             br#"{}"#.as_slice(),
             br#"{"policy_revision":7}"#.as_slice(),

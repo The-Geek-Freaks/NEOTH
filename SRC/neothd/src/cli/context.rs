@@ -213,6 +213,7 @@ mod windows_tests {
 
     use super::*;
     use crate::{
+        config::FreedomConfig,
         connectors::{
             ConnectorConfiguration, ConnectorId, ConnectorInstanceId, ConnectorPolicySnapshot,
             SubjectId,
@@ -223,7 +224,6 @@ mod windows_tests {
             },
             runtime_local_import::ContextEvidenceReplayRuntime,
         },
-        config::FreedomConfig,
         context_graph::{ContextImportApplyKey, ContextStore},
         daemon::{audit_rpc, pidfile},
         wal::{
@@ -257,8 +257,11 @@ mod windows_tests {
     fn write_active_config(home: &std::path::Path) {
         let mut config = FreedomConfig::default();
         config.context_connectors = active_config();
-        std::fs::write(home.join("freedom.yaml"), serde_yaml::to_string(&config).unwrap())
-            .unwrap();
+        std::fs::write(
+            home.join("freedom.yaml"),
+            serde_yaml::to_string(&config).unwrap(),
+        )
+        .unwrap();
     }
 
     fn args(action: ContextImportAction) -> ContextArgs {
@@ -442,8 +445,8 @@ mod windows_tests {
         let resumed_config: FreedomConfig =
             serde_yaml::from_slice(&std::fs::read(home.path().join("freedom.yaml")).unwrap())
                 .unwrap();
-        let restarted = ConnectorControlPlane::from_config(&resumed_config.context_connectors)
-            .unwrap();
+        let restarted =
+            ConnectorControlPlane::from_config(&resumed_config.context_connectors).unwrap();
         assert_eq!(
             restarted.status().unwrap()[0].lifecycle,
             ConnectorLifecycle::Active,

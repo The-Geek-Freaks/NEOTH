@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T00:36:43.5646695Z",
-  "validationStatus": "W247 independently reviewed durable lifecycle; fresh Group424 and native Windows pending",
+  "capturedUtc": "2026-09-23T00:38:52.0633096Z",
+  "validationStatus": "W247 reviewed source with exact Hosted formatting; runtime pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1073,8 +1073,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/context.rs",
-      "bytes": 17165,
-      "sha256": "C1F64EBDC481369C6AA7C5C8CF7E6F201D306B53F8EEB8C06276A5542D9E1471"
+      "bytes": 17195,
+      "sha256": "450D23750638F771AF74670F5B2143D080494EA24904DA241B438D411F3276BF"
     },
     {
       "path": "SRC/neothd/src/cli/credential_transfer.rs",
@@ -1528,13 +1528,13 @@
     },
     {
       "path": "SRC/neothd/src/connectors/control_plane.rs",
-      "bytes": 76958,
-      "sha256": "D658F628C82FFAD7216510A637B4DFE6064D9C9D29C5AC4C1F962662DE5ED866"
+      "bytes": 77402,
+      "sha256": "F3AA5C2C671AE2E4C85CE0C3D81DDA407676DCD3DC0B0412A570688BDD49C8DF"
     },
     {
       "path": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-      "bytes": 114228,
-      "sha256": "C6BCC64359E88FE96DC56DAB55A824663C0B1DB01AD297BC931FE3B3B9174DB4"
+      "bytes": 114247,
+      "sha256": "67D7C5148B32CD4E69914EA371449F1CCDF3FF7005FC80E5E2208818B09E62F8"
     },
     {
       "path": "SRC/neothd/src/context_graph/mod.rs",
