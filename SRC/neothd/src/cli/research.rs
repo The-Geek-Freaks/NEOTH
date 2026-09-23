@@ -207,7 +207,8 @@ async fn run(
     let provider: &dyn crate::providers::Provider = match provider_override {
         Some(provider) => provider,
         None => {
-            resolved_provider = match crate::providers::from_config_for_utility_at(&cfg, home).await {
+            resolved_provider = match crate::providers::from_config_for_utility_at(&cfg, home).await
+            {
                 Ok(value) => value,
                 Err(error) => {
                     return Err(pre_effect_failure(
@@ -820,7 +821,7 @@ mod tests {
 
     #[tokio::test]
     async fn operator_lifecycle_dispatches_create_approve_run_pause_resume_cancel_show_and_list_with_exact_revisions()
-    {
+     {
         // The public research dispatcher deliberately resolves NEOTH_HOME at
         // invocation time. Serialize the process-wide override so this test
         // drives that same operator path without inheriting a developer home.
@@ -878,7 +879,8 @@ mod tests {
             .is_err(),
             "run dispatch must surface unavailable provider configuration"
         );
-        let run_terminal = research_runs::load(home.path(), &approved.id).expect("load run terminal");
+        let run_terminal =
+            research_runs::load(home.path(), &approved.id).expect("load run terminal");
         assert_eq!(run_terminal.state, research_runs::ResearchRunState::Failed);
         assert!(!run_terminal.effect_started);
 
@@ -889,18 +891,12 @@ mod tests {
             ResearchRunBudget::from_config(&crate::config::DeepResearchConfig::default()),
         )
         .expect("create pause fixture");
-        let paused_approved = research_runs::approve(
-            home.path(),
-            &paused_draft.id,
-            paused_draft.revision,
-        )
-        .expect("approve pause fixture");
-        let paused_running = research_runs::claim_run(
-            home.path(),
-            &paused_approved.id,
-            paused_approved.revision,
-        )
-        .expect("claim pause fixture");
+        let paused_approved =
+            research_runs::approve(home.path(), &paused_draft.id, paused_draft.revision)
+                .expect("approve pause fixture");
+        let paused_running =
+            research_runs::claim_run(home.path(), &paused_approved.id, paused_approved.revision)
+                .expect("claim pause fixture");
         run_research(dispatch_args(ResearchAction::Pause {
             id: paused_running.id.clone(),
             revision: paused_running.revision,
@@ -937,18 +933,12 @@ mod tests {
             ResearchRunBudget::from_config(&crate::config::DeepResearchConfig::default()),
         )
         .expect("create cancel fixture");
-        let cancel_approved = research_runs::approve(
-            home.path(),
-            &cancel_draft.id,
-            cancel_draft.revision,
-        )
-        .expect("approve cancel fixture");
-        let cancel_running = research_runs::claim_run(
-            home.path(),
-            &cancel_approved.id,
-            cancel_approved.revision,
-        )
-        .expect("claim cancel fixture");
+        let cancel_approved =
+            research_runs::approve(home.path(), &cancel_draft.id, cancel_draft.revision)
+                .expect("approve cancel fixture");
+        let cancel_running =
+            research_runs::claim_run(home.path(), &cancel_approved.id, cancel_approved.revision)
+                .expect("claim cancel fixture");
         run_research(dispatch_args(ResearchAction::Cancel {
             id: cancel_running.id.clone(),
             revision: cancel_running.revision,
@@ -964,8 +954,8 @@ mod tests {
                 .expect("executor observes dispatched cancel request"),
             research_runs::ResearchControl::Cancelled
         );
-        let cancelled = research_runs::load(home.path(), &cancel_running.id)
-            .expect("load cancelled run");
+        let cancelled =
+            research_runs::load(home.path(), &cancel_running.id).expect("load cancelled run");
         assert_eq!(cancelled.state, research_runs::ResearchRunState::Cancelled);
         run_research(dispatch_args(ResearchAction::Show {
             id: cancelled.id.clone(),
@@ -979,7 +969,7 @@ mod tests {
 
     #[tokio::test]
     async fn successful_lifecycle_dispatches_real_authorized_producer_and_decodes_wal_terminals_without_replay()
-    {
+     {
         let _env = crate::test_env::lock();
         let home = tempfile::tempdir().expect("create isolated successful lifecycle home");
         std::fs::write(
@@ -1024,9 +1014,21 @@ mod tests {
         let completed = research_runs::load(home.path(), &approved.id)
             .expect("load completed research lifecycle");
         assert_eq!(completed.state, research_runs::ResearchRunState::Completed);
-        assert!(completed.effect_started, "successful run crosses the durable effect boundary");
-        assert!(completed.audit.iter().any(|entry| entry.event == "completed"));
-        assert_eq!(calls.load(Ordering::SeqCst), 2, "plan plus synthesis are authorized");
+        assert!(
+            completed.effect_started,
+            "successful run crosses the durable effect boundary"
+        );
+        assert!(
+            completed
+                .audit
+                .iter()
+                .any(|entry| entry.event == "completed")
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "plan plus synthesis are authorized"
+        );
 
         let events = deep_research_lifecycle_payloads(home.path());
         let topic_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(topic.as_bytes()));
@@ -1040,13 +1042,19 @@ mod tests {
             crate::wal::events::EVENT_TYPE_DEEP_RESEARCH_STARTED,
             "start receipt precedes completion"
         );
-        assert_eq!(events[0].1["topic_hash"].as_str(), Some(topic_hash.as_str()));
+        assert_eq!(
+            events[0].1["topic_hash"].as_str(),
+            Some(topic_hash.as_str())
+        );
         assert_eq!(
             events[1].0,
             crate::wal::events::EVENT_TYPE_DEEP_RESEARCH_COMPLETED,
             "completion receipt follows the same exact-topic start"
         );
-        assert_eq!(events[1].1["topic_hash"].as_str(), Some(topic_hash.as_str()));
+        assert_eq!(
+            events[1].1["topic_hash"].as_str(),
+            Some(topic_hash.as_str())
+        );
         assert_eq!(events[1].1["rounds"].as_u64(), Some(1));
         assert_eq!(
             events[1].1["citation_count"].as_u64(),
@@ -1120,9 +1128,20 @@ mod tests {
         );
         let interrupted = research_runs::load(home.path(), &approved.id)
             .expect("load interrupted research lifecycle");
-        assert_eq!(interrupted.state, research_runs::ResearchRunState::Interrupted);
-        assert!(interrupted.effect_started, "interrupted run crossed the effect boundary");
-        assert!(interrupted.audit.iter().any(|entry| entry.event == "interrupted"));
+        assert_eq!(
+            interrupted.state,
+            research_runs::ResearchRunState::Interrupted
+        );
+        assert!(
+            interrupted.effect_started,
+            "interrupted run crossed the effect boundary"
+        );
+        assert!(
+            interrupted
+                .audit
+                .iter()
+                .any(|entry| entry.event == "interrupted")
+        );
         let events = deep_research_lifecycle_payloads(home.path());
         let topic_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(topic.as_bytes()));
         assert_eq!(
@@ -1130,7 +1149,10 @@ mod tests {
             1,
             "interrupted producer must not append a completion receipt"
         );
-        assert_eq!(events[0].0, crate::wal::events::EVENT_TYPE_DEEP_RESEARCH_STARTED);
+        assert_eq!(
+            events[0].0,
+            crate::wal::events::EVENT_TYPE_DEEP_RESEARCH_STARTED
+        );
         assert_eq!(
             events[0].1["topic_hash"].as_str(),
             Some(topic_hash.as_str()),

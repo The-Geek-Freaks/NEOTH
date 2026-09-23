@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W329 reviewed research CLI/WAL fixtures pending hosted; W330 acquisition admitted; Group687",
+  "status": "W329 exact hosted formatting imported; Core35840622919 and native behavior pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 106167,
-    "sha256": "63C042C670DBFA059BA90EE876D438FD8718174F12ABFEB2455BF62DB2E4A825"
+    "bytes": 106158,
+    "sha256": "C25A82E8F3F5B98D425565063A985A4A7D0E86569400DDED5FD8ECCB1524CE98"
   },
   "sourceInputs": 612,
   "requiredNativeTests": [
@@ -3384,19 +3384,19 @@
     {
       "test": "cli::research::tests::provider_call_cap_rejects_next_call_without_inner_invocation",
       "sourcePath": "SRC/neothd/src/cli/research.rs",
-      "sourceSha256": "5C5F1F95AF5DD75047DD1DBB245802CDAD9E2F6EFB868275E9E92D256B772261",
+      "sourceSha256": "A742E487B95E643F7458A5A19BA913E05FAC45F5EF0DC9EC2415B06EE5554710",
       "junitClass": "neoth"
     },
     {
       "test": "cli::research::tests::research_parser_requires_revision_for_mutations_and_keeps_read_commands",
       "sourcePath": "SRC/neothd/src/cli/research.rs",
-      "sourceSha256": "5C5F1F95AF5DD75047DD1DBB245802CDAD9E2F6EFB868275E9E92D256B772261",
+      "sourceSha256": "A742E487B95E643F7458A5A19BA913E05FAC45F5EF0DC9EC2415B06EE5554710",
       "junitClass": "neoth"
     },
     {
       "test": "cli::research::tests::pre_effect_config_setup_failure_persists_failed_without_provider_or_http_effect",
       "sourcePath": "SRC/neothd/src/cli/research.rs",
-      "sourceSha256": "5C5F1F95AF5DD75047DD1DBB245802CDAD9E2F6EFB868275E9E92D256B772261",
+      "sourceSha256": "A742E487B95E643F7458A5A19BA913E05FAC45F5EF0DC9EC2415B06EE5554710",
       "junitClass": "neoth"
     },
     {
@@ -3456,7 +3456,7 @@
     {
       "test": "cli::research::tests::paused_or_cancelled_terminal_wal_failure_is_reported_without_mutation",
       "sourcePath": "SRC/neothd/src/cli/research.rs",
-      "sourceSha256": "5C5F1F95AF5DD75047DD1DBB245802CDAD9E2F6EFB868275E9E92D256B772261",
+      "sourceSha256": "A742E487B95E643F7458A5A19BA913E05FAC45F5EF0DC9EC2415B06EE5554710",
       "junitClass": "neoth"
     },
     {
@@ -6144,19 +6144,19 @@
     {
       "test": "cli::research::tests::operator_lifecycle_dispatches_create_approve_run_pause_resume_cancel_show_and_list_with_exact_revisions",
       "sourcePath": "SRC/neothd/src/cli/research.rs",
-      "sourceSha256": "5C5F1F95AF5DD75047DD1DBB245802CDAD9E2F6EFB868275E9E92D256B772261",
+      "sourceSha256": "A742E487B95E643F7458A5A19BA913E05FAC45F5EF0DC9EC2415B06EE5554710",
       "junitClass": "neoth"
     },
     {
       "test": "cli::research::tests::successful_lifecycle_dispatches_real_authorized_producer_and_decodes_wal_terminals_without_replay",
       "sourcePath": "SRC/neothd/src/cli/research.rs",
-      "sourceSha256": "5C5F1F95AF5DD75047DD1DBB245802CDAD9E2F6EFB868275E9E92D256B772261",
+      "sourceSha256": "A742E487B95E643F7458A5A19BA913E05FAC45F5EF0DC9EC2415B06EE5554710",
       "junitClass": "neoth"
     },
     {
       "test": "cli::research::tests::interrupted_lifecycle_decodes_started_wal_and_refuses_replay_after_terminal_failure",
       "sourcePath": "SRC/neothd/src/cli/research.rs",
-      "sourceSha256": "5C5F1F95AF5DD75047DD1DBB245802CDAD9E2F6EFB868275E9E92D256B772261",
+      "sourceSha256": "A742E487B95E643F7458A5A19BA913E05FAC45F5EF0DC9EC2415B06EE5554710",
       "junitClass": "neoth"
     }
   ],
@@ -20365,6 +20365,20 @@
       }
     ],
     "note": "W329 three real-dispatch fixtures with hermetic search and topic-bound authenticated WAL; independent source PASS. W330 exact four targets acquisition admitted35839698279. P209/P213 remain open. BSOD hold no local execution.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave329HostedFormat": {
+    "base": "d6aaa6ac6ec390b24e09c1d827b16d745d81ea9d",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/research.rs",
+        "bytes": 45740,
+        "sha256": "A742E487B95E643F7458A5A19BA913E05FAC45F5EF0DC9EC2415B06EE5554710",
+        "blob": "6f709f563dd77a13751792795890374c18d1c103"
+      }
+    ],
+    "note": "Imported preflight35840620863 research.rs rustfmt patch only after SHA256 and exact git pre/postimage verification. No local formatter or code execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
