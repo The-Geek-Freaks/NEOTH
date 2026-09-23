@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W494/W499/W500 consent, streams and wizard; W495/W498 acceptance (2026-09-23):**
+Group888c7 is admitted885PASS/3FAIL/0missing with176bindings. W500 repairs
+an actual wire mismatch: real request-bound consent proofs use UUID.dot64hex,
+while the prior GUI validator rejected the dot. Exact grammar regression
+includes real ready/interactive mints. W499 decodes the actual CLI StreamFrames
+carrier without weakening Block/Replace/secret/receipt assertions. The verified
+hosted CLI reference adds only92new Buddy command lines. W494 adds2 real
+serve-bootstrap GUI callback/loss cases and same-boot controller reconciliation;
+P1-18 stays open pending execution. Windows17c7 is admitted17/17 with25artifact
+hashes. P1-19 is accepted from33macOS+32Windows exact test/class terminals with
+15-path scoped carry; P1-02 from14exact mirror cases. Inventory743sources,
+1185native+Win24Linux33mac32,Group890,GUI148Linux144macOS,macNative33.
+Road1042checked/280open/2partial;282raw/281pre-tag;WS-LF35done/83open.
+No local executable checks. Details:docs/gold-wave494-500-consent-stream-wizard.md,
+docs/gold-wave495-local-model-acceptance.md,docs/gold-wave498-mirror-refusal-acceptance.md.
 **W496 hosted formatting import (2026-09-23):**
 W488-W493/P219 is published asc7b946f1. Preflight35917397881 produced
 artifact10776260380:2SHA256 entries and all3 complete before/after Gitblob

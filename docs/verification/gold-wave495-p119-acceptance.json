@@ -1,0 +1,523 @@
+{
+  "schema": "neoth-functional-acceptance/v1",
+  "roadItem": "GOLD-LF-P1-19",
+  "verdict": "ACCEPTED_FUNCTIONAL",
+  "baselineSource": "bc9db76c4ff72bfff9fa3674f20d904ead12fc76",
+  "acceptedSource": "2636215c54a0127dfc8bce5990f979542fc7deff",
+  "selection": {
+    "uniqueIdentities": 33,
+    "Windows": 32,
+    "macOS": 33
+  },
+  "criteria": {
+    "downloadUpdateProgressCancelErrorsPrune": "daemon local-model controller plus models ollama CLI and GUI callback surface",
+    "diskRamVram": "local-model snapshot/resource projection and CLI/Buddy/GUI consumers",
+    "loadAndProbeBackedReady": "local-model readiness controller; exact chat then fresh matching ps-digest test",
+    "daemonLifecycle": "serve_tasks native-provider lifecycle gate",
+    "transport": "authenticated local-model IPC routes, bounded request handling, discovery and shutdown",
+    "gui": "strict readiness-schema parser plus real typed-ack/fresh-readback callback"
+  },
+  "artifacts": [
+    {
+      "platform": "macOS",
+      "path": "work/gold-20260906/wave450-macos-bc9/nextest-junit-macos-10761989248/junit.xml",
+      "sha256": "91842D99DA6A83C1F2056A787F07E48A298B21E3BD7E787E8055197959386726",
+      "passed": 33,
+      "run": 35871801240
+    },
+    {
+      "platform": "windows",
+      "path": "work/gold-20260906/wave445-windows-bc9/nextest-junit-windows-10761104886/junit.xml",
+      "sha256": "9A8BB8614553EAF0BF2520CB55C9DC4A9FBD3DA28B8083A28ED52A64128DD4B8",
+      "passed": 32,
+      "run": 35871801240
+    }
+  ],
+  "terminals": [
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::bounded_http_response_is_rejected_before_inventory_is_accepted",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::cancel_requires_the_exact_active_id_and_retains_uncertainty",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::completed_operation_handle_is_reaped_before_a_refresh_observation",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::concurrent_cancel_and_shutdown_reap_one_blocked_pull_with_one_uncertain_receipt",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::critical_admission_persistence_failure_sends_no_mutation_request",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::failed_or_mismatched_probe_never_marks_model_ready",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::fresh_chat_ps_proof_assigns_loaded_use_for_an_initially_unloaded_model",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::inventory_uses_tag_name_when_ollama_omits_model",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::mutation_admission_is_rejected_while_a_real_probe_is_in_flight",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::nested_action_payload_rejects_unknown_fields",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::prune_refuses_absent_or_loaded_targets_and_proves_exact_fresh_absence",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::pull_requires_terminal_success_and_fresh_target_inventory",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::ready_requires_exact_chat_then_fresh_matching_ps_digest",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::refresh_cannot_restore_stale_ready_while_a_mutation_is_active",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::restart_does_not_revive_a_previous_ready_observation",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::retry_requires_an_exact_retained_failed_action_and_never_runs_implicitly",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::shutdown_aborts_blocked_terminal_reconciliation_without_rewriting_completed_receipt",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models::tests::terminal_persistence_failure_after_send_keeps_intent_blocks_actions_and_never_replays",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models_ipc::tests::fixture_request_parses_exact_status_route",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models_ipc::tests::malformed_request_is_rejected",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models_ipc::tests::request_size_bound_is_rejected",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models_ipc::tests::unauthorized_bearer_fails_closed",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models_ipc::tests::cancel_route_requires_exact_bounded_operation_id",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models_ipc::tests::status_and_exact_cancel_route_while_start_is_pending",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models_ipc::tests::native_bind_discovery_client_roundtrip_drains_after_stop",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models_ipc::tests::shutdown_signal_is_observable_without_detaching_waiters",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "daemon::local_models_ipc::tests::response_fixture_requires_success_status_and_json_body",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "cli::serve_tasks::local_models_lifecycle_tests::local_models_runtime_requires_active_native_ollama_provider",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "cli::models::tests::ollama_config_selects_the_same_spaced_parent_home_as_serve",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "cli::models::tests::ollama_nested_commands_preserve_exact_selectors_and_operation_ids",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "panel_logic::tests::local_models_ready_requires_the_core_ready_variant",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "panel_logic::tests::local_models_reject_unknown_readiness_schema",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed"
+    },
+    {
+      "platform": "macOS",
+      "test": "w58_gui_callback_runtime_tests::w185_local_model_callbacks_require_typed_ack_and_fresh_readback",
+      "junitClass": "neothd-gui::neothd-gui-macos-native",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::bounded_http_response_is_rejected_before_inventory_is_accepted",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::cancel_requires_the_exact_active_id_and_retains_uncertainty",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::completed_operation_handle_is_reaped_before_a_refresh_observation",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::concurrent_cancel_and_shutdown_reap_one_blocked_pull_with_one_uncertain_receipt",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::critical_admission_persistence_failure_sends_no_mutation_request",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::failed_or_mismatched_probe_never_marks_model_ready",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::fresh_chat_ps_proof_assigns_loaded_use_for_an_initially_unloaded_model",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::inventory_uses_tag_name_when_ollama_omits_model",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::mutation_admission_is_rejected_while_a_real_probe_is_in_flight",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::nested_action_payload_rejects_unknown_fields",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::prune_refuses_absent_or_loaded_targets_and_proves_exact_fresh_absence",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::pull_requires_terminal_success_and_fresh_target_inventory",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::ready_requires_exact_chat_then_fresh_matching_ps_digest",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::refresh_cannot_restore_stale_ready_while_a_mutation_is_active",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::restart_does_not_revive_a_previous_ready_observation",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::retry_requires_an_exact_retained_failed_action_and_never_runs_implicitly",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::shutdown_aborts_blocked_terminal_reconciliation_without_rewriting_completed_receipt",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models::tests::terminal_persistence_failure_after_send_keeps_intent_blocks_actions_and_never_replays",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models_ipc::tests::fixture_request_parses_exact_status_route",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models_ipc::tests::malformed_request_is_rejected",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models_ipc::tests::request_size_bound_is_rejected",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models_ipc::tests::unauthorized_bearer_fails_closed",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models_ipc::tests::cancel_route_requires_exact_bounded_operation_id",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models_ipc::tests::status_and_exact_cancel_route_while_start_is_pending",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models_ipc::tests::native_bind_discovery_client_roundtrip_drains_after_stop",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models_ipc::tests::shutdown_signal_is_observable_without_detaching_waiters",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "daemon::local_models_ipc::tests::response_fixture_requires_success_status_and_json_body",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "cli::serve_tasks::local_models_lifecycle_tests::local_models_runtime_requires_active_native_ollama_provider",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "cli::models::tests::ollama_config_selects_the_same_spaced_parent_home_as_serve",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "cli::models::tests::ollama_nested_commands_preserve_exact_selectors_and_operation_ids",
+      "junitClass": "neoth",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "panel_logic::tests::local_models_ready_requires_the_core_ready_variant",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed"
+    },
+    {
+      "platform": "windows",
+      "test": "panel_logic::tests::local_models_reject_unknown_readiness_schema",
+      "junitClass": "neothd-gui::bin/neothd-gui",
+      "status": "passed"
+    }
+  ],
+  "sourceCarry": [
+    {
+      "path": "SRC/neothd/src/daemon/local_models.rs",
+      "baselineBlob": "6004110fc2d70823aa4c826d4d7a76a7443b237d",
+      "acceptedBlob": "6004110fc2d70823aa4c826d4d7a76a7443b237d",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/local_models/tests.rs",
+      "baselineBlob": "693a003fecac02f4adf2eedbe884715f67d80ea3",
+      "acceptedBlob": "693a003fecac02f4adf2eedbe884715f67d80ea3",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/local_models_ipc.rs",
+      "baselineBlob": "51d87a24b2117b0aa42f1228430bba9ceee0b5e1",
+      "acceptedBlob": "51d87a24b2117b0aa42f1228430bba9ceee0b5e1",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/mod.rs",
+      "baselineBlob": "7bef6e2b283b77e110be494bb8e3a75f295073a1",
+      "acceptedBlob": "7bef6e2b283b77e110be494bb8e3a75f295073a1",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_tasks.rs",
+      "baselineBlob": "f0c7b7d095dce3caf68f8208b01167d5f76a6cf4",
+      "acceptedBlob": "c31784ad850437311effbaadea3cfc05bc78b3ca",
+      "reason": "Only unrelated audit RPC arguments bundled; local-model lifecycle unchanged"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve.rs",
+      "baselineBlob": "f507112be9203fd553d8bc688d64c3220a71d254",
+      "acceptedBlob": "2eec3736d022878cca1276c305f333e73b42d392",
+      "reason": "Only unrelated audit RPC call adapted to AuditRpcInputs; local-model spawn unchanged"
+    },
+    {
+      "path": "SRC/neothd/src/cli/models.rs",
+      "baselineBlob": "8ce770018dd77d56f4fe018f0018cac290aff936",
+      "acceptedBlob": "8ce770018dd77d56f4fe018f0018cac290aff936",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/cli/buddy.rs",
+      "baselineBlob": "19593f9eedd01ffaf870f97eac9d5d6f0cc82a09",
+      "acceptedBlob": "9dcfc58adb56765d1eb34229eedc1cb8ade29943",
+      "reason": "Only unrelated task-delegate CLI variants/routing/tests added; local-model snapshot unchanged"
+    },
+    {
+      "path": "SRC/neothd-gui/src/panel_logic.rs",
+      "baselineBlob": "6bcd0468e6bcc5cf0014610ef68995d13ef7d495",
+      "acceptedBlob": "6bcd0468e6bcc5cf0014610ef68995d13ef7d495",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd-gui/src/gui_action.rs",
+      "baselineBlob": "88e61cd6c08893bcc8765e6f433f69a5ce93a838",
+      "acceptedBlob": "9ce964c9369eeddb63ec85c4945f0dfbbd2708bc",
+      "reason": "Local-model error ack serde attribute wrapped only; other changes cluster/proposal"
+    },
+    {
+      "path": "SRC/neothd-gui/src/main.rs",
+      "baselineBlob": "0705853e795bb1a9a52693daa0449435e65aa306",
+      "acceptedBlob": "e19057450ec041882995891278081293a2b71644",
+      "reason": "Local-model map_or(true) becomes equivalent is_none_or; nested worker-error if becomes equivalent let-chain. W185 callback test byte-identical. Other diffs unrelated"
+    },
+    {
+      "path": "SRC/neothd-gui/src/buddy_activity.rs",
+      "baselineBlob": "926a3934f97433224ed79b159e81996bada5c63b",
+      "acceptedBlob": "926a3934f97433224ed79b159e81996bada5c63b",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/main.slint",
+      "baselineBlob": "37622ca1054ae04bb35dd23bc3807f27a4570c86",
+      "acceptedBlob": "37622ca1054ae04bb35dd23bc3807f27a4570c86",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/tabs.slint",
+      "baselineBlob": "aa1b83ce8187ec5d7982462b093c2654f651281c",
+      "acceptedBlob": "aa1b83ce8187ec5d7982462b093c2654f651281c",
+      "reason": "exact"
+    },
+    {
+      "path": "packaging/tests/verify_macos_native_gui_fixture_discovery.py",
+      "baselineBlob": "efb61d66f4df3d103d491592de859b3d5e0d9cd7",
+      "acceptedBlob": "bc83bd2225f3ccd9727a1f36ae0d7432fec02754",
+      "reason": "Only W480 registration added; W185 retained"
+    }
+  ],
+  "review": "W477 independent source/carry review; Root verified all65 individual testcase terminals in their exact JUnit classes and both artifact hashes",
+  "limitations": "Probe-backed readiness and honest resources; RAM explicitly unknown without authoritative measurement. Windows W185 callback not selected; callback passed macOS and independently Linux GUI145. Functional scope only; no current full-release or installed-package claim.",
+  "localExecutableValidationRan": false
+}

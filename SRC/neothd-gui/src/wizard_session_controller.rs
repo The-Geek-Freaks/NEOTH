@@ -27,6 +27,27 @@ const BOOTSTRAP_DISCOVERY_POLL: Duration = Duration::from_millis(50);
 // daemon's durable pending transaction with a fresh boot binding.
 static BOOTSTRAP_START_ATTEMPTED: AtomicBool = AtomicBool::new(false);
 
+/// Test-only isolation for the process-global one-bootstrap guard. Production
+/// keeps its single-attempt ownership unchanged; hosted GUI fixtures restore
+/// the prior test-process state even when an assertion unwinds.
+#[cfg(test)]
+pub(crate) struct BootstrapAttemptTestGuard {
+    previous: bool,
+}
+
+#[cfg(test)]
+impl Drop for BootstrapAttemptTestGuard {
+    fn drop(&mut self) {
+        BOOTSTRAP_START_ATTEMPTED.store(self.previous, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn isolate_bootstrap_attempt_for_test() -> BootstrapAttemptTestGuard {
+    let previous = BOOTSTRAP_START_ATTEMPTED.swap(false, Ordering::AcqRel);
+    BootstrapAttemptTestGuard { previous }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WizardBinding {
     session_id: WizardSessionId,
@@ -371,6 +392,12 @@ mod tests {
         assert!(observed.accepted_sequence >= mutation.accepted_sequence);
         assert!(controller.accept_watch_snapshot(observed).unwrap());
 
+        // A fresh OpenOrResume against the same daemon boot only rebinds the
+        // authoritative cursor. It cannot replay the already acknowledged
+        // selection while the observer is reconnecting.
+        let reconciled = controller.reconcile_same_boot().unwrap();
+        assert_eq!(reconciled.accepted_sequence, mutation.accepted_sequence);
+
         // This emulates a late watcher response captured before the mutation.
         // It must not replace the controller's newer cursor or repaint status.
         let stale = WizardSnapshot {
@@ -381,4 +408,5 @@ mod tests {
         stop_send.send(()).unwrap();
         server_thread.join().unwrap();
     }
+
 }

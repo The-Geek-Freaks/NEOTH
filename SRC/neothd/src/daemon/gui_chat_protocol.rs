@@ -1420,11 +1420,29 @@ fn validate_capability(value: &GuiChatOpaqueCapability) -> GuiChatResult<()> {
     validate_opaque("capability", &value.0, GUI_CHAT_OPAQUE_CAPABILITY_MAX_BYTES)
 }
 fn validate_consent_proof(value: &GuiChatConsentProof) -> GuiChatResult<()> {
-    validate_opaque(
+    validate_nonempty(
         "consent_proof",
         &value.0,
         GUI_CHAT_OPAQUE_CAPABILITY_MAX_BYTES,
-    )
+    )?;
+    // Request-bound proofs are minted by consent_challenge as
+    // `<canonical-lowercase-uuid>.<64-lowercase-hex-secret>`. They are not
+    // GUI capabilities, so do not relax the strict opaque-capability grammar.
+    let (token_id, secret) = value
+        .0
+        .split_once('.')
+        .ok_or(GuiChatProtocolError::Invalid("consent_proof_shape"))?;
+    let parsed = Uuid::parse_str(token_id)
+        .map_err(|_| GuiChatProtocolError::Invalid("consent_proof_shape"))?;
+    if parsed.to_string() != token_id
+        || secret.len() != 64
+        || !secret
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err(GuiChatProtocolError::Invalid("consent_proof_shape"));
+    }
+    Ok(())
 }
 fn validate_opaque(name: &'static str, value: &str, limit: usize) -> GuiChatResult<()> {
     validate_nonempty(name, value, limit)?;
@@ -1503,6 +1521,117 @@ mod tests {
             byte_len: 3,
             media_kind: "text/plain".into(),
         }]
+    }
+
+    fn write_consent_fixture_config(home: &std::path::Path) {
+        let mut config = crate::config::FreedomConfig {
+            provider_kind: Some(crate::cli::init::ProviderKind::ClaudeCli),
+            provider_binary: Some("claude".into()),
+            provider_model: Some("consent-proof-fixture".into()),
+            autonomy: crate::permissions::AutonomyLevel::Full,
+            review_gate_enabled: false,
+            steps_completed: vec![1, 2, 3, 4, 5, 6, 7],
+            ..Default::default()
+        };
+        config.council.disabled = Some(true);
+        config.memory.recall_shortcut = false;
+        std::fs::write(
+            home.join("freedom.yaml"),
+            serde_yaml::to_string(&config).expect("serialize consent fixture config"),
+        )
+        .expect("write consent fixture config");
+    }
+
+    #[tokio::test]
+    async fn request_bound_consent_proofs_accept_real_ready_and_interactive_mints() {
+        let descriptor_digest = "a".repeat(64);
+
+        let ready_home = tempfile::tempdir().expect("ready fixture home");
+        write_consent_fixture_config(ready_home.path());
+        crate::consent::prepare_grant_routes(
+            ready_home.path(),
+            &[crate::consent::ConsentRoute::new(
+                crate::cli::init::ProviderKind::ClaudeCli,
+                None,
+            )],
+        )
+        .expect("prepare ready consent")
+        .commit()
+        .expect("commit ready consent");
+        let ready_proof =
+            crate::cli::consent_challenge::mint_ready_request_bound_gui_chat_consent(
+                ready_home.path(),
+                &descriptor_digest,
+                "ready-daemon-challenge",
+                "ready-session",
+                crate::time::now_unix_secs(),
+            )
+            .expect("mint ready request-bound proof");
+        validate_consent_proof(&GuiChatConsentProof(ready_proof.to_string()))
+            .expect("ready producer proof matches the wire grammar");
+
+        let interactive_home = tempfile::tempdir().expect("interactive fixture home");
+        write_consent_fixture_config(interactive_home.path());
+        let challenge = match crate::cli::consent_challenge::create_core_gui_chat_consent_preflight(
+            interactive_home.path(),
+            crate::time::now_unix_secs(),
+        )
+        .expect("create interactive consent preflight")
+        {
+            crate::cli::consent_challenge::CoreGuiChatConsentPreflight::ConfirmationRequired {
+                challenge_token,
+                ..
+            } => challenge_token,
+            crate::cli::consent_challenge::CoreGuiChatConsentPreflight::Ready => {
+                panic!("ungranted fixture unexpectedly ready")
+            }
+        };
+        let interactive_proof =
+            crate::cli::consent_challenge::decide_request_bound_gui_chat_consent(
+                interactive_home.path(),
+                challenge.as_str(),
+                &descriptor_digest,
+                "interactive-session",
+                crate::cli::consent_challenge::ChatConsentDecision::AllowOnce,
+            )
+            .await
+            .expect("decide interactive request-bound consent")
+            .expect("allow-once produces a request-bound proof");
+        validate_consent_proof(&GuiChatConsentProof(interactive_proof.to_string()))
+            .expect("interactive producer proof matches the wire grammar");
+    }
+
+    #[test]
+    fn request_bound_consent_proof_rejects_noncanonical_and_oversized_shapes() {
+        let canonical =
+            "018f1234-5678-7abc-8def-0123456789ab.".to_owned() + &"a".repeat(64);
+        validate_consent_proof(&GuiChatConsentProof(canonical.clone()))
+            .expect("canonical request-bound proof");
+
+        for malformed in [
+            canonical.to_uppercase(),
+            canonical.replacen('.', "", 1),
+            format!("{canonical}.extra"),
+            format!("{}g", &canonical[..canonical.len() - 1]),
+            canonical[..canonical.len() - 1].to_owned(),
+            "x".repeat(GUI_CHAT_OPAQUE_CAPABILITY_MAX_BYTES + 1),
+        ] {
+            assert!(validate_consent_proof(&GuiChatConsentProof(malformed)).is_err());
+        }
+
+        let deny_with_proof = GuiChatConsentDecisionRequest {
+            schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+            expected_boot_id: "boot-a".into(),
+            preflight_id: GuiChatOpaqueCapability("preflight-capability".into()),
+            preflight_descriptor_digest: digest('a'),
+            consent_challenge: GuiChatOpaqueCapability("challenge-capability".into()),
+            decision: GuiChatConsentDecision::Deny,
+            consent_proof: Some(GuiChatConsentProof(canonical)),
+        };
+        assert!(matches!(
+            validate_decide_request(&deny_with_proof),
+            Err(GuiChatProtocolError::Invalid("deny_must_not_supply_proof"))
+        ));
     }
 
     #[test]

@@ -285,6 +285,98 @@ List authoritative durable Pending and Indeterminate revocation requests
 
 Summarize the versioned membership-authority snapshot
 
+#### `neoth buddy cluster task-delegate`
+
+Manage task-delegation authority through the canonical cluster command
+
+##### `neoth buddy cluster task-delegate outbound-dispatch`
+
+Ask the live authenticated daemon to dispatch exactly one outbound delegated task. There is intentionally no offline approximation
+
+- `--operation-id <OPERATION_ID>`
+- `--task-id <TASK_ID>`
+- `--prompt <PROMPT>`
+- `--model-hint <MODEL_HINT>`
+- `--skill <SKILL>`
+- `--channel <CHANNEL>`
+- `--account <ACCOUNT>`
+
+##### `neoth buddy cluster task-delegate outbound-reset`
+
+CAS-reset one outbound route to a durable deny tombstone
+
+- `<PEER_KEY>`
+- `--skill <SKILL>`
+- `--channel <CHANNEL>`
+- `--account <ACCOUNT>`
+- `--priority <PRIORITY>`
+- `--expected-revision <EXPECTED_REVISION>`
+
+##### `neoth buddy cluster task-delegate outbound-set`
+
+CAS one exact outbound route. This changes only local durable authority; daemon dispatch remains a separate live operation
+
+- `<PEER_KEY>`
+- `--skill <SKILL>`
+- `--channel <CHANNEL>`
+- `--account <ACCOUNT>`
+- `--allowed <ALLOWED>`
+- `--priority <PRIORITY>`
+- `--expected-revision <EXPECTED_REVISION>`
+
+##### `neoth buddy cluster task-delegate outbound-show`
+
+Read one exact operator-owned outbound delegation route
+
+- `<PEER_KEY>`
+- `--skill <SKILL>`
+- `--channel <CHANNEL>`
+- `--account <ACCOUNT>`
+
+##### `neoth buddy cluster task-delegate scope-reset`
+
+CAS-reset an exact scoped authority to denied while retaining its revision tombstone; reset never re-opens a broad permission
+
+- `<PEER_KEY>`
+- `--skill <SKILL>`
+- `--channel <CHANNEL>`
+- `--account <ACCOUNT>`
+- `--expected-revision <EXPECTED_REVISION>`
+
+##### `neoth buddy cluster task-delegate scope-set`
+
+CAS one exact scoped authority. Scoped requests default-deny unless this exact tuple is present and allowed
+
+- `<PEER_KEY>`
+- `--skill <SKILL>`
+- `--channel <CHANNEL>`
+- `--account <ACCOUNT>`
+- `--allowed <ALLOWED>`
+- `--expected-revision <EXPECTED_REVISION>`
+
+##### `neoth buddy cluster task-delegate scope-show`
+
+Read one exact scoped skill/channel/account authority for a peer
+
+- `<PEER_KEY>`
+- `--skill <SKILL>`
+- `--channel <CHANNEL>`
+- `--account <ACCOUNT>`
+
+##### `neoth buddy cluster task-delegate set`
+
+Compare-and-set one exact peer's delegation assignment. Use revision 0 for an as-yet unassigned active peer; read the returned revision before a later change or revocation
+
+- `<PEER_PK>`
+- `--allowed <ALLOWED>`
+- `--expected-revision <REVISION>`
+
+##### `neoth buddy cluster task-delegate show`
+
+Read one exact peer's durable delegation assignment
+
+- `<PEER_PK>`
+
 ### `neoth buddy embedding`
 
 Inspect or explicitly operate the selected local embedding model using the same lifecycle owner as `neoth models embedding`. `--config` binds the operation to that exact instance home

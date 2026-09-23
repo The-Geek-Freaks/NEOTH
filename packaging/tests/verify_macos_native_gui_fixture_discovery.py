@@ -30,6 +30,8 @@ CUSTOM_TESTS = frozenset(
         "w58_gui_callback_runtime_tests::w167_daemon_recall_chip_batch_projects_current_surface_and_fences_terminals",
         "w58_gui_callback_runtime_tests::w168_daemon_throughput_state_projects_main_and_buddy_then_fences_boundaries",
         "w58_gui_callback_runtime_tests::w480_real_producer_post_provider_outcomes_replay_through_main_and_buddy",
+        "w58_gui_callback_runtime_tests::p118_gui_callbacks_cancel_real_bootstrap_without_replay",
+        "w58_gui_callback_runtime_tests::p118_projection_freezes_after_hosted_bootstrap_loss_without_replay",
         "w58_gui_callback_runtime_tests::w164_response_feedback_callback_requires_post_done_target_and_verified_readback",
         "w58_gui_callback_runtime_tests::w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback",
         "w58_gui_callback_runtime_tests::w185_local_model_callbacks_require_typed_ack_and_fresh_readback",

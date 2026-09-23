@@ -21480,19 +21480,41 @@ template = "[REDACTED]"
         )
         .await
         .expect("replacement streaming run");
-        let visible = output
-            .0
-            .iter()
-            .filter_map(|event| match event {
-                ChatTurnEvent::Output(ChatOutput::ProviderDelta { text, .. }) => {
-                    Some(text.as_str())
+        let expected_body = "first ordinary chunk; [REDACTED]; third ordinary chunk";
+        let mut provider_deltas = Vec::new();
+        let mut provider_done = Vec::new();
+        for event in &output.0 {
+            let ChatTurnEvent::Output(ChatOutput::StreamFrames { frames }) = event else {
+                continue;
+            };
+            for line in frames.lines().filter(|line| !line.trim().is_empty()) {
+                let frame: serde_json::Value =
+                    serde_json::from_str(line).expect("decode W458 deferred stream frame");
+                match frame["neoth_stream"].as_str() {
+                    Some("provider_delta") => provider_deltas.push(frame),
+                    Some("provider_done") => provider_done.push(frame),
+                    _ => {}
                 }
-                _ => None,
-            })
-            .collect::<Vec<_>>();
+            }
+        }
         assert_eq!(
-            visible,
-            ["first ordinary chunk; [REDACTED]; third ordinary chunk"]
+            provider_deltas.len(),
+            1,
+            "Replace exposes one accepted logical provider delta through the deferred stream frame"
+        );
+        assert_eq!(provider_deltas[0]["sequence"], 1);
+        assert_eq!(provider_deltas[0]["text"], expected_body);
+        let expected_hash = stream_content_hash(expected_body);
+        assert_eq!(
+            provider_done.len(),
+            1,
+            "Replace exposes one provider boundary for the accepted body"
+        );
+        assert_eq!(provider_done[0]["count"], 1);
+        assert_eq!(provider_done[0]["content_hash"], expected_hash);
+        assert!(
+            provider_done[0].get("text").is_none(),
+            "the provider boundary remains content-free"
         );
         let done_lines = output
             .0
@@ -21508,7 +21530,6 @@ template = "[REDACTED]"
             "Replace commits exactly one terminal receipt"
         );
         let done: serde_json::Value = serde_json::from_str(done_lines[0]).unwrap();
-        let expected_hash = stream_content_hash(visible[0]);
         assert_eq!(done["count"], 1);
         assert_eq!(done["content_hash"], expected_hash);
         assert_eq!(

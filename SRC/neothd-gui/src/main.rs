@@ -13393,104 +13393,7 @@ fn main() -> Result<()> {
         });
     });
 
-    let weak_wizard_channel = window.as_weak();
-    window.on_wizard_channel_changed(move |enabled| {
-        let Some(w) = weak_wizard_channel.upgrade() else {
-            return;
-        };
-        if w.get_wizard_daemon_operation_in_flight() || !w.get_wizard_daemon_available() {
-            return;
-        }
-        w.set_wizard_daemon_operation_in_flight(true);
-        w.set_status_line("Recording channel choice with the private setup daemon…".into());
-        let weak_completion = w.as_weak();
-        std::thread::spawn(move || {
-            let result = (|| -> Result<()> {
-                let mut slot = wizard_daemon_session().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                let Some(session) = slot.as_mut() else {
-                    anyhow::bail!("setup daemon session request is already active");
-                };
-                let channel = if enabled {
-                    neothd::wizard::recommend::ChannelRecommendation::Telegram
-                } else {
-                    neothd::wizard::recommend::ChannelRecommendation::Cli
-                };
-                session.submit_operator_choice(
-                    neothd::wizard::ipc::WizardIpcMessage::ChannelOverride { channel },
-                )?;
-                Ok(())
-            })();
-            let _ = slint::invoke_from_event_loop(move || {
-                let Some(w) = weak_completion.upgrade() else {
-                    return;
-                };
-                w.set_wizard_daemon_operation_in_flight(false);
-                match result {
-                    Ok(()) => w.set_status_line("Channel choice recorded by the setup daemon.".into()),
-                    Err(error) if error.to_string().contains("request is already active") => {
-                        w.set_status_line("Setup daemon is reporting status; retry the channel choice shortly.".into());
-                    }
-                    Err(error) => {
-                        tracing::error!(error = %error, "GUI wizard channel submission unavailable");
-                        WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
-                        w.set_wizard_daemon_available(false);
-                        w.set_status_line("Setup daemon became unavailable. Reopen NEOTH to reconcile setup before continuing.".into());
-                    }
-                }
-            });
-        });
-    });
-
-    let weak_cancel_setup = window.as_weak();
-    window.on_cancel_clicked(move || {
-        let Some(w) = weak_cancel_setup.upgrade() else {
-            return;
-        };
-        if w.get_wizard_daemon_operation_in_flight() || !w.get_wizard_daemon_available() {
-            return;
-        }
-        w.set_wizard_daemon_operation_in_flight(true);
-        w.set_status_line("Cancelling setup through the private setup daemon…".into());
-        let weak_completion = w.as_weak();
-        std::thread::spawn(move || {
-            let result = (|| -> Result<()> {
-                let mut slot = wizard_daemon_session().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                let Some(session) = slot.as_mut() else {
-                    anyhow::bail!("setup daemon session request is already active");
-                };
-                session.cancel(neothd::wizard::ipc::WizardStepId::Finish)?;
-                Ok(())
-            })();
-            let _ = slint::invoke_from_event_loop(move || {
-                let Some(w) = weak_completion.upgrade() else {
-                    return;
-                };
-                w.set_wizard_daemon_operation_in_flight(false);
-                match result {
-                    Ok(()) => {
-                        WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
-                        w.set_wizard_daemon_available(false);
-                        w.set_status_line(
-                            "Setup cancelled by the daemon. No completion was claimed; reopen NEOTH to resume the retained pending setup."
-                                .into(),
-                        );
-                    }
-                    Err(error) if error.to_string().contains("request is already active") => {
-                        w.set_status_line("Setup daemon is reporting status; retry cancellation shortly.".into());
-                    }
-                    Err(error) => {
-                        tracing::error!(error = %error, "GUI wizard cancellation unavailable");
-                        WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
-                        w.set_wizard_daemon_available(false);
-                        w.set_status_line(
-                            "Setup daemon became unavailable while cancelling. Reopen NEOTH to reconcile its authoritative status."
-                                .into(),
-                        );
-                    }
-                }
-            });
-        });
-    });
+    register_wizard_daemon_callbacks(&window);
 
     let weak = window.as_weak();
     // GUI-REENTRY-PRESET fix: clone the flag into the closure so on_finish_clicked
@@ -19464,6 +19367,107 @@ fn spawn_neothd_plain(bin: &Path) -> std::process::Command {
         .env("NEOTH_LOG", "error");
     suppress_console_window(&mut cmd);
     cmd
+}
+
+fn register_wizard_daemon_callbacks(window: &MainWindow) {
+    let weak_wizard_channel = window.as_weak();
+    window.on_wizard_channel_changed(move |enabled| {
+        let Some(w) = weak_wizard_channel.upgrade() else {
+            return;
+        };
+        if w.get_wizard_daemon_operation_in_flight() || !w.get_wizard_daemon_available() {
+            return;
+        }
+        w.set_wizard_daemon_operation_in_flight(true);
+        w.set_status_line("Recording channel choice with the private setup daemon…".into());
+        let weak_completion = w.as_weak();
+        std::thread::spawn(move || {
+            let result = (|| -> Result<()> {
+                let mut slot = wizard_daemon_session().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                let Some(session) = slot.as_mut() else {
+                    anyhow::bail!("setup daemon session request is already active");
+                };
+                let channel = if enabled {
+                    neothd::wizard::recommend::ChannelRecommendation::Telegram
+                } else {
+                    neothd::wizard::recommend::ChannelRecommendation::Cli
+                };
+                session.submit_operator_choice(
+                    neothd::wizard::ipc::WizardIpcMessage::ChannelOverride { channel },
+                )?;
+                Ok(())
+            })();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(w) = weak_completion.upgrade() else {
+                    return;
+                };
+                w.set_wizard_daemon_operation_in_flight(false);
+                match result {
+                    Ok(()) => w.set_status_line("Channel choice recorded by the setup daemon.".into()),
+                    Err(error) if error.to_string().contains("request is already active") => {
+                        w.set_status_line("Setup daemon is reporting status; retry the channel choice shortly.".into());
+                    }
+                    Err(error) => {
+                        tracing::error!(error = %error, "GUI wizard channel submission unavailable");
+                        WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
+                        w.set_wizard_daemon_available(false);
+                        w.set_status_line("Setup daemon became unavailable. Reopen NEOTH to reconcile setup before continuing.".into());
+                    }
+                }
+            });
+        });
+    });
+
+    let weak_cancel_setup = window.as_weak();
+    window.on_cancel_clicked(move || {
+        let Some(w) = weak_cancel_setup.upgrade() else {
+            return;
+        };
+        if w.get_wizard_daemon_operation_in_flight() || !w.get_wizard_daemon_available() {
+            return;
+        }
+        w.set_wizard_daemon_operation_in_flight(true);
+        w.set_status_line("Cancelling setup through the private setup daemon…".into());
+        let weak_completion = w.as_weak();
+        std::thread::spawn(move || {
+            let result = (|| -> Result<()> {
+                let mut slot = wizard_daemon_session().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                let Some(session) = slot.as_mut() else {
+                    anyhow::bail!("setup daemon session request is already active");
+                };
+                session.cancel(neothd::wizard::ipc::WizardStepId::Finish)?;
+                Ok(())
+            })();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(w) = weak_completion.upgrade() else {
+                    return;
+                };
+                w.set_wizard_daemon_operation_in_flight(false);
+                match result {
+                    Ok(()) => {
+                        WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
+                        w.set_wizard_daemon_available(false);
+                        w.set_status_line(
+                            "Setup cancelled by the daemon. No completion was claimed; reopen NEOTH to resume the retained pending setup."
+                                .into(),
+                        );
+                    }
+                    Err(error) if error.to_string().contains("request is already active") => {
+                        w.set_status_line("Setup daemon is reporting status; retry cancellation shortly.".into());
+                    }
+                    Err(error) => {
+                        tracing::error!(error = %error, "GUI wizard cancellation unavailable");
+                        WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
+                        w.set_wizard_daemon_available(false);
+                        w.set_status_line(
+                            "Setup daemon became unavailable while cancelling. Reopen NEOTH to reconcile its authoritative status."
+                                .into(),
+                        );
+                    }
+                }
+            });
+        });
+    });
 }
 
 fn wizard_daemon_session()
@@ -47524,6 +47528,238 @@ exit 0
     }
 
     #[cfg(not(windows))]
+    fn p118_wait_for_child_exit(child: &mut std::process::Child) -> bool {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => return true,
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Ok(None) | Err(_) => return false,
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    struct P118WizardSessionGuard {
+        frozen_before_install: bool,
+    }
+
+    #[cfg(not(windows))]
+    impl P118WizardSessionGuard {
+        fn install(session: wizard_session_controller::WizardSessionController) -> Self {
+            let frozen_before_install =
+                WIZARD_DAEMON_FROZEN.load(std::sync::atomic::Ordering::Acquire);
+            let mut slot = wizard_daemon_session()
+                .lock()
+                .expect("install exclusive P118 wizard daemon session");
+            assert!(slot.is_none(), "P118 requires an unbound GUI wizard session");
+            *slot = Some(session);
+            WIZARD_DAEMON_FROZEN.store(false, std::sync::atomic::Ordering::Release);
+            Self {
+                frozen_before_install,
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    impl Drop for P118WizardSessionGuard {
+        fn drop(&mut self) {
+            let mut slot = wizard_daemon_session()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let _ = slot.take();
+            WIZARD_DAEMON_FROZEN.store(
+                self.frozen_before_install,
+                std::sync::atomic::Ordering::Release,
+            );
+        }
+    }
+
+    #[cfg(not(windows))]
+    struct P118WizardBootstrapChild(std::sync::Arc<std::sync::Mutex<Option<std::process::Child>>>);
+
+    #[cfg(not(windows))]
+    impl P118WizardBootstrapChild {
+        fn exited(&self) -> bool {
+            let mut child = self.0.lock().expect("inspect P118 bootstrap child");
+            child
+                .as_mut()
+                .and_then(|child| child.try_wait().expect("query P118 bootstrap child"))
+                .is_some()
+        }
+
+        fn terminate(&self) {
+            let mut child = self.0.lock().expect("terminate P118 bootstrap child");
+            let Some(child) = child.as_mut() else {
+                panic!("P118 bootstrap child was never started");
+            };
+            if child.try_wait().expect("query P118 bootstrap child").is_none() {
+                child.kill().expect("terminate owned P118 bootstrap child");
+                assert!(
+                    p118_wait_for_child_exit(child),
+                    "owned P118 bootstrap child did not exit before the bounded deadline"
+                );
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    impl Drop for P118WizardBootstrapChild {
+        fn drop(&mut self) {
+            let Ok(mut child) = self.0.lock() else {
+                return;
+            };
+            let Some(mut child) = child.take() else {
+                return;
+            };
+            if child.try_wait().ok().flatten().is_none() {
+                let _ = child.kill();
+            }
+            let _ = p118_wait_for_child_exit(&mut child);
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn p118_open_hosted_bootstrap(
+        home: &Path,
+        child: &P118WizardBootstrapChild,
+    ) -> wizard_session_controller::WizardSessionController {
+        let bin = which_neothd()
+            .expect("hosted P118 fixture requires the built neoth CLI on PATH");
+        let child_slot = std::sync::Arc::clone(&child.0);
+        wizard_session_controller::WizardSessionController::open_or_start(
+            home,
+            &bin,
+            move |bin, home| {
+                let mut command = spawn_neothd_plain(bin);
+                let spawned = command
+                    .env("NEOTH_HOME", home)
+                    .args(["serve", "--wizard-bootstrap", "--config"])
+                    .arg(home.join("freedom.yaml"))
+                    .spawn()
+                    .context("start hosted P118 wizard bootstrap")?;
+                *child_slot
+                    .lock()
+                    .expect("record owned P118 wizard bootstrap") = Some(spawned);
+                Ok(())
+            },
+        )
+        .expect("bind GUI controller to hosted P118 wizard bootstrap")
+    }
+
+    /// P118 exercises the installed Slint callbacks against the hosted `neoth
+    /// serve --wizard-bootstrap` process. It proves that a channel selection
+    /// is daemon-acknowledged, Cancel reaches the daemon's terminal state and
+    /// drains the listener, and later controls cannot recreate the session.
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn p118_gui_callbacks_cancel_real_bootstrap_without_replay() {
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial P118 GUI callback environment");
+        let fixture = TempDir::new().expect("create P118 GUI bootstrap home");
+        let home = fixture.path().join("home");
+        std::fs::create_dir_all(&home).expect("create P118 NEOTH home");
+        let _home = NeothHomeGuard::install(&home);
+        let _bootstrap_attempt = wizard_session_controller::isolate_bootstrap_attempt_for_test();
+        let child = P118WizardBootstrapChild(std::sync::Arc::new(std::sync::Mutex::new(None)));
+        let session = p118_open_hosted_bootstrap(&home, &child);
+        let _session = P118WizardSessionGuard::install(session);
+
+        let window = MainWindow::new().expect("construct P118 MainWindow");
+        window.set_wizard_daemon_available(true);
+        window.set_wizard_daemon_operation_in_flight(false);
+        register_wizard_daemon_callbacks(&window);
+
+        window.invoke_wizard_channel_changed(true);
+        w153_pump_until(&window, "P118 channel acknowledgement", |window| {
+            !window.get_wizard_daemon_operation_in_flight()
+                && window.get_status_line().as_str()
+                    == "Channel choice recorded by the setup daemon."
+        });
+
+        window.invoke_cancel_clicked();
+        w153_pump_until(&window, "P118 daemon cancellation acknowledgement", |window| {
+            !window.get_wizard_daemon_operation_in_flight()
+                && !window.get_wizard_daemon_available()
+                && window
+                    .get_status_line()
+                    .as_str()
+                    .starts_with("Setup cancelled by the daemon.")
+        });
+        w153_pump_until(&window, "P118 bootstrap listener drain", move |_| child.exited());
+        assert!(
+            neothd::daemon::wizard_ipc::WizardIpcClient::discover(&home).is_err(),
+            "the cancelled bootstrap listener must not remain discoverable for replay",
+        );
+
+        let terminal_status = window.get_status_line().to_string();
+        window.invoke_wizard_channel_changed(false);
+        assert_eq!(window.get_status_line().as_str(), terminal_status);
+        window.invoke_finish_clicked();
+        assert!(!window.get_wizard_daemon_available());
+        assert!(
+            window
+                .get_status_line()
+                .as_str()
+                .contains("must be reconciled"),
+            "a frozen Finish must not reopen or replay the cancelled daemon session"
+        );
+        assert!(
+            WIZARD_DAEMON_FROZEN.load(std::sync::atomic::Ordering::Acquire),
+            "terminal cancellation freezes later GUI mutations for this boot"
+        );
+    }
+
+    /// P118's watcher owns no mutation retry. Losing the exact hosted daemon
+    /// freezes the visible controls; a later Finish only asks the operator to
+    /// reopen NEOTH and cannot recreate the missing bootstrap process.
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn p118_projection_freezes_after_hosted_bootstrap_loss_without_replay() {
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial P118 daemon-loss environment");
+        let fixture = TempDir::new().expect("create P118 daemon-loss home");
+        let home = fixture.path().join("home");
+        std::fs::create_dir_all(&home).expect("create P118 daemon-loss NEOTH home");
+        let _home = NeothHomeGuard::install(&home);
+        let _bootstrap_attempt = wizard_session_controller::isolate_bootstrap_attempt_for_test();
+        let child = P118WizardBootstrapChild(std::sync::Arc::new(std::sync::Mutex::new(None)));
+        let _session = P118WizardSessionGuard::install(p118_open_hosted_bootstrap(&home, &child));
+        let window = MainWindow::new().expect("construct P118 daemon-loss MainWindow");
+        window.set_wizard_daemon_available(true);
+        start_wizard_session_projection(window.as_weak());
+
+        child.terminate();
+        w153_pump_until(&window, "P118 daemon-loss projection", |window| {
+            !window.get_wizard_daemon_available()
+                && window
+                    .get_status_line()
+                    .as_str()
+                    .contains("identity changed or became unavailable")
+        });
+        assert!(
+            WIZARD_DAEMON_FROZEN.load(std::sync::atomic::Ordering::Acquire),
+            "daemon loss must freeze this GUI boot"
+        );
+        assert!(
+            neothd::daemon::wizard_ipc::WizardIpcClient::discover(&home).is_err(),
+            "lost daemon endpoint must not remain a replay target",
+        );
+        window.invoke_finish_clicked();
+        assert!(
+            window
+                .get_status_line()
+                .as_str()
+                .contains("must be reconciled"),
+            "Finish after daemon loss must not bootstrap or replay an action"
+        );
+    }
+
+    #[cfg(not(windows))]
     fn w153_pump_until<F>(window: &MainWindow, label: &str, complete: F)
     where
         F: Fn(&MainWindow) -> bool + 'static,
@@ -50854,7 +51090,7 @@ exit 7
     }
 
     #[cfg(target_os = "macos")]
-    const MACOS_NATIVE_HARNESS_TESTS: [&str; 31] = [
+    const MACOS_NATIVE_HARNESS_TESTS: [&str; 33] = [
         "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
         "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
         "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
@@ -50882,6 +51118,8 @@ exit 7
         "w58_gui_callback_runtime_tests::w185_local_model_callbacks_require_typed_ack_and_fresh_readback",
         "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe",
         "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good",
+        "w58_gui_callback_runtime_tests::p118_gui_callbacks_cancel_real_bootstrap_without_replay",
+        "w58_gui_callback_runtime_tests::p118_projection_freezes_after_hosted_bootstrap_loss_without_replay",
         "w58_gui_callback_runtime_tests::w233_task_delegate_set_owns_busy_across_edits_and_fences_stale_completion",
         "w58_gui_callback_runtime_tests::w233_invalid_fresh_readback_keeps_committed_receipt_and_fences_mutation",
         "w58_gui_callback_runtime_tests::w233_task_delegate_callback_fixture_covers_conflict_receipt_and_newer_readback",
@@ -51022,6 +51260,12 @@ exit 7
                     }
                     "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good" => {
                         w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good()
+                    }
+                    "w58_gui_callback_runtime_tests::p118_gui_callbacks_cancel_real_bootstrap_without_replay" => {
+                        p118_gui_callbacks_cancel_real_bootstrap_without_replay()
+                    }
+                    "w58_gui_callback_runtime_tests::p118_projection_freezes_after_hosted_bootstrap_loss_without_replay" => {
+                        p118_projection_freezes_after_hosted_bootstrap_loss_without_replay()
                     }
                     "w58_gui_callback_runtime_tests::w233_task_delegate_set_owns_busy_across_edits_and_fences_stale_completion" => { w233_task_delegate_set_owns_busy_across_edits_and_fences_stale_completion() }
                     "w58_gui_callback_runtime_tests::w233_invalid_fresh_readback_keeps_committed_receipt_and_fences_mutation" => { w233_invalid_fresh_readback_keeps_committed_receipt_and_fences_mutation() }

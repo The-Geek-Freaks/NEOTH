@@ -1,5 +1,7 @@
 # W185 — daemon-owned local model operations
 
+**Functional acceptance (2026-09-23):** W495 verifies33 unique identities and65 exact macOS/Windows test-class terminals with15-path scoped carry. See `docs/gold-wave495-local-model-acceptance.md`. The original source-only W185 notes below are retained as history; P1-19 is now accepted.
+
 GOLD-LF-P1-19 is implemented across the Ollama controller, private same-user
 IPC, daemon lifecycle, `models ollama`, Buddy status and Resources UI. This is
 an independently reviewed implementation with passing Hosted core compilation;

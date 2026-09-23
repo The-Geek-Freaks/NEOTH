@@ -2,7 +2,9 @@
 
 **Version:** 1.1
 **Last-Updated:** 2026-05-16
-**Implementation-Status:** PARTIAL — Schicht-0 detector + WAL band 0x16/0x17/0x18/0x1A SHIPPED 2026-05-15 at `SRC/neothd/src/security/refusal_detect.rs` + `cli/refusal.rs`. Stages 2-6 (Right-hemisphere structural analysis, Corpus-Callosum synthesis, Left-hemisphere relay, persistent-refusal guard) DEFERRED — see SPEC_refusal_recovery.md for the recovery-orchestration scope.
+**Current functional status (2026-09-23): ACCEPTED for GOLD-LF-P1-02.** Stages 2-6 pass14 source-bound hosted pipeline/chat/prepared-turn cases; scoped carry and limits are recorded in `docs/verification/gold-wave498-p102-acceptance.json`. The dated implementation note below describes the May baseline, not current shipping status.
+
+**Historical implementation status (2026-05-15):** PARTIAL — Schicht-0 detector + WAL band 0x16/0x17/0x18/0x1A SHIPPED 2026-05-15 at `SRC/neothd/src/security/refusal_detect.rs` + `cli/refusal.rs`. Stages 2-6 (Right-hemisphere structural analysis, Corpus-Callosum synthesis, Left-hemisphere relay, persistent-refusal guard) DEFERRED — see SPEC_refusal_recovery.md for the recovery-orchestration scope.
 **Framework-Basis:** Tool-Framework v4.1 (Teil B.5 / C.1)
 **Referenz-Designs:** `00_DESIGN_v0.4.md §1.3`, Framework E.2 Mirror Tool, Framework G.6 Refusal-Umgehung
 

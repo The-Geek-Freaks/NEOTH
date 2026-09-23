@@ -1,0 +1,107 @@
+{
+  "schema": "neoth-functional-acceptance/v1",
+  "roadItem": "GOLD-LF-P1-02",
+  "verdict": "ACCEPTED_FUNCTIONAL",
+  "source": "3de1cfe2536f7fa6141ab3901cd2023d4224a114",
+  "acceptedSource": "2636215c54a0127dfc8bce5990f979542fc7deff",
+  "run": 35914415313,
+  "groupAdmission": {
+    "executed": 888,
+    "sha256": "0700362315198D574F10B8DFF6BAFAB86AA2F97803F82153FF539199C35B7FB3",
+    "path": "work/gold-20260906/wave487-hosted-results/group888/ADMISSION.json",
+    "bindings": 176,
+    "passed": 884,
+    "failed": 4
+  },
+  "selection": {
+    "required": 14,
+    "passed": 14
+  },
+  "criteria": [
+    "Right structural analysis and typed Cerebellum synthesis",
+    "Strict terminal template fallback and verbatim relay",
+    "Same-session WAL before output and original refusal preserved on WAL error",
+    "Shared budget, absolute deadline, cancellation and repeat-attempt refusal",
+    "No downstream recovery or local-shadow bypass after a terminal mirror"
+  ],
+  "terminals": [
+    {
+      "test": "security::mirror_refusal_pipeline::tests::usable_right_and_cerebellum_relay_the_mirror_verbatim",
+      "status": "passed"
+    },
+    {
+      "test": "security::mirror_refusal_pipeline::tests::right_refusal_uses_template_without_callosum_or_cascade",
+      "status": "passed"
+    },
+    {
+      "test": "security::mirror_refusal_pipeline::tests::exhausted_budget_and_second_admission_make_no_provider_calls",
+      "status": "passed"
+    },
+    {
+      "test": "security::mirror_refusal_pipeline::tests::prompts_fence_untrusted_request_and_forbid_reframing",
+      "status": "passed"
+    },
+    {
+      "test": "security::mirror_refusal_pipeline::tests::malformed_or_operational_synthesis_never_reaches_visible_output",
+      "status": "passed"
+    },
+    {
+      "test": "security::mirror_refusal_pipeline::tests::cancelled_turn_never_dispatches_pending_provider",
+      "status": "passed"
+    },
+    {
+      "test": "security::mirror_refusal_pipeline::tests::absolute_deadline_aborts_a_pending_right_provider",
+      "status": "passed"
+    },
+    {
+      "test": "security::mirror_refusal_pipeline::tests::minimal_leaf_request_preserves_sampling_without_operator_context",
+      "status": "passed"
+    },
+    {
+      "test": "cli::chat::tests::chat_hard_block_is_terminal_when_recovery_is_disabled",
+      "status": "passed"
+    },
+    {
+      "test": "cli::chat::tests::chat_budget_exhausted_refusal_is_terminally_mirrored",
+      "status": "passed"
+    },
+    {
+      "test": "cli::chat_turn_pipeline::tests::prepared_turn_terminal_mirror_preserves_seeded_context_before_final_receipt_and_terminal",
+      "status": "passed"
+    },
+    {
+      "test": "cli::chat_turn_pipeline::tests::prepared_turn_terminal_mirror_blocks_retry_and_local_shadow_after_authorized_snapshot",
+      "status": "passed"
+    },
+    {
+      "test": "cli::chat_turn_pipeline::tests::prepared_turn_terminal_mirror_blocks_truthful_refusal_and_local_shadow_final_result",
+      "status": "passed"
+    },
+    {
+      "test": "cli::chat_turn_pipeline::tests::prepared_streaming_terminal_mirror_reports_finalization_error_when_final_binding_append_fails",
+      "status": "passed"
+    }
+  ],
+  "sourceCarry": [
+    {
+      "path": "SRC/neothd/src/security/mirror_refusal_pipeline.rs",
+      "sourceBlob": "35816a2e612cea0c41cf6fff6160679bbd95da7c",
+      "acceptedBlob": "35816a2e612cea0c41cf6fff6160679bbd95da7c",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "sourceBlob": "cf104da0a4c7246d40c7fe32cff4d71fa952ada0",
+      "acceptedBlob": "cf104da0a4c7246d40c7fe32cff4d71fa952ada0",
+      "reason": "exact"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "sourceBlob": "4d68de8b4716c7afbd43873ee8e5d5e4c51ad1db",
+      "acceptedBlob": "71e330e71aa8ac040be56ffbaef44f6c13322806",
+      "reason": "Only unrelated W458 post-provider regression test changed; mirror production and tests unchanged"
+    }
+  ],
+  "limitations": "Functional acceptance with actual fixture providers; not a live-provider/full-release qualification. Four unrelated Group888 failures remain separate.",
+  "localExecutableValidationRan": false
+}
