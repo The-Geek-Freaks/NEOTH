@@ -19,6 +19,7 @@
 //! complete generation on its next tick).
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -26,7 +27,7 @@ use clap::{Args, Subcommand, ValueEnum};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::config::inference::InferenceProvider;
+use crate::config::inference::{HemisphereRole, InferenceProvider};
 use crate::cron::schema::{
     Delivery, DeliveryMode, ExecutionPolicy, Job, JobsFile, ProviderTarget, Schedule,
     classify_role, preflight, schedule_collides,
@@ -1055,6 +1056,7 @@ async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Resul
         .await
         .context("construct the provider chain for the job")?;
     let default_model = crate::providers::provider_default_wire_model(provider.as_ref());
+    let left_provider = manual_cron_left_provider(&config)?;
 
     // One-shot WAL writer (daemon confirmed not live above). It owns a unique
     // namespace so stale pidfile detection can never create a dual appender.
@@ -1065,8 +1067,7 @@ async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Resul
     let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.clone())
         .context("open a one-shot WAL writer")?;
 
-    let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
-        provider,
+    let authorizer = bind_manual_cron_left_authorizer(
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
             config.autonomy_policy(),
             Some(writer.clone()),
@@ -1074,6 +1075,12 @@ async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Resul
         )
         .with_usage_home(home.clone())
         .with_usage_automated(true),
+        &config,
+        left_provider,
+    );
+    let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+        provider,
+        authorizer,
         default_model,
         "cron.manual_run",
     );
@@ -1126,6 +1133,27 @@ async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Resul
         anyhow::bail!("job `{}` did not complete successfully", job.id);
     }
     Ok(())
+}
+
+/// The standalone manual command constructs its default fallback chain through
+/// the canonical Left factory. Bind that retained origin at the final provider
+/// boundary. Jobs with explicit execution intent are still rebuilt and bound
+/// by `cron::runner`; this helper never changes their role or override rules.
+fn manual_cron_left_provider(config: &FreedomConfig) -> Result<InferenceProvider> {
+    config
+        .inference
+        .slot_for(HemisphereRole::Left)
+        .provider
+        .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
+        .ok_or_else(|| anyhow::anyhow!("manual Cron Left fallback chain has no configured provider identity"))
+}
+
+fn bind_manual_cron_left_authorizer(
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
+    config: &FreedomConfig,
+    left_provider: InferenceProvider,
+) -> crate::providers::cost_authorization::ProviderCallAuthorizer {
+    authorizer.with_role_dispatch(HemisphereRole::Left, left_provider, Arc::new(config.clone()))
 }
 
 /// `neoth cron status` — per-CronRole count summary. JV-PRO-05.
@@ -1201,6 +1229,108 @@ fn cron_status(by_role: bool, file: Option<PathBuf>, output: OutputFormat) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use crate::config::role_policy::{RolePolicyConfig, RolePolicyRule};
+    use crate::providers::cost_authorization::{AuthorizedProvider, ProviderCallAuthorizer};
+    use crate::providers::{Completion, CompletionIdentity, Provider, ProviderDispatchPermit, Request};
+
+    struct W302CronLeaf {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for W302CronLeaf {
+        fn name(&self) -> &'static str {
+            "openai_api"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("w302-cron-allowed")
+        }
+
+        async fn complete_raw(
+            &self,
+            _request: Request,
+            _permit: &ProviderDispatchPermit,
+        ) -> Result<Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Completion {
+                text: "manual cron leaf".to_owned(),
+                identity: CompletionIdentity::default(),
+                model: "w302-cron-allowed".to_owned(),
+                ..Completion::default()
+            })
+        }
+    }
+
+    fn w302_cron_config(policy_model: &str) -> FreedomConfig {
+        let mut config = FreedomConfig::default();
+        config.inference.default_slot.provider = Some(InferenceProvider::OpenAi);
+        config.inference.default_slot.model = Some(policy_model.to_owned());
+        config.inference.role_policy = Some(RolePolicyConfig {
+            rules: vec![RolePolicyRule {
+                role: HemisphereRole::Left,
+                provider: InferenceProvider::OpenAi,
+                model: Some(policy_model.to_owned()),
+            }],
+        });
+        config
+    }
+
+    fn w302_cron_provider_requests(segment: &std::path::Path) -> usize {
+        let bytes = std::fs::read(segment).expect("read W302 Cron WAL");
+        let mut count = 0;
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST {
+                let payload: serde_json::Value =
+                    serde_json::from_slice(frame.payload).expect("decode W302 Cron request");
+                assert_eq!(payload["hemisphere_role"], "left");
+                assert_eq!(payload["hemisphere_provider"], "openai_api");
+                count += 1;
+            }
+            Ok(())
+        })
+        .expect("scan W302 Cron WAL");
+        count
+    }
+
+    #[tokio::test]
+    async fn w302_manual_cron_left_binding_allows_and_denies_before_raw_leaf() {
+        for (policy_model, expected_calls) in [("w302-cron-allowed", 1usize), ("denied", 0)] {
+            let dir = tempfile::tempdir().expect("create W302 Cron home");
+            let segment = dir.path().join(format!("{policy_model}.wal"));
+            let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("spawn W302 Cron WAL");
+            let config = w302_cron_config(policy_model);
+            let calls = Arc::new(AtomicUsize::new(0));
+            let raw = Arc::new(W302CronLeaf {
+                calls: Arc::clone(&calls),
+            });
+            let authorizer = bind_manual_cron_left_authorizer(
+                ProviderCallAuthorizer::fail_closed(
+                    crate::permissions::AutonomyLevel::Full,
+                    Some(writer.clone()),
+                    config.tokens.max_per_request,
+                ),
+                &config,
+                manual_cron_left_provider(&config).expect("configured Left provider"),
+            );
+            let provider = AuthorizedProvider::from_arc(
+                raw,
+                authorizer,
+                Some("w302-cron-allowed".to_owned()),
+                "cron.w302.manual",
+            );
+            let result = provider.complete(Request::default()).await;
+            assert_eq!(result.is_ok(), expected_calls == 1);
+            assert_eq!(calls.load(Ordering::SeqCst), expected_calls);
+            drop(provider);
+            drop(writer);
+            join.await.expect("drain W302 Cron WAL");
+            assert_eq!(w302_cron_provider_requests(&segment), expected_calls);
+        }
+    }
 
     #[test]
     fn jobs_path_defaults_under_neoth_home() {

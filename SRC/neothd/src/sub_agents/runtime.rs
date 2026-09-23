@@ -759,6 +759,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+    use crate::config::inference::{HemisphereRole, InferenceProvider};
+    use crate::config::role_policy::{RolePolicyConfig, RolePolicyRule};
     use crate::providers::cost_authorization::{AuthorizedProvider, ProviderCallAuthorizer};
     use crate::providers::{CompletionIdentity, ProviderDispatchPermit, ProviderRequestControls};
     use crate::sub_agents::parallel::dispatch_parallel;
@@ -801,6 +803,74 @@ mod tests {
         always_fail: bool,
         fail_qa: bool,
         fail_primary_system: Option<String>,
+    }
+
+    struct W296QuotaProvider {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for W296QuotaProvider {
+        fn name(&self) -> &'static str {
+            "openai_api"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("wire-model-v1")
+        }
+
+        async fn complete_raw(
+            &self,
+            _req: Request,
+            _permit: &ProviderDispatchPermit,
+        ) -> Result<Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(anyhow::Error::new(crate::providers::quota::QuotaError {
+                provider: self.name(),
+                retry_after: None,
+                body: "W296 synthetic 429".to_owned(),
+            }))
+        }
+    }
+
+    struct W296FallbackProvider {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for W296FallbackProvider {
+        fn name(&self) -> &'static str {
+            "openai_api"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("wire-model-v1")
+        }
+
+        async fn complete_raw(
+            &self,
+            req: Request,
+            _permit: &ProviderDispatchPermit,
+        ) -> Result<Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let is_qa = req
+                .system
+                .as_deref()
+                .is_some_and(|system| system.contains("strict QA verifier"));
+            Ok(Completion {
+                termination: Default::default(),
+                text: if is_qa {
+                    r#"{"kind":"pass","evidence":["candidate addresses task"]}"#.to_owned()
+                } else {
+                    "candidate output".to_owned()
+                },
+                identity: CompletionIdentity::default(),
+                model: "wire-model-v1".to_owned(),
+                input_tokens: Some(10),
+                output_tokens: Some(5),
+                ..Completion::default()
+            })
+        }
     }
 
     #[async_trait::async_trait]
@@ -933,6 +1003,59 @@ mod tests {
             Some("wire-model-v1".into()),
             "sub_agents.test",
         ))
+    }
+
+    fn w296_left_config(policy_provider: InferenceProvider, policy_model: &str) -> FreedomConfig {
+        let mut config = FreedomConfig::default();
+        config.inference.default_slot.provider = Some(InferenceProvider::OpenAi);
+        config.inference.role_policy = Some(RolePolicyConfig {
+            rules: vec![RolePolicyRule {
+                role: HemisphereRole::Left,
+                provider: policy_provider,
+                model: Some(policy_model.to_owned()),
+            }],
+        });
+        config
+    }
+
+    fn w296_authorized_left(
+        raw: Arc<QaScriptProvider>,
+        config: Arc<FreedomConfig>,
+        writer: WalWriterHandle,
+    ) -> Arc<AuthorizedProvider> {
+        let input_token_cap = config.tokens.max_per_request;
+        let binding = crate::cli::agents::fan_out_left_role_binding(config)
+            .expect("W296 fixture has a configured Left identity");
+        Arc::new(AuthorizedProvider::from_arc(
+            raw,
+            crate::cli::agents::bind_fan_out_left_authorizer(
+                ProviderCallAuthorizer::fail_closed(
+                    crate::permissions::AutonomyLevel::Full,
+                    Some(writer),
+                    input_token_cap,
+                ),
+                &binding,
+            ),
+            Some("wire-model-v1".into()),
+            "sub_agents.w296",
+        ))
+    }
+
+    fn w296_left_provider_request_count(segment: &std::path::Path) -> usize {
+        let bytes = std::fs::read(segment).expect("read W296 WAL");
+        let mut count = 0;
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST {
+                let payload: serde_json::Value =
+                    serde_json::from_slice(frame.payload).expect("decode W296 request");
+                assert_eq!(payload["hemisphere_role"], "left");
+                assert_eq!(payload["hemisphere_provider"], "openai_api");
+                count += 1;
+            }
+            Ok(())
+        })
+        .expect("scan W296 WAL");
+        count
     }
 
     fn registry_context(payload: &str) -> crate::pipeline::RenderedUntrustedContext {
@@ -1251,6 +1374,241 @@ mod tests {
             retry_primary.shape.repeated_segment_bytes,
             (expected_request.context.len() + "candidate output".len() + retry.qa_failures.len())
                 as u64
+        );
+    }
+
+    #[tokio::test]
+    async fn w296_left_policy_covers_primary_qa_and_retry_leaf_lifecycles() {
+        let dir = tempfile::tempdir().expect("create W296 retry home");
+        let segment = dir.path().join("w296-primary-qa-retry.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("spawn W296 WAL");
+        let raw = Arc::new(QaScriptProvider {
+            calls: AtomicUsize::new(0),
+            request_models: Mutex::new(Vec::new()),
+            request_systems: Mutex::new(Vec::new()),
+            malformed: false,
+            always_fail: true,
+            fail_qa: false,
+            fail_primary_system: None,
+        });
+        let config = Arc::new(w296_left_config(InferenceProvider::OpenAi, "wire-model-v1"));
+        let worker = Arc::new(ProviderSubAgentWorker::new_without_skill_registry_context(
+            w296_authorized_left(Arc::clone(&raw), config, writer.clone()),
+            [agent("a", "agent")],
+            true,
+            writer.clone(),
+        ));
+
+        let report = dispatch_parallel(worker, vec![request("a", "w296-retry")], Some(1), None)
+            .await
+            .expect("W296 Left policy admits the fan-out leaves");
+        assert_eq!(report.fail_count, 1);
+        assert_eq!(raw.calls.load(Ordering::SeqCst), 4);
+        assert_eq!(
+            report.results[0]
+                .provider_calls
+                .iter()
+                .map(|call| call.stage.as_str())
+                .collect::<Vec<_>>(),
+            ["primary", "qa", "primary", "qa"]
+        );
+        drop(report);
+        drop(writer);
+        join.await.expect("drain W296 retry WAL");
+        assert_eq!(
+            w296_left_provider_request_count(&segment),
+            4,
+            "primary, QA, correction, and correction QA each retain Left in their lifecycle"
+        );
+    }
+
+    #[tokio::test]
+    async fn w296_left_policy_denies_primary_provider_or_model_before_any_leaf_lifecycle() {
+        for (case, policy_provider, policy_model) in [
+            ("provider", InferenceProvider::Gemini, "wire-model-v1"),
+            ("model", InferenceProvider::OpenAi, "w296-other-model"),
+        ] {
+            let dir = tempfile::tempdir().expect("create W296 deny home");
+            let segment = dir.path().join(format!("w296-denied-{case}.wal"));
+            let (writer, join) =
+                crate::wal::writer::spawn(segment.clone()).expect("spawn W296 deny WAL");
+            let raw = Arc::new(QaScriptProvider {
+                calls: AtomicUsize::new(0),
+                request_models: Mutex::new(Vec::new()),
+                request_systems: Mutex::new(Vec::new()),
+                malformed: false,
+                always_fail: true,
+                fail_qa: false,
+                fail_primary_system: None,
+            });
+            let config = Arc::new(w296_left_config(policy_provider, policy_model));
+            let worker = Arc::new(ProviderSubAgentWorker::new_without_skill_registry_context(
+                w296_authorized_left(Arc::clone(&raw), config, writer.clone()),
+                [agent("a", "agent")],
+                true,
+                writer.clone(),
+            ));
+
+            let report = dispatch_parallel(
+                worker,
+                vec![request("a", &format!("w296-denied-{case}"))],
+                Some(1),
+                None,
+            )
+            .await
+            .expect("a denied leaf becomes a bounded blocked sub-agent result");
+            assert_eq!(report.blocked_count, 1, "{case} denial blocks the worker");
+            assert_eq!(
+                raw.calls.load(Ordering::SeqCst),
+                0,
+                "{case} denial precedes primary, QA, and retry raw transport"
+            );
+            drop(report);
+            drop(writer);
+            join.await.expect("drain W296 deny WAL");
+            assert_eq!(
+                w296_left_provider_request_count(&segment),
+                0,
+                "{case} denial cannot mint a provider request lifecycle"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn w296_left_policy_covers_429_fallback_leaf_lifecycles() {
+        let dir = tempfile::tempdir().expect("create W296 fallback home");
+        let segment = dir.path().join("w296-fallback.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("spawn W296 WAL");
+        let quota_calls = Arc::new(AtomicUsize::new(0));
+        let fallback_calls = Arc::new(AtomicUsize::new(0));
+        let chain = crate::providers::fallback::FallbackProvider::new_with_models_at(
+            vec![
+                Box::new(W296QuotaProvider {
+                    calls: Arc::clone(&quota_calls),
+                }),
+                Box::new(W296FallbackProvider {
+                    calls: Arc::clone(&fallback_calls),
+                }),
+            ],
+            vec![Some("wire-model-v1".to_owned()), Some("wire-model-v1".to_owned())],
+            1,
+            None,
+            dir.path().join("quota.json"),
+        );
+        let config = Arc::new(w296_left_config(InferenceProvider::OpenAi, "wire-model-v1"));
+        let input_token_cap = config.tokens.max_per_request;
+        let binding = crate::cli::agents::fan_out_left_role_binding(config)
+            .expect("W296 fixture has a configured Left identity");
+        let provider = Arc::new(AuthorizedProvider::from_box(
+            Box::new(chain),
+            crate::cli::agents::bind_fan_out_left_authorizer(
+                ProviderCallAuthorizer::fail_closed(
+                    crate::permissions::AutonomyLevel::Full,
+                    Some(writer.clone()),
+                    input_token_cap,
+                ),
+                &binding,
+            ),
+            Some("wire-model-v1".into()),
+            "sub_agents.w296.fallback",
+        ));
+        let worker = Arc::new(ProviderSubAgentWorker::new_without_skill_registry_context(
+            provider,
+            [agent("a", "agent")],
+            false,
+            writer.clone(),
+        ));
+
+        let report = dispatch_parallel(worker, vec![request("a", "w296-fallback")], Some(1), None)
+            .await
+            .expect("W296 fallback fan-out completes");
+        assert_eq!(report.pass_count, 1);
+        assert_eq!(quota_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(fallback_calls.load(Ordering::SeqCst), 2);
+        drop(report);
+        drop(writer);
+        join.await.expect("drain W296 fallback WAL");
+        assert_eq!(
+            w296_left_provider_request_count(&segment),
+            4,
+            "both primary and QA preserve Left across their 429 and fallback leaves"
+        );
+    }
+
+    #[tokio::test]
+    async fn w296_left_policy_allows_429_primary_then_denies_fallback_model_before_transport() {
+        let dir = tempfile::tempdir().expect("create W296 denied fallback home");
+        let segment = dir.path().join("w296-fallback-model-denied.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("spawn W296 WAL");
+        let quota_calls = Arc::new(AtomicUsize::new(0));
+        let fallback_calls = Arc::new(AtomicUsize::new(0));
+        let chain = crate::providers::fallback::FallbackProvider::new_with_models_at(
+            vec![
+                Box::new(W296QuotaProvider {
+                    calls: Arc::clone(&quota_calls),
+                }),
+                Box::new(W296FallbackProvider {
+                    calls: Arc::clone(&fallback_calls),
+                }),
+            ],
+            vec![
+                Some("wire-model-v1".to_owned()),
+                Some("w296-disallowed-fallback-model".to_owned()),
+            ],
+            1,
+            None,
+            dir.path().join("quota.json"),
+        );
+        let config = Arc::new(w296_left_config(InferenceProvider::OpenAi, "wire-model-v1"));
+        let input_token_cap = config.tokens.max_per_request;
+        let binding = crate::cli::agents::fan_out_left_role_binding(config)
+            .expect("W296 fixture has a configured Left identity");
+        let provider = Arc::new(AuthorizedProvider::from_box(
+            Box::new(chain),
+            crate::cli::agents::bind_fan_out_left_authorizer(
+                ProviderCallAuthorizer::fail_closed(
+                    crate::permissions::AutonomyLevel::Full,
+                    Some(writer.clone()),
+                    input_token_cap,
+                ),
+                &binding,
+            ),
+            Some("wire-model-v1".into()),
+            "sub_agents.w296.fallback_model_denied",
+        ));
+        let worker = Arc::new(ProviderSubAgentWorker::new_without_skill_registry_context(
+            provider,
+            [agent("a", "agent")],
+            false,
+            writer.clone(),
+        ));
+
+        let report = dispatch_parallel(
+            worker,
+            vec![request("a", "w296-fallback-model-denied")],
+            Some(1),
+            None,
+        )
+        .await
+        .expect("denied fallback becomes a bounded blocked sub-agent result");
+        assert_eq!(report.blocked_count, 1);
+        assert_eq!(
+            quota_calls.load(Ordering::SeqCst),
+            1,
+            "the admitted primary 429 is the only raw transport effect"
+        );
+        assert_eq!(
+            fallback_calls.load(Ordering::SeqCst),
+            0,
+            "the disallowed fallback model cannot reach raw transport"
+        );
+        drop(report);
+        drop(writer);
+        join.await.expect("drain W296 denied fallback WAL");
+        assert_eq!(
+            w296_left_provider_request_count(&segment),
+            1,
+            "only the allowed primary leaf gets a provider request lifecycle"
         );
     }
 

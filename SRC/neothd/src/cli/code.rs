@@ -1074,14 +1074,25 @@ async fn build_worker_set(
                 // may still contain an alias or provider shorthand.
                 let default_model = providers::provider_default_wire_model(p.as_ref());
                 let model_name = default_model.clone().unwrap_or_default();
+                let authorizer = providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                    cfg.autonomy_policy(),
+                    wal_writer.as_ref().map(|writer| writer.as_ref().clone()),
+                    cfg.tokens.max_per_request,
+                );
+                let authorizer = match coding_role_authorizer(authorizer, cfg, role) {
+                    Ok(authorizer) => authorizer,
+                    Err(error) => {
+                        eprintln!(
+                            "⚠  dispatch: {hemi} unbound — {error}. Tasks on this hemisphere will block.",
+                            hemi = hemi.as_str()
+                        );
+                        continue;
+                    }
+                };
                 let provider =
                     Arc::new(providers::cost_authorization::AuthorizedProvider::from_box(
                         p,
-                        providers::cost_authorization::ProviderCallAuthorizer::interactive(
-                            cfg.autonomy_policy(),
-                            wal_writer.as_ref().map(|writer| writer.as_ref().clone()),
-                            cfg.tokens.max_per_request,
-                        ),
+                        authorizer,
                         default_model,
                         "coding.worker",
                     ));
@@ -1104,6 +1115,22 @@ async fn build_worker_set(
         }
     }
     workers
+}
+
+/// Bind the role already selected by the resume worker factory.  The command
+/// owns one fixed configuration snapshot and intentionally has no live reload.
+fn coding_role_authorizer(
+    authorizer: providers::cost_authorization::ProviderCallAuthorizer,
+    config: &FreedomConfig,
+    role: HemisphereRole,
+) -> Result<providers::cost_authorization::ProviderCallAuthorizer> {
+    let provider = config
+        .inference
+        .slot_for(role)
+        .provider
+        .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
+        .ok_or_else(|| anyhow::anyhow!("coding role `{}` has no configured provider identity", role.as_str()))?;
+    Ok(authorizer.with_role_dispatch(role, provider, std::sync::Arc::new(config.clone())))
 }
 
 /// QU-10b / SP-A1 — `neoth code --run-pending`. Build the worker set, then
@@ -1508,8 +1535,88 @@ fn validate_apply_has_dispatch_path(apply: bool, dispatch: bool, run_pending: bo
 mod tests {
     use super::*;
     use crate::code_map::graph::EdgeKind;
+    use crate::config::inference::InferenceProvider;
+    use crate::config::role_policy::{RolePolicyConfig, RolePolicyRule};
+    use crate::permissions::AutonomyLevel;
+    use crate::providers::{Completion, Provider, Request};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
+
+    struct RoleCountingProvider(Arc<AtomicUsize>);
+
+    #[async_trait::async_trait]
+    impl Provider for RoleCountingProvider {
+        fn name(&self) -> &'static str {
+            "local_ollama"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("w300-right")
+        }
+
+        fn output_token_ceiling(&self, _: &Request) -> Option<u32> {
+            Some(64)
+        }
+
+        async fn complete(&self, request: Request) -> Result<Completion> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(Completion {
+                text: "worker".to_owned(),
+                model: request.model.unwrap_or_default(),
+                ..Completion::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn resume_worker_role_binding_allows_selected_right_and_denies_mismatch_before_transport() {
+        let mut allowed_config = FreedomConfig::default();
+        allowed_config.inference.right.provider = Some(InferenceProvider::LocalOllama);
+        allowed_config.inference.role_policy = Some(RolePolicyConfig {
+            rules: vec![RolePolicyRule {
+                role: HemisphereRole::Right,
+                provider: InferenceProvider::LocalOllama,
+                model: Some("w300-right".to_owned()),
+            }],
+        });
+        let allowed_calls = Arc::new(AtomicUsize::new(0));
+        let allowed = providers::cost_authorization::AuthorizedProvider::from_box(
+            Box::new(RoleCountingProvider(Arc::clone(&allowed_calls))),
+            coding_role_authorizer(
+                providers::cost_authorization::ProviderCallAuthorizer::test_only(AutonomyLevel::Full),
+                &allowed_config,
+                HemisphereRole::Right,
+            )
+            .unwrap(),
+            Some("w300-right".to_owned()),
+            "coding.worker.w300",
+        );
+        allowed.complete(Request::default()).await.unwrap();
+        assert_eq!(allowed_calls.load(Ordering::SeqCst), 1);
+
+        let mut denied_config = allowed_config.clone();
+        denied_config.inference.role_policy.as_mut().unwrap().rules[0].provider =
+            InferenceProvider::OpenAi;
+        let denied_calls = Arc::new(AtomicUsize::new(0));
+        let denied = providers::cost_authorization::AuthorizedProvider::from_box(
+            Box::new(RoleCountingProvider(Arc::clone(&denied_calls))),
+            coding_role_authorizer(
+                providers::cost_authorization::ProviderCallAuthorizer::test_only(AutonomyLevel::Full),
+                &denied_config,
+                HemisphereRole::Right,
+            )
+            .unwrap(),
+            Some("w300-right".to_owned()),
+            "coding.worker.w300",
+        );
+        let error = denied
+            .complete(Request::default())
+            .await
+            .expect_err("configured Right mismatch must stop before transport");
+        assert!(error.to_string().contains("role dispatch denied"), "{error:#}");
+        assert_eq!(denied_calls.load(Ordering::SeqCst), 0);
+    }
 
     fn real_code_map_fixture() -> (tempfile::TempDir, PathBuf, Connection) {
         let dir = tempdir().unwrap();

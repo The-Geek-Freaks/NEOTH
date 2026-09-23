@@ -842,6 +842,8 @@ async fn emit_wal_frame<S: crate::code_map::snapshot::CompanionSnapshotAttestati
             "source_fingerprint_sha256": graphify_receipt.source_fingerprint_sha256,
             "native_index_generation": graphify_receipt.native_index_generation,
             "native_graph_generation": graphify_receipt.native_graph_generation,
+            "native_import_generation": graphify_receipt.native_import_generation,
+            "native_type_generation": graphify_receipt.native_type_generation,
             "artifacts": graphify_receipt.artifacts,
         },
         "ts_unix":             now_ns / 1_000_000_000,
@@ -1195,13 +1197,27 @@ mod tests {
                 .receipt
                 .artifacts
                 .iter()
+                .take(2)
                 .map(|artifact| (artifact.name.as_str(), artifact.bytes))
                 .collect::<Vec<_>>(),
             vec![
                 ("GRAPH_REPORT.md", report_contents.len() as u64),
                 ("GRAPH_TREE.html", tree_contents.len() as u64),
             ],
-            "the receipt must bind exactly the complete Graphify evidence set"
+            "the receipt retains its original Graphify output pair"
+        );
+        assert_eq!(
+            published.receipt.artifacts[2].name,
+            crate::graphify_publish::CODEGRAPH_WITNESS_NAME
+        );
+        assert!(published.receipt.artifacts[2].bytes > 0);
+        assert_eq!(
+            published.receipt.native_index_generation,
+            published.receipt.native_import_generation
+        );
+        assert_eq!(
+            published.receipt.native_index_generation,
+            published.receipt.native_type_generation
         );
         let current = crate::graphify_publish::read_current_graphify_pointer(&published.corpus_dir)
             .unwrap()

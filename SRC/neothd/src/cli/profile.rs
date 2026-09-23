@@ -17,6 +17,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
+use std::sync::Arc;
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
@@ -3097,13 +3098,15 @@ async fn run_pipeline_cli_batch(
     let (writer, writer_completion) =
         crate::wal::writer::spawn_for_home_with_completion(segment, neoth_home.clone())
             .context("spawn home-bound profile-run WAL writer")?;
+    let authorizer = profile_cli_left_role_authorizer(
+        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+            config.autonomy_policy(), Some(writer.clone()), config.tokens.max_per_request,
+        ),
+        &config,
+    )?;
     let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
         provider,
-        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
-            config.autonomy_policy(),
-            Some(writer.clone()),
-            config.tokens.max_per_request,
-        ),
+        authorizer,
         default_model,
         "profile.cli_batch",
     );
@@ -3187,6 +3190,19 @@ async fn run_pipeline_cli_batch(
         }
     }
     Ok(())
+}
+
+/// Profile extraction has a fixed analytic origin: Left. Retain the selected
+/// slot and immutable CLI configuration at the one provider wrapper.
+fn profile_cli_left_role_authorizer(
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
+    config: &FreedomConfig,
+) -> Result<crate::providers::cost_authorization::ProviderCallAuthorizer> {
+    let role = crate::config::inference::HemisphereRole::Left;
+    let provider = config.inference.slot_for(role).provider
+        .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
+        .context("profile extraction Left role has no configured provider identity")?;
+    Ok(authorizer.with_role_dispatch(role, provider, Arc::new(config.clone())))
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -3791,7 +3807,133 @@ fn render_knobs(rows: &[KnobRow], output: &OutputFormat) {
 mod tests {
     use super::*;
     use clap::Parser;
+    use crate::providers::Provider as _;
     use rusqlite::params;
+
+    struct W301CountingProvider(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for W301CountingProvider {
+        fn name(&self) -> &'static str {
+            "local_ollama"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("w301-left")
+        }
+
+        async fn complete(
+            &self,
+            request: crate::providers::Request,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(crate::providers::Completion {
+                text: "ok".into(),
+                model: request.model.unwrap_or_default(),
+                ..Default::default()
+            })
+        }
+    }
+
+    fn w301_profile_config(model: &str) -> FreedomConfig {
+        let mut cfg = FreedomConfig::default();
+        cfg.inference.left.provider =
+            Some(crate::config::inference::InferenceProvider::LocalOllama);
+        cfg.inference.left.model = Some(model.into());
+        cfg.inference.role_policy = Some(crate::config::role_policy::RolePolicyConfig {
+            rules: vec![crate::config::role_policy::RolePolicyRule {
+                role: crate::config::inference::HemisphereRole::Left,
+                provider: crate::config::inference::InferenceProvider::LocalOllama,
+                model: Some(model.into()),
+            }],
+        });
+        cfg
+    }
+
+    fn w301_provider_request_frame_count(segment: &std::path::Path) -> usize {
+        let bytes = std::fs::read(segment).expect("read W301 lifecycle WAL");
+        let header = crate::wal::segment_header::parse_segment_header(&bytes)
+            .expect("parse W301 lifecycle WAL header");
+        let mut cursor = header.header_len();
+        let mut requests = 0;
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..])
+                .expect("decode W301 lifecycle WAL frame");
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST {
+                requests += 1;
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        requests
+    }
+
+    #[tokio::test]
+    async fn w301_profile_left_binding_allows_one_raw_call_and_wal_lifecycle() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cfg = w301_profile_config("w301-left");
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("profile.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let authorizer = profile_cli_left_role_authorizer(
+            crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                cfg.autonomy_policy(),
+                Some(writer.clone()),
+                cfg.tokens.max_per_request,
+            ),
+            &cfg,
+        )
+        .unwrap();
+        let raw = W301CountingProvider(calls.clone());
+        let provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
+            &raw,
+            authorizer,
+            None,
+            "w301.profile.left",
+        );
+        provider
+            .complete(crate::providers::Request::default())
+            .await
+            .unwrap();
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(std::fs::metadata(segment).unwrap().len() > 0);
+    }
+
+    #[tokio::test]
+    async fn w301_profile_left_model_denial_has_zero_raw_calls_and_no_wal_effect() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cfg = w301_profile_config("different-model");
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("profile-denied.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let authorizer = profile_cli_left_role_authorizer(
+            crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                cfg.autonomy_policy(),
+                Some(writer.clone()),
+                cfg.tokens.max_per_request,
+            ),
+            &cfg,
+        )
+        .unwrap();
+        let raw = W301CountingProvider(calls.clone());
+        let provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
+            &raw,
+            authorizer,
+            None,
+            "w301.profile.denied",
+        );
+        assert!(provider
+            .complete(crate::providers::Request::default())
+            .await
+            .is_err());
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(w301_provider_request_frame_count(&segment), 0);
+    }
 
     // ── UX-04 knob_rows ────────────────────────────────────────────
     // `ProfilePreset` is already in scope via `use super::*`; only

@@ -522,15 +522,17 @@ async fn build_dispatch_plan(
                 let default_model =
                     crate::providers::provider_default_wire_model(provider.as_ref());
                 let model_name = default_model.clone().unwrap_or_default();
+                let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                    config.autonomy_policy(),
+                    writer.as_ref().map(|writer| writer.as_ref().clone()),
+                    config.tokens.max_per_request,
+                )
+                .with_usage_home(neoth_home.to_path_buf());
+                let authorizer = coding_role_authorizer(authorizer, config, role)?;
                 let provider = Arc::new(
                     crate::providers::cost_authorization::AuthorizedProvider::from_box(
                         provider,
-                        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
-                            config.autonomy_policy(),
-                            writer.as_ref().map(|writer| writer.as_ref().clone()),
-                            config.tokens.max_per_request,
-                        )
-                        .with_usage_home(neoth_home.to_path_buf()),
+                        authorizer,
                         default_model,
                         "coding.worker",
                     ),
@@ -1151,9 +1153,14 @@ pub(crate) async fn build_audited_worker(
             config.tokens.max_per_request,
         )
         .await?;
+    let authorizer = coding_role_authorizer(
+        audit.authorizer(),
+        config,
+        crate::config::inference::HemisphereRole::Cerebellum,
+    )?;
     let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
         provider,
-        audit.authorizer(),
+        authorizer,
         default_model,
         "coding.decomposer",
     );
@@ -1175,6 +1182,23 @@ pub(crate) async fn build_audited_worker(
         None => worker,
     };
     Ok(AuditedCodingWorker::new(worker, audit, owner))
+}
+
+/// Bind the role already selected by a coding worker factory.  The fixed
+/// config snapshot deliberately matches the provider topology for this run;
+/// coding workers are not daemon-live provider routes.
+fn coding_role_authorizer(
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
+    config: &crate::config::FreedomConfig,
+    role: crate::config::inference::HemisphereRole,
+) -> Result<crate::providers::cost_authorization::ProviderCallAuthorizer> {
+    let provider = config
+        .inference
+        .slot_for(role)
+        .provider
+        .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
+        .ok_or_else(|| anyhow::anyhow!("coding role `{}` has no configured provider identity", role.as_str()))?;
+    Ok(authorizer.with_role_dispatch(role, provider, Arc::new(config.clone())))
 }
 
 #[async_trait::async_trait(?Send)]
@@ -2865,7 +2889,126 @@ mod tests {
     use crate::coding::code_map_receipt::{
         CodeMapContextKind, CodeMapContextSource, CodeMapSelectedFile,
     };
+    use crate::config::inference::{HemisphereRole, InferenceProvider};
+    use crate::config::role_policy::{RolePolicyConfig, RolePolicyRule};
+    use crate::permissions::AutonomyLevel;
+    use crate::providers::{Completion, Provider, Request};
     use std::sync::atomic::AtomicUsize;
+
+    struct RoleCountingProvider {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for RoleCountingProvider {
+        fn name(&self) -> &'static str {
+            "local_ollama"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("w300-cerebellum")
+        }
+
+        fn output_token_ceiling(&self, _: &Request) -> Option<u32> {
+            Some(64)
+        }
+
+        async fn complete(&self, request: Request) -> Result<Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Completion {
+                text: "decomposition".to_owned(),
+                model: request.model.unwrap_or_default(),
+                ..Completion::default()
+            })
+        }
+    }
+
+    fn w300_role_config(policy_provider: InferenceProvider) -> crate::config::FreedomConfig {
+        let mut config = crate::config::FreedomConfig::default();
+        config.inference.cerebellum.provider = Some(InferenceProvider::LocalOllama);
+        config.inference.role_policy = Some(RolePolicyConfig {
+            rules: vec![RolePolicyRule {
+                role: HemisphereRole::Cerebellum,
+                provider: policy_provider,
+                model: Some("w300-cerebellum".to_owned()),
+            }],
+        });
+        config
+    }
+
+    fn w300_provider_request_payload(segment: &std::path::Path) -> serde_json::Value {
+        let bytes = std::fs::read(segment).unwrap();
+        let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = header.header_len();
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            cursor += frame.header.total_len as usize;
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST {
+                return serde_json::from_slice(&frame.payload).unwrap();
+            }
+        }
+        panic!("allowed Cerebellum call must write a provider-request lifecycle frame");
+    }
+
+    #[tokio::test]
+    async fn cerebellum_decomposer_role_binding_allows_one_leaf_and_audits_then_denies_before_transport() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("w300-cerebellum-role.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let allowed_config = w300_role_config(InferenceProvider::LocalOllama);
+        let allowed_calls = Arc::new(AtomicUsize::new(0));
+        let allowed_authorizer = coding_role_authorizer(
+            crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Full,
+                Some(writer.clone()),
+                allowed_config.tokens.max_per_request,
+            ),
+            &allowed_config,
+            HemisphereRole::Cerebellum,
+        )
+        .unwrap();
+        let allowed = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+            Box::new(RoleCountingProvider {
+                calls: Arc::clone(&allowed_calls),
+            }),
+            allowed_authorizer,
+            Some("w300-cerebellum".to_owned()),
+            "coding.decomposer.w300",
+        );
+        let decomposer = crate::coding::cerebellum_provider::CerebellumDecomposer::new(allowed);
+        assert_eq!(decomposer.complete("plan").await.unwrap(), "decomposition");
+        assert_eq!(allowed_calls.load(Ordering::SeqCst), 1);
+        drop(decomposer);
+        drop(writer);
+        join.await.unwrap();
+        let request = w300_provider_request_payload(&segment);
+        assert_eq!(request["hemisphere_role"], "cerebellum");
+        assert_eq!(request["hemisphere_provider"], "local_ollama");
+        assert_eq!(request["hemisphere_model"], "w300-cerebellum");
+
+        let denied_config = w300_role_config(InferenceProvider::OpenAi);
+        let denied_calls = Arc::new(AtomicUsize::new(0));
+        let denied_authorizer = coding_role_authorizer(
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(AutonomyLevel::Full),
+            &denied_config,
+            HemisphereRole::Cerebellum,
+        )
+        .unwrap();
+        let denied = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+            Box::new(RoleCountingProvider {
+                calls: Arc::clone(&denied_calls),
+            }),
+            denied_authorizer,
+            Some("w300-cerebellum".to_owned()),
+            "coding.decomposer.w300",
+        );
+        let error = crate::coding::cerebellum_provider::CerebellumDecomposer::new(denied)
+            .complete("plan")
+            .await
+            .expect_err("configured Cerebellum provider mismatch must stop before transport");
+        assert!(error.to_string().contains("role dispatch denied"), "{error:#}");
+        assert_eq!(denied_calls.load(Ordering::SeqCst), 0);
+    }
 
     fn service_code_map_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, CodingServiceConfig) {
         let dir = tempfile::tempdir().unwrap();

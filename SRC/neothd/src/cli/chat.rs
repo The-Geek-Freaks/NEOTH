@@ -11508,6 +11508,23 @@ fn role_provider_from_slot(
         .ok_or_else(|| anyhow::anyhow!("Council hemisphere has no configured provider identity"))
 }
 
+/// Bind the concrete role that selected a Council dissent-loop winner before
+/// the loop engine reaches its raw provider boundary. The role comes from the
+/// retained Council result, while the provider identity comes only from that
+/// role's configured slot; a winner model never selects a Hemisphere role.
+fn bind_council_dissent_winner_authorizer(
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
+    config: &FreedomConfig,
+    winner_role: crate::config::inference::HemisphereRole,
+) -> Result<crate::providers::cost_authorization::ProviderCallAuthorizer> {
+    let provider = role_provider_from_slot(config, config.inference.slot_for(winner_role))?;
+    Ok(authorizer.with_role_dispatch(
+        winner_role,
+        provider,
+        std::sync::Arc::new(config.clone()),
+    ))
+}
+
 /// Build a fresh `ProviderHemisphere` for `role` using the configured
 /// per-role provider (defaults collapse to single-mode in Single
 /// topology). Used by `run_council_debate` to build all three plus by
@@ -14448,6 +14465,11 @@ async fn dispatch_council_with_recovery_for_turn(
                 .as_ref()
                 .map(|guarded| guarded as &dyn crate::providers::Provider)
                 .unwrap_or_else(|| winner_provider.as_ref());
+            let winner_authorizer = bind_council_dissent_winner_authorizer(
+                authorizer.clone(),
+                config,
+                winner.role,
+            )?;
             match crate::loop_engine::engine::run_loop(
                 &loop_cfg,
                 winner_for_loop,
@@ -14455,7 +14477,7 @@ async fn dispatch_council_with_recovery_for_turn(
                 &crate::mcp::McpServers::default(),
                 writer,
                 config,
-                authorizer.clone(),
+                winner_authorizer,
                 Some(&council_budget),
                 tool_scope,
                 // P4 — interactive chat session: honour the elicitation gate.
@@ -19524,6 +19546,175 @@ modes:
         );
     }
 
+    const W303_DISSENT_WINNER_MODEL: &str = "w303-right-winner-model";
+
+    fn w303_dissent_winner_config(
+        policy_provider: crate::config::inference::InferenceProvider,
+    ) -> FreedomConfig {
+        let mut config = FreedomConfig {
+            provider_kind: Some(ProviderKind::ClaudeCli),
+            provider_model: Some("w303-left-model".to_owned()),
+            autonomy: UNPRICED_TEST_PROVIDER_AUTONOMY,
+            review_gate_enabled: false,
+            steps_completed: vec![1, 2, 3, 4, 5, 6, 7],
+            ..Default::default()
+        };
+        config.inference.mode = crate::config::inference::TopologyMode::Custom;
+        config.inference.default_slot.provider =
+            Some(crate::config::inference::InferenceProvider::OpenAi);
+        config.inference.default_slot.model = Some("w303-left-model".to_owned());
+        config.inference.right.provider =
+            Some(crate::config::inference::InferenceProvider::ClaudeCli);
+        config.inference.right.model = Some(W303_DISSENT_WINNER_MODEL.to_owned());
+        config.inference.role_policy = Some(crate::config::role_policy::RolePolicyConfig {
+            rules: vec![crate::config::role_policy::RolePolicyRule {
+                role: crate::config::inference::HemisphereRole::Right,
+                provider: policy_provider,
+                model: Some(W303_DISSENT_WINNER_MODEL.to_owned()),
+            }],
+        });
+        config
+    }
+
+    fn w303_dissent_winner_authorizer(
+        config: &FreedomConfig,
+        writer: crate::wal::writer::WalWriterHandle,
+    ) -> crate::providers::cost_authorization::ProviderCallAuthorizer {
+        bind_council_dissent_winner_authorizer(
+            crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+                UNPRICED_TEST_PROVIDER_AUTONOMY,
+                Some(writer),
+                config.tokens.max_per_request,
+            ),
+            config,
+            crate::config::inference::HemisphereRole::Right,
+        )
+        .expect("W303 configured winner role binds its own slot identity")
+    }
+
+    fn w303_provider_request_count(segment: &std::path::Path) -> usize {
+        let bytes = std::fs::read(segment).expect("read W303 WAL");
+        let mut count = 0;
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == EVENT_TYPE_PROVIDER_REQUEST {
+                count += 1;
+            }
+            Ok(())
+        })
+        .expect("scan W303 WAL");
+        count
+    }
+
+    #[tokio::test]
+    async fn w303_dissent_winner_right_role_allows_loop_leaf_and_records_role_decision() {
+        let home = tempdir().expect("create W303 allowed home");
+        crate::consent::grant(home.path(), ProviderKind::ClaudeCli)
+            .expect("grant W303 winner provider consent");
+        let segment = canonical_test_wal(home.path(), "w303-dissent-winner-allowed");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("spawn W303 WAL");
+        let config = w303_dissent_winner_config(
+            crate::config::inference::InferenceProvider::ClaudeCli,
+        );
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let raw_provider = CountingMockProvider {
+            counter: std::sync::Arc::clone(&calls),
+            reply: "W303 dissent-loop reply".to_owned(),
+        };
+        let loop_cfg = crate::loop_engine::engine::LoopConfig::for_dissent_invoke(
+            config.autonomy,
+            home.path().to_path_buf(),
+            None,
+        );
+
+        let record = crate::loop_engine::engine::run_loop(
+            &loop_cfg,
+            &raw_provider,
+            Request {
+                prompt: "W303 dissent winner loop".to_owned(),
+                model: Some(W303_DISSENT_WINNER_MODEL.to_owned()),
+                ..Request::default()
+            },
+            &crate::mcp::McpServers::default(),
+            &writer,
+            &config,
+            w303_dissent_winner_authorizer(&config, writer.clone()),
+            None,
+            &crate::mcp::McpToolScope::default(),
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
+            None,
+        )
+        .await
+        .expect("configured Right winner may reach the dissent-loop leaf");
+        assert_eq!(record.rounds_run, 1);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        drop(writer);
+        join.await.expect("drain W303 allowed WAL");
+
+        let bytes = std::fs::read(&segment).expect("read W303 allowed WAL");
+        let mut roles = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == EVENT_TYPE_PROVIDER_REQUEST {
+                let payload: serde_json::Value =
+                    serde_json::from_slice(frame.payload).expect("decode W303 request");
+                roles.push(payload["hemisphere_role"].as_str().unwrap().to_owned());
+            }
+            Ok(())
+        })
+        .expect("scan W303 allowed WAL");
+        assert_eq!(roles, vec!["right"]);
+    }
+
+    #[tokio::test]
+    async fn w303_dissent_winner_denied_right_role_blocks_loop_leaf_before_request_wal() {
+        let home = tempdir().expect("create W303 denied home");
+        crate::consent::grant(home.path(), ProviderKind::ClaudeCli)
+            .expect("grant W303 winner provider consent");
+        let segment = canonical_test_wal(home.path(), "w303-dissent-winner-denied");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("spawn W303 WAL");
+        let config = w303_dissent_winner_config(
+            crate::config::inference::InferenceProvider::OpenAi,
+        );
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let raw_provider = CountingMockProvider {
+            counter: std::sync::Arc::clone(&calls),
+            reply: "W303 must not reach this leaf".to_owned(),
+        };
+        let loop_cfg = crate::loop_engine::engine::LoopConfig::for_dissent_invoke(
+            config.autonomy,
+            home.path().to_path_buf(),
+            None,
+        );
+
+        let error = crate::loop_engine::engine::run_loop(
+            &loop_cfg,
+            &raw_provider,
+            Request {
+                prompt: "W303 denied dissent winner loop".to_owned(),
+                model: Some(W303_DISSENT_WINNER_MODEL.to_owned()),
+                ..Request::default()
+            },
+            &crate::mcp::McpServers::default(),
+            &writer,
+            &config,
+            w303_dissent_winner_authorizer(&config, writer.clone()),
+            None,
+            &crate::mcp::McpToolScope::default(),
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
+            None,
+        )
+        .await
+        .expect_err("mismatched Right winner policy must block the dissent-loop leaf");
+        assert!(error.to_string().contains("role dispatch"), "{error:#}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        drop(writer);
+        join.await.expect("drain W303 denied WAL");
+        assert_eq!(
+            w303_provider_request_count(&segment),
+            0,
+            "denied W303 winner cannot mint a provider request lifecycle"
+        );
+    }
+
     const W292_LEFT_MODEL: &str = "w292-left-model";
 
     struct W292CountingProvider {
@@ -19826,44 +20017,46 @@ modes:
             None,
             "w292.daemon.compatibility_reload",
         );
-        let pending = provider.complete(Request::default());
-        tokio::pin!(pending);
-        tokio::select! {
-            result = &mut pending => panic!("raw W292 compatibility transport completed before durable request acknowledgement: {result:?}"),
-            result = tokio::time::timeout(Duration::from_secs(5), ack_gate.wait_until_durable()) => {
-                result.expect("W292 compatibility provider request did not become durable");
+        {
+            let pending = provider.complete(Request::default());
+            tokio::pin!(pending);
+            tokio::select! {
+                result = &mut pending => panic!("raw W292 compatibility transport completed before durable request acknowledgement: {result:?}"),
+                result = tokio::time::timeout(Duration::from_secs(5), ack_gate.wait_until_durable()) => {
+                    result.expect("W292 compatibility provider request did not become durable");
+                }
             }
+            let mut policy_enabled = reload.latest().as_ref().clone();
+            policy_enabled.inference.role_policy = Some(crate::config::role_policy::RolePolicyConfig {
+                rules: vec![crate::config::role_policy::RolePolicyRule {
+                    role: crate::config::inference::HemisphereRole::Left,
+                    provider: crate::config::inference::InferenceProvider::OpenAi,
+                    model: Some(W292_LEFT_MODEL.to_owned()),
+                }],
+            });
+            std::fs::write(
+                &config_path,
+                serde_yaml::to_string(&policy_enabled).expect("serialize W292 enabled policy"),
+            )
+            .expect("write W292 enabled policy");
+            assert!(matches!(
+                reload
+                    .try_reload()
+                    .expect("accept compatibility-to-role-policy reload"),
+                crate::config::reload::ReloadResult::Reloaded { .. }
+            ));
+            ack_gate.release();
+            let error = pending
+                .await
+                .expect_err("newly enabled mismatched Left policy blocks raw normal-chat transport");
+            assert!(
+                error
+                    .to_string()
+                    .contains("role dispatch policy changed after authorization"),
+                "{error:#}"
+            );
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         }
-        let mut policy_enabled = reload.latest().as_ref().clone();
-        policy_enabled.inference.role_policy = Some(crate::config::role_policy::RolePolicyConfig {
-            rules: vec![crate::config::role_policy::RolePolicyRule {
-                role: crate::config::inference::HemisphereRole::Left,
-                provider: crate::config::inference::InferenceProvider::OpenAi,
-                model: Some(W292_LEFT_MODEL.to_owned()),
-            }],
-        });
-        std::fs::write(
-            &config_path,
-            serde_yaml::to_string(&policy_enabled).expect("serialize W292 enabled policy"),
-        )
-        .expect("write W292 enabled policy");
-        assert!(matches!(
-            reload
-                .try_reload()
-                .expect("accept compatibility-to-role-policy reload"),
-            crate::config::reload::ReloadResult::Reloaded { .. }
-        ));
-        ack_gate.release();
-        let error = pending
-            .await
-            .expect_err("newly enabled mismatched Left policy blocks raw normal-chat transport");
-        assert!(
-            error
-                .to_string()
-                .contains("role dispatch policy changed after authorization"),
-            "{error:#}"
-        );
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         drop(provider);
         drop(writer);
         join.await.expect("drain W292 compatibility WAL");
@@ -19911,46 +20104,48 @@ modes:
             None,
             "w292.daemon.reload",
         );
-        let pending = provider.complete(Request::default());
-        tokio::pin!(pending);
-        tokio::select! {
-            result = &mut pending => panic!("raw W292 transport completed before durable request acknowledgement: {result:?}"),
-            result = tokio::time::timeout(Duration::from_secs(5), ack_gate.wait_until_durable()) => {
-                result.expect("W292 provider request did not become durable");
+        {
+            let pending = provider.complete(Request::default());
+            tokio::pin!(pending);
+            tokio::select! {
+                result = &mut pending => panic!("raw W292 transport completed before durable request acknowledgement: {result:?}"),
+                result = tokio::time::timeout(Duration::from_secs(5), ack_gate.wait_until_durable()) => {
+                    result.expect("W292 provider request did not become durable");
+                }
             }
+            let mut revoked = reload.latest().as_ref().clone();
+            revoked
+                .inference
+                .role_policy
+                .as_mut()
+                .expect("active W292 policy")
+                .rules
+                .push(crate::config::role_policy::RolePolicyRule {
+                    role: crate::config::inference::HemisphereRole::Right,
+                    provider: crate::config::inference::InferenceProvider::OpenAi,
+                    model: Some("w292-revocation-identity".to_owned()),
+                });
+            std::fs::write(
+                &config_path,
+                serde_yaml::to_string(&revoked).expect("serialize W292 revoked policy"),
+            )
+            .expect("write W292 revoked policy");
+            assert!(matches!(
+                reload.try_reload().expect("accept role-policy-only reload"),
+                crate::config::reload::ReloadResult::Reloaded { .. }
+            ));
+            ack_gate.release();
+            let error = pending
+                .await
+                .expect_err("accepted role-policy change blocks raw normal-chat transport");
+            assert!(
+                error
+                    .to_string()
+                    .contains("role dispatch policy changed after authorization"),
+                "{error:#}"
+            );
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         }
-        let mut revoked = reload.latest().as_ref().clone();
-        revoked
-            .inference
-            .role_policy
-            .as_mut()
-            .expect("active W292 policy")
-            .rules
-            .push(crate::config::role_policy::RolePolicyRule {
-                role: crate::config::inference::HemisphereRole::Right,
-                provider: crate::config::inference::InferenceProvider::OpenAi,
-                model: Some("w292-revocation-identity".to_owned()),
-            });
-        std::fs::write(
-            &config_path,
-            serde_yaml::to_string(&revoked).expect("serialize W292 revoked policy"),
-        )
-        .expect("write W292 revoked policy");
-        assert!(matches!(
-            reload.try_reload().expect("accept role-policy-only reload"),
-            crate::config::reload::ReloadResult::Reloaded { .. }
-        ));
-        ack_gate.release();
-        let error = pending
-            .await
-            .expect_err("accepted role-policy change blocks raw normal-chat transport");
-        assert!(
-            error
-                .to_string()
-                .contains("role dispatch policy changed after authorization"),
-            "{error:#}"
-        );
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         drop(provider);
         drop(writer);
         join.await.expect("drain W292 reload WAL");

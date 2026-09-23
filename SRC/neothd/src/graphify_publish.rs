@@ -29,6 +29,7 @@ use crate::wiki::GraphifyIngestScope;
 pub const GRAPHIFY_PUBLISH_SCHEMA: u32 = 1;
 pub const GRAPH_REPORT_NAME: &str = "GRAPH_REPORT.md";
 pub const GRAPH_TREE_NAME: &str = "GRAPH_TREE.html";
+pub const CODEGRAPH_WITNESS_NAME: &str = "CODEGRAPH_WITNESS.json";
 pub const GENERATION_RECEIPT_NAME: &str = "GENERATION_RECEIPT.json";
 pub const CURRENT_POINTER_NAME: &str = "CURRENT";
 pub const GRAPHIFY_TRANSACTION_NAME: &str = ".neoth-graphify-transaction.json";
@@ -38,7 +39,9 @@ const GENERATIONS_DIR_NAME: &str = "generations";
 const MAX_FRIENDLY_SUBDIR_BYTES: usize = 96;
 const MAX_REPORT_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_TREE_BYTES: u64 = 128 * 1024 * 1024;
-const MAX_TOTAL_ARTIFACT_BYTES: u64 = MAX_REPORT_BYTES + MAX_TREE_BYTES;
+const MAX_CODEGRAPH_WITNESS_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_TOTAL_ARTIFACT_BYTES: u64 =
+    MAX_REPORT_BYTES + MAX_TREE_BYTES + MAX_CODEGRAPH_WITNESS_BYTES;
 const MAX_RECEIPT_BYTES: u64 = 256 * 1024;
 const MAX_POINTER_BYTES: u64 = 16 * 1024;
 const MAX_BINDING_BYTES: u64 = 32 * 1024;
@@ -94,6 +97,12 @@ pub struct GraphifyGenerationReceipt {
     pub source_fingerprint_sha256: String,
     pub native_index_generation: i64,
     pub native_graph_generation: i64,
+    /// Absent from pre-W299 receipts. Zero is therefore an explicit legacy
+    /// marker, not a current CodeGraph generation.
+    #[serde(default)]
+    pub native_import_generation: i64,
+    #[serde(default)]
+    pub native_type_generation: i64,
     pub artifacts: Vec<GraphifyArtifactReceipt>,
 }
 
@@ -109,6 +118,10 @@ pub struct CurrentGraphifyPointer {
     pub source_fingerprint_sha256: String,
     pub native_index_generation: i64,
     pub native_graph_generation: i64,
+    #[serde(default)]
+    pub native_import_generation: i64,
+    #[serde(default)]
+    pub native_type_generation: i64,
 }
 
 /// Prepared publication.  Dropping this value aborts and removes its private
@@ -537,6 +550,8 @@ impl From<&GraphifyGenerationReceipt> for CurrentGraphifyPointer {
             source_fingerprint_sha256: receipt.source_fingerprint_sha256.clone(),
             native_index_generation: receipt.native_index_generation,
             native_graph_generation: receipt.native_graph_generation,
+            native_import_generation: receipt.native_import_generation,
+            native_type_generation: receipt.native_type_generation,
         }
     }
 }
@@ -692,7 +707,17 @@ pub(crate) fn prepare_graphify_publication(
         "Graphify source output directory",
     )?;
 
-    let artifacts = collect_source_artifacts(&graphify_output)?;
+    let codegraph_witness = request
+        .native_snapshot
+        .graphify_codegraph_witness()
+        .context("materialize bounded native CodeGraph witness")?;
+    let codegraph_witness_bytes = serde_json::to_vec(&codegraph_witness)
+        .context("serialize deterministic native CodeGraph witness")?;
+    ensure!(
+        codegraph_witness_bytes.len() as u64 <= MAX_CODEGRAPH_WITNESS_BYTES,
+        "native CodeGraph witness exceeds byte limit"
+    );
+    let artifacts = collect_source_artifacts(&graphify_output, codegraph_witness_bytes)?;
     let total_bytes = artifacts.iter().try_fold(0_u64, |total, artifact| {
         total
             .checked_add(artifact.receipt.bytes)
@@ -717,6 +742,8 @@ pub(crate) fn prepare_graphify_publication(
         source_fingerprint_sha256: native_snapshot.source_fingerprint_sha256.clone(),
         native_index_generation: native_snapshot.index_generation,
         native_graph_generation: native_snapshot.graph_generation,
+        native_import_generation: codegraph_witness.import_generation,
+        native_type_generation: codegraph_witness.type_generation,
         artifacts: artifacts
             .iter()
             .map(|artifact| artifact.receipt.clone())
@@ -826,7 +853,9 @@ pub(crate) fn load_current_graphify_generation_receipt(
             && receipt.generation_id == pointer.generation_id
             && receipt.source_fingerprint_sha256 == pointer.source_fingerprint_sha256
             && receipt.native_index_generation == pointer.native_index_generation
-            && receipt.native_graph_generation == pointer.native_graph_generation,
+            && receipt.native_graph_generation == pointer.native_graph_generation
+            && receipt.native_import_generation == pointer.native_import_generation
+            && receipt.native_type_generation == pointer.native_type_generation,
         "Graphify CURRENT pointer does not exactly match its generation receipt"
     );
     validate_published_generation(&generation_dir, &receipt)?;
@@ -918,6 +947,13 @@ fn generation_id(receipt: &GraphifyGenerationReceipt) -> String {
     digest.update(b"\0");
     digest.update(receipt.native_index_generation.to_le_bytes());
     digest.update(receipt.native_graph_generation.to_le_bytes());
+    // Pre-W299 receipts deserialize the absent fields as zero. Preserve their
+    // historical generation IDs so a still-visible legacy CURRENT remains
+    // readable and recoverable while new publications bind all four graphs.
+    if receipt.native_import_generation != 0 || receipt.native_type_generation != 0 {
+        digest.update(receipt.native_import_generation.to_le_bytes());
+        digest.update(receipt.native_type_generation.to_le_bytes());
+    }
     for artifact in &receipt.artifacts {
         digest.update(b"\0");
         digest.update(artifact.name.as_bytes());
@@ -1010,7 +1046,10 @@ fn validate_friendly_subdir(raw: &str) -> Result<String> {
     Ok(raw.to_owned())
 }
 
-fn collect_source_artifacts(graphify_output: &Path) -> Result<Vec<StagedArtifact>> {
+fn collect_source_artifacts(
+    graphify_output: &Path,
+    codegraph_witness_bytes: Vec<u8>,
+) -> Result<Vec<StagedArtifact>> {
     // The report and tree are one logical evidence set. Read every required
     // member twice and require the complete second set to match the first;
     // accepting a report without its paired tree (or a mix observed during a
@@ -1026,6 +1065,15 @@ fn collect_source_artifacts(graphify_output: &Path) -> Result<Vec<StagedArtifact
                 .map(|artifact| (&artifact.receipt, &artifact.bytes))),
         "Graphify artifact set changed while publication was being prepared"
     );
+    let mut artifacts = artifacts;
+    artifacts.push(StagedArtifact {
+        receipt: GraphifyArtifactReceipt {
+            name: CODEGRAPH_WITNESS_NAME.to_owned(),
+            bytes: codegraph_witness_bytes.len() as u64,
+            sha256: sha256_bytes(&codegraph_witness_bytes),
+        },
+        bytes: codegraph_witness_bytes,
+    });
     Ok(artifacts)
 }
 
@@ -1118,6 +1166,14 @@ fn validate_generation_contents(
             "published Graphify artifact {} differs from its receipt",
             artifact.name
         );
+        if artifact.name == CODEGRAPH_WITNESS_NAME {
+            let witness_bytes = read_regular_bounded_no_follow(
+                &generation.join(&artifact.name),
+                limit_for_artifact(&artifact.name)?,
+                &artifact.name,
+            )?;
+            validate_codegraph_witness(expected, &witness_bytes)?;
+        }
     }
     let actual_names = directory_entry_names(generation)?;
     ensure!(
@@ -1147,9 +1203,16 @@ fn validate_receipt_shape(receipt: &GraphifyGenerationReceipt) -> Result<()> {
         receipt.generation_id == generation_id(receipt),
         "Graphify generation id does not bind the receipt contents"
     );
+    let legacy = receipt.native_import_generation == 0 && receipt.native_type_generation == 0;
     ensure!(
-        receipt.artifacts.len() == 2,
-        "Graphify receipt must carry exactly the complete report/tree artifact set"
+        legacy
+            || (receipt.native_import_generation == receipt.native_index_generation
+                && receipt.native_type_generation == receipt.native_index_generation),
+        "Graphify receipt carries invalid ImportGraph/TypeHierarchy generations"
+    );
+    ensure!(
+        (legacy && receipt.artifacts.len() == 2) || (!legacy && receipt.artifacts.len() == 3),
+        "Graphify receipt must carry either the legacy report/tree pair or the complete report/tree/CodeGraph witness set"
     );
     ensure!(
         receipt.artifacts[0].name == GRAPH_REPORT_NAME,
@@ -1159,6 +1222,100 @@ fn validate_receipt_shape(receipt: &GraphifyGenerationReceipt) -> Result<()> {
         receipt.artifacts[1].name == GRAPH_TREE_NAME,
         "Graphify receipt is missing its required tree"
     );
+    if !legacy {
+        ensure!(
+            receipt.artifacts[2].name == CODEGRAPH_WITNESS_NAME,
+            "Graphify receipt is missing its required CodeGraph witness"
+        );
+    }
+    Ok(())
+}
+
+/// Validate a receipted W299 witness without consulting an ambient code-map
+/// database. The bytes are immutable-generation evidence; substituting a
+/// newer SQLite result here would make the receipt's generation claim false.
+pub(crate) fn validate_codegraph_witness(
+    receipt: &GraphifyGenerationReceipt,
+    bytes: &[u8],
+) -> Result<()> {
+    ensure!(
+        receipt.native_import_generation > 0
+            && receipt.native_import_generation == receipt.native_index_generation
+            && receipt.native_type_generation == receipt.native_index_generation,
+        "legacy Graphify receipt has no CodeGraph witness binding"
+    );
+    let witness: crate::code_map::snapshot::GraphifyCodeGraphWitness =
+        serde_json::from_slice(bytes).context("parse Graphify CodeGraph witness")?;
+    let canonical = serde_json::to_vec(&witness).context("canonicalize Graphify CodeGraph witness")?;
+    ensure!(
+        canonical == bytes,
+        "Graphify CodeGraph witness is not canonical deterministic JSON"
+    );
+    ensure!(
+        witness.schema_version == 1
+            && witness.canonical_repo_root == receipt.canonical_repo_root
+            && witness.repo_root_identity_sha256 == receipt.repo_root_identity_sha256
+            && witness.source_fingerprint_sha256 == receipt.source_fingerprint_sha256
+            && witness.index_generation == receipt.native_index_generation
+            && witness.graph_generation == receipt.native_graph_generation
+            && witness.import_generation == receipt.native_import_generation
+            && witness.type_generation == receipt.native_type_generation,
+        "Graphify CodeGraph witness provenance does not match its receipt"
+    );
+    let imports = crate::code_map::imports::ImportGraph::from_edges(witness.import_edges.clone());
+    ensure!(
+        imports.edges() == witness.import_edges.as_slice(),
+        "Graphify CodeGraph witness import edges are not canonical"
+    );
+    let hierarchy = crate::code_map::type_hierarchy::TypeHierarchy::from_parts(
+        witness.type_edges.clone(),
+        witness.type_endpoints.iter().cloned().collect(),
+    )?;
+    ensure!(
+        hierarchy.endpoints().iter().eq(witness.type_endpoints.iter())
+            && hierarchy.edges() == witness.type_edges.as_slice(),
+        "Graphify CodeGraph witness type hierarchy is not canonical"
+    );
+    for edge in &witness.call_edges {
+        edge.validate_confidence()?;
+    }
+    let graph = crate::code_map::graph::CallGraph::from_edges(witness.call_edges.clone());
+    let expected_bfs = match graph.edges().first() {
+        Some(edge) => {
+            ensure!(
+                witness.call_bfs.direction == "callees"
+                    && witness.call_bfs.max_depth == 2
+                    && witness.call_bfs.max_entries == 64
+                    && witness.call_bfs.max_text_bytes == 16 * 1024
+                    && witness.call_bfs.seed_file.as_deref() == Some(edge.from_file.as_str())
+                    && witness.call_bfs.seed_symbol.as_deref() == Some(edge.from_symbol.as_str()),
+                "Graphify CodeGraph witness BFS provenance is invalid"
+            );
+            graph.callees_of_bounded(
+                &edge.from_file,
+                &edge.from_symbol,
+                witness.call_bfs.max_depth,
+                witness.call_bfs.max_entries,
+                witness.call_bfs.max_text_bytes,
+            )?
+        }
+        None => {
+            ensure!(
+                witness.call_bfs.direction == "callees"
+                    && witness.call_bfs.max_depth == 2
+                    && witness.call_bfs.max_entries == 64
+                    && witness.call_bfs.max_text_bytes == 16 * 1024
+                    && witness.call_bfs.seed_file.is_none()
+                    && witness.call_bfs.seed_symbol.is_none(),
+                "empty Graphify CodeGraph witness has invalid BFS provenance"
+            );
+            Vec::new()
+        }
+    };
+    ensure!(
+        witness.call_bfs.entries == expected_bfs,
+        "Graphify CodeGraph witness BFS rows do not match its fixed projection"
+    );
     Ok(())
 }
 
@@ -1166,6 +1323,7 @@ fn limit_for_artifact(name: &str) -> Result<u64> {
     match name {
         GRAPH_REPORT_NAME => Ok(MAX_REPORT_BYTES),
         GRAPH_TREE_NAME => Ok(MAX_TREE_BYTES),
+        CODEGRAPH_WITNESS_NAME => Ok(MAX_CODEGRAPH_WITNESS_BYTES),
         _ => bail!("unsupported Graphify artifact name {name:?}"),
     }
 }
@@ -1349,6 +1507,12 @@ fn validate_current_pointer(pointer: &CurrentGraphifyPointer) -> Result<()> {
         pointer.native_index_generation > 0
             && pointer.native_index_generation == pointer.native_graph_generation,
         "Graphify CURRENT pointer carries invalid native generations"
+    );
+    ensure!(
+        (pointer.native_import_generation == 0 && pointer.native_type_generation == 0)
+            || (pointer.native_import_generation == pointer.native_index_generation
+                && pointer.native_type_generation == pointer.native_index_generation),
+        "Graphify CURRENT pointer carries invalid ImportGraph/TypeHierarchy generations"
     );
     ensure!(
         valid_sha256(&pointer.source_fingerprint_sha256),
@@ -2403,6 +2567,58 @@ mod tests {
         published.finish().unwrap();
     }
 
+    #[test]
+    fn publication_seals_scoped_codegraph_witness_with_fixed_bfs_provenance() {
+        let fixture = Fixture::new();
+        fs::write(
+            fixture.repo.path().join("lib.rs"),
+            "pub fn alpha() { beta(); }\npub fn beta() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            fixture.repo.path().join("types.rs"),
+            "pub trait Parent {}\npub struct Child;\nimpl Parent for Child {}\n",
+        )
+        .unwrap();
+        fs::write(
+            fixture.repo.path().join("module.py"),
+            "from helper import Helper\nclass PythonChild(Helper):\n    pass\n",
+        )
+        .unwrap();
+        fs::write(fixture.repo.path().join("helper.py"), "class Helper:\n    pass\n").unwrap();
+        let snapshot = fixture.snapshot();
+        let published = fixture
+            .prepare(&snapshot, Some("Knowledge"))
+            .unwrap()
+            .publish()
+            .unwrap();
+        assert_eq!(
+            published
+                .receipt
+                .artifacts
+                .iter()
+                .map(|artifact| artifact.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![GRAPH_REPORT_NAME, GRAPH_TREE_NAME, CODEGRAPH_WITNESS_NAME]
+        );
+        assert_eq!(
+            published.receipt.native_index_generation,
+            published.receipt.native_import_generation
+        );
+        assert_eq!(
+            published.receipt.native_index_generation,
+            published.receipt.native_type_generation
+        );
+        let witness = fs::read(published.generation_dir.join(CODEGRAPH_WITNESS_NAME)).unwrap();
+        validate_codegraph_witness(&published.receipt, &witness).unwrap();
+        let parsed: crate::code_map::snapshot::GraphifyCodeGraphWitness =
+            serde_json::from_slice(&witness).unwrap();
+        assert_eq!(parsed.call_bfs.direction, "callees");
+        assert_eq!(parsed.call_bfs.seed_symbol.as_deref(), Some("alpha"));
+        assert!(parsed.call_bfs.entries.iter().any(|entry| entry.name == "beta"));
+        finish_without_ingest(published);
+    }
+
     #[cfg(unix)]
     fn set_unix_directory_mode(path: &Path, mode: u32) {
         use std::os::unix::fs::PermissionsExt as _;
@@ -3147,6 +3363,33 @@ mod tests {
         assert_eq!(receipt, published.receipt);
         published.mark_ingest_skipped().unwrap();
         published.finish().unwrap();
+    }
+
+    #[test]
+    fn current_pointer_cannot_drop_codegraph_generation_binding() {
+        let fixture = Fixture::new();
+        let snapshot = fixture.snapshot();
+        let published = fixture
+            .prepare(&snapshot, Some("Knowledge"))
+            .unwrap()
+            .publish()
+            .unwrap();
+        let mut legacy_shaped = CurrentGraphifyPointer::from(&published.receipt);
+        legacy_shaped.native_import_generation = 0;
+        legacy_shaped.native_type_generation = 0;
+        fs::write(
+            &published.current_pointer,
+            json_line(&legacy_shaped).unwrap(),
+        )
+        .unwrap();
+        let error = load_current_graphify_generation_receipt(&published.corpus_dir)
+            .err()
+            .unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("does not exactly match its generation receipt")
+        );
     }
 
     #[test]

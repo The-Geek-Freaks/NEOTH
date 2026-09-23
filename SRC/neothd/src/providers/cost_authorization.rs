@@ -4617,7 +4617,7 @@ mod tests {
         assert_eq!(inner.attempts.load(Ordering::SeqCst), 2);
         drop(provider);
         drop(writer);
-        join.await.unwrap();
+        join.await.unwrap().unwrap();
 
         let lifecycle = wal_frames(&segment)
             .into_iter()
@@ -7971,8 +7971,8 @@ mod tests {
             ),
             (
                 "cron/runner.rs",
-                3,
-                "3f50cf36eb2cdbc5611b5a256bee6ffb74266caf898ec80b73d1b2d8d556b546",
+                6,
+                "217e48199e588e644d2b5f2fd432295f687ca50bacf1f365612ee4b0cfd69d4d",
             ),
             (
                 "daemon/arxiv_skill_scan_cron.rs",

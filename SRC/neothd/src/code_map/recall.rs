@@ -1027,6 +1027,9 @@ pub const ARCHITECTURE_SKILL_ID: &str = "improve_codebase_architecture";
 pub const ARCHITECTURE_CYCLE_LIMIT: usize = 20;
 const ARCHITECTURE_EDGE_LIMIT: usize = 250_000;
 const ARCHITECTURE_EDGE_TEXT_BYTE_LIMIT: usize = 32 * 1024 * 1024;
+const ARCHITECTURE_IMPORT_WITNESS_LIMIT: usize = 1;
+const ARCHITECTURE_TYPE_WITNESS_LIMIT: usize = 1;
+const ARCHITECTURE_EVIDENCE_TEXT_BYTE_LIMIT: usize = 8 * 1024;
 
 /// One cycle plus the persisted code-map root it came from. Roots stay separate
 /// during detection so equal symbol names in two repositories cannot form a
@@ -1045,6 +1048,10 @@ pub struct ArchitectureFindings {
     pub edges_scanned: usize,
     pub cycles_injected: usize,
     pub truncated: bool,
+    /// Exact persisted import witnesses from the same complete generation.
+    pub import_witnesses: Vec<crate::code_map::imports::ImportEdge>,
+    /// Exact direct child-to-parent hierarchy witnesses from that generation.
+    pub type_witnesses: Vec<crate::code_map::type_hierarchy::TypeHierarchyEdge>,
 }
 
 /// Build the architecture findings consumed by the real
@@ -1066,7 +1073,8 @@ pub fn architecture_findings_for_skill(
         return Ok(None);
     }
 
-    let root_exists: bool = conn.query_row(
+    let snapshot = conn.unchecked_transaction()?;
+    let root_exists: bool = snapshot.query_row(
         "SELECT EXISTS(SELECT 1 FROM code_map_roots WHERE root = ?1)",
         [root],
         |row| row.get(0),
@@ -1081,7 +1089,7 @@ pub fn architecture_findings_for_skill(
 
     let (edges, edge_limit_exceeded, _) =
         super::persist::load_edges_for_root_bounded_with_text_limit(
-            conn,
+            &snapshot,
             root,
             ARCHITECTURE_EDGE_LIMIT,
             ARCHITECTURE_EDGE_TEXT_BYTE_LIMIT,
@@ -1092,6 +1100,23 @@ pub fn architecture_findings_for_skill(
         );
     }
     let edges_scanned = edges.len();
+    let (index_generation, graph_generation, import_generation, type_generation, complete): (i64, i64, i64, i64, bool) = snapshot.query_row(
+        "SELECT index_generation, graph_generation, import_generation, type_generation, oversize_skipped = 0 AND truncated_at IS NULL FROM code_map_roots WHERE root = ?1",
+        [root],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+    )?;
+    anyhow::ensure!(
+        complete && index_generation > 0 && index_generation == graph_generation && index_generation == import_generation && index_generation == type_generation,
+        "architecture evidence is not bound to one complete current index generation"
+    );
+    let (import_edges, import_truncated) = super::persist::load_import_edges_for_root_bounded(
+        &snapshot, root, ARCHITECTURE_IMPORT_WITNESS_LIMIT, ARCHITECTURE_EVIDENCE_TEXT_BYTE_LIMIT,
+    )?;
+    let (hierarchy, type_truncated) = super::persist::load_type_hierarchy_for_root_bounded(
+        &snapshot, root, ARCHITECTURE_TYPE_WITNESS_LIMIT, ARCHITECTURE_TYPE_WITNESS_LIMIT.saturating_mul(2), ARCHITECTURE_EVIDENCE_TEXT_BYTE_LIMIT,
+    )?;
+    let import_witnesses = import_edges;
+    let type_witnesses = hierarchy.edges().to_vec();
     // Ask for one extra cycle so the rendered block can disclose that the
     // context cap hid additional findings rather than pretending complete
     // coverage. `find_cycles` is deterministic over persisted edge order.
@@ -1111,20 +1136,30 @@ pub fn architecture_findings_for_skill(
         });
     }
 
-    let block = render_architecture_findings(&cycles, roots_scanned, edges_scanned, truncated);
+    let cycle_truncated = truncated;
+    let evidence_truncated = import_truncated || type_truncated;
+    truncated |= evidence_truncated;
+    let block = render_architecture_findings(&cycles, &import_witnesses, &type_witnesses, roots_scanned, edges_scanned, cycle_truncated, evidence_truncated, truncated);
+    snapshot.commit()?;
     Ok(Some(ArchitectureFindings {
         cycles_injected: cycles.len(),
         block,
         roots_scanned,
         edges_scanned,
         truncated,
+        import_witnesses,
+        type_witnesses,
     }))
 }
 
 fn render_architecture_findings(
     cycles: &[ArchitectureCycleFinding],
+    imports: &[crate::code_map::imports::ImportEdge],
+    types: &[crate::code_map::type_hierarchy::TypeHierarchyEdge],
     roots_scanned: usize,
     edges_scanned: usize,
+    cycle_truncated: bool,
+    evidence_truncated: bool,
     truncated: bool,
 ) -> String {
     let mut out = format!(
@@ -1144,10 +1179,13 @@ fn render_architecture_findings(
             }
             out.push_str(&format!("  - {}: {}\n", finding.root, closed.join(" -> ")));
         }
-        if truncated {
+        if cycle_truncated {
             out.push_str("  - additional cycles omitted by the context limit\n");
         }
     }
+    out.push_str(&format!("# import_witnesses={} type_witnesses={} evidence_truncated={evidence_truncated}\n", imports.len(), types.len()));
+    for edge in imports { out.push_str(&format!("  - import {} -> {} ({})\n", edge.from_file, edge.to_file, edge.language)); }
+    for edge in types { out.push_str(&format!("  - type {}::{} -> {}::{} ({})\n", edge.child.file_path, edge.child.symbol, edge.parent.file_path, edge.parent.symbol, edge.language)); }
     crate::security::redact::sanitize_tool_output(&out)
 }
 
@@ -1163,6 +1201,34 @@ mod tests {
     use crate::code_map::walker::{Language, RepoFile, RepoMap, ScanReport};
     use std::path::PathBuf;
     use tempfile::tempdir;
+
+    fn complete_architecture_fixture(with_cycle: bool) -> (tempfile::TempDir, Connection, String) {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("src/a.rs"), "pub struct Base; pub struct Child;\n").unwrap();
+        std::fs::write(repo.join("src/b.rs"), "pub fn b() {}\n").unwrap();
+        std::fs::write(repo.join("src/model.py"), "class Base: pass\nclass Child(Base): pass\n").unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(&repo).with_symbols(true).scan().unwrap();
+        let root = crate::code_map::root_identity::CanonicalRepoRoot::discover(&repo).unwrap();
+        let root_display = root.display().to_owned();
+        let mut conn = open(&dir.path().join("code_map.db")).unwrap();
+        let edges = if with_cycle {
+            vec![
+                CodeEdge { from_file: "src/a.rs".into(), from_symbol: "a".into(), to_name: "b".into(), target_file: None, kind: EdgeKind::Calls, confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE, confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred },
+                CodeEdge { from_file: "src/b.rs".into(), from_symbol: "b".into(), to_name: "a".into(), target_file: None, kind: EdgeKind::Calls, confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE, confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred },
+            ]
+        } else { Vec::new() };
+        let imports = [crate::code_map::imports::ImportEdge { from_file: "src/a.rs".into(), to_file: "src/model.py".into(), language: "rust".into() }];
+        let child = crate::code_map::type_hierarchy::TypeEndpoint::new("src/model.py", "Child").unwrap();
+        let parent = crate::code_map::type_hierarchy::TypeEndpoint::new("src/model.py", "Base").unwrap();
+        let hierarchy = crate::code_map::type_hierarchy::TypeHierarchy::from_parts(
+            vec![crate::code_map::type_hierarchy::TypeHierarchyEdge { child: child.clone(), parent: parent.clone(), language: "python".into() }],
+            std::collections::BTreeSet::from([child, parent]),
+        ).unwrap();
+        crate::code_map::persist::persist_map_and_edges_bound(&mut conn, &map, &edges, &imports, &hierarchy, &root).unwrap();
+        (dir, conn, root_display)
+    }
 
     /// PR5-010: a daemon's process CWD is never the indexed repo, so
     /// `resolve_active_root` always answers `None` there and the repo-map
@@ -1982,17 +2048,31 @@ mod tests {
     fn rendered_architecture_findings_sanitize_legacy_cycle_evidence() {
         let secret = concat!("sk-", "FAKE_TEST_ARCH_MAP_AAAAAAAAAAAAAA");
         let colored = format!("sk-\x1b[36m{}\x1b[0m", &secret[3..]);
+        let import = crate::code_map::imports::ImportEdge {
+            from_file: "src/lib.rs".into(), to_file: "src/model.py".into(), language: "rust".into(),
+        };
+        let ty = crate::code_map::type_hierarchy::TypeHierarchyEdge {
+            child: crate::code_map::type_hierarchy::TypeEndpoint::new("src/model.py", "Child").unwrap(),
+            parent: crate::code_map::type_hierarchy::TypeEndpoint::new("src/base.py", "Base").unwrap(),
+            language: "python".into(),
+        };
         let block = render_architecture_findings(
             &[ArchitectureCycleFinding {
                 root: format!("/repo/{colored}"),
                 symbols: vec!["useful_a".into(), format!("useful_b/{colored}")],
             }],
+            &[import],
+            &[ty],
             1,
             2,
+            false,
+            false,
             false,
         );
 
         assert!(block.contains("useful_a"), "{block}");
+        assert!(block.contains("import src/lib.rs -> src/model.py (rust)"), "{block}");
+        assert!(block.contains("type src/model.py::Child -> src/base.py::Base (python)"), "{block}");
         assert!(block.contains("[REDACTED:openai_key]"), "{block}");
         assert_eq!(block.matches("[REDACTED:openai_key]").count(), 2, "{block}");
         assert!(!block.contains(secret), "{block}");
@@ -2037,37 +2117,12 @@ mod tests {
 
     #[test]
     fn architecture_skill_automatically_consumes_persisted_cycles() {
-        let (_dir, mut conn) = seed_db_with_two_files();
-        persist_edges(
-            &mut conn,
-            "/repo/a",
-            &[
-                CodeEdge {
-                    from_file: "src/a.rs".into(),
-                    from_symbol: "a".into(),
-                    to_name: "b".into(),
-                    target_file: None,
-                    kind: EdgeKind::Calls,
-                    confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
-                    confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
-                },
-                CodeEdge {
-                    from_file: "src/b.rs".into(),
-                    from_symbol: "b".into(),
-                    to_name: "a".into(),
-                    target_file: None,
-                    kind: EdgeKind::Calls,
-                    confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
-                    confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
-                },
-            ],
-        )
-        .unwrap();
+        let (_dir, conn, root) = complete_architecture_fixture(true);
 
         let findings = architecture_findings_for_skill(
             &conn,
             Some(ARCHITECTURE_SKILL_ID),
-            "/repo/a",
+            &root,
             ARCHITECTURE_CYCLE_LIMIT,
         )
         .unwrap()
@@ -2078,21 +2133,25 @@ mod tests {
         assert_eq!(findings.cycles_injected, 1);
         assert!(!findings.truncated);
         assert!(findings.block.contains("a -> b -> a"));
+        assert_eq!(findings.import_witnesses.len(), 1);
+        assert_eq!(findings.type_witnesses.len(), 1);
+        assert!(findings.block.contains("import src/a.rs -> src/model.py (rust)"));
+        assert!(findings.block.contains("type src/model.py::Child -> src/model.py::Base (python)"));
         assert!(findings.block.contains("architecture-findings"));
     }
 
     #[test]
     fn architecture_cycle_context_is_skill_scoped_and_discloses_empty_scan() {
-        let (_dir, conn) = seed_db_with_two_files();
+        let (_dir, conn, root) = complete_architecture_fixture(false);
         assert!(
-            architecture_findings_for_skill(&conn, Some("unrelated_skill"), "/repo/a", 20)
+            architecture_findings_for_skill(&conn, Some("unrelated_skill"), &root, 20)
                 .unwrap()
                 .is_none(),
             "normal chat turns must not receive architecture-only graph evidence"
         );
 
         let findings =
-            architecture_findings_for_skill(&conn, Some(ARCHITECTURE_SKILL_ID), "/repo/a", 20)
+            architecture_findings_for_skill(&conn, Some(ARCHITECTURE_SKILL_ID), &root, 20)
                 .unwrap()
                 .unwrap();
         assert_eq!(findings.cycles_injected, 0);
@@ -2109,6 +2168,30 @@ mod tests {
             .is_none(),
             "an unknown/currently-unmapped repo must never fall back to another persisted root"
         );
+    }
+
+    #[test]
+    fn architecture_evidence_refuses_mixed_partial_or_stale_generations_and_discloses_caps() {
+        let (dir, conn, root) = complete_architecture_fixture(false);
+        conn.execute("UPDATE code_map_roots SET import_generation = import_generation + 1 WHERE root = ?1", [&root]).unwrap();
+        assert!(architecture_findings_for_skill(&conn, Some(ARCHITECTURE_SKILL_ID), &root, 20).is_err());
+        conn.execute("UPDATE code_map_roots SET import_generation = index_generation, oversize_skipped = 1 WHERE root = ?1", [&root]).unwrap();
+        assert!(architecture_findings_for_skill(&conn, Some(ARCHITECTURE_SKILL_ID), &root, 20).is_err());
+        conn.execute("UPDATE code_map_roots SET oversize_skipped = 0 WHERE root = ?1", [&root]).unwrap();
+        std::fs::write(dir.path().join("repo/src/a.rs"), "pub struct Base; pub struct Changed;\n").unwrap();
+        assert!(architecture_findings_for_skill(&conn, Some(ARCHITECTURE_SKILL_ID), &root, 20).is_err());
+
+        let (_fresh_dir, fresh, fresh_root) = complete_architecture_fixture(false);
+        fresh.execute(
+            "INSERT INTO code_map_import_edges (root, from_file, to_file, language) VALUES (?1, 'src/b.rs', 'src/model.py', 'rust')",
+            [&fresh_root],
+        ).unwrap();
+        let capped = architecture_findings_for_skill(&fresh, Some(ARCHITECTURE_SKILL_ID), &fresh_root, 20)
+            .unwrap()
+            .expect("current snapshot still renders its bounded import witness");
+        assert!(capped.truncated);
+        assert!(capped.block.contains("evidence_truncated=true"));
+        assert!(!capped.block.contains("additional cycles omitted"));
     }
 
     #[test]

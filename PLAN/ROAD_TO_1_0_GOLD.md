@@ -8,6 +8,34 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W296-W307 role callers, graph consumers and hosted repairs (2026-09-23):**
+The standalone agent fan-out, coding worker/decomposer, direct role/profile CLI,
+manual Cron/loop callers and fresh Council-dissent winner retain their actual
+configured role at the provider authority boundary. Counted allow/deny, QA,
+retry, fallback and WAL fixtures use the production binding seams. Independent
+source reviews passed; P2-15 remains open for hosted acceptance.
+
+Architecture recall reads call/import/type evidence from one complete, equal
+four-generation SQLite snapshot and reports cycle/evidence caps separately.
+Graphify publishes a bounded CODEGRAPH_WITNESS.json tied to its immutable
+receipt, CURRENT and wiki commit fence; legacy REPORT/TREE generations remain
+readable. Independent source review passed; P2-11 remains open.
+
+Group564452 run35826131329 actually executed556:538PASS/18FAIL, then stopped
+on a misnamed W289 discovery. All117 source bindings, matrix/lock and556
+ordered terminals were admitted. Eight W289 identities now use their actual
+workstream_c_tests module. W304 repairs17 private-home fixture setups; W305
+reviews the sole Cron callsite fingerprint drift. Three authenticated fixture
+WAL drains now check the inner persistence result as well as the task join.
+Corec83 run35827159275 passed production Clippy but found two W292 pinned-future
+lifetime errors; W306 scopes those futures before provider/writer teardown.
+No failed or unstarted case is accepted.
+
+Inventory592 paths; native990 plus Windows19/Linux31/macOS30; grouped594;
+GUI99+29Linux/26macOS unchanged. Road1324=1021checked/301open/2partial;
+WS-LF14done/104open unchanged. All executable verification remains hosted.
+Next: exact hosted format/Core, Group594, GUI128 and native Windows/macOS CI.
+
 **W298 focused chat preparation lint repair (2026-09-23):** Core424
 run35826459440 stopped at one strict Clippy diagnostic: prepare_chat_turn_input
 now has9arguments after the daemon role-policy controller was added. The narrow

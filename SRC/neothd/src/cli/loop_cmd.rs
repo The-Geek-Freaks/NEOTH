@@ -16,6 +16,7 @@ use clap::{Args, Subcommand};
 use tracing::warn;
 
 use crate::cli::OutputFormat;
+use crate::config::inference::HemisphereRole;
 use crate::config::FreedomConfig;
 use crate::loop_engine::{LoopAutonomyLevel, LoopRunRecord};
 
@@ -176,12 +177,15 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
             .context("spawn WAL writer")?;
     let provider_policy =
         crate::permissions::AutonomyPolicySnapshot::new(autonomy, &config.custom_autonomy);
+    let left_provider = standalone_loop_left_provider(&config)?;
     let provider_call_authorizer =
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
             provider_policy,
             Some(writer.clone()),
             config.tokens.max_per_request,
         );
+    let provider_call_authorizer =
+        bind_standalone_loop_left_authorizer(provider_call_authorizer, &config, left_provider);
 
     let req = match standalone_loop_enriched_request(&config, &neoth_home, &writer, &args.prompt)
         .await
@@ -246,6 +250,32 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
     let record = result?;
     print!("{}", render_record(&record, output)?);
     Ok(())
+}
+
+/// `fallback_chain_from_config` above starts from the canonical Left role.
+/// The generic loop engine has no role origin, so retain that caller-selected
+/// identity in its authorizer rather than teaching the engine to infer one.
+fn standalone_loop_left_provider(
+    config: &FreedomConfig,
+) -> Result<crate::config::inference::InferenceProvider> {
+    config
+        .inference
+        .slot_for(HemisphereRole::Left)
+        .provider
+        .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
+        .ok_or_else(|| anyhow::anyhow!("standalone loop Left fallback chain has no configured provider identity"))
+}
+
+fn bind_standalone_loop_left_authorizer(
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
+    config: &FreedomConfig,
+    left_provider: crate::config::inference::InferenceProvider,
+) -> crate::providers::cost_authorization::ProviderCallAuthorizer {
+    authorizer.with_role_dispatch(
+        HemisphereRole::Left,
+        left_provider,
+        std::sync::Arc::new(config.clone()),
+    )
 }
 
 /// Build the one request a standalone loop may reuse for all of its rounds.
@@ -484,7 +514,100 @@ fn truncate_id(id: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use crate::loop_engine::engine::{LoopRound, StopReason};
+    use crate::config::inference::InferenceProvider;
+    use crate::config::role_policy::{RolePolicyConfig, RolePolicyRule};
+    use crate::providers::cost_authorization::{AuthorizedProvider, ProviderCallAuthorizer};
+    use crate::providers::{CompletionIdentity, ProviderDispatchPermit};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
+
+    struct W302LoopLeaf {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for W302LoopLeaf {
+        fn name(&self) -> &'static str {
+            "openai_api"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("w302-loop-allowed")
+        }
+
+        async fn complete_raw(
+            &self,
+            _request: crate::providers::Request,
+            _permit: &ProviderDispatchPermit,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(crate::providers::Completion {
+                text: "loop round output".to_owned(),
+                identity: CompletionIdentity::default(),
+                model: "w302-loop-allowed".to_owned(),
+                ..Default::default()
+            })
+        }
+    }
+
+    struct W302QuotaLeaf {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for W302QuotaLeaf {
+        fn name(&self) -> &'static str {
+            "openai_api"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("w302-loop-allowed")
+        }
+
+        async fn complete_raw(
+            &self,
+            _request: crate::providers::Request,
+            _permit: &ProviderDispatchPermit,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(anyhow::Error::new(crate::providers::quota::QuotaError {
+                provider: self.name(),
+                retry_after: None,
+                body: "W302 synthetic 429".to_owned(),
+            }))
+        }
+    }
+
+    fn w302_loop_config(policy_model: &str) -> FreedomConfig {
+        let mut config = FreedomConfig::default();
+        config.inference.default_slot.provider = Some(InferenceProvider::OpenAi);
+        config.inference.default_slot.model = Some(policy_model.to_owned());
+        config.inference.role_policy = Some(RolePolicyConfig {
+            rules: vec![RolePolicyRule {
+                role: HemisphereRole::Left,
+                provider: InferenceProvider::OpenAi,
+                model: Some(policy_model.to_owned()),
+            }],
+        });
+        config
+    }
+
+    fn w302_loop_provider_requests(segment: &std::path::Path) -> usize {
+        let bytes = std::fs::read(segment).expect("read W302 loop WAL");
+        let mut count = 0;
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST {
+                let payload: serde_json::Value =
+                    serde_json::from_slice(frame.payload).expect("decode W302 loop request");
+                assert_eq!(payload["hemisphere_role"], "left");
+                assert_eq!(payload["hemisphere_provider"], "openai_api");
+                count += 1;
+            }
+            Ok(())
+        })
+        .expect("scan W302 loop WAL");
+        count
+    }
 
     struct StandaloneRequestRecordingProvider {
         requests: Arc<Mutex<Vec<crate::providers::Request>>>,
@@ -755,5 +878,128 @@ mod tests {
         assert_eq!(requests[0].system.as_deref(), Some(initial_system.as_str()));
         assert_eq!(requests[1].system.as_deref(), Some(initial_system.as_str()));
         assert_ne!(requests[0].prompt, requests[1].prompt);
+    }
+
+    #[tokio::test]
+    async fn w302_standalone_loop_retains_left_binding_for_every_round() {
+        let home = tempfile::tempdir().expect("create W302 loop home");
+        let segment = home.path().join("w302-loop-rounds.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("spawn W302 loop WAL");
+        let config = w302_loop_config("w302-loop-allowed");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let raw = Arc::new(W302LoopLeaf {
+            calls: Arc::clone(&calls),
+        });
+        let authorizer = bind_standalone_loop_left_authorizer(
+            ProviderCallAuthorizer::fail_closed(
+                crate::permissions::AutonomyLevel::Full,
+                Some(writer.clone()),
+                config.tokens.max_per_request,
+            ),
+            &config,
+            standalone_loop_left_provider(&config).expect("configured Left provider"),
+        );
+        let loop_config = crate::loop_engine::engine::LoopConfig {
+            min_rounds: 2,
+            max_rounds: 2,
+            until: vec![],
+            tool_call_budget: Some(10),
+            autonomy: crate::permissions::AutonomyLevel::Full,
+            refine_enabled: false,
+            neoth_home: home.path().to_path_buf(),
+        };
+        crate::loop_engine::run_loop(
+            &loop_config,
+            raw.as_ref(),
+            crate::providers::Request {
+                prompt: "W302 loop rounds".to_owned(),
+                ..Default::default()
+            },
+            &crate::mcp::McpServers::default(),
+            &writer,
+            &config,
+            authorizer,
+            None,
+            &crate::mcp::McpToolScope::default(),
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
+            None,
+        )
+        .await
+        .expect("two bound standalone loop rounds complete");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        drop(raw);
+        drop(writer);
+        join.await.expect("drain W302 loop WAL");
+        assert_eq!(w302_loop_provider_requests(&segment), 2);
+    }
+
+    #[tokio::test]
+    async fn w302_standalone_loop_denies_primary_and_429_fallback_before_raw_leaf() {
+        let home = tempfile::tempdir().expect("create W302 denied loop home");
+        let segment = home.path().join("w302-loop-denied.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("spawn W302 loop WAL");
+        let config = w302_loop_config("w302-loop-allowed");
+
+        let denied_primary_calls = Arc::new(AtomicUsize::new(0));
+        let denied_primary = AuthorizedProvider::from_arc(
+            Arc::new(W302LoopLeaf {
+                calls: Arc::clone(&denied_primary_calls),
+            }),
+            bind_standalone_loop_left_authorizer(
+                ProviderCallAuthorizer::fail_closed(
+                    crate::permissions::AutonomyLevel::Full,
+                    Some(writer.clone()),
+                    config.tokens.max_per_request,
+                ),
+                &w302_loop_config("denied"),
+                standalone_loop_left_provider(&config).expect("configured Left provider"),
+            ),
+            Some("w302-loop-allowed".to_owned()),
+            "loop.w302.primary_denied",
+        );
+        assert!(denied_primary.complete(crate::providers::Request::default()).await.is_err());
+        assert_eq!(denied_primary_calls.load(Ordering::SeqCst), 0);
+        drop(denied_primary);
+
+        let quota_calls = Arc::new(AtomicUsize::new(0));
+        let fallback_calls = Arc::new(AtomicUsize::new(0));
+        let chain = crate::providers::fallback::FallbackProvider::new_with_models_at(
+            vec![
+                Box::new(W302QuotaLeaf {
+                    calls: Arc::clone(&quota_calls),
+                }),
+                Box::new(W302LoopLeaf {
+                    calls: Arc::clone(&fallback_calls),
+                }),
+            ],
+            vec![
+                Some("w302-loop-allowed".to_owned()),
+                Some("w302-loop-disallowed-fallback".to_owned()),
+            ],
+            1,
+            None,
+            home.path().join("w302-quota.json"),
+        );
+        let fallback = AuthorizedProvider::from_box(
+            Box::new(chain),
+            bind_standalone_loop_left_authorizer(
+                ProviderCallAuthorizer::fail_closed(
+                    crate::permissions::AutonomyLevel::Full,
+                    Some(writer.clone()),
+                    config.tokens.max_per_request,
+                ),
+                &config,
+                standalone_loop_left_provider(&config).expect("configured Left provider"),
+            ),
+            Some("w302-loop-allowed".to_owned()),
+            "loop.w302.fallback_denied",
+        );
+        assert!(fallback.complete(crate::providers::Request::default()).await.is_err());
+        assert_eq!(quota_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(fallback_calls.load(Ordering::SeqCst), 0);
+        drop(fallback);
+        drop(writer);
+        join.await.expect("drain W302 loop WAL");
+        assert_eq!(w302_loop_provider_requests(&segment), 1);
     }
 }

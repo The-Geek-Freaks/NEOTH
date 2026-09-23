@@ -25,6 +25,44 @@ use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::sub_agents::{SubAgent, builtins};
 
+#[derive(Clone)]
+pub(crate) struct FanOutLeftRoleBinding {
+    role: crate::config::inference::HemisphereRole,
+    provider: crate::config::inference::InferenceProvider,
+    config: Arc<FreedomConfig>,
+}
+
+/// Resolve the fixed canonical Left origin before the fan-out opens its WAL.
+/// The legacy identity fallback preserves single-provider configurations whose
+/// topology leaves the default slot implicit.
+pub(crate) fn fan_out_left_role_binding(
+    config: Arc<FreedomConfig>,
+) -> Result<FanOutLeftRoleBinding> {
+    let role = crate::config::inference::HemisphereRole::Left;
+    let provider = config
+        .inference
+        .slot_for(role)
+        .provider
+        .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
+        .context("sub-agent Left role has no configured provider identity")?;
+    Ok(FanOutLeftRoleBinding {
+        role,
+        provider,
+        config,
+    })
+}
+
+pub(crate) fn bind_fan_out_left_authorizer(
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
+    binding: &FanOutLeftRoleBinding,
+) -> crate::providers::cost_authorization::ProviderCallAuthorizer {
+    authorizer.with_role_dispatch(
+        binding.role,
+        binding.provider,
+        Arc::clone(&binding.config),
+    )
+}
+
 #[derive(Args, Debug, Clone)]
 pub struct AgentsArgs {
     #[command(subcommand)]
@@ -160,6 +198,7 @@ async fn run_fan_out(
     let config_path = home.join("freedom.yaml");
     let config = FreedomConfig::load_from_path(&config_path)
         .context("load freedom.yaml — run `neoth init` first")?;
+    let left_binding = fan_out_left_role_binding(Arc::new(config.clone()))?;
     let skill_registry_context = fan_out_skill_registry_context(home, &config_path, &config)
         .await
         .context("capture authority-bound Skill registry for this fan-out run")?;
@@ -176,14 +215,18 @@ async fn run_fan_out(
             .context("build sub-agent provider")?;
     canonicalize_agent_models(&config, raw_provider.as_ref(), &mut selected)?;
     let default_model = crate::providers::provider_default_wire_model(raw_provider.as_ref());
+    let authorizer = bind_fan_out_left_authorizer(
+        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+            config.autonomy_policy(),
+            Some(writer.clone()),
+            config.tokens.max_per_request,
+        ),
+        &left_binding,
+    );
     let provider = Arc::new(
         crate::providers::cost_authorization::AuthorizedProvider::from_box(
             raw_provider,
-            crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
-                config.autonomy_policy(),
-                Some(writer.clone()),
-                config.tokens.max_per_request,
-            ),
+            authorizer,
             default_model,
             "sub_agents.fan_out",
         ),

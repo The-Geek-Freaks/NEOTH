@@ -488,7 +488,10 @@ pub(crate) fn open_graphify_transaction_recovery<S: CompanionSnapshotAttestation
             && receipt.repo_root_identity_sha256 == snapshot.root_identity_sha256()
             && receipt.source_fingerprint_sha256 == snapshot.source_fingerprint_sha256()
             && receipt.native_index_generation == snapshot.index_generation()
-            && receipt.native_graph_generation == snapshot.graph_generation(),
+            && receipt.native_graph_generation == snapshot.graph_generation()
+            && ((receipt.native_import_generation == 0 && receipt.native_type_generation == 0)
+                || (receipt.native_import_generation == receipt.native_index_generation
+                    && receipt.native_type_generation == receipt.native_index_generation)),
         "Graphify recovery receipt does not bind the supplied scoped native snapshot"
     );
     let active = inspect_active_scope_generation(conn, &receipt, scope)?;
@@ -589,6 +592,8 @@ mod tests {
             source_fingerprint_sha256: "c".repeat(64),
             native_index_generation: 1,
             native_graph_generation: 1,
+            native_import_generation: 0,
+            native_type_generation: 0,
             artifacts: vec![GraphifyArtifactReceipt {
                 name: "GRAPH_REPORT.md".to_owned(),
                 bytes: 1,

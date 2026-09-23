@@ -10,6 +10,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
+use std::sync::Arc;
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
@@ -858,6 +859,7 @@ async fn run_test(
             cfg.tokens.max_per_request,
         )
         .await?;
+    let provider_audit = hemisphere_test_role_authorizer(provider_audit, cfg, role)?;
     let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
         provider,
         provider_audit.authorizer_with_ephemeral_consent(ephemeral_consent),
@@ -968,6 +970,19 @@ async fn run_test(
     operation
 }
 
+/// Retain the role parsed by the direct test command at the final provider
+/// boundary. This command has one fixed config snapshot and no reload path.
+fn hemisphere_test_role_authorizer(
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
+    cfg: &FreedomConfig,
+    role: HemisphereRole,
+) -> Result<crate::providers::cost_authorization::ProviderCallAuthorizer> {
+    let provider = cfg.inference.slot_for(role).provider
+        .or_else(|| cfg.provider_kind.map(|kind| kind.to_inference()))
+        .context("selected hemisphere role has no configured provider identity")?;
+    Ok(authorizer.with_role_dispatch(role, provider, Arc::new(cfg.clone())))
+}
+
 /// D-1 live-call outcome. Carried back to `run_test` so the rendering
 /// code stays separate from the provider-touching code (testable in
 /// isolation).
@@ -1054,6 +1069,98 @@ fn parse_role(s: &str) -> Result<HemisphereRole> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::Provider as _;
+
+    struct RoleCountingProvider(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for RoleCountingProvider {
+        fn name(&self) -> &'static str {
+            "local_ollama"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("w301-right")
+        }
+
+        async fn complete(
+            &self,
+            request: crate::providers::Request,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(crate::providers::Completion {
+                text: "ok".into(),
+                model: request.model.unwrap_or_default(),
+                ..Default::default()
+            })
+        }
+    }
+
+    fn w301_role_config(provider: InferenceProvider, model: &str) -> FreedomConfig {
+        let mut cfg = FreedomConfig::default();
+        cfg.inference.right.provider = Some(provider);
+        cfg.inference.right.model = Some(model.into());
+        cfg.inference.role_policy = Some(crate::config::role_policy::RolePolicyConfig {
+            rules: vec![crate::config::role_policy::RolePolicyRule {
+                role: HemisphereRole::Right,
+                provider,
+                model: Some(model.into()),
+            }],
+        });
+        cfg
+    }
+
+    #[tokio::test]
+    async fn w301_hemispheres_right_binding_allows_selected_leaf_once() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cfg = w301_role_config(InferenceProvider::LocalOllama, "w301-right");
+        let authorizer = hemisphere_test_role_authorizer(
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            &cfg,
+            HemisphereRole::Right,
+        )
+        .unwrap();
+        let raw = RoleCountingProvider(calls.clone());
+        let provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
+            &raw,
+            authorizer,
+            None,
+            "w301.hemispheres.right",
+        );
+        provider
+            .complete(crate::providers::Request::default())
+            .await
+            .unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn w301_hemispheres_right_model_denial_has_zero_raw_calls() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cfg = w301_role_config(InferenceProvider::LocalOllama, "different-model");
+        let authorizer = hemisphere_test_role_authorizer(
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            &cfg,
+            HemisphereRole::Right,
+        )
+        .unwrap();
+        let raw = RoleCountingProvider(calls.clone());
+        let provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
+            &raw,
+            authorizer,
+            None,
+            "w301.hemispheres.denied",
+        );
+        assert!(provider
+            .complete(crate::providers::Request::default())
+            .await
+            .is_err());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
 
     #[test]
     fn single_mode_stores_supplied_key_in_credentials_not_public_slot() {

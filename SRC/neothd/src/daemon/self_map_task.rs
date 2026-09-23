@@ -695,6 +695,8 @@ fn self_map_completion_payload<S: crate::code_map::snapshot::CompanionSnapshotAt
             "source_fingerprint_sha256": graphify_receipt.source_fingerprint_sha256,
             "native_index_generation": graphify_receipt.native_index_generation,
             "native_graph_generation": graphify_receipt.native_graph_generation,
+            "native_import_generation": graphify_receipt.native_import_generation,
+            "native_type_generation": graphify_receipt.native_type_generation,
             "artifacts": graphify_receipt.artifacts,
         },
         "ts_unix":              now_ns / 1_000_000_000,
@@ -1011,6 +1013,8 @@ mod tests {
             source_fingerprint_sha256: snapshot.snapshot().source_fingerprint_sha256.clone(),
             native_index_generation: snapshot.snapshot().index_generation,
             native_graph_generation: snapshot.snapshot().graph_generation,
+            native_import_generation: 0,
+            native_type_generation: 0,
             artifacts: vec![crate::graphify_publish::GraphifyArtifactReceipt {
                 name: "GRAPH_REPORT.md".to_owned(),
                 bytes: 42,

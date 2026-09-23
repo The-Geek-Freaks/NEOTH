@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::graph::{CallGraph, DEFAULT_MAX_GRAPH_EDGES, FileInput};
@@ -82,6 +83,51 @@ pub(crate) struct ScopedRebuildSnapshot {
     included_relative_paths: Vec<PathBuf>,
     excluded_relative_paths: Vec<PathBuf>,
 }
+
+/// Deterministic, bounded native evidence copied into a Graphify generation.
+/// It is minted only through [`ScopedRebuildSnapshot`], which keeps the
+/// database path and source scope non-forgeable to companion publishers.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GraphifyCodeGraphWitness {
+    pub(crate) schema_version: u32,
+    pub(crate) canonical_repo_root: String,
+    pub(crate) repo_root_identity_sha256: String,
+    pub(crate) source_fingerprint_sha256: String,
+    pub(crate) index_generation: i64,
+    pub(crate) graph_generation: i64,
+    pub(crate) import_generation: i64,
+    pub(crate) type_generation: i64,
+    pub(crate) import_edges: Vec<super::imports::ImportEdge>,
+    pub(crate) type_endpoints: Vec<super::type_hierarchy::TypeEndpoint>,
+    pub(crate) type_edges: Vec<super::type_hierarchy::TypeHierarchyEdge>,
+    pub(crate) call_edges: Vec<super::graph::CodeEdge>,
+    pub(crate) call_bfs: GraphifyCallBfsWitness,
+}
+
+/// A fixed, non-user-controlled CallGraph projection. An empty graph carries
+/// no seed and no rows; a non-empty graph uses its stable first persisted edge.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GraphifyCallBfsWitness {
+    pub(crate) direction: String,
+    pub(crate) max_depth: usize,
+    pub(crate) max_entries: usize,
+    pub(crate) max_text_bytes: usize,
+    pub(crate) seed_file: Option<String>,
+    pub(crate) seed_symbol: Option<String>,
+    pub(crate) entries: Vec<super::graph::CalleeEntry>,
+}
+
+const GRAPHIFY_CODEGRAPH_WITNESS_SCHEMA: u32 = 1;
+const GRAPHIFY_WITNESS_IMPORT_EDGE_LIMIT: usize = 2_048;
+const GRAPHIFY_WITNESS_TYPE_EDGE_LIMIT: usize = 2_048;
+const GRAPHIFY_WITNESS_TYPE_ENDPOINT_LIMIT: usize = 4_096;
+const GRAPHIFY_WITNESS_CALL_EDGE_LIMIT: usize = 2_048;
+const GRAPHIFY_WITNESS_TEXT_BYTES: usize = 2 * 1024 * 1024;
+const GRAPHIFY_WITNESS_BFS_DEPTH: usize = 2;
+const GRAPHIFY_WITNESS_BFS_ENTRIES: usize = 64;
+const GRAPHIFY_WITNESS_BFS_TEXT_BYTES: usize = 16 * 1024;
 
 /// Read-only evidence for completing a pre-existing Graphify transaction.
 /// Unlike [`ScopedRebuildSnapshot`], constructing this value never opens a
@@ -205,12 +251,12 @@ pub(crate) fn attest_existing_persisted_snapshot(
     })?;
     connection.pragma_update(None, "query_only", "ON")?;
     let display = root.display();
-    let row: Option<(Option<String>, i64, i64, bool)> = connection.query_row(
-        "SELECT root_identity, index_generation, graph_generation, oversize_skipped = 0 AND truncated_at IS NULL FROM code_map_roots WHERE root = ?1 AND (root_identity IS NULL OR length(CAST(root_identity AS BLOB)) <= ?2)",
+    let row: Option<(Option<String>, i64, i64, i64, i64, bool)> = connection.query_row(
+        "SELECT root_identity, index_generation, graph_generation, import_generation, type_generation, oversize_skipped = 0 AND truncated_at IS NULL FROM code_map_roots WHERE root = ?1 AND (root_identity IS NULL OR length(CAST(root_identity AS BLOB)) <= ?2)",
         rusqlite::params![display, MAX_PERSISTED_RECOVERY_ROW_TEXT_BYTES],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
     ).optional().context("read persisted native generation for recovery")?;
-    let Some((stored_identity, index_generation, graph_generation, complete)) = row else {
+    let Some((stored_identity, index_generation, graph_generation, import_generation, type_generation, complete)) = row else {
         let oversized: bool = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM code_map_roots WHERE root = ?1 AND root_identity IS NOT NULL AND length(CAST(root_identity AS BLOB)) > ?2)",
             rusqlite::params![display, MAX_PERSISTED_RECOVERY_ROW_TEXT_BYTES],
@@ -230,7 +276,9 @@ pub(crate) fn attest_existing_persisted_snapshot(
         index_generation == expected_index_generation
             && graph_generation == expected_graph_generation
             && index_generation > 0
-            && index_generation == graph_generation,
+            && index_generation == graph_generation
+            && index_generation == import_generation
+            && index_generation == type_generation,
         "persisted native generations do not match the recovery receipt"
     );
     let persisted_fingerprint = persisted_source_fingerprint(&connection, root)?;
@@ -321,6 +369,118 @@ impl ScopedRebuildSnapshot {
         &self.excluded_relative_paths
     }
 
+    /// Materialize one fixed-size CodeGraph witness from the exact persisted
+    /// generation minted by this scoped capability. Any stale, incomplete, or
+    /// over-budget graph is refused before a Graphify generation can advance.
+    pub(crate) fn graphify_codegraph_witness(&self) -> Result<GraphifyCodeGraphWitness> {
+        self.revalidate_companion_publication()?;
+        let connection = super::persist::open(&self.database_path).with_context(|| {
+            format!(
+                "open scoped code-map database {} for Graphify witness",
+                self.database_path.display()
+            )
+        })?;
+        let root = self.snapshot.root.display().to_owned();
+        let (
+            root_identity,
+            index_generation,
+            graph_generation,
+            import_generation,
+            type_generation,
+            complete,
+        ): (String, i64, i64, i64, i64, bool) = connection.query_row(
+            "SELECT root_identity, index_generation, graph_generation, import_generation, type_generation, \
+                    oversize_skipped = 0 AND truncated_at IS NULL \
+             FROM code_map_roots WHERE root = ?1",
+            [&root],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )?;
+        ensure!(
+            root_identity == self.snapshot.root.identity().as_str()
+                && complete
+                && index_generation > 0
+                && index_generation == self.snapshot.index_generation
+                && graph_generation == self.snapshot.graph_generation
+                && index_generation == graph_generation
+                && index_generation == import_generation
+                && index_generation == type_generation,
+            "scoped code-map ImportGraph/TypeHierarchy generation changed before Graphify witness"
+        );
+        let (import_edges, import_truncated) = super::persist::load_import_edges_for_root_bounded(
+            &connection,
+            &root,
+            GRAPHIFY_WITNESS_IMPORT_EDGE_LIMIT,
+            GRAPHIFY_WITNESS_TEXT_BYTES,
+        )?;
+        let (type_hierarchy, type_truncated) =
+            super::persist::load_type_hierarchy_for_root_bounded(
+                &connection,
+                &root,
+                GRAPHIFY_WITNESS_TYPE_EDGE_LIMIT,
+                GRAPHIFY_WITNESS_TYPE_ENDPOINT_LIMIT,
+                GRAPHIFY_WITNESS_TEXT_BYTES,
+            )?;
+        let (call_edges, call_truncated, _) =
+            super::persist::load_edges_for_root_bounded_with_text_limit(
+                &connection,
+                &root,
+                GRAPHIFY_WITNESS_CALL_EDGE_LIMIT,
+                GRAPHIFY_WITNESS_TEXT_BYTES,
+            )?;
+        ensure!(
+            !import_truncated && !type_truncated && !call_truncated,
+            "scoped code-map evidence exceeds the fixed Graphify witness budget"
+        );
+        let graph = CallGraph::from_edges(call_edges.clone());
+        let (seed_file, seed_symbol, entries) = match graph.edges().first() {
+            Some(edge) => (
+                Some(edge.from_file.clone()),
+                Some(edge.from_symbol.clone()),
+                graph.callees_of_bounded(
+                    &edge.from_file,
+                    &edge.from_symbol,
+                    GRAPHIFY_WITNESS_BFS_DEPTH,
+                    GRAPHIFY_WITNESS_BFS_ENTRIES,
+                    GRAPHIFY_WITNESS_BFS_TEXT_BYTES,
+                )?,
+            ),
+            None => (None, None, Vec::new()),
+        };
+        self.revalidate_companion_publication()?;
+        Ok(GraphifyCodeGraphWitness {
+            schema_version: GRAPHIFY_CODEGRAPH_WITNESS_SCHEMA,
+            canonical_repo_root: root,
+            repo_root_identity_sha256: self.snapshot.root_identity_sha256.clone(),
+            source_fingerprint_sha256: self.snapshot.source_fingerprint_sha256.clone(),
+            index_generation,
+            graph_generation,
+            import_generation,
+            type_generation,
+            import_edges,
+            type_endpoints: type_hierarchy.endpoints().iter().cloned().collect(),
+            type_edges: type_hierarchy.edges().to_vec(),
+            call_edges,
+            call_bfs: GraphifyCallBfsWitness {
+                direction: "callees".to_owned(),
+                max_depth: GRAPHIFY_WITNESS_BFS_DEPTH,
+                max_entries: GRAPHIFY_WITNESS_BFS_ENTRIES,
+                max_text_bytes: GRAPHIFY_WITNESS_BFS_TEXT_BYTES,
+                seed_file,
+                seed_symbol,
+                entries,
+            },
+        })
+    }
+
     /// Revalidate the exact filesystem scope and persisted DB generation which
     /// minted this capability. Companion publishers call this immediately
     /// before their own visibility boundary; a freely assembled
@@ -372,11 +532,22 @@ impl ScopedRebuildSnapshot {
             )
         })?;
         let root = self.snapshot.root.display();
+        let (index_generation, graph_generation, import_generation, type_generation, complete):
+            (i64, i64, i64, i64, bool) = connection.query_row(
+            "SELECT index_generation, graph_generation, import_generation, type_generation, \
+                    oversize_skipped = 0 AND truncated_at IS NULL \
+             FROM code_map_roots WHERE root = ?1",
+            [root],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )?;
         ensure!(
-            super::persist::root_index_generation(&connection, root)?
-                == Some(self.snapshot.index_generation)
-                && super::persist::root_graph_generation(&connection, root)?
-                    == Some(self.snapshot.graph_generation),
+            complete
+                && index_generation == self.snapshot.index_generation
+                && graph_generation == self.snapshot.graph_generation
+                && index_generation > 0
+                && index_generation == graph_generation
+                && index_generation == import_generation
+                && index_generation == type_generation,
             "native code-map generation changed before companion publication"
         );
         Ok(())

@@ -140,6 +140,13 @@ jobs:
               "wave280RetentionAcceptance": 51,
               "wave289CronRoleAcceptance": 8,
               "wave292NormalChatRoleAcceptance": 7,
+              "wave296AgentsRoleAcceptance": 4,
+              "wave297ArchitectureEvidenceAcceptance": 4,
+              "wave300CodingRoleAcceptance": 2,
+              "wave301DirectRoleCliAcceptance": 4,
+              "wave302CronLoopRoleAcceptance": 3,
+              "wave303DissentRoleAcceptance": 2,
+              "wave299GraphifyWitnessAcceptance": 4,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():

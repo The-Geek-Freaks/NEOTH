@@ -18,9 +18,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::graphify_publish::{
-    CURRENT_POINTER_NAME, CurrentGraphifyPointer, GENERATION_RECEIPT_NAME, GRAPH_REPORT_NAME,
-    GRAPH_TREE_NAME, GRAPHIFY_PUBLISH_SCHEMA, GraphifyGenerationReceipt,
-    read_current_graphify_pointer,
+    CODEGRAPH_WITNESS_NAME, CURRENT_POINTER_NAME, CurrentGraphifyPointer, GENERATION_RECEIPT_NAME,
+    GRAPH_REPORT_NAME, GRAPH_TREE_NAME, GRAPHIFY_PUBLISH_SCHEMA, GraphifyGenerationReceipt,
+    read_current_graphify_pointer, validate_codegraph_witness,
 };
 use crate::memory::groundtruth::{Source, insert, list_for_scope, revoke};
 use crate::wiki::sources::{WikiSource, prettify_stem, slug_for};
@@ -29,13 +29,19 @@ const GRAPHIFY_GENERATIONS_DIR: &str = "generations";
 const MAX_GRAPHIFY_RECEIPT_BYTES: u64 = 256 * 1024;
 const MAX_GRAPHIFY_REPORT_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_GRAPHIFY_TREE_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_GRAPHIFY_CODEGRAPH_WITNESS_BYTES: u64 = 4 * 1024 * 1024;
 const GRAPHIFY_CORPUS_SCOPE_PREFIX: &str = "graphify-corpus-";
 const GRAPHIFY_SELF_MAP_SCOPE_PREFIX: &str = "neoth-self-map-";
 const MAX_GRAPHIFY_SCOPE_CORPUS_LEN: usize = 40;
 const MAX_GRAPHIFY_FRIENDLY_SUBDIR_BYTES: usize = 96;
-const REQUIRED_GRAPHIFY_ARTIFACTS: [(&str, u64); 2] = [
+const LEGACY_GRAPHIFY_ARTIFACTS: [(&str, u64); 2] = [
     (GRAPH_REPORT_NAME, MAX_GRAPHIFY_REPORT_BYTES),
     (GRAPH_TREE_NAME, MAX_GRAPHIFY_TREE_BYTES),
+];
+const REQUIRED_GRAPHIFY_ARTIFACTS: [(&str, u64); 3] = [
+    (GRAPH_REPORT_NAME, MAX_GRAPHIFY_REPORT_BYTES),
+    (GRAPH_TREE_NAME, MAX_GRAPHIFY_TREE_BYTES),
+    (CODEGRAPH_WITNESS_NAME, MAX_GRAPHIFY_CODEGRAPH_WITNESS_BYTES),
 ];
 
 /// Scope tag carried by every self-wiki ground-truth row — segregates the
@@ -192,6 +198,16 @@ where
         destructive_scope != WIKI_SCOPE,
         "Graphify ingest cannot own the canonical self-wiki scope"
     );
+    let codegraph_binding = if receipt.native_import_generation == 0 {
+        "codegraph_witness: legacy-absent".to_owned()
+    } else {
+        format!(
+            "codegraph_witness: {}; import_generation: {}; type_generation: {}",
+            CODEGRAPH_WITNESS_NAME,
+            receipt.native_import_generation,
+            receipt.native_type_generation,
+        )
+    };
     let statements = verified
         .sources
         .into_iter()
@@ -199,7 +215,7 @@ where
             format!(
                 "Graphify corpus `{}` generation `{}` doc: {} — vault page \
                  [[{}/generations/{}/{}]] (artifact: {}; artifact_sha256: {}; \
-                 source_fingerprint_sha256: {}; native_generation: {}; corpus_id: {}; \
+                 source_fingerprint_sha256: {}; native_generation: {}; {}; corpus_id: {}; \
                  transaction_id: {})",
                 receipt.friendly_subdir,
                 receipt.generation_id,
@@ -211,6 +227,7 @@ where
                 source.sha256,
                 receipt.source_fingerprint_sha256,
                 receipt.native_index_generation,
+                codegraph_binding,
                 receipt.corpus_id,
                 transaction_id,
             )
@@ -362,7 +379,8 @@ fn verify_graphify_generation(
 
     let mut verified_sources = BTreeMap::new();
     for artifact in &expected.artifacts {
-        let retain = artifact.name.eq_ignore_ascii_case(GRAPH_REPORT_NAME);
+        let retain = artifact.name.eq_ignore_ascii_case(GRAPH_REPORT_NAME)
+            || artifact.name == CODEGRAPH_WITNESS_NAME;
         let verified = verify_regular_artifact(
             &generation_dir.join(&artifact.name),
             graphify_artifact_limit(&artifact.name)?,
@@ -379,6 +397,13 @@ fn verify_graphify_generation(
             "required Graphify artifact {} is empty or whitespace-only",
             artifact.name
         );
+        if artifact.name == CODEGRAPH_WITNESS_NAME {
+            let bytes = verified
+                .retained
+                .as_deref()
+                .context("receipted Graphify CodeGraph witness bytes were not retained")?;
+            validate_codegraph_witness(expected, bytes)?;
+        }
         if artifact
             .name
             .rsplit_once('.')
@@ -458,7 +483,9 @@ fn validate_graphify_receipt_shape(receipt: &GraphifyGenerationReceipt) -> Resul
             .context("Graphify ingest artifact byte total overflow")?;
     }
     ensure!(
-        total <= MAX_GRAPHIFY_REPORT_BYTES + MAX_GRAPHIFY_TREE_BYTES,
+        total <= MAX_GRAPHIFY_REPORT_BYTES
+            + MAX_GRAPHIFY_TREE_BYTES
+            + MAX_GRAPHIFY_CODEGRAPH_WITNESS_BYTES,
         "Graphify ingest artifact receipts exceed their aggregate byte limit"
     );
     ensure!(
@@ -469,18 +496,30 @@ fn validate_graphify_receipt_shape(receipt: &GraphifyGenerationReceipt) -> Resul
 }
 
 /// One closed artifact policy shared by the public compatibility wrapper, the
-/// guarded transaction path, and no-ingest receipt admission. A library caller
-/// cannot weaken Graphify publication's REPORT+TREE completion contract.
+/// guarded transaction path, and no-ingest receipt admission. Existing
+/// report/tree generations remain readable after the W299 contract migration,
+/// but a new positive import/type generation must carry its witness.
 fn validate_required_graphify_artifact_manifest(receipt: &GraphifyGenerationReceipt) -> Result<()> {
+    let legacy = receipt.native_import_generation == 0 && receipt.native_type_generation == 0;
     ensure!(
-        receipt.artifacts.len() == REQUIRED_GRAPHIFY_ARTIFACTS.len(),
-        "Graphify ingest requires exactly GRAPH_REPORT.md and GRAPH_TREE.html"
+        legacy
+            || (receipt.native_import_generation == receipt.native_index_generation
+                && receipt.native_type_generation == receipt.native_index_generation),
+        "Graphify ingest receipt has invalid ImportGraph/TypeHierarchy generations"
     );
-    for (artifact, (required_name, _)) in receipt.artifacts.iter().zip(REQUIRED_GRAPHIFY_ARTIFACTS)
-    {
+    let required = if legacy {
+        &LEGACY_GRAPHIFY_ARTIFACTS[..]
+    } else {
+        &REQUIRED_GRAPHIFY_ARTIFACTS[..]
+    };
+    ensure!(
+        receipt.artifacts.len() == required.len(),
+        "Graphify ingest artifact manifest is not the required legacy REPORT+TREE pair or current REPORT+TREE+CODEGRAPH_WITNESS.json set"
+    );
+    for (artifact, (required_name, _)) in receipt.artifacts.iter().zip(required.iter()) {
         ensure!(
-            artifact.name.as_str() == required_name,
-            "Graphify ingest artifact manifest is not the canonical REPORT+TREE pair"
+            artifact.name.as_str() == *required_name,
+            "Graphify ingest artifact manifest is not canonical for its receipt generation"
         );
     }
     Ok(())
@@ -629,6 +668,10 @@ fn graphify_generation_id(receipt: &GraphifyGenerationReceipt) -> String {
     digest.update(b"\0");
     digest.update(receipt.native_index_generation.to_le_bytes());
     digest.update(receipt.native_graph_generation.to_le_bytes());
+    if receipt.native_import_generation != 0 || receipt.native_type_generation != 0 {
+        digest.update(receipt.native_import_generation.to_le_bytes());
+        digest.update(receipt.native_type_generation.to_le_bytes());
+    }
     for artifact in &receipt.artifacts {
         digest.update(b"\0");
         digest.update(artifact.name.as_bytes());
@@ -1058,6 +1101,8 @@ mod tests {
                 source_fingerprint_sha256,
                 native_index_generation: 7,
                 native_graph_generation: 7,
+                native_import_generation: 0,
+                native_type_generation: 0,
                 artifacts,
             };
             receipt.generation_id = graphify_generation_id(&receipt);
@@ -1083,6 +1128,66 @@ mod tests {
                 generation_dir,
                 receipt,
             }
+        }
+
+        fn current_with_codegraph_witness() -> Self {
+            let mut fixture = Self::new(false);
+            fixture.receipt.native_import_generation = fixture.receipt.native_index_generation;
+            fixture.receipt.native_type_generation = fixture.receipt.native_index_generation;
+            let witness = crate::code_map::snapshot::GraphifyCodeGraphWitness {
+                schema_version: 1,
+                canonical_repo_root: fixture.receipt.canonical_repo_root.clone(),
+                repo_root_identity_sha256: fixture.receipt.repo_root_identity_sha256.clone(),
+                source_fingerprint_sha256: fixture.receipt.source_fingerprint_sha256.clone(),
+                index_generation: fixture.receipt.native_index_generation,
+                graph_generation: fixture.receipt.native_graph_generation,
+                import_generation: fixture.receipt.native_import_generation,
+                type_generation: fixture.receipt.native_type_generation,
+                import_edges: Vec::new(),
+                type_endpoints: Vec::new(),
+                type_edges: Vec::new(),
+                call_edges: Vec::new(),
+                call_bfs: crate::code_map::snapshot::GraphifyCallBfsWitness {
+                    direction: "callees".to_owned(),
+                    max_depth: 2,
+                    max_entries: 64,
+                    max_text_bytes: 16 * 1024,
+                    seed_file: None,
+                    seed_symbol: None,
+                    entries: Vec::new(),
+                },
+            };
+            let witness_bytes = serde_json::to_vec(&witness).unwrap();
+            fixture
+                .receipt
+                .artifacts
+                .push(crate::graphify_publish::GraphifyArtifactReceipt {
+                    name: CODEGRAPH_WITNESS_NAME.to_owned(),
+                    bytes: witness_bytes.len() as u64,
+                    sha256: hex::encode(Sha256::digest(&witness_bytes)),
+                });
+            fixture.receipt.generation_id = graphify_generation_id(&fixture.receipt);
+            let generation_dir = fixture
+                .corpus_dir
+                .join(GRAPHIFY_GENERATIONS_DIR)
+                .join(&fixture.receipt.generation_id);
+            fs::create_dir_all(&generation_dir).unwrap();
+            for name in [GRAPH_REPORT_NAME, GRAPH_TREE_NAME] {
+                fs::copy(fixture.generation_dir.join(name), generation_dir.join(name)).unwrap();
+            }
+            fs::write(generation_dir.join(CODEGRAPH_WITNESS_NAME), witness_bytes).unwrap();
+            fs::write(
+                generation_dir.join(GENERATION_RECEIPT_NAME),
+                serde_json::to_vec(&fixture.receipt).unwrap(),
+            )
+            .unwrap();
+            fs::write(
+                fixture.corpus_dir.join(CURRENT_POINTER_NAME),
+                serde_json::to_vec(&CurrentGraphifyPointer::from(&fixture.receipt)).unwrap(),
+            )
+            .unwrap();
+            fixture.generation_dir = generation_dir;
+            fixture
         }
 
         fn scope(&self) -> String {
@@ -1332,6 +1437,51 @@ mod tests {
     }
 
     #[test]
+    fn current_codegraph_witness_is_receipt_bound_before_scope_replacement() {
+        let (_d, c) = conn();
+        let fixture = GraphifyFixture::current_with_codegraph_witness();
+        let stats = ingest_graphify_generation_for_scope(
+            &c,
+            &fixture.generation_dir,
+            GraphifyIngestScope::Corpus,
+            &fixture.receipt,
+            2_000,
+        )
+        .unwrap();
+        assert_eq!(stats.inserted, 1);
+        let rows = list_for_scope(&c, &fixture.scope()).unwrap();
+        assert!(rows[0].statement.contains(CODEGRAPH_WITNESS_NAME));
+        assert!(rows[0].statement.contains("import_generation: 7"));
+        assert!(rows[0].statement.contains("type_generation: 7"));
+    }
+
+    #[test]
+    fn current_receipt_without_codegraph_witness_preserves_prior_scope() {
+        let (_d, c) = conn();
+        let fixture = GraphifyFixture::current_with_codegraph_witness();
+        let scope = fixture.scope();
+        ingest_sources_for_scope(
+            &c,
+            &[src("GRAPH_REPORT", "Prior graph", SourceCategory::Design)],
+            &scope,
+            1_000,
+        )
+        .unwrap();
+        let mut missing = fixture.receipt.clone();
+        missing.artifacts.pop();
+        let error = ingest_graphify_generation_for_scope(
+            &c,
+            &fixture.generation_dir,
+            GraphifyIngestScope::Corpus,
+            &missing,
+            2_000,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("CODEGRAPH_WITNESS.json"));
+        assert_scope_preserved(&c, &scope, "Prior graph");
+    }
+
+    #[test]
     fn graphify_blank_report_never_revokes_prior_scope() {
         let (_d, c) = conn();
         let fixture = GraphifyFixture::with_report(false, b" \r\n\t".to_vec());
@@ -1520,7 +1670,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("requires exactly GRAPH_REPORT.md and GRAPH_TREE.html")
+                .contains("artifact manifest")
         );
         assert_scope_preserved(&c, &scope, "Graph report");
     }
@@ -1552,7 +1702,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("requires exactly GRAPH_REPORT.md and GRAPH_TREE.html")
+                .contains("artifact manifest")
         );
         assert_scope_preserved(&c, &scope, "Graph report");
     }

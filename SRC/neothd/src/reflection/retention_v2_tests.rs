@@ -12,9 +12,46 @@ use crate::reflection::hygiene_store::apply_hygiene_plan;
 use crate::reflection::retention_authority::DailyRetentionExecutionConfig;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use tempfile::TempDir;
+use std::path::{Path, PathBuf};
 
 const NOW: i64 = 1_787_788_800;
+
+/// A retention fixture must acquire the same private, capability-bound Daily
+/// settlement gate as production. A plain `TempDir` is intentionally not a
+/// valid home authority on every platform.
+struct PrivateRetentionHome {
+    _root: crate::test_env::CanonicalTempDir,
+    path: PathBuf,
+}
+
+impl PrivateRetentionHome {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+fn private_retention_home() -> PrivateRetentionHome {
+    let root = crate::test_env::canonical_tempdir().expect("private retention test root");
+    #[cfg(unix)]
+    let path = {
+        use std::os::unix::fs::DirBuilderExt as _;
+
+        let path = root.path().join("private-retention-home");
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&path)
+            .expect("create private Unix retention home");
+        path
+    };
+    #[cfg(windows)]
+    let path = {
+        let path = root.path().join("private-retention-home");
+        crate::wal::win_native::create_private_directory_new(&path)
+            .expect("create private Windows retention home");
+        path
+    };
+    PrivateRetentionHome { _root: root, path }
+}
 
 fn enabled() -> DailyRetentionExecutionConfig {
     DailyRetentionExecutionConfig {
@@ -47,9 +84,9 @@ fn preserve_period_inputs(home: &std::path::Path, periods: Vec<PeriodReflection>
     .unwrap();
 }
 
-fn settled_expired_pair() -> (TempDir, TempDir, PeriodReflection) {
-    let home = TempDir::new().unwrap();
-    let vault = TempDir::new().unwrap();
+fn settled_expired_pair() -> (PrivateRetentionHome, PrivateRetentionHome, PeriodReflection) {
+    let home = private_retention_home();
+    let vault = private_retention_home();
     let stale = daily(90, "v2-stale");
     let current = daily(0, "v2-current");
     settle_daily_admission(home.path(), &stale, None, Some((vault.path(), "NEOTH"))).unwrap();
@@ -228,7 +265,7 @@ fn v2_identical_byte_note_replacement_refuses_receipt_owned_quarantine() {
 
 #[test]
 fn v2_yearly_synthesis_provenance_is_exact_before_hygiene_after_overlap_and_after_purge() {
-    let home = TempDir::new().unwrap();
+    let home = private_retention_home();
     let stale = daily(90, "yearly-historical");
     let current = daily(0, "yearly-current");
     settle_daily_admission(home.path(), &stale, None, None).unwrap();
@@ -287,8 +324,8 @@ fn v2_yearly_synthesis_provenance_is_exact_before_hygiene_after_overlap_and_afte
 
 #[test]
 fn v2_legacy_matching_note_is_not_adopted() {
-    let home = TempDir::new().unwrap();
-    let vault = TempDir::new().unwrap();
+    let home = private_retention_home();
+    let vault = private_retention_home();
     let stale = daily(90, "legacy-note");
     let current = daily(0, "current");
     settle_daily_admission(home.path(), &stale, None, None).unwrap();
@@ -652,7 +689,7 @@ fn v2_completed_purge_rejects_a_foreign_receipt_binding_without_changing_evidenc
 }
 #[test]
 fn v2_bounded_batches_preserve_unselected_expired_records_for_later_ticks() {
-    let home = TempDir::new().unwrap();
+    let home = private_retention_home();
     let mut periods = vec![daily(0, "current")];
     settle_daily_admission(home.path(), periods.first().unwrap(), None, None).unwrap();
     for age in 90..220 {
