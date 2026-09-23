@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W257 exact-envelope live Doctor reviewed; four native regressions, Hosted pending",
+  "status": "W257 exact Hosted formatting imported; behavior pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 93038,
-    "sha256": "6ED40E41B140D1F2C53E50446B79C8F4175E3F6A48D8E2DADFCD13BE02E6771E"
+    "bytes": 93012,
+    "sha256": "4D78784C86AC5AB0B2045336B778969889C3123F80EF8473B76460AF6ADF4862"
   },
   "sourceInputs": 538,
   "requiredNativeTests": [
@@ -5184,25 +5184,25 @@
     {
       "test": "cli::doctor::checks::context_import::tests::rpc_success_envelope_with_active_status_passes_without_claiming_an_import_succeeded",
       "sourcePath": "SRC/neothd/src/cli/doctor/checks/context_import.rs",
-      "sourceSha256": "EDF1CE3A5686159CF5B0514CB2ADAF99FD7E6E365D9BF13CE6398C97557E6F55",
+      "sourceSha256": "3A1C941689D8F7B2CA4BFE4432625172CFDFC1FD4072F8AD9D1740F36A0FFE1A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::checks::context_import::tests::paused_and_revoked_live_statuses_are_explicitly_unavailable",
       "sourcePath": "SRC/neothd/src/cli/doctor/checks/context_import.rs",
-      "sourceSha256": "EDF1CE3A5686159CF5B0514CB2ADAF99FD7E6E365D9BF13CE6398C97557E6F55",
+      "sourceSha256": "3A1C941689D8F7B2CA4BFE4432625172CFDFC1FD4072F8AD9D1740F36A0FFE1A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::checks::context_import::tests::missing_duplicate_malformed_and_zero_revision_statuses_never_pass",
       "sourcePath": "SRC/neothd/src/cli/doctor/checks/context_import.rs",
-      "sourceSha256": "EDF1CE3A5686159CF5B0514CB2ADAF99FD7E6E365D9BF13CE6398C97557E6F55",
+      "sourceSha256": "3A1C941689D8F7B2CA4BFE4432625172CFDFC1FD4072F8AD9D1740F36A0FFE1A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::checks::context_import::tests::error_envelope_and_unknown_lifecycle_fail_without_echoing_untrusted_text",
       "sourcePath": "SRC/neothd/src/cli/doctor/checks/context_import.rs",
-      "sourceSha256": "EDF1CE3A5686159CF5B0514CB2ADAF99FD7E6E365D9BF13CE6398C97557E6F55",
+      "sourceSha256": "3A1C941689D8F7B2CA4BFE4432625172CFDFC1FD4072F8AD9D1740F36A0FFE1A",
       "junitClass": "neoth"
     }
   ],
@@ -16936,6 +16936,26 @@
       }
     ],
     "note": "538sources866native98GUI, Group436; real Windows/Unix status assertions match existing success envelope; Core342success and Audio49 19/19 perplatform admitted; no local validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave257HostedFormat": {
+    "base": "af0e056f1639ab0677ffb32fe9f3c1aa1f88379e",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/doctor/checks/context_import.rs",
+        "bytes": 9719,
+        "sha256": "3A1C941689D8F7B2CA4BFE4432625172CFDFC1FD4072F8AD9D1740F36A0FFE1A",
+        "blob": "42fdd0e0c76cbe9e3501c1bec4bb8b7939521047"
+      },
+      {
+        "path": "SRC/neothd/src/cli/doctor/checks/mod.rs",
+        "bytes": 506,
+        "sha256": "245E9EE6C2DDE1DD64D4A6714C167C61F04F2BB0506325921AFFB5EF302BDC84",
+        "blob": "db4027fa87a0278325aaa5ebb8970f9782357a1a"
+      }
+    ],
+    "note": "Two path patch from Preflight35807294729, source/SHA/preimage/postimage verified; no local formatter.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -62,8 +62,9 @@ pub(crate) async fn check_context_import_control_plane(home: &Path) -> CheckOutc
         Err(_) => CheckOutcome {
             name: NAME,
             status: CheckStatus::Warn,
-            detail: "live daemon control-plane status unavailable; Context Import readiness is unknown"
-                .to_string(),
+            detail:
+                "live daemon control-plane status unavailable; Context Import readiness is unknown"
+                    .to_string(),
         },
     }
 }
@@ -126,8 +127,9 @@ fn classify_status_response(response: &str) -> CheckOutcome {
         return CheckOutcome {
             name: NAME,
             status: CheckStatus::Fail,
-            detail: "live daemon control-plane reported zero Context Import revision; status is invalid"
-                .to_string(),
+            detail:
+                "live daemon control-plane reported zero Context Import revision; status is invalid"
+                    .to_string(),
         };
     }
 
@@ -188,7 +190,11 @@ mod tests {
                 r#"{{"ok":true,"data":{{"accounts":[{{"connector":"local_import","lifecycle":"{lifecycle}","policy_revision":7,"lifecycle_revision":11}}]}}}}"#
             );
             let outcome = classify_status_response(&response);
-            assert_eq!(outcome.status, CheckStatus::Warn, "{lifecycle}: {outcome:?}");
+            assert_eq!(
+                outcome.status,
+                CheckStatus::Warn,
+                "{lifecycle}: {outcome:?}"
+            );
             assert!(outcome.detail.contains(lifecycle));
             assert!(outcome.detail.contains("unavailable") || outcome.detail.contains("paused"));
         }
@@ -210,9 +216,8 @@ mod tests {
 
     #[test]
     fn error_envelope_and_unknown_lifecycle_fail_without_echoing_untrusted_text() {
-        let rejected = classify_status_response(
-            r#"{"ok":false,"code":"operator-controlled-error-text"}"#,
-        );
+        let rejected =
+            classify_status_response(r#"{"ok":false,"code":"operator-controlled-error-text"}"#);
         assert_eq!(rejected.status, CheckStatus::Fail);
         assert!(!rejected.detail.contains("operator-controlled-error-text"));
 

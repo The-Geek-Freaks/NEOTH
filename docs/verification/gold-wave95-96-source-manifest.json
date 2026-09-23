@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T01:38:41.9320252Z",
-  "validationStatus": "W257 exact-envelope live Doctor reviewed; four native regressions, Hosted pending",
+  "capturedUtc": "2026-09-23T01:41:22.5425739Z",
+  "validationStatus": "W257 exact Hosted formatting imported; behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1108,8 +1108,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/context_import.rs",
-      "bytes": 9628,
-      "sha256": "EDF1CE3A5686159CF5B0514CB2ADAF99FD7E6E365D9BF13CE6398C97557E6F55"
+      "bytes": 9719,
+      "sha256": "3A1C941689D8F7B2CA4BFE4432625172CFDFC1FD4072F8AD9D1740F36A0FFE1A"
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/integrations.rs",
