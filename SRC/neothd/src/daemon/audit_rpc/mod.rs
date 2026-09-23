@@ -87,10 +87,9 @@ pub(crate) use client::{
 };
 #[cfg(feature = "cluster")]
 pub use client::{
-    dispatch_task_delegate_outbound,
-    membership_confirm, membership_invite, membership_legacy_pending, membership_revocation_status,
-    membership_revoke, membership_runtime_health, membership_set_task_delegate_assignment,
-    membership_snapshot,
+    dispatch_task_delegate_outbound, membership_confirm, membership_invite,
+    membership_legacy_pending, membership_revocation_status, membership_revoke,
+    membership_runtime_health, membership_set_task_delegate_assignment, membership_snapshot,
 };
 pub use fullauto_token::{FULLAUTO_TOKEN_TTL, FullAutoTokenStore, JOBS_RUN_TOKEN_TTL};
 pub(crate) use server::bind_and_serve;

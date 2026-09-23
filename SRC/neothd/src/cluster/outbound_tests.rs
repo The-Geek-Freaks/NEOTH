@@ -27,15 +27,10 @@ fn active_live_peer(store: &MembershipStore, label: &str, now: i64) -> String {
     active_peer_at(store, label, now, now.saturating_add(LIVE_GRANT_TTL_SECS))
 }
 
-fn active_peer_at(
-    store: &MembershipStore,
-    label: &str,
-    now: i64,
-    expires_at_unix: i64,
-) -> String {
+fn active_peer_at(store: &MembershipStore, label: &str, now: i64, expires_at_unix: i64) -> String {
     let peer_home = tempfile::tempdir().expect("create isolated peer identity");
-    let identity = LocalNodeIdentity::load_or_create(peer_home.path())
-        .expect("create isolated peer identity");
+    let identity =
+        LocalNodeIdentity::load_or_create(peer_home.path()).expect("create isolated peer identity");
     let transport = TransportIdentity::peeroxide(&identity.peeroxide_key_pair().public_key);
     let attestation = identity
         .attest_endpoint(
@@ -140,7 +135,8 @@ fn outbound_candidates_require_the_exact_allowed_scope() {
 }
 
 #[test]
-fn outbound_candidates_order_by_priority_then_authenticated_peer_key_and_stale_cas_preserves_route() {
+fn outbound_candidates_order_by_priority_then_authenticated_peer_key_and_stale_cas_preserves_route()
+{
     let home = tempfile::tempdir().expect("create authority home");
     let store = MembershipStore::open(home.path()).expect("open authority store");
     let exact = scope();
@@ -156,9 +152,16 @@ fn outbound_candidates_order_by_priority_then_authenticated_peer_key_and_stale_c
         .expect("query ordered candidates");
     let mut equal_priority = vec![peer_a.clone(), peer_b.clone()];
     equal_priority.sort();
-    let expected = vec![equal_priority.remove(0), equal_priority.remove(0), peer_c.clone()];
+    let expected = vec![
+        equal_priority.remove(0),
+        equal_priority.remove(0),
+        peer_c.clone(),
+    ];
     assert_eq!(
-        before.iter().map(|candidate| candidate.peer_key.clone()).collect::<Vec<_>>(),
+        before
+            .iter()
+            .map(|candidate| candidate.peer_key.clone())
+            .collect::<Vec<_>>(),
         expected,
         "the selected route is deterministic across equal-priority peers"
     );
@@ -194,7 +197,13 @@ fn prepared_outbound_operation_recovers_indeterminate_and_is_never_replayed() {
     let peer_key = active_peer(&store, "prepared-recovery");
     assign(&store, peer_key.clone(), &exact, true, 1, 0);
     let prepared = store
-        .prepare_task_delegate_outbound_operation("op-prepared", "task-prepared", &peer_key, &exact, NOW)
+        .prepare_task_delegate_outbound_operation(
+            "op-prepared",
+            "task-prepared",
+            &peer_key,
+            &exact,
+            NOW,
+        )
         .expect("persist prepared outbound operation");
     assert_eq!(prepared.state, OutboundTaskDelegateState::Prepared);
 
@@ -222,13 +231,16 @@ fn prepared_outbound_operation_recovers_indeterminate_and_is_never_replayed() {
             .expect("indeterminate operation cannot settle"),
         "recovery must not replay a prepared operation"
     );
-    assert!(store
-        .discard_prepared_task_delegate_outbound_operation("op-prepared")
-        .is_err());
+    assert!(
+        store
+            .discard_prepared_task_delegate_outbound_operation("op-prepared")
+            .is_err()
+    );
 }
 
 #[test]
-fn only_exact_selected_peer_and_task_settle_outbound_operation_and_late_accept_cannot_reopen_result() {
+fn only_exact_selected_peer_and_task_settle_outbound_operation_and_late_accept_cannot_reopen_result()
+ {
     let home = tempfile::tempdir().expect("create authority home");
     let store = MembershipStore::open(home.path()).expect("open authority store");
     let exact = scope();
@@ -237,7 +249,13 @@ fn only_exact_selected_peer_and_task_settle_outbound_operation_and_late_accept_c
     assign(&store, selected_peer.clone(), &exact, true, 1, 0);
     assign(&store, wrong_peer.clone(), &exact, true, 2, 0);
     let prepared = store
-        .prepare_task_delegate_outbound_operation("op-result", "task-result", &selected_peer, &exact, NOW)
+        .prepare_task_delegate_outbound_operation(
+            "op-result",
+            "task-result",
+            &selected_peer,
+            &exact,
+            NOW,
+        )
         .expect("persist selected prepared operation");
     assert_eq!(prepared.peer_key, selected_peer);
     assert!(
@@ -274,7 +292,13 @@ fn only_exact_selected_peer_and_task_settle_outbound_operation_and_late_accept_c
     );
 
     store
-        .prepare_task_delegate_outbound_operation("op-discard", "task-discard", &selected_peer, &exact, NOW + 6)
+        .prepare_task_delegate_outbound_operation(
+            "op-discard",
+            "task-discard",
+            &selected_peer,
+            &exact,
+            NOW + 6,
+        )
         .expect("persist operation that the synchronous queue refusal may discard");
     store
         .discard_prepared_task_delegate_outbound_operation("op-discard")
@@ -298,7 +322,8 @@ fn runtime_dispatch_fails_over_from_unknown_or_closed_candidate_before_acceptanc
             Arc::clone(&live_sessions),
         ));
         let exact = scope();
-        let unavailable_peer = active_live_peer(membership.store(), "runtime-unavailable", live_now);
+        let unavailable_peer =
+            active_live_peer(membership.store(), "runtime-unavailable", live_now);
         let live_peer = active_live_peer(membership.store(), "runtime-live", live_now);
         assign(
             membership.store(),
@@ -308,14 +333,7 @@ fn runtime_dispatch_fails_over_from_unknown_or_closed_candidate_before_acceptanc
             1,
             0,
         );
-        assign(
-            membership.store(),
-            live_peer.clone(),
-            &exact,
-            true,
-            2,
-            0,
-        );
+        assign(membership.store(), live_peer.clone(), &exact, true, 2, 0);
 
         let streams = Arc::new(super::peer_streams::PeerStreamRegistry::new());
         if closed_first {
@@ -328,8 +346,8 @@ fn runtime_dispatch_fails_over_from_unknown_or_closed_candidate_before_acceptanc
                     live_now,
                 )
                 .expect("admit closed peer");
-            let (_generation, receiver, _cancel) = streams
-                .register_authorized_session(&unavailable_peer, &unavailable_grant);
+            let (_generation, receiver, _cancel) =
+                streams.register_authorized_session(&unavailable_peer, &unavailable_grant);
             drop(receiver);
         }
         let live_grant = membership
@@ -347,11 +365,21 @@ fn runtime_dispatch_fails_over_from_unknown_or_closed_candidate_before_acceptanc
             .expect("construct outbound controller");
         controller.install_peer_streams(Arc::clone(&streams));
         let request = dispatch_request(
-            if closed_first { "op-closed-failover" } else { "op-unknown-failover" },
-            if closed_first { "task-closed-failover" } else { "task-unknown-failover" },
+            if closed_first {
+                "op-closed-failover"
+            } else {
+                "op-unknown-failover"
+            },
+            if closed_first {
+                "task-closed-failover"
+            } else {
+                "task-unknown-failover"
+            },
             exact,
         );
-        let receipt = controller.dispatch(&request).expect("fail over to live peer");
+        let receipt = controller
+            .dispatch(&request)
+            .expect("fail over to live peer");
         assert_eq!(receipt.peer_key, live_peer);
         assert_eq!(receipt.state, OutboundTaskDelegateState::Accepted);
         let delivered = receiver
@@ -380,14 +408,7 @@ fn clearing_previously_live_peer_streams_refuses_new_outbound_dispatch_without_e
     ));
     let exact = scope();
     let peer_key = active_live_peer(membership.store(), "teardown-live", live_now);
-    assign(
-        membership.store(),
-        peer_key.clone(),
-        &exact,
-        true,
-        1,
-        0,
-    );
+    assign(membership.store(), peer_key.clone(), &exact, true, 1, 0);
     let grant = membership
         .store()
         .admit(
@@ -403,7 +424,8 @@ fn clearing_previously_live_peer_streams_refuses_new_outbound_dispatch_without_e
         .expect("construct teardown controller");
     controller.install_peer_streams(Arc::clone(&streams));
 
-    let live_request = dispatch_request("op-before-teardown", "task-before-teardown", exact.clone());
+    let live_request =
+        dispatch_request("op-before-teardown", "task-before-teardown", exact.clone());
     assert_eq!(
         controller
             .dispatch(&live_request)
@@ -440,20 +462,12 @@ fn clear_waits_for_inflight_dispatch_admission_then_fences_later_dispatches() {
     ));
     let exact = scope();
     let peer_key = active_live_peer(membership.store(), "concurrent-teardown-live", live_now);
-    assign(
-        membership.store(),
-        peer_key.clone(),
-        &exact,
-        true,
-        1,
-        0,
-    );
+    assign(membership.store(), peer_key.clone(), &exact, true, 1, 0);
     let grant = membership
         .store()
         .admit(
             CarrierKind::Peeroxide,
-            &TransportIdentity::parse(peer_key.clone())
-                .expect("parse concurrent teardown peer"),
+            &TransportIdentity::parse(peer_key.clone()).expect("parse concurrent teardown peer"),
             live_now,
         )
         .expect("admit concurrent teardown peer");
@@ -487,9 +501,7 @@ fn clear_waits_for_inflight_dispatch_admission_then_fences_later_dispatches() {
             .send(())
             .expect("report clear attempt start");
         clear_controller.clear_peer_streams();
-        clear_finished_tx
-            .send(())
-            .expect("report clear completion");
+        clear_finished_tx.send(()).expect("report clear completion");
     });
     clear_started_rx
         .recv()

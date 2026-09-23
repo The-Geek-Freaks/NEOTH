@@ -8,6 +8,16 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W403 hosted cluster formatting and admitted WAL Core (2026-09-23):**
+Core9fd35864804945 is source-admitted across all4gates; exported54491B95
+matches its committed CLI reference. Group810bdb35866133454 is running after
+that source's production/test-target readiness; its actual terminals remain
+pending. Coreed97935866308409 checks the separately published outbound batch.
+The ten-path format patch from Preflighted97935866308924 was source/digest/
+before-and-after-blob verified and imported without a local formatter.
+Inventory676;native1136;Group824;GUI143Linux/139macOS;Road1028/294/2 and
+WS-LF21done/97open unchanged. No local executable validation ran.
+
 **W392 outbound cluster and W400 session-preview selection (2026-09-23):**
 The daemon-owned outbound dispatcher binds exact operator scopes to active
 authenticated peers, persists Prepared before enqueue, and permits candidate

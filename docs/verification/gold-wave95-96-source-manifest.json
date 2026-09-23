@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T13:17:32.5686348Z",
-  "validationStatus": "W392 integrated static reviewed and fixture-clock repaired;10 outbound cases and W4004native8GUI selected; hosted pending",
+  "capturedUtc": "2026-09-23T13:20:57.7414769Z",
+  "validationStatus": "W39210path verified hosted format import; Core9fd all4gates admitted; Group810 and Coreed979 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -813,13 +813,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1171768,
-      "sha256": "A2A519140ACBE4F6F730F6BD5728CF75C3ABDC538BC144B6D56E242EF23C903A"
+      "bytes": 1172430,
+      "sha256": "32734C79E900234617B9F7D6F5AFC572DF14871089001EB62E97DF5080ADAF8A"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1769477,
-      "sha256": "88F35AFAD40CC2B4BC4FF3EF396568BF319DE5D7405F69CD06CAA81078AFB4C3"
+      "bytes": 1770139,
+      "sha256": "8745BBBE321A563F957BC94B9518BB027DFC5D2B5DD38824BD86F9E2BD6ADD87"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1428,8 +1428,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/cluster.rs",
-      "bytes": 263959,
-      "sha256": "F610964754FD6D42402A0D360E0BA2B225E4A0A131C217EA3A2DAAEAF10B8CB6"
+      "bytes": 264575,
+      "sha256": "C4170096E6829FCDB091B1C1101B2E6CF64BA1EEA82B788B243F84DCFDC03D3E"
     },
     {
       "path": "SRC/neothd/src/cli/code_intel.rs",
@@ -1688,8 +1688,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
-      "bytes": 529544,
-      "sha256": "BDA692CBF2C0A62669DC88F1EDC620856FBC2B8FD8BF4E35513635FFE5F64F64"
+      "bytes": 529559,
+      "sha256": "92EF8213A2CD0ED773291544E3ABD6A6ACFB46388E364E21E6B9F1F948A48051"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tests.rs",
@@ -1723,13 +1723,13 @@
     },
     {
       "path": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "bytes": 147509,
-      "sha256": "29A164A785D1961E49DC7F1A3D023B9F53F8F26819CBEFA1DEE0EC28BB8DBFB9"
+      "bytes": 147667,
+      "sha256": "634FE96EC5BD50A73E43EBE6BFAA3EA0E36B51E49436BB6D668B03CC71CA3DE9"
     },
     {
       "path": "SRC/neothd/src/cluster/membership.rs",
-      "bytes": 296983,
-      "sha256": "5D57E1B7ADDD7AD73AB91EF626CAE87488969D9373EF3536B575633851AC7613"
+      "bytes": 298771,
+      "sha256": "5AD3497CE474EA2D4FF97788167145744DF5465B9C73B685F5658FBAD36C3F6F"
     },
     {
       "path": "SRC/neothd/src/code_map/co_change.rs",
@@ -1988,23 +1988,23 @@
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
-      "bytes": 51038,
-      "sha256": "3A8001BA96B5FCA2B09F190581F7EB514C2738B47DA70086B9CDC289CB8BB1C9"
+      "bytes": 51069,
+      "sha256": "A07BE7BBF04E75B7308B5DD5D050A9AFA8216E404C469085A3C09FF42E86FA93"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
-      "bytes": 20039,
-      "sha256": "CFD0E2E21CCAAE202022534D17230B7641CE018C9994F7024A6FC2C15B16F912"
+      "bytes": 20035,
+      "sha256": "9EFE853FFE3FC357A891A79C23F92C84DF3C3318CF3F994FEEB639018A6092CD"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
-      "bytes": 70192,
-      "sha256": "25F916A9AD718203C2CB044A9624CC64472551FD60049C695B0AF9D8FF800919"
+      "bytes": 70589,
+      "sha256": "73FEEBA9B6CB120DE2AB49CCF97444F93D92CABFF0C6F2C0F9850740102B6C4D"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
-      "bytes": 110443,
-      "sha256": "295D79E95EAED52453375C81CD6A8438BBB6B87D2DB4E1370D326AEF781AFE1D"
+      "bytes": 110514,
+      "sha256": "94419E7FDE1010A0D5F448F6C90A7D9A290AB630DE0AF0B5D9938972F2F6C2DE"
     },
     {
       "path": "SRC/neothd/src/daemon/auto_update.rs",
@@ -3373,13 +3373,13 @@
     },
     {
       "path": "SRC/neothd/src/cluster/outbound_tests.rs",
-      "bytes": 19526,
-      "sha256": "D24EE7CAE58C80062A33336E6E066B8BC49C2920B33ED78C4E6BE1408E410C9F"
+      "bytes": 19733,
+      "sha256": "D42F714804D048B4F1E99AC69155CE99E5B3BA18863702E7688ACD3E4E439C6F"
     },
     {
       "path": "docs/gold-wave392-outbound-scoped-delegation.md",
-      "bytes": 1563,
-      "sha256": "413373EF996444435EC0D321998BD17DD762812F3159183D9F312223F8FC799B"
+      "bytes": 2020,
+      "sha256": "C002DB860B67A3642E7AB953F8D52DF3AA92EF13C609277C6232F46DB5A03093"
     },
     {
       "path": "docs/gold-wave400-session-preview-selection.md",

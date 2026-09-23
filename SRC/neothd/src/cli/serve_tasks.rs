@@ -4257,7 +4257,9 @@ pub(crate) async fn spawn_audit_rpc(
     #[cfg(feature = "cluster")] membership: std::sync::Arc<
         crate::cluster::membership::MembershipController,
     >,
-    #[cfg(feature = "cluster")] outbound_task_delegate: std::sync::Arc<crate::cluster::runtime_supervisor::OutboundTaskDelegateController>,
+    #[cfg(feature = "cluster")] outbound_task_delegate: std::sync::Arc<
+        crate::cluster::runtime_supervisor::OutboundTaskDelegateController,
+    >,
 ) -> anyhow::Result<(
     Option<JoinHandle<anyhow::Result<()>>>,
     Option<crate::daemon::audit_rpc::SidecarGuard>,

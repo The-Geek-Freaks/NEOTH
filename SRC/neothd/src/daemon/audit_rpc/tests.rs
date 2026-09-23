@@ -1257,7 +1257,9 @@ async fn outbound_task_delegate_rpc_requires_auth_reports_unavailable_and_queues
         chat_runtime: None,
         gui_chat_runtime: None,
     };
-    let (endpoint, listener) = bind_and_serve(home.path(), &endpoint_nonce, state).await.unwrap();
+    let (endpoint, listener) = bind_and_serve(home.path(), &endpoint_nonce, state)
+        .await
+        .unwrap();
 
     assert_eq!(
         raw_post_path(&endpoint, "/membership/task-delegate/outbound", None, &body)
@@ -1285,7 +1287,10 @@ async fn outbound_task_delegate_rpc_requires_auth_reports_unavailable_and_queues
     assert_eq!(receipt.task_id, request.task_id);
     assert_eq!(receipt.peer_key, transport.as_str());
     assert_eq!(receipt.state, OutboundTaskDelegateState::Accepted);
-    let delivered = receiver.recv().await.expect("one authorized delegated frame");
+    let delivered = receiver
+        .recv()
+        .await
+        .expect("one authorized delegated frame");
     match &delivered.body {
         FrameBody::TaskDelegate(task) => {
             assert_eq!(task.task_id, request.task_id);
@@ -1317,7 +1322,9 @@ async fn outbound_task_delegate_rpc_requires_auth_reports_unavailable_and_queues
     };
     let unavailable_nonce = test_endpoint_nonce();
     let (unavailable_endpoint, unavailable_listener) =
-        bind_and_serve(home.path(), &unavailable_nonce, unavailable_state).await.unwrap();
+        bind_and_serve(home.path(), &unavailable_nonce, unavailable_state)
+            .await
+            .unwrap();
     assert_eq!(
         raw_post_path(
             &unavailable_endpoint,

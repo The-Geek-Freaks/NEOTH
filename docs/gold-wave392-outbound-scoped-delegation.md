@@ -25,3 +25,10 @@ consensus and GUI/Buddy parity remain outside this slice.
 Runtime queue fixtures capture the current clock for finite 300-second grants;
 pure membership model fixtures retain deterministic historical timestamps.
 The real send path revalidates expiry against the current clock, unchanged.
+
+Hosted Preflighted979 run35866308924 produced a ten-path rustfmt-only patch.
+Root verified the exact source head, artifact digests and every before/after
+Git blob before importing it. This is format evidence, not compiler or behavior
+acceptance. Coreed97935866308409 supplies the pending current-source compiler
+gate. The earlier Core9fd35864804945 passed all four gates and its exported
+CLI reference54491B95 matches the committed pre-outbound reference.

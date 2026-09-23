@@ -1835,37 +1835,75 @@ async fn run_task_delegate_assignment(
                 OutputFormat::Table => print_scoped_assignment(&Some(assignment)),
             }
         }
-        ClusterTaskDelegateAction::OutboundShow { peer_key, skill, channel, account } => {
+        ClusterTaskDelegateAction::OutboundShow {
+            peer_key,
+            skill,
+            channel,
+            account,
+        } => {
             let scope = crate::cluster::heartbeat::TaskDelegateScope {
-                skill_id: skill, channel_id: channel, account_id: account,
+                skill_id: skill,
+                channel_id: channel,
+                account_id: account,
             };
             let assignment = task_delegate_outbound_assignment_show_at(&home, &peer_key, &scope)?;
             print_outbound_assignment(output, &assignment);
         }
         ClusterTaskDelegateAction::OutboundSet {
-            peer_key, skill, channel, account, allowed, priority, expected_revision,
+            peer_key,
+            skill,
+            channel,
+            account,
+            allowed,
+            priority,
+            expected_revision,
         } => {
             let scope = crate::cluster::heartbeat::TaskDelegateScope {
-                skill_id: skill, channel_id: channel, account_id: account,
+                skill_id: skill,
+                channel_id: channel,
+                account_id: account,
             };
             let assignment = task_delegate_outbound_assignment_set_at(
-                &home, &peer_key, &scope, allowed, priority, expected_revision,
+                &home,
+                &peer_key,
+                &scope,
+                allowed,
+                priority,
+                expected_revision,
             )?;
             print_outbound_assignment(output, &Some(assignment));
         }
         ClusterTaskDelegateAction::OutboundReset {
-            peer_key, skill, channel, account, priority, expected_revision,
+            peer_key,
+            skill,
+            channel,
+            account,
+            priority,
+            expected_revision,
         } => {
             let scope = crate::cluster::heartbeat::TaskDelegateScope {
-                skill_id: skill, channel_id: channel, account_id: account,
+                skill_id: skill,
+                channel_id: channel,
+                account_id: account,
             };
             let assignment = task_delegate_outbound_assignment_set_at(
-                &home, &peer_key, &scope, false, priority, expected_revision,
+                &home,
+                &peer_key,
+                &scope,
+                false,
+                priority,
+                expected_revision,
             )?;
             print_outbound_assignment(output, &Some(assignment));
         }
         ClusterTaskDelegateAction::OutboundDispatch {
-            operation_id, task_id, prompt, model_hint, skill, channel, account,
+            operation_id,
+            task_id,
+            prompt,
+            model_hint,
+            skill,
+            channel,
+            account,
         } => {
             let request = crate::cluster::runtime_supervisor::OutboundTaskDelegateDispatchRequest {
                 operation_id,
@@ -1873,12 +1911,15 @@ async fn run_task_delegate_assignment(
                 prompt,
                 model_hint,
                 scope: crate::cluster::heartbeat::TaskDelegateScope {
-                    skill_id: skill, channel_id: channel, account_id: account,
+                    skill_id: skill,
+                    channel_id: channel,
+                    account_id: account,
                 },
             };
-            let receipt = crate::daemon::audit_rpc::dispatch_task_delegate_outbound(&home, &request)
-                .await
-                .map_err(|error| anyhow::anyhow!(error))?;
+            let receipt =
+                crate::daemon::audit_rpc::dispatch_task_delegate_outbound(&home, &request)
+                    .await
+                    .map_err(|error| anyhow::anyhow!(error))?;
             match output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&receipt)?),
                 OutputFormat::Jsonl => println!("{}", serde_json::to_string(&receipt)?),
@@ -1925,12 +1966,14 @@ fn task_delegate_outbound_assignment_show_at(
     scope: &crate::cluster::heartbeat::TaskDelegateScope,
 ) -> Result<Option<crate::cluster::membership::TaskDelegateOutboundAssignment>> {
     validate_pub_key_hex(peer_key)?;
-    crate::cluster::heartbeat::validate_task_delegate(&crate::cluster::heartbeat::TaskDelegateBody {
-        task_id: "outbound-scope-show".into(),
-        prompt: "outbound-scope-show".into(),
-        model_hint: None,
-        scope: Some(scope.clone()),
-    })?;
+    crate::cluster::heartbeat::validate_task_delegate(
+        &crate::cluster::heartbeat::TaskDelegateBody {
+            task_id: "outbound-scope-show".into(),
+            prompt: "outbound-scope-show".into(),
+            model_hint: None,
+            scope: Some(scope.clone()),
+        },
+    )?;
     crate::cluster::membership::MembershipStore::task_delegate_outbound_assignment_read_only(
         home, peer_key, scope,
     )

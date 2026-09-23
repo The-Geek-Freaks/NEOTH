@@ -55,35 +55,136 @@ pub struct OutboundTaskDelegateController {
 }
 
 impl OutboundTaskDelegateController {
-    pub fn new(home: &std::path::Path, membership: Arc<crate::cluster::membership::MembershipController>) -> Result<Self> {
-        let local_peer_id = crate::cluster::membership::LocalNodeIdentity::load_or_create(home)?.stable_node_id().as_str().to_string();
-        membership.store().recover_prepared_task_delegate_outbound_operations(crate::time::now_unix_i64())?;
-        Ok(Self { membership, streams: std::sync::Mutex::new(None), local_peer_id, #[cfg(test)] admission_observer: std::sync::Mutex::new(None) })
+    pub fn new(
+        home: &std::path::Path,
+        membership: Arc<crate::cluster::membership::MembershipController>,
+    ) -> Result<Self> {
+        let local_peer_id = crate::cluster::membership::LocalNodeIdentity::load_or_create(home)?
+            .stable_node_id()
+            .as_str()
+            .to_string();
+        membership
+            .store()
+            .recover_prepared_task_delegate_outbound_operations(crate::time::now_unix_i64())?;
+        Ok(Self {
+            membership,
+            streams: std::sync::Mutex::new(None),
+            local_peer_id,
+            #[cfg(test)]
+            admission_observer: std::sync::Mutex::new(None),
+        })
     }
-    pub fn install_peer_streams(&self, streams: Arc<crate::cluster::peer_streams::PeerStreamRegistry>) { *self.streams.lock().unwrap_or_else(|p| p.into_inner()) = Some(streams); }
-    pub fn clear_peer_streams(&self) { *self.streams.lock().unwrap_or_else(|p| p.into_inner()) = None; }
+    pub fn install_peer_streams(
+        &self,
+        streams: Arc<crate::cluster::peer_streams::PeerStreamRegistry>,
+    ) {
+        *self.streams.lock().unwrap_or_else(|p| p.into_inner()) = Some(streams);
+    }
+    pub fn clear_peer_streams(&self) {
+        *self.streams.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
     #[cfg(test)]
-    pub(crate) fn set_admission_observer(&self, observer: Option<Arc<dyn Fn() + Send + Sync>>) { *self.admission_observer.lock().unwrap_or_else(|p| p.into_inner()) = observer; }
-    pub fn dispatch(&self, request: &OutboundTaskDelegateDispatchRequest) -> Result<OutboundTaskDelegateDispatchReceipt> {
-        crate::cluster::heartbeat::validate_task_delegate(&crate::cluster::heartbeat::TaskDelegateBody { task_id: request.task_id.clone(), prompt: request.prompt.clone(), model_hint: request.model_hint.clone(), scope: Some(request.scope.clone()) })?;
+    pub(crate) fn set_admission_observer(&self, observer: Option<Arc<dyn Fn() + Send + Sync>>) {
+        *self
+            .admission_observer
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = observer;
+    }
+    pub fn dispatch(
+        &self,
+        request: &OutboundTaskDelegateDispatchRequest,
+    ) -> Result<OutboundTaskDelegateDispatchReceipt> {
+        crate::cluster::heartbeat::validate_task_delegate(
+            &crate::cluster::heartbeat::TaskDelegateBody {
+                task_id: request.task_id.clone(),
+                prompt: request.prompt.clone(),
+                model_hint: request.model_hint.clone(),
+                scope: Some(request.scope.clone()),
+            },
+        )?;
         // Hold this admission lock through prepare + try_send. Runtime teardown
         // takes the same lock before returning, so it cannot report dispatch
         // disabled while an earlier caller still holds a clone and can enqueue.
         let streams_guard = self.streams.lock().unwrap_or_else(|p| p.into_inner());
         #[cfg(test)]
-        if let Some(observer) = self.admission_observer.lock().unwrap_or_else(|p| p.into_inner()).as_ref().cloned() { observer(); }
-        let streams = streams_guard.as_ref().context("cluster outbound delegation unavailable: no live authenticated peer runtime")?;
-        for candidate in self.membership.store().task_delegate_outbound_candidates(&request.scope)? {
-            self.membership.store().prepare_task_delegate_outbound_operation(&request.operation_id, &request.task_id, &candidate.peer_key, &request.scope, crate::time::now_unix_i64())?;
-            let frame = crate::cluster::heartbeat::WireFrame { kind: crate::cluster::heartbeat::FrameKind::TaskDelegate, sequence: 0, sent_unix_ms: crate::time::now_unix_i64().max(0).unsigned_abs().saturating_mul(1000), peer_id: self.local_peer_id.clone(), body: crate::cluster::heartbeat::FrameBody::TaskDelegate(crate::cluster::heartbeat::TaskDelegateBody { task_id: request.task_id.clone(), prompt: request.prompt.clone(), model_hint: request.model_hint.clone(), scope: Some(request.scope.clone()) }) };
+        if let Some(observer) = self
+            .admission_observer
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .cloned()
+        {
+            observer();
+        }
+        let streams = streams_guard.as_ref().context(
+            "cluster outbound delegation unavailable: no live authenticated peer runtime",
+        )?;
+        for candidate in self
+            .membership
+            .store()
+            .task_delegate_outbound_candidates(&request.scope)?
+        {
+            self.membership
+                .store()
+                .prepare_task_delegate_outbound_operation(
+                    &request.operation_id,
+                    &request.task_id,
+                    &candidate.peer_key,
+                    &request.scope,
+                    crate::time::now_unix_i64(),
+                )?;
+            let frame = crate::cluster::heartbeat::WireFrame {
+                kind: crate::cluster::heartbeat::FrameKind::TaskDelegate,
+                sequence: 0,
+                sent_unix_ms: crate::time::now_unix_i64()
+                    .max(0)
+                    .unsigned_abs()
+                    .saturating_mul(1000),
+                peer_id: self.local_peer_id.clone(),
+                body: crate::cluster::heartbeat::FrameBody::TaskDelegate(
+                    crate::cluster::heartbeat::TaskDelegateBody {
+                        task_id: request.task_id.clone(),
+                        prompt: request.prompt.clone(),
+                        model_hint: request.model_hint.clone(),
+                        scope: Some(request.scope.clone()),
+                    },
+                ),
+            };
             match streams.send_to(&candidate.peer_key, frame) {
-                Ok(()) => { let state = self.membership.store().accept_task_delegate_outbound_operation(&request.operation_id, crate::time::now_unix_i64())?; return Ok(OutboundTaskDelegateDispatchReceipt { operation_id: request.operation_id.clone(), task_id: request.task_id.clone(), peer_key: candidate.peer_key, state }); }
-                Err(crate::cluster::peer_streams::SendError::UnknownPeer | crate::cluster::peer_streams::SendError::QueueFull | crate::cluster::peer_streams::SendError::Closed | crate::cluster::peer_streams::SendError::MembershipRevoked) => { self.membership.store().discard_prepared_task_delegate_outbound_operation(&request.operation_id)?; }
+                Ok(()) => {
+                    let state = self
+                        .membership
+                        .store()
+                        .accept_task_delegate_outbound_operation(
+                            &request.operation_id,
+                            crate::time::now_unix_i64(),
+                        )?;
+                    return Ok(OutboundTaskDelegateDispatchReceipt {
+                        operation_id: request.operation_id.clone(),
+                        task_id: request.task_id.clone(),
+                        peer_key: candidate.peer_key,
+                        state,
+                    });
+                }
+                Err(
+                    crate::cluster::peer_streams::SendError::UnknownPeer
+                    | crate::cluster::peer_streams::SendError::QueueFull
+                    | crate::cluster::peer_streams::SendError::Closed
+                    | crate::cluster::peer_streams::SendError::MembershipRevoked,
+                ) => {
+                    self.membership
+                        .store()
+                        .discard_prepared_task_delegate_outbound_operation(&request.operation_id)?;
+                }
             }
         }
         anyhow::bail!("cluster outbound delegation has no live eligible peer")
     }
-    pub fn receive_result(&self, peer_key: &str, task_id: &str) -> Result<bool> { self.membership.store().result_task_delegate_outbound_operation(peer_key, task_id, crate::time::now_unix_i64()) }
+    pub fn receive_result(&self, peer_key: &str, task_id: &str) -> Result<bool> {
+        self.membership
+            .store()
+            .result_task_delegate_outbound_operation(peer_key, task_id, crate::time::now_unix_i64())
+    }
 }
 
 const CREDENTIAL_POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -621,7 +722,8 @@ impl CarrierRuntime {
         );
         // Publish only after swarm construction succeeded. Failed startup
         // cannot leave a stale dispatchable registry behind.
-        deps.outbound_dispatch.install_peer_streams(Arc::clone(&peer_streams));
+        deps.outbound_dispatch
+            .install_peer_streams(Arc::clone(&peer_streams));
         let gossip = crate::cluster::wal_sync::spawn_gossip_tick(
             peer_streams,
             deps.segment_path.clone(),

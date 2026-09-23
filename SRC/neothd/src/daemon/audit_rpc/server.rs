@@ -635,7 +635,8 @@ pub struct AuditRpcState {
     #[cfg(feature = "cluster")]
     pub membership: Option<Arc<crate::cluster::membership::MembershipController>>,
     #[cfg(feature = "cluster")]
-    pub outbound_task_delegate: Option<Arc<crate::cluster::runtime_supervisor::OutboundTaskDelegateController>>,
+    pub outbound_task_delegate:
+        Option<Arc<crate::cluster::runtime_supervisor::OutboundTaskDelegateController>>,
     pub audit_routes_enabled: bool,
     /// W39 is installed by `run_serve` after the daemon has constructed its
     /// owned runtime. `None` keeps focused audit-only listeners fail-closed for
@@ -1024,11 +1025,34 @@ async fn handle_one_pre_admission(
     #[cfg(feature = "cluster")]
     if req_path.starts_with("/membership/") {
         if req_path == "/membership/task-delegate/outbound" {
-            let Some(dispatcher) = state.outbound_task_delegate.as_ref().cloned() else { let _ = stream.write_all(http_response(503, "outbound task delegation unavailable").as_bytes()).await; let _ = stream.shutdown().await; return Ok(ConnectionOutcome::Complete); };
-            let request = serde_json::from_slice::<crate::cluster::runtime_supervisor::OutboundTaskDelegateDispatchRequest>(&req.body).context("invalid outbound task delegation body")?;
-            let result = tokio::task::spawn_blocking(move || dispatcher.dispatch(&request)).await.map_err(|e| anyhow::anyhow!("outbound task delegation worker failed: {e}"))?;
-            let (status, body) = match result { Ok(value) => (200, serde_json::to_string(&value)?), Err(error) => (422, serde_json::json!({"error":format!("{error:#}")}).to_string()) };
-            let _ = stream.write_all(http_response_json(status, &body).as_bytes()).await; let _ = stream.shutdown().await; return Ok(ConnectionOutcome::Complete);
+            let Some(dispatcher) = state.outbound_task_delegate.as_ref().cloned() else {
+                let _ = stream
+                    .write_all(
+                        http_response(503, "outbound task delegation unavailable").as_bytes(),
+                    )
+                    .await;
+                let _ = stream.shutdown().await;
+                return Ok(ConnectionOutcome::Complete);
+            };
+            let request = serde_json::from_slice::<
+                crate::cluster::runtime_supervisor::OutboundTaskDelegateDispatchRequest,
+            >(&req.body)
+            .context("invalid outbound task delegation body")?;
+            let result = tokio::task::spawn_blocking(move || dispatcher.dispatch(&request))
+                .await
+                .map_err(|e| anyhow::anyhow!("outbound task delegation worker failed: {e}"))?;
+            let (status, body) = match result {
+                Ok(value) => (200, serde_json::to_string(&value)?),
+                Err(error) => (
+                    422,
+                    serde_json::json!({"error":format!("{error:#}")}).to_string(),
+                ),
+            };
+            let _ = stream
+                .write_all(http_response_json(status, &body).as_bytes())
+                .await;
+            let _ = stream.shutdown().await;
+            return Ok(ConnectionOutcome::Complete);
         }
         let Some(controller) = state.membership.as_ref().cloned() else {
             let _ = stream
