@@ -23,7 +23,9 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::heartbeat::WireFrame;
-use super::membership::{AuthEpoch, CarrierKind, MembershipEffectGuard, MembershipGrant, StableNodeId};
+use super::membership::{
+    AuthEpoch, CarrierKind, MembershipEffectGuard, MembershipGrant, StableNodeId,
+};
 
 /// Bounded outbound queue per peer. Big enough to absorb a burst of replies /
 /// gossip without backpressure on the sender, small enough that a wedged peer
@@ -89,10 +91,18 @@ pub(crate) struct BudgetSession {
 }
 
 impl BudgetSession {
-    pub(crate) fn generation(&self) -> u64 { self.generation }
-    pub(crate) fn stable_node_id(&self) -> &StableNodeId { &self.stable_node_id }
-    pub(crate) fn grant(&self) -> &MembershipGrant { &self.grant }
-    pub(crate) fn cancellation(&self) -> tokio::sync::watch::Receiver<bool> { self.cancel.clone() }
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+    pub(crate) fn stable_node_id(&self) -> &StableNodeId {
+        &self.stable_node_id
+    }
+    pub(crate) fn grant(&self) -> &MembershipGrant {
+        &self.grant
+    }
+    pub(crate) fn cancellation(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.cancel.clone()
+    }
 }
 
 impl AuthorizedWireFrame {
@@ -368,7 +378,14 @@ impl PeerStreamRegistry {
         {
             return Err(SendError::MembershipRevoked);
         }
-        Ok(BudgetSession { transport_identity: route.transport_identity.as_str().to_owned(), generation, stable_node_id, grant, sender, cancel })
+        Ok(BudgetSession {
+            transport_identity: route.transport_identity.as_str().to_owned(),
+            generation,
+            stable_node_id,
+            grant,
+            sender,
+            cancel,
+        })
     }
 
     /// Construct the inbound session context only for the generation owned by
@@ -382,7 +399,9 @@ impl PeerStreamRegistry {
         config: &super::budget_raft::types::BudgetClusterConfig,
     ) -> Result<BudgetSession, SendError> {
         let route = super::budget_raft::network::BudgetPeerRoute {
-            node_id: config.raft_node_id(grant.stable_node_id()).ok_or(SendError::MembershipRevoked)?,
+            node_id: config
+                .raft_node_id(grant.stable_node_id())
+                .ok_or(SendError::MembershipRevoked)?,
             stable_node_id: grant.stable_node_id().clone(),
             transport_identity: grant.transport_identity().clone(),
         };
@@ -416,13 +435,17 @@ impl PeerStreamRegistry {
         };
         if generation != session.generation
             || stable_node_id.as_ref() != Some(&session.stable_node_id)
-            || grant.as_ref().is_none_or(|current_grant|
+            || grant.as_ref().is_none_or(|current_grant| {
                 current_grant.stable_node_id() != session.grant.stable_node_id()
                     || current_grant.transport_identity() != session.grant.transport_identity()
                     || current_grant.auth_epoch() != session.grant.auth_epoch()
                     || current_grant.membership_epoch() != session.grant.membership_epoch()
-                    || current_grant.carrier() != session.grant.carrier())
-            || session.grant.revalidate(crate::time::now_unix_i64()).is_err()
+                    || current_grant.carrier() != session.grant.carrier()
+            })
+            || session
+                .grant
+                .revalidate(crate::time::now_unix_i64())
+                .is_err()
         {
             return Err(SendError::MembershipRevoked);
         }
@@ -430,7 +453,12 @@ impl PeerStreamRegistry {
             .grant
             .begin_effect(crate::time::now_unix_i64())
             .map_err(|_| SendError::MembershipRevoked)?;
-        session.sender.try_send(AuthorizedWireFrame { frame, effect_guard: Some(effect_guard) })
+        session
+            .sender
+            .try_send(AuthorizedWireFrame {
+                frame,
+                effect_guard: Some(effect_guard),
+            })
             .map_err(|error| match error {
                 tokio::sync::mpsc::error::TrySendError::Full(_) => SendError::QueueFull,
                 tokio::sync::mpsc::error::TrySendError::Closed(_) => SendError::Closed,

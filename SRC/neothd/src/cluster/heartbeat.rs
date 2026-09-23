@@ -254,20 +254,27 @@ pub fn validate_budget_raft_envelope(envelope: &BudgetRaftEnvelope) -> Result<()
     );
     anyhow::ensure!(envelope.request_id != 0, "budget raft request id is zero");
     anyhow::ensure!(
-        !envelope.cluster_id.is_empty() && envelope.cluster_id.len() <= MAX_BUDGET_RAFT_CLUSTER_ID_BYTES,
+        !envelope.cluster_id.is_empty()
+            && envelope.cluster_id.len() <= MAX_BUDGET_RAFT_CLUSTER_ID_BYTES,
         "budget raft cluster id is empty or exceeds cap"
     );
     anyhow::ensure!(
-        !envelope.asserted_sender.is_empty() && envelope.asserted_sender.len() <= MAX_BUDGET_RAFT_SENDER_BYTES,
+        !envelope.asserted_sender.is_empty()
+            && envelope.asserted_sender.len() <= MAX_BUDGET_RAFT_SENDER_BYTES,
         "budget raft asserted sender is empty or exceeds cap"
     );
     anyhow::ensure!(
-        envelope.scope_hash.len() == 64 && envelope.scope_hash.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        envelope.scope_hash.len() == 64
+            && envelope
+                .scope_hash
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit()),
         "budget raft scope hash is not canonical SHA-256 hex"
     );
     anyhow::ensure!(
         envelope.payload.len() <= MAX_BUDGET_RAFT_PAYLOAD_BYTES,
-        "budget raft payload {} exceeds cap {MAX_BUDGET_RAFT_PAYLOAD_BYTES}", envelope.payload.len()
+        "budget raft payload {} exceeds cap {MAX_BUDGET_RAFT_PAYLOAD_BYTES}",
+        envelope.payload.len()
     );
     Ok(())
 }

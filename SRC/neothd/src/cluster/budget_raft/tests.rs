@@ -86,24 +86,34 @@ fn frozen_membership_scope_and_config_tampering_fail_closed() {
     let identity = duplicate_transport.voters.values().next().unwrap().clone();
     duplicate_transport.voters.insert(node("44"), identity);
     duplicate_transport.voters.remove(&node("33"));
-    assert_eq!(Err(BudgetRejection::InvalidConfig), duplicate_transport.validate());
+    assert_eq!(
+        Err(BudgetRejection::InvalidConfig),
+        duplicate_transport.validate()
+    );
 }
 
 #[test]
 fn reserve_replay_keeps_original_position_and_cap_never_rebates_release() {
     let mut ledger = ledger(10);
     let grant = reserve_grant(&mut ledger, "1", 6);
-    assert_eq!(CommittedLogPosition { term: 4, index: 11 }, grant.committed_at);
+    assert_eq!(
+        CommittedLogPosition { term: 4, index: 11 },
+        grant.committed_at
+    );
 
     let replay_command = reserve(&ledger, "1", 6);
     let replay = ledger.apply(99, 777, BudgetCommand::Reserve(replay_command));
     assert_eq!(BudgetReply::AlreadyReserved(grant.clone()), replay);
 
     assert!(matches!(
-        ledger.apply(4, 13, BudgetCommand::ReleaseBeforeClaim {
-            grant_id: grant.grant_id.clone(),
-            reserve_fence: grant.reserve_fence.clone(),
-        }),
+        ledger.apply(
+            4,
+            13,
+            BudgetCommand::ReleaseBeforeClaim {
+                grant_id: grant.grant_id.clone(),
+                reserve_fence: grant.reserve_fence.clone(),
+            }
+        ),
         BudgetReply::Released(_)
     ));
     let new_reservation = reserve(&ledger, "2", 5);
@@ -112,10 +122,14 @@ fn reserve_replay_keeps_original_position_and_cap_never_rebates_release() {
         BudgetReply::Rejected(BudgetRejection::CapExceeded)
     ));
     assert!(matches!(
-        ledger.apply(4, 15, BudgetCommand::ReleaseBeforeClaim {
-            grant_id: grant.grant_id,
-            reserve_fence: grant.reserve_fence,
-        }),
+        ledger.apply(
+            4,
+            15,
+            BudgetCommand::ReleaseBeforeClaim {
+                grant_id: grant.grant_id,
+                reserve_fence: grant.reserve_fence,
+            }
+        ),
         BudgetReply::Released(_)
     ));
     assert!(ledger.validate().is_ok());
@@ -130,7 +144,10 @@ fn claim_ack_loss_is_reconcile_only_and_never_changes_first_claim_position() {
         BudgetReply::NewClaimed(receipt) => receipt,
         reply => panic!("expected first claim, got {reply:?}"),
     };
-    assert_eq!(CommittedLogPosition { term: 7, index: 12 }, first.committed_at);
+    assert_eq!(
+        CommittedLogPosition { term: 7, index: 12 },
+        first.committed_at
+    );
     assert_eq!(
         BudgetReply::AlreadyClaimed(first.clone()),
         ledger.apply(99, 888, BudgetCommand::BeginDispatch(command))
@@ -143,10 +160,14 @@ fn claim_ack_loss_is_reconcile_only_and_never_changes_first_claim_position() {
         ledger.apply(7, 13, BudgetCommand::BeginDispatch(competing))
     );
     assert!(matches!(
-        ledger.apply(7, 14, BudgetCommand::ReleaseBeforeClaim {
-            grant_id: grant.grant_id,
-            reserve_fence: grant.reserve_fence,
-        }),
+        ledger.apply(
+            7,
+            14,
+            BudgetCommand::ReleaseBeforeClaim {
+                grant_id: grant.grant_id,
+                reserve_fence: grant.reserve_fence,
+            }
+        ),
         BudgetReply::Rejected(BudgetRejection::ReleaseAfterClaim)
     ));
 }
@@ -178,10 +199,16 @@ fn unknown_settlement_holds_full_bound_and_terminal_replay_is_exact() {
         reply => panic!("expected unknown-cost settlement, got {reply:?}"),
     };
     assert_eq!(
-        GrantTerminal::Settled { charged_usd_nanos: 6, actual_cost_was_unknown: true },
+        GrantTerminal::Settled {
+            charged_usd_nanos: 6,
+            actual_cost_was_unknown: true
+        },
         receipt.terminal
     );
-    assert_eq!(BudgetReply::Settled(receipt.clone()), ledger.apply(8, 99, BudgetCommand::Settle(unknown)));
+    assert_eq!(
+        BudgetReply::Settled(receipt.clone()),
+        ledger.apply(8, 99, BudgetCommand::Settle(unknown))
+    );
     assert_eq!(
         BudgetReply::Rejected(BudgetRejection::GrantConflict),
         ledger.apply(4, 14, BudgetCommand::Settle(settlement(&claim, Some(1))))
@@ -217,10 +244,14 @@ fn overrun_is_durable_reconciliation_and_changed_retry_is_conflict() {
         ledger.apply(4, 15, BudgetCommand::Settle(settlement(&claim, Some(8))))
     );
     assert!(matches!(
-        ledger.apply(4, 16, BudgetCommand::ReleaseBeforeClaim {
-            grant_id: grant.grant_id,
-            reserve_fence: grant.reserve_fence,
-        }),
+        ledger.apply(
+            4,
+            16,
+            BudgetCommand::ReleaseBeforeClaim {
+                grant_id: grant.grant_id,
+                reserve_fence: grant.reserve_fence,
+            }
+        ),
         BudgetReply::Rejected(BudgetRejection::ReleaseAfterClaim)
     ));
     assert!(ledger.validate().is_ok());
@@ -230,11 +261,19 @@ fn overrun_is_durable_reconciliation_and_changed_retry_is_conflict() {
 fn corrupted_recovery_state_is_not_admissible() {
     let mut ledger = ledger(20);
     let grant = reserve_grant(&mut ledger, "1", 6);
-    ledger.grants.get_mut(&grant.grant_id).unwrap().reserve_fence = GrantFence("00".repeat(32));
+    ledger
+        .grants
+        .get_mut(&grant.grant_id)
+        .unwrap()
+        .reserve_fence = GrantFence("00".repeat(32));
     assert_eq!(Err(BudgetRejection::InvalidConfig), ledger.validate());
     assert_eq!(
         BudgetReply::Rejected(BudgetRejection::InvalidConfig),
-        ledger.apply(4, 12, BudgetCommand::BeginDispatch(claim_command(&grant, node("11"))))
+        ledger.apply(
+            4,
+            12,
+            BudgetCommand::BeginDispatch(claim_command(&grant, node("11")))
+        )
     );
 }
 

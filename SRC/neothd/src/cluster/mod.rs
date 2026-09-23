@@ -28,6 +28,7 @@ pub mod hyperswarm;
 #[cfg(feature = "cluster-iroh")]
 pub mod iroh_transport;
 
+pub mod budget_raft;
 /// Cluster auto-discovery primitives — `cluster_key` derivation plus
 /// HMAC-authenticated announce packets consumed by the mDNS, Tailscale, and
 /// relay discovery surfaces.
@@ -35,7 +36,6 @@ pub mod iroh_transport;
 pub mod discovery;
 pub mod identity;
 pub mod membership;
-pub mod budget_raft;
 #[cfg(test)]
 mod outbound_tests;
 pub mod peer_auth;

@@ -113,7 +113,8 @@ impl BudgetClusterConfig {
     }
 
     fn validate_shape(&self) -> Result<(), BudgetRejection> {
-        if !is_identifier(&self.cluster_id) || self.membership_epoch == 0 || self.cap_usd_nanos == 0 {
+        if !is_identifier(&self.cluster_id) || self.membership_epoch == 0 || self.cap_usd_nanos == 0
+        {
             return Err(BudgetRejection::InvalidConfig);
         }
         if self.voters.len() != 3 {
@@ -276,7 +277,9 @@ pub(crate) fn is_uuid_v7(value: &str) -> bool {
     }
     for (index, byte) in bytes.iter().enumerate() {
         if matches!(index, 8 | 13 | 18 | 23) {
-            if *byte != b'-' { return false; }
+            if *byte != b'-' {
+                return false;
+            }
         } else if !byte.is_ascii_digit() && !matches!(*byte, b'a'..=b'f') {
             return false;
         }

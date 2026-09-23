@@ -920,9 +920,7 @@ fn windows_absolute_disk_root(
     };
     let root = match prefix.kind() {
         Prefix::Disk(letter) => PathBuf::from(format!("{}:\\", char::from(letter))),
-        Prefix::VerbatimDisk(letter) => {
-            PathBuf::from(format!("\\\\?\\{}:\\", char::from(letter)))
-        }
+        Prefix::VerbatimDisk(letter) => PathBuf::from(format!("\\\\?\\{}:\\", char::from(letter))),
         _ => anyhow::bail!(
             "{label} path has no supported disk root: {}",
             display_path.display()

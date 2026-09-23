@@ -9,13 +9,13 @@ use super::service::{
     BudgetMembershipValidator, BudgetServiceError,
 };
 use super::types::BudgetClusterConfig;
-use anyhow::{Context, Result};
-use async_trait::async_trait;
 use crate::cluster::membership::{
-    CarrierKind, LocalNodeIdentity, MembershipSnapshot,
-    MembershipState, MembershipStore, StableNodeId, TransportIdentity,
+    CarrierKind, LocalNodeIdentity, MembershipSnapshot, MembershipState, MembershipStore,
+    StableNodeId, TransportIdentity,
 };
 use crate::config::BudgetRaftConfig;
+use anyhow::{Context, Result};
+use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -93,9 +93,13 @@ impl BudgetMembershipValidator for DurableBudgetMembershipValidator {
     ) -> Result<AuthenticatedLocalInvocation, BudgetServiceError> {
         let snapshot = self.snapshot().await.map_err(unavailable)?;
         verify_snapshot(expected, &snapshot, crate::time::now_unix_i64()).map_err(unavailable)?;
-        let expected_transport = expected.voters.get(expected_local).ok_or(
-            BudgetServiceError::Configuration("local stable identity is not a frozen budget voter"),
-        )?;
+        let expected_transport =
+            expected
+                .voters
+                .get(expected_local)
+                .ok_or(BudgetServiceError::Configuration(
+                    "local stable identity is not a frozen budget voter",
+                ))?;
         if expected_transport != &self.local_transport_identity
             || !snapshot_has_current_binding(
                 &snapshot,
@@ -108,11 +112,13 @@ impl BudgetMembershipValidator for DurableBudgetMembershipValidator {
                 "local stable identity or Peeroxide transport binding is no longer current".into(),
             ));
         }
-        Ok(AuthenticatedLocalInvocation::from_revalidated_local_session(
-            expected_local.clone(),
-            expected_transport.clone(),
-            expected.membership_epoch,
-        ))
+        Ok(
+            AuthenticatedLocalInvocation::from_revalidated_local_session(
+                expected_local.clone(),
+                expected_transport.clone(),
+                expected.membership_epoch,
+            ),
+        )
     }
 
     async fn revalidate_peer(
@@ -153,9 +159,18 @@ fn derive_from_snapshot(
     snapshot: &MembershipSnapshot,
     now_unix: i64,
 ) -> Result<BudgetClusterConfig> {
-    anyhow::ensure!(configured.cap_usd_nanos > 0 && configured.utc_window > 0, "budget cap and UTC window must be positive");
-    anyhow::ensure!(configured.membership_epoch > 0, "budget membership epoch must be positive");
-    anyhow::ensure!(configured.voters.len() == 3, "budget authority requires exactly three configured voters");
+    anyhow::ensure!(
+        configured.cap_usd_nanos > 0 && configured.utc_window > 0,
+        "budget cap and UTC window must be positive"
+    );
+    anyhow::ensure!(
+        configured.membership_epoch > 0,
+        "budget membership epoch must be positive"
+    );
+    anyhow::ensure!(
+        configured.voters.len() == 3,
+        "budget authority requires exactly three configured voters"
+    );
     let voters = configured
         .voters
         .iter()
@@ -166,9 +181,17 @@ fn derive_from_snapshot(
             ))
         })
         .collect::<Result<BTreeMap<_, _>>>()?;
-    anyhow::ensure!(voters.len() == 3, "budget authority has duplicate configured stable node ids");
     anyhow::ensure!(
-        voters.values().map(|transport| transport.as_str()).collect::<std::collections::HashSet<_>>().len() == 3,
+        voters.len() == 3,
+        "budget authority has duplicate configured stable node ids"
+    );
+    anyhow::ensure!(
+        voters
+            .values()
+            .map(|transport| transport.as_str())
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            == 3,
         "budget authority has duplicate configured peeroxide keys"
     );
     let config = BudgetClusterConfig::new(
@@ -187,13 +210,31 @@ fn derive_from_snapshot(
     Ok(config)
 }
 
-fn verify_snapshot(expected: &BudgetClusterConfig, snapshot: &MembershipSnapshot, now_unix: i64) -> Result<()> {
-    snapshot.validate().context("membership snapshot is malformed")?;
-    anyhow::ensure!(snapshot.pending_outbox == 0, "membership authority has pending outbox work");
-    anyhow::ensure!(snapshot.authority_epoch.get() == expected.membership_epoch, "membership authority epoch differs from frozen budget epoch");
-    anyhow::ensure!(snapshot.revocation_floor <= snapshot.authority_epoch, "membership revocation floor is invalid");
+fn verify_snapshot(
+    expected: &BudgetClusterConfig,
+    snapshot: &MembershipSnapshot,
+    now_unix: i64,
+) -> Result<()> {
+    snapshot
+        .validate()
+        .context("membership snapshot is malformed")?;
+    anyhow::ensure!(
+        snapshot.pending_outbox == 0,
+        "membership authority has pending outbox work"
+    );
+    anyhow::ensure!(
+        snapshot.authority_epoch.get() == expected.membership_epoch,
+        "membership authority epoch differs from frozen budget epoch"
+    );
+    anyhow::ensure!(
+        snapshot.revocation_floor <= snapshot.authority_epoch,
+        "membership revocation floor is invalid"
+    );
     for (stable, transport) in &expected.voters {
-        anyhow::ensure!(snapshot_has_current_binding(snapshot, stable, transport, now_unix), "frozen budget voter {stable} is inactive, revoked, expired, or has a changed Peeroxide binding");
+        anyhow::ensure!(
+            snapshot_has_current_binding(snapshot, stable, transport, now_unix),
+            "frozen budget voter {stable} is inactive, revoked, expired, or has a changed Peeroxide binding"
+        );
     }
     Ok(())
 }
@@ -204,35 +245,45 @@ fn snapshot_has_current_binding(
     transport: &TransportIdentity,
     now_unix: i64,
 ) -> bool {
-    snapshot.members.iter().find(|member| &member.stable_node_id == stable).is_some_and(|member| {
-        member.state == MembershipState::Active
-            && !member.tombstoned
-            && member.membership_epoch.get() == snapshot.authority_epoch.get()
-            && member.membership_epoch.get() >= snapshot.revocation_floor.get()
-            && member.bindings.iter().any(|binding| {
-                binding.carrier == CarrierKind::Peeroxide
-                    && &binding.transport_identity == transport
-                    && binding.auth_epoch == member.auth_epoch
-                    && binding.membership_epoch == member.membership_epoch
-                    && binding.expires_at_unix.is_none_or(|expiry| expiry > now_unix)
-            })
-    })
+    snapshot
+        .members
+        .iter()
+        .find(|member| &member.stable_node_id == stable)
+        .is_some_and(|member| {
+            member.state == MembershipState::Active
+                && !member.tombstoned
+                && member.membership_epoch.get() == snapshot.authority_epoch.get()
+                && member.membership_epoch.get() >= snapshot.revocation_floor.get()
+                && member.bindings.iter().any(|binding| {
+                    binding.carrier == CarrierKind::Peeroxide
+                        && &binding.transport_identity == transport
+                        && binding.auth_epoch == member.auth_epoch
+                        && binding.membership_epoch == member.membership_epoch
+                        && binding
+                            .expires_at_unix
+                            .is_none_or(|expiry| expiry > now_unix)
+                })
+        })
 }
 
 fn unavailable(error: anyhow::Error) -> BudgetServiceError {
-    BudgetServiceError::Unavailable(format!("durable budget membership revalidation failed: {error:#}"))
+    BudgetServiceError::Unavailable(format!(
+        "durable budget membership revalidation failed: {error:#}"
+    ))
 }
 
 fn inbound_unavailable(error: anyhow::Error) -> BudgetInboundError {
-    BudgetInboundError::Unavailable(format!("durable budget membership revalidation failed: {error:#}"))
+    BudgetInboundError::Unavailable(format!(
+        "durable budget membership revalidation failed: {error:#}"
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cluster::membership::{
-        AuthEpoch, CarrierBindingSnapshot, MemberSnapshot, MembershipEpoch,
-        MEMBERSHIP_SNAPSHOT_VERSION,
+        AuthEpoch, CarrierBindingSnapshot, MEMBERSHIP_SNAPSHOT_VERSION, MemberSnapshot,
+        MembershipEpoch,
     };
     use crate::config::BudgetRaftVoterConfig;
 
@@ -319,10 +370,17 @@ mod tests {
         let mut revoked = snapshot(7);
         revoked.members[1].state = MembershipState::Revoked;
         revoked.members[1].tombstoned = true;
-        assert!(derive_from_snapshot(
-            "budget-mesh".into(), &policy, &local, &local_transport, &revoked, 1,
-        )
-        .is_err());
+        assert!(
+            derive_from_snapshot(
+                "budget-mesh".into(),
+                &policy,
+                &local,
+                &local_transport,
+                &revoked,
+                1,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -331,10 +389,17 @@ mod tests {
         let local = stable('1');
         let local_transport = transport('a');
 
-        assert!(derive_from_snapshot(
-            "budget-mesh".into(), &policy, &local, &local_transport, &snapshot(8), 1,
-        )
-        .is_err());
+        assert!(
+            derive_from_snapshot(
+                "budget-mesh".into(),
+                &policy,
+                &local,
+                &local_transport,
+                &snapshot(8),
+                1,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -344,14 +409,16 @@ mod tests {
         let local_transport = transport('a');
         let mut changed_binding = policy.clone();
         changed_binding.voters[2].peeroxide_key = "d".repeat(64);
-        assert!(derive_from_snapshot(
-            "budget-mesh".into(),
-            &changed_binding,
-            &local,
-            &local_transport,
-            &snapshot(7),
-            1,
-        )
-        .is_err());
+        assert!(
+            derive_from_snapshot(
+                "budget-mesh".into(),
+                &changed_binding,
+                &local,
+                &local_transport,
+                &snapshot(7),
+                1,
+            )
+            .is_err()
+        );
     }
 }

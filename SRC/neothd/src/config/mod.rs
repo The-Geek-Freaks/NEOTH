@@ -2314,7 +2314,10 @@ impl ClusterConfig {
             if self.transport != ClusterTransport::Peeroxide {
                 return Err("cluster.budget_raft requires cluster.transport `peeroxide`; iroh has no authenticated budget carrier".to_string());
             }
-            if self.budget_raft.cap_usd_nanos == 0 || self.budget_raft.utc_window <= 0 || self.budget_raft.membership_epoch == 0 {
+            if self.budget_raft.cap_usd_nanos == 0
+                || self.budget_raft.utc_window <= 0
+                || self.budget_raft.membership_epoch == 0
+            {
                 return Err("cluster.budget_raft requires a positive cap_usd_nanos, utc_window, and membership_epoch".to_string());
             }
             if self.budget_raft.voters.len() != 3 {
@@ -2324,10 +2327,16 @@ impl ClusterConfig {
             let mut peeroxide_keys = std::collections::BTreeSet::new();
             for voter in &self.budget_raft.voters {
                 if voter.stable_node_id.len() != 64
-                    || !voter.stable_node_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    || !voter
+                        .stable_node_id
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit())
                     || voter.stable_node_id != voter.stable_node_id.to_ascii_lowercase()
                     || voter.peeroxide_key.len() != 64
-                    || !voter.peeroxide_key.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    || !voter
+                        .peeroxide_key
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit())
                     || voter.peeroxide_key != voter.peeroxide_key.to_ascii_lowercase()
                 {
                     return Err("cluster.budget_raft voters must use canonical 32-byte hexadecimal stable ids and peeroxide keys".to_string());

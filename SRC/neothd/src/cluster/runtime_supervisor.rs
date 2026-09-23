@@ -19,7 +19,8 @@ use tracing::{info, warn};
 use crate::cluster::discovery::ClusterKey;
 use crate::config::credentials::Credentials;
 use crate::config::{
-    BudgetRaftConfig, ClusterAnnouncePolicy, ClusterConfig, ClusterMdnsConfig, ClusterTransport, FreedomConfig,
+    BudgetRaftConfig, ClusterAnnouncePolicy, ClusterConfig, ClusterMdnsConfig, ClusterTransport,
+    FreedomConfig,
 };
 use crate::providers::Provider;
 use crate::wal::writer::WalWriterHandle;
@@ -677,8 +678,9 @@ impl CarrierRuntime {
             peer_streams.clone();
         deps.live_sessions.register(live_adapter);
         let (budget_config, budget_carrier, budget_service) = if spec.budget_raft.enabled {
-            let local_identity = crate::cluster::membership::LocalNodeIdentity::load_existing(&deps.home)
-                .context("load existing local identity before enabling budget raft")?;
+            let local_identity =
+                crate::cluster::membership::LocalNodeIdentity::load_existing(&deps.home)
+                    .context("load existing local identity before enabling budget raft")?;
             let local_identity = local_identity.as_ref().context(
                 "cluster budget raft requires an existing local stable identity; refusing to mint one during authority recovery",
             )?;
@@ -716,11 +718,12 @@ impl CarrierRuntime {
             crate::cluster::wal_sync::GossipState::new(),
         ));
         let cluster_provider = deps.shared_provider.clone().map(|provider| {
-            let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
-                Arc::clone(&deps.reload_controller),
-                Some(deps.writer.clone()),
-                deps.home.clone(),
-            );
+            let authorizer =
+                crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
+                    Arc::clone(&deps.reload_controller),
+                    Some(deps.writer.clone()),
+                    deps.home.clone(),
+                );
             let authorizer = match budget_service.as_ref() {
                 Some(service) => authorizer.with_cluster_budget(Arc::clone(service)),
                 None => authorizer,
@@ -760,15 +763,21 @@ impl CarrierRuntime {
             Ok(swarm) => swarm,
             Err(error) => {
                 executor.shutdown().await;
-                if let Some(carrier) = budget_carrier.as_ref() { carrier.stop(); }
-                if let Some(service) = budget_service.as_ref() { let _ = service.shutdown().await; }
+                if let Some(carrier) = budget_carrier.as_ref() {
+                    carrier.stop();
+                }
+                if let Some(service) = budget_service.as_ref() {
+                    let _ = service.shutdown().await;
+                }
                 return Err(error).context("start configured peeroxide cluster transport");
             }
         };
         // The carrier cannot route ingress while its weak service target is
         // empty. Bootstrap is after Peeroxide is alive, but before the service
         // is published to that carrier or the provider executor can issue work.
-        if let (Some(service), Some(carrier), Some(_config)) = (&budget_service, &budget_carrier, &budget_config) {
+        if let (Some(service), Some(carrier), Some(_config)) =
+            (&budget_service, &budget_carrier, &budget_config)
+        {
             if let Err(error) = service.bootstrap_fixed_voters().await {
                 carrier.stop();
                 let _ = swarm.shutdown().await;

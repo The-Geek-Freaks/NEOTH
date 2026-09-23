@@ -936,9 +936,9 @@ impl ProviderCallAuditTicket {
                     None => None,
                 };
                 if let Err(error) = dispatch.settle_after_provider_call(actual_usd_nanos).await {
-                // A terminal quorum failure after a provider effect must keep
-                // the committed claim/bound for reconciliation. Returning an
-                // error here would make a paid invocation look retryable.
+                    // A terminal quorum failure after a provider effect must keep
+                    // the committed claim/bound for reconciliation. Returning an
+                    // error here would make a paid invocation look retryable.
                     tracing::error!(
                         error = %error,
                         invocation_id = %self.invocation_id,
@@ -1234,10 +1234,12 @@ impl ProviderIntentLifecycle {
     fn into_guard(
         mut self,
         reservation: Option<crate::council::daily_budget::DailyBudgetReservation>,
-        #[cfg(feature = "cluster")]
-        cluster_budget_dispatch: Option<crate::cluster::budget_raft::service::ProviderDispatchTicket>,
-        #[cfg(feature = "cluster")]
-        cluster_budget_permit: Option<crate::cluster::budget_raft::service::NewDispatchPermit>,
+        #[cfg(feature = "cluster")] cluster_budget_dispatch: Option<
+            crate::cluster::budget_raft::service::ProviderDispatchTicket,
+        >,
+        #[cfg(feature = "cluster")] cluster_budget_permit: Option<
+            crate::cluster::budget_raft::service::NewDispatchPermit,
+        >,
     ) -> ProviderCallAuditGuard {
         debug_assert!(match &self.state {
             ProviderIntentState::Durable => true,
@@ -1252,9 +1254,10 @@ impl ProviderIntentLifecycle {
             .expect("provider intent lifecycle ticket already consumed");
         ticket.daily_budget_reservation = reservation;
         #[cfg(feature = "cluster")]
-        ticket.cluster_budget_dispatch = cluster_budget_dispatch;
-        #[cfg(feature = "cluster")]
-        ticket.cluster_budget_permit = cluster_budget_permit;
+        {
+            ticket.cluster_budget_dispatch = cluster_budget_dispatch;
+            ticket.cluster_budget_permit = cluster_budget_permit;
+        }
         ticket.started = Instant::now();
         ProviderCallAuditGuard {
             ticket: Some(ticket),
@@ -1419,9 +1422,11 @@ impl AuthorizedLeafCall {
                     .service
                     .reserve_and_begin_provider_dispatch(plan.reserve.clone())
                     .await
-                    .map_err(|error| anyhow::anyhow!(ProviderAuthorizationError(format!(
-                        "cluster budget authority denied provider dispatch: {error}"
-                    ))))?;
+                    .map_err(|error| {
+                        anyhow::anyhow!(ProviderAuthorizationError(format!(
+                            "cluster budget authority denied provider dispatch: {error}"
+                        )))
+                    })?;
                 let permit = dispatch.take_provider_permit().map_err(|error| {
                     anyhow::anyhow!(ProviderAuthorizationError(format!(
                         "cluster budget authority could not consume provider dispatch permit: {error}"
@@ -3634,7 +3639,10 @@ mod tests {
     #[cfg(feature = "cluster")]
     #[test]
     fn cluster_budget_rounds_positive_reserves_up_but_allows_zero_actual_cost() {
-        assert_eq!(cluster_budget_usd_to_nanos_ceil(0.000_000_000_1).unwrap(), 1);
+        assert_eq!(
+            cluster_budget_usd_to_nanos_ceil(0.000_000_000_1).unwrap(),
+            1
+        );
         assert_eq!(cluster_budget_actual_usd_to_nanos_ceil(0.0).unwrap(), 0);
         assert!(cluster_budget_usd_to_nanos_ceil(0.0).is_err());
         assert!(cluster_budget_actual_usd_to_nanos_ceil(-0.1).is_err());
@@ -3673,9 +3681,13 @@ mod tests {
     #[cfg(feature = "cluster")]
     #[tokio::test]
     async fn cluster_budget_quorum_leaf_dispatches_exactly_once() {
-        let fixture = crate::cluster::budget_raft::service_tests::ThreeNodeFixture::start_with_cap(1_000_000_000).await;
+        let fixture = crate::cluster::budget_raft::service_tests::ThreeNodeFixture::start_with_cap(
+            1_000_000_000,
+        )
+        .await;
         let home = tempfile::tempdir().unwrap();
-        let (writer, join) = crate::wal::writer::spawn(home.path().join("cluster-budget-ok.wal")).unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn(home.path().join("cluster-budget-ok.wal")).unwrap();
         let inner = Arc::new(CountingProvider {
             name: "openai_api",
             calls: AtomicUsize::new(0),
@@ -3701,10 +3713,14 @@ mod tests {
     #[cfg(feature = "cluster")]
     #[tokio::test]
     async fn cluster_budget_no_quorum_blocks_before_raw_provider_dispatch() {
-        let fixture = crate::cluster::budget_raft::service_tests::ThreeNodeFixture::start_with_cap(1_000_000_000).await;
+        let fixture = crate::cluster::budget_raft::service_tests::ThreeNodeFixture::start_with_cap(
+            1_000_000_000,
+        )
+        .await;
         let isolated_leader = fixture.isolate_leader_both_directions().await;
         let home = tempfile::tempdir().unwrap();
-        let (writer, join) = crate::wal::writer::spawn(home.path().join("cluster-budget-no-quorum.wal")).unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn(home.path().join("cluster-budget-no-quorum.wal")).unwrap();
         let inner = Arc::new(CountingProvider {
             name: "openai_api",
             calls: AtomicUsize::new(0),
@@ -3719,7 +3735,11 @@ mod tests {
         );
 
         let error = provider.complete(Request::default()).await.unwrap_err();
-        assert!(error.to_string().contains("cluster budget authority denied provider dispatch"));
+        assert!(
+            error
+                .to_string()
+                .contains("cluster budget authority denied provider dispatch")
+        );
         assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
 
         drop(provider);
@@ -3731,9 +3751,14 @@ mod tests {
     #[cfg(feature = "cluster")]
     #[tokio::test]
     async fn cluster_budget_unknown_price_blocks_before_raft_or_raw_provider_dispatch() {
-        let fixture = crate::cluster::budget_raft::service_tests::ThreeNodeFixture::start_with_cap(1_000_000_000).await;
+        let fixture = crate::cluster::budget_raft::service_tests::ThreeNodeFixture::start_with_cap(
+            1_000_000_000,
+        )
+        .await;
         let home = tempfile::tempdir().unwrap();
-        let (writer, join) = crate::wal::writer::spawn(home.path().join("cluster-budget-unknown-price.wal")).unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn(home.path().join("cluster-budget-unknown-price.wal"))
+                .unwrap();
         let inner = Arc::new(CountingProvider {
             name: "future_cloud",
             calls: AtomicUsize::new(0),
@@ -3748,7 +3773,11 @@ mod tests {
         );
 
         let error = provider.complete(Request::default()).await.unwrap_err();
-        assert!(error.to_string().contains("cluster budget blocks unknown provider pricing"));
+        assert!(
+            error
+                .to_string()
+                .contains("cluster budget blocks unknown provider pricing")
+        );
         assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
 
         drop(provider);

@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W453 hosted formatting and exact license import (2026-09-23):**
+W449 is published as b1fd8466. Its Preflight35885319917 exported formatting for
+19 source files; all complete before/after Git blobs, patch SHA256 and source
+HEAD were verified before import. No local formatter ran. W446 notice export
+35885323058 passed:13 hash bindings, the unchanged original snapshot set and
+exactly two OpenRaft0.9.25 upstream additions were verified, then the generated
+snapshots and distribution notices were imported. Core35885319425 found W454:
+two feature attributes on assignment expressions are unstable on Rust1.91.
+The assignments now live in one feature-gated block; fresh hosted proof is pending.
+FullCIbc9 finished: macOS17872run/17865PASS/7knownSQLFAIL/25skip; all30native GUI
+callbacks passed. P203 containment/vault, W153reasoning and W155citation terminals
+are available for criterion-level admission (W451/W452). No Road row closes here.
+Inventory723/native1173/Windows21/Linux33/macOS32/Group878/GUI143Linux139macOS;
+Road1034checked/288open/2partial;WS-LF27done/91open. BSOD hold remains.
+
 **W449 fixed-voter quorum budget integration; W446/W447 hosted follow-ups (2026-09-23):**
 The default-off cluster budget now connects the reviewed domain ledger, real
 OpenRaft0.9.25 SQLite storage, authenticated Peeroxide replication/client lane,

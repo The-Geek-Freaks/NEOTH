@@ -21,7 +21,9 @@ pub struct BudgetSnapshotData {
 }
 
 impl BudgetSnapshotData {
-    pub fn empty() -> Self { Self::default() }
+    pub fn empty() -> Self {
+        Self::default()
+    }
 
     pub fn from_bytes(bytes: Vec<u8>) -> io::Result<Self> {
         if bytes.len() > MAX_BUDGET_SNAPSHOT_BYTES {
@@ -30,16 +32,27 @@ impl BudgetSnapshotData {
         Ok(Self { bytes, position: 0 })
     }
 
-    pub fn into_bytes(self) -> Vec<u8> { self.bytes }
-    pub fn bytes(&self) -> &[u8] { &self.bytes }
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
 }
 
 fn snapshot_too_large() -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, "budget raft snapshot exceeds configured maximum")
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        "budget raft snapshot exceeds configured maximum",
+    )
 }
 
 impl AsyncRead for BudgetSnapshotData {
-    fn poll_read(mut self: Pin<&mut Self>, _: &mut Context<'_>, buffer: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
         let available = self.bytes.get(self.position..).unwrap_or(&[]);
         let count = min(available.len(), buffer.remaining());
         buffer.put_slice(&available[..count]);
@@ -49,21 +62,33 @@ impl AsyncRead for BudgetSnapshotData {
 }
 
 impl AsyncWrite for BudgetSnapshotData {
-    fn poll_write(mut self: Pin<&mut Self>, _: &mut Context<'_>, source: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+        source: &[u8],
+    ) -> Poll<io::Result<usize>> {
         let position = self.position;
         let end = match position.checked_add(source.len()) {
             Some(end) if end <= MAX_BUDGET_SNAPSHOT_BYTES => end,
             _ => return Poll::Ready(Err(snapshot_too_large())),
         };
-        if position > self.bytes.len() { self.bytes.resize(position, 0); }
-        if end > self.bytes.len() { self.bytes.resize(end, 0); }
+        if position > self.bytes.len() {
+            self.bytes.resize(position, 0);
+        }
+        if end > self.bytes.len() {
+            self.bytes.resize(end, 0);
+        }
         self.bytes[position..end].copy_from_slice(source);
         self.position = end;
         Poll::Ready(Ok(source.len()))
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> { Poll::Ready(Ok(())) }
-    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> { Poll::Ready(Ok(())) }
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
 }
 
 impl AsyncSeek for BudgetSnapshotData {
@@ -73,15 +98,22 @@ impl AsyncSeek for BudgetSnapshotData {
             SeekFrom::Current(offset) => (self.position as i128, offset as i128),
             SeekFrom::End(offset) => (self.bytes.len() as i128, offset as i128),
         };
-        let position = base.checked_add(offset).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "budget snapshot seek overflow"))?;
+        let position = base.checked_add(offset).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "budget snapshot seek overflow")
+        })?;
         if position < 0 || position > MAX_BUDGET_SNAPSHOT_BYTES as i128 {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "budget snapshot seek outside configured maximum"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "budget snapshot seek outside configured maximum",
+            ));
         }
         self.position = position as usize;
         Ok(())
     }
 
-    fn poll_complete(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<u64>> { Poll::Ready(Ok(self.position as u64)) }
+    fn poll_complete(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<u64>> {
+        Poll::Ready(Ok(self.position as u64))
+    }
 }
 
 openraft::declare_raft_types!(

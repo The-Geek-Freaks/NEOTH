@@ -12,15 +12,15 @@ use super::service::{
     BudgetMembershipValidator, BudgetRaftService, BudgetServiceError,
 };
 use super::types::{
-    BeginDispatch, BudgetClusterConfig, BudgetGrantId, BudgetRejection,
-    DispatchAttemptId, ReserveBudget,
+    BeginDispatch, BudgetClusterConfig, BudgetGrantId, BudgetRejection, DispatchAttemptId,
+    ReserveBudget,
 };
 use crate::cluster::membership::{LocalNodeIdentity, StableNodeId, TransportIdentity};
 use async_trait::async_trait;
 use openraft::network::RPCOption;
 use openraft::raft::{
-    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
-    InstallSnapshotResponse, VoteRequest, VoteResponse,
+    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
+    VoteRequest, VoteResponse,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, Weak};
@@ -44,16 +44,23 @@ impl BudgetMembershipValidator for FixtureMembershipValidator {
         expected_local: &StableNodeId,
     ) -> Result<AuthenticatedLocalInvocation, BudgetServiceError> {
         if expected != &self.config {
-            return Err(BudgetServiceError::Configuration("fixture received a different frozen budget config"));
+            return Err(BudgetServiceError::Configuration(
+                "fixture received a different frozen budget config",
+            ));
         }
-        let transport = self.config.voters.get(expected_local)
+        let transport = self
+            .config
+            .voters
+            .get(expected_local)
             .cloned()
             .ok_or(BudgetServiceError::OriginMismatch)?;
-        Ok(AuthenticatedLocalInvocation::from_revalidated_local_session(
-            expected_local.clone(),
-            transport,
-            self.config.membership_epoch,
-        ))
+        Ok(
+            AuthenticatedLocalInvocation::from_revalidated_local_session(
+                expected_local.clone(),
+                transport,
+                self.config.membership_epoch,
+            ),
+        )
     }
 
     async fn revalidate_peer(
@@ -89,7 +96,10 @@ impl FixtureCarrierRegistry {
     }
 
     fn register(&self, node_id: u64, service: &Arc<BudgetRaftService>) {
-        self.services.lock().unwrap().insert(node_id, Arc::downgrade(service));
+        self.services
+            .lock()
+            .unwrap()
+            .insert(node_id, Arc::downgrade(service));
     }
 
     fn remove(&self, node_id: u64) {
@@ -118,26 +128,49 @@ impl FixtureCarrierRegistry {
     }
 
     fn drop_next_command_reply(&self, origin: u64, target: u64) {
-        self.dropped_command_acks.lock().unwrap().insert((origin, target));
+        self.dropped_command_acks
+            .lock()
+            .unwrap()
+            .insert((origin, target));
     }
 
     fn take_dropped_command_reply(&self, origin: u64, target: u64) -> bool {
-        self.dropped_command_acks.lock().unwrap().remove(&(origin, target))
+        self.dropped_command_acks
+            .lock()
+            .unwrap()
+            .remove(&(origin, target))
     }
 
-    fn target(&self, origin: u64, route: &BudgetPeerRoute) -> Result<Arc<BudgetRaftService>, BudgetRpcError> {
-        if self.blocked_links.lock().unwrap().contains(&(origin, route.node_id)) {
+    fn target(
+        &self,
+        origin: u64,
+        route: &BudgetPeerRoute,
+    ) -> Result<Arc<BudgetRaftService>, BudgetRpcError> {
+        if self
+            .blocked_links
+            .lock()
+            .unwrap()
+            .contains(&(origin, route.node_id))
+        {
             return Err(unreachable_rpc("fixture partition drops this target"));
         }
-        self.services.lock().unwrap().get(&route.node_id)
+        self.services
+            .lock()
+            .unwrap()
+            .get(&route.node_id)
             .and_then(Weak::upgrade)
             .ok_or_else(|| unreachable_rpc("fixture target is absent or restarted"))
     }
 
     fn authenticated_sender(&self, origin: u64) -> Result<AuthenticatedBudgetPeer, BudgetRpcError> {
-        let (stable_node_id, transport_identity) = self.config.voters.iter()
+        let (stable_node_id, transport_identity) = self
+            .config
+            .voters
+            .iter()
             .find(|(stable_node_id, _)| self.config.raft_node_id(stable_node_id) == Some(origin))
-            .ok_or_else(|| unreachable_rpc("fixture origin is not an exact frozen voter binding"))?;
+            .ok_or_else(|| {
+                unreachable_rpc("fixture origin is not an exact frozen voter binding")
+            })?;
         Ok(AuthenticatedBudgetPeer::from_revalidated_peer_session(
             stable_node_id.clone(),
             transport_identity.clone(),
@@ -163,7 +196,9 @@ impl FixtureCarrier {
         if self.registry.config.voters.get(&route.stable_node_id) != Some(&route.transport_identity)
             || self.registry.config.raft_node_id(&route.stable_node_id) != Some(route.node_id)
         {
-            return Err(unreachable_rpc("fixture route is not an exact frozen voter binding"));
+            return Err(unreachable_rpc(
+                "fixture route is not an exact frozen voter binding",
+            ));
         }
         self.registry.target(self.origin, route)
     }
@@ -182,11 +217,18 @@ impl BudgetRaftCarrier for FixtureCarrier {
         _deadline: Duration,
     ) -> Result<super::types::BudgetReply, BudgetRpcError> {
         let peer = self.peer()?;
-        let reply = self.target(route)?.command_from_authenticated_peer(&peer, command)
+        let reply = self
+            .target(route)?
+            .command_from_authenticated_peer(&peer, command)
             .await
             .map_err(inbound_rpc)?;
-        if self.registry.take_dropped_command_reply(self.origin, route.node_id) {
-            return Err(unreachable_rpc("fixture drops a committed client command reply"));
+        if self
+            .registry
+            .take_dropped_command_reply(self.origin, route.node_id)
+        {
+            return Err(unreachable_rpc(
+                "fixture drops a committed client command reply",
+            ));
         }
         Ok(reply)
     }
@@ -199,7 +241,8 @@ impl BudgetRaftCarrier for FixtureCarrier {
         _deadline: Duration,
     ) -> Result<AppendEntriesResponse<u64>, BudgetRpcError> {
         let peer = self.peer()?;
-        self.target(route)?.append_entries_from_authenticated_peer(&peer, request)
+        self.target(route)?
+            .append_entries_from_authenticated_peer(&peer, request)
             .await
             .map_err(inbound_rpc)
     }
@@ -211,9 +254,14 @@ impl BudgetRaftCarrier for FixtureCarrier {
         _option: RPCOption,
         _deadline: Duration,
     ) -> Result<InstallSnapshotResponse<u64>, BudgetSnapshotRpcError> {
-        let peer = self.peer().map_err(|error| unreachable_snapshot(&error.to_string()))?;
-        let target = self.target(route).map_err(|error| unreachable_snapshot(&error.to_string()))?;
-        target.install_snapshot_from_authenticated_peer(&peer, request)
+        let peer = self
+            .peer()
+            .map_err(|error| unreachable_snapshot(&error.to_string()))?;
+        let target = self
+            .target(route)
+            .map_err(|error| unreachable_snapshot(&error.to_string()))?;
+        target
+            .install_snapshot_from_authenticated_peer(&peer, request)
             .await
             .map_err(|error| unreachable_snapshot(&error.to_string()))
     }
@@ -226,7 +274,8 @@ impl BudgetRaftCarrier for FixtureCarrier {
         _deadline: Duration,
     ) -> Result<VoteResponse<u64>, BudgetRpcError> {
         let peer = self.peer()?;
-        self.target(route)?.vote_from_authenticated_peer(&peer, request)
+        self.target(route)?
+            .vote_from_authenticated_peer(&peer, request)
             .await
             .map_err(inbound_rpc)
     }
@@ -252,34 +301,75 @@ impl ThreeNodeFixture {
     /// Starts the immutable three-voter fixture with the requested nanos cap.
     /// Provider tests use a larger cap to keep their accounting input focused.
     pub(crate) async fn start_with_cap(cap_usd_nanos: u64) -> Self {
-        let homes = (0..3).map(|_| tempfile::tempdir().unwrap()).collect::<Vec<_>>();
-        let identities = homes.iter().map(|home| LocalNodeIdentity::load_or_create(home.path()).unwrap()).collect::<Vec<_>>();
-        let voters = identities.iter().enumerate().map(|(index, identity)| {
-            (
-                identity.stable_node_id().clone(),
-                TransportIdentity::parse(format!("fixture-peeroxide-voter-{index}")).unwrap(),
-            )
-        }).collect::<BTreeMap<_, _>>();
+        let homes = (0..3)
+            .map(|_| tempfile::tempdir().unwrap())
+            .collect::<Vec<_>>();
+        let identities = homes
+            .iter()
+            .map(|home| LocalNodeIdentity::load_or_create(home.path()).unwrap())
+            .collect::<Vec<_>>();
+        let voters = identities
+            .iter()
+            .enumerate()
+            .map(|(index, identity)| {
+                (
+                    identity.stable_node_id().clone(),
+                    TransportIdentity::parse(format!("fixture-peeroxide-voter-{index}")).unwrap(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
         let config = BudgetClusterConfig::new(
-            "w434-three-voter-fixture".into(), FIXTURE_EPOCH, voters, cap_usd_nanos, FIXTURE_WINDOW,
-        ).unwrap();
+            "w434-three-voter-fixture".into(),
+            FIXTURE_EPOCH,
+            voters,
+            cap_usd_nanos,
+            FIXTURE_WINDOW,
+        )
+        .unwrap();
         let registry = Arc::new(FixtureCarrierRegistry::new(config.clone()));
-        let carriers = identities.iter().map(|identity| Arc::new(FixtureCarrier::new(
-            config.raft_node_id(identity.stable_node_id()).unwrap(), Arc::clone(&registry),
-        ))).collect::<Vec<_>>();
-        let validator = Arc::new(FixtureMembershipValidator { config: config.clone() });
+        let carriers = identities
+            .iter()
+            .map(|identity| {
+                Arc::new(FixtureCarrier::new(
+                    config.raft_node_id(identity.stable_node_id()).unwrap(),
+                    Arc::clone(&registry),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let validator = Arc::new(FixtureMembershipValidator {
+            config: config.clone(),
+        });
         let mut services = Vec::with_capacity(3);
         for (index, identity) in identities.iter().enumerate() {
-            let service = Arc::new(BudgetRaftService::recover(
-                homes[index].path(), config.clone(), identity, carriers[index].clone(), validator.clone(),
-            ).await.unwrap());
-            registry.register(config.raft_node_id(identity.stable_node_id()).unwrap(), &service);
+            let service = Arc::new(
+                BudgetRaftService::recover(
+                    homes[index].path(),
+                    config.clone(),
+                    identity,
+                    carriers[index].clone(),
+                    validator.clone(),
+                )
+                .await
+                .unwrap(),
+            );
+            registry.register(
+                config.raft_node_id(identity.stable_node_id()).unwrap(),
+                &service,
+            );
             services.push(service);
         }
         for service in &services {
             service.bootstrap_fixed_voters().await.unwrap();
         }
-        let fixture = Self { config, homes, identities, services, registry, carriers, validator };
+        let fixture = Self {
+            config,
+            homes,
+            identities,
+            services,
+            registry,
+            carriers,
+            validator,
+        };
         fixture.wait_for_leader().await;
         fixture
     }
@@ -289,8 +379,8 @@ impl ThreeNodeFixture {
             loop {
                 let mut leaders = BTreeSet::new();
                 for service in &self.services {
-                leaders.insert(service.current_leader_node().await);
-            }
+                    leaders.insert(service.current_leader_node().await);
+                }
                 if leaders.len() == 1 {
                     if let Some(leader) = *leaders.first().unwrap() {
                         return leader;
@@ -298,27 +388,35 @@ impl ThreeNodeFixture {
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
-        }).await.expect("three-node fixture must elect one leader within bound")
+        })
+        .await
+        .expect("three-node fixture must elect one leader within bound")
     }
 
     fn service_for(&self, node_id: u64) -> &Arc<BudgetRaftService> {
-        let index = self.identities.iter().position(|identity| {
-            self.config.raft_node_id(identity.stable_node_id()) == Some(node_id)
-        }).unwrap();
+        let index = self
+            .identities
+            .iter()
+            .position(|identity| {
+                self.config.raft_node_id(identity.stable_node_id()) == Some(node_id)
+            })
+            .unwrap();
         &self.services[index]
     }
 
     fn node_ids(&self) -> Vec<u64> {
-        self.identities.iter().map(|identity| {
-            self.config.raft_node_id(identity.stable_node_id()).unwrap()
-        }).collect()
+        self.identities
+            .iter()
+            .map(|identity| self.config.raft_node_id(identity.stable_node_id()).unwrap())
+            .collect()
     }
 
     /// Returns a nonleader replica so callers exercise the authenticated
     /// follower-to-leader budget command route.
     pub(crate) async fn follower_service(&self) -> Arc<BudgetRaftService> {
         let leader = self.wait_for_leader().await;
-        self.node_ids().into_iter()
+        self.node_ids()
+            .into_iter()
             .find(|node| *node != leader)
             .map(|node| Arc::clone(self.service_for(node)))
             .expect("three-voter fixture must contain a follower")
@@ -328,39 +426,60 @@ impl ThreeNodeFixture {
     /// voters, leaving the leader without a quorum.
     pub(crate) async fn isolate_leader_both_directions(&self) -> Arc<BudgetRaftService> {
         let leader = self.wait_for_leader().await;
-        self.registry.isolate_both_directions(leader, self.node_ids());
+        self.registry
+            .isolate_both_directions(leader, self.node_ids());
         Arc::clone(self.service_for(leader))
     }
 
     fn origin_for(&self, node_id: u64) -> AuthenticatedLocalInvocation {
-        let identity = self.identities.iter().find(|identity| {
-            self.config.raft_node_id(identity.stable_node_id()) == Some(node_id)
-        }).unwrap();
+        let identity = self
+            .identities
+            .iter()
+            .find(|identity| self.config.raft_node_id(identity.stable_node_id()) == Some(node_id))
+            .unwrap();
         AuthenticatedLocalInvocation::from_revalidated_local_session(
             identity.stable_node_id().clone(),
-            self.config.voters.get(identity.stable_node_id()).unwrap().clone(),
+            self.config
+                .voters
+                .get(identity.stable_node_id())
+                .unwrap()
+                .clone(),
             self.config.membership_epoch,
         )
     }
 
     fn stable_for(&self, node_id: u64) -> StableNodeId {
-        self.identities.iter().find(|identity| {
-            self.config.raft_node_id(identity.stable_node_id()) == Some(node_id)
-        }).unwrap().stable_node_id().clone()
+        self.identities
+            .iter()
+            .find(|identity| self.config.raft_node_id(identity.stable_node_id()) == Some(node_id))
+            .unwrap()
+            .stable_node_id()
+            .clone()
     }
 
     async fn restart(&mut self, node_id: u64) {
-        let index = self.identities.iter().position(|identity| {
-            self.config.raft_node_id(identity.stable_node_id()) == Some(node_id)
-        }).unwrap();
+        let index = self
+            .identities
+            .iter()
+            .position(|identity| {
+                self.config.raft_node_id(identity.stable_node_id()) == Some(node_id)
+            })
+            .unwrap();
         let previous = self.services.remove(index);
         previous.shutdown().await.unwrap();
         self.registry.remove(node_id);
         drop(previous);
-        let replacement = Arc::new(BudgetRaftService::recover(
-            self.homes[index].path(), self.config.clone(), &self.identities[index],
-            self.carriers[index].clone(), self.validator.clone(),
-        ).await.unwrap());
+        let replacement = Arc::new(
+            BudgetRaftService::recover(
+                self.homes[index].path(),
+                self.config.clone(),
+                &self.identities[index],
+                self.carriers[index].clone(),
+                self.validator.clone(),
+            )
+            .await
+            .unwrap(),
+        );
         self.registry.register(node_id, &replacement);
         self.services.insert(index, replacement);
         self.wait_for_leader().await;
@@ -410,29 +529,51 @@ fn inbound_rpc(error: BudgetInboundError) -> BudgetRpcError {
 async fn three_voter_quorum_reserves_claims_once_releases_and_settles() {
     let fixture = ThreeNodeFixture::start().await;
     let leader = fixture.wait_for_leader().await;
-    let follower = fixture.node_ids().into_iter().find(|node| *node != leader).unwrap();
+    let follower = fixture
+        .node_ids()
+        .into_iter()
+        .find(|node| *node != leader)
+        .unwrap();
     let service = fixture.service_for(follower);
     let origin = fixture.origin_for(follower);
     let owner = fixture.stable_for(follower);
 
     // Reserve -> Begin -> Settle all enter on a follower and traverse the
     // origin-bound carrier to the elected leader exactly once.
-    let claim_grant = service.reserve(reserve(&fixture.config, 1, 20)).await.unwrap();
+    let claim_grant = service
+        .reserve(reserve(&fixture.config, 1, 20))
+        .await
+        .unwrap();
     let claim = begin(&claim_grant, &owner);
-    let permit = service.begin_dispatch(&origin, claim.clone()).await.unwrap();
+    let permit = service
+        .begin_dispatch(&origin, claim.clone())
+        .await
+        .unwrap();
     drop(permit);
     assert!(matches!(
         service.begin_dispatch(&origin, claim).await,
         Err(BudgetServiceError::Unavailable(_))
     ));
 
-    let settle_grant = service.reserve(reserve(&fixture.config, 2, 20)).await.unwrap();
-    let settle_permit = service.begin_dispatch(&origin, begin(&settle_grant, &owner)).await.unwrap();
+    let settle_grant = service
+        .reserve(reserve(&fixture.config, 2, 20))
+        .await
+        .unwrap();
+    let settle_permit = service
+        .begin_dispatch(&origin, begin(&settle_grant, &owner))
+        .await
+        .unwrap();
     let settled = service.settle(settle_permit, Some(7)).await.unwrap();
     assert_eq!(settled.grant_id, settle_grant.grant_id);
 
-    let releasable = service.reserve(reserve(&fixture.config, 3, 20)).await.unwrap();
-    let released = service.release_before_claim(releasable.grant_id.clone(), releasable.reserve_fence).await.unwrap();
+    let releasable = service
+        .reserve(reserve(&fixture.config, 3, 20))
+        .await
+        .unwrap();
+    let released = service
+        .release_before_claim(releasable.grant_id.clone(), releasable.reserve_fence)
+        .await
+        .unwrap();
     assert_eq!(released.grant_id, releasable.grant_id);
     fixture.shutdown().await;
 }
@@ -441,13 +582,26 @@ async fn three_voter_quorum_reserves_claims_once_releases_and_settles() {
 async fn minority_partition_cannot_commit_a_new_reservation() {
     let fixture = ThreeNodeFixture::start().await;
     let leader = fixture.wait_for_leader().await;
-    fixture.registry.block_from(leader, fixture.node_ids().into_iter().filter(|node| *node != leader));
-    let blocked = fixture.service_for(leader).reserve(reserve(&fixture.config, 10, 20)).await;
+    fixture.registry.block_from(
+        leader,
+        fixture
+            .node_ids()
+            .into_iter()
+            .filter(|node| *node != leader),
+    );
+    let blocked = fixture
+        .service_for(leader)
+        .reserve(reserve(&fixture.config, 10, 20))
+        .await;
     assert!(matches!(blocked, Err(BudgetServiceError::Unavailable(_))));
 
     fixture.registry.heal();
     fixture.wait_for_leader().await;
-    let committed = fixture.service_for(leader).reserve(reserve(&fixture.config, 10, 20)).await.unwrap();
+    let committed = fixture
+        .service_for(leader)
+        .reserve(reserve(&fixture.config, 10, 20))
+        .await
+        .unwrap();
     assert_eq!(committed.grant_id.0, "018f0000-0000-7000-8000-00000000000a");
     fixture.shutdown().await;
 }
@@ -456,11 +610,18 @@ async fn minority_partition_cannot_commit_a_new_reservation() {
 async fn restart_after_discarded_claim_ack_never_reissues_provider_permit() {
     let mut fixture = ThreeNodeFixture::start().await;
     let leader = fixture.wait_for_leader().await;
-    let follower = fixture.node_ids().into_iter().find(|node| *node != leader).unwrap();
+    let follower = fixture
+        .node_ids()
+        .into_iter()
+        .find(|node| *node != leader)
+        .unwrap();
     let service = fixture.service_for(follower);
     let origin = fixture.origin_for(follower);
     let owner = fixture.stable_for(follower);
-    let grant = service.reserve(reserve(&fixture.config, 20, 20)).await.unwrap();
+    let grant = service
+        .reserve(reserve(&fixture.config, 20, 20))
+        .await
+        .unwrap();
     let request = begin(&grant, &owner);
     fixture.registry.drop_next_command_reply(follower, leader);
     assert!(matches!(
@@ -482,24 +643,45 @@ async fn restart_after_discarded_claim_ack_never_reissues_provider_permit() {
 async fn unknown_and_overrun_settlements_stay_terminal_without_a_new_permit() {
     let fixture = ThreeNodeFixture::start().await;
     let leader = fixture.wait_for_leader().await;
-    let follower = fixture.node_ids().into_iter().find(|node| *node != leader).unwrap();
+    let follower = fixture
+        .node_ids()
+        .into_iter()
+        .find(|node| *node != leader)
+        .unwrap();
     let service = fixture.service_for(follower);
     let origin = fixture.origin_for(follower);
     let owner = fixture.stable_for(follower);
 
-    let unknown_grant = service.reserve(reserve(&fixture.config, 30, 20)).await.unwrap();
-    let unknown_permit = service.begin_dispatch(&origin, begin(&unknown_grant, &owner)).await.unwrap();
+    let unknown_grant = service
+        .reserve(reserve(&fixture.config, 30, 20))
+        .await
+        .unwrap();
+    let unknown_permit = service
+        .begin_dispatch(&origin, begin(&unknown_grant, &owner))
+        .await
+        .unwrap();
     let unknown_claim = unknown_permit.claim_receipt();
     drop(unknown_permit);
-    let unknown = service.settle_reconciliation(unknown_claim.clone(), None).await.unwrap();
+    let unknown = service
+        .settle_reconciliation(unknown_claim.clone(), None)
+        .await
+        .unwrap();
     assert_eq!(unknown.grant_id, unknown_grant.grant_id);
     assert!(matches!(
-        service.begin_dispatch(&origin, begin(&unknown_grant, &owner)).await,
+        service
+            .begin_dispatch(&origin, begin(&unknown_grant, &owner))
+            .await,
         Err(BudgetServiceError::Unavailable(_))
     ));
 
-    let overrun_grant = service.reserve(reserve(&fixture.config, 31, 20)).await.unwrap();
-    let overrun_permit = service.begin_dispatch(&origin, begin(&overrun_grant, &owner)).await.unwrap();
+    let overrun_grant = service
+        .reserve(reserve(&fixture.config, 31, 20))
+        .await
+        .unwrap();
+    let overrun_permit = service
+        .begin_dispatch(&origin, begin(&overrun_grant, &owner))
+        .await
+        .unwrap();
     let overrun_claim = overrun_permit.claim_receipt();
     assert!(matches!(
         service.settle(overrun_permit, Some(21)).await,
@@ -513,7 +695,9 @@ async fn unknown_and_overrun_settlements_stay_terminal_without_a_new_permit() {
     let mut nonexistent_claim = unknown_claim;
     nonexistent_claim.grant_id = BudgetGrantId("018f0000-0000-7000-8000-00000000ffff".into());
     assert!(matches!(
-        service.settle_reconciliation(nonexistent_claim, Some(1)).await,
+        service
+            .settle_reconciliation(nonexistent_claim, Some(1))
+            .await,
         Err(BudgetServiceError::Rejected(BudgetRejection::UnknownGrant))
     ));
     fixture.shutdown().await;
@@ -523,13 +707,28 @@ async fn unknown_and_overrun_settlements_stay_terminal_without_a_new_permit() {
 async fn changed_membership_origin_cannot_claim_through_a_follower() {
     let fixture = ThreeNodeFixture::start().await;
     let leader = fixture.wait_for_leader().await;
-    let follower = fixture.node_ids().into_iter().find(|node| *node != leader).unwrap();
-    let wrong_origin = fixture.node_ids().into_iter()
-        .find(|node| *node != leader && *node != follower).unwrap();
+    let follower = fixture
+        .node_ids()
+        .into_iter()
+        .find(|node| *node != leader)
+        .unwrap();
+    let wrong_origin = fixture
+        .node_ids()
+        .into_iter()
+        .find(|node| *node != leader && *node != follower)
+        .unwrap();
     let service = fixture.service_for(follower);
-    let grant = service.reserve(reserve(&fixture.config, 40, 20)).await.unwrap();
+    let grant = service
+        .reserve(reserve(&fixture.config, 40, 20))
+        .await
+        .unwrap();
     assert!(matches!(
-        service.begin_dispatch(&fixture.origin_for(wrong_origin), begin(&grant, &fixture.stable_for(follower))).await,
+        service
+            .begin_dispatch(
+                &fixture.origin_for(wrong_origin),
+                begin(&grant, &fixture.stable_for(follower))
+            )
+            .await,
         Err(BudgetServiceError::OriginMismatch)
     ));
     fixture.shutdown().await;

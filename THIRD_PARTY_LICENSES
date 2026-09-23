@@ -131,7 +131,7 @@ SOFTWARE.
 
 ## Rust distribution dependencies
 
-Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-server` target profiles used by the release workflow. The inventory covers 1199 external crates reachable through runtime or build dependencies; dev-only edges are excluded. Regenerate with `python packaging/generate_rust_notices.py --write`.
+Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-server` target profiles used by the release workflow. The inventory covers 1207 external crates reachable through runtime or build dependencies; dev-only edges are excluded. Regenerate with `python packaging/generate_rust_notices.py --write`.
 
 ### Exact package inventory
 
@@ -160,6 +160,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `anstyle-parse 1.0.0` - `MIT OR Apache-2.0` - https://github.com/rust-cli/anstyle.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `anstyle-query 1.1.5` - `MIT OR Apache-2.0` - https://github.com/rust-cli/anstyle.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `anstyle-wincon 3.0.11` - `MIT OR Apache-2.0` - https://github.com/rust-cli/anstyle.git - targets: aarch64-pc-windows-msvc, x86_64-pc-windows-msvc
+- `anyerror 0.1.13` - `Apache-2.0` - https://github.com/drmingdrmer/anyerror - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `anyhow 1.0.103` - `MIT OR Apache-2.0` - https://github.com/dtolnay/anyhow - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `anymap2 0.13.0` - `MIT/Apache-2.0` - https://github.com/azriel91/anymap2 - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `anymap3 1.1.0` - `BlueOak-1.0.0 OR MIT OR Apache-2.0` - https://github.com/reivilibre/anymap3 - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
@@ -236,13 +237,14 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `block2 0.5.1` - `MIT` - https://github.com/madsmtm/objc2 - targets: aarch64-apple-darwin, x86_64-apple-darwin
 - `block2 0.6.2` - `MIT` - https://github.com/madsmtm/objc2 - targets: aarch64-apple-darwin, x86_64-apple-darwin
 - `blocking 1.6.2` - `Apache-2.0 OR MIT` - https://github.com/smol-rs/blocking - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
-- `borsh 1.8.1` - `MIT OR Apache-2.0` - https://github.com/near/borsh-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `borsh-derive 1.8.1` - `Apache-2.0` - https://github.com/near/borsh-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `borsh 1.8.1` - `MIT OR Apache-2.0` - https://github.com/near/borsh-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `borsh-derive 1.8.1` - `Apache-2.0` - https://github.com/near/borsh-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `bs58 0.5.1` - `MIT/Apache-2.0` - https://github.com/Nullus157/bs58-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `bstr 1.12.1` - `MIT OR Apache-2.0` - https://github.com/BurntSushi/bstr - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `built 0.8.0` - `MIT` - https://github.com/lukaslueg/built - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `bumpalo 3.20.2` - `MIT OR Apache-2.0` - https://github.com/fitzgen/bumpalo - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `by_address 1.2.1` - `MIT OR Apache-2.0` - https://github.com/mbrubeck/by_address - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `byte-unit 5.2.6` - `MIT` - https://github.com/magiclen/byte-unit - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `bytemuck 1.25.0` - `Zlib OR Apache-2.0 OR MIT` - https://github.com/Lokathor/bytemuck - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `bytemuck_derive 1.10.2` - `Zlib OR Apache-2.0 OR MIT` - https://github.com/Lokathor/bytemuck - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `byteorder 1.5.0` - `Unlicense OR MIT` - https://github.com/BurntSushi/byteorder - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -797,6 +799,8 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `onig_sys 69.9.3` - `MIT` - https://github.com/rust-onig/rust-onig - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `opaque-debug 0.3.1` - `MIT OR Apache-2.0` - https://github.com/RustCrypto/utils - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `opaquerr 0.2.0` - `MIT` - https://github.com/shadowylab/opaquerr.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `openraft 0.9.25` - `MIT OR Apache-2.0` - https://github.com/datafuselabs/openraft - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `openraft-macros 0.9.25` - `MIT OR Apache-2.0` - https://github.com/datafuselabs/openraft - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `openssl-probe 0.2.1` - `MIT OR Apache-2.0` - https://github.com/rustls/openssl-probe - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `option-ext 0.2.0` - `MPL-2.0` - https://github.com/soc/option-ext.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `ordered-stream 0.2.0` - `MIT OR Apache-2.0` - https://github.com/danieldg/ordered-stream - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -942,6 +946,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `ruma-macros 0.19.0` - `MIT` - https://github.com/ruma/ruma - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rusqlite 0.37.0` - `MIT` - https://github.com/rusqlite/rusqlite - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rust-stemmers 1.2.0` - `MIT/BSD-3-Clause` - https://github.com/CurrySoftware/rust-stemmers - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `rust_decimal 1.43.0` - `MIT` - https://github.com/paupino/rust-decimal - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rustc-hash 1.1.0` - `Apache-2.0/MIT` - https://github.com/rust-lang-nursery/rustc-hash - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `rustc-hash 2.1.2` - `Apache-2.0 OR MIT` - https://github.com/rust-lang/rustc-hash - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rustc_version 0.4.1` - `MIT OR Apache-2.0` - https://github.com/djc/rustc-version-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -1068,7 +1073,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `symphonia-utils-xiph 0.5.5` - `MPL-2.0` - https://github.com/pdeljanov/Symphonia - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `syn 1.0.109` - `MIT OR Apache-2.0` - https://github.com/dtolnay/syn - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `syn 2.0.117` - `MIT OR Apache-2.0` - https://github.com/dtolnay/syn - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `syn 3.0.6` - `MIT OR Apache-2.0` - https://github.com/dtolnay/syn - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `syn 3.0.6` - `MIT OR Apache-2.0` - https://github.com/dtolnay/syn - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `sync_wrapper 1.0.2` - `Apache-2.0` - https://github.com/Actyx/sync_wrapper - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `synstructure 0.13.2` - `MIT` - https://github.com/mystor/synstructure - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `sys-locale 0.3.2` - `MIT OR Apache-2.0` - https://github.com/1Password/sys-locale - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
@@ -1134,6 +1139,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `tracing 0.1.44` - `MIT` - https://github.com/tokio-rs/tracing - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `tracing-attributes 0.1.31` - `MIT` - https://github.com/tokio-rs/tracing - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `tracing-core 0.1.36` - `MIT` - https://github.com/tokio-rs/tracing - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `tracing-futures 0.2.5` - `MIT` - https://github.com/tokio-rs/tracing - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `tracing-log 0.2.0` - `MIT` - https://github.com/tokio-rs/tracing - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `tracing-serde 0.2.0` - `MIT` - https://github.com/tokio-rs/tracing - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `tracing-subscriber 0.3.23` - `MIT` - https://github.com/tokio-rs/tracing - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -1187,10 +1193,12 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `urlencoding 2.1.3` - `MIT` - https://github.com/kornelski/rust_urlencoding - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `usvg 0.47.0` - `Apache-2.0 OR MIT` - https://github.com/linebender/resvg - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `utf-8 0.7.6` - `MIT OR Apache-2.0` - https://github.com/SimonSapin/rust-utf8 - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `utf8-width 0.1.9` - `MIT` - https://github.com/magiclen/utf8-width - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `utf8_iter 1.0.4` - `Apache-2.0 OR MIT` - https://github.com/hsivonen/utf8_iter - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `utf8parse 0.2.2` - `Apache-2.0 OR MIT` - https://github.com/alacritty/vte - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `uuid 1.23.5` - `Apache-2.0 OR MIT` - https://github.com/uuid-rs/uuid - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `v_frame 0.3.9` - `BSD-2-Clause` - https://github.com/rust-av/v_frame - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `validit 0.2.6` - `MIT OR Apache-2.0` - https://github.com/drmingdrmer/validit - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `vcpkg 0.2.15` - `MIT/Apache-2.0` - https://github.com/mcgoo/vcpkg-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `version_check 0.9.5` - `MIT/Apache-2.0` - https://github.com/SergioBenitez/version_check - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `vodozemac 0.10.0` - `Apache-2.0` - https://github.com/matrix-org/vodozemac - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -1433,6 +1441,8 @@ These crate archives omit a standalone notice file. Their published `.cargo_vcs_
 - `objc2-security 0.3.2` - `Zlib OR Apache-2.0 OR MIT` - revision `7b1abfd750a2cacaea71d6a56ecfb83cb7de560b` - https://github.com/madsmtm/objc2
 - `objc2-security-foundation 0.3.2` - `Zlib OR Apache-2.0 OR MIT` - revision `7b1abfd750a2cacaea71d6a56ecfb83cb7de560b` - https://github.com/madsmtm/objc2
 - `objc2-system-configuration 0.3.2` - `Zlib OR Apache-2.0 OR MIT` - revision `7b1abfd750a2cacaea71d6a56ecfb83cb7de560b` - https://github.com/madsmtm/objc2
+- `openraft 0.9.25` - `MIT OR Apache-2.0` - revision `8815cdba2826f74e848acef361ad03f93bb1c3f8` - https://github.com/datafuselabs/openraft
+- `openraft-macros 0.9.25` - `MIT OR Apache-2.0` - revision `8815cdba2826f74e848acef361ad03f93bb1c3f8` - https://github.com/datafuselabs/openraft
 - `portmapper 0.19.1` - `MIT OR Apache-2.0` - revision `051ab8761006d7f2155e34a49f6bb881b582d5ab` - https://github.com/n0-computer/net-tools
 - `profiling 1.0.18` - `MIT OR Apache-2.0` - revision `8271551172eb6fa4cba47369aedd93790c623df9` - https://github.com/aclysma/profiling
 - `profiling-procmacros 1.0.18` - `MIT OR Apache-2.0` - revision `8271551172eb6fa4cba47369aedd93790c623df9` - https://github.com/aclysma/profiling
@@ -4256,7 +4266,7 @@ Creator: Person: Daniel Thompson-Yvetot
 
 #### SHA-256 `143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4`
 
-Applies to: `addr2line 0.25.1`, `ahash 0.8.12`, `aligned 0.4.3`, `ambient-authority 0.0.2`, `anymap2 0.13.0`, `arbitrary 1.4.2`, `arc-swap 1.9.1`, `arrayvec 0.7.6`, `as-slice 0.2.1`, `async-channel 2.5.0`, `async-compression 0.4.42`, `async-executor 1.14.0`, `async-fs 2.2.0`, `async-io 2.6.0`, `async-lock 3.4.2`, `async-net 2.0.0`, `async-process 2.5.0`, `async-recursion 1.1.1`, `async-signal 0.2.14`, `async-task 4.7.1`, `atomic-waker 1.1.2`, `autocfg 1.5.0`, `base64 0.13.1`, `base64 0.22.1`, `bitflags 1.3.2`, `bitflags 2.11.1`, `bitstream-io 4.10.0`, `blocking 1.6.2`, `bs58 0.5.1`, `bstr 1.12.1`, `bumpalo 3.20.2`, `by_address 1.2.1`, `cap-fs-ext 4.0.2`, `cap-primitives 4.0.2`, `cap-std 4.0.2`, `cc 1.2.62`, `cexpr 0.6.0`, `cff-parser 0.2.0`, `cfg-if 1.0.4`, `cgl 0.3.2`, `cmake 0.1.58`, `compression-codecs 0.4.38`, `compression-core 0.4.32`, `concurrent-queue 2.5.0`, `core-foundation 0.10.1`, `core-foundation 0.9.4`, `core-foundation-sys 0.8.7`, `core-graphics 0.23.2`, `core-graphics-types 0.1.3`, `coreaudio-rs 0.14.2`, `countme 3.0.1`, `critical-section 1.2.0`, `crossbeam-channel 0.5.15`, `crossbeam-deque 0.8.6`, `crossbeam-epoch 0.9.20`, `crossbeam-utils 0.8.21`, `curve25519-dalek-derive 0.1.1`, `data-url 0.3.2`, `derivative 2.2.0`, `derive_arbitrary 1.4.2`, `displaydoc 0.2.5`, `either 1.15.0`, `embedded-io 0.4.0`, `embedded-io 0.6.1`, `equivalent 1.0.2`, `errno 0.3.14`, `euclid 0.20.14`, `euclid 0.22.14`, `event-listener 5.4.2`, `event-listener-strategy 0.5.4`, `fastrand 2.4.1`, `filetime 0.2.29`, `find-msvc-tools 0.1.9`, `fixedbitset 0.5.7`, `flate2 1.1.9`, `fnv 1.0.7`, `fontique 0.8.0`, `form_urlencoded 1.2.2`, `fs-set-times 0.20.3`, `futures-lite 2.6.1`, `gethostname 1.1.0`, `getopts 0.2.24`, `gif 0.14.2`, `gimli 0.32.3`, `glob 0.3.3`, `gloo-utils 0.2.0`, `glow 0.17.0`, `hash32 0.3.1`, `hashbrown 0.12.3`, `hashbrown 0.14.5`, `hashbrown 0.15.5`, `hashbrown 0.16.1`, `hashbrown 0.17.1`, `heapless 0.8.0`, `heck 0.5.0`, `html5ever 0.39.0`, `htmlparser 0.2.1`, `httparse 1.10.1`, `hyper-rustls 0.27.9`, `idna 1.1.0`, `idna_adapter 1.2.2`, `indexmap 1.9.3`, `indexmap 2.14.0`, `io-extras 0.19.0`, `io-lifetimes 1.0.11`, `io-lifetimes 2.0.4`, `io-lifetimes 3.0.1`, `ipconfig 0.3.4`, `itertools 0.10.5`, `itertools 0.11.0`, `itertools 0.12.1`, `itertools 0.14.0`, `itertools 0.15.0`, `jobserver 0.1.34`, `js-sys 0.3.98`, `keyboard-types 0.7.0`, `lazy_static 1.5.0`, `leb128fmt 0.1.0`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `linux-raw-sys 0.9.4`, `lock_api 0.4.14`, `log 0.4.29`, `maplit 1.0.2`, `markup5ever 0.39.0`, `matrixmultiply 0.3.11`, `memo-map 0.3.4`, `mime 0.3.17`, `minijinja 2.24.0`, `muda 0.18.0`, `muda 0.19.3`, `ndarray 0.17.2`, `num 0.4.3`, `num-bigint 0.4.6`, `num-complex 0.4.6`, `num-derive 0.4.2`, `num-integer 0.1.46`, `num-iter 0.1.45`, `num-rational 0.4.2`, `num-traits 0.2.19`, `num_cpus 1.17.0`, `oauth2 5.0.0`, `oauth2-reqwest 0.1.0-alpha.3`, `object 0.37.3`, `once_cell 1.21.4`, `openssl-probe 0.2.1`, `ordered-stream 0.2.0`, `parking 2.2.1`, `parking_lot 0.12.5`, `parking_lot_core 0.9.12`, `parlance 0.1.0`, `parley 0.8.0`, `parley_data 0.8.0`, `percent-encoding 2.3.2`, `petgraph 0.8.3`, `piper 0.2.5`, `pkg-config 0.3.33`, `png 0.17.16`, `png 0.18.1`, `polling 2.8.0`, `polling 3.11.0`, `pollster 0.4.0`, `postcard 1.1.3`, `postcard-derive 0.2.2`, `primal-check 0.3.4`, `profiling 1.0.18`, `profiling-procmacros 1.0.18`, `prost 0.14.4`, `prost-derive 0.14.4`, `rawpointer 0.2.1`, `rayon 1.12.0`, `rayon-cond 0.3.0`, `rayon-core 1.13.0`, `regex 1.13.0`, `regex-automata 0.4.14`, `regex-syntax 0.8.11`, `rowan 0.16.1`, `roxmltree 0.21.1`, `rustc-hash 1.1.0`, `rustc_version 0.4.1`, `rustix 0.38.44`, `rustix 1.1.4`, `rustix-linux-procfs 0.1.1`, `rustls 0.23.45`, `rustls-native-certs 0.8.4`, `rustls-pemfile 2.2.0`, `scoped-tls 1.0.1`, `scoped-tls-hkt 0.1.5`, `scopeguard 1.2.0`, `sealed 0.6.0`, `secret-service 4.0.0`, `security-framework 3.7.0`, `security-framework-sys 2.17.0`, `selectors 0.38.0`, `serde_plain 1.0.2`, `serde_with 3.21.0`, `serde_with_macros 3.21.0`, `servo_arc 0.4.3`, `signal-hook-registry 1.4.8`, `simplecss 0.2.2`, `smallvec 1.15.1`, `smol_str 0.2.2`, `smol_str 0.3.6`, `socket2 0.5.10`, `socket2 0.6.3`, `spin_on 0.1.1`, `stable_deref_trait 1.2.1`, `stacker 0.1.24`, `string_cache 0.9.0`, `string_cache_codegen 0.6.1`, `svgtypes 0.16.1`, `swash 0.2.7`, `syn 1.0.109`, `system-configuration 0.7.0`, `system-configuration-sys 0.6.0`, `tar 0.4.46`, `tempfile 3.27.0`, `tendril 0.5.0`, `text-size 1.1.1`, `thread_local 1.1.9`, `toml_datetime 0.6.3`, `tract-core 0.23.8`, `tract-data 0.23.8`, `tract-extra 0.23.8`, `tract-hir 0.23.8`, `tract-linalg 0.23.8`, `tract-nnef 0.23.8`, `tract-onnx 0.23.8`, `tract-onnx-opl 0.23.8`, `tract-transformers 0.23.8`, `tray-icon 0.24.1`, `ttf-parser 0.25.1`, `tungstenite 0.24.0`, `tungstenite 0.28.0`, `ucd-trie 0.1.7`, `unicase 2.9.0`, `unicode-bidi 0.3.18`, `unicode-bidi-mirroring 0.4.0`, `unicode-ccc 0.4.0`, `unicode-normalization 0.1.25`, `unicode-normalization-alignments 0.1.12`, `unicode-properties 0.1.4`, `unicode-segmentation 1.13.2`, `unicode-vo 0.1.0`, `unicode-width 0.2.2`, `unicode-xid 0.2.6`, `url 2.5.8`, `uuid 1.23.5`, `vcpkg 0.2.15`, `version_check 0.9.5`, `wasm-bindgen 0.2.121`, `wasm-bindgen-futures 0.4.71`, `wasm-bindgen-macro 0.2.121`, `wasm-bindgen-macro-support 0.2.121`, `wasm-bindgen-shared 0.2.121`, `wasm-encoder 0.236.1`, `wasmparser 0.236.1`, `wasmprinter 0.236.1`, `web-sys 0.3.98`, `web_atoms 0.2.4`, `weezl 0.1.12`, `wl-clipboard-rs 0.9.3`, `wmi 0.18.4`, `xattr 1.6.1`, `yazi 0.2.1`, `zeno 0.3.3`
+Applies to: `addr2line 0.25.1`, `ahash 0.8.12`, `aligned 0.4.3`, `ambient-authority 0.0.2`, `anymap2 0.13.0`, `arbitrary 1.4.2`, `arc-swap 1.9.1`, `arrayvec 0.7.6`, `as-slice 0.2.1`, `async-channel 2.5.0`, `async-compression 0.4.42`, `async-executor 1.14.0`, `async-fs 2.2.0`, `async-io 2.6.0`, `async-lock 3.4.2`, `async-net 2.0.0`, `async-process 2.5.0`, `async-recursion 1.1.1`, `async-signal 0.2.14`, `async-task 4.7.1`, `atomic-waker 1.1.2`, `autocfg 1.5.0`, `base64 0.13.1`, `base64 0.22.1`, `bitflags 1.3.2`, `bitflags 2.11.1`, `bitstream-io 4.10.0`, `blocking 1.6.2`, `bs58 0.5.1`, `bstr 1.12.1`, `bumpalo 3.20.2`, `by_address 1.2.1`, `cap-fs-ext 4.0.2`, `cap-primitives 4.0.2`, `cap-std 4.0.2`, `cc 1.2.62`, `cexpr 0.6.0`, `cff-parser 0.2.0`, `cfg-if 1.0.4`, `cgl 0.3.2`, `cmake 0.1.58`, `compression-codecs 0.4.38`, `compression-core 0.4.32`, `concurrent-queue 2.5.0`, `core-foundation 0.10.1`, `core-foundation 0.9.4`, `core-foundation-sys 0.8.7`, `core-graphics 0.23.2`, `core-graphics-types 0.1.3`, `coreaudio-rs 0.14.2`, `countme 3.0.1`, `critical-section 1.2.0`, `crossbeam-channel 0.5.15`, `crossbeam-deque 0.8.6`, `crossbeam-epoch 0.9.20`, `crossbeam-utils 0.8.21`, `curve25519-dalek-derive 0.1.1`, `data-url 0.3.2`, `derivative 2.2.0`, `derive_arbitrary 1.4.2`, `displaydoc 0.2.5`, `either 1.15.0`, `embedded-io 0.4.0`, `embedded-io 0.6.1`, `equivalent 1.0.2`, `errno 0.3.14`, `euclid 0.20.14`, `euclid 0.22.14`, `event-listener 5.4.2`, `event-listener-strategy 0.5.4`, `fastrand 2.4.1`, `filetime 0.2.29`, `find-msvc-tools 0.1.9`, `fixedbitset 0.5.7`, `flate2 1.1.9`, `fnv 1.0.7`, `fontique 0.8.0`, `form_urlencoded 1.2.2`, `fs-set-times 0.20.3`, `futures-lite 2.6.1`, `gethostname 1.1.0`, `getopts 0.2.24`, `gif 0.14.2`, `gimli 0.32.3`, `glob 0.3.3`, `gloo-utils 0.2.0`, `glow 0.17.0`, `hash32 0.3.1`, `hashbrown 0.12.3`, `hashbrown 0.14.5`, `hashbrown 0.15.5`, `hashbrown 0.16.1`, `hashbrown 0.17.1`, `heapless 0.8.0`, `heck 0.5.0`, `html5ever 0.39.0`, `htmlparser 0.2.1`, `httparse 1.10.1`, `hyper-rustls 0.27.9`, `idna 1.1.0`, `idna_adapter 1.2.2`, `indexmap 1.9.3`, `indexmap 2.14.0`, `io-extras 0.19.0`, `io-lifetimes 1.0.11`, `io-lifetimes 2.0.4`, `io-lifetimes 3.0.1`, `ipconfig 0.3.4`, `itertools 0.10.5`, `itertools 0.11.0`, `itertools 0.12.1`, `itertools 0.14.0`, `itertools 0.15.0`, `jobserver 0.1.34`, `js-sys 0.3.98`, `keyboard-types 0.7.0`, `lazy_static 1.5.0`, `leb128fmt 0.1.0`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `linux-raw-sys 0.9.4`, `lock_api 0.4.14`, `log 0.4.29`, `maplit 1.0.2`, `markup5ever 0.39.0`, `matrixmultiply 0.3.11`, `memo-map 0.3.4`, `mime 0.3.17`, `minijinja 2.24.0`, `muda 0.18.0`, `muda 0.19.3`, `ndarray 0.17.2`, `num 0.4.3`, `num-bigint 0.4.6`, `num-complex 0.4.6`, `num-derive 0.4.2`, `num-integer 0.1.46`, `num-iter 0.1.45`, `num-rational 0.4.2`, `num-traits 0.2.19`, `num_cpus 1.17.0`, `oauth2 5.0.0`, `oauth2-reqwest 0.1.0-alpha.3`, `object 0.37.3`, `once_cell 1.21.4`, `openraft 0.9.25`, `openraft-macros 0.9.25`, `openssl-probe 0.2.1`, `ordered-stream 0.2.0`, `parking 2.2.1`, `parking_lot 0.12.5`, `parking_lot_core 0.9.12`, `parlance 0.1.0`, `parley 0.8.0`, `parley_data 0.8.0`, `percent-encoding 2.3.2`, `petgraph 0.8.3`, `piper 0.2.5`, `pkg-config 0.3.33`, `png 0.17.16`, `png 0.18.1`, `polling 2.8.0`, `polling 3.11.0`, `pollster 0.4.0`, `postcard 1.1.3`, `postcard-derive 0.2.2`, `primal-check 0.3.4`, `profiling 1.0.18`, `profiling-procmacros 1.0.18`, `prost 0.14.4`, `prost-derive 0.14.4`, `rawpointer 0.2.1`, `rayon 1.12.0`, `rayon-cond 0.3.0`, `rayon-core 1.13.0`, `regex 1.13.0`, `regex-automata 0.4.14`, `regex-syntax 0.8.11`, `rowan 0.16.1`, `roxmltree 0.21.1`, `rustc-hash 1.1.0`, `rustc_version 0.4.1`, `rustix 0.38.44`, `rustix 1.1.4`, `rustix-linux-procfs 0.1.1`, `rustls 0.23.45`, `rustls-native-certs 0.8.4`, `rustls-pemfile 2.2.0`, `scoped-tls 1.0.1`, `scoped-tls-hkt 0.1.5`, `scopeguard 1.2.0`, `sealed 0.6.0`, `secret-service 4.0.0`, `security-framework 3.7.0`, `security-framework-sys 2.17.0`, `selectors 0.38.0`, `serde_plain 1.0.2`, `serde_with 3.21.0`, `serde_with_macros 3.21.0`, `servo_arc 0.4.3`, `signal-hook-registry 1.4.8`, `simplecss 0.2.2`, `smallvec 1.15.1`, `smol_str 0.2.2`, `smol_str 0.3.6`, `socket2 0.5.10`, `socket2 0.6.3`, `spin_on 0.1.1`, `stable_deref_trait 1.2.1`, `stacker 0.1.24`, `string_cache 0.9.0`, `string_cache_codegen 0.6.1`, `svgtypes 0.16.1`, `swash 0.2.7`, `syn 1.0.109`, `system-configuration 0.7.0`, `system-configuration-sys 0.6.0`, `tar 0.4.46`, `tempfile 3.27.0`, `tendril 0.5.0`, `text-size 1.1.1`, `thread_local 1.1.9`, `toml_datetime 0.6.3`, `tract-core 0.23.8`, `tract-data 0.23.8`, `tract-extra 0.23.8`, `tract-hir 0.23.8`, `tract-linalg 0.23.8`, `tract-nnef 0.23.8`, `tract-onnx 0.23.8`, `tract-onnx-opl 0.23.8`, `tract-transformers 0.23.8`, `tray-icon 0.24.1`, `ttf-parser 0.25.1`, `tungstenite 0.24.0`, `tungstenite 0.28.0`, `ucd-trie 0.1.7`, `unicase 2.9.0`, `unicode-bidi 0.3.18`, `unicode-bidi-mirroring 0.4.0`, `unicode-ccc 0.4.0`, `unicode-normalization 0.1.25`, `unicode-normalization-alignments 0.1.12`, `unicode-properties 0.1.4`, `unicode-segmentation 1.13.2`, `unicode-vo 0.1.0`, `unicode-width 0.2.2`, `unicode-xid 0.2.6`, `url 2.5.8`, `uuid 1.23.5`, `validit 0.2.6`, `vcpkg 0.2.15`, `version_check 0.9.5`, `wasm-bindgen 0.2.121`, `wasm-bindgen-futures 0.4.71`, `wasm-bindgen-macro 0.2.121`, `wasm-bindgen-macro-support 0.2.121`, `wasm-bindgen-shared 0.2.121`, `wasm-encoder 0.236.1`, `wasmparser 0.236.1`, `wasmprinter 0.236.1`, `web-sys 0.3.98`, `web_atoms 0.2.4`, `weezl 0.1.12`, `wl-clipboard-rs 0.9.3`, `wmi 0.18.4`, `xattr 1.6.1`, `yazi 0.2.1`, `zeno 0.3.3`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Apache License
@@ -7966,7 +7976,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3`
 
-Applies to: `adler2 2.0.1`, `allocator-api2 0.2.21`, `ambient-authority 0.0.2`, `anyhow 1.0.103`, `async-channel 2.5.0`, `async-executor 1.14.0`, `async-fs 2.2.0`, `async-io 2.6.0`, `async-lock 3.4.2`, `async-net 2.0.0`, `async-process 2.5.0`, `async-recursion 1.1.1`, `async-signal 0.2.14`, `async-task 4.7.1`, `async-trait 0.1.89`, `atomic-waker 1.1.2`, `auto_enums 0.8.8`, `blocking 1.6.2`, `borsh 1.8.1`, `borsh-derive 1.8.1`, `candle-nn 0.8.4`, `candle-transformers 0.8.4`, `cap-fs-ext 4.0.2`, `cap-primitives 4.0.2`, `cap-std 4.0.2`, `concurrent-queue 2.5.0`, `countme 3.0.1`, `curve25519-dalek-derive 0.1.1`, `derive_utils 0.15.1`, `displaydoc 0.2.5`, `drm 0.14.1`, `drm-ffi 0.9.1`, `drm-sys 0.8.1`, `dtoa 1.0.11`, `dyn-clone 1.0.20`, `dyn-hash 1.0.0`, `endi 1.1.1`, `erased-serde 0.4.10`, `event-listener 5.4.2`, `event-listener-strategy 0.5.4`, `fastrand 2.4.1`, `flume 0.11.1`, `fs-set-times 0.20.3`, `futures-lite 2.6.1`, `glow 0.17.0`, `inventory 0.3.24`, `io-extras 0.19.0`, `io-lifetimes 1.0.11`, `io-lifetimes 2.0.4`, `io-lifetimes 3.0.1`, `itoa 1.0.18`, `leb128fmt 0.1.0`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `linux-raw-sys 0.9.4`, `minimal-lexical 0.2.1`, `mmap-rs 0.7.0`, `monostate 0.1.18`, `monostate-impl 0.1.18`, `num_enum 0.7.6`, `num_enum_derive 0.7.6`, `once_cell 1.21.4`, `ordered-stream 0.2.0`, `parking 2.2.1`, `paste 1.0.15`, `pastey 0.1.1`, `pastey 0.2.3`, `pin-project 1.1.12`, `pin-project-internal 1.1.12`, `pin-project-lite 0.2.17`, `piper 0.2.5`, `polling 2.8.0`, `polling 3.11.0`, `portable-atomic 1.13.1`, `prettyplease 0.2.37`, `proc-macro-crate 3.5.0`, `proc-macro2 1.0.106`, `quote 1.0.45`, `ref-cast 1.0.25`, `ref-cast-impl 1.0.25`, `rowan 0.16.1`, `rustc-hash 1.1.0`, `rustc-hash 2.1.2`, `rustix 0.38.44`, `rustix 1.1.4`, `rustix-linux-procfs 0.1.1`, `rustversion 1.0.22`, `sealed 0.6.0`, `selectors 0.38.0`, `semver 1.0.28`, `seq-macro 0.3.6`, `serde 1.0.228`, `serde_bytes 0.11.19`, `serde_core 1.0.228`, `serde_derive 1.0.228`, `serde_html_form 0.4.0`, `serde_json 1.0.150`, `serde_path_to_error 0.1.20`, `serde_repr 0.1.20`, `serde_yaml 0.9.34+deprecated`, `servo_arc 0.4.3`, `smol_str 0.2.2`, `smol_str 0.3.6`, `spin_on 0.1.1`, `syn 1.0.109`, `syn 2.0.117`, `syn 3.0.6`, `text-size 1.1.1`, `thiserror 1.0.69`, `thiserror 2.0.18`, `thiserror-impl 1.0.69`, `thiserror-impl 2.0.18`, `tract-core 0.23.8`, `tract-data 0.23.8`, `tract-extra 0.23.8`, `tract-hir 0.23.8`, `tract-linalg 0.23.8`, `tract-nnef 0.23.8`, `tract-onnx 0.23.8`, `tract-onnx-opl 0.23.8`, `tract-transformers 0.23.8`, `typeid 1.0.3`, `ug 0.1.0`, `unicode-ident 1.0.24`, `unsafe-libyaml 0.2.11`, `utf-8 0.7.6`, `wasm-encoder 0.236.1`, `wasmparser 0.236.1`, `wasmprinter 0.236.1`, `wmi 0.18.4`, `x11-dl 2.21.0`, `xdg-home 1.3.0`, `zbus_names 3.0.0`, `zmij 1.0.21`, `zvariant_utils 2.1.0`, `zvariant_utils 3.3.1`
+Applies to: `adler2 2.0.1`, `allocator-api2 0.2.21`, `ambient-authority 0.0.2`, `anyhow 1.0.103`, `async-channel 2.5.0`, `async-executor 1.14.0`, `async-fs 2.2.0`, `async-io 2.6.0`, `async-lock 3.4.2`, `async-net 2.0.0`, `async-process 2.5.0`, `async-recursion 1.1.1`, `async-signal 0.2.14`, `async-task 4.7.1`, `async-trait 0.1.89`, `atomic-waker 1.1.2`, `auto_enums 0.8.8`, `blocking 1.6.2`, `borsh 1.8.1`, `borsh-derive 1.8.1`, `candle-nn 0.8.4`, `candle-transformers 0.8.4`, `cap-fs-ext 4.0.2`, `cap-primitives 4.0.2`, `cap-std 4.0.2`, `concurrent-queue 2.5.0`, `countme 3.0.1`, `curve25519-dalek-derive 0.1.1`, `derive_utils 0.15.1`, `displaydoc 0.2.5`, `drm 0.14.1`, `drm-ffi 0.9.1`, `drm-sys 0.8.1`, `dtoa 1.0.11`, `dyn-clone 1.0.20`, `dyn-hash 1.0.0`, `endi 1.1.1`, `erased-serde 0.4.10`, `event-listener 5.4.2`, `event-listener-strategy 0.5.4`, `fastrand 2.4.1`, `flume 0.11.1`, `fs-set-times 0.20.3`, `futures-lite 2.6.1`, `glow 0.17.0`, `inventory 0.3.24`, `io-extras 0.19.0`, `io-lifetimes 1.0.11`, `io-lifetimes 2.0.4`, `io-lifetimes 3.0.1`, `itoa 1.0.18`, `leb128fmt 0.1.0`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `linux-raw-sys 0.9.4`, `minimal-lexical 0.2.1`, `mmap-rs 0.7.0`, `monostate 0.1.18`, `monostate-impl 0.1.18`, `num_enum 0.7.6`, `num_enum_derive 0.7.6`, `once_cell 1.21.4`, `openraft 0.9.25`, `openraft-macros 0.9.25`, `ordered-stream 0.2.0`, `parking 2.2.1`, `paste 1.0.15`, `pastey 0.1.1`, `pastey 0.2.3`, `pin-project 1.1.12`, `pin-project-internal 1.1.12`, `pin-project-lite 0.2.17`, `piper 0.2.5`, `polling 2.8.0`, `polling 3.11.0`, `portable-atomic 1.13.1`, `prettyplease 0.2.37`, `proc-macro-crate 3.5.0`, `proc-macro2 1.0.106`, `quote 1.0.45`, `ref-cast 1.0.25`, `ref-cast-impl 1.0.25`, `rowan 0.16.1`, `rustc-hash 1.1.0`, `rustc-hash 2.1.2`, `rustix 0.38.44`, `rustix 1.1.4`, `rustix-linux-procfs 0.1.1`, `rustversion 1.0.22`, `sealed 0.6.0`, `selectors 0.38.0`, `semver 1.0.28`, `seq-macro 0.3.6`, `serde 1.0.228`, `serde_bytes 0.11.19`, `serde_core 1.0.228`, `serde_derive 1.0.228`, `serde_html_form 0.4.0`, `serde_json 1.0.150`, `serde_path_to_error 0.1.20`, `serde_repr 0.1.20`, `serde_yaml 0.9.34+deprecated`, `servo_arc 0.4.3`, `smol_str 0.2.2`, `smol_str 0.3.6`, `spin_on 0.1.1`, `syn 1.0.109`, `syn 2.0.117`, `syn 3.0.6`, `text-size 1.1.1`, `thiserror 1.0.69`, `thiserror 2.0.18`, `thiserror-impl 1.0.69`, `thiserror-impl 2.0.18`, `tract-core 0.23.8`, `tract-data 0.23.8`, `tract-extra 0.23.8`, `tract-hir 0.23.8`, `tract-linalg 0.23.8`, `tract-nnef 0.23.8`, `tract-onnx 0.23.8`, `tract-onnx-opl 0.23.8`, `tract-transformers 0.23.8`, `typeid 1.0.3`, `ug 0.1.0`, `unicode-ident 1.0.24`, `unsafe-libyaml 0.2.11`, `utf-8 0.7.6`, `validit 0.2.6`, `wasm-encoder 0.236.1`, `wasmparser 0.236.1`, `wasmprinter 0.236.1`, `wmi 0.18.4`, `x11-dl 2.21.0`, `xdg-home 1.3.0`, `zbus_names 3.0.0`, `zmij 1.0.21`, `zvariant_utils 2.1.0`, `zvariant_utils 3.3.1`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Permission is hereby granted, free of charge, to any
@@ -13643,7 +13653,7 @@ SOFTWARE.
 
 #### SHA-256 `50e6751797c50dedd75ef1b8a0d9e42f5f8472e9fbce91f34718e9f97b0c780a`
 
-Applies to: `as-raw-xcb-connection 1.0.1`, `candle-core 0.8.4`, `candle-nn 0.8.4`, `candle-transformers 0.8.4`, `ciborium 0.2.2`, `ciborium-io 0.2.2`, `ciborium-ll 0.2.2`, `clang-sys 1.8.1`, `cmov 0.5.4`, `cpal 0.18.2`, `ctutils 0.4.2`, `encode_unicode 1.0.0`, `encoding_rs 0.8.35`, `esaxx-rs 0.1.10`, `flume 0.11.1`, `gl_generator 0.14.0`, `hf-hub 0.5.0`, `identity-hash 0.1.0`, `imgref 1.12.1`, `khronos_api 3.1.0`, `kurbo 0.13.1`, `lru-slab 0.1.2`, `memfd 0.6.5`, `ntapi 0.4.3`, `polycool 0.4.0`, `qrcode 0.14.1`, `quinn 0.11.9`, `quinn-proto 0.11.15`, `quinn-udp 0.5.14`, `raw-window-metal 1.1.0`, `rustls-platform-verifier 0.7.0`, `safetensors 0.4.5`, `serdect 0.4.3`, `spm_precompiled 0.1.4`, `static_assertions 1.1.0`, `sys-locale 0.3.2`, `tinyvec 1.11.0`, `tokenizers 0.20.4`, `ug 0.1.0`, `unicode-linebreak 0.1.5`, `utf8_iter 1.0.4`, `x11rb 0.13.2`, `x11rb-protocol 0.13.2`, `zeroize 1.9.0`, `zeroize_derive 1.5.0`, `zune-core 0.5.1`, `zune-jpeg 0.5.15`
+Applies to: `anyerror 0.1.13`, `as-raw-xcb-connection 1.0.1`, `candle-core 0.8.4`, `candle-nn 0.8.4`, `candle-transformers 0.8.4`, `ciborium 0.2.2`, `ciborium-io 0.2.2`, `ciborium-ll 0.2.2`, `clang-sys 1.8.1`, `cmov 0.5.4`, `cpal 0.18.2`, `ctutils 0.4.2`, `encode_unicode 1.0.0`, `encoding_rs 0.8.35`, `esaxx-rs 0.1.10`, `flume 0.11.1`, `gl_generator 0.14.0`, `hf-hub 0.5.0`, `identity-hash 0.1.0`, `imgref 1.12.1`, `khronos_api 3.1.0`, `kurbo 0.13.1`, `lru-slab 0.1.2`, `memfd 0.6.5`, `ntapi 0.4.3`, `polycool 0.4.0`, `qrcode 0.14.1`, `quinn 0.11.9`, `quinn-proto 0.11.15`, `quinn-udp 0.5.14`, `raw-window-metal 1.1.0`, `rustls-platform-verifier 0.7.0`, `safetensors 0.4.5`, `serdect 0.4.3`, `spm_precompiled 0.1.4`, `static_assertions 1.1.0`, `sys-locale 0.3.2`, `tinyvec 1.11.0`, `tokenizers 0.20.4`, `ug 0.1.0`, `unicode-linebreak 0.1.5`, `utf8_iter 1.0.4`, `x11rb 0.13.2`, `x11rb-protocol 0.13.2`, `zeroize 1.9.0`, `zeroize_derive 1.5.0`, `zune-core 0.5.1`, `zune-jpeg 0.5.15`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Apache License
@@ -22859,7 +22869,7 @@ THE SOFTWARE.
 
 #### SHA-256 `898b1ae9821e98daf8964c8d6c7f61641f5f5aa78ad500020771c0939ee0dea1`
 
-Applies to: `tracing 0.1.44`, `tracing-attributes 0.1.31`, `tracing-core 0.1.36`, `tracing-log 0.2.0`, `tracing-serde 0.2.0`, `tracing-subscriber 0.3.23`
+Applies to: `tracing 0.1.44`, `tracing-attributes 0.1.31`, `tracing-core 0.1.36`, `tracing-futures 0.2.5`, `tracing-log 0.2.0`, `tracing-serde 0.2.0`, `tracing-subscriber 0.3.23`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Copyright (c) 2019 Tokio Contributors
@@ -29461,6 +29471,34 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
+#### SHA-256 `b65c9ac375b3b6c538efe6253131c44a73b50c5ee0c48a34319e766633bfee02`
+
+Applies to: `utf8-width 0.1.9`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+MIT License
+
+Copyright (c) 2020 magiclen.org (Ron Li)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
 #### SHA-256 `b68ad1a3367b825447089e1f8d6829b97f47a89eb78d2f4ebaef4672f5606186`
 
 Applies to: `data-encoding 2.11.0`, `data-encoding-macro 0.1.20`, `data-encoding-macro-internal 0.1.18`
@@ -33512,6 +33550,34 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
+#### SHA-256 `dd0741aba702705d02da3e18fca5d3a27538fe6c983e9f09946e82ecfc59acab`
+
+Applies to: `byte-unit 5.2.6`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+MIT License
+
+Copyright (c) 2023 magiclen.org (Ron Li)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
 #### SHA-256 `dd2ded915af021c14dda776ae2147aa77a72ce104b446ddcdc27b64c03641a4e`
 
 Applies to: `crc-catalog 2.5.0`
@@ -36884,6 +36950,34 @@ at your option.
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in the work by you, as defined in the Apache-2.0 license, shall
 be dual licensed as above, without any additional terms or conditions.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
+#### SHA-256 `f8218253704e32441cafea1b9b3bcb2c6a3c51c5553cd8513d179290202bccb2`
+
+Applies to: `rust_decimal 1.43.0`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+MIT License
+
+Copyright (c) 2016 Paul Mason
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
 #### SHA-256 `f892996eb4b6f2e54241432ed67b743772224e191ba3a0ae595eb4feca3df4c5`

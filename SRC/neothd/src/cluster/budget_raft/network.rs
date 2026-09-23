@@ -12,19 +12,16 @@ use async_trait::async_trait;
 use openraft::error::{RPCError, RaftError};
 use openraft::network::{RPCOption, RaftNetwork, RaftNetworkFactory};
 use openraft::raft::{
-    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
-    InstallSnapshotResponse, VoteRequest, VoteResponse,
+    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
+    VoteRequest, VoteResponse,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 pub type BudgetRpcError = RPCError<u64, openraft::BasicNode, RaftError<u64>>;
-pub type BudgetSnapshotRpcError = RPCError<
-    u64,
-    openraft::BasicNode,
-    RaftError<u64, openraft::error::InstallSnapshotError>,
->;
+pub type BudgetSnapshotRpcError =
+    RPCError<u64, openraft::BasicNode, RaftError<u64, openraft::error::InstallSnapshotError>>;
 
 /// Frozen route selected from the accepted three-voter membership snapshot.
 /// `node_id` is deterministic only inside this frozen configuration.
@@ -77,7 +74,6 @@ pub trait BudgetRaftCarrier: Send + Sync + 'static {
         option: RPCOption,
         deadline: Duration,
     ) -> Result<VoteResponse<u64>, BudgetRpcError>;
-
 }
 
 /// Network factory passed into OpenRaft.  Construction accepts only the exact
@@ -101,13 +97,20 @@ impl BudgetRaftNetworkFactory {
         if routes.iter().any(|(id, route)| *id != route.node_id) {
             return Err("budget raft route key does not match route node id");
         }
-        let mut identities = routes.values().map(|route| route.stable_node_id.clone()).collect::<Vec<_>>();
+        let mut identities = routes
+            .values()
+            .map(|route| route.stable_node_id.clone())
+            .collect::<Vec<_>>();
         identities.sort();
         identities.dedup();
         if identities.len() != 3 {
             return Err("budget raft routes do not bind three distinct stable nodes");
         }
-        Ok(Self { carrier, routes: Arc::new(routes), request_timeout })
+        Ok(Self {
+            carrier,
+            routes: Arc::new(routes),
+            request_timeout,
+        })
     }
 }
 
@@ -137,8 +140,13 @@ impl RaftNetwork<BudgetTypeConfig> for BudgetRaftNetwork {
         rpc: AppendEntriesRequest<BudgetTypeConfig>,
         option: RPCOption,
     ) -> Result<AppendEntriesResponse<u64>, BudgetRpcError> {
-        let route = self.route.as_ref().ok_or_else(|| unreachable_error("unknown frozen budget voter"))?;
-        self.carrier.append_entries(route, rpc, option, self.request_timeout).await
+        let route = self
+            .route
+            .as_ref()
+            .ok_or_else(|| unreachable_error("unknown frozen budget voter"))?;
+        self.carrier
+            .append_entries(route, rpc, option, self.request_timeout)
+            .await
     }
 
     async fn install_snapshot(
@@ -146,8 +154,13 @@ impl RaftNetwork<BudgetTypeConfig> for BudgetRaftNetwork {
         rpc: InstallSnapshotRequest<BudgetTypeConfig>,
         option: RPCOption,
     ) -> Result<InstallSnapshotResponse<u64>, BudgetSnapshotRpcError> {
-        let route = self.route.as_ref().ok_or_else(|| snapshot_unreachable_error("unknown frozen budget voter"))?;
-        self.carrier.install_snapshot(route, rpc, option, self.request_timeout).await
+        let route = self
+            .route
+            .as_ref()
+            .ok_or_else(|| snapshot_unreachable_error("unknown frozen budget voter"))?;
+        self.carrier
+            .install_snapshot(route, rpc, option, self.request_timeout)
+            .await
     }
 
     async fn vote(
@@ -155,10 +168,14 @@ impl RaftNetwork<BudgetTypeConfig> for BudgetRaftNetwork {
         rpc: VoteRequest<u64>,
         option: RPCOption,
     ) -> Result<VoteResponse<u64>, BudgetRpcError> {
-        let route = self.route.as_ref().ok_or_else(|| unreachable_error("unknown frozen budget voter"))?;
-        self.carrier.vote(route, rpc, option, self.request_timeout).await
+        let route = self
+            .route
+            .as_ref()
+            .ok_or_else(|| unreachable_error("unknown frozen budget voter"))?;
+        self.carrier
+            .vote(route, rpc, option, self.request_timeout)
+            .await
     }
-
 }
 
 fn unreachable_error(message: &'static str) -> BudgetRpcError {

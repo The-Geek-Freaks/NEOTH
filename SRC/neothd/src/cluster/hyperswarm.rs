@@ -59,8 +59,8 @@ use tokio::io::AsyncRead;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tracing::{debug, error, info, warn};
 
-use super::discovery::ClusterKey;
 use super::budget_raft::carrier::BudgetPeerCarrier;
+use super::discovery::ClusterKey;
 use super::executor::ClusterTaskJob;
 use super::gossip_wire::GossipAcceptance;
 use super::heartbeat::{

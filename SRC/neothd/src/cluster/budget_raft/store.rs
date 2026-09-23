@@ -7,15 +7,15 @@
 
 use super::raft_types::{BudgetSnapshotData, BudgetTypeConfig, MAX_BUDGET_SNAPSHOT_BYTES};
 use super::state_machine::BudgetLedger;
-use super::types::{BudgetClusterConfig, BudgetReply, BudgetRejection};
-use anyhow::{anyhow, bail, Context, Result};
+use super::types::{BudgetClusterConfig, BudgetRejection, BudgetReply};
+use anyhow::{Context, Result, anyhow, bail};
 use openraft::storage::{LogFlushed, RaftLogStorage, RaftStateMachine, Snapshot};
 use openraft::{
     Entry, EntryPayload, ErrorSubject, ErrorVerb, LogId, LogState, RaftLogReader,
     RaftSnapshotBuilder, SnapshotMeta, StorageError, StorageIOError, StoredMembership, Vote,
 };
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
-use serde::{de::DeserializeOwned, Serialize};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use serde::{Serialize, de::DeserializeOwned};
 use std::fmt::Debug;
 use std::ops::{Bound, RangeBounds};
 use std::path::Path;
@@ -50,7 +50,9 @@ impl std::fmt::Debug for BudgetRaftStore {
 /// Existing metadata must match the frozen config exactly. Corrupt/missing
 /// applied state is an error; this function never treats it as a new database.
 pub fn open(path: &Path, initial: BudgetLedger) -> Result<BudgetRaftStore> {
-    initial.validate().map_err(|error| anyhow!("initial budget ledger violates frozen configuration invariants: {error:?}"))?;
+    initial.validate().map_err(|error| {
+        anyhow!("initial budget ledger violates frozen configuration invariants: {error:?}")
+    })?;
     let mut conn = Connection::open(path)
         .with_context(|| format!("open budget raft store {}", path.display()))?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
@@ -84,20 +86,33 @@ pub fn open(path: &Path, initial: BudgetLedger) -> Result<BudgetRaftStore> {
 
     let config = to_json(initial.config()).context("encode frozen budget config")?;
     let stored: Option<Vec<u8>> = conn
-        .query_row("SELECT value FROM raft_meta WHERE key = ?1", [META_CONFIG], |row| row.get(0))
+        .query_row(
+            "SELECT value FROM raft_meta WHERE key = ?1",
+            [META_CONFIG],
+            |row| row.get(0),
+        )
         .optional()?;
     match stored {
         Some(blob) => {
-            let existing: BudgetClusterConfig = from_json(&blob).context("decode frozen budget config")?;
+            let existing: BudgetClusterConfig =
+                from_json(&blob).context("decode frozen budget config")?;
             if existing != *initial.config() || blob != config {
                 bail!("budget raft frozen configuration does not match existing store");
             }
             let ledger: Option<Vec<u8>> = conn
-                .query_row("SELECT ledger FROM raft_state WHERE singleton = ?1", [STATE_ROW], |row| row.get(0))
+                .query_row(
+                    "SELECT ledger FROM raft_state WHERE singleton = ?1",
+                    [STATE_ROW],
+                    |row| row.get(0),
+                )
                 .optional()?;
-            let recovered: BudgetLedger = from_json(&ledger.ok_or_else(|| anyhow!("budget raft config exists but applied ledger is absent"))?)
-                .context("decode persisted budget ledger")?;
-            recovered.validate().map_err(|error| anyhow!("persisted budget ledger violates recovery invariants: {error:?}"))?;
+            let recovered: BudgetLedger = from_json(&ledger.ok_or_else(|| {
+                anyhow!("budget raft config exists but applied ledger is absent")
+            })?)
+            .context("decode persisted budget ledger")?;
+            recovered.validate().map_err(|error| {
+                anyhow!("persisted budget ledger violates recovery invariants: {error:?}")
+            })?;
             if recovered.config() != initial.config() {
                 bail!("persisted ledger configuration does not match frozen store config");
             }
@@ -105,29 +120,51 @@ pub fn open(path: &Path, initial: BudgetLedger) -> Result<BudgetRaftStore> {
             validate_persisted_snapshot(&conn, initial.config())?;
         }
         None => {
-            let log_count: i64 = conn.query_row("SELECT COUNT(*) FROM raft_log", [], |row| row.get(0))?;
-            let state_exists: Option<i64> = conn.query_row(
-                "SELECT singleton FROM raft_state WHERE singleton = ?1", [STATE_ROW], |row| row.get(0),
-            ).optional()?;
-            let meta_count: i64 = conn.query_row("SELECT COUNT(*) FROM raft_meta", [], |row| row.get(0))?;
-            let snapshot_count: i64 = conn.query_row("SELECT COUNT(*) FROM raft_snapshot", [], |row| row.get(0))?;
+            let log_count: i64 =
+                conn.query_row("SELECT COUNT(*) FROM raft_log", [], |row| row.get(0))?;
+            let state_exists: Option<i64> = conn
+                .query_row(
+                    "SELECT singleton FROM raft_state WHERE singleton = ?1",
+                    [STATE_ROW],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let meta_count: i64 =
+                conn.query_row("SELECT COUNT(*) FROM raft_meta", [], |row| row.get(0))?;
+            let snapshot_count: i64 =
+                conn.query_row("SELECT COUNT(*) FROM raft_snapshot", [], |row| row.get(0))?;
             let legacy_hard_state: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'raft_hard_state'", [], |row| row.get(0),
             )?;
-            let legacy_hard_values: i64 = if legacy_hard_state == 0 { 0 } else {
+            let legacy_hard_values: i64 = if legacy_hard_state == 0 {
+                0
+            } else {
                 conn.query_row("SELECT COUNT(*) FROM raft_hard_state WHERE vote IS NOT NULL OR committed_log IS NOT NULL", [], |row| row.get(0))?
             };
             let legacy_applied: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'raft_applied'", [], |row| row.get(0),
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'raft_applied'",
+                [],
+                |row| row.get(0),
             )?;
-            let legacy_applied_values: i64 = if legacy_applied == 0 { 0 } else {
+            let legacy_applied_values: i64 = if legacy_applied == 0 {
+                0
+            } else {
                 conn.query_row("SELECT COUNT(*) FROM raft_applied WHERE last_applied IS NOT NULL OR grants IS NOT NULL", [], |row| row.get(0))?
             };
-            if log_count != 0 || state_exists.is_some() || meta_count != 0 || snapshot_count != 0 || legacy_hard_values != 0 || legacy_applied_values != 0 {
+            if log_count != 0
+                || state_exists.is_some()
+                || meta_count != 0
+                || snapshot_count != 0
+                || legacy_hard_values != 0
+                || legacy_applied_values != 0
+            {
                 bail!("budget raft store has durable state but no frozen configuration marker");
             }
             let tx = conn.transaction()?;
-            tx.execute("INSERT INTO raft_meta(key, value) VALUES(?1, ?2)", params![META_CONFIG, config])?;
+            tx.execute(
+                "INSERT INTO raft_meta(key, value) VALUES(?1, ?2)",
+                params![META_CONFIG, config],
+            )?;
             tx.execute(
                 "INSERT INTO raft_state(singleton, last_applied, membership, ledger) VALUES(?1, NULL, ?2, ?3)",
                 params![STATE_ROW, to_json(&StoredMembership::<u64, openraft::BasicNode>::default())?, to_json(&initial)?],
@@ -135,7 +172,10 @@ pub fn open(path: &Path, initial: BudgetLedger) -> Result<BudgetRaftStore> {
             tx.commit()?;
         }
     }
-    Ok(BudgetRaftStore { db: Arc::new(std::sync::Mutex::new(conn)), io: Arc::new(Semaphore::new(1)) })
+    Ok(BudgetRaftStore {
+        db: Arc::new(std::sync::Mutex::new(conn)),
+        io: Arc::new(Semaphore::new(1)),
+    })
 }
 
 impl BudgetRaftStore {
@@ -144,30 +184,56 @@ impl BudgetRaftStore {
         T: Send + 'static,
         F: FnOnce(&mut Connection) -> Result<T> + Send + 'static,
     {
-        let permit = self.io.clone().acquire_owned().await.context("budget raft I/O semaphore closed")?;
+        let permit = self
+            .io
+            .clone()
+            .acquire_owned()
+            .await
+            .context("budget raft I/O semaphore closed")?;
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            let mut conn = db.lock().map_err(|_| anyhow!("budget raft SQLite mutex poisoned"))?;
+            let mut conn = db
+                .lock()
+                .map_err(|_| anyhow!("budget raft SQLite mutex poisoned"))?;
             f(&mut conn)
-        }).await.map_err(|e| anyhow!("budget raft SQLite task failed: {e}"))?
+        })
+        .await
+        .map_err(|e| anyhow!("budget raft SQLite task failed: {e}"))?
     }
 
-    async fn storage<T, F>(&self, subject: ErrorSubject<u64>, verb: ErrorVerb, f: F) -> Result<T, StorageError<u64>>
+    async fn storage<T, F>(
+        &self,
+        subject: ErrorSubject<u64>,
+        verb: ErrorVerb,
+        f: F,
+    ) -> Result<T, StorageError<u64>>
     where
         T: Send + 'static,
         F: FnOnce(&mut Connection) -> Result<T> + Send + 'static,
     {
-        self.blocking(f).await.map_err(|e| StorageError::IO { source: StorageIOError::new(subject, verb, e) })
+        self.blocking(f).await.map_err(|e| StorageError::IO {
+            source: StorageIOError::new(subject, verb, e),
+        })
     }
 }
 
-fn to_json<T: Serialize>(value: &T) -> Result<Vec<u8>> { Ok(serde_json::to_vec(value)?) }
-fn from_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> { Ok(serde_json::from_slice(bytes)?) }
-fn sql_index(index: u64) -> Result<i64> { Ok(i64::try_from(index).map_err(|_| anyhow!("raft index exceeds SQLite INTEGER range"))?) }
+fn to_json<T: Serialize>(value: &T) -> Result<Vec<u8>> {
+    Ok(serde_json::to_vec(value)?)
+}
+fn from_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
+    Ok(serde_json::from_slice(bytes)?)
+}
+fn sql_index(index: u64) -> Result<i64> {
+    Ok(i64::try_from(index).map_err(|_| anyhow!("raft index exceeds SQLite INTEGER range"))?)
+}
 
 fn read_meta<T: DeserializeOwned>(conn: &Connection, key: &str) -> Result<Option<T>> {
-    let bytes: Option<Vec<u8>> = conn.query_row("SELECT value FROM raft_meta WHERE key = ?1", [key], |row| row.get(0)).optional()?;
+    let bytes: Option<Vec<u8>> = conn
+        .query_row("SELECT value FROM raft_meta WHERE key = ?1", [key], |row| {
+            row.get(0)
+        })
+        .optional()?;
     bytes.map(|value| from_json(&value)).transpose()
 }
 
@@ -180,20 +246,34 @@ fn write_meta<T: Serialize>(tx: &Transaction<'_>, key: &str, value: &T) -> Resul
     Ok(())
 }
 
-fn state(conn: &Connection) -> Result<(Option<LogId<u64>>, StoredMembership<u64, openraft::BasicNode>, BudgetLedger)> {
+fn state(
+    conn: &Connection,
+) -> Result<(
+    Option<LogId<u64>>,
+    StoredMembership<u64, openraft::BasicNode>,
+    BudgetLedger,
+)> {
     let (last, membership, ledger): (Option<Vec<u8>>, Vec<u8>, Vec<u8>) = conn.query_row(
-        "SELECT last_applied, membership, ledger FROM raft_state WHERE singleton = ?1", [STATE_ROW],
+        "SELECT last_applied, membership, ledger FROM raft_state WHERE singleton = ?1",
+        [STATE_ROW],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
     let ledger: BudgetLedger = from_json(&ledger)?;
-    ledger.validate().map_err(|error| anyhow!("persisted budget ledger violates recovery invariants: {error:?}"))?;
+    ledger.validate().map_err(|error| {
+        anyhow!("persisted budget ledger violates recovery invariants: {error:?}")
+    })?;
     let last = last.map(|bytes| from_json(&bytes)).transpose()?;
     let membership = from_json(&membership)?;
     validate_membership(ledger.config(), &last, &membership)?;
     Ok((last, membership, ledger))
 }
 
-fn save_state(tx: &Transaction<'_>, last: &Option<LogId<u64>>, membership: &StoredMembership<u64, openraft::BasicNode>, ledger: &BudgetLedger) -> Result<()> {
+fn save_state(
+    tx: &Transaction<'_>,
+    last: &Option<LogId<u64>>,
+    membership: &StoredMembership<u64, openraft::BasicNode>,
+    ledger: &BudgetLedger,
+) -> Result<()> {
     validate_membership(ledger.config(), last, membership)?;
     tx.execute(
         "UPDATE raft_state SET last_applied = ?2, membership = ?3, ledger = ?4 WHERE singleton = ?1",
@@ -226,7 +306,10 @@ fn validate_membership(
         bail!("budget membership is newer than applied state");
     }
     let expected = config.raft_voters();
-    let expected_ids = expected.keys().copied().collect::<std::collections::BTreeSet<_>>();
+    let expected_ids = expected
+        .keys()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
     let actual_configs = membership.get_joint_config();
     if actual_configs.len() != 1 || actual_configs[0] != expected_ids {
         bail!("budget membership is dynamic, joint, or has an unexpected voter set");
@@ -242,18 +325,28 @@ fn validate_membership(
 }
 
 fn validate_persisted_snapshot(conn: &Connection, config: &BudgetClusterConfig) -> Result<()> {
-    let row: Option<(Vec<u8>, Vec<u8>)> = conn.query_row(
-        "SELECT metadata, snapshot FROM raft_snapshot WHERE singleton = ?1",
-        [SNAPSHOT_ROW],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    ).optional()?;
-    let Some((metadata, bytes)) = row else { return Ok(()); };
+    let row: Option<(Vec<u8>, Vec<u8>)> = conn
+        .query_row(
+            "SELECT metadata, snapshot FROM raft_snapshot WHERE singleton = ?1",
+            [SNAPSHOT_ROW],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((metadata, bytes)) = row else {
+        return Ok(());
+    };
     if bytes.len() > MAX_BUDGET_SNAPSHOT_BYTES {
         bail!("persisted budget raft snapshot exceeds byte bound");
     }
     let meta: RaftSnapshot = from_json(&metadata)?;
-    let (last, membership, ledger): (Option<LogId<u64>>, StoredMembership<u64, openraft::BasicNode>, BudgetLedger) = from_json(&bytes)?;
-    ledger.validate().map_err(|error| anyhow!("persisted budget raft snapshot violates recovery invariants: {error:?}"))?;
+    let (last, membership, ledger): (
+        Option<LogId<u64>>,
+        StoredMembership<u64, openraft::BasicNode>,
+        BudgetLedger,
+    ) = from_json(&bytes)?;
+    ledger.validate().map_err(|error| {
+        anyhow!("persisted budget raft snapshot violates recovery invariants: {error:?}")
+    })?;
     validate_membership(config, &last, &membership)?;
     if last != meta.last_log_id || membership != meta.last_membership || ledger.config() != config {
         bail!("persisted budget raft snapshot does not match durable metadata/configuration");
@@ -262,10 +355,23 @@ fn validate_persisted_snapshot(conn: &Connection, config: &BudgetClusterConfig) 
 }
 
 impl RaftLogReader<BudgetTypeConfig> for BudgetRaftStore {
-    async fn try_get_log_entries<RB>(&mut self, range: RB) -> Result<Vec<RaftEntry>, StorageError<u64>>
-    where RB: RangeBounds<u64> + Clone + Debug + openraft::OptionalSend {
-        let lower = match range.start_bound() { Bound::Included(v) => *v, Bound::Excluded(v) => v.saturating_add(1), Bound::Unbounded => 0 };
-        let upper = match range.end_bound() { Bound::Included(v) => v.checked_add(1), Bound::Excluded(v) => Some(*v), Bound::Unbounded => None };
+    async fn try_get_log_entries<RB>(
+        &mut self,
+        range: RB,
+    ) -> Result<Vec<RaftEntry>, StorageError<u64>>
+    where
+        RB: RangeBounds<u64> + Clone + Debug + openraft::OptionalSend,
+    {
+        let lower = match range.start_bound() {
+            Bound::Included(v) => *v,
+            Bound::Excluded(v) => v.saturating_add(1),
+            Bound::Unbounded => 0,
+        };
+        let upper = match range.end_bound() {
+            Bound::Included(v) => v.checked_add(1),
+            Bound::Excluded(v) => Some(*v),
+            Bound::Unbounded => None,
+        };
         self.storage(ErrorSubject::Logs, ErrorVerb::Read, move |conn| {
             let mut entries = Vec::new();
             match upper {
@@ -291,23 +397,70 @@ impl RaftLogStorage<BudgetTypeConfig> for BudgetRaftStore {
     async fn get_log_state(&mut self) -> Result<LogState<BudgetTypeConfig>, StorageError<u64>> {
         self.storage(ErrorSubject::Logs, ErrorVerb::Read, |conn| {
             let purged: Option<LogId<u64>> = read_meta(conn, META_PURGED)?;
-            let bytes: Option<Vec<u8>> = conn.query_row("SELECT entry FROM raft_log ORDER BY log_index DESC LIMIT 1", [], |row| row.get(0)).optional()?;
-            let last_log_id = bytes.map(|b| from_json::<RaftEntry>(&b).map(|e| e.log_id)).transpose()?.or_else(|| purged.clone());
-            Ok(LogState { last_purged_log_id: purged, last_log_id })
-        }).await
+            let bytes: Option<Vec<u8>> = conn
+                .query_row(
+                    "SELECT entry FROM raft_log ORDER BY log_index DESC LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let last_log_id = bytes
+                .map(|b| from_json::<RaftEntry>(&b).map(|e| e.log_id))
+                .transpose()?
+                .or_else(|| purged.clone());
+            Ok(LogState {
+                last_purged_log_id: purged,
+                last_log_id,
+            })
+        })
+        .await
     }
-    async fn get_log_reader(&mut self) -> Self::LogReader { self.clone() }
+    async fn get_log_reader(&mut self) -> Self::LogReader {
+        self.clone()
+    }
     async fn save_vote(&mut self, vote: &Vote<u64>) -> Result<(), StorageError<u64>> {
         let vote = vote.clone();
-        self.storage(ErrorSubject::Vote, ErrorVerb::Write, move |conn| { let tx = conn.transaction()?; write_meta(&tx, META_VOTE, &vote)?; tx.commit()?; Ok(()) }).await
+        self.storage(ErrorSubject::Vote, ErrorVerb::Write, move |conn| {
+            let tx = conn.transaction()?;
+            write_meta(&tx, META_VOTE, &vote)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
     }
-    async fn read_vote(&mut self) -> Result<Option<Vote<u64>>, StorageError<u64>> { self.storage(ErrorSubject::Vote, ErrorVerb::Read, |conn| read_meta(conn, META_VOTE)).await }
-    async fn save_committed(&mut self, committed: Option<LogId<u64>>) -> Result<(), StorageError<u64>> {
-        self.storage(ErrorSubject::Store, ErrorVerb::Write, move |conn| { let tx = conn.transaction()?; write_meta(&tx, META_COMMITTED, &committed)?; tx.commit()?; Ok(()) }).await
+    async fn read_vote(&mut self) -> Result<Option<Vote<u64>>, StorageError<u64>> {
+        self.storage(ErrorSubject::Vote, ErrorVerb::Read, |conn| {
+            read_meta(conn, META_VOTE)
+        })
+        .await
     }
-    async fn read_committed(&mut self) -> Result<Option<LogId<u64>>, StorageError<u64>> { self.storage(ErrorSubject::Store, ErrorVerb::Read, |conn| read_meta(conn, META_COMMITTED)).await }
-    async fn append<I>(&mut self, entries: I, callback: LogFlushed<BudgetTypeConfig>) -> Result<(), StorageError<u64>>
-    where I: IntoIterator<Item = RaftEntry> + openraft::OptionalSend, I::IntoIter: openraft::OptionalSend {
+    async fn save_committed(
+        &mut self,
+        committed: Option<LogId<u64>>,
+    ) -> Result<(), StorageError<u64>> {
+        self.storage(ErrorSubject::Store, ErrorVerb::Write, move |conn| {
+            let tx = conn.transaction()?;
+            write_meta(&tx, META_COMMITTED, &committed)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+    async fn read_committed(&mut self) -> Result<Option<LogId<u64>>, StorageError<u64>> {
+        self.storage(ErrorSubject::Store, ErrorVerb::Read, |conn| {
+            read_meta(conn, META_COMMITTED)
+        })
+        .await
+    }
+    async fn append<I>(
+        &mut self,
+        entries: I,
+        callback: LogFlushed<BudgetTypeConfig>,
+    ) -> Result<(), StorageError<u64>>
+    where
+        I: IntoIterator<Item = RaftEntry> + openraft::OptionalSend,
+        I::IntoIter: openraft::OptionalSend,
+    {
         let entries: Vec<_> = entries.into_iter().collect();
         let persisted = self.storage(ErrorSubject::Logs, ErrorVerb::Write, move |conn| {
             let tx = conn.transaction()?;
@@ -328,61 +481,136 @@ impl RaftLogStorage<BudgetTypeConfig> for BudgetRaftStore {
             }
             tx.commit()?; Ok(())
         }).await;
-        match persisted { Ok(()) => { callback.log_io_completed(Ok(())); Ok(()) }, Err(error) => { callback.log_io_completed(Err(std::io::Error::other(error.to_string()))); Err(error) } }
+        match persisted {
+            Ok(()) => {
+                callback.log_io_completed(Ok(()));
+                Ok(())
+            }
+            Err(error) => {
+                callback.log_io_completed(Err(std::io::Error::other(error.to_string())));
+                Err(error)
+            }
+        }
     }
     async fn truncate(&mut self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
         self.storage(ErrorSubject::Logs, ErrorVerb::Delete, move |conn| {
             let (applied, _, _) = state(conn)?;
-            if applied.as_ref().is_some_and(|last| last.index >= log_id.index) { bail!("would truncate an applied Raft log"); }
-            let tx = conn.transaction()?; tx.execute("DELETE FROM raft_log WHERE log_index >= ?1", [sql_index(log_id.index)?])?; tx.commit()?; Ok(())
-        }).await
+            if applied
+                .as_ref()
+                .is_some_and(|last| last.index >= log_id.index)
+            {
+                bail!("would truncate an applied Raft log");
+            }
+            let tx = conn.transaction()?;
+            tx.execute(
+                "DELETE FROM raft_log WHERE log_index >= ?1",
+                [sql_index(log_id.index)?],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
     }
     async fn purge(&mut self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
         self.storage(ErrorSubject::Logs, ErrorVerb::Delete, move |conn| {
             let (applied, _, _) = state(conn)?;
-            if applied.as_ref().is_none_or(|last| last.index < log_id.index) { bail!("would purge a non-applied Raft log"); }
+            if applied
+                .as_ref()
+                .is_none_or(|last| last.index < log_id.index)
+            {
+                bail!("would purge a non-applied Raft log");
+            }
             let tx = conn.transaction()?;
             let old: Option<LogId<u64>> = read_meta(&tx, META_PURGED)?;
-            if old.as_ref().is_some_and(|previous| previous.index > log_id.index) { bail!("would move last-purged Raft log backwards"); }
+            if old
+                .as_ref()
+                .is_some_and(|previous| previous.index > log_id.index)
+            {
+                bail!("would move last-purged Raft log backwards");
+            }
             write_meta(&tx, META_PURGED, &log_id)?;
-            tx.execute("DELETE FROM raft_log WHERE log_index <= ?1", [sql_index(log_id.index)?])?;
-            tx.commit()?; Ok(())
-        }).await
+            tx.execute(
+                "DELETE FROM raft_log WHERE log_index <= ?1",
+                [sql_index(log_id.index)?],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
     }
 }
 
 impl RaftStateMachine<BudgetTypeConfig> for BudgetRaftStore {
     type SnapshotBuilder = Self;
-    async fn applied_state(&mut self) -> Result<(Option<LogId<u64>>, StoredMembership<u64, openraft::BasicNode>), StorageError<u64>> {
-        self.storage(ErrorSubject::StateMachine, ErrorVerb::Read, |conn| { let (last, membership, _) = state(conn)?; Ok((last, membership)) }).await
+    async fn applied_state(
+        &mut self,
+    ) -> Result<
+        (
+            Option<LogId<u64>>,
+            StoredMembership<u64, openraft::BasicNode>,
+        ),
+        StorageError<u64>,
+    > {
+        self.storage(ErrorSubject::StateMachine, ErrorVerb::Read, |conn| {
+            let (last, membership, _) = state(conn)?;
+            Ok((last, membership))
+        })
+        .await
     }
     async fn apply<I>(&mut self, entries: I) -> Result<Vec<BudgetReply>, StorageError<u64>>
-    where I: IntoIterator<Item = RaftEntry> + openraft::OptionalSend, I::IntoIter: openraft::OptionalSend {
+    where
+        I: IntoIterator<Item = RaftEntry> + openraft::OptionalSend,
+        I::IntoIter: openraft::OptionalSend,
+    {
         let entries: Vec<_> = entries.into_iter().collect();
         self.storage(ErrorSubject::StateMachine, ErrorVerb::Write, move |conn| {
             let tx = conn.transaction()?;
             let (mut last, mut membership, mut ledger) = state(&tx)?;
             let mut replies = Vec::with_capacity(entries.len());
             for entry in entries {
-                if last.as_ref().is_some_and(|previous| entry.log_id.index != previous.index.saturating_add(1)) { bail!("would apply a non-consecutive Raft log"); }
+                if last
+                    .as_ref()
+                    .is_some_and(|previous| entry.log_id.index != previous.index.saturating_add(1))
+                {
+                    bail!("would apply a non-consecutive Raft log");
+                }
                 let reply = match entry.payload {
                     EntryPayload::Blank => BudgetReply::Rejected(BudgetRejection::InvalidConfig),
-                    EntryPayload::Normal(command) => ledger.apply(entry.log_id.leader_id.term, entry.log_id.index, command),
-                    EntryPayload::Membership(config) => { membership = StoredMembership::new(Some(entry.log_id.clone()), config); BudgetReply::Rejected(BudgetRejection::InvalidConfig) }
+                    EntryPayload::Normal(command) => {
+                        ledger.apply(entry.log_id.leader_id.term, entry.log_id.index, command)
+                    }
+                    EntryPayload::Membership(config) => {
+                        membership = StoredMembership::new(Some(entry.log_id.clone()), config);
+                        BudgetReply::Rejected(BudgetRejection::InvalidConfig)
+                    }
                 };
-                last = Some(entry.log_id); replies.push(reply);
+                last = Some(entry.log_id);
+                replies.push(reply);
             }
-            ledger.validate().map_err(|error| anyhow!("committed budget ledger transition violates invariants: {error:?}"))?;
+            ledger.validate().map_err(|error| {
+                anyhow!("committed budget ledger transition violates invariants: {error:?}")
+            })?;
             save_state(&tx, &last, &membership, &ledger)?;
-            tx.commit()?; Ok(replies)
-        }).await
+            tx.commit()?;
+            Ok(replies)
+        })
+        .await
     }
-    async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder { self.clone() }
-    async fn begin_receiving_snapshot(&mut self) -> Result<Box<BudgetSnapshotData>, StorageError<u64>> {
+    async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
+        self.clone()
+    }
+    async fn begin_receiving_snapshot(
+        &mut self,
+    ) -> Result<Box<BudgetSnapshotData>, StorageError<u64>> {
         Ok(Box::new(BudgetSnapshotData::empty()))
     }
-    async fn install_snapshot(&mut self, meta: &RaftSnapshot, snapshot: Box<BudgetSnapshotData>) -> Result<(), StorageError<u64>> {
-        let meta = meta.clone(); let bytes = snapshot.into_inner();
+    async fn install_snapshot(
+        &mut self,
+        meta: &RaftSnapshot,
+        snapshot: Box<BudgetSnapshotData>,
+    ) -> Result<(), StorageError<u64>> {
+        let meta = meta.clone();
+        let bytes = snapshot.into_inner();
         self.storage(ErrorSubject::Snapshot(Some(meta.signature())), ErrorVerb::Write, move |conn| {
             if bytes.len() > MAX_BUDGET_SNAPSHOT_BYTES { bail!("received budget raft snapshot exceeds byte bound"); }
             let (last, membership, ledger): (Option<LogId<u64>>, StoredMembership<u64, openraft::BasicNode>, BudgetLedger) = from_json(&bytes).context("decode budget raft snapshot")?;
@@ -396,7 +624,9 @@ impl RaftStateMachine<BudgetTypeConfig> for BudgetRaftStore {
             tx.commit()?; Ok(())
         }).await
     }
-    async fn get_current_snapshot(&mut self) -> Result<Option<Snapshot<BudgetTypeConfig>>, StorageError<u64>> {
+    async fn get_current_snapshot(
+        &mut self,
+    ) -> Result<Option<Snapshot<BudgetTypeConfig>>, StorageError<u64>> {
         self.storage(ErrorSubject::Snapshot(None), ErrorVerb::Read, |conn| {
             let row: Option<(Vec<u8>, Vec<u8>)> = conn.query_row("SELECT metadata, snapshot FROM raft_snapshot WHERE singleton = ?1", [SNAPSHOT_ROW], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
             row.map(|(metadata, bytes)| {

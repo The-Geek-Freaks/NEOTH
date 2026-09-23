@@ -1,9 +1,9 @@
 //! Durable-store fixtures. `mod.rs` wires this file once the OpenRaft pin lands.
 
+use super::raft_types::{BudgetSnapshotData, MAX_BUDGET_SNAPSHOT_BYTES};
 use super::state_machine::BudgetLedger;
 use super::store::open;
-use super::raft_types::{BudgetSnapshotData, MAX_BUDGET_SNAPSHOT_BYTES};
-use super::types::{BudgetClusterConfig, BudgetCommand, BudgetReply, BudgetGrantId, ReserveBudget};
+use super::types::{BudgetClusterConfig, BudgetCommand, BudgetGrantId, BudgetReply, ReserveBudget};
 use crate::cluster::membership::{StableNodeId, TransportIdentity};
 use openraft::storage::{RaftLogStorage, RaftStateMachine};
 use openraft::{CommittedLeaderId, Entry, EntryPayload, LogId, Membership, StoredMembership, Vote};
@@ -21,7 +21,10 @@ fn ledger(cluster_id: &str, cap: u64) -> BudgetLedger {
             )
         })
         .collect::<BTreeMap<_, _>>();
-    BudgetLedger::new(BudgetClusterConfig::new(cluster_id.to_owned(), 7, voters, cap, 20_260_923).unwrap()).unwrap()
+    BudgetLedger::new(
+        BudgetClusterConfig::new(cluster_id.to_owned(), 7, voters, cap, 20_260_923).unwrap(),
+    )
+    .unwrap()
 }
 
 #[tokio::test]
@@ -54,13 +57,26 @@ fn corrupt_deserialized_ledger_stays_unavailable_without_reset() {
     drop(store);
     let conn = rusqlite::Connection::open(&path).unwrap();
     let corrupt = br#"{"config":null,"grants":{}}"#.to_vec();
-    conn.execute("UPDATE raft_state SET ledger = ?1 WHERE singleton = 1", [&corrupt]).unwrap();
+    conn.execute(
+        "UPDATE raft_state SET ledger = ?1 WHERE singleton = 1",
+        [&corrupt],
+    )
+    .unwrap();
     drop(conn);
 
     assert!(open(&path, ledger("cluster-a", 100)).is_err());
     let conn = rusqlite::Connection::open(path).unwrap();
-    let retained: Vec<u8> = conn.query_row("SELECT ledger FROM raft_state WHERE singleton = 1", [], |row| row.get(0)).unwrap();
-    assert_eq!(corrupt, retained, "recovery failure cannot overwrite evidence with a fresh ledger");
+    let retained: Vec<u8> = conn
+        .query_row(
+            "SELECT ledger FROM raft_state WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        corrupt, retained,
+        "recovery failure cannot overwrite evidence with a fresh ledger"
+    );
 }
 
 #[test]
@@ -70,22 +86,38 @@ fn missing_config_marker_rejects_durable_vote_evidence() {
     let store = open(&path, ledger("cluster-a", 100)).unwrap();
     drop(store);
     let conn = rusqlite::Connection::open(&path).unwrap();
-    conn.execute("DELETE FROM raft_meta WHERE key = 'frozen-config'", []).unwrap();
+    conn.execute("DELETE FROM raft_meta WHERE key = 'frozen-config'", [])
+        .unwrap();
     conn.execute("DELETE FROM raft_state", []).unwrap();
     conn.execute(
         "INSERT INTO raft_meta(key, value) VALUES(?1, ?2)",
-        rusqlite::params!["vote", br#"{\"leader_id\":{\"term\":9,\"node_id\":2},\"committed\":true}"#.to_vec()],
+        rusqlite::params![
+            "vote",
+            br#"{\"leader_id\":{\"term\":9,\"node_id\":2},\"committed\":true}"#.to_vec()
+        ],
     )
     .unwrap();
     assert!(open(&path, ledger("cluster-a", 100)).is_err());
-    let retained: i64 = conn.query_row("SELECT COUNT(*) FROM raft_meta WHERE key = 'vote'", [], |row| row.get(0)).unwrap();
-    assert_eq!(1, retained, "config-less durable vote evidence must never be reset");
+    let retained: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM raft_meta WHERE key = 'vote'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        1, retained,
+        "config-less durable vote evidence must never be reset"
+    );
 }
 
 #[tokio::test]
 async fn snapshot_stream_refuses_growth_past_hard_limit() {
     let mut snapshot = BudgetSnapshotData::empty();
-    snapshot.seek(SeekFrom::Start(MAX_BUDGET_SNAPSHOT_BYTES as u64)).await.unwrap();
+    snapshot
+        .seek(SeekFrom::Start(MAX_BUDGET_SNAPSHOT_BYTES as u64))
+        .await
+        .unwrap();
     assert!(snapshot.write_all(&[1]).await.is_err());
     assert!(BudgetSnapshotData::from_bytes(vec![0; MAX_BUDGET_SNAPSHOT_BYTES + 1]).is_err());
 }
@@ -95,7 +127,12 @@ async fn snapshot_stream_seek_past_eof_reads_empty_without_panicking() {
     let mut snapshot = BudgetSnapshotData::empty();
     snapshot.seek(SeekFrom::Start(128)).await.unwrap();
     let mut byte = [0_u8; 1];
-    assert_eq!(0, tokio::io::AsyncReadExt::read(&mut snapshot, &mut byte).await.unwrap());
+    assert_eq!(
+        0,
+        tokio::io::AsyncReadExt::read(&mut snapshot, &mut byte)
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]
@@ -115,23 +152,58 @@ async fn applied_index_ledger_and_snapshot_survive_one_restart_together() {
     });
     let initial_membership = Membership::from(initial.config().raft_voters());
     let mut store = open(&path, initial).unwrap();
-    let reply = store.apply([
-        Entry { log_id: membership_log, payload: EntryPayload::Membership(initial_membership) },
-        Entry { log_id: log.clone(), payload: EntryPayload::Normal(command) },
-    ]).await.unwrap();
-    assert!(matches!(reply.as_slice(), [BudgetReply::Rejected(_), BudgetReply::Reserved(_)]));
+    let reply = store
+        .apply([
+            Entry {
+                log_id: membership_log,
+                payload: EntryPayload::Membership(initial_membership),
+            },
+            Entry {
+                log_id: log.clone(),
+                payload: EntryPayload::Normal(command),
+            },
+        ])
+        .await
+        .unwrap();
+    assert!(matches!(
+        reply.as_slice(),
+        [BudgetReply::Rejected(_), BudgetReply::Reserved(_)]
+    ));
     let snapshot = store.build_snapshot().await.unwrap();
     let snapshot_id = snapshot.meta.snapshot_id.clone();
     drop(store);
 
     let mut recovered = open(&path, ledger("cluster-a", 100)).unwrap();
-    assert_eq!(Some(log.clone()), recovered.applied_state().await.unwrap().0);
-    assert_eq!(snapshot_id, recovered.get_current_snapshot().await.unwrap().unwrap().meta.snapshot_id);
+    assert_eq!(
+        Some(log.clone()),
+        recovered.applied_state().await.unwrap().0
+    );
+    assert_eq!(
+        snapshot_id,
+        recovered
+            .get_current_snapshot()
+            .await
+            .unwrap()
+            .unwrap()
+            .meta
+            .snapshot_id
+    );
     drop(recovered);
 
     let conn = rusqlite::Connection::open(path).unwrap();
-    let ledger: BudgetLedger = serde_json::from_slice(&conn.query_row("SELECT ledger FROM raft_state WHERE singleton = 1", [], |row| row.get::<_, Vec<u8>>(0)).unwrap()).unwrap();
-    assert!(ledger.grants.contains_key(&BudgetGrantId("018f47ab-7b4a-7c6d-8e9f-0123456789ab".into())));
+    let ledger: BudgetLedger = serde_json::from_slice(
+        &conn
+            .query_row(
+                "SELECT ledger FROM raft_state WHERE singleton = 1",
+                [],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(ledger.grants.contains_key(&BudgetGrantId(
+        "018f47ab-7b4a-7c6d-8e9f-0123456789ab".into()
+    )));
 }
 
 #[test]
@@ -141,12 +213,24 @@ fn schema_uses_wal_full_sync_and_keeps_one_snapshot_slot() {
     let store = open(&path, ledger("cluster-a", 100)).unwrap();
     drop(store);
     let conn = rusqlite::Connection::open(path).unwrap();
-    let mode: String = conn.query_row("PRAGMA journal_mode", [], |row| row.get(0)).unwrap();
-    let sync: i64 = conn.query_row("PRAGMA synchronous", [], |row| row.get(0)).unwrap();
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .unwrap();
+    let sync: i64 = conn
+        .query_row("PRAGMA synchronous", [], |row| row.get(0))
+        .unwrap();
     assert_eq!("wal", mode.to_ascii_lowercase());
-    assert_eq!(2, sync, "SQLite FULL synchronous mode is required for Raft acknowledgements");
-    let snapshots: i64 = conn.query_row("SELECT COUNT(*) FROM raft_snapshot", [], |row| row.get(0)).unwrap();
-    assert_eq!(0, snapshots, "snapshot replacement is a bounded singleton slot");
+    assert_eq!(
+        2, sync,
+        "SQLite FULL synchronous mode is required for Raft acknowledgements"
+    );
+    let snapshots: i64 = conn
+        .query_row("SELECT COUNT(*) FROM raft_snapshot", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        0, snapshots,
+        "snapshot replacement is a bounded singleton slot"
+    );
 }
 
 #[tokio::test]
@@ -169,8 +253,13 @@ async fn truncation_and_purge_keep_the_log_boundary_durable() {
     store.truncate(log.clone()).await.unwrap();
     drop(store);
     let conn = rusqlite::Connection::open(&path).unwrap();
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM raft_log", [], |row| row.get(0)).unwrap();
-    assert_eq!(0, count, "truncate removes the inclusive conflict suffix atomically");
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM raft_log", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        0, count,
+        "truncate removes the inclusive conflict suffix atomically"
+    );
     conn.execute(
         "INSERT INTO raft_log(log_index, term, entry) VALUES(?1, ?2, ?3)",
         rusqlite::params![1_i64, 4_i64, vec![0_u8]],
@@ -181,7 +270,10 @@ async fn truncation_and_purge_keep_the_log_boundary_durable() {
         [serde_json::to_vec(&log).unwrap()],
     )
     .unwrap();
-    let membership = StoredMembership::new(Some(log.clone()), Membership::from(initial.config().raft_voters()));
+    let membership = StoredMembership::new(
+        Some(log.clone()),
+        Membership::from(initial.config().raft_voters()),
+    );
     conn.execute(
         "UPDATE raft_state SET membership = ?1 WHERE singleton = 1",
         [serde_json::to_vec(&membership).unwrap()],
@@ -190,10 +282,20 @@ async fn truncation_and_purge_keep_the_log_boundary_durable() {
     drop(conn);
 
     let mut store = open(&path, ledger("cluster-a", 100)).unwrap();
-    assert!(store.purge(LogId::new(CommittedLeaderId::new(4, 1), 2)).await.is_err());
+    assert!(
+        store
+            .purge(LogId::new(CommittedLeaderId::new(4, 1), 2))
+            .await
+            .is_err()
+    );
     store.purge(log).await.unwrap();
     drop(store);
     let conn = rusqlite::Connection::open(path).unwrap();
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM raft_log", [], |row| row.get(0)).unwrap();
-    assert_eq!(0, count, "purge advances the durable boundary and deletes its inclusive prefix together");
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM raft_log", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        0, count,
+        "purge advances the durable boundary and deletes its inclusive prefix together"
+    );
 }
