@@ -741,11 +741,11 @@ impl LinuxChatUnitSetup {
                             LinuxUnitStartupObservation::Terminal
                                 if snapshot.load_state != "not-found" =>
                             {
-                                let main_start_timestamp = snapshot
-                                    .exec_main_start_timestamp_monotonic
-                                    .map_or_else(|| "<unavailable>".to_string(), |value| {
-                                        value.to_string()
-                                    });
+                                let main_start_timestamp =
+                                    snapshot.exec_main_start_timestamp_monotonic.map_or_else(
+                                        || "<unavailable>".to_string(),
+                                        |value| value.to_string(),
+                                    );
                                 return Err(format!(
                                     "{LINUX_SERVICE_ERROR}: manager reported {last_state}; result={}, \
                                      exec_main_code={}, exec_main_status={}, status_text={}, \
@@ -757,7 +757,8 @@ impl LinuxChatUnitSetup {
                                     main_start_timestamp,
                                 ));
                             }
-                            LinuxUnitStartupObservation::Pending | LinuxUnitStartupObservation::Terminal => {}
+                            LinuxUnitStartupObservation::Pending
+                            | LinuxUnitStartupObservation::Terminal => {}
                         }
                     }
                     Err(error) => last_state = error,
@@ -1273,7 +1274,9 @@ impl LinuxUnitSnapshot {
             LinuxUnitStartupObservation::Ready
         } else if self.active_state == "failed"
             || (self.active_state == "inactive"
-                && self.exec_main_start_timestamp_monotonic.is_some_and(|timestamp| timestamp != 0))
+                && self
+                    .exec_main_start_timestamp_monotonic
+                    .is_some_and(|timestamp| timestamp != 0))
         {
             LinuxUnitStartupObservation::Terminal
         } else {
@@ -3314,24 +3317,42 @@ mod tests {
         assert_eq!(snapshot.exec_main_status, "0");
         assert_eq!(snapshot.status_text, "GUI chat request contained");
         assert_eq!(snapshot.exec_main_start_timestamp_monotonic, Some(42));
-        assert_eq!(snapshot.startup_observation(), LinuxUnitStartupObservation::Ready);
+        assert_eq!(
+            snapshot.startup_observation(),
+            LinuxUnitStartupObservation::Ready
+        );
 
         snapshot.active_state = "inactive".to_string();
         snapshot.sub_state = "dead".to_string();
         snapshot.exec_main_start_timestamp_monotonic = Some(0);
-        assert_eq!(snapshot.startup_observation(), LinuxUnitStartupObservation::Pending);
+        assert_eq!(
+            snapshot.startup_observation(),
+            LinuxUnitStartupObservation::Pending
+        );
         snapshot.active_state = "activating".to_string();
         snapshot.sub_state = "start".to_string();
-        assert_eq!(snapshot.startup_observation(), LinuxUnitStartupObservation::Pending);
+        assert_eq!(
+            snapshot.startup_observation(),
+            LinuxUnitStartupObservation::Pending
+        );
         snapshot.active_state = "active".to_string();
         snapshot.sub_state = "running".to_string();
-        assert_eq!(snapshot.startup_observation(), LinuxUnitStartupObservation::Ready);
+        assert_eq!(
+            snapshot.startup_observation(),
+            LinuxUnitStartupObservation::Ready
+        );
         snapshot.active_state = "inactive".to_string();
         snapshot.sub_state = "dead".to_string();
         snapshot.exec_main_start_timestamp_monotonic = Some(42);
-        assert_eq!(snapshot.startup_observation(), LinuxUnitStartupObservation::Terminal);
+        assert_eq!(
+            snapshot.startup_observation(),
+            LinuxUnitStartupObservation::Terminal
+        );
         snapshot.active_state = "failed".to_string();
-        assert_eq!(snapshot.startup_observation(), LinuxUnitStartupObservation::Terminal);
+        assert_eq!(
+            snapshot.startup_observation(),
+            LinuxUnitStartupObservation::Terminal
+        );
 
         let legacy_snapshot = parse_linux_unit_snapshot(
             "LoadState=loaded\nActiveState=active\nSubState=running\n\
@@ -3344,7 +3365,10 @@ mod tests {
         assert_eq!(legacy_snapshot.exec_main_status, "<unavailable>");
         assert_eq!(legacy_snapshot.status_text, "<unavailable>");
         assert_eq!(legacy_snapshot.exec_main_start_timestamp_monotonic, None);
-        assert_eq!(legacy_snapshot.startup_observation(), LinuxUnitStartupObservation::Ready);
+        assert_eq!(
+            legacy_snapshot.startup_observation(),
+            LinuxUnitStartupObservation::Ready
+        );
     }
 
     #[cfg(target_os = "linux")]

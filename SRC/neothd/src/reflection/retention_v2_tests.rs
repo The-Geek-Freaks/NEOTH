@@ -208,7 +208,10 @@ fn v2_reserved_note_quarantine_directory_is_accepted_by_inventory() {
         Some((vault.path(), "NEOTH")),
     )
     .unwrap();
-    assert_eq!(outcome.execution, DailyRetentionExecution::AwaitingRetentionAuthority);
+    assert_eq!(
+        outcome.execution,
+        DailyRetentionExecution::AwaitingRetentionAuthority
+    );
 }
 
 #[test]

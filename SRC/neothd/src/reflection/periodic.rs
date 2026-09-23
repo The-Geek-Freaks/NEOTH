@@ -2057,7 +2057,8 @@ fn plan_managed_daily_note_retention(
                 &target.daily,
                 &name,
                 &target.daily_path.join(&name),
-            )? else {
+            )?
+            else {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
                     "daily retention note quarantine disappeared during inventory",
@@ -2110,7 +2111,8 @@ fn count_unattested_daily_note_debt_without_archive(
                 &target.daily,
                 &name,
                 &target.daily_path.join(&name),
-            )? else {
+            )?
+            else {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
                     "daily retention note quarantine disappeared during inventory",

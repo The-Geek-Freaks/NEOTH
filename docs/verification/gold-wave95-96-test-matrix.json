@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W318-W322 SOURCE PASS; P222 accepted22/22 unchanged sources; Group684 selected; hosted repair validation pending",
+  "status": "Exact hosted formatting imported for W318-W323; P222 accepted; Core1a17 and GUI1291a17 active; Group684 pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 105459,
-    "sha256": "CFDEE9174ECC33036B5FD72AC5A1D1915020E7E032BA66CF6A5798B47735B937"
+    "bytes": 105458,
+    "sha256": "1FB2D630BBEFF1CF28B8E821A1234C1CA2EFC2BF0369691DEE692200BD3C6198"
   },
   "sourceInputs": 608,
   "requiredNativeTests": [
@@ -2826,37 +2826,37 @@
     {
       "test": "reflection::periodic::tests::yearly_source_reader_uses_only_strict_daily_archive_records_in_tag_order",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "8892572D09E930C922EB6C6F6A80D9446CFD468F92F219A905D02FB817E69581",
+      "sourceSha256": "FE838D71194FCCF34672FC8ED0B8DD75A8AF2161503A1CFD1A34342653121CBB",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::yearly_synthesis_receipt_is_exactly_once_and_refuses_changed_sources",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "8892572D09E930C922EB6C6F6A80D9446CFD468F92F219A905D02FB817E69581",
+      "sourceSha256": "FE838D71194FCCF34672FC8ED0B8DD75A8AF2161503A1CFD1A34342653121CBB",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::concurrent_yearly_settlers_converge_to_one_atomic_receipt",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "8892572D09E930C922EB6C6F6A80D9446CFD468F92F219A905D02FB817E69581",
+      "sourceSha256": "FE838D71194FCCF34672FC8ED0B8DD75A8AF2161503A1CFD1A34342653121CBB",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::daily_retention_uses_archive_tags_and_defers_the_inclusive_ninety_day_boundary",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "8892572D09E930C922EB6C6F6A80D9446CFD468F92F219A905D02FB817E69581",
+      "sourceSha256": "FE838D71194FCCF34672FC8ED0B8DD75A8AF2161503A1CFD1A34342653121CBB",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::daily_retention_keeps_current_admission_archive_when_authority_is_absent",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "8892572D09E930C922EB6C6F6A80D9446CFD468F92F219A905D02FB817E69581",
+      "sourceSha256": "FE838D71194FCCF34672FC8ED0B8DD75A8AF2161503A1CFD1A34342653121CBB",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::admission_state_revision_change_cannot_enable_an_unsigned_retention_effect",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "8892572D09E930C922EB6C6F6A80D9446CFD468F92F219A905D02FB817E69581",
+      "sourceSha256": "FE838D71194FCCF34672FC8ED0B8DD75A8AF2161503A1CFD1A34342653121CBB",
       "junitClass": "neoth"
     },
     {
@@ -5544,31 +5544,31 @@
     {
       "test": "reflection::periodic::tests::deterministic_retention_batches_resume_strictly_after_the_last_terminal_candidate",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "8892572D09E930C922EB6C6F6A80D9446CFD468F92F219A905D02FB817E69581",
+      "sourceSha256": "FE838D71194FCCF34672FC8ED0B8DD75A8AF2161503A1CFD1A34342653121CBB",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::deterministic_retention_batches_cover_multiyear_history_without_starvation",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "8892572D09E930C922EB6C6F6A80D9446CFD468F92F219A905D02FB817E69581",
+      "sourceSha256": "FE838D71194FCCF34672FC8ED0B8DD75A8AF2161503A1CFD1A34342653121CBB",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::daily_retention_accepts_exactly_4096_archives_and_never_selects_or_emits_over_64",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "8892572D09E930C922EB6C6F6A80D9446CFD468F92F219A905D02FB817E69581",
+      "sourceSha256": "FE838D71194FCCF34672FC8ED0B8DD75A8AF2161503A1CFD1A34342653121CBB",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::daily_retention_defers_bounded_cross_year_history_without_effects",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "8892572D09E930C922EB6C6F6A80D9446CFD468F92F219A905D02FB817E69581",
+      "sourceSha256": "FE838D71194FCCF34672FC8ED0B8DD75A8AF2161503A1CFD1A34342653121CBB",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::retention_retry_does_not_advance_or_delete_without_an_authority_terminal_receipt",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "8892572D09E930C922EB6C6F6A80D9446CFD468F92F219A905D02FB817E69581",
+      "sourceSha256": "FE838D71194FCCF34672FC8ED0B8DD75A8AF2161503A1CFD1A34342653121CBB",
       "junitClass": "neoth"
     },
     {
@@ -5604,103 +5604,103 @@
     {
       "test": "reflection::periodic::retention_v2_tests::v2_default_off_leaves_real_archive_and_settlement_note_unchanged",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::retention_v2_tests::v2_enabled_quarantines_real_archive_and_receipt_owned_note_without_losing_period_input",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::retention_v2_tests::v2_identical_byte_note_replacement_refuses_receipt_owned_quarantine",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::retention_v2_tests::v2_yearly_synthesis_provenance_is_exact_before_hygiene_after_overlap_and_after_purge",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::retention_v2_tests::v2_legacy_matching_note_is_not_adopted",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::retention_v2_tests::v2_prepared_before_rename_is_abandoned_then_next_batch_is_safe",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::retention_v2_tests::v2_post_archive_rename_before_transition_reconciles_source_identity",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::retention_v2_tests::v2_committed_journal_rejects_a_mismatched_immutable_receipt",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::retention_v2_tests::v2_receipt_owned_missing_note_still_quarantines_the_exact_archive",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::retention_v2_tests::v2_post_note_rename_before_transition_reconciles_deterministic_destination",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::retention_v2_tests::v2_receipt_before_committed_ordering_is_idempotent_after_restart",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::retention_v2_tests::v2_purge_prepared_before_unlink_restarts_from_both_quarantined_leaves",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::retention_v2_tests::v2_unlink_attempted_after_partial_unlink_is_reconciled_truthfully",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::retention_v2_tests::v2_completed_purge_is_idempotent_after_the_effect_receipt_is_timestamped",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::retention_v2_tests::v2_purged_completed_journal_finalizes_a_missing_effect_receipt_timestamp",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::retention_v2_tests::v2_completed_purge_rejects_a_foreign_receipt_binding_without_changing_evidence",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::retention_v2_tests::v2_bounded_batches_preserve_unselected_expired_records_for_later_ticks",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
@@ -6060,13 +6060,13 @@
     {
       "test": "reflection::periodic::retention_v2_tests::v2_reserved_note_quarantine_directory_is_accepted_by_inventory",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::retention_v2_tests::v2_reserved_note_quarantine_regular_file_is_inventory_error",
       "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+      "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
       "junitClass": "neoth"
     },
     {
@@ -6793,8 +6793,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
-      "bytes": 129931,
-      "sha256": "385C26EDA3886223E03036FD3147DCBA64BC1721C2421BEC03EDB112197BEBFD"
+      "bytes": 130240,
+      "sha256": "9614E23D8D8BF435B37BBF7B2E5446AFDACDC7E6AA499E607245C3CD1E9DCB04"
     }
   ],
   "remoteFormatCorrection": {
@@ -8023,7 +8023,7 @@
       {
         "test": "reflection::periodic::retention_v2_tests::v2_reserved_note_quarantine_symlink_is_inventory_error",
         "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-        "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+        "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
         "junitClass": "neoth"
       }
     ],
@@ -8211,7 +8211,7 @@
       {
         "test": "reflection::periodic::retention_v2_tests::v2_reserved_note_quarantine_symlink_is_inventory_error",
         "sourcePath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-        "sourceSha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7",
+        "sourceSha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
         "junitClass": "neoth"
       }
     ]
@@ -20281,6 +20281,32 @@
       }
     ],
     "note": "W318 bound retention inventory +3regressions; W319 initial systemd inactive observation+lint; W320-W322 topology,budget,policy,quota fixture fixes; W323 parent consent accepted and25Codegraph tests selected; exact W315 hosted formatting imported. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave318323HostedFormatting": {
+    "base": "1a17f7e7fded40cbfa5cc31657c1fd676958056a",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
+        "bytes": 130240,
+        "sha256": "9614E23D8D8BF435B37BBF7B2E5446AFDACDC7E6AA499E607245C3CD1E9DCB04",
+        "blob": "6616090c5a203a4da3f76011f47710f8412b15c5"
+      },
+      {
+        "path": "SRC/neothd/src/reflection/periodic.rs",
+        "bytes": 243134,
+        "sha256": "FE838D71194FCCF34672FC8ED0B8DD75A8AF2161503A1CFD1A34342653121CBB",
+        "blob": "142beec8bdbd0840c495911455d551892796c4c3"
+      },
+      {
+        "path": "SRC/neothd/src/reflection/retention_v2_tests.rs",
+        "bytes": 29380,
+        "sha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733",
+        "blob": "6dc1c6c87d91c6f9c97d5c183ab4844be77effca"
+      }
+    ],
+    "note": "Preflight35837779652 patch SHA2567F25D287BB14A8C89D0E9AFBC3EEE173915D62ADB14379F340D065C47812BACD exact Git pre/postimage verified in3sourcepaths; no local formatter",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

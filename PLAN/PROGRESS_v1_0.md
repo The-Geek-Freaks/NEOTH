@@ -2,6 +2,12 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W318-W323 exact hosted formatting (2026-09-23):** Preflight1a17
+run35837779652 produced a three-file format patch. SHA2567F25D287 and every
+Git pre/postimage were verified before import. Core1a1735837799526 and
+GUI1291a1735837802269 continue on their frozen source; Group684 follows after
+test-target readiness. No local formatter or executable validation ran.
+
 **W318-W323 repairs and P2-22 acceptance (2026-09-23):** Group643750
 run35833333444 is source/terminal admitted:643executed,624PASS/19FAIL,
 138fixture sources plus matrix/lock and every ordered actual terminal checked.

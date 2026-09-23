@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T08:30:26.5113997Z",
-  "validationStatus": "W318-W322 SOURCE PASS; P222 accepted22/22 unchanged sources; Group684 selected; hosted repair validation pending",
+  "capturedUtc": "2026-09-23T08:37:59.0195523Z",
+  "validationStatus": "Exact hosted formatting imported for W318-W323; P222 accepted; Core1a17 and GUI1291a17 active; Group684 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -473,18 +473,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 143381,
-      "sha256": "2D1E3D46C8856F2B399AADD666A85359D32CE3AAA972F320E3C133E46B2FF377"
+      "bytes": 143745,
+      "sha256": "B4051E93F4E6AA973C16EFFDB8439E82060E5CE51265F9C016B785BCFA0A834B"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1146405,
-      "sha256": "9BF1813B8B99F82483557F6F5433FA61E11422D40EB3BF897BF3B02AF0FCCA4D"
+      "bytes": 1146769,
+      "sha256": "834E924DA0BC4A96625C5297122A222787A3C29AFF421B9337F550CE2849C22F"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1742922,
-      "sha256": "19659D12A1871C6AC490BB6A0210EAC3FEBA2D811040C2D086330D2C1ADC33AA"
+      "bytes": 1743286,
+      "sha256": "0357A990C32FBE80AE0447807C404265546BF06FD8AF046D18A8B9B5061FC0FA"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -623,8 +623,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
-      "bytes": 129931,
-      "sha256": "385C26EDA3886223E03036FD3147DCBA64BC1721C2421BEC03EDB112197BEBFD"
+      "bytes": 130240,
+      "sha256": "9614E23D8D8BF435B37BBF7B2E5446AFDACDC7E6AA499E607245C3CD1E9DCB04"
     },
     {
       "path": "SRC/neothd-gui/src/chat_reasoning.rs",
@@ -2408,8 +2408,8 @@
     },
     {
       "path": "SRC/neothd/src/reflection/periodic.rs",
-      "bytes": 243110,
-      "sha256": "8892572D09E930C922EB6C6F6A80D9446CFD468F92F219A905D02FB817E69581"
+      "bytes": 243134,
+      "sha256": "FE838D71194FCCF34672FC8ED0B8DD75A8AF2161503A1CFD1A34342653121CBB"
     },
     {
       "path": "SRC/neothd/src/security/mirror_refusal_pipeline.rs",
@@ -2828,8 +2828,8 @@
     },
     {
       "path": "SRC/neothd/src/reflection/retention_v2_tests.rs",
-      "bytes": 29358,
-      "sha256": "B1F3E897D28222B94BD4ADD3457B405D2022B0BA023E8275238CD517690405D7"
+      "bytes": 29380,
+      "sha256": "9E9EC1D11690AB5B5844FF4A4CF2BCB1DF973C38A2498D1291637C005D4D7733"
     },
     {
       "path": "docs/gold-wave280-daily-retention.md",
