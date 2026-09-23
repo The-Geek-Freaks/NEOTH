@@ -271,6 +271,7 @@ struct PlanRegistry {
 struct PendingPlan {
     runtime: RuntimeLocalImport,
     local_plan_id: crate::connectors::local_import::LocalImportPlanId,
+    preview: crate::connectors::runtime_local_import::LocalImportPlanPreview,
     confirmation_nonce: String,
     expires_at: Instant,
 }
@@ -2359,6 +2360,7 @@ fn plan_import(state: &RpcState, request: PlanRequest) -> Result<String> {
             return Err(error);
         }
     };
+    let preview = pending.preview;
     let mut registry = match state.plans.lock() {
         Ok(registry) => registry,
         Err(_) => {
@@ -2394,6 +2396,11 @@ fn plan_import(state: &RpcState, request: PlanRequest) -> Result<String> {
     Ok(serde_json::json!({
         "plan_id": plan_id,
         "confirmation_nonce": confirmation_nonce,
+        "preview": {
+            "record_count": preview.record_count(),
+            "policy_revision": preview.policy_revision(),
+            "parser_revision": preview.parser_revision(),
+        },
     })
     .to_string())
 }
@@ -2427,8 +2434,10 @@ fn build_pending_plan(
         !reservation.accepted(),
         "fresh opaque plan identity unexpectedly names a committed outcome"
     );
-    let local_plan_id = match runtime.plan_import(Path::new(&request.relative_path)) {
-        Ok(plan_id) => plan_id,
+    let (local_plan_id, preview) = match runtime
+        .plan_import_with_preview(Path::new(&request.relative_path))
+    {
+        Ok(plan) => plan,
         Err(error) => {
             if let Err(release_error) = runtime.release_apply_outcome(apply_key) {
                 return Err(anyhow::anyhow!(
@@ -2441,6 +2450,7 @@ fn build_pending_plan(
     Ok(PendingPlan {
         runtime,
         local_plan_id,
+        preview,
         confirmation_nonce,
         expires_at,
     })

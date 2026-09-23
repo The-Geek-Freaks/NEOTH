@@ -8,6 +8,33 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W253 import preview and W255 actual-guardian gate (2026-09-23):** import
+planning now returns the exact retained plan's record count, policy revision
+and parser revision beside its opaque confirmation tokens. It exposes no source
+content or identity and leaves the confirmed re-read/commit path intact. A new
+universal regression checks a multi-record preview without a receipt effect;
+existing Windows/Unix actual daemon roundtrips check the exact response allowlist.
+Independent review passed after limiting the unused legacy wrapper to tests.
+Inventory: 537 sources / 862 universal native / 98 universal GUI; native extras
+Windows 19 / Linux 29 / macOS 28; Group432 / GUI124. CC-04 remains open.
+
+W252 GUI124 `35805521658` bound all inputs but ran no builds/fixtures: the exact
+profile was loaded, while util-linux failed at
+`setgroups`. W255 retains required manager/bus readiness and exact harness
+profiles, and uses the mandatory W153/W164 product guardian fixtures as the
+namespace acceptance gate. The mismatching synthetic util-linux prerequisite
+is removed; actual fixture failures retain bounded kernel/manager diagnostics.
+No production containment check or fixture selection is weakened.
+
+Core `35805267468` failed on a Unix-gated trait import and an unused `mut`.
+Both were corrected in `3427d4b0`; Preflight passed and Core `35805832718` is
+running. FullCI `35805037288` on the earlier `49e58dfb` milestone exposed one
+`manual_contains` lint in the pinned OpenClaw inventory test; the equivalent
+`contains` expression is corrected here while the remaining native jobs run.
+See `docs/gold-wave253-context-next-boundary.md` and
+`docs/gold-wave255-actual-guardian-gate.md`. Road counts remain unchanged;
+all executable validation stays on Hosted runners under the local BSOD hold.
+
 **W252 scoped Hosted AppArmor prerequisites (2026-09-23):** the confirmed
 `unprivileged_userns`/`sys_admin` denial is addressed with temporary profiles
 attached only to `/usr/bin/unshare` and the exact Cargo-reported GUI harness

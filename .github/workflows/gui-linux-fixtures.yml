@@ -286,7 +286,6 @@ jobs:
           containment_runtime=""
           containment_readiness="$evidence_root/receipt/linux-contained-chat-readiness.txt"
           containment_diagnostics="$evidence_root/receipt/linux-contained-chat-diagnostics.txt"
-          containment_userns_help="$evidence_root/receipt/linux-contained-chat-userns-help.txt"
           containment_apparmor_dir="$RUNNER_TEMP/neoth-w252-apparmor"
           containment_apparmor_profiles=()
           : > "$containment_diagnostics"
@@ -377,7 +376,6 @@ jobs:
             runtime_stat="$(stat -c '%u:%g:%a:%F' "$XDG_RUNTIME_DIR")" || return 1
             [[ "$runtime_stat" == "$uid:$gid:700:directory" ]] || return 1
             command -v apparmor_parser >/dev/null 2>&1 || return 1
-            install_containment_apparmor_profile neoth-w252-readiness-unshare /usr/bin/unshare || return 1
 
             {
               echo '=== contained-chat readiness ==='
@@ -386,16 +384,7 @@ jobs:
               stat -c '%n mode=%a uid=%u gid=%g type=%F' /usr/bin/systemd-run /usr/bin/systemctl || return 1
               timeout 1 /usr/bin/systemctl --user show-environment >/dev/null || return 1
               timeout 10 /usr/bin/systemctl --user is-system-running || true
-              /usr/bin/unshare --help > "$containment_userns_help" 2>&1 || return 1
-              grep -F -- '--map-current-user' "$containment_userns_help" >/dev/null || return 1
-              # Match the production source after it removes the explicit
-              # DBUS address before starting its transient service. The real
-              # guardian maps its existing UID/GID, so do not use the stronger
-              # util-linux --map-root-user mode here. This remains a
-              # manager/namespace capability probe; W153/W164 remain the
-              # notify-guardian acceptance proof.
-              env -u DBUS_SESSION_BUS_ADDRESS timeout 20 /usr/bin/systemd-run --user --quiet --wait --pipe --collect --service-type=exec --property=Delegate=no --property=KillMode=control-group --property=SendSIGKILL=yes --property=NoNewPrivileges=yes -- /usr/bin/unshare --user --map-current-user --setgroups deny --cgroup --mount --pid --fork /bin/sh -c 'cat /proc/self/uid_map && cat /proc/self/gid_map' || return 1
-              echo 'contained-chat readiness passed'
+              echo 'contained-chat manager readiness passed; namespace acceptance is exercised by the required actual fixtures'
             } > "$containment_readiness" 2>&1 || return 1
           }
           if ! start_containment_session; then
@@ -568,6 +557,7 @@ jobs:
                 printf '%s\n' "$test_name" >> "$passed"
               else
                 test_status=$?
+                containment_userns_snapshot
                 containment_snapshot
                 cat "$containment_diagnostics" >> "$log"
                 printf '%s\n' "$test_name" >> "$failed"

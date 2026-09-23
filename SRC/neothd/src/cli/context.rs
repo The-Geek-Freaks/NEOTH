@@ -369,6 +369,23 @@ mod windows_tests {
         .await
         .unwrap();
         let plan: serde_json::Value = serde_json::from_str(&plan).unwrap();
+        assert_eq!(
+            plan["data"]["preview"],
+            serde_json::json!({
+                "record_count": 1,
+                "policy_revision": 7,
+                "parser_revision": 1,
+            }),
+            "plan preview must describe only the exact retained plan's content-free count and revisions"
+        );
+        assert_eq!(
+            plan["data"].as_object().unwrap().len(),
+            3,
+            "plan response must not expose source paths, content, hashes, or authority data"
+        );
+        assert!(plan["data"].get("confirmation_nonce").is_some());
+        assert!(plan["data"].get("plan_id").is_some());
+        assert!(plan["data"].get("preview").is_some());
         let plan_id = plan["data"]["plan_id"].as_str().unwrap().to_owned();
         let confirmation_nonce = plan["data"]["confirmation_nonce"]
             .as_str()
@@ -645,6 +662,23 @@ mod unix_tests {
         .await
         .unwrap();
         let plan: serde_json::Value = serde_json::from_str(&plan).unwrap();
+        assert_eq!(
+            plan["data"]["preview"],
+            serde_json::json!({
+                "record_count": 1,
+                "policy_revision": 7,
+                "parser_revision": 1,
+            }),
+            "plan preview must describe only the exact retained plan's content-free count and revisions"
+        );
+        assert_eq!(
+            plan["data"].as_object().unwrap().len(),
+            3,
+            "plan response must not expose source paths, content, hashes, or authority data"
+        );
+        assert!(plan["data"].get("confirmation_nonce").is_some());
+        assert!(plan["data"].get("plan_id").is_some());
+        assert!(plan["data"].get("preview").is_some());
         let plan_id = plan["data"]["plan_id"].as_str().unwrap().to_owned();
         let confirmation_nonce = plan["data"]["confirmation_nonce"]
             .as_str()

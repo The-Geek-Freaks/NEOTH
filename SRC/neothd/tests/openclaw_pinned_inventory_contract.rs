@@ -86,8 +86,7 @@ fn pinned_inventory_keeps_plan_current_importer_registry_and_evidence_claims_dis
                     descriptor.id.as_str() == row.canonical_id.as_str()
                         || descriptor
                             .migration_aliases
-                            .iter()
-                            .any(|alias| *alias == row.canonical_id.as_str()),
+                            .contains(&row.canonical_id.as_str()),
                     "registry binding must accept the OpenClaw canonical source"
                 );
             }

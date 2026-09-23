@@ -53,6 +53,38 @@ struct RetainedPlan {
     expires_at: Instant,
 }
 
+/// Content-free facts about the exact plan retained for one later explicit
+/// confirmation. This is intentionally smaller than the plan: it exposes no
+/// source identity, path, spans, hashes, or untrusted record text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LocalImportPlanPreview {
+    record_count: usize,
+    policy_revision: u64,
+    parser_revision: u32,
+}
+
+impl LocalImportPlanPreview {
+    pub(crate) const fn record_count(self) -> usize {
+        self.record_count
+    }
+
+    pub(crate) const fn policy_revision(self) -> u64 {
+        self.policy_revision
+    }
+
+    pub(crate) const fn parser_revision(self) -> u32 {
+        self.parser_revision
+    }
+
+    fn from_plan(plan: &LocalImportPlan) -> Self {
+        Self {
+            record_count: plan.records().len(),
+            policy_revision: plan.policy_revision(),
+            parser_revision: plan.parser_revision(),
+        }
+    }
+}
+
 /// Capability-owned, in-memory-only import coordinator. It never persists a
 /// path, a plan, imported text, or an operator identity outside ContextStore's
 /// encrypted Evidence representation. Process restart drops every plan.
@@ -91,13 +123,25 @@ impl RuntimeLocalImport {
         })
     }
 
-    /// Plan one operator-selected path through the existing no-follow,
-    /// capability-relative reader. The opaque HMAC plan id is returned; no
-    /// raw path or imported record text appears in the result.
+    /// Test-only compatibility wrapper for existing direct-runtime fixtures
+    /// that only need the opaque plan ID. Production callers must retain and
+    /// return the content-free preview from `plan_import_with_preview`.
+    #[cfg(test)]
     pub(crate) fn plan_import(
         &mut self,
         selected_relative_path: &Path,
     ) -> Result<LocalImportPlanId> {
+        self.plan_import_with_preview(selected_relative_path)
+            .map(|(plan_id, _)| plan_id)
+    }
+
+    /// Return an opaque plan handle plus the content-free preview derived from
+    /// the exact plan retained for confirmation. The preview creates no
+    /// additional read, store, WAL, or authority effect.
+    pub(crate) fn plan_import_with_preview(
+        &mut self,
+        selected_relative_path: &Path,
+    ) -> Result<(LocalImportPlanId, LocalImportPlanPreview)> {
         let lease = self.acquire_live_operation_lease()?;
         self.purge_expired();
         if self.plans.len() >= MAX_RETAINED_PLANS {
@@ -110,6 +154,7 @@ impl RuntimeLocalImport {
             policy,
         )?)?;
         let id = plan.id();
+        let preview = LocalImportPlanPreview::from_plan(&plan);
         let expires_at = Instant::now()
             .checked_add(self.plan_ttl)
             .ok_or_else(|| anyhow!("local-import plan TTL overflow"))?;
@@ -122,7 +167,7 @@ impl RuntimeLocalImport {
             },
         );
         drop(lease);
-        Ok(id)
+        Ok((id, preview))
     }
 
     /// Reserve the bounded, durable outer-operation identity before the
@@ -505,6 +550,27 @@ mod tests {
         assert_eq!(runtime.replay_receipts(&mut wal).unwrap(), 1);
         assert_eq!(wal.delivered, 1);
         assert_eq!(runtime.replay_receipts(&mut wal).unwrap(), 0);
+    }
+
+    #[test]
+    fn plan_preview_is_exact_content_free_and_has_no_store_or_wal_effect() {
+        let root = crate::test_env::canonical_tempdir().unwrap();
+        std::fs::write(root.path().join("selected.txt"), "first\nsecond\n").unwrap();
+        let mut runtime = runtime(root.path());
+
+        let (_plan_id, preview) = runtime
+            .plan_import_with_preview(Path::new("selected.txt"))
+            .unwrap();
+
+        assert_eq!(preview.record_count(), 2);
+        assert_eq!(preview.policy_revision(), 7);
+        assert_eq!(preview.parser_revision(), 1);
+        let mut wal = RecordingWal {
+            delivered: 0,
+            fail: false,
+        };
+        assert_eq!(runtime.replay_receipts(&mut wal).unwrap(), 0);
+        assert_eq!(wal.delivered, 0);
     }
 
     #[test]

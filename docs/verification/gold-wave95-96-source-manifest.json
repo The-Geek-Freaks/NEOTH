@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T01:17:35.5957768Z",
-  "validationStatus": "W249 Hosted compile repair for missing Unix trait import and unused mut; execution pending",
+  "capturedUtc": "2026-09-23T01:22:54.8591017Z",
+  "validationStatus": "W253 preview and W255 actual guardian gate reviewed; Hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -38,8 +38,8 @@
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
-      "bytes": 37495,
-      "sha256": "8E6A2C1680E775AF6EBFAE916CB83D3D03F877EAAC50175392FFBBC0C27F86A6"
+      "bytes": 36390,
+      "sha256": "287503AA29B386CE2AE4A05A8AE814191508149CE7093A4D01D87BF755555C53"
     },
     {
       "path": ".github/workflows/live-audio.yml",
@@ -73,8 +73,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 12400,
-      "sha256": "832826BA780F6903AAAB2937627521758224BCD6C16154BE8ADFE2721614A78A"
+      "bytes": 12451,
+      "sha256": "C55C117E1332AA3B078DBDE6A9CB8DC499B498DD4B673F5F85B437D35E70ADFF"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -438,18 +438,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 93954,
-      "sha256": "EDBA41DA2CB0F643ECFFCD927567C605AA6294916DA8B77CD0C808D6B9CFC452"
+      "bytes": 95750,
+      "sha256": "85A5C73AAB2F3962D8D04F85D59C3AE51DC472B96AA0620B59BC6311B4142AE4"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1096889,
-      "sha256": "500CE2BD34C6B3071D79A6AB08F3445A033E2BFF00237AA541292E6F8A53BEAC"
+      "bytes": 1098685,
+      "sha256": "BFA0A885C4654D616A0DACEFBF06A7FD48B0F1D29D100087F1AA7673160AC207"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1692457,
-      "sha256": "3EDEE3DD08AF6903998A1D8CF65FFF48A2EE9120CA84A68404D34738476188D8"
+      "bytes": 1694253,
+      "sha256": "638AD36144BDC026B82B863A2290AE440CE58C727464DF0AC342A53506A1F63C"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1073,8 +1073,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/context.rs",
-      "bytes": 27827,
-      "sha256": "E3CA430F921180E8E6151C4EB44FEC78A6D47D68DB58730EDECF0CA44007C770"
+      "bytes": 29233,
+      "sha256": "A54B84A78CF23994BC5C3A5961C08139D5B3B7A2AAB4C9415AFE5E7AC61494A1"
     },
     {
       "path": "SRC/neothd/src/cli/credential_transfer.rs",
@@ -1533,8 +1533,8 @@
     },
     {
       "path": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-      "bytes": 136076,
-      "sha256": "3A7DDB69C046A127158C349E77D86503493D86D511FD1BC9AC63998C763C35A2"
+      "bytes": 136437,
+      "sha256": "7950EC734C928A894F73CA4D65D80BC386C3921E859747C122D8CF1CC02ED116"
     },
     {
       "path": "SRC/neothd/src/context_graph/mod.rs",
@@ -2663,8 +2663,8 @@
     },
     {
       "path": "SRC/neothd/tests/openclaw_pinned_inventory_contract.rs",
-      "bytes": 3843,
-      "sha256": "6814E3017FC29A95B8315169DB2B35A30D9EFFD63B4E85C3408E79A31BDC1DE6"
+      "bytes": 3795,
+      "sha256": "E1DFD8260961569B86EF69C2332CCB7574B60769FF3DF12EDD19AA83693B3F71"
     },
     {
       "path": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
