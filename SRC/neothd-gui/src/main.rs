@@ -43954,6 +43954,164 @@ mod w58_gui_callback_runtime_tests {
         }
     }
 
+    /// Replays only the core-owned, typed W458 capture.  This bridge owns no
+    /// producer and never creates Delta, ProviderDone, or Terminal events.
+    #[cfg(not(windows))]
+    struct W480RealProducerBridge {
+        turn: GuiChatTurnMetadata,
+        main_subscription: GuiChatSubscriptionMetadata,
+        buddy_subscription: GuiChatSubscriptionMetadata,
+        main_events: Mutex<Vec<GuiChatBridgeEvent>>,
+        buddy_events: Mutex<Vec<GuiChatBridgeEvent>>,
+        main_attach_started: std::sync::atomic::AtomicUsize,
+        buddy_attach_started: std::sync::atomic::AtomicUsize,
+    }
+
+    #[cfg(not(windows))]
+    impl W480RealProducerBridge {
+        fn from_capture(capture: &gui_bridge_test_support::W458ProducerBridgeCapture) -> Self {
+            Self {
+                turn: capture.turn.clone(),
+                main_subscription: capture.main_subscription.clone(),
+                buddy_subscription: capture.buddy_subscription.clone(),
+                main_events: Mutex::new(capture.main_events.clone()),
+                buddy_events: Mutex::new(capture.buddy_events.clone()),
+                main_attach_started: std::sync::atomic::AtomicUsize::new(0),
+                buddy_attach_started: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        fn subscription(&self, surface: GuiChatSurface) -> GuiChatBridgeSubscription {
+            let metadata = match surface {
+                GuiChatSurface::Main => self.main_subscription.clone(),
+                GuiChatSurface::Buddy => self.buddy_subscription.clone(),
+            };
+            gui_bridge_test_support::subscription(metadata)
+        }
+
+        fn attach_started(&self, surface: GuiChatSurface) -> usize {
+            let counter = match surface {
+                GuiChatSurface::Main => &self.main_attach_started,
+                GuiChatSurface::Buddy => &self.buddy_attach_started,
+            };
+            counter.load(std::sync::atomic::Ordering::Acquire)
+        }
+    }
+
+    /// Read the authenticated event cursor without changing the core-owned
+    /// event shape. The one-shot fixture still obeys normal replay semantics.
+    #[cfg(not(windows))]
+    fn w480_captured_event_sequence(event: &GuiChatBridgeEvent) -> u64 {
+        match event {
+            GuiChatBridgeEvent::Accepted { sequence, .. }
+            | GuiChatBridgeEvent::PhaseChanged { sequence, .. }
+            | GuiChatBridgeEvent::Notice { sequence, .. }
+            | GuiChatBridgeEvent::TurnSilenceTimeout { sequence, .. }
+            | GuiChatBridgeEvent::Delta { sequence, .. }
+            | GuiChatBridgeEvent::ReasoningDelta { sequence, .. }
+            | GuiChatBridgeEvent::ReasoningCheckpoint { sequence, .. }
+            | GuiChatBridgeEvent::ReasoningState { sequence, .. }
+            | GuiChatBridgeEvent::ProviderDone { sequence, .. }
+            | GuiChatBridgeEvent::CancelRequested { sequence, .. }
+            | GuiChatBridgeEvent::RecallChipBatch { sequence, .. }
+            | GuiChatBridgeEvent::ThroughputState { sequence, .. }
+            | GuiChatBridgeEvent::Terminal { sequence, .. } => *sequence,
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[async_trait::async_trait]
+    impl GuiChatBridge for W480RealProducerBridge {
+        async fn preflight(
+            &self,
+            _input: GuiChatBridgePreflightInput,
+        ) -> GuiChatBridgeResult<GuiChatBridgePreflight> {
+            Ok(GuiChatBridgePreflight::Ready {
+                decision: gui_bridge_test_support::decision_receipt(),
+            })
+        }
+
+        async fn decide(
+            &self,
+            _preflight: GuiChatBridgePreflightReceipt,
+            _decision: GuiChatConsentDecision,
+        ) -> GuiChatBridgeResult<GuiChatBridgeDecisionOutcome> {
+            Ok(GuiChatBridgeDecisionOutcome::Approved(
+                gui_bridge_test_support::decision_receipt(),
+            ))
+        }
+
+        async fn start(
+            &self,
+            _decision: GuiChatBridgeDecisionReceipt,
+        ) -> GuiChatBridgeResult<GuiChatBridgeTurn> {
+            Ok(gui_bridge_test_support::turn(self.turn.clone()))
+        }
+
+        async fn active(&self) -> GuiChatBridgeResult<Option<GuiChatBridgeTurn>> {
+            Ok(None)
+        }
+
+        async fn exchange_same_session_attach(
+            &self,
+            _turn: &GuiChatBridgeTurn,
+            surface: GuiChatSurface,
+        ) -> GuiChatBridgeResult<GuiChatBridgeSubscription> {
+            Ok(self.subscription(surface))
+        }
+
+        async fn attach(
+            &self,
+            subscription: GuiChatBridgeSubscription,
+            after_sequence: u64,
+            sink: &mut dyn GuiChatBridgeEventSink,
+        ) -> GuiChatBridgeResult<()> {
+            let expected = match subscription.metadata.surface {
+                GuiChatSurface::Main => &self.main_subscription,
+                GuiChatSurface::Buddy => &self.buddy_subscription,
+            };
+            let actual = &subscription.metadata;
+            if actual.boot_id != expected.boot_id
+                || actual.turn_id != expected.turn_id
+                || actual.surface != expected.surface
+                || actual.generation != expected.generation
+            {
+                return Err(neothd::daemon::gui_chat_bridge::GuiChatBridgeError::invalid(
+                    "W480 replay received a foreign captured subscription",
+                ));
+            }
+            let events = match actual.surface {
+                GuiChatSurface::Main => {
+                    self.main_attach_started
+                        .fetch_add(1, std::sync::atomic::Ordering::Release);
+                    std::mem::take(&mut *self.main_events.lock().expect("W480 Main captured events"))
+                }
+                GuiChatSurface::Buddy => {
+                    self.buddy_attach_started
+                        .fetch_add(1, std::sync::atomic::Ordering::Release);
+                    std::mem::take(&mut *self.buddy_events.lock().expect("W480 Buddy captured events"))
+                }
+            };
+            for event in events {
+                if w480_captured_event_sequence(&event) > after_sequence {
+                    sink.on_event(event)?;
+                }
+            }
+            Ok(())
+        }
+
+        async fn cancel(&self, _turn: &GuiChatBridgeTurn) -> GuiChatBridgeResult<()> {
+            Ok(())
+        }
+
+        async fn status(
+            &self,
+            _turn: &GuiChatBridgeTurn,
+        ) -> GuiChatBridgeResult<GuiChatTurnMetadata> {
+            Ok(self.turn.clone())
+        }
+    }
+
     struct NeothHomeGuard(Option<std::ffi::OsString>);
 
     impl NeothHomeGuard {
@@ -48894,6 +49052,199 @@ exit 0
     }
 
     #[cfg(not(windows))]
+    fn w480_rendered_text(window: &MainWindow, overlay: &MiniOverlay) -> String {
+        let mut text = vec![window.get_status_line().to_string()];
+        text.extend(window.get_chat_live_messages().iter().map(|row| row.text.to_string()));
+        text.extend(window.get_chat_messages().iter().map(|row| row.text.to_string()));
+        text.extend(
+            window
+                .get_chat_session_history()
+                .iter()
+                .map(|row| row.preview.to_string()),
+        );
+        text.extend(
+            window
+                .get_chat_channels()
+                .iter()
+                .map(|row| row.last_message.to_string()),
+        );
+        text.extend(overlay.get_recent_lines().iter().map(ToString::to_string));
+        text.join("\n")
+    }
+
+    #[cfg(not(windows))]
+    fn w480_replay_real_producer_capture(
+        capture: &gui_bridge_test_support::W458ProducerBridgeCapture,
+        surface: GuiChatSurface,
+        expected_body: Option<&'static str>,
+    ) {
+        const SECRET: &str = "sk-w458-never-visible";
+        let window = MainWindow::new().expect("construct W480 MainWindow");
+        let overlay = MiniOverlay::new().expect("construct W480 MiniOverlay");
+        // The normal Local CLI sidebar row is what production updates after a
+        // non-incognito terminal. Seed it so this test observes that real
+        // preview write rather than accepting an empty model vacuously.
+        window.set_chat_channels(slint::ModelRc::new(slint::VecModel::from(
+            super::build_chat_sidebar_channels(&[]),
+        )));
+        let replay_bridge = Arc::new(W480RealProducerBridge::from_capture(capture));
+        let bridge: Arc<dyn GuiChatBridge> = replay_bridge.clone();
+        let _installed =
+            super::gui_chat_bridge_controller::GuiChatBridgeController::install_with_test_bridge(
+                &window,
+                &overlay,
+                "w480-fixture-session".into(),
+                Arc::new(Mutex::new(Vec::new())),
+                Arc::new(Mutex::new(std::collections::HashMap::new())),
+                Arc::new(Mutex::new(std::collections::HashMap::new())),
+                Arc::new(Mutex::new(std::collections::HashMap::new())),
+                bridge,
+            )
+            .expect("install W480 real producer replay bridge");
+
+        match surface {
+            GuiChatSurface::Main => window.invoke_chat_send_clicked("W480 Main".into(), false),
+            GuiChatSurface::Buddy => overlay.invoke_send_clicked("W480 Buddy".into(), false),
+        }
+        let completed_overlay = overlay.as_weak();
+        w153_pump_until(&window, "W480 captured producer settlement", move |window| {
+            let terminal_observed = match expected_body {
+                Some(expected_body) => {
+                    let completed = window.get_chat_live_messages().iter().any(|row| {
+                        row.role.as_str() == "assistant"
+                            && row.stream_phase.as_str() == "complete"
+                            && row.text.as_str() == expected_body
+                    });
+                    let buddy_rendered = surface != GuiChatSurface::Buddy
+                        || completed_overlay.upgrade().is_some_and(|overlay| {
+                            overlay
+                                .get_recent_lines()
+                                .iter()
+                                .any(|line| line.contains(expected_body))
+                        });
+                    completed && buddy_rendered
+                }
+                None => window.get_chat_live_messages().iter().any(|row| {
+                    row.role.as_str() == "error"
+                        || matches!(row.stream_phase.as_str(), "failed" | "cancelled")
+                }),
+            };
+            !window.get_chat_send_in_flight()
+                && completed_overlay.upgrade().is_some_and(|overlay| {
+                    !overlay.get_send_in_flight()
+                })
+                && replay_bridge.attach_started(surface) > 0
+                && terminal_observed
+        });
+
+        let rendered = w480_rendered_text(&window, &overlay);
+        assert!(
+            !rendered.contains(SECRET),
+            "W480 must never render the post-provider source secret"
+        );
+        match expected_body {
+            Some(expected_body) => {
+                let assistant_rows = window
+                    .get_chat_live_messages()
+                    .iter()
+                    .filter(|row| row.role.as_str() == "assistant")
+                    .map(|row| row.text.to_string())
+                    .collect::<Vec<_>>();
+                assert_eq!(assistant_rows, [expected_body], "W480 renders one accepted body");
+                assert!(
+                    window.get_chat_live_messages().iter().any(|row| {
+                        row.role.as_str() == "assistant"
+                            && row.stream_phase.as_str() == "complete"
+                            && row.text.as_str() == expected_body
+                    }),
+                    "W480 Complete must retain only the accepted body",
+                );
+                assert!(
+                    window
+                        .get_chat_channels()
+                        .iter()
+                        .find(|row| row.id.as_str() == "cli")
+                        .is_some_and(|row| row.last_message.as_str() == expected_body),
+                    "W480 must publish the accepted body to the real Local CLI preview",
+                );
+                if surface == GuiChatSurface::Buddy {
+                    assert!(
+                        overlay
+                            .get_recent_lines()
+                            .iter()
+                            .any(|line| line.contains(expected_body)),
+                        "W480 Buddy must render the accepted body in its own recent-lines surface",
+                    );
+                }
+                assert!(rendered.contains(expected_body));
+            }
+            None => {
+                assert!(
+                    !window.get_chat_live_messages().iter().any(|row| {
+                        row.role.as_str() == "assistant"
+                            && row.stream_phase.as_str() == "complete"
+                    }),
+                    "W480 Block cannot render Complete",
+                );
+                assert!(
+                    !rendered.contains("first ordinary chunk")
+                        && !rendered.contains("third ordinary chunk"),
+                    "W480 Block cannot render a provider delta",
+                );
+                assert!(
+                    window
+                        .get_chat_channels()
+                        .iter()
+                        .find(|row| row.id.as_str() == "cli")
+                        .is_some_and(|row| row.last_message.is_empty()),
+                    "W480 Block cannot publish a preview",
+                );
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w480_real_producer_post_provider_outcomes_replay_through_main_and_buddy() {
+        use gui_bridge_test_support::{
+            W458PostProviderScenario::{Block, Replace}, capture_w458_real_producer,
+        };
+
+        const SECRET: &str = "sk-w458-never-visible";
+        const ACCEPTED: &str = "first ordinary chunk; [REDACTED]; third ordinary chunk";
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial W480 GUI fixture environment");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("construct W480 capture runtime");
+        let (block, replace) = runtime.block_on(async {
+            let block = capture_w458_real_producer(Block).await?;
+            let replace = capture_w458_real_producer(Replace).await?;
+            anyhow::Ok((block, replace))
+        })
+        .expect("capture actual W458 producer outcomes once each");
+
+        for (name, capture) in [("Block", &block), ("Replace", &replace)] {
+            assert_eq!(capture.provider_invocations, 1, "W480 {name} provider opens once");
+            assert_eq!(capture.provider_chunks, 3, "W480 {name} consumes three chunks");
+            assert!(capture.post_provider_hook_observed, "W480 {name} observes its hook");
+            assert!(
+                !format!("{:?}{:?}", capture.main_events, capture.buddy_events).contains(SECRET),
+                "W480 {name} capture cannot transport the source secret",
+            );
+        }
+
+        // Each replay gets a fresh Main/Buddy pair. The bridge only forwards
+        // the capture's typed events to the installed controller sink.
+        for surface in [GuiChatSurface::Main, GuiChatSurface::Buddy] {
+            w480_replay_real_producer_capture(&block, surface, None);
+            w480_replay_real_producer_capture(&replace, surface, Some(ACCEPTED));
+        }
+    }
+
+    #[cfg(not(windows))]
     #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight() {
         const RECEIPT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -50563,7 +50914,7 @@ exit 7
     }
 
     #[cfg(target_os = "macos")]
-    const MACOS_NATIVE_HARNESS_TESTS: [&str; 30] = [
+    const MACOS_NATIVE_HARNESS_TESTS: [&str; 31] = [
         "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
         "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
         "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
@@ -50583,6 +50934,7 @@ exit 7
         "w58_gui_callback_runtime_tests::w163_recall_chip_controls_freeze_current_response_and_clear_on_turn_change",
         "w58_gui_callback_runtime_tests::w167_daemon_recall_chip_batch_projects_current_surface_and_fences_terminals",
         "w58_gui_callback_runtime_tests::w168_daemon_throughput_state_projects_main_and_buddy_then_fences_boundaries",
+        "w58_gui_callback_runtime_tests::w480_real_producer_post_provider_outcomes_replay_through_main_and_buddy",
         "w58_gui_callback_runtime_tests::w164_response_feedback_callback_requires_post_done_target_and_verified_readback",
         "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight",
         "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts",
@@ -50706,6 +51058,9 @@ exit 7
                     }
                     "w58_gui_callback_runtime_tests::w168_daemon_throughput_state_projects_main_and_buddy_then_fences_boundaries" => {
                         w168_daemon_throughput_state_projects_main_and_buddy_then_fences_boundaries()
+                    }
+                    "w58_gui_callback_runtime_tests::w480_real_producer_post_provider_outcomes_replay_through_main_and_buddy" => {
+                        w480_real_producer_post_provider_outcomes_replay_through_main_and_buddy()
                     }
                     "w58_gui_callback_runtime_tests::w164_response_feedback_callback_requires_post_done_target_and_verified_readback" => {
                         w164_response_feedback_callback_requires_post_done_target_and_verified_readback()

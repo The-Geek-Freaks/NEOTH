@@ -209,6 +209,12 @@ pub enum BuddyClusterAction {
     RevokeStatus { request_id: String },
     /// List authoritative durable Pending and Indeterminate revocation requests.
     RevokeUnresolved,
+    /// Manage task-delegation authority through the canonical cluster command.
+    #[command(name = "task-delegate")]
+    TaskDelegate {
+        #[command(subcommand)]
+        action: crate::cli::cluster::ClusterTaskDelegateAction,
+    },
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -394,6 +400,13 @@ async fn run_cluster(action: BuddyClusterAction, output: OutputFormat) -> Result
         BuddyClusterAction::RevokeUnresolved => {
             let health = crate::cli::cluster::membership_runtime_health(&home).await?;
             render_typed(&health, output)
+        }
+        BuddyClusterAction::TaskDelegate { action } => {
+            crate::cli::cluster::run_cluster(crate::cli::cluster::ClusterArgs {
+                action: crate::cli::cluster::ClusterAction::TaskDelegate { action },
+                output,
+            })
+            .await
         }
     }
 }
@@ -1004,6 +1017,115 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn buddy_task_delegate_parses_scope_and_outbound_cas_arguments_losslessly() {
+        let peer_key = "a".repeat(64);
+        let scope = BuddyCli::try_parse_from([
+            "buddy",
+            "cluster",
+            "task-delegate",
+            "scope-set",
+            &peer_key,
+            "--skill",
+            "summarize",
+            "--channel",
+            "telegram",
+            "--account",
+            "primary",
+            "--allowed",
+            "true",
+            "--expected-revision",
+            "41",
+        ])
+        .expect("scoped CAS command parses");
+        assert!(matches!(
+            scope.args.action,
+            BuddyAction::Cluster {
+                action: BuddyClusterAction::TaskDelegate {
+                    action: crate::cli::cluster::ClusterTaskDelegateAction::ScopeSet {
+                        peer_key: parsed_peer,
+                        skill,
+                        channel: Some(channel),
+                        account: Some(account),
+                        allowed: true,
+                        expected_revision: 41,
+                    },
+                },
+            } if parsed_peer == peer_key
+                && skill == "summarize"
+                && channel == "telegram"
+                && account == "primary"
+        ));
+
+        let outbound = BuddyCli::try_parse_from([
+            "buddy",
+            "cluster",
+            "task-delegate",
+            "outbound-set",
+            &peer_key,
+            "--skill",
+            "summarize",
+            "--channel",
+            "telegram",
+            "--account",
+            "primary",
+            "--allowed",
+            "false",
+            "--priority",
+            "7",
+            "--expected-revision",
+            "42",
+        ])
+        .expect("outbound CAS command parses");
+        assert!(matches!(
+            outbound.args.action,
+            BuddyAction::Cluster {
+                action: BuddyClusterAction::TaskDelegate {
+                    action: crate::cli::cluster::ClusterTaskDelegateAction::OutboundSet {
+                        peer_key: parsed_peer,
+                        skill,
+                        channel: Some(channel),
+                        account: Some(account),
+                        allowed: false,
+                        priority: 7,
+                        expected_revision: 42,
+                    },
+                },
+            } if parsed_peer == peer_key
+                && skill == "summarize"
+                && channel == "telegram"
+                && account == "primary"
+        ));
+    }
+
+    #[cfg(feature = "cluster")]
+    #[tokio::test]
+    async fn buddy_task_delegate_executes_the_canonical_cluster_dispatch() {
+        let action = crate::cli::cluster::ClusterTaskDelegateAction::ScopeSet {
+            peer_key: "not-a-public-key".into(),
+            skill: "summarize".into(),
+            channel: Some("telegram".into()),
+            account: Some("primary".into()),
+            allowed: true,
+            expected_revision: 0,
+        };
+        let buddy_error = run_cluster(
+            BuddyClusterAction::TaskDelegate {
+                action: action.clone(),
+            },
+            OutputFormat::Json,
+        )
+        .await
+        .expect_err("canonical public-key validation rejects invalid peer");
+        let cluster_error = crate::cli::cluster::run_cluster(crate::cli::cluster::ClusterArgs {
+            action: crate::cli::cluster::ClusterAction::TaskDelegate { action },
+            output: OutputFormat::Json,
+        })
+        .await
+        .expect_err("canonical public-key validation rejects invalid peer");
+        assert_eq!(buddy_error.to_string(), cluster_error.to_string());
+    }
     #[cfg(feature = "cluster")]
     #[test]
     fn buddy_cluster_summary_derives_from_shared_validated_envelope() {

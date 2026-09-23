@@ -2189,21 +2189,164 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
     }
 }
 
+/// Internal W458 producer capture.  It is compiled for the core regression and
+/// for the explicitly feature-gated bridge integration fixture.  The capture
+/// consumes the ordinary authenticated attach stream, deserializes the real
+/// protocol frames, and leaves bridge mapping to the bridge's private mapper.
+#[cfg(any(test, feature = "gui-bridge-test-support"))]
+pub(crate) mod w458_test_support {
+    use super::*;
+    use crate::config::reload::ReloadController;
+    use crate::providers::{ChunkStream, Completion, CompletionChunk, Provider, Request};
+    use async_trait::async_trait;
+    use futures_util::{stream, StreamExt as _};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static STREAM_OPENS: AtomicUsize = AtomicUsize::new(0);
+    static STREAM_ITEMS_POLLED: AtomicUsize = AtomicUsize::new(0);
+
+    pub(crate) struct W458RuntimeCapture {
+        pub(crate) turn_id: Uuid,
+        pub(crate) main_generation: u64,
+        pub(crate) buddy_generation: u64,
+        pub(crate) main_initial_sequence: u64,
+        pub(crate) buddy_initial_sequence: u64,
+        pub(crate) main_frames: Vec<GuiChatStreamFrame>,
+        pub(crate) buddy_frames: Vec<GuiChatStreamFrame>,
+        pub(crate) provider_invocations: usize,
+        pub(crate) provider_chunks: usize,
+        pub(crate) post_provider_hook_observed: bool,
+    }
+
+    struct W458StreamProvider;
+
+    #[async_trait]
+    impl Provider for W458StreamProvider {
+        fn name(&self) -> &'static str { "claude_cli" }
+        fn default_model(&self) -> Option<&str> { Some("w458-stream") }
+        fn streams_on_wire(&self) -> bool { true }
+        async fn complete(&self, _request: Request) -> anyhow::Result<Completion> {
+            anyhow::bail!("W458 must use the streaming producer")
+        }
+        async fn stream_raw(
+            &self,
+            _request: Request,
+            _permit: &crate::providers::ProviderDispatchPermit,
+        ) -> anyhow::Result<ChunkStream> {
+            STREAM_OPENS.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::pin(stream::iter(vec![
+                Ok(CompletionChunk { delta: "first ordinary chunk; ".into(), done: false, termination: Default::default(), identity: Default::default(), input_tokens: None, output_tokens: None, cache_creation_tokens: None, cache_read_tokens: None }),
+                Ok(CompletionChunk { delta: "sk-w458-never-visible".into(), done: false, termination: Default::default(), identity: Default::default(), input_tokens: None, output_tokens: None, cache_creation_tokens: None, cache_read_tokens: None }),
+                Ok(CompletionChunk { delta: "; third ordinary chunk".into(), done: true, termination: Default::default(), identity: Default::default(), input_tokens: Some(5), output_tokens: Some(3), cache_creation_tokens: None, cache_read_tokens: None }),
+            ]).inspect(|_| { STREAM_ITEMS_POLLED.fetch_add(1, Ordering::SeqCst); })))
+        }
+    }
+
+    async fn runtime_with_admitted_turn(hook_toml: &str) -> anyhow::Result<(
+        DaemonGuiChatRuntime,
+        Uuid,
+        crate::wal::writer::WalWriterCompletion,
+        tempfile::TempDir,
+    )> {
+        let home = tempfile::tempdir()?;
+        crate::consent::grant(home.path(), crate::cli::init::ProviderKind::ClaudeCli)?;
+        std::fs::create_dir_all(home.path().join("hooks"))?;
+        std::fs::write(home.path().join("hooks").join("w458.toml"), hook_toml)?;
+        let mut config = crate::config::FreedomConfig {
+            provider_kind: Some(crate::cli::init::ProviderKind::ClaudeCli), provider_binary: Some("claude".into()), provider_model: Some("w458-stream".into()), autonomy: crate::permissions::AutonomyLevel::Full, review_gate_enabled: false, steps_completed: vec![1, 2, 3, 4, 5, 6, 7], ..Default::default()
+        };
+        config.council.disabled = Some(true);
+        config.memory.recall_shortcut = false;
+        let config_path = home.path().join("freedom.yaml");
+        std::fs::write(&config_path, serde_yaml::to_string(&config)?)?;
+        let segment = home.path().join("wal").join("000001.wal");
+        std::fs::create_dir_all(segment.parent().context("W458 WAL parent")?)?;
+        let (writer, completion, ready) = crate::wal::writer::spawn_for_home_ready_with_completion(segment.clone(), home.path().to_path_buf())?;
+        ready.wait().await?;
+        let controller = Arc::new(ReloadController::new(config, config_path.clone()));
+        let core = Arc::new(DaemonChatRuntime::new(home.path().to_path_buf(), config_path.clone(), segment, controller, writer));
+        core.publish_provider(Arc::new(W458StreamProvider) as Arc<dyn Provider>, 0).await?;
+        let runtime = DaemonGuiChatRuntime::new(core, home.path().to_path_buf(), config_path, "w458-boot".into());
+        let turn_id = Uuid::now_v7();
+        let request_id = GuiChatRequestId(Uuid::now_v7());
+        let request = GuiChatPreflightRequest { schema_version: GUI_CHAT_V1_SCHEMA_VERSION, expected_boot_id: "w458-boot".into(), request_id, session_id: "w458-session".into(), origin_surface: GuiChatSurface::Main, message: "W458 exercise the real GUI producer".into(), model: None, skill_id: None, incognito: false, reasoning_display: false, attachments: Vec::new() };
+        let mut state = runtime.state.lock().await;
+        state.preflights.insert("w458-preflight".into(), Preflight { request: request.clone(), digest: GuiChatDigest("w458-digest".into()), staged: Vec::new(), challenge: "w458-challenge".into(), start_capability: None, ephemeral: Some(crate::consent::EphemeralConsent::default()) });
+        state.turns.insert(turn_id, Turn { request_id, intent: GuiChatDigest("w458-intent".into()), session: request.session_id, incognito: false, reasoning_display: false, next_reasoning_sequence: 1, reasoning_event_count: 0, reasoning_byte_count: 0, reasoning_terminal: None, cancellation: Default::default(), cancel_capability: "w458-cancel".into(), grant: "w458-grant".into(), subscriptions: HashMap::new(), live_reasoning_owner: None, replay: VecDeque::new(), replay_bytes: 0, next_sequence: 1, phase: GuiChatPhase::Waiting, terminal: None, effects: HashMap::new(), next_effect_id: 1, effect_admission: Arc::new(Mutex::new(())), effect_changed: Arc::new(Notify::new()), owner_registry: Arc::new(StdMutex::new(OwnerRegistry { closed: false, cancellations: Vec::new() })), staged: Vec::new(), ephemeral: Some(crate::consent::EphemeralConsent::default()) });
+        drop(state);
+        Ok((runtime, turn_id, completion, home))
+    }
+
+    async fn read_header(stream: &mut tokio::io::DuplexStream) -> anyhow::Result<()> {
+        use tokio::io::AsyncReadExt;
+        let mut bytes = Vec::new();
+        loop { bytes.push(stream.read_u8().await?); if bytes.ends_with(b"\r\n\r\n") { return Ok(()); } }
+    }
+    async fn read_frame(stream: &mut tokio::io::DuplexStream) -> anyhow::Result<GuiChatStreamFrame> {
+        use tokio::io::AsyncReadExt;
+        let mut line = Vec::new();
+        loop { let byte = stream.read_u8().await?; if byte == b'\n' { return Ok(serde_json::from_slice(&line)?); } line.push(byte); }
+    }
+    async fn read_terminal_frames(runtime: &DaemonGuiChatRuntime, turn_id: Uuid, name: &str, stream: &mut tokio::io::DuplexStream) -> anyhow::Result<Vec<GuiChatStreamFrame>> {
+        let mut frames = Vec::new();
+        for _ in 0..8 {
+            let frame = tokio::time::timeout(Duration::from_secs(10), read_frame(stream)).await.map_err(|_| {
+                let state = runtime.state.lock_sync().ok();
+                let turn = state.as_ref().and_then(|state| state.turns.get(&turn_id));
+                anyhow::anyhow!("W458 {name} attach timed out: provider_opens={} source_items={} turn_present={} phase={:?} terminal={} replay_frames={}", STREAM_OPENS.load(Ordering::SeqCst), STREAM_ITEMS_POLLED.load(Ordering::SeqCst), turn.is_some(), turn.map(|turn| turn.phase), turn.is_some_and(|turn| turn.terminal.is_some()), turn.map_or(0, |turn| turn.replay.len()))
+            })??;
+            let terminal = matches!(&frame.payload, GuiChatFramePayload::Terminal { .. });
+            frames.push(frame);
+            if terminal { return Ok(frames); }
+        }
+        anyhow::bail!("W458 stream exceeded the bounded terminal frame budget")
+    }
+
+    pub(crate) async fn capture_real_producer(replace: bool) -> anyhow::Result<W458RuntimeCapture> {
+        const BLOCK: &str = "\nname = \"w458-post-provider-block\"\nstage = \"post_provider_call\"\n[matcher]\npattern = \"sk-w458-never-visible\"\n[action]\nkind = \"block\"\nreason = \"synthetic secret\"\n";
+        const REPLACE: &str = "\nname = \"w458-post-provider-replace\"\nstage = \"post_provider_call\"\n[matcher]\npattern = \"sk-w458-never-visible\"\n[action]\nkind = \"replace\"\ntemplate = \"[REDACTED]\"\n";
+        STREAM_OPENS.store(0, Ordering::SeqCst); STREAM_ITEMS_POLLED.store(0, Ordering::SeqCst);
+        let (runtime, turn_id, completion, home) = runtime_with_admitted_turn(if replace { REPLACE } else { BLOCK }).await?;
+        let exchange = |surface| GuiChatAttachExchangeRequest { schema_version: GUI_CHAT_V1_SCHEMA_VERSION, expected_boot_id: "w458-boot".into(), turn_id: GuiChatTurnId(turn_id), session_id: "w458-session".into(), desired_surface: surface, grant: GuiChatOpaqueCapability("w458-grant".into()) };
+        let main = runtime.exchange_attach(exchange(GuiChatSurface::Main)).await?;
+        let buddy = runtime.exchange_attach(exchange(GuiChatSurface::Buddy)).await?;
+        let request = |response: &GuiChatAttachExchangeResponse| GuiChatAttachRequest { schema_version: GUI_CHAT_V1_SCHEMA_VERSION, expected_boot_id: "w458-boot".into(), turn_id: response.turn_id.clone(), session_id: response.session_id.clone(), surface: response.surface, subscription_generation: response.subscription_generation, attach_capability: response.attach_capability.clone(), after_sequence: 0 };
+        let (main_server, mut main_client) = tokio::io::duplex(128 * 1024); let main_runtime = runtime.clone(); let main_request = request(&main); let main_task = tokio::spawn(async move { main_runtime.attach(Box::new(main_server), main_request).await });
+        let (buddy_server, mut buddy_client) = tokio::io::duplex(128 * 1024); let buddy_runtime = runtime.clone(); let buddy_request = request(&buddy); let buddy_task = tokio::spawn(async move { buddy_runtime.attach(Box::new(buddy_server), buddy_request).await });
+        read_header(&mut main_client).await?; read_header(&mut buddy_client).await?;
+        runtime.schedule_turn(turn_id);
+        let main_frames = read_terminal_frames(&runtime, turn_id, if replace { "replace" } else { "block" }, &mut main_client).await?;
+        let buddy_frames = read_terminal_frames(&runtime, turn_id, if replace { "replace" } else { "block" }, &mut buddy_client).await?;
+        main_task.await.context("W458 main task join")??; buddy_task.await.context("W458 buddy task join")??;
+        runtime.close_and_drain().await; drop(runtime); completion.wait().await?;
+        let post_provider_hook_observed = if replace {
+            main_frames.iter().any(|frame| {
+                matches!(
+                    &frame.payload,
+                    GuiChatFramePayload::Delta { text }
+                        if text == "first ordinary chunk; [REDACTED]; third ordinary chunk"
+                )
+            })
+        } else {
+            let wal = std::fs::read(home.path().join("wal").join("000001.wal"))?;
+            let mut observed = false;
+            crate::wal::scan::for_each_frame(&wal, |_, frame| { if frame.header.event_type == crate::wal::events::EVENT_TYPE_HOOK_BLOCKED { let payload: serde_json::Value = serde_json::from_slice(frame.payload)?; observed |= payload["name"] == "w458-post-provider-block" && payload["stage"] == "post_provider_call"; } Ok(()) })?;
+            observed
+        };
+        Ok(W458RuntimeCapture { turn_id, main_generation: main.subscription_generation, buddy_generation: buddy.subscription_generation, main_initial_sequence: main.initial_sequence, buddy_initial_sequence: buddy.initial_sequence, main_frames, buddy_frames, provider_invocations: STREAM_OPENS.load(Ordering::SeqCst), provider_chunks: STREAM_ITEMS_POLLED.load(Ordering::SeqCst), post_provider_hook_observed })
+    }
+}
+
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
     use crate::config::reload::ReloadController;
     use crate::providers::{
-        ChatTurnEffectGate, ChunkStream, Completion, CompletionChunk, EffectOwnerCancellation,
-        Provider, Request, TurnEffectOwner,
+        ChatTurnEffectGate, Completion, EffectOwnerCancellation, Provider, Request,
+        TurnEffectOwner,
     };
     use async_trait::async_trait;
-    use futures_util::{StreamExt as _, stream};
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-
-    static W458_STREAM_OPENS: AtomicUsize = AtomicUsize::new(0);
-    static W458_STREAM_ITEMS_POLLED: AtomicUsize = AtomicUsize::new(0);
-
+    use std::sync::atomic::{AtomicBool, Ordering};
     #[test]
     fn recall_chip_mapping_preserves_typed_same_query_rows() {
         use crate::memory::recall_presentation::{
@@ -2333,200 +2476,6 @@ mod lifecycle_tests {
         async fn complete(&self, _request: Request) -> anyhow::Result<Completion> {
             unreachable!("the lifecycle fixture never enters provider body work")
         }
-    }
-
-    /// Hermetic three-chunk provider for W458. Its second chunk is the only
-    /// secret-bearing source; PostProviderCall must decide whether anything
-    /// reaches the real GUI runtime sink.
-    struct W458StreamProvider;
-
-    #[async_trait]
-    impl Provider for W458StreamProvider {
-        fn name(&self) -> &'static str {
-            "claude_cli"
-        }
-
-        fn default_model(&self) -> Option<&str> {
-            Some("w458-stream")
-        }
-
-        fn streams_on_wire(&self) -> bool {
-            true
-        }
-
-        async fn complete(&self, _request: Request) -> anyhow::Result<Completion> {
-            anyhow::bail!("W458 must use the streaming producer")
-        }
-
-        async fn stream_raw(
-            &self,
-            _request: Request,
-            _permit: &crate::providers::ProviderDispatchPermit,
-        ) -> anyhow::Result<ChunkStream> {
-            W458_STREAM_OPENS.fetch_add(1, Ordering::SeqCst);
-            Ok(Box::pin(
-                stream::iter(vec![
-                    Ok(CompletionChunk {
-                        delta: "first ordinary chunk; ".into(),
-                        done: false,
-                        termination: Default::default(),
-                        identity: Default::default(),
-                        input_tokens: None,
-                        output_tokens: None,
-                        cache_creation_tokens: None,
-                        cache_read_tokens: None,
-                    }),
-                    Ok(CompletionChunk {
-                        delta: "sk-w458-never-visible".into(),
-                        done: false,
-                        termination: Default::default(),
-                        identity: Default::default(),
-                        input_tokens: None,
-                        output_tokens: None,
-                        cache_creation_tokens: None,
-                        cache_read_tokens: None,
-                    }),
-                    Ok(CompletionChunk {
-                        delta: "; third ordinary chunk".into(),
-                        done: true,
-                        termination: Default::default(),
-                        identity: Default::default(),
-                        input_tokens: Some(5),
-                        output_tokens: Some(3),
-                        cache_creation_tokens: None,
-                        cache_read_tokens: None,
-                    }),
-                ])
-                .inspect(|_| {
-                    W458_STREAM_ITEMS_POLLED.fetch_add(1, Ordering::SeqCst);
-                }),
-            ))
-        }
-    }
-
-    /// Test-only admission fixture. It deliberately seeds the already-admitted
-    /// runtime state, then uses `schedule_turn` so the real worker owns the
-    /// provider, post-provider hook, RuntimeSink, terminal and replay frames.
-    async fn w458_runtime_with_admitted_turn(
-        hook_toml: &str,
-    ) -> (
-        DaemonGuiChatRuntime,
-        Uuid,
-        crate::wal::writer::WalWriterCompletion,
-        tempfile::TempDir,
-    ) {
-        let home = tempfile::tempdir().expect("W458 fixture home");
-        crate::consent::grant(home.path(), crate::cli::init::ProviderKind::ClaudeCli)
-            .expect("grant W458 durable fixture consent");
-        std::fs::create_dir_all(home.path().join("hooks")).expect("create W458 hook dir");
-        std::fs::write(home.path().join("hooks").join("w458.toml"), hook_toml)
-            .expect("write W458 post-provider hook");
-        let mut config = crate::config::FreedomConfig {
-            provider_kind: Some(crate::cli::init::ProviderKind::ClaudeCli),
-            provider_binary: Some("claude".into()),
-            provider_model: Some("w458-stream".into()),
-            autonomy: crate::permissions::AutonomyLevel::Full,
-            review_gate_enabled: false,
-            steps_completed: vec![1, 2, 3, 4, 5, 6, 7],
-            ..Default::default()
-        };
-        config.council.disabled = Some(true);
-        config.memory.recall_shortcut = false;
-        let config_path = home.path().join("freedom.yaml");
-        std::fs::write(
-            &config_path,
-            serde_yaml::to_string(&config).expect("serialize W458 config"),
-        )
-        .expect("write W458 config");
-        let segment = home.path().join("wal").join("000001.wal");
-        std::fs::create_dir_all(segment.parent().expect("W458 wal parent"))
-            .expect("create W458 wal parent");
-        let (writer, completion, ready) = crate::wal::writer::spawn_for_home_ready_with_completion(
-            segment.clone(),
-            home.path().to_path_buf(),
-        )
-        .expect("spawn W458 fixture writer");
-        ready.wait().await.expect("W458 writer ready");
-        let controller = Arc::new(ReloadController::new(config, config_path.clone()));
-        let core = Arc::new(DaemonChatRuntime::new(
-            home.path().to_path_buf(),
-            config_path.clone(),
-            segment,
-            controller,
-            writer,
-        ));
-        core.publish_provider(Arc::new(W458StreamProvider) as Arc<dyn Provider>, 0)
-            .await
-            .expect("publish W458 stream provider");
-        let runtime = DaemonGuiChatRuntime::new(
-            core,
-            home.path().to_path_buf(),
-            config_path,
-            "w458-boot".into(),
-        );
-        let turn_id = Uuid::now_v7();
-        let request_id = GuiChatRequestId(Uuid::now_v7());
-        let request = GuiChatPreflightRequest {
-            schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
-            expected_boot_id: "w458-boot".into(),
-            request_id,
-            session_id: "w458-session".into(),
-            origin_surface: GuiChatSurface::Main,
-            message: "W458 exercise the real GUI producer".into(),
-            model: None,
-            skill_id: None,
-            incognito: false,
-            reasoning_display: false,
-            attachments: Vec::new(),
-        };
-        let mut state = runtime.state.lock().await;
-        state.preflights.insert(
-            "w458-preflight".into(),
-            Preflight {
-                request: request.clone(),
-                digest: GuiChatDigest("w458-digest".into()),
-                staged: Vec::new(),
-                challenge: "w458-challenge".into(),
-                start_capability: None,
-                ephemeral: Some(crate::consent::EphemeralConsent::default()),
-            },
-        );
-        state.turns.insert(
-            turn_id,
-            Turn {
-                request_id,
-                intent: GuiChatDigest("w458-intent".into()),
-                session: request.session_id,
-                incognito: false,
-                reasoning_display: false,
-                next_reasoning_sequence: 1,
-                reasoning_event_count: 0,
-                reasoning_byte_count: 0,
-                reasoning_terminal: None,
-                cancellation: Default::default(),
-                cancel_capability: "w458-cancel".into(),
-                grant: "w458-grant".into(),
-                subscriptions: HashMap::new(),
-                live_reasoning_owner: None,
-                replay: VecDeque::new(),
-                replay_bytes: 0,
-                next_sequence: 1,
-                phase: GuiChatPhase::Waiting,
-                terminal: None,
-                effects: HashMap::new(),
-                next_effect_id: 1,
-                effect_admission: Arc::new(Mutex::new(())),
-                effect_changed: Arc::new(Notify::new()),
-                owner_registry: Arc::new(StdMutex::new(OwnerRegistry {
-                    closed: false,
-                    cancellations: Vec::new(),
-                })),
-                staged: Vec::new(),
-                ephemeral: Some(crate::consent::EphemeralConsent::default()),
-            },
-        );
-        drop(state);
-        (runtime, turn_id, completion, home)
     }
 
     async fn runtime_with_handshake_turn() -> (
@@ -2899,155 +2848,38 @@ mod lifecycle_tests {
         }
     }
 
-    async fn w458_attach_pair(
-        runtime: &DaemonGuiChatRuntime,
-        turn_id: Uuid,
-    ) -> (
-        tokio::io::DuplexStream,
-        tokio::io::DuplexStream,
-        tokio::task::JoinHandle<GuiChatResult<()>>,
-        tokio::task::JoinHandle<GuiChatResult<()>>,
-    ) {
-        let exchange = |surface| GuiChatAttachExchangeRequest {
-            schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
-            expected_boot_id: "w458-boot".into(),
-            turn_id: GuiChatTurnId(turn_id),
-            session_id: "w458-session".into(),
-            desired_surface: surface,
-            grant: GuiChatOpaqueCapability("w458-grant".into()),
-        };
-        let attach_request = |response: &GuiChatAttachExchangeResponse| GuiChatAttachRequest {
-            schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
-            expected_boot_id: "w458-boot".into(),
-            turn_id: response.turn_id.clone(),
-            session_id: response.session_id.clone(),
-            surface: response.surface,
-            subscription_generation: response.subscription_generation,
-            attach_capability: response.attach_capability.clone(),
-            after_sequence: 0,
-        };
-        let main = runtime
-            .exchange_attach(exchange(GuiChatSurface::Main))
-            .await
-            .expect("W458 main attach exchange");
-        let buddy = runtime
-            .exchange_attach(exchange(GuiChatSurface::Buddy))
-            .await
-            .expect("W458 buddy attach exchange");
-        let (main_server, mut main_client) = tokio::io::duplex(128 * 1024);
-        let main_runtime = runtime.clone();
-        let main_task = tokio::spawn(async move {
-            main_runtime
-                .attach(Box::new(main_server), attach_request(&main))
-                .await
-        });
-        let (buddy_server, mut buddy_client) = tokio::io::duplex(128 * 1024);
-        let buddy_runtime = runtime.clone();
-        let buddy_task = tokio::spawn(async move {
-            buddy_runtime
-                .attach(Box::new(buddy_server), attach_request(&buddy))
-                .await
-        });
-        read_attach_header(&mut main_client).await;
-        read_attach_header(&mut buddy_client).await;
-        (main_client, buddy_client, main_task, buddy_task)
-    }
-
-    async fn read_w458_terminal_frames(
-        runtime: &DaemonGuiChatRuntime,
-        turn_id: Uuid,
-        name: &str,
-        stream: &mut tokio::io::DuplexStream,
-    ) -> Vec<serde_json::Value> {
-        let mut frames = Vec::new();
-        for _ in 0..8 {
-            let frame = match tokio::time::timeout(
-                Duration::from_secs(10),
-                read_attach_frame(stream),
-            )
-            .await
-            {
-                Ok(frame) => frame,
-                Err(_) => {
-                    let state = runtime.state.lock().await;
-                    let turn = state.turns.get(&turn_id);
-                    panic!(
-                        "W458 {name} attach did not receive a frame within 10s: \
-                         provider_opens={} source_items={} turn_present={} phase={:?} terminal={} replay_frames={}",
-                        W458_STREAM_OPENS.load(Ordering::SeqCst),
-                        W458_STREAM_ITEMS_POLLED.load(Ordering::SeqCst),
-                        turn.is_some(),
-                        turn.map(|turn| turn.phase),
-                        turn.is_some_and(|turn| turn.terminal.is_some()),
-                        turn.map_or(0, |turn| turn.replay.len()),
-                    );
-                }
-            };
-            let terminal = frame["payload"]["type"] == "terminal";
-            frames.push(frame);
-            if terminal {
-                return frames;
-            }
-        }
-        panic!("W458 stream exceeded the bounded terminal frame budget");
-    }
-
     #[tokio::test]
     async fn w458_real_producer_post_hook_is_visible_to_main_and_buddy_only_after_acceptance() {
         const SECRET: &str = "sk-w458-never-visible";
-        const BLOCK: &str = r#"
-name = "w458-post-provider-block"
-stage = "post_provider_call"
-[matcher]
-pattern = "sk-w458-never-visible"
-[action]
-kind = "block"
-reason = "synthetic secret"
-"#;
-        const REPLACE: &str = r#"
-name = "w458-post-provider-replace"
-stage = "post_provider_call"
-[matcher]
-pattern = "sk-w458-never-visible"
-[action]
-kind = "replace"
-template = "[REDACTED]"
-"#;
-
-        for (name, hook, accepted) in [
-            ("block", BLOCK, None),
+        for (name, replace, accepted) in [
+            ("block", false, None),
             (
                 "replace",
-                REPLACE,
+                true,
                 Some("first ordinary chunk; [REDACTED]; third ordinary chunk"),
             ),
         ] {
-            W458_STREAM_OPENS.store(0, Ordering::SeqCst);
-            W458_STREAM_ITEMS_POLLED.store(0, Ordering::SeqCst);
-            let (runtime, turn_id, completion, _home) = w458_runtime_with_admitted_turn(hook).await;
-            let (mut main, mut buddy, main_task, buddy_task) =
-                w458_attach_pair(&runtime, turn_id).await;
-            runtime.schedule_turn(turn_id);
-            let main_frames = read_w458_terminal_frames(&runtime, turn_id, name, &mut main).await;
-            let buddy_frames = read_w458_terminal_frames(&runtime, turn_id, name, &mut buddy).await;
-            main_task
+            let capture = super::w458_test_support::capture_real_producer(replace)
                 .await
-                .expect("W458 main attach task joins")
-                .expect("W458 main attach succeeds");
-            buddy_task
-                .await
-                .expect("W458 buddy attach task joins")
-                .expect("W458 buddy attach succeeds");
+                .expect("W458 shared real producer fixture");
             assert_eq!(
-                W458_STREAM_OPENS.load(Ordering::SeqCst),
+                capture.provider_invocations,
                 1,
                 "{name} reached the real streaming provider exactly once"
             );
             assert_eq!(
-                W458_STREAM_ITEMS_POLLED.load(Ordering::SeqCst),
+                capture.provider_chunks,
                 3,
                 "{name} consumed all three source chunks before the post-provider decision"
             );
+            let main_frames = capture.main_frames
+                .iter()
+                .map(|frame| serde_json::to_value(frame).expect("serialize W458 main typed frame"))
+                .collect::<Vec<_>>();
+            let buddy_frames = capture.buddy_frames
+                .iter()
+                .map(|frame| serde_json::to_value(frame).expect("serialize W458 buddy typed frame"))
+                .collect::<Vec<_>>();
 
             for frames in [&main_frames, &buddy_frames] {
                 let serialized = serde_json::to_string(frames).expect("serialize W458 frames");
@@ -3095,29 +2927,10 @@ template = "[REDACTED]"
                 main_payloads, buddy_payloads,
                 "Main and Buddy consume one shared runtime replay payload sequence"
             );
-            runtime.close_and_drain().await;
-            drop(runtime);
-            completion.wait().await.expect("W458 writer drained");
             if accepted.is_none() {
-                let wal = std::fs::read(_home.path().join("wal").join("000001.wal"))
-                    .expect("read drained W458 block WAL");
-                let mut hook_blocks = Vec::new();
-                crate::wal::scan::for_each_frame(&wal, |_, frame| {
-                    if frame.header.event_type == crate::wal::events::EVENT_TYPE_HOOK_BLOCKED {
-                        hook_blocks.push(
-                            serde_json::from_slice::<serde_json::Value>(frame.payload)
-                                .expect("decode W458 HOOK_BLOCKED payload"),
-                        );
-                    }
-                    Ok(())
-                })
-                .expect("scan drained W458 block WAL");
                 assert!(
-                    hook_blocks.iter().any(|payload| {
-                        payload["name"] == "w458-post-provider-block"
-                            && payload["stage"] == "post_provider_call"
-                    }),
-                    "Block terminal is caused by the real PostProviderCall hook: {hook_blocks:?}"
+                    capture.post_provider_hook_observed,
+                    "Block terminal is caused by the real PostProviderCall hook"
                 );
             }
         }

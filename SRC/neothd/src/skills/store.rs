@@ -6336,6 +6336,9 @@ mod reported_commit_tests {
         let ambient_parent = temp.path().join("bound-parent");
         let displaced_parent = temp.path().join("displaced-parent");
         std::fs::create_dir(&ambient_parent).unwrap();
+        let ambient_namespace = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
         let target = ambient_parent.join("state.json");
         let root = open_bound_directory(&ambient_parent, false, "test store")
             .unwrap()
@@ -6345,10 +6348,35 @@ mod reported_commit_tests {
         let hook_ambient_parent = ambient_parent.clone();
         let hook_displaced_parent = displaced_parent.clone();
         windows_private_atomic_stage::set_before_rename_for_test(move || {
-            std::fs::rename(&hook_ambient_parent, &hook_displaced_parent).unwrap();
-            std::fs::create_dir(&hook_ambient_parent).unwrap();
-            std::fs::write(
-                hook_ambient_parent.join("state.json"),
+            // Win32's path-based directory rename refuses the live subtree even
+            // when its handles share DELETE. Use the native capability-relative
+            // operation an uncooperative same-user writer can actually perform.
+            let source = open_windows_mutation_handle(
+                &ambient_namespace.dir,
+                OsStr::new("bound-parent"),
+                &hook_ambient_parent,
+            )
+            .unwrap();
+            windows_rename_open_handle_ex(
+                &source,
+                &ambient_namespace.dir,
+                OsStr::new("displaced-parent"),
+                false,
+                &hook_displaced_parent,
+            )
+            .unwrap();
+            create_private_child_directory(&ambient_namespace.dir, OsStr::new("bound-parent"))
+                .unwrap();
+            let replacement_parent = open_real_child_dir(
+                &ambient_namespace.dir,
+                OsStr::new("bound-parent"),
+                &hook_ambient_parent,
+            )
+            .unwrap();
+            atomic_write_private_child(
+                &replacement_parent,
+                OsStr::new("state.json"),
+                &hook_ambient_parent.join("state.json"),
                 b"ambient replacement",
             )
             .unwrap();

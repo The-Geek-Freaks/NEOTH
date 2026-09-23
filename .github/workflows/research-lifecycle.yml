@@ -173,6 +173,7 @@ jobs:
               "wave462RepairAcceptance": 4,
               "wave469LiveAuthorityStreamWizardAcceptance": 3,
               "wave478ConcurrentBudgetAcceptance": 1,
+              "wave485BuddyTaskDelegateAcceptance": 2,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():
@@ -184,6 +185,8 @@ jobs:
                   raise SystemExit(f"{wave_name} requiredTests must contain exactly {expected} identities")
               required_names.extend(names)
           expected_count = sum(expected_wave_counts.values())
+          if expected_count != 888:
+              raise SystemExit(f"Grouped required test catalog must contain exactly 888 identities (got {expected_count})")
           if not all(isinstance(name, str) and name for name in required_names):
               raise SystemExit("Grouped requiredTests contains an invalid identity")
           if len(required_names) != expected_count or len(set(required_names)) != expected_count:
@@ -252,13 +255,133 @@ jobs:
           : > "$log"
           : > "$evidence_root/receipt/failed-fixtures.txt"
           expected_count="$(wc -l < "$evidence_root/source/fixture-names.txt" | tr -d '[:space:]')"
+          [[ "$expected_count" == "888" ]] || {
+            echo "Grouped fixture catalog must contain exactly 888 identities (got $expected_count)" >&2
+            exit 1
+          }
+          artifact_log="$evidence_root/log/neoth-lib-test-artifacts.jsonl"
+          compile_stderr="$evidence_root/log/neoth-lib-test-compile.stderr.log"
+          binary_receipt="$evidence_root/receipt/neoth-lib-test-binary.json"
+          {
+            echo "=== compile neoth lib test binary ==="
+            if ! cargo test -p neoth --lib --locked --no-run --message-format=json > "$artifact_log" 2> "$compile_stderr"; then
+              cat "$compile_stderr"
+              python - "$artifact_log" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          rendered_limit = 20
+          rendered_char_limit = 8_000
+          emitted = 0
+          for raw in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+              try:
+                  message = json.loads(raw)
+              except json.JSONDecodeError:
+                  continue
+              diagnostic = message.get("message") if message.get("reason") == "compiler-message" else None
+              rendered = diagnostic.get("rendered") if isinstance(diagnostic, dict) else None
+              if not isinstance(rendered, str) or not rendered:
+                  continue
+              if emitted == rendered_limit:
+                  print(f"Cargo diagnostic output capped at {rendered_limit} messages", file=sys.stderr)
+                  break
+              print(rendered[:rendered_char_limit], end="" if rendered.endswith("\n") else "\n", file=sys.stderr)
+              emitted += 1
+          if emitted == 0:
+              print("no rendered Cargo diagnostics found; raw JSON artifact is retained", file=sys.stderr)
+          PY
+              echo "neoth lib test binary compilation failed" >&2
+              exit 1
+            fi
+            cat "$compile_stderr"
+            python - "$artifact_log" "$binary_receipt" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          artifact_log = pathlib.Path(sys.argv[1])
+          receipt_path = pathlib.Path(sys.argv[2])
+          candidates = []
+          for line_number, raw in enumerate(artifact_log.read_text(encoding="utf-8").splitlines(), 1):
+              try:
+                  message = json.loads(raw)
+              except json.JSONDecodeError as error:
+                  raise SystemExit(f"invalid Cargo JSON artifact line {line_number}: {error}")
+              if message.get("reason") != "compiler-artifact":
+                  continue
+              target = message.get("target")
+              if not isinstance(target, dict):
+                  continue
+              profile = message.get("profile")
+              if not isinstance(profile, dict):
+                  continue
+              executable = message.get("executable")
+              if (
+                  target.get("name") == "neothd"
+                  and target.get("kind") == ["lib"]
+                  and target.get("src_path", "").endswith("/neothd/src/lib.rs")
+                  and profile.get("test") is True
+              ):
+                  if not isinstance(executable, str) or not executable:
+                      raise SystemExit("neoth lib test artifact has no executable path")
+                  candidates.append({
+                      "packageId": message.get("package_id"),
+                      "targetName": target.get("name"),
+                      "targetKind": target.get("kind"),
+                      "sourcePath": target.get("src_path"),
+                      "executable": executable,
+                  })
+          if len(candidates) != 1:
+              raise SystemExit(
+                  f"expected exactly one neoth lib test binary artifact, found {len(candidates)}"
+              )
+          receipt_path.write_text(
+              json.dumps(
+                  {
+                      "schema": "neoth-research-lifecycle-test-binary/v1",
+                      "candidateCount": len(candidates),
+                      "selected": candidates[0],
+                  },
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+              newline="\n",
+          )
+          PY
+          } 2>&1 | tee -a "$log"
+          test_binary="$(python - "$binary_receipt" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          receipt = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          selected = receipt.get("selected")
+          executable = selected.get("executable") if isinstance(selected, dict) else None
+          if receipt.get("candidateCount") != 1 or not isinstance(executable, str) or not executable:
+              raise SystemExit("selected neoth lib test binary receipt is incomplete or ambiguous")
+          print(executable)
+          PY
+          )"
+          [[ -x "$test_binary" ]] || {
+            echo "selected neoth lib test binary is not executable: $test_binary" >&2
+            exit 1
+          }
+          {
+            echo "=== selected neoth lib test binary ==="
+            printf '%s\n' "$test_binary"
+          } 2>&1 | tee -a "$log"
+          # Cargo runs package tests from the package root; keep direct harness
+          # execution at the same working directory.
+          cd neothd
           executed=0
           while IFS= read -r test_name; do
             test_name="${test_name%$'\r'}"
             [[ -n "$test_name" ]] || { echo "empty Grouped fixture identity" >&2; exit 1; }
             {
               echo "=== list $test_name ==="
-              if ! listed="$(cargo test -p neoth --lib --locked "$test_name" -- --exact --list)"; then
+              if ! listed="$("$test_binary" "$test_name" --exact --list)"; then
                 echo "exact Grouped discovery failed: $test_name" >&2
                 exit 1
               fi
@@ -270,7 +393,7 @@ jobs:
                 exit 1
               }
               echo "=== run $test_name ==="
-              if ! timeout --kill-after=10s 180s cargo test -p neoth --lib --locked "$test_name" -- --exact --test-threads=1; then
+              if ! timeout --kill-after=10s 180s "$test_binary" "$test_name" --exact --test-threads=1; then
                 echo "exact Grouped fixture failed: $test_name" >&2
                 printf '%s\n' "$test_name" >> "$evidence_root/receipt/failed-fixtures.txt"
               fi
@@ -302,7 +425,7 @@ jobs:
 
       - name: Upload grouped source identities
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4888f43607fa02 # v4
         with:
           name: w190-research-lifecycle-source-${{ github.sha }}
           path: ${{ runner.temp }}/w190-research-lifecycle/source/
@@ -311,7 +434,7 @@ jobs:
 
       - name: Upload grouped Cargo log
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4888f43607fa02 # v4
         with:
           name: w190-research-lifecycle-log-${{ github.sha }}
           path: ${{ runner.temp }}/w190-research-lifecycle/log/
@@ -320,7 +443,7 @@ jobs:
 
       - name: Upload grouped lifecycle receipt
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4888f43607fa02 # v4
         with:
           name: w190-research-lifecycle-receipt-${{ github.sha }}
           path: ${{ runner.temp }}/w190-research-lifecycle/receipt/

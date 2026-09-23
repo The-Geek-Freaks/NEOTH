@@ -529,6 +529,82 @@ pub trait GuiChatBridge: Send + Sync {
 #[cfg(feature = "gui-bridge-test-support")]
 pub mod gui_bridge_test_support {
     use super::*;
+
+    /// Chooses the actual W458 post-provider hook fixture.  The producer and
+    /// both attach streams live in the daemon runtime; this is only the
+    /// bridge-facing selector for the two already-regressed outcomes.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum W458PostProviderScenario {
+        Block,
+        Replace,
+    }
+
+    /// Bridge mapping of the real W458 producer capture.  Events are created
+    /// solely by `map_frame` from typed frames emitted by the runtime.
+    pub struct W458ProducerBridgeCapture {
+        pub turn: GuiChatTurnMetadata,
+        pub main_subscription: GuiChatSubscriptionMetadata,
+        pub buddy_subscription: GuiChatSubscriptionMetadata,
+        pub main_events: Vec<GuiChatBridgeEvent>,
+        pub buddy_events: Vec<GuiChatBridgeEvent>,
+        pub provider_invocations: usize,
+        pub provider_chunks: usize,
+        pub post_provider_hook_observed: bool,
+    }
+
+    pub async fn capture_w458_real_producer(
+        scenario: W458PostProviderScenario,
+    ) -> anyhow::Result<W458ProducerBridgeCapture> {
+        let capture = crate::daemon::gui_chat_runtime::w458_test_support::capture_real_producer(
+            matches!(scenario, W458PostProviderScenario::Replace),
+        )
+        .await?;
+        let turn = GuiChatTurnMetadata {
+            boot_id: "w458-boot".into(),
+            turn_id: GuiChatTurnId(capture.turn_id),
+            origin_surface: GuiChatSurface::Main,
+            // This is the pre-producer turn snapshot.  `adopt` seeds its
+            // reducer cursor from this value, so terminal/replay progress is
+            // represented only by the captured real events below.
+            phase: GuiChatPhase::Waiting,
+            latest_sequence: capture.main_initial_sequence,
+        };
+        let main_subscription = GuiChatSubscriptionMetadata {
+            boot_id: turn.boot_id.clone(),
+            turn_id: turn.turn_id,
+            surface: GuiChatSurface::Main,
+            generation: capture.main_generation,
+            latest_sequence: capture.main_initial_sequence,
+        };
+        let buddy_subscription = GuiChatSubscriptionMetadata {
+            boot_id: turn.boot_id.clone(),
+            turn_id: turn.turn_id,
+            surface: GuiChatSurface::Buddy,
+            generation: capture.buddy_generation,
+            latest_sequence: capture.buddy_initial_sequence,
+        };
+        let main_events = capture
+            .main_frames
+            .into_iter()
+            .map(|frame| map_frame(frame, main_subscription.clone()))
+            .collect();
+        let buddy_events = capture
+            .buddy_frames
+            .into_iter()
+            .map(|frame| map_frame(frame, buddy_subscription.clone()))
+            .collect();
+        Ok(W458ProducerBridgeCapture {
+            turn,
+            main_subscription,
+            buddy_subscription,
+            main_events,
+            buddy_events,
+            provider_invocations: capture.provider_invocations,
+            provider_chunks: capture.provider_chunks,
+            post_provider_hook_observed: capture.post_provider_hook_observed,
+        })
+    }
+
     fn fixture() -> GuiChatSealedHandle {
         GuiChatSealedHandle::Fixture
     }

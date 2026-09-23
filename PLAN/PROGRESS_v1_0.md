@@ -2,6 +2,23 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W480/W484-W486 producer consumers, Buddy parity and hosted efficiency (2026-09-23):**
+Preflight 35911848078 passed at 580c29e5. Core9abb passed slim Clippy and
+core test-target compilation; workspace Clippy and Group886 continue. Windows
+35911460507 compiled/executed16:15PASS,1FAIL; the parent-swap hook now reports
+Win32 5 instead of32. W486 uses the existing native relative POSIX rename in
+that fixture while retaining both original publication assertions. W480 shares
+real producer/attach frames with the actual desktop controller/sink/reducer and
+requires visible Main/Buddy terminal/body/preview results. Initial replay cursors
+and subscription identities are bound. W485 routes Buddy TaskDelegate through
+the canonical cluster grammar/handler. W484 compiles the grouped test binary once
+and preserves every exact fresh-process case, timeout and evidence marker; the
+old run spent822.12s in repeated Cargo completion overhead. Source review and
+hosted results are distinct; no new Road row closes in this publication.
+Inventory734/native1183/Group888; GUI146Linux142macOS;macOSnative31.
+Road1039checked/283open/2partial;WS-LF32done/86open. BSOD hold remains absolute.
+Evidence: docs/gold-wave480-producer-consumers-and-batch-execution.md.
+
 **W482 hosted formatting import (2026-09-23):**
 W479 is published as 9abb52d5. Preflight 35911416396 exported formatting for
 three Rust files; artifact 10772743046, both SHA256 entries and all complete

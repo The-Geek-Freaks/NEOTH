@@ -120,10 +120,10 @@ jobs:
           by_platform = matrix.get("requiredGuiTestsByPlatform")
           if not isinstance(by_platform, dict):
               raise SystemExit("requiredGuiTestsByPlatform is missing or malformed")
-          linux = require_names(by_platform.get("Linux"), "requiredGuiTestsByPlatform.Linux", 30)
+          linux = require_names(by_platform.get("Linux"), "requiredGuiTestsByPlatform.Linux", 31)
           selected = universal + linux
-          if len(selected) != 145 or len(selected) != len(set(selected)):
-              raise SystemExit("GUI fixture selection must contain exactly 145 unique identities (115 universal + 30 Linux)")
+          if len(selected) != 146 or len(selected) != len(set(selected)):
+              raise SystemExit("GUI fixture selection must contain exactly 146 unique identities (115 universal + 31 Linux)")
 
           supported_classes = {
               "neothd-gui::bin/neothd-gui": {"kind": "bin", "selector": ["--bin", "neothd-gui"]},

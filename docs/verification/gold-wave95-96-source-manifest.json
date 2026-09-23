@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T19:46:55.4582881Z",
-  "validationStatus": "W482 exact hosted formatting import; inventory733/native1181/Group886; P122 accepted; W479 core/group/windows runs active",
+  "capturedUtc": "2026-09-23T20:06:18.1892761Z",
+  "validationStatus": "W480 real producer-consumer regression, W484 compile-once grouped lane, W485 Buddy canonical assignment route, W486 Windows native rename fixture; inventory734/native1183/Group888/GUI146Linux142macOS; hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -44,7 +44,7 @@
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
       "bytes": 39349,
-      "sha256": "DDCA3C9DA54CCC5C96FCABB152F96C4D757488687D0B4B0596BF9E0CCF88EA35"
+      "sha256": "3A87D6496F074B89B7F8C47FF01BB8F691AD74BA64E5AB80F9EDC8EF7A9B86B9"
     },
     {
       "path": ".github/workflows/live-audio.yml",
@@ -88,8 +88,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 15059,
-      "sha256": "962F9525F237F8B19A434382B746D6B508AF190940C24740B206FF7C5D046770"
+      "bytes": 20624,
+      "sha256": "BEF08CB023C2B1461D8A3693F199BCC2F3A706A0F74ECE66DD7A7E694A407CC8"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -952,6 +952,11 @@
       "sha256": "08C5F0B019B223DEF2AB855BA15DD1F5CDBF39D4A5B32DBF53E1AC265E65BB67"
     },
     {
+      "path": "docs/gold-wave480-producer-consumers-and-batch-execution.md",
+      "bytes": 5154,
+      "sha256": "DF4F0BD5A1612A54AEC9E949ABB12C3A7D5413ED09AD2A58FE48A15A74FF7A11"
+    },
+    {
       "path": "docs/install.md",
       "bytes": 13637,
       "sha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625"
@@ -1148,8 +1153,8 @@
     },
     {
       "path": "packaging/tests/verify_macos_native_gui_fixture_discovery.py",
-      "bytes": 6426,
-      "sha256": "692D0D2F83F16D479AE5090E68FF8600739F3FAB26FB89542BBD4D3E417C8EDF"
+      "bytes": 6541,
+      "sha256": "D9043B2D0CE2D13BF59B3621832A647E0C9B961F483FF91A35C964A7240D8921"
     },
     {
       "path": "packaging/windows/smoke-installer.ps1",
@@ -1158,18 +1163,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 181234,
-      "sha256": "5CEE6E3BABDF6D156518CE21AAEDB25862D4D4A3DEA4B123FB06F53EB95F3F61"
+      "bytes": 182483,
+      "sha256": "727FB83115F75BCE1ADB97F6AB31F7B81080E1DBF0D20C0E3F8EA480C97C0B30"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1191447,
-      "sha256": "91774FE4EDA6CA7FEAA79E90C5DDB57ADA35BF787B74A6957D77E96C7E4A3847"
+      "bytes": 1192696,
+      "sha256": "D96191CACDF7C637DBF7D37FD5704F3F50FF7FE21CE2563D7F694CAE07FD4EA4"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1789780,
-      "sha256": "B2E5E66633A70F7E95D1D4A440EB29634747F8B0DD5D9F4B00345DD0E43CEEF5"
+      "bytes": 1791029,
+      "sha256": "F9BFEA440114858E296A0CAB7A3C5C0D1D951C75D8EF1802D7F72CE1CA459042"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1378,8 +1383,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2184798,
-      "sha256": "F8B6626B05EDA7183FEAC7D8662E7BBE4D9A033C70E5D4038CD7ECCF747ED611"
+      "bytes": 2200754,
+      "sha256": "BD331B19C227A57DEA0EF56C1DBAAA30287632B89BE07BA7C4B9F2E31EF806C6"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -1748,8 +1753,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/buddy.rs",
-      "bytes": 43695,
-      "sha256": "9635C51A35CEF6A62B0F04915B522C1487D126EF4B7DB215C6D49766175F2AFF"
+      "bytes": 47990,
+      "sha256": "5632859932629A75941926A9E7424003E2E93D569F0C0EE2E9F0E6319E8D9D8E"
     },
     {
       "path": "SRC/neothd/src/cli/capabilities.rs",
@@ -2513,8 +2518,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_bridge.rs",
-      "bytes": 57117,
-      "sha256": "A994C393EFAA282680BDFC3BBB69EBE32441FF80C7C04EBA8418B1B86DE7ED69"
+      "bytes": 60257,
+      "sha256": "23CBD344B82F67345FF61624A3A0B70FD47C174F3FB8CCCF74FAEE8759271D6C"
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_protocol.rs",
@@ -2523,8 +2528,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "bytes": 161628,
-      "sha256": "B4016A1DF779191060D1E2939DE348E4B59464BAC38331C6A15D150C4DEF6BE9"
+      "bytes": 160141,
+      "sha256": "15CD35A32804CBFFE7FA5983E007E4963F537B94AB04F24D59A038616CD72E04"
     },
     {
       "path": "SRC/neothd/src/daemon/live_throughput.rs",
@@ -3343,8 +3348,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/store.rs",
-      "bytes": 248537,
-      "sha256": "7D744A136D87CE2490EA94BE558348F2B87821EBAD69C5B88BB47316AB429804"
+      "bytes": 249665,
+      "sha256": "A031C4AF44C457965B0112888C951FEF7348386B4027795A564A4C383EE5F994"
     },
     {
       "path": "SRC/neothd/src/slash/schema.rs",
