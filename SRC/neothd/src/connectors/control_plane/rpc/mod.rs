@@ -2434,19 +2434,18 @@ fn build_pending_plan(
         !reservation.accepted(),
         "fresh opaque plan identity unexpectedly names a committed outcome"
     );
-    let (local_plan_id, preview) = match runtime
-        .plan_import_with_preview(Path::new(&request.relative_path))
-    {
-        Ok(plan) => plan,
-        Err(error) => {
-            if let Err(release_error) = runtime.release_apply_outcome(apply_key) {
-                return Err(anyhow::anyhow!(
-                    "{error:#}; failed to release context-import admission: {release_error:#}"
-                ));
+    let (local_plan_id, preview) =
+        match runtime.plan_import_with_preview(Path::new(&request.relative_path)) {
+            Ok(plan) => plan,
+            Err(error) => {
+                if let Err(release_error) = runtime.release_apply_outcome(apply_key) {
+                    return Err(anyhow::anyhow!(
+                        "{error:#}; failed to release context-import admission: {release_error:#}"
+                    ));
+                }
+                return Err(error);
             }
-            return Err(error);
-        }
-    };
+        };
     Ok(PendingPlan {
         runtime,
         local_plan_id,

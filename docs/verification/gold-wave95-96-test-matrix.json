@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W253 preview and W255 actual guardian gate reviewed; Hosted pending",
+  "status": "Group42449 all passed; W253 exact Hosted format imported, Group432 and GUI124 running",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 92839,
-    "sha256": "A5E8DE233378582934DDF049CEA3189A0F2EFCFA5902531816359696FA4A3EA8"
+    "bytes": 92857,
+    "sha256": "E21EFC251DD5939F08825B6D474FB876C48057BD21624AFF26922CB21A7FB9EC"
   },
   "sourceInputs": 537,
   "requiredNativeTests": [
@@ -5166,7 +5166,7 @@
     {
       "test": "connectors::control_plane::rpc::tests::lifecycle_request_requires_exact_revision_fields",
       "sourcePath": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-      "sourceSha256": "7950EC734C928A894F73CA4D65D80BC386C3921E859747C122D8CF1CC02ED116",
+      "sourceSha256": "894C1ED310BEB1BB5808885FE47AB43C28E510BDFE22CF4D559A9F1DFAA9FAAE",
       "junitClass": "neoth"
     },
     {
@@ -6999,37 +6999,37 @@
       {
         "test": "connectors::control_plane::rpc::tests::unix_client_response_parser_rejects_ambiguous_and_truncated_envelopes",
         "sourcePath": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-        "sourceSha256": "7950EC734C928A894F73CA4D65D80BC386C3921E859747C122D8CF1CC02ED116",
+        "sourceSha256": "894C1ED310BEB1BB5808885FE47AB43C28E510BDFE22CF4D559A9F1DFAA9FAAE",
         "junitClass": "neoth"
       },
       {
         "test": "connectors::control_plane::rpc::tests::unix_client_discovery_rejects_wrong_cc_nonce_pid_lock_nonce_and_runtime_nonce_before_connect",
         "sourcePath": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-        "sourceSha256": "7950EC734C928A894F73CA4D65D80BC386C3921E859747C122D8CF1CC02ED116",
+        "sourceSha256": "894C1ED310BEB1BB5808885FE47AB43C28E510BDFE22CF4D559A9F1DFAA9FAAE",
         "junitClass": "neoth"
       },
       {
         "test": "connectors::control_plane::rpc::tests::unix_client_discovery_rejects_group_readable_and_symlinked_tokens_before_connect",
         "sourcePath": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-        "sourceSha256": "7950EC734C928A894F73CA4D65D80BC386C3921E859747C122D8CF1CC02ED116",
+        "sourceSha256": "894C1ED310BEB1BB5808885FE47AB43C28E510BDFE22CF4D559A9F1DFAA9FAAE",
         "junitClass": "neoth"
       },
       {
         "test": "connectors::control_plane::rpc::tests::unix_private_discovery_reader_rejects_mode_symlink_and_oversize_on_the_opened_fd",
         "sourcePath": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-        "sourceSha256": "7950EC734C928A894F73CA4D65D80BC386C3921E859747C122D8CF1CC02ED116",
+        "sourceSha256": "894C1ED310BEB1BB5808885FE47AB43C28E510BDFE22CF4D559A9F1DFAA9FAAE",
         "junitClass": "neoth"
       },
       {
         "test": "connectors::control_plane::rpc::tests::unix_client_endpoint_identity_detects_a_replaced_socket_leaf",
         "sourcePath": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-        "sourceSha256": "7950EC734C928A894F73CA4D65D80BC386C3921E859747C122D8CF1CC02ED116",
+        "sourceSha256": "894C1ED310BEB1BB5808885FE47AB43C28E510BDFE22CF4D559A9F1DFAA9FAAE",
         "junitClass": "neoth"
       },
       {
         "test": "connectors::control_plane::rpc::tests::unix_client_fixture_home_is_canonical_under_the_inherited_temp_environment",
         "sourcePath": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-        "sourceSha256": "7950EC734C928A894F73CA4D65D80BC386C3921E859747C122D8CF1CC02ED116",
+        "sourceSha256": "894C1ED310BEB1BB5808885FE47AB43C28E510BDFE22CF4D559A9F1DFAA9FAAE",
         "junitClass": "neoth"
       },
       {
@@ -7169,37 +7169,37 @@
       {
         "test": "connectors::control_plane::rpc::tests::unix_client_response_parser_rejects_ambiguous_and_truncated_envelopes",
         "sourcePath": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-        "sourceSha256": "7950EC734C928A894F73CA4D65D80BC386C3921E859747C122D8CF1CC02ED116",
+        "sourceSha256": "894C1ED310BEB1BB5808885FE47AB43C28E510BDFE22CF4D559A9F1DFAA9FAAE",
         "junitClass": "neoth"
       },
       {
         "test": "connectors::control_plane::rpc::tests::unix_client_discovery_rejects_wrong_cc_nonce_pid_lock_nonce_and_runtime_nonce_before_connect",
         "sourcePath": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-        "sourceSha256": "7950EC734C928A894F73CA4D65D80BC386C3921E859747C122D8CF1CC02ED116",
+        "sourceSha256": "894C1ED310BEB1BB5808885FE47AB43C28E510BDFE22CF4D559A9F1DFAA9FAAE",
         "junitClass": "neoth"
       },
       {
         "test": "connectors::control_plane::rpc::tests::unix_client_discovery_rejects_group_readable_and_symlinked_tokens_before_connect",
         "sourcePath": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-        "sourceSha256": "7950EC734C928A894F73CA4D65D80BC386C3921E859747C122D8CF1CC02ED116",
+        "sourceSha256": "894C1ED310BEB1BB5808885FE47AB43C28E510BDFE22CF4D559A9F1DFAA9FAAE",
         "junitClass": "neoth"
       },
       {
         "test": "connectors::control_plane::rpc::tests::unix_private_discovery_reader_rejects_mode_symlink_and_oversize_on_the_opened_fd",
         "sourcePath": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-        "sourceSha256": "7950EC734C928A894F73CA4D65D80BC386C3921E859747C122D8CF1CC02ED116",
+        "sourceSha256": "894C1ED310BEB1BB5808885FE47AB43C28E510BDFE22CF4D559A9F1DFAA9FAAE",
         "junitClass": "neoth"
       },
       {
         "test": "connectors::control_plane::rpc::tests::unix_client_endpoint_identity_detects_a_replaced_socket_leaf",
         "sourcePath": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-        "sourceSha256": "7950EC734C928A894F73CA4D65D80BC386C3921E859747C122D8CF1CC02ED116",
+        "sourceSha256": "894C1ED310BEB1BB5808885FE47AB43C28E510BDFE22CF4D559A9F1DFAA9FAAE",
         "junitClass": "neoth"
       },
       {
         "test": "connectors::control_plane::rpc::tests::unix_client_fixture_home_is_canonical_under_the_inherited_temp_environment",
         "sourcePath": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-        "sourceSha256": "7950EC734C928A894F73CA4D65D80BC386C3921E859747C122D8CF1CC02ED116",
+        "sourceSha256": "894C1ED310BEB1BB5808885FE47AB43C28E510BDFE22CF4D559A9F1DFAA9FAAE",
         "junitClass": "neoth"
       },
       {
@@ -16855,6 +16855,20 @@
       }
     ],
     "note": "537sources862native98GUI, Group432/GUI124; exact retained preview; mandatory actual guardian fixtures replace synthetic unshare proxy; OpenClaw manual_contains repair; no local validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave253HostedFormat": {
+    "base": "d99d5c6c2cb69eab0648364bf1ac158679a3ac21",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
+        "bytes": 136472,
+        "sha256": "894C1ED310BEB1BB5808885FE47AB43C28E510BDFE22CF4D559A9F1DFAA9FAAE",
+        "blob": "aefc9ae5c02f41e7bed69e9a0c6a05dd63402bb1"
+      }
+    ],
+    "note": "424/424 exact-source49e admission; later W253 one-path formatter imported with source/SHA/preimage/postimage checks, no local execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

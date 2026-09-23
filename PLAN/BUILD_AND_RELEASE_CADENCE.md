@@ -3,6 +3,16 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W251 Hosted acceptance (2026-09-23):** Group424 `35805034886` on `49e58dfb`
+passed **424/424**. All 91 selected source paths, matrix, lock and every actual
+test terminal were verified. The previously failing held-lease lifecycle case
+now passes without a larger timeout. This proves the W247/W251 focused native
+batch at that source; it does not cover later W249/W253 additions or close the
+broader CC-03/CC-04 criteria. The one-path W253 formatting receipt from
+Preflight `35806201049` was source/SHA/preimage/postimage verified and imported.
+Group432 `35806200712` and GUI124 `35806202796` continue on `d99d5c6c`.
+No local formatter, compiler or test ran; Road counts remain unchanged.
+
 **W253 import preview and W255 actual-guardian gate (2026-09-23):** import
 planning now returns the exact retained plan's record count, policy revision
 and parser revision beside its opaque confirmation tokens. It exposes no source

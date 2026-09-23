@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T01:22:54.8591017Z",
-  "validationStatus": "W253 preview and W255 actual guardian gate reviewed; Hosted pending",
+  "capturedUtc": "2026-09-23T01:26:34.3031341Z",
+  "validationStatus": "Group42449 all passed; W253 exact Hosted format imported, Group432 and GUI124 running",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -438,18 +438,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 95750,
-      "sha256": "85A5C73AAB2F3962D8D04F85D59C3AE51DC472B96AA0620B59BC6311B4142AE4"
+      "bytes": 96441,
+      "sha256": "2BD9C1C6A804A77F553D33B0873B7BE3BD83194FD44EE2933E7004881190B5BE"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1098685,
-      "sha256": "BFA0A885C4654D616A0DACEFBF06A7FD48B0F1D29D100087F1AA7673160AC207"
+      "bytes": 1099376,
+      "sha256": "A4697DC25379944D795D41431E243F6689A6B001165D9783BC8F3B3653ABD55E"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1694253,
-      "sha256": "638AD36144BDC026B82B863A2290AE440CE58C727464DF0AC342A53506A1F63C"
+      "bytes": 1694944,
+      "sha256": "E1C8BE9A7EFF592705C952268A289FFE718197FAFA7E30B5FA1EDEF51A2F3237"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1533,8 +1533,8 @@
     },
     {
       "path": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-      "bytes": 136437,
-      "sha256": "7950EC734C928A894F73CA4D65D80BC386C3921E859747C122D8CF1CC02ED116"
+      "bytes": 136472,
+      "sha256": "894C1ED310BEB1BB5808885FE47AB43C28E510BDFE22CF4D559A9F1DFAA9FAAE"
     },
     {
       "path": "SRC/neothd/src/context_graph/mod.rs",
