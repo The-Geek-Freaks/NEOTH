@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "P215accepted;W350realoutboxfixtures+W351exactcompilefixes;hostedpending",
+  "status": "P215accepted W350351exacthostedformat imported;Core32bcpending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 110940,
-    "sha256": "394A3B58D390ACFC711D489188A9BE235912CFAEFC3C4A6DF3EAFB5641AA602D"
+    "bytes": 110931,
+    "sha256": "90F7BAB5F1BFF7312E831CFF4DF80B8C68EE3CA45CBC0AAE57C4EAC25360B36C"
   },
   "sourceInputs": 639,
   "requiredNativeTests": [
@@ -6204,55 +6204,55 @@
     {
       "test": "daemon::dream_phases::tests::light_promotes_only_selected_hot_inputs_and_real_warm_reader_retains_trust_zero",
       "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
-      "sourceSha256": "592D65A92AD835402958BBF1FB2A8621935E1E476EE890D107D81ABB2A6E6854",
+      "sourceSha256": "8B07719EE76E29DE8DACE85886FFD473709BC34BEEAAF1622E2585DA59DA047D",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::dream_phases::tests::second_day_with_no_fresh_hot_rows_creates_one_canonical_rem_edge_and_duplicate_ticks_do_not_reinforce",
       "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
-      "sourceSha256": "592D65A92AD835402958BBF1FB2A8621935E1E476EE890D107D81ABB2A6E6854",
+      "sourceSha256": "8B07719EE76E29DE8DACE85886FFD473709BC34BEEAAF1622E2585DA59DA047D",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::dream_phases::tests::oversized_dream_ids_bind_the_deterministic_first_32_and_leave_the_rest_hot",
       "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
-      "sourceSha256": "592D65A92AD835402958BBF1FB2A8621935E1E476EE890D107D81ABB2A6E6854",
+      "sourceSha256": "8B07719EE76E29DE8DACE85886FFD473709BC34BEEAAF1622E2585DA59DA047D",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::dream_phases::tests::channel_consent_revocation_after_prepare_blocks_all_dream_effects",
       "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
-      "sourceSha256": "592D65A92AD835402958BBF1FB2A8621935E1E476EE890D107D81ABB2A6E6854",
+      "sourceSha256": "8B07719EE76E29DE8DACE85886FFD473709BC34BEEAAF1622E2585DA59DA047D",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::dream_phases::tests::channel_consent_regrant_with_a_new_revision_denies_the_prepared_binding",
       "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
-      "sourceSha256": "592D65A92AD835402958BBF1FB2A8621935E1E476EE890D107D81ABB2A6E6854",
+      "sourceSha256": "8B07719EE76E29DE8DACE85886FFD473709BC34BEEAAF1622E2585DA59DA047D",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::dream_phases::tests::generation_or_corrupted_binding_denial_leaves_phase_effects_unmutated",
       "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
-      "sourceSha256": "592D65A92AD835402958BBF1FB2A8621935E1E476EE890D107D81ABB2A6E6854",
+      "sourceSha256": "8B07719EE76E29DE8DACE85886FFD473709BC34BEEAAF1622E2585DA59DA047D",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::dream_phases::tests::claimed_resume_only_uses_existing_bound_input_and_cannot_select_new_rows",
       "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
-      "sourceSha256": "592D65A92AD835402958BBF1FB2A8621935E1E476EE890D107D81ABB2A6E6854",
+      "sourceSha256": "8B07719EE76E29DE8DACE85886FFD473709BC34BEEAAF1622E2585DA59DA047D",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::dream_phases::tests::prepared_repair_recreates_only_the_declared_missing_pair_once",
       "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
-      "sourceSha256": "592D65A92AD835402958BBF1FB2A8621935E1E476EE890D107D81ABB2A6E6854",
+      "sourceSha256": "8B07719EE76E29DE8DACE85886FFD473709BC34BEEAAF1622E2585DA59DA047D",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::dream_phases::tests::rejected_light_write_rolls_back_without_completing_the_prepared_receipt",
       "sourcePath": "SRC/neothd/src/daemon/dream_phases.rs",
-      "sourceSha256": "592D65A92AD835402958BBF1FB2A8621935E1E476EE890D107D81ABB2A6E6854",
+      "sourceSha256": "8B07719EE76E29DE8DACE85886FFD473709BC34BEEAAF1622E2585DA59DA047D",
       "junitClass": "neoth"
     },
     {
@@ -6330,13 +6330,13 @@
     {
       "test": "cli::dreaming_task::tests::effect_rail_rejects_cancelled_and_superseded_generations",
       "sourcePath": "SRC/neothd/src/cli/dreaming_task.rs",
-      "sourceSha256": "87CE72336047E16C6A6A301978FD985B6FAFCD466A903191BD8C7104B7A5BC64",
+      "sourceSha256": "4E889333E7A07F3448F2C6053C721D1D20175C333F217FD61CC0AC894EB619AF",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dreaming_task::tests::scheduled_pass_binds_jsonl_dream_and_audit_day_to_claimed_local_date",
       "sourcePath": "SRC/neothd/src/cli/dreaming_task.rs",
-      "sourceSha256": "87CE72336047E16C6A6A301978FD985B6FAFCD466A903191BD8C7104B7A5BC64",
+      "sourceSha256": "4E889333E7A07F3448F2C6053C721D1D20175C333F217FD61CC0AC894EB619AF",
       "junitClass": "neoth"
     },
     {
@@ -6348,13 +6348,13 @@
     {
       "test": "cli::dreaming_task::tests::dream_phase_outboxes_deliver_once_and_exact_replay_has_no_new_effects",
       "sourcePath": "SRC/neothd/src/cli/dreaming_task.rs",
-      "sourceSha256": "87CE72336047E16C6A6A301978FD985B6FAFCD466A903191BD8C7104B7A5BC64",
+      "sourceSha256": "4E889333E7A07F3448F2C6053C721D1D20175C333F217FD61CC0AC894EB619AF",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dreaming_task::tests::dream_phase_ack_loss_stays_pending_then_restart_uses_existing_exact_before_delivery",
       "sourcePath": "SRC/neothd/src/cli/dreaming_task.rs",
-      "sourceSha256": "87CE72336047E16C6A6A301978FD985B6FAFCD466A903191BD8C7104B7A5BC64",
+      "sourceSha256": "4E889333E7A07F3448F2C6053C721D1D20175C333F217FD61CC0AC894EB619AF",
       "junitClass": "neoth"
     }
   ],
@@ -20994,6 +20994,26 @@
       }
     ],
     "note": "Core4ea5 E0308 and E0505 corrected; Group721; no local executable validation",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave349351HostedFormat": {
+    "base": "32bc0f82af685faadd88631256ba38516da6cfff",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/dreaming_task.rs",
+        "bytes": 84511,
+        "sha256": "4E889333E7A07F3448F2C6053C721D1D20175C333F217FD61CC0AC894EB619AF",
+        "blob": "4ba8284375cb396ad04429bcbd2d105d16d7cbff"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/dream_phases.rs",
+        "bytes": 39696,
+        "sha256": "8B07719EE76E29DE8DACE85886FFD473709BC34BEEAAF1622E2585DA59DA047D",
+        "blob": "524596a2e8b34fd7abac6cad81917d39c9a23770"
+      }
+    ],
+    "note": "2file format patch verified against artifactSHA and eachGit pre/postimage;no localformatter",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

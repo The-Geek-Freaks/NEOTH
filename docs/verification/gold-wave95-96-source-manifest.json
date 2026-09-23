@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T10:08:31.9081754Z",
-  "validationStatus": "P215accepted;W350realoutboxfixtures+W351exactcompilefixes;hostedpending",
+  "capturedUtc": "2026-09-23T10:11:38.8734344Z",
+  "validationStatus": "P215accepted W350351exacthostedformat imported;Core32bcpending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3128,13 +3128,13 @@
     },
     {
       "path": "SRC/neothd/src/cli/dreaming_task.rs",
-      "bytes": 84273,
-      "sha256": "87CE72336047E16C6A6A301978FD985B6FAFCD466A903191BD8C7104B7A5BC64"
+      "bytes": 84511,
+      "sha256": "4E889333E7A07F3448F2C6053C721D1D20175C333F217FD61CC0AC894EB619AF"
     },
     {
       "path": "SRC/neothd/src/daemon/dream_phases.rs",
-      "bytes": 39761,
-      "sha256": "592D65A92AD835402958BBF1FB2A8621935E1E476EE890D107D81ABB2A6E6854"
+      "bytes": 39696,
+      "sha256": "8B07719EE76E29DE8DACE85886FFD473709BC34BEEAAF1622E2585DA59DA047D"
     },
     {
       "path": "SRC/neothd/src/memory/assoc_graph.rs",

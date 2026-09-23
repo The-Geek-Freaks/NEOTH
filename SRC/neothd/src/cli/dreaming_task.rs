@@ -1558,9 +1558,14 @@ mod tests {
             crate::daemon::dream_phases::prepare_for_day(home.path(), day, generation).unwrap(),
             "the real phase preparer must persist the day input"
         );
-        let audits = crate::daemon::dream_phases::resume_existing_for_day(home.path(), day, generation)
-            .expect("complete real Dream phases into SQLite outboxes");
-        assert_eq!(audits.len(), 3, "Light, REM, and Repair must each be pending");
+        let audits =
+            crate::daemon::dream_phases::resume_existing_for_day(home.path(), day, generation)
+                .expect("complete real Dream phases into SQLite outboxes");
+        assert_eq!(
+            audits.len(),
+            3,
+            "Light, REM, and Repair must each be pending"
+        );
 
         let wal_dir = home.path().join("wal");
         std::fs::create_dir_all(&wal_dir).unwrap();
@@ -1579,10 +1584,13 @@ mod tests {
             "all three authenticated writer receipts must bridge SQLite outboxes to delivered"
         );
         let wal_len_after_delivery = std::fs::metadata(&segment).unwrap().len();
-        let retained_after_delivery: i64 = crate::memory::store::open(&home.path().join("views.db"))
-            .unwrap()
-            .query_row("SELECT COUNT(*) FROM idx_consolidated", [], |row| row.get(0))
-            .unwrap();
+        let retained_after_delivery: i64 =
+            crate::memory::store::open(&home.path().join("views.db"))
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM idx_consolidated", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
 
         assert!(
             crate::daemon::dream_phases::resume_existing_for_day(home.path(), day, generation)
@@ -1597,7 +1605,9 @@ mod tests {
         );
         let retained_after_replay: i64 = crate::memory::store::open(&home.path().join("views.db"))
             .unwrap()
-            .query_row("SELECT COUNT(*) FROM idx_consolidated", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM idx_consolidated", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(
             retained_after_replay, retained_after_delivery,
@@ -1616,9 +1626,12 @@ mod tests {
         seed_dream_phase_home(home.path());
         let day = "2042-03-15";
         let generation = "w350-fixture-generation";
-        assert!(crate::daemon::dream_phases::prepare_for_day(home.path(), day, generation).unwrap());
-        let audits = crate::daemon::dream_phases::resume_existing_for_day(home.path(), day, generation)
-            .expect("complete phase effects before simulating lost acknowledgement");
+        assert!(
+            crate::daemon::dream_phases::prepare_for_day(home.path(), day, generation).unwrap()
+        );
+        let audits =
+            crate::daemon::dream_phases::resume_existing_for_day(home.path(), day, generation)
+                .expect("complete phase effects before simulating lost acknowledgement");
         assert_eq!(audits.len(), 3);
         let lost_ack_audit = audits[0].clone();
 
@@ -1663,8 +1676,9 @@ mod tests {
         drop(writer);
         join.await.expect("finish pre-restart Dream writer");
 
-        let (restarted, restarted_join) = crate::wal::spawn_for_home(segment, home.path().to_path_buf())
-            .expect("restart the exact home-bound Dream audit writer");
+        let (restarted, restarted_join) =
+            crate::wal::spawn_for_home(segment, home.path().to_path_buf())
+                .expect("restart the exact home-bound Dream audit writer");
         assert!(matches!(
             restarted
                 .append_dream_audit_once(home.path(), dream_audit_descriptor(&audits[0]))
@@ -1690,7 +1704,9 @@ mod tests {
         );
 
         drop(restarted);
-        restarted_join.await.expect("finish restarted Dream audit writer");
+        restarted_join
+            .await
+            .expect("finish restarted Dream audit writer");
     }
     struct AlwaysWeatherEmbed;
 

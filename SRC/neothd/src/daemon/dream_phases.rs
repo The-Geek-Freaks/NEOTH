@@ -246,21 +246,20 @@ fn prepare_or_load(
              WHERE warm.kind='retained' AND warm.event_id IS NOT NULL AND (o.origin_kind='local_attested' OR (o.origin_kind='channel_bound' AND c.state='verified_granted')) \
              ORDER BY warm.importance DESC, warm.consolidated_ts DESC, warm.event_id ASC LIMIT 32"
         )?;
-        warm
-            .query_map([], |r| {
-                Ok((
-                    r.get(0)?,
-                    r.get(1)?,
-                    r.get(2)?,
-                    r.get(3)?,
-                    r.get(4)?,
-                    r.get(5)?,
-                    r.get(6)?,
-                    r.get(7)?,
-                    r.get(8)?,
-                ))
-            })?
-            .collect::<rusqlite::Result<_>>()?
+        warm.query_map([], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+                r.get(7)?,
+                r.get(8)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<_>>()?
     };
     for (event_id, text_hash, trust, kind, channel, account, sender, consent, revision) in warm_rows
     {
