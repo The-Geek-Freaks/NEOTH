@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W268 source reviewed; Group451/Core/format hosted pending; GUI124841 and FullCI49 active",
+  "status": "W268 hosted formatter imported; Group451 and Core cbae pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 93385,
-    "sha256": "4E85C2AE932E08C6E764E2D072F31EEBD7ECCA46A3631D7935BE563B708F0A53"
+    "bytes": 93359,
+    "sha256": "9BBB2F3D5071B3E07D9A6C90122C7C2F32E6082B0104B43C439683E579B6D925"
   },
   "sourceInputs": 538,
   "requiredNativeTests": [
@@ -5280,13 +5280,13 @@
     {
       "test": "channels::signal::tests::live_signal_reply_refuses_unrecorded_intent_and_records_one_terminal_per_effect",
       "sourcePath": "SRC/neothd/src/channels/signal.rs",
-      "sourceSha256": "55EE8045BD55939838B3F590B58337ABC878FFF009167394B56F931DE0CE901C",
+      "sourceSha256": "823F9325F27F5CBE10001BC94D00C921972A9818423A0F20360FF0983BE5F304",
       "junitClass": "neoth"
     },
     {
       "test": "channels::signal::tests::live_signal_reply_reports_receipt_failure_without_replaying_accepted_effect",
       "sourcePath": "SRC/neothd/src/channels/signal.rs",
-      "sourceSha256": "55EE8045BD55939838B3F590B58337ABC878FFF009167394B56F931DE0CE901C",
+      "sourceSha256": "823F9325F27F5CBE10001BC94D00C921972A9818423A0F20360FF0983BE5F304",
       "junitClass": "neoth"
     },
     {
@@ -17330,6 +17330,20 @@
       }
     ],
     "note": "Signal default actual reply intent-before-effect, terminal-after-effect and no replay; startup sealed authority; exact generated authenticated WAL and Doctor isolation. Local executable validation prohibited.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave268HostedFormat": {
+    "base": "cbae95475a2c75f18e604b2d0579491b6c18a125",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/channels/signal.rs",
+        "bytes": 24668,
+        "sha256": "823F9325F27F5CBE10001BC94D00C921972A9818423A0F20360FF0983BE5F304",
+        "blob": "6b0eda4180ee52bd1efb73a254758c16b035dfd6"
+      }
+    ],
+    "note": "Source-head and SHA256SUMS checked; sole Signal path exact Gitblob pre/postimages verified. No local formatter.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -237,26 +237,27 @@ where
         crate::time::now_unix_secs(),
         provenance,
     )
-    .await else {
+    .await
+    else {
         return Err(ChannelError::Transport(
             "mandatory authenticated Signal egress intent could not be recorded".to_string(),
         ));
     };
     match post().await {
-        Ok(message_id) => {
-            crate::channels::send_gate::emit_legacy_live_egress_result(
-                writer,
-                &intent_id,
-                "delivered",
-                Some(&message_id.0),
-                crate::time::now_unix_secs(),
-                provenance,
-            )
-            .await
-            .map_err(|()| ChannelError::Transport(
+        Ok(message_id) => crate::channels::send_gate::emit_legacy_live_egress_result(
+            writer,
+            &intent_id,
+            "delivered",
+            Some(&message_id.0),
+            crate::time::now_unix_secs(),
+            provenance,
+        )
+        .await
+        .map_err(|()| {
+            ChannelError::Transport(
                 "mandatory authenticated Signal egress receipt could not be recorded".to_string(),
-            ))
-        }
+            )
+        }),
         Err(error) => {
             let outcome = match &error {
                 ChannelError::Transport(_) => "transport",
@@ -273,9 +274,12 @@ where
                 provenance,
             )
             .await
-            .map_err(|()| ChannelError::Transport(
-                "mandatory authenticated Signal egress receipt could not be recorded".to_string(),
-            ))?;
+            .map_err(|()| {
+                ChannelError::Transport(
+                    "mandatory authenticated Signal egress receipt could not be recorded"
+                        .to_string(),
+                )
+            })?;
             Err(error)
         }
     }
@@ -435,7 +439,10 @@ mod tests {
         let (writer, join, ready) =
             crate::wal::writer::spawn_for_home_ready(segment.clone(), home.path().to_path_buf())
                 .expect("spawn Signal live-reply WAL writer");
-        ready.wait().await.expect("initialize Signal live-reply WAL");
+        ready
+            .wait()
+            .await
+            .expect("initialize Signal live-reply WAL");
         let delivered_calls = Arc::new(AtomicUsize::new(0));
         send_live_signal_reply(
             &writer,
@@ -475,13 +482,19 @@ mod tests {
             .is_err()
         );
         assert_eq!(delivered_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(failed_calls.load(Ordering::SeqCst), 1, "adapter errors do not retry");
+        assert_eq!(
+            failed_calls.load(Ordering::SeqCst),
+            1,
+            "adapter errors do not retry"
+        );
         drop(writer);
         join.await
             .expect("join Signal live-reply WAL writer")
             .expect("close Signal live-reply WAL writer");
 
-        let bytes = tokio::fs::read(segment).await.expect("read Signal live-reply WAL");
+        let bytes = tokio::fs::read(segment)
+            .await
+            .expect("read Signal live-reply WAL");
         let mut cursor = crate::wal::segment_header::SEGMENT_HEADER_LEN;
         let mut outcomes = Vec::new();
         while cursor < bytes.len() {
@@ -496,7 +509,10 @@ mod tests {
             }
             cursor += frame.header.total_len as usize;
         }
-        assert_eq!(outcomes, vec![Some("delivered".to_string()), Some("transport".to_string())]);
+        assert_eq!(
+            outcomes,
+            vec![Some("delivered".to_string()), Some("transport".to_string())]
+        );
         let counters = crate::daemon::channel_transport_evidence::read_account_transport_evidence(
             home.path(),
             crate::time::now_unix_secs() as i64,
@@ -505,7 +521,11 @@ mod tests {
         let signal_default = crate::channels::registry::ChannelRef::default_account(
             crate::channels::ChannelKind::Signal,
         );
-        assert_eq!(counters.len(), 1, "no other account may gain Signal evidence");
+        assert_eq!(
+            counters.len(),
+            1,
+            "no other account may gain Signal evidence"
+        );
         assert_eq!(counters.get(&signal_default).unwrap().accepted, 1);
         assert_eq!(counters.get(&signal_default).unwrap().failed, 1);
         assert_eq!(counters.get(&signal_default).unwrap().completed, 2);
@@ -521,12 +541,11 @@ mod tests {
         let wal = home.path().join("wal");
         std::fs::create_dir_all(&wal).expect("create Signal unsettled-receipt WAL");
         let segment = wal.join("000001.wal");
-        let (writer, completion, ready) =
-            crate::wal::writer::spawn_for_home_ready_with_completion(
-                segment.clone(),
-                home.path().to_path_buf(),
-            )
-            .expect("spawn Signal unsettled-receipt WAL writer");
+        let (writer, completion, ready) = crate::wal::writer::spawn_for_home_ready_with_completion(
+            segment.clone(),
+            home.path().to_path_buf(),
+        )
+        .expect("spawn Signal unsettled-receipt WAL writer");
         ready
             .wait()
             .await
@@ -582,13 +601,14 @@ mod tests {
             .send(())
             .expect("release accepted Signal adapter result after writer stop");
         assert!(
-            in_flight
-                .await
-                .expect("join Signal live reply")
-                .is_err(),
+            in_flight.await.expect("join Signal live reply").is_err(),
             "receipt failure is visible after the one accepted Signal effect"
         );
-        assert_eq!(calls.load(Ordering::SeqCst), 1, "receipt failure never retries Signal");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "receipt failure never retries Signal"
+        );
         drop(writer);
 
         let bytes = tokio::fs::read(segment)
