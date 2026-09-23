@@ -550,6 +550,9 @@ pub mod gui_bridge_test_support {
         pub provider_invocations: usize,
         pub provider_chunks: usize,
         pub post_provider_hook_observed: bool,
+        /// Bounded W458-only failure context from the real runtime capture.
+        /// It contains only fixed diagnostic labels and frame counts.
+        pub terminal_diagnostic: String,
     }
 
     pub async fn capture_w458_real_producer(
@@ -599,6 +602,9 @@ pub mod gui_bridge_test_support {
             generation: capture.buddy_generation,
             latest_sequence: capture.buddy_replay_cursor,
         };
+        // Retain the runtime's content-free diagnostic before its typed frame
+        // vectors are moved into the bridge projection below.
+        let terminal_diagnostic = capture.terminal_diagnostic();
         let main_events = capture
             .main_frames
             .into_iter()
@@ -618,6 +624,7 @@ pub mod gui_bridge_test_support {
             provider_invocations: capture.provider_invocations,
             provider_chunks: capture.provider_chunks,
             post_provider_hook_observed: capture.post_provider_hook_observed,
+            terminal_diagnostic,
         })
     }
 

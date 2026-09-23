@@ -2269,7 +2269,8 @@ pub(crate) mod w458_test_support {
                 let Some(GuiChatStreamFrame {
                     payload: GuiChatFramePayload::Terminal { terminal },
                     ..
-                }) = frames.last() else {
+                }) = frames.last()
+                else {
                     return ("missing", "missing", "missing");
                 };
                 let state = match terminal.state {
@@ -3273,7 +3274,8 @@ mod lifecycle_tests {
                 .await
                 .expect("W458 shared real producer fixture");
             assert_eq!(
-                capture.provider_invocations, 1,
+                capture.provider_invocations,
+                1,
                 "{name} reached the real streaming provider exactly once; {}",
                 capture.terminal_diagnostic(),
             );

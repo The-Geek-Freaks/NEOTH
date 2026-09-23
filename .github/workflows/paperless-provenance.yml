@@ -1,0 +1,52 @@
+name: W531 Paperless OCI provenance acquisition
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paperless-provenance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  acquire:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact source without credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Test bounded acquisition contract
+        run: python3 -m unittest scripts/test_acquire_paperless_provenance.py
+
+      - name: Acquire OCI index and platform-manifest receipts only
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt_dir="$RUNNER_TEMP/paperless-provenance"
+          mkdir -p "$receipt_dir"
+          python3 scripts/acquire_paperless_provenance.py \
+            --output "$receipt_dir/receipt.json" \
+            --source-head "$(git rev-parse HEAD)" \
+            --script-sha256 "$(sha256sum scripts/acquire_paperless_provenance.py | awk '{print $1}')" \
+            --workflow-sha256 "$(sha256sum .github/workflows/paperless-provenance.yml | awk '{print $1}')"
+          sha256sum "$receipt_dir/receipt.json" > "$receipt_dir/receipt.json.sha256"
+
+      - name: Upload candidate provenance receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: paperless-oci-provenance-receipt
+          path: ${{ runner.temp }}/paperless-provenance
+          if-no-files-found: error
+          retention-days: 14

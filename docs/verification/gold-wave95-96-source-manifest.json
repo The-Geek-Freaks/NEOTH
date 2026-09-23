@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T22:13:50.1293692Z",
-  "validationStatus": "W525_W529_SOURCE_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-09-23T22:23:37.2421353Z",
+  "validationStatus": "W531_W536_SOURCE_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -60,6 +60,11 @@
       "path": ".github/workflows/openclaw-schema-inventory.yml",
       "bytes": 4096,
       "sha256": "AF91A9EF852BABD2CD41A0B11F18FE1FEF727B3FD23234431D7FED2330C3ACD1"
+    },
+    {
+      "path": ".github/workflows/paperless-provenance.yml",
+      "bytes": 1811,
+      "sha256": "DB8466F7248A98726C97EE72D92194AA077FB7508440BB736A25395D4DB7F4BE"
     },
     {
       "path": ".github/workflows/preflight.yml",
@@ -1002,6 +1007,11 @@
       "sha256": "01E18D0E3DAA6F29D64C60A2653D7A41A2C2743EB2C5C580BA17A806AC4170EA"
     },
     {
+      "path": "docs/gold-wave531-paperless-provenance.md",
+      "bytes": 2452,
+      "sha256": "92CCEDB8059B9B15BFAC83D7D5C295970600E39F4DEC47EE1E51107D2C945420"
+    },
+    {
       "path": "docs/install.md",
       "bytes": 13637,
       "sha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625"
@@ -1238,18 +1248,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 192220,
-      "sha256": "86C25AEAFA34056F9FD2B60FF4F2560DAF11AFFF1662E612E4C5FFB88EC1CB4C"
+      "bytes": 193102,
+      "sha256": "B44DBA642F51FDEBDE4EE5BAB399AB537281505EBA60D76869C35B934EB81E5C"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1202544,
-      "sha256": "F084899482B0EC34FAF371B8A3165ABA3188613880DBAD1F10969727627C1B03"
+      "bytes": 1203426,
+      "sha256": "133F0CE05D090AC85036E7E6FDB0725224133A18C5920245C6150F29B0CA030C"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1801177,
-      "sha256": "F94297B7664A297E8943926A6905A89BCF74DB626520B94CACD4C563F6BB0600"
+      "bytes": 1802059,
+      "sha256": "35748D7005C3C4A783187DDABB5687823E9E529D41ED7E4314EF0A63F80226CB"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -1272,9 +1282,19 @@
       "sha256": "0E612B4A62427C2B3F169ADDBACED55F19E26220DB1F6A0AD0183CA5DC24C7E7"
     },
     {
+      "path": "scripts/acquire_paperless_provenance.py",
+      "bytes": 15066,
+      "sha256": "1E3E25F81568F2601FFCD520C50A15E4C55837E7068E83CBED3B69A6D83F5582"
+    },
+    {
       "path": "scripts/extract_openclaw_channel_schema.py",
       "bytes": 10267,
       "sha256": "08F2749E1A057F98A305C8589EF0BE1BA12830A268F6BB42E7D4F6EA1C721C12"
+    },
+    {
+      "path": "scripts/test_acquire_paperless_provenance.py",
+      "bytes": 6499,
+      "sha256": "C73C8581FE79B1CDD51BFA7C3BC1A03700E4BD7C974EB2A07B3F997C87C5B846"
     },
     {
       "path": "scripts/test_extract_openclaw_channel_schema.py",
@@ -1463,8 +1483,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2209143,
-      "sha256": "87DCA1487C1DE7C62D147C9F7CB0A7FA6A97CC1767B57A92D9E8ABB841DA20BB"
+      "bytes": 2209209,
+      "sha256": "0E1CDE3B7D86C1D4A070A8287D77225158D353985E9AFAFF3A4BFE29DAF2265F"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -1858,8 +1878,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1148607,
-      "sha256": "1DDE382BFF5C32710BD7338A1BA72B1C77ABF3AE19AE19C3F71AA3857271D336"
+      "bytes": 1148595,
+      "sha256": "EE8874B04744BC1CBC221B2786E95A16038E72A9C8B665B0B7B9EE2D94CD2265"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -2603,8 +2623,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_bridge.rs",
-      "bytes": 60957,
-      "sha256": "57903810F3D164AF2092B82BEA3FF21FE31E736F1119D63DF8E0F61400ED71A1"
+      "bytes": 61386,
+      "sha256": "44D4C241AC248249AFC4F510AB1DBBE1928209893EEA604B5D76F04DCFB75597"
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_protocol.rs",
@@ -2613,8 +2633,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "bytes": 172334,
-      "sha256": "14DB4FAEF4E08BAA257AEEDE876E65D203832A47270E88C4F9EB6D573C99437A"
+      "bytes": 172366,
+      "sha256": "90C9B8DC3447108B47049B5AA2ED50D07CADF13C835097AE7E711AC854765566"
     },
     {
       "path": "SRC/neothd/src/daemon/live_throughput.rs",

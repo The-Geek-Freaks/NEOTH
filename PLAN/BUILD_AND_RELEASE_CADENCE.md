@@ -3,6 +3,18 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W531 Paperless OCI provenance; W534/W536 stream diagnostics (2026-09-24):**
+A main-only hosted workflow acquires and retains three OCI indexes and six
+exact platform manifests with bounded HTTPS and digest/size/media checks.
+Seven direct/fake-client contract tests run hosted; no layer/image/runtime
+verification is claimed and artifact_verified remains false. Root verified
+the signed upstream release/commit and immutable compose hash. W534 imports
+the exact two-file hosted formatting patch; W536 forwards fixed-label producer
+diagnostics to the existing strict GUI assertion. Both source batches are
+independently reviewed; execution is pending. Inventory759sources/1198native,
+Group903/GUI148Linux144macOS; Road1044checked/278open/2partial,
+280raw/279pre-tag; WS-LF37done/81open. No local executable checks or Slint edits.
+Evidence:docs/gold-wave531-paperless-provenance.md.
 **W525-W529 hosted Chat/Paperless follow-up (2026-09-24):**
 Group8906b is admitted888PASS/2FAIL/0missing with176bindings. W526 aligns
 accepted Replace termination/refusal expectations with production while keeping

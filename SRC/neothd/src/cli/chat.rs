@@ -21520,8 +21520,7 @@ template = "[REDACTED]"
             "the provider boundary remains content-free"
         );
         assert_eq!(
-            provider_done[0]["refused"],
-            false,
+            provider_done[0]["refused"], false,
             "accepted PostProviderCall replacement must clear native final-stream refusal metadata"
         );
         assert!(
