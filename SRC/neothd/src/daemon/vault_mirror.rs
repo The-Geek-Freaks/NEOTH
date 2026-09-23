@@ -138,13 +138,36 @@ impl VaultMirrorStatus {
 
 /// Scheduler entrypoint.  A disabled configuration is an observable no-op.
 pub async fn run_nightly(home: &Path, config: &VaultMirrorConfig) -> VaultMirrorStatus {
+    run_nightly_dispatch(home, config, None).await
+}
+
+/// One policy dispatcher shared by the production configured-remote entrypoint
+/// and the test-only local-bare-remote fixture. `None` retains the production
+/// transport: the validated configured remote is resolved only by `run_impl`.
+async fn run_nightly_dispatch(
+    home: &Path,
+    config: &VaultMirrorConfig,
+    test_remote: Option<&str>,
+) -> VaultMirrorStatus {
     if !config.enabled {
         return VaultMirrorStatus::disabled();
     }
     if !config.allow_nightly_push {
         return VaultMirrorStatus::blocked(MirrorBlockReason::NightlyPushNotAllowed);
     }
-    run_impl(home, config, true).await
+    match test_remote {
+        Some(remote) => run_impl_for_remote(home, config, true, remote).await,
+        None => run_impl(home, config, true).await,
+    }
+}
+
+#[cfg(test)]
+async fn run_nightly_with_test_remote(
+    home: &Path,
+    config: &VaultMirrorConfig,
+    test_remote: &str,
+) -> VaultMirrorStatus {
+    run_nightly_dispatch(home, config, Some(test_remote)).await
 }
 
 /// CLI entrypoint. `push=false` performs no Git network action.
@@ -1618,6 +1641,87 @@ mod tests {
             repaired.receipt.unwrap().phase,
             MirrorPhase::Verified
         ));
+    }
+
+    #[tokio::test]
+    async fn nightly_entrypoint_default_off_and_without_permission_create_no_mirror_state() {
+        let fixture = tempfile::tempdir().unwrap();
+        let home = fixture.path().join("missing-neoth-home");
+
+        let disabled = run_nightly(&home, &VaultMirrorConfig::default()).await;
+        assert!(matches!(
+            disabled.config,
+            MirrorConfigStatus::Disabled
+        ));
+        assert!(disabled.receipt.is_none());
+        assert!(!home.exists());
+
+        let denied = run_nightly(&home, &test_config(1, false)).await;
+        assert!(matches!(
+            denied.receipt.as_ref().map(|receipt| &receipt.phase),
+            Some(MirrorPhase::Blocked(MirrorBlockReason::NightlyPushNotAllowed))
+        ));
+        assert!(!home.exists());
+    }
+
+    // Hosted-only: executes the public nightly gates and then the same durable
+    // push/exact-head protocol against a local bare remote. Do not run it on
+    // the BSOD-held local workstation.
+    #[tokio::test]
+    async fn nightly_entrypoint_uses_durable_push_and_exact_head_verification() {
+        let fixture = tempfile::tempdir().unwrap();
+        let home = fixture.path().join("neoth-home");
+        let bare = fixture.path().join("remote.git");
+        std::fs::create_dir_all(home.join("wal")).unwrap();
+        std::fs::write(home.join("wal/fixture.wal"), b"nightly WAL fixture bytes").unwrap();
+        std::fs::write(home.join("credentials.yaml"), b"nightly credential sentinel").unwrap();
+        init_bare_remote(&bare);
+        let remote = bare.to_str().unwrap();
+        let mut config = test_config(1, false);
+        config.allow_nightly_push = true;
+
+        let status = run_nightly_with_test_remote(&home, &config, remote).await;
+        let receipt = status.receipt.expect("verified nightly receipt");
+        assert!(matches!(receipt.phase, MirrorPhase::Verified));
+        assert!(receipt.wal_included);
+        assert!(!receipt.credentials_included);
+        let commit = receipt.commit_oid.clone().expect("nightly commit id");
+        assert_eq!(receipt.remote_head_oid.as_deref(), Some(commit.as_str()));
+        let paths = MirrorPaths::open(&home, true).unwrap();
+        assert_eq!(
+            git_ls_remote(&paths.repository, remote, &config.branch)
+                .await
+                .unwrap(),
+            Some(commit)
+        );
+        let archive_path = paths
+            .staging
+            .display
+            .join(&receipt.run_id)
+            .join("archive.tar.gz");
+        let archive_file = std::fs::File::open(archive_path).unwrap();
+        let decoder = flate2::read::GzDecoder::new(archive_file);
+        let mut archive = tar::Archive::new(decoder);
+        let mut fixture_wal = None;
+        let mut credentials_member = false;
+        for entry in archive.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            let path = entry.path().unwrap().into_owned();
+            if path == Path::new("wal/fixture.wal") {
+                let mut bytes = Vec::new();
+                std::io::Read::read_to_end(&mut entry, &mut bytes).unwrap();
+                fixture_wal = Some(bytes);
+            }
+            if path == Path::new("credentials.yaml") {
+                credentials_member = true;
+            }
+        }
+        assert_eq!(fixture_wal.as_deref(), Some(b"nightly WAL fixture bytes".as_slice()));
+        assert!(!credentials_member);
+        let state = load_state(&paths).unwrap().expect("persisted nightly state");
+        assert!(state.active.is_none());
+        assert_eq!(state.verified_runs.len(), 1);
+        assert_eq!(state.verified_runs[0].run_id, receipt.run_id);
     }
 
     #[tokio::test]

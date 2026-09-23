@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T10:57:43.8894491Z",
-  "validationStatus": "W362 two Unix cap_std permission type errors corrected; hosted rerun pending",
+  "capturedUtc": "2026-09-23T11:07:49.3331632Z",
+  "validationStatus": "Reviewed nightly backup caller/archive/remote fixtures and two hosted browser lint repairs; fresh hosted verification pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -78,8 +78,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 14425,
-      "sha256": "92D2A9CADC64A6B0166DC38A70C82D3C5AA4230C7BB8730709CB261380BAC8D1"
+      "bytes": 14527,
+      "sha256": "8906EDDA36BD6F3B44F2A24977E6BCCD95DB399A60D53FD378BBA6B22083D76A"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -808,18 +808,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 154898,
-      "sha256": "6A2C2B588DC8A7BE66AA2CD9EC3D0D070B966427AFFFED66A9936FAFC3C265C5"
+      "bytes": 156193,
+      "sha256": "FE339680DD30FB83CCC4D78EC97996D4359260105C10F519407F3396A3BA0EB5"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1158057,
-      "sha256": "F8D748333C1D9F917A3F58C4322AFE2490B20CA8AB503E1259D4C0178E270D95"
+      "bytes": 1159352,
+      "sha256": "3D43FD6959DA26C94BB84731B7EA02EC357C03FFF2ECB4B777A31245DF50F563"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1755506,
-      "sha256": "B6D3E1A2F2BE9670F46437795B926A98246A956D31010DD3179A5FC0D6600349"
+      "bytes": 1756801,
+      "sha256": "C798C3328A8C38337531C982B96FF4AD9485BB7B3BC23B34534D672B733E7882"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -2173,8 +2173,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/vault_mirror.rs",
-      "bytes": 75965,
-      "sha256": "DE96C20D83761E9FDA0D4658773A4FBC106686A7A8DA7749E68CBD7168F57777"
+      "bytes": 80400,
+      "sha256": "7D8ED9135346FB12BB3DBAF0751FCF0441616F794DCE3921A73AD374569ADE8B"
     },
     {
       "path": "SRC/neothd/src/daemon/watchdog_cron.rs",
@@ -2948,8 +2948,8 @@
     },
     {
       "path": "SRC/neothd/src/tools/managed_browser.rs",
-      "bytes": 64305,
-      "sha256": "062FE57747F61C28F66B264025EA7FF2A9C451BA90FBBF42B6618D6EC07E7B4D"
+      "bytes": 64396,
+      "sha256": "9658D24E66C0F29FF4C2B123B1807123F14231EA0A858D966AC4BB4799A64B1D"
     },
     {
       "path": "SRC/neothd/src/tools/mod.rs",
@@ -3245,6 +3245,16 @@
       "path": "docs/gold-wave362-browser-permission-types.md",
       "bytes": 717,
       "sha256": "44D0F57B84907E65555BF60E08702E3E5DEEB14B9C3F6613B63B9BBAC004806B"
+    },
+    {
+      "path": "docs/gold-wave363-nightly-backup-callers.md",
+      "bytes": 1565,
+      "sha256": "2DDEDE3402D78623E0BB22B9EE02F2E1087008AF008828E05B536471CFDFBF1F"
+    },
+    {
+      "path": "docs/gold-wave365-browser-clippy.md",
+      "bytes": 719,
+      "sha256": "3CC6D469D380C8FE800C0236A62D6AF497A5A98F5895D494734A1B4304AD730B"
     }
   ]
 }

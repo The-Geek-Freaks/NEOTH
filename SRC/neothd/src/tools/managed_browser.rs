@@ -560,7 +560,6 @@ async fn download_reviewed_archive_at(
     let request = ExternalHttpRequest::get(url, ExternalHttpSurface::ManagedBrowserInstall);
     let permitted_request = request.clone();
     let url = url.to_owned();
-    let expected_bytes = expected_bytes;
     let expected_sha256 = expected_sha256.to_owned();
     http.execute(request, move |permit| async move {
         permit.require(&permitted_request)?;
@@ -704,22 +703,25 @@ fn install_verified_archive(
         let _ = sync_parent_directory(&generations, &generations_display)?;
         resolve_from_manifest(home_path, platform, manifest)
     })();
-    if install.is_err() && !published {
-        // The stage name is freshly allocated and only this operation may
-        // remove it. Cleanup is bounded and capability-relative; an ambiguous
-        // cleanup failure remains visible to the operator.
-        if let Err(cleanup) = remove_bound_real_directory_tree(
-            &generations,
-            &stage_name,
-            &stage_display,
-            stage_binding.identity_token(),
-        ) {
-            return Err(install.err().expect("checked error").context(format!(
-                "managed-browser stage cleanup also failed: {cleanup}"
-            )));
+    match (install, published) {
+        (Err(install_error), false) => {
+            // The stage name is freshly allocated and only this operation may
+            // remove it. Cleanup is bounded and capability-relative; an ambiguous
+            // cleanup failure remains visible to the operator.
+            match remove_bound_real_directory_tree(
+                &generations,
+                &stage_name,
+                &stage_display,
+                stage_binding.identity_token(),
+            ) {
+                Ok(()) => Err(install_error),
+                Err(cleanup) => Err(install_error.context(format!(
+                    "managed-browser stage cleanup also failed: {cleanup}"
+                ))),
+            }
         }
+        (install, _) => install,
     }
-    install
 }
 
 fn create_private_stage(

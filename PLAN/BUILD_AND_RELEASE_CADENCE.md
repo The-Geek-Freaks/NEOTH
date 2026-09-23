@@ -3,6 +3,25 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W363 nightly backup and W365 browser lint repair (2026-09-23):**
+The public nightly backup and the controlled bare-remote fixture now share
+one policy dispatcher. Two new regressions prove both denied modes leave the
+home absent and an admitted nightly run produces a verified remote commit,
+an archive containing exact WAL bytes but no seeded credentials, and durable
+settled state. Independent final review passed, including the owned archive
+path required before mutable reads. Twenty-four existing W184 identities
+join the grouped selection; its remaining shared and platform/GUI cases
+retain their explicit existing lanes.
+W365 removes the two actual Coreed749 Clippy diagnostics without suppressions:
+a redundant capture and panic-based error extraction. Original install errors
+and any cleanup failure remain observable. New hosted verification is pending.
+W366 selects the existing CLI-reference equality test; the newly generated
+browser command reference must be imported before that behavior run.
+Inventory650; native1092+Windows19/Linux33/macOS32; Group780; GUI135Linux/131macOS.
+Road1027checked/295open/2partial; WS-LF20done/98open unchanged.
+FullCI954 Linux stopped on a hosted runner shutdown (exit143); Windows/macOS
+and Group721 continue. No local executable validation ran.
+
 **W362 browser permission type repair (2026-09-23):** Core356
 run35851362763 found two Unix capability-permission type errors. The verified
 file now uses cap_std Permissions and its extension trait, preserving0700,

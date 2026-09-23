@@ -161,6 +161,8 @@ jobs:
               "wave352ManagedBrowserCliAcceptance": 7,
               "wave355EnabledRetentionCallerAcceptance": 2,
               "wave359DreamOptInAcceptance": 12,
+              "wave363NightlyBackupAcceptance": 26,
+              "wave366CliReferenceAcceptance": 1,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():
