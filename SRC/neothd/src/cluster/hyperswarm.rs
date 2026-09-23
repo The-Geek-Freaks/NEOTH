@@ -1913,7 +1913,7 @@ async fn handle_task_delegate_inner(
     // provider work. Only the operator-owned, exact-key assignment ceiling
     // may do that. In particular, Hello.capabilities and task-body fields
     // never participate in this decision.
-    if !membership_grant.task_delegate_authorized().unwrap_or(false) {
+    if !membership_grant.task_delegate_scope_authorized(body.scope.as_ref()).unwrap_or(false) {
         reply_task_rejected(
             peer_streams,
             remote_pk_hex,
@@ -2075,7 +2075,7 @@ async fn handle_task_delegate_inner(
             // A CLI revocation can land while the durable autonomy gate was
             // running. Re-read the assignment immediately before the queued
             // provider effect; an earlier Allow never becomes a capability.
-            if !membership_grant.task_delegate_authorized().unwrap_or(false) {
+            if !membership_grant.task_delegate_scope_authorized(body.scope.as_ref()).unwrap_or(false) {
                 reply_task_rejected(
                     peer_streams,
                     remote_pk_hex,
@@ -2100,6 +2100,7 @@ async fn handle_task_delegate_inner(
                 task_id.clone(),
                 body.prompt,
                 remote_pk_hex.to_string(),
+                body.scope,
                 membership_grant.clone(),
             ) {
                 Ok(job) => job,
@@ -2554,6 +2555,7 @@ mod tests {
             task_id: task_id.into(),
             prompt: prompt.into(),
             model_hint: None,
+            scope: None,
         }
     }
 

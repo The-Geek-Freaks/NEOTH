@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T11:53:00.4544725Z",
-  "validationStatus": "Core216 all4gates source-admitted; browser CLI reference imported; Group780/GUI135/BGE2 behavior pending",
+  "capturedUtc": "2026-09-23T12:04:10.6975124Z",
+  "validationStatus": "W374/W380 scoped cluster + W379 macOS GUI static reviewed; Group786/Core/new CLI export/GUI behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -78,8 +78,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 14527,
-      "sha256": "8906EDDA36BD6F3B44F2A24977E6BCCD95DB399A60D53FD378BBA6B22083D76A"
+      "bytes": 14578,
+      "sha256": "D70614311765B155802C7ABABA427CD17588D22E46105EE645D1162599423DE2"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -813,13 +813,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1162495,
-      "sha256": "439C41B3393D0A4C6DB1FA9A2ED8ADDB86B25371BF2C241D4198994D5660E282"
+      "bytes": 1163608,
+      "sha256": "4A480640F189BFDA81C1D01C29D16743804B68CC685385FE2C295D7CE9FFB104"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1759944,
-      "sha256": "AB358EE727C6BEF22913C06D03324D1991087487B1C889B89BDDE2E660BD722B"
+      "bytes": 1761057,
+      "sha256": "6C92B1383F61DF20E78AC61CF4FB270A5B02B27072C17A2D88D2893100DF09E5"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1028,8 +1028,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2177555,
-      "sha256": "B6A91F71D55671D107D1F3A714471B4E1356313613AE81233F72CE6D9111E922"
+      "bytes": 2177844,
+      "sha256": "FA5E2A251B872A03AEEED2AE53F00E579C3C040735C3BAA7069220C68728540D"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -1428,8 +1428,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/cluster.rs",
-      "bytes": 246781,
-      "sha256": "0297A409C86D4727CCC848C709EA9281104BBAB00B48755D1CAC97DC2F33FE4D"
+      "bytes": 254826,
+      "sha256": "1F7243667C2E4F36D1B8CFE2AB2A0559D361B3E2997C1065745DE550F87888C4"
     },
     {
       "path": "SRC/neothd/src/cli/code_intel.rs",
@@ -1718,18 +1718,18 @@
     },
     {
       "path": "SRC/neothd/src/cluster/executor.rs",
-      "bytes": 70307,
-      "sha256": "FAA20034576931DFE5ADFEB601AEC0F30052E391B57FDB8BDA315403D15A210E"
+      "bytes": 78351,
+      "sha256": "76DB0AB5696FD3100D0D87E419D361ADC2D43D55CAF5872EC7E548E8A30669A1"
     },
     {
       "path": "SRC/neothd/src/cluster/hyperswarm.rs",
-      "bytes": 147126,
-      "sha256": "7FFB7110A4F6A88AE4D33FE081BA24373C83CC5785CA85429DB2FFB6CBF10BF4"
+      "bytes": 147229,
+      "sha256": "D8F3D0D7478ABEF919457924A555F7FBAD03A13128FC02CEA32B6484AFAB4236"
     },
     {
       "path": "SRC/neothd/src/cluster/membership.rs",
-      "bytes": 266738,
-      "sha256": "ADB97D6D1E51C77845BC2D0A5E8064FC1286787BD61DE69FBA54C28EE0CC839B"
+      "bytes": 279232,
+      "sha256": "13C6A6333D3188359B05B035254CEC0D5FE978835B6E61F7906537F4A5EEF142"
     },
     {
       "path": "SRC/neothd/src/code_map/co_change.rs",
@@ -3290,6 +3290,21 @@
       "path": "docs/gold-wave381-core-and-reference.md",
       "bytes": 1610,
       "sha256": "15ACEDA66FEEB310667FCACB55C381593689029BFBE3348620E56FB69538200C"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/heartbeat.rs",
+      "bytes": 41252,
+      "sha256": "163EE02C08032D4D48833771945CC0F9A4D904BDC909004B4C3575E2C37F8FDD"
+    },
+    {
+      "path": "docs/gold-wave374-cluster-scoped-assignments.md",
+      "bytes": 2199,
+      "sha256": "0753E2E9C511BECA60B02A3E8D8961EF968E39BE4D06FA7807AE623EB59DFCBE"
+    },
+    {
+      "path": "docs/gold-wave379-macos-gui-fixtures.md",
+      "bytes": 1316,
+      "sha256": "6AD6E40DEAB8008FD7B3B647207CFA44DB995B617BDCF6C9F1E04965D5458CE8"
     }
   ]
 }

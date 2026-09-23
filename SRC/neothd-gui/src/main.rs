@@ -48276,6 +48276,12 @@ exit 0
         }
         let calls = std::fs::read_to_string(fixture.path().join("calls"))
             .expect("read W177 callback CLI fixture calls");
+        #[cfg(all(target_os = "macos", feature = "macos-native-gui-test"))]
+        assert!(
+            calls.is_empty(),
+            "W164 macOS containment refusal must not issue response-feedback CLI actions"
+        );
+        #[cfg(not(all(target_os = "macos", feature = "macos-native-gui-test")))]
         for (expected, count) in [
             (
                 "feedback-response:--output json feedback response set --response aabbccddeeff00112233445566778899 --session session-w164 --revision 0 --signal accepted",
@@ -49787,9 +49793,9 @@ case "$*" in
     exit 0
     ;;
   *"citation lookup"*)
-    if echo "$*" | /bin/grep -q -- "--gui-approval-stdin"; then
-      /bin/cat > "$base/lookup-stdin"
-    fi
+    case "$*" in
+      *"--gui-approval-stdin"*) /bin/cat > "$base/lookup-stdin" ;;
+    esac
     ;;
 esac
 if [ "$mode" = hung ]; then

@@ -57,6 +57,9 @@ pub struct ClusterTaskJob {
     pub prompt: String,
     /// Authenticated peer Noise pubkey hex to reply to.
     pub reply_peer_pk: String,
+    /// Request-controlled resource selector, enforced only through the
+    /// authenticated grant's exact operator assignment.
+    pub scope: Option<super::heartbeat::TaskDelegateScope>,
     /// Non-constructible authority proof captured at carrier admission.
     pub membership_grant: super::membership::MembershipGrant,
     queued_effect: Option<super::membership::MembershipEffectGuard>,
@@ -67,6 +70,7 @@ impl ClusterTaskJob {
         task_id: String,
         prompt: String,
         reply_peer_pk: String,
+        scope: Option<super::heartbeat::TaskDelegateScope>,
         membership_grant: super::membership::MembershipGrant,
     ) -> anyhow::Result<Self> {
         let queued_effect = membership_grant.begin_effect_kind(
@@ -77,6 +81,7 @@ impl ClusterTaskJob {
             task_id,
             prompt,
             reply_peer_pk,
+            scope,
             membership_grant,
             queued_effect: Some(queued_effect),
         })
@@ -483,7 +488,7 @@ async fn run_one_task_execution_inner(
     // removed. A second check is the final provider-boundary seam below.
     if !job
         .membership_grant
-        .task_delegate_authorized()
+        .task_delegate_scope_authorized(job.scope.as_ref())
         .unwrap_or(false)
     {
         tracing::warn!(
@@ -571,7 +576,7 @@ async fn run_one_task_execution_inner(
     // linearization; the gate is released before any provider future is run.
     let mut external_permit = match job
         .membership_grant
-        .begin_task_delegate_external(&mut effect_guard, (now_unix_ms() / 1_000) as i64)
+        .begin_task_delegate_external(&mut effect_guard, (now_unix_ms() / 1_000) as i64, job.scope.as_ref())
     {
         Ok(permit) => permit,
         Err(crate::cluster::membership::TaskDelegateExternalAdmissionError::AssignmentDenied) => {
@@ -827,6 +832,7 @@ mod tests {
             "t-1".into(),
             prompt.into(),
             "aa".into(),
+            None,
             store
                 .admit(
                     crate::cluster::membership::CarrierKind::Peeroxide,
@@ -836,6 +842,20 @@ mod tests {
                 .unwrap(),
         )
         .unwrap()
+    }
+
+    fn scoped_job(home: &std::path::Path, prompt: &str) -> ClusterTaskJob {
+        let mut queued = job(home, prompt);
+        let peer_key = queued.membership_grant.transport_identity().as_str().to_string();
+        let scope = super::super::heartbeat::TaskDelegateScope {
+            skill_id: "summarize".into(), channel_id: Some("telegram".into()), account_id: Some("primary".into()),
+        };
+        crate::cluster::membership::MembershipStore::open(home).unwrap()
+            .set_task_delegate_scoped_assignment(&crate::cluster::membership::TaskDelegateScopedAssignment {
+                peer_key, skill_id: scope.skill_id.clone(), channel_id: scope.channel_id.clone(), account_id: scope.account_id.clone(), allowed: true, revision: 0,
+            }, 0).unwrap();
+        queued.scope = Some(scope);
+        queued
     }
 
     fn job_with_live_controller(
@@ -897,7 +917,7 @@ mod tests {
             )
             .unwrap();
         (
-            ClusterTaskJob::authorized("t-1".into(), prompt.into(), "aa".into(), grant).unwrap(),
+            ClusterTaskJob::authorized("t-1".into(), prompt.into(), "aa".into(), None, grant).unwrap(),
             controller,
         )
     }
@@ -1051,6 +1071,70 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn scoped_assignment_revoked_after_queue_before_dispatch_makes_zero_provider_calls() {
+        use crate::providers::Completion;
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountingProvider(Arc<AtomicUsize>);
+
+        #[async_trait]
+        impl Provider for CountingProvider {
+            fn name(&self) -> &'static str {
+                "local_qwen"
+            }
+
+            async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                anyhow::bail!("must not be called after scoped assignment revoke")
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let queued = scoped_job(home.path(), "queued before scoped assignment revoke");
+        let peer_key = queued
+            .membership_grant
+            .transport_identity()
+            .as_str()
+            .to_string();
+        let scope = queued.scope.clone().expect("scoped job has an exact scope");
+        crate::cluster::membership::MembershipStore::open(home.path())
+            .unwrap()
+            .set_task_delegate_scoped_assignment(
+                &crate::cluster::membership::TaskDelegateScopedAssignment {
+                    peer_key,
+                    skill_id: scope.skill_id,
+                    channel_id: scope.channel_id,
+                    account_id: scope.account_id,
+                    allowed: false,
+                    revision: 0,
+                },
+                1,
+            )
+            .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+            Arc::new(CountingProvider(Arc::clone(&calls))),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            None,
+            "cluster.test.scoped-assignment",
+        );
+        let result = run_one_task(
+            Some(Arc::new(provider)),
+            queued,
+            execution_context(home.path(), crate::config::FreedomConfig::default()),
+        )
+        .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(matches!(
+            result.status,
+            TaskResultStatus::Rejected { ref reason } if reason == "operator_assignment_denied"
+        ));
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn assignment_revoke_holding_authority_gate_blocks_start_then_makes_zero_provider_calls()
     {
@@ -1126,6 +1210,114 @@ mod tests {
         start_attempted.wait();
         setter_release.wait();
         setter.join().expect("assignment setter panicked");
+        let result = execution.await.expect("executor task panicked");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(matches!(
+            result.body.status,
+            TaskResultStatus::Rejected { ref reason } if reason == "operator_assignment_denied"
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn scoped_assignment_revoke_winning_final_authority_gate_makes_zero_provider_calls() {
+        use crate::providers::Completion;
+        use async_trait::async_trait;
+        use std::sync::Barrier;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountingProvider(Arc<AtomicUsize>);
+
+        #[async_trait]
+        impl Provider for CountingProvider {
+            fn name(&self) -> &'static str {
+                "local_qwen"
+            }
+
+            async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                anyhow::bail!("must not be called after scoped final assignment revoke")
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let (mut queued, controller) =
+            job_with_live_controller(home.path(), "scoped final assignment revoke");
+        let peer_key = queued
+            .membership_grant
+            .transport_identity()
+            .as_str()
+            .to_string();
+        let scope = super::super::heartbeat::TaskDelegateScope {
+            skill_id: "summarize".into(),
+            channel_id: Some("telegram".into()),
+            account_id: Some("primary".into()),
+        };
+        let allowed = controller
+            .store()
+            .set_task_delegate_scoped_assignment(
+                &crate::cluster::membership::TaskDelegateScopedAssignment {
+                    peer_key: peer_key.clone(),
+                    skill_id: scope.skill_id.clone(),
+                    channel_id: scope.channel_id.clone(),
+                    account_id: scope.account_id.clone(),
+                    allowed: true,
+                    revision: 0,
+                },
+                0,
+            )
+            .unwrap();
+        queued.scope = Some(scope.clone());
+
+        let setter_entered = Arc::new(Barrier::new(2));
+        let setter_release = Arc::new(Barrier::new(2));
+        let start_attempted = Arc::new(Barrier::new(2));
+        let setter_entered_observer = Arc::clone(&setter_entered);
+        let setter_release_observer = Arc::clone(&setter_release);
+        let start_attempted_observer = Arc::clone(&start_attempted);
+        controller.store().set_task_delegate_gate_observers(
+            Some(Arc::new(move || {
+                setter_entered_observer.wait();
+                setter_release_observer.wait();
+            })),
+            Some(Arc::new(move || {
+                start_attempted_observer.wait();
+            })),
+        );
+        let setter_store = controller.store().clone();
+        let setter = std::thread::spawn(move || {
+            setter_store
+                .set_task_delegate_scoped_assignment(
+                    &crate::cluster::membership::TaskDelegateScopedAssignment {
+                        peer_key,
+                        skill_id: scope.skill_id,
+                        channel_id: scope.channel_id,
+                        account_id: scope.account_id,
+                        allowed: false,
+                        revision: 0,
+                    },
+                    allowed.revision,
+                )
+                .unwrap();
+        });
+        setter_entered.wait();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+            Arc::new(CountingProvider(Arc::clone(&calls))),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            None,
+            "cluster.test.scoped-assignment-final-boundary",
+        );
+        let execution = tokio::spawn(run_one_task_execution_inner(
+            Some(Arc::new(provider)),
+            queued,
+            execution_context(home.path(), crate::config::FreedomConfig::default()),
+            None,
+        ));
+        start_attempted.wait();
+        setter_release.wait();
+        setter.join().expect("scoped assignment setter panicked");
         let result = execution.await.expect("executor task panicked");
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         assert!(matches!(
@@ -1223,7 +1415,7 @@ mod tests {
             .unwrap();
         let stable = grant.stable_node_id().clone();
         let queued =
-            ClusterTaskJob::authorized("cancel-me".into(), "block".into(), "aa".into(), grant)
+            ClusterTaskJob::authorized("cancel-me".into(), "block".into(), "aa".into(), None, grant)
                 .unwrap();
 
         let calls = Arc::new(AtomicUsize::new(0));

@@ -253,6 +253,19 @@ pub struct GoodbyeBody {
 pub const MAX_TASK_PROMPT_BYTES: usize = 8 * 1024;
 /// SL-01 maximum `task_id` / `model_hint` string length (bytes).
 pub const MAX_TASK_ID_BYTES: usize = 64;
+/// Scoped delegation identifiers are bounded, canonical wire atoms. They name
+/// an operator-assigned capability; they never identify the requesting peer.
+pub const MAX_TASK_SCOPE_ID_BYTES: usize = 128;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDelegateScope {
+    pub skill_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+}
 
 /// SL-01 TaskDelegate body — a master delegating a prompt to this node.
 /// The requester identity is NEVER carried here: it is the authenticated Noise
@@ -270,6 +283,12 @@ pub struct TaskDelegateBody {
     /// Capability-aware routing is v1.0 hardening.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_hint: Option<String>,
+    /// An optional requested capability/channel/account tuple. Its presence
+    /// narrows authority: the authenticated peer must have an exact
+    /// operator-created scoped assignment. Omitting it preserves the legacy
+    /// TaskDelegate contract and cannot broaden a scoped request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<TaskDelegateScope>,
 }
 
 /// SL-01 result status. `Rejected` = the accept gate refused (with a reason
@@ -330,6 +349,15 @@ pub fn validate_task_delegate(body: &TaskDelegateBody) -> Result<()> {
             body.prompt.len()
         );
     }
+    if let Some(scope) = &body.scope {
+        validate_task_scope_id("skill_id", &scope.skill_id)?;
+        if let Some(channel_id) = &scope.channel_id {
+            validate_task_scope_id("channel_id", channel_id)?;
+        }
+        if let Some(account_id) = &scope.account_id {
+            validate_task_scope_id("account_id", account_id)?;
+        }
+    }
     if let Some(hint) = &body.model_hint
         && hint.len() > MAX_TASK_ID_BYTES
     {
@@ -338,6 +366,13 @@ pub fn validate_task_delegate(body: &TaskDelegateBody) -> Result<()> {
             hint.len()
         );
     }
+    Ok(())
+}
+
+fn validate_task_scope_id(label: &str, value: &str) -> Result<()> {
+    anyhow::ensure!(!value.is_empty(), "task_delegate: {label} is empty");
+    anyhow::ensure!(value.len() <= MAX_TASK_SCOPE_ID_BYTES, "task_delegate: {label} exceeds cap");
+    anyhow::ensure!(value.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':')), "task_delegate: {label} contains non canonical characters");
     Ok(())
 }
 
@@ -578,6 +613,7 @@ mod tests {
                 task_id: "task-abc".into(),
                 prompt: "summarize this".into(),
                 model_hint: Some("qwen3".into()),
+                scope: None,
             }),
         };
         let bytes = encode_frame(&frame).unwrap();
@@ -701,8 +737,24 @@ mod tests {
             task_id: "t".into(),
             prompt: "p".into(),
             model_hint: None,
+            scope: None,
         };
         assert!(validate_task_delegate(&ok).is_ok());
+        let scoped = TaskDelegateBody {
+            task_id: "scope".into(), prompt: "p".into(), model_hint: None,
+            scope: Some(TaskDelegateScope { skill_id: "summarize".into(), channel_id: Some("telegram".into()), account_id: Some("primary".into()) }),
+        };
+        assert!(validate_task_delegate(&scoped).is_ok());
+        let invalid_scope = TaskDelegateBody {
+            scope: Some(TaskDelegateScope { skill_id: "not valid".into(), channel_id: None, account_id: None }),
+            ..scoped.clone()
+        };
+        assert!(validate_task_delegate(&invalid_scope).is_err());
+        let oversized_scope = TaskDelegateBody {
+            scope: Some(TaskDelegateScope { skill_id: "x".repeat(MAX_TASK_SCOPE_ID_BYTES + 1), channel_id: None, account_id: None }),
+            ..scoped
+        };
+        assert!(validate_task_delegate(&oversized_scope).is_err());
 
         // Empty task_id / empty prompt rejected.
         assert!(
@@ -710,6 +762,7 @@ mod tests {
                 task_id: String::new(),
                 prompt: "p".into(),
                 model_hint: None,
+                scope: None,
             })
             .is_err()
         );
@@ -718,6 +771,7 @@ mod tests {
                 task_id: "t".into(),
                 prompt: String::new(),
                 model_hint: None,
+                scope: None,
             })
             .is_err()
         );
@@ -728,6 +782,7 @@ mod tests {
                 task_id: "t".into(),
                 prompt: "x".repeat(MAX_TASK_PROMPT_BYTES + 1),
                 model_hint: None,
+                scope: None,
             })
             .is_err(),
             "prompt over {MAX_TASK_PROMPT_BYTES} bytes must be rejected"
@@ -739,6 +794,7 @@ mod tests {
                 task_id: "x".repeat(MAX_TASK_ID_BYTES + 1),
                 prompt: "p".into(),
                 model_hint: None,
+                scope: None,
             })
             .is_err()
         );
@@ -747,6 +803,7 @@ mod tests {
                 task_id: "t".into(),
                 prompt: "p".into(),
                 model_hint: Some("x".repeat(MAX_TASK_ID_BYTES + 1)),
+                scope: None,
             })
             .is_err()
         );
@@ -759,6 +816,7 @@ mod tests {
                     task_id: bad.into(),
                     prompt: "p".into(),
                     model_hint: None,
+                    scope: None,
                 })
                 .is_err(),
                 "task_id {bad:?} must be rejected"
@@ -770,6 +828,7 @@ mod tests {
                 task_id: "task-42_v1.0:retry".into(),
                 prompt: "p".into(),
                 model_hint: None,
+                scope: None,
             })
             .is_ok()
         );
@@ -1005,4 +1064,3 @@ mod tests {
         assert_eq!(ONCHANGE_PUSH_MIN_INTERVAL_MS, 1_000);
         assert_eq!(MAX_CAPABILITIES, 64);
     }
-}

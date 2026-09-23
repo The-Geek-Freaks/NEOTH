@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W382 scoped cluster and macOS GUI source batch (2026-09-23):**
+W374/W380 add exact peer/skill/channel/account assignments with revision CAS,
+default deny, schema6 migration and checks through the final provider-start
+authority gate. Existing unscoped behavior remains covered. Six exact selected
+identities include v5 read-only/migration, bounds, queue revocation, final-gate
+revocation and CLI CAS/reset. Scoped CLI writes are offline-only until their
+authenticated daemon RPC exists; broader P2-18 routing remains open.
+W379 corrects two macOS GUI fixtures without weakening successful-path checks
+or stdin-only approval handling. Both slices passed independent static review.
+Hosted format, core typecheck, generated CLI reference and behavior are pending.
+Earlier Group780, GUI135, BGE2 and FullCI954 runs keep their actual source heads.
+Inventory660;native1098+Windows19/Linux33/macOS32;Group786;GUI135Linux/131macOS.
+Road1324=1027checked/295open/2partial;WS-LF20done/98open unchanged.
+W373 WAL transaction remains separate unaccepted work. No local executable
+validation ran under the absolute BSOD hold.
 **W381 core and browser CLI reference accepted (2026-09-23):**
 Core216 run35855695782 passed all4explicit gates: slim production Clippy,
 core test-target typecheck, CLI build and source-bound reference export.
