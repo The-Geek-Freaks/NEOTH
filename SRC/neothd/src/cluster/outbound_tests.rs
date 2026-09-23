@@ -2,7 +2,7 @@ use super::heartbeat::TaskDelegateScope;
 use super::membership::{
     AuthEpoch, BootId, CarrierKind, LiveSessionRegistry, LocalNodeIdentity, MembershipController,
     MembershipEpoch, MembershipStore, OutboundTaskDelegateState, TaskDelegateOutboundAssignment,
-    TransportIdentity,
+    TaskDelegateOutboundAssignmentRequest, TransportIdentity,
 };
 use super::runtime_supervisor::{
     OutboundTaskDelegateController, OutboundTaskDelegateDispatchRequest,
@@ -542,5 +542,264 @@ fn clear_waits_for_inflight_dispatch_admission_then_fences_later_dispatches() {
     assert!(
         receiver.try_recv().is_err(),
         "the post-clear dispatch must not enqueue another frame"
+    );
+}
+
+#[test]
+fn deny_that_wins_outbound_authority_gate_sends_nothing_and_leaves_no_replayable_prepare() {
+    let home = tempfile::tempdir().expect("create outbound deny-race authority home");
+    let live_now = crate::time::now_unix_i64();
+    let live_sessions = Arc::new(LiveSessionRegistry::new());
+    let membership = Arc::new(MembershipController::new(
+        MembershipStore::open(home.path()).expect("open outbound deny-race authority store"),
+        Arc::clone(&live_sessions),
+    ));
+    let exact = scope();
+    let peer_key = active_live_peer(membership.store(), "deny-wins", live_now);
+    let allowed = membership
+        .set_task_delegate_outbound_assignment(&TaskDelegateOutboundAssignmentRequest {
+            peer_key: peer_key.clone(),
+            skill_id: exact.skill_id.clone(),
+            channel_id: exact.channel_id.clone(),
+            account_id: exact.account_id.clone(),
+            allowed: true,
+            priority: 1,
+            expected_revision: 0,
+        })
+        .expect("commit initially allowed exact route");
+    let grant = membership
+        .store()
+        .admit(
+            CarrierKind::Peeroxide,
+            &TransportIdentity::parse(peer_key.clone()).expect("parse deny-race peer transport"),
+            live_now,
+        )
+        .expect("admit deny-race peer");
+    let streams = Arc::new(super::peer_streams::PeerStreamRegistry::new());
+    let (_generation, mut receiver, _cancel) =
+        streams.register_authorized_session(&peer_key, &grant);
+    let controller = Arc::new(
+        OutboundTaskDelegateController::new(home.path(), Arc::clone(&membership))
+            .expect("construct deny-race controller"),
+    );
+    controller.install_peer_streams(Arc::clone(&streams));
+
+    let (setter_entered_tx, setter_entered_rx) = std::sync::mpsc::channel();
+    let (setter_release_tx, setter_release_rx) = std::sync::mpsc::channel();
+    let (dispatch_start_tx, dispatch_start_rx) = std::sync::mpsc::channel();
+    let setter_release_rx = Arc::new(std::sync::Mutex::new(setter_release_rx));
+    let release_observer = Arc::clone(&setter_release_rx);
+    membership.store().set_task_delegate_gate_observers(
+        Some(Arc::new(move || {
+            setter_entered_tx
+                .send(())
+                .expect("report deny setter acquired authority gate");
+            release_observer
+                .lock()
+                .expect("lock deny setter release receiver")
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .expect("release deny setter authority gate");
+        })),
+        Some(Arc::new(move || {
+            dispatch_start_tx
+                .send(())
+                .expect("report dispatch reached outbound authority gate");
+        })),
+    );
+    let deny_membership = Arc::clone(&membership);
+    let deny_scope = exact.clone();
+    let deny_peer_key = peer_key.clone();
+    let (deny_tx, deny_rx) = std::sync::mpsc::channel();
+    let _deny_thread = std::thread::spawn(move || {
+        let result = deny_membership.set_task_delegate_outbound_assignment(
+            &TaskDelegateOutboundAssignmentRequest {
+                peer_key: deny_peer_key,
+                skill_id: deny_scope.skill_id,
+                channel_id: deny_scope.channel_id,
+                account_id: deny_scope.account_id,
+                allowed: false,
+                priority: allowed.committed.priority,
+                expected_revision: allowed.committed.revision,
+            },
+        );
+        deny_tx.send(result).expect("report deny setter result");
+    });
+    setter_entered_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("deny setter holds outbound authority gate");
+
+    let request = dispatch_request("op-deny-wins", "task-deny-wins", exact.clone());
+    let dispatch_controller = Arc::clone(&controller);
+    let (dispatch_tx, dispatch_rx) = std::sync::mpsc::channel();
+    let _dispatch_thread = std::thread::spawn(move || {
+        dispatch_tx
+            .send(dispatch_controller.dispatch(&request))
+            .expect("report dispatch result");
+    });
+    dispatch_start_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("dispatch did not reach the shared outbound authority gate");
+    assert!(
+        matches!(
+            dispatch_rx.recv_timeout(std::time::Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "dispatch must wait while the earlier deny owns the authority gate"
+    );
+
+    setter_release_tx
+        .send(())
+        .expect("release deny setter authority gate");
+    let denied = deny_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("deny setter did not complete")
+        .expect("deny setter failed");
+    assert!(!denied.committed.allowed);
+    assert!(
+        dispatch_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("receive denied dispatch result")
+            .is_err(),
+        "a deny committed before admission must refuse dispatch"
+    );
+    membership.store().set_task_delegate_gate_observers(None, None);
+    assert!(
+        receiver.try_recv().is_err(),
+        "the denied dispatch must enqueue no frame"
+    );
+
+    let restored = membership
+        .set_task_delegate_outbound_assignment(&TaskDelegateOutboundAssignmentRequest {
+            peer_key,
+            skill_id: exact.skill_id.clone(),
+            channel_id: exact.channel_id.clone(),
+            account_id: exact.account_id.clone(),
+            allowed: true,
+            priority: denied.committed.priority,
+            expected_revision: denied.committed.revision,
+        })
+        .expect("restore exact outbound route");
+    assert!(restored.committed.allowed);
+    assert_eq!(
+        controller
+            .dispatch(&dispatch_request("op-deny-wins", "task-deny-wins", exact))
+            .expect("same operation succeeds because denied dispatch never prepared it")
+            .state,
+        OutboundTaskDelegateState::Accepted
+    );
+    drop(receiver.try_recv().expect("restored route receives exactly one frame"));
+    assert!(
+        controller
+            .dispatch(&dispatch_request("op-deny-wins", "task-deny-wins", scope()))
+            .is_err(),
+        "accepted operation must not replay after the restored route dispatch"
+    );
+    assert!(
+        receiver.try_recv().is_err(),
+        "the rejected replay must not enqueue a second frame"
+    );
+
+    let (dispatch_entered_tx, dispatch_entered_rx) = std::sync::mpsc::channel();
+    let (dispatch_release_tx, dispatch_release_rx) = std::sync::mpsc::channel();
+    let dispatch_release_rx = Arc::new(std::sync::Mutex::new(dispatch_release_rx));
+    let release_observer = Arc::clone(&dispatch_release_rx);
+    membership
+        .store()
+        .set_task_delegate_outbound_gate_held_observer(Some(Arc::new(move || {
+            dispatch_entered_tx
+                .send(())
+                .expect("report dispatch acquired outbound authority gate");
+            release_observer
+                .lock()
+                .expect("lock dispatch release receiver")
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .expect("release dispatch outbound authority gate");
+        })));
+    let dispatch_first_request =
+        dispatch_request("op-dispatch-wins", "task-dispatch-wins", scope());
+    let dispatch_controller = Arc::clone(&controller);
+    let (dispatch_tx, dispatch_rx) = std::sync::mpsc::channel();
+    let _dispatch_thread = std::thread::spawn(move || {
+        dispatch_tx
+            .send(dispatch_controller.dispatch(&dispatch_first_request))
+            .expect("report dispatch-first result");
+    });
+    dispatch_entered_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("dispatch did not acquire the shared outbound authority gate");
+
+    let deny_membership = Arc::clone(&membership);
+    let (deny_started_tx, deny_started_rx) = std::sync::mpsc::channel();
+    membership
+        .store()
+        .set_task_delegate_outbound_setter_contention_observer(Some(Arc::new(move || {
+            deny_started_tx
+                .send(())
+                .expect("report dispatch-first deny contended on the setter gate");
+        })));
+    let (deny_tx, deny_rx) = std::sync::mpsc::channel();
+    let deny_peer_key = restored.committed.peer_key.clone();
+    let deny_scope = scope();
+    let _deny_thread = std::thread::spawn(move || {
+        let result = deny_membership.set_task_delegate_outbound_assignment(
+            &TaskDelegateOutboundAssignmentRequest {
+                peer_key: deny_peer_key,
+                skill_id: deny_scope.skill_id,
+                channel_id: deny_scope.channel_id,
+                account_id: deny_scope.account_id,
+                allowed: false,
+                priority: restored.committed.priority,
+                expected_revision: restored.committed.revision,
+            },
+        );
+        deny_tx.send(result).expect("report dispatch-first deny result");
+    });
+    deny_started_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("dispatch-first deny did not contend on the shared authority gate");
+    assert!(
+        matches!(
+            deny_rx.recv_timeout(std::time::Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "a deny begun after admission must wait for the accepted queue insertion"
+    );
+    dispatch_release_tx
+        .send(())
+        .expect("release dispatch outbound authority gate");
+    assert_eq!(
+        dispatch_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("dispatch-first result did not arrive")
+            .expect("dispatch-first operation failed")
+            .state,
+        OutboundTaskDelegateState::Accepted
+    );
+    assert!(
+        !deny_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("dispatch-first deny did not complete")
+            .expect("dispatch-first deny failed")
+            .committed
+            .allowed
+    );
+    membership.store().set_task_delegate_outbound_gate_held_observer(None);
+    membership
+        .store()
+        .set_task_delegate_outbound_setter_contention_observer(None);
+    drop(
+        receiver
+            .try_recv()
+            .expect("dispatch-first admission queues exactly one frame"),
+    );
+    assert!(
+        controller
+            .dispatch(&dispatch_request("op-dispatch-wins", "task-dispatch-wins", scope()))
+            .is_err(),
+        "the accepted dispatch-first operation must remain non-replayable after deny"
+    );
+    assert!(
+        receiver.try_recv().is_err(),
+        "the rejected dispatch-first replay must not enqueue a second frame"
     );
 }

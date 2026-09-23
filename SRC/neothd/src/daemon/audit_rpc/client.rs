@@ -971,6 +971,39 @@ pub async fn membership_set_task_delegate_assignment(
 }
 
 #[cfg(feature = "cluster")]
+pub async fn membership_set_task_delegate_scope_assignment(
+    home: &Path,
+    request: &crate::cluster::membership::TaskDelegateScopedAssignmentRequest,
+) -> std::result::Result<
+    crate::cluster::membership::TaskDelegateScopedAssignmentCommitReceipt,
+    AuditRpcClientError,
+> {
+    let body = serde_json::to_string(request)
+        .map_err(|error| AuditRpcClientError::Unavailable(error.to_string()))?;
+    let (status, response) = post_rpc(home, "/membership/task-delegate/scope", &body).await?;
+    response_json(status, &response)
+}
+
+#[cfg(feature = "cluster")]
+pub async fn membership_set_task_delegate_outbound_assignment(
+    home: &Path,
+    request: &crate::cluster::membership::TaskDelegateOutboundAssignmentRequest,
+) -> std::result::Result<
+    crate::cluster::membership::TaskDelegateOutboundAssignmentCommitReceipt,
+    AuditRpcClientError,
+> {
+    let body = serde_json::to_string(request)
+        .map_err(|error| AuditRpcClientError::Unavailable(error.to_string()))?;
+    let (status, response) = post_rpc(
+        home,
+        "/membership/task-delegate/outbound-assignment",
+        &body,
+    )
+    .await?;
+    response_json(status, &response)
+}
+
+#[cfg(feature = "cluster")]
 pub async fn dispatch_task_delegate_outbound(
     home: &Path,
     request: &crate::cluster::runtime_supervisor::OutboundTaskDelegateDispatchRequest,

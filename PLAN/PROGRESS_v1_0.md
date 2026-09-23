@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W469 live assignments and integrated regressions (2026-09-23):**
+W467 is published as8ec8bf6a; Preflight35892387374 passed. Core35892417444
+is checking its exact source. W465/W466 add daemon-owned authenticated scoped
+and outbound CAS mutations, one-attempt live CLI routing and a shared outbound
+authority gate. Existing offline mutations retain the exclusive daemon PID lock.
+Both dispatch/deny orders have bounded regression coverage. W458 now runs the
+real three-chunk producer through filesystem hooks into actual Main/Buddy daemon
+attach streams; Block requires its exact WAL hook event and Replace its digest.
+W468 executes real GUI preparation, private wizard commit and topology reload/
+rerun. Independent static reviews passed; executable gates remain hosted/pending.
+P1-22/P2-18/P2-26a stay open pending their actual remaining acceptance boundaries.
+Inventory731/native1180+Windows23/Linux33/macOS32;Group885;GUI145Linux141macOS.
+Road1038checked/284open/2partial and WS-LF31done/87open unchanged; BSOD hold stays.
+Evidence: docs/gold-wave469-live-authority-stream-wizard.md.
+
 **W467 actual hosted core diagnostics (2026-09-23):**
 Preflight76e4 run35890366917 passed. Corea96 run35889966328 passed slim
 production Clippy but failed the test-target check: two impl-level OpenRaft

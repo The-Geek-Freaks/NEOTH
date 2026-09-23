@@ -1808,8 +1808,14 @@ async fn run_task_delegate_assignment(
                 channel_id: channel,
                 account_id: account,
             };
-            let assignment =
-                task_delegate_scope_set_at(&home, &peer_key, &scope, allowed, expected_revision)?;
+            let assignment = task_delegate_scope_set_live_or_offline_at(
+                &home,
+                &peer_key,
+                &scope,
+                allowed,
+                expected_revision,
+            )
+            .await?;
             match output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&assignment)?),
                 OutputFormat::Jsonl => println!("{}", serde_json::to_string(&assignment)?),
@@ -1828,8 +1834,14 @@ async fn run_task_delegate_assignment(
                 channel_id: channel,
                 account_id: account,
             };
-            let assignment =
-                task_delegate_scope_set_at(&home, &peer_key, &scope, false, expected_revision)?;
+            let assignment = task_delegate_scope_set_live_or_offline_at(
+                &home,
+                &peer_key,
+                &scope,
+                false,
+                expected_revision,
+            )
+            .await?;
             match output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&assignment)?),
                 OutputFormat::Jsonl => println!("{}", serde_json::to_string(&assignment)?),
@@ -1864,14 +1876,15 @@ async fn run_task_delegate_assignment(
                 channel_id: channel,
                 account_id: account,
             };
-            let assignment = task_delegate_outbound_assignment_set_at(
+            let assignment = task_delegate_outbound_assignment_set_live_or_offline_at(
                 &home,
                 &peer_key,
                 &scope,
                 allowed,
                 priority,
                 expected_revision,
-            )?;
+            )
+            .await?;
             print_outbound_assignment(output, &Some(assignment));
         }
         ClusterTaskDelegateAction::OutboundReset {
@@ -1887,14 +1900,15 @@ async fn run_task_delegate_assignment(
                 channel_id: channel,
                 account_id: account,
             };
-            let assignment = task_delegate_outbound_assignment_set_at(
+            let assignment = task_delegate_outbound_assignment_set_live_or_offline_at(
                 &home,
                 &peer_key,
                 &scope,
                 false,
                 priority,
                 expected_revision,
-            )?;
+            )
+            .await?;
             print_outbound_assignment(output, &Some(assignment));
         }
         ClusterTaskDelegateAction::OutboundDispatch {
@@ -2014,7 +2028,7 @@ fn task_delegate_outbound_assignment_set_at(
     validate_pub_key_hex(peer_key)?;
     anyhow::ensure!(
         live_daemon_owner_pid(home)?.is_none(),
-        "stop the daemon before changing outbound task-delegate assignments; outbound assignment RPC is not available"
+        "offline outbound task-delegate assignment requires no daemon PID-lock owner; use the live daemon RPC path while it is running"
     );
     let _offline_authority_lock = acquire_offline_membership_guard(home)?;
     crate::cluster::membership::MembershipStore::open(home)?.set_task_delegate_outbound_assignment(
@@ -2027,6 +2041,42 @@ fn task_delegate_outbound_assignment_set_at(
             priority,
             revision: 0,
         },
+        expected_revision,
+    )
+}
+
+async fn task_delegate_outbound_assignment_set_live_or_offline_at(
+    home: &Path,
+    peer_key: &str,
+    scope: &crate::cluster::heartbeat::TaskDelegateScope,
+    allowed: bool,
+    priority: u64,
+    expected_revision: u64,
+) -> Result<crate::cluster::membership::TaskDelegateOutboundAssignment> {
+    validate_pub_key_hex(peer_key)?;
+    if live_daemon_owner_pid(home)?.is_some() {
+        let receipt = crate::daemon::audit_rpc::membership_set_task_delegate_outbound_assignment(
+            home,
+            &crate::cluster::membership::TaskDelegateOutboundAssignmentRequest {
+                peer_key: peer_key.to_string(),
+                skill_id: scope.skill_id.clone(),
+                channel_id: scope.channel_id.clone(),
+                account_id: scope.account_id.clone(),
+                allowed,
+                priority,
+                expected_revision,
+            },
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!(error))?;
+        return Ok(receipt.committed);
+    }
+    task_delegate_outbound_assignment_set_at(
+        home,
+        peer_key,
+        scope,
+        allowed,
+        priority,
         expected_revision,
     )
 }
@@ -2058,7 +2108,7 @@ fn task_delegate_scope_set_at(
     validate_pub_key_hex(peer_key)?;
     anyhow::ensure!(
         live_daemon_owner_pid(home)?.is_none(),
-        "stop the daemon before changing scoped task-delegate assignments; live scoped RPC is not available"
+        "offline scoped task-delegate assignment requires no daemon PID-lock owner; use the live daemon RPC path while it is running"
     );
     let _offline_authority_lock = acquire_offline_membership_guard(home)?;
     crate::cluster::membership::MembershipStore::open(home)?.set_task_delegate_scoped_assignment(
@@ -2072,6 +2122,33 @@ fn task_delegate_scope_set_at(
         },
         expected_revision,
     )
+}
+
+async fn task_delegate_scope_set_live_or_offline_at(
+    home: &Path,
+    peer_key: &str,
+    scope: &crate::cluster::heartbeat::TaskDelegateScope,
+    allowed: bool,
+    expected_revision: u64,
+) -> Result<crate::cluster::membership::TaskDelegateScopedAssignment> {
+    validate_pub_key_hex(peer_key)?;
+    if live_daemon_owner_pid(home)?.is_some() {
+        let receipt = crate::daemon::audit_rpc::membership_set_task_delegate_scope_assignment(
+            home,
+            &crate::cluster::membership::TaskDelegateScopedAssignmentRequest {
+                peer_key: peer_key.to_string(),
+                skill_id: scope.skill_id.clone(),
+                channel_id: scope.channel_id.clone(),
+                account_id: scope.account_id.clone(),
+                allowed,
+                expected_revision,
+            },
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!(error))?;
+        return Ok(receipt.committed);
+    }
+    task_delegate_scope_set_at(home, peer_key, scope, allowed, expected_revision)
 }
 
 fn task_delegate_assignment_set_at(
@@ -5894,6 +5971,53 @@ mod tests {
             std::fs::read_dir(home.path()).unwrap().count(),
             0,
             "outbound show must not create authority state"
+        );
+    }
+
+    #[cfg(feature = "cluster")]
+    #[tokio::test]
+    async fn live_scoped_and_outbound_assignment_rpc_failures_never_fall_back_offline() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let _daemon_owner = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid"))
+            .expect("acquire simulated daemon owner");
+        let peer_key = "a".repeat(64);
+        let scope = crate::cluster::heartbeat::TaskDelegateScope {
+            skill_id: "summarize".into(),
+            channel_id: Some("telegram".into()),
+            account_id: Some("primary".into()),
+        };
+
+        assert!(
+            task_delegate_scope_set_live_or_offline_at(
+                home.path(),
+                &peer_key,
+                &scope,
+                true,
+                0,
+            )
+            .await
+            .is_err(),
+            "a live daemon with no reachable RPC must refuse scoped assignment"
+        );
+        assert!(
+            task_delegate_outbound_assignment_set_live_or_offline_at(
+                home.path(),
+                &peer_key,
+                &scope,
+                true,
+                1,
+                0,
+            )
+            .await
+            .is_err(),
+            "a live daemon with no reachable RPC must refuse outbound assignment"
+        );
+        assert!(
+            !home
+                .path()
+                .join("cluster-membership.db")
+                .exists(),
+            "live RPC failures must not open or mutate the offline authority"
         );
     }
 

@@ -120,6 +120,13 @@ impl OutboundTaskDelegateController {
         let streams = streams_guard.as_ref().context(
             "cluster outbound delegation unavailable: no live authenticated peer runtime",
         )?;
+        // One narrow authority epoch spans exact route selection, durable
+        // prepare, and synchronous queue acceptance. It is never held while
+        // awaiting a remote peer result, so replies cannot block an operator CAS.
+        let _authority_gate = self
+            .membership
+            .store()
+            .lock_task_delegate_outbound_authority();
         for candidate in self
             .membership
             .store()

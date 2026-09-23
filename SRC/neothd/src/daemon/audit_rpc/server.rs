@@ -926,6 +926,8 @@ async fn handle_one_pre_admission(
             | "/membership/confirm"
             | "/membership/legacy-pending"
             | "/membership/task-delegate"
+            | "/membership/task-delegate/scope"
+            | "/membership/task-delegate/outbound-assignment"
             | "/membership/task-delegate/outbound"
     );
     #[cfg(not(feature = "cluster"))]
@@ -1487,6 +1489,22 @@ fn process_membership_request(
                 serde_json::from_slice(body).context("invalid task delegate assignment body")?;
             Ok(serde_json::to_value(
                 controller.set_task_delegate_assignment(&request)?,
+            )?)
+        }
+        "/membership/task-delegate/scope" => {
+            let request: crate::cluster::membership::TaskDelegateScopedAssignmentRequest =
+                serde_json::from_slice(body)
+                    .context("invalid scoped task delegate assignment body")?;
+            Ok(serde_json::to_value(
+                controller.set_task_delegate_scoped_assignment(&request)?,
+            )?)
+        }
+        "/membership/task-delegate/outbound-assignment" => {
+            let request: crate::cluster::membership::TaskDelegateOutboundAssignmentRequest =
+                serde_json::from_slice(body)
+                    .context("invalid outbound task delegate assignment body")?;
+            Ok(serde_json::to_value(
+                controller.set_task_delegate_outbound_assignment(&request)?,
             )?)
         }
         _ => unreachable!("membership route allowlisted"),

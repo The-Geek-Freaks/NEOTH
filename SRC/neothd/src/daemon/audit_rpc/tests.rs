@@ -893,7 +893,10 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
         MembershipConfirmRequest, MembershipController, MembershipInviteRequest,
         MembershipRevokeBinding, MembershipRevokeRequest, MembershipState, MembershipStore,
         RevocationIntentState, RevocationIntentStatus, RevokeReceipt,
-        TaskDelegateAssignmentCommitReceipt, TaskDelegateAssignmentRequest, TransportIdentity,
+        TaskDelegateAssignmentCommitReceipt, TaskDelegateAssignmentRequest,
+        TaskDelegateOutboundAssignmentCommitReceipt, TaskDelegateOutboundAssignmentRequest,
+        TaskDelegateScopedAssignmentCommitReceipt, TaskDelegateScopedAssignmentRequest,
+        TransportIdentity,
     };
 
     let home = tempdir().unwrap();
@@ -1080,6 +1083,222 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
         serde_json::from_str(&body).expect("typed assignment revoke receipt");
     assert!(!denied.committed.allowed);
     assert_eq!(denied.committed.revision, 2);
+
+    let scoped_request = TaskDelegateScopedAssignmentRequest {
+        peer_key: transport.as_str().to_string(),
+        skill_id: "summarize".into(),
+        channel_id: Some("telegram".into()),
+        account_id: Some("primary".into()),
+        allowed: true,
+        expected_revision: 0,
+    };
+    let scoped_body = serde_json::to_string(&scoped_request).unwrap();
+    assert_eq!(
+        raw_post_path(&addr, "/membership/task-delegate/scope", None, &scoped_body)
+            .await
+            .0,
+        401
+    );
+    let scoped_scope = crate::cluster::heartbeat::TaskDelegateScope {
+        skill_id: scoped_request.skill_id.clone(),
+        channel_id: scoped_request.channel_id.clone(),
+        account_id: scoped_request.account_id.clone(),
+    };
+    assert_eq!(
+        store
+            .task_delegate_scoped_assignment(transport.as_str(), &scoped_scope)
+            .unwrap(),
+        None,
+        "unauthenticated scoped assignment must not mutate the authority"
+    );
+    let (status, body) = raw_post_path(
+        &addr,
+        "/membership/task-delegate/scope",
+        Some("membership-token"),
+        &scoped_body,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let scoped: TaskDelegateScopedAssignmentCommitReceipt =
+        serde_json::from_str(&body).expect("typed scoped assignment commit receipt");
+    assert!(scoped.committed.allowed);
+    assert_eq!(scoped.committed.revision, 1);
+    assert_eq!(scoped.committed.peer_key, transport.as_str());
+    assert_eq!(scoped.committed.skill_id, "summarize");
+    assert_eq!(scoped.committed.channel_id.as_deref(), Some("telegram"));
+    assert_eq!(scoped.committed.account_id.as_deref(), Some("primary"));
+    assert_eq!(
+        raw_post_path(
+            &addr,
+            "/membership/task-delegate/scope",
+            Some("membership-token"),
+            &scoped_body,
+        )
+        .await
+        .0,
+        422,
+        "stale scoped assignment CAS must be refused"
+    );
+    assert_eq!(
+        store
+            .task_delegate_scoped_assignment(transport.as_str(), &scoped_scope)
+            .unwrap(),
+        Some(scoped.committed.clone()),
+        "stale scoped request must preserve the committed assignment"
+    );
+    let reset_scope = TaskDelegateScopedAssignmentRequest {
+        allowed: false,
+        expected_revision: scoped.committed.revision,
+        ..scoped_request.clone()
+    };
+    let (status, body) = raw_post_path(
+        &addr,
+        "/membership/task-delegate/scope",
+        Some("membership-token"),
+        &serde_json::to_string(&reset_scope).unwrap(),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let scoped_reset: TaskDelegateScopedAssignmentCommitReceipt =
+        serde_json::from_str(&body).expect("typed scoped assignment reset receipt");
+    assert!(!scoped_reset.committed.allowed);
+    assert_eq!(scoped_reset.committed.revision, 2);
+    let wrong_scoped_scope = crate::cluster::heartbeat::TaskDelegateScope {
+        channel_id: Some("discord".into()),
+        ..scoped_scope.clone()
+    };
+    assert_eq!(
+        store
+            .task_delegate_scoped_assignment(transport.as_str(), &wrong_scoped_scope)
+            .unwrap(),
+        None,
+        "a different scoped channel remains default deny"
+    );
+    assert_eq!(
+        raw_post_path(
+            &addr,
+            "/membership/task-delegate/scope",
+            Some("membership-token"),
+            &format!(
+                r#"{{"peer_key":"{}","skill_id":"summarize","channel_id":"telegram","account_id":"primary","allowed":true,"expected_revision":2,"unexpected":true}}"#,
+                transport.as_str()
+            ),
+        )
+        .await
+        .0,
+        422,
+        "malformed scoped request must be rejected before mutation"
+    );
+
+    let outbound_request = TaskDelegateOutboundAssignmentRequest {
+        peer_key: transport.as_str().to_string(),
+        skill_id: "summarize".into(),
+        channel_id: Some("telegram".into()),
+        account_id: Some("primary".into()),
+        allowed: true,
+        priority: 7,
+        expected_revision: 0,
+    };
+    let outbound_body = serde_json::to_string(&outbound_request).unwrap();
+    assert_eq!(
+        raw_post_path(
+            &addr,
+            "/membership/task-delegate/outbound-assignment",
+            None,
+            &outbound_body,
+        )
+        .await
+        .0,
+        401
+    );
+    let outbound_scope = crate::cluster::heartbeat::TaskDelegateScope {
+        skill_id: outbound_request.skill_id.clone(),
+        channel_id: outbound_request.channel_id.clone(),
+        account_id: outbound_request.account_id.clone(),
+    };
+    assert_eq!(
+        store
+            .task_delegate_outbound_assignment(transport.as_str(), &outbound_scope)
+            .unwrap(),
+        None,
+        "unauthenticated outbound assignment must not mutate the authority"
+    );
+    let (status, body) = raw_post_path(
+        &addr,
+        "/membership/task-delegate/outbound-assignment",
+        Some("membership-token"),
+        &outbound_body,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let outbound: TaskDelegateOutboundAssignmentCommitReceipt =
+        serde_json::from_str(&body).expect("typed outbound assignment commit receipt");
+    assert!(outbound.committed.allowed);
+    assert_eq!(outbound.committed.priority, 7);
+    assert_eq!(outbound.committed.revision, 1);
+    assert_eq!(outbound.committed.peer_key, transport.as_str());
+    assert_eq!(
+        raw_post_path(
+            &addr,
+            "/membership/task-delegate/outbound-assignment",
+            Some("membership-token"),
+            &outbound_body,
+        )
+        .await
+        .0,
+        422,
+        "stale outbound assignment CAS must be refused"
+    );
+    assert_eq!(
+        store
+            .task_delegate_outbound_assignment(transport.as_str(), &outbound_scope)
+            .unwrap(),
+        Some(outbound.committed.clone()),
+        "stale outbound request must preserve the committed assignment"
+    );
+    let reset_outbound = TaskDelegateOutboundAssignmentRequest {
+        allowed: false,
+        expected_revision: outbound.committed.revision,
+        ..outbound_request.clone()
+    };
+    let (status, body) = raw_post_path(
+        &addr,
+        "/membership/task-delegate/outbound-assignment",
+        Some("membership-token"),
+        &serde_json::to_string(&reset_outbound).unwrap(),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let outbound_reset: TaskDelegateOutboundAssignmentCommitReceipt =
+        serde_json::from_str(&body).expect("typed outbound assignment reset receipt");
+    assert!(!outbound_reset.committed.allowed);
+    assert_eq!(outbound_reset.committed.revision, 2);
+    let wrong_outbound_scope = crate::cluster::heartbeat::TaskDelegateScope {
+        account_id: Some("secondary".into()),
+        ..outbound_scope.clone()
+    };
+    assert_eq!(
+        store
+            .task_delegate_outbound_assignment(transport.as_str(), &wrong_outbound_scope)
+            .unwrap(),
+        None,
+        "a different outbound account remains default deny"
+    );
+    assert_eq!(
+        raw_post_path(
+            &addr,
+            "/membership/task-delegate/outbound-assignment",
+            Some("membership-token"),
+            &format!(
+                r#"{{"peer_key":"{}","skill_id":"summarize","channel_id":"telegram","account_id":"primary","allowed":true,"priority":7,"expected_revision":2,"unexpected":true}}"#,
+                transport.as_str()
+            ),
+        )
+        .await
+        .0,
+        422,
+        "malformed outbound request must be rejected before mutation"
+    );
 
     let envelope = controller.snapshot().unwrap().into_envelope().unwrap();
     let member = envelope.snapshot.members.first().unwrap();

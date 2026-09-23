@@ -17380,22 +17380,30 @@ impl CredentialsYaml {
 }
 
 fn finish(state: &WizardSnapshot) -> Result<FinishReport> {
+    let neoth_dir = default_neoth_home();
+    finish_in_home(state, &neoth_dir)
+}
+
+/// Execute the GUI-owned preparation phase for one already-selected wizard
+/// state. Production uses [`finish`] with the canonical home; keeping the
+/// home explicit makes the same prepare phase testable together with the
+/// daemon-owned commit and subsequent re-entry readback.
+fn finish_in_home(state: &WizardSnapshot, neoth_dir: &Path) -> Result<FinishReport> {
     validate_finish_state(state)?;
 
-    let neoth_dir = default_neoth_home();
-    std::fs::create_dir_all(&neoth_dir)
+    std::fs::create_dir_all(neoth_dir)
         .with_context(|| format!("create {}", neoth_dir.display()))?;
 
     // Preserve the long-standing provider/Telegram wizard merge first. OMI
     // secrets then go through the daemon's strict stdin credential API, which
     // understands encrypted files and keychain storage. Public OMI config is
     // written last, so a credential failure can never leave OMI enabled.
-    let mut credentials_path = write_credentials_yaml(state, &neoth_dir)?;
+    let mut credentials_path = write_credentials_yaml(state, neoth_dir)?;
     if state.omi_enabled
         && (!state.omi_developer_key.is_empty() || !state.omi_native_token.is_empty())
     {
         persist_omi_credentials_via_cli(
-            &neoth_dir,
+            neoth_dir,
             &state.omi_developer_key,
             &state.omi_native_token,
         )?;
@@ -17404,7 +17412,7 @@ fn finish(state: &WizardSnapshot) -> Result<FinishReport> {
             credentials_path = Some(file_path);
         }
     }
-    let freedom_path = write_freedom_yaml(state, &neoth_dir)?;
+    let freedom_path = write_freedom_yaml(state, neoth_dir)?;
 
     Ok(FinishReport {
         freedom_path,
@@ -38652,6 +38660,135 @@ mod interface_preference_tests {
                 if status.contains("completion could not be verified")
                     && !status.contains("Setup complete and verified")
         ));
+    }
+
+    /// P1-22: the GUI's custom three-role selection must survive the actual
+    /// private wizard transaction and a later GUI re-entry/rerun. This uses
+    /// the production writer, real IPC controller, and daemon-owned prepared
+    /// hash commit rather than a direct writer-only assertion.
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn p122_custom_topology_survives_shared_commit_and_gui_rerun() {
+        use neothd::config::inference::{InferenceProvider, TopologyMode};
+        use neothd::daemon::wizard_ipc::bind_and_serve;
+        use neothd::wizard::ipc::{WizardIpcMessage, WizardTerminalState};
+        use std::sync::mpsc;
+
+        let home = tempfile::tempdir().unwrap();
+        let server_home = home.path().to_path_buf();
+        let (ready_send, ready_recv) = mpsc::sync_channel(1);
+        let server_thread = std::thread::spawn(move || -> anyhow::Result<()> {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            runtime.block_on(async move {
+                let (server, _guard) = bind_and_serve(&server_home)?;
+                ready_send
+                    .send(())
+                    .map_err(|_| anyhow::anyhow!("P1-22 test lost wizard-server readiness"))?;
+                server.await?
+            })
+        });
+        ready_recv
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("private wizard server readiness");
+
+        let mut controller = wizard_session_controller::WizardSessionController::open_or_start(
+            home.path(),
+            Path::new("unused-neothd"),
+            |_, _| anyhow::bail!("P1-22 must bind the existing private wizard server"),
+        )
+        .expect("shared GUI wizard controller");
+        controller
+            .submit_operator_choice(WizardIpcMessage::ChannelOverride {
+                channel: neothd::wizard::recommend::ChannelRecommendation::Cli,
+            })
+            .expect("admitted GUI wizard choice before completion");
+
+        let mut state = WizardSnapshot::default();
+        state.operator_id = "sam".into();
+        state.provider_kind = "claude_cli".into();
+        state.autonomy = "standard".into();
+        state.license_accepted = true;
+        state.hemisphere_use_single = false;
+        state.hemisphere_shared_model = "claude-sonnet-4-6".into();
+        state.hemisphere_left_provider = "anthropic_api".into();
+        state.hemisphere_left_model = "claude-opus-4-6".into();
+        state.hemisphere_right_provider = "openai_api".into();
+        state.hemisphere_right_model = "gpt-5.5".into();
+        state.hemisphere_cerebellum_provider = "local_ollama".into();
+        state.hemisphere_cerebellum_model = "qwen3:8b".into();
+
+        let prepared = finish_in_home(&state, home.path()).expect("GUI prepare custom topology");
+        let config_hash = wizard_session_controller::prepared_config_sha256(&prepared.freedom_path)
+            .expect("prepared freedom.yaml hash");
+        let acknowledgement = controller
+            .prepare_for_commit(config_hash)
+            .expect("daemon-owned prepared-hash completion acknowledgement");
+        assert_eq!(acknowledgement.terminal, WizardTerminalState::Completed);
+        assert_eq!(acknowledgement.last_message, Some(WizardIpcMessage::Finished));
+        assert!(home.path().join(".initialized").is_file());
+
+        let reentry = read_freedom_yaml(&prepared.freedom_path).expect("GUI re-entry projection");
+        let reentry_topology = reentry.inference.expect("GUI re-entry topology");
+        assert_eq!(reentry_topology.mode, TopologyMode::Custom);
+        assert_eq!(reentry_topology.left.provider, Some(InferenceProvider::AnthropicApi));
+        assert_eq!(reentry_topology.left.model.as_deref(), Some("claude-opus-4-6"));
+        assert_eq!(reentry_topology.right.provider, Some(InferenceProvider::OpenAi));
+        assert_eq!(reentry_topology.right.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(reentry_topology.cerebellum.provider, Some(InferenceProvider::LocalOllama));
+        assert_eq!(reentry_topology.cerebellum.model.as_deref(), Some("qwen3:8b"));
+
+        // Mirror the production re-entry projection back into a new Finish
+        // state, then rerun without touching the completed transaction.
+        state.hemisphere_use_single = matches!(reentry_topology.mode, TopologyMode::Single);
+        state.provider_kind = reentry_topology
+            .default_slot
+            .provider
+            .expect("re-entry shared provider")
+            .as_str()
+            .into();
+        state.hemisphere_shared_model = reentry_topology.default_slot.model.unwrap_or_default();
+        state.hemisphere_left_provider = reentry_topology
+            .left
+            .provider
+            .expect("re-entry left provider")
+            .as_str()
+            .into();
+        state.hemisphere_left_model = reentry_topology.left.model.unwrap_or_default();
+        state.hemisphere_right_provider = reentry_topology
+            .right
+            .provider
+            .expect("re-entry right provider")
+            .as_str()
+            .into();
+        state.hemisphere_right_model = reentry_topology.right.model.unwrap_or_default();
+        state.hemisphere_cerebellum_provider = reentry_topology
+            .cerebellum
+            .provider
+            .expect("re-entry cerebellum provider")
+            .as_str()
+            .into();
+        state.hemisphere_cerebellum_model = reentry_topology.cerebellum.model.unwrap_or_default();
+
+        // Reload through the daemon's effective config reader to prove its
+        // canonical topology remains intact after that GUI rerun.
+        let rerun = finish_in_home(&state, home.path()).expect("GUI topology rerun");
+        assert_eq!(rerun.freedom_path, prepared.freedom_path);
+        let reloaded = neothd::config::FreedomConfig::load_from_path(&rerun.freedom_path)
+            .expect("daemon config reload after GUI rerun");
+        assert_eq!(reloaded.inference.mode, TopologyMode::Custom);
+        assert_eq!(reloaded.inference.left.provider, Some(InferenceProvider::AnthropicApi));
+        assert_eq!(reloaded.inference.left.model.as_deref(), Some("claude-opus-4-6"));
+        assert_eq!(reloaded.inference.right.provider, Some(InferenceProvider::OpenAi));
+        assert_eq!(reloaded.inference.right.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(reloaded.inference.cerebellum.provider, Some(InferenceProvider::LocalOllama));
+        assert_eq!(reloaded.inference.cerebellum.model.as_deref(), Some("qwen3:8b"));
+
+        server_thread
+            .join()
+            .expect("private wizard server thread")
+            .expect("private wizard server completion");
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]

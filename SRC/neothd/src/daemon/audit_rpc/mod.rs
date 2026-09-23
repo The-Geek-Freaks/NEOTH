@@ -89,7 +89,9 @@ pub(crate) use client::{
 pub use client::{
     dispatch_task_delegate_outbound, membership_confirm, membership_invite,
     membership_legacy_pending, membership_revocation_status, membership_revoke,
-    membership_runtime_health, membership_set_task_delegate_assignment, membership_snapshot,
+    membership_runtime_health, membership_set_task_delegate_assignment,
+    membership_set_task_delegate_outbound_assignment,
+    membership_set_task_delegate_scope_assignment, membership_snapshot,
 };
 pub use fullauto_token::{FULLAUTO_TOKEN_TTL, FullAutoTokenStore, JOBS_RUN_TOKEN_TTL};
 pub(crate) use server::bind_and_serve;

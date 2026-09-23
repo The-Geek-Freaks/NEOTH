@@ -1349,13 +1349,17 @@ pub(crate) struct GenerationEffectRegistry {
     quiesced: Condvar,
     /// Serializes the durable delegation CAS with the final provider-start
     /// linearization. This is deliberately separate from `state`: it is held
-    /// only for the authority read/write and `begin_external`, never across a
-    /// provider future.
+    /// only for the authority read/write, `begin_external`, and synchronous
+    /// outbound admission, never across a provider future or remote reply.
     task_delegate_start: Mutex<()>,
     #[cfg(test)]
     task_delegate_setter_gate_observer: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     #[cfg(test)]
     task_delegate_start_gate_observer: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    #[cfg(test)]
+    task_delegate_outbound_gate_held_observer: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    #[cfg(test)]
+    task_delegate_outbound_setter_contention_observer: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl std::fmt::Debug for GenerationEffectRegistry {
@@ -1406,6 +1410,32 @@ impl GenerationEffectRegistry {
     fn observe_task_delegate_start_gate(&self) {
         if let Some(observer) = self
             .task_delegate_start_gate_observer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .cloned()
+        {
+            observer();
+        }
+    }
+
+    #[cfg(test)]
+    fn observe_task_delegate_outbound_gate_held(&self) {
+        if let Some(observer) = self
+            .task_delegate_outbound_gate_held_observer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .cloned()
+        {
+            observer();
+        }
+    }
+
+    #[cfg(test)]
+    fn observe_task_delegate_outbound_setter_contention(&self) {
+        if let Some(observer) = self
+            .task_delegate_outbound_setter_contention_observer
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .as_ref()
@@ -2387,6 +2417,57 @@ impl MembershipController {
         })
     }
 
+    /// Commit one exact scoped delegation assignment through the daemon-owned
+    /// authority. The receipt is the CAS result itself, never a racy readback.
+    pub fn set_task_delegate_scoped_assignment(
+        &self,
+        request: &TaskDelegateScopedAssignmentRequest,
+    ) -> Result<TaskDelegateScopedAssignmentCommitReceipt> {
+        let _operation = self
+            .operations
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Ok(TaskDelegateScopedAssignmentCommitReceipt {
+            committed: self.store.set_task_delegate_scoped_assignment(
+                &TaskDelegateScopedAssignment {
+                    peer_key: request.peer_key.clone(),
+                    skill_id: request.skill_id.clone(),
+                    channel_id: request.channel_id.clone(),
+                    account_id: request.account_id.clone(),
+                    allowed: request.allowed,
+                    revision: 0,
+                },
+                request.expected_revision,
+            )?,
+        })
+    }
+
+    /// Commit one exact outbound delegation route through the daemon-owned
+    /// authority. The receipt is the CAS result itself, never a racy readback.
+    pub fn set_task_delegate_outbound_assignment(
+        &self,
+        request: &TaskDelegateOutboundAssignmentRequest,
+    ) -> Result<TaskDelegateOutboundAssignmentCommitReceipt> {
+        let _operation = self
+            .operations
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Ok(TaskDelegateOutboundAssignmentCommitReceipt {
+            committed: self.store.set_task_delegate_outbound_assignment(
+                &TaskDelegateOutboundAssignment {
+                    peer_key: request.peer_key.clone(),
+                    skill_id: request.skill_id.clone(),
+                    channel_id: request.channel_id.clone(),
+                    account_id: request.account_id.clone(),
+                    allowed: request.allowed,
+                    priority: request.priority,
+                    revision: 0,
+                },
+                request.expected_revision,
+            )?,
+        })
+    }
+
     pub fn snapshot(&self) -> Result<MembershipSnapshot> {
         self.store.full_snapshot()
     }
@@ -2767,6 +2848,45 @@ pub struct TaskDelegateAssignmentCommitReceipt {
     pub committed: TaskDelegateAssignment,
 }
 
+/// Strict authenticated daemon request for one exact scoped delegation CAS.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDelegateScopedAssignmentRequest {
+    pub peer_key: String,
+    pub skill_id: String,
+    pub channel_id: Option<String>,
+    pub account_id: Option<String>,
+    pub allowed: bool,
+    pub expected_revision: u64,
+}
+
+/// Stable receipt of the scoped delegation CAS that this request committed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDelegateScopedAssignmentCommitReceipt {
+    pub committed: TaskDelegateScopedAssignment,
+}
+
+/// Strict authenticated daemon request for one exact outbound delegation CAS.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDelegateOutboundAssignmentRequest {
+    pub peer_key: String,
+    pub skill_id: String,
+    pub channel_id: Option<String>,
+    pub account_id: Option<String>,
+    pub allowed: bool,
+    pub priority: u64,
+    pub expected_revision: u64,
+}
+
+/// Stable receipt of the outbound delegation CAS that this request committed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDelegateOutboundAssignmentCommitReceipt {
+    pub committed: TaskDelegateOutboundAssignment,
+}
+
 #[derive(Clone, Debug)]
 struct PendingOutboxEvent {
     id: i64,
@@ -2922,6 +3042,46 @@ impl MembershipStore {
         start: Option<Arc<dyn Fn() + Send + Sync>>,
     ) {
         self.effects.set_task_delegate_gate_observers(setter, start);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_task_delegate_outbound_gate_held_observer(
+        &self,
+        observer: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) {
+        *self
+            .effects
+            .task_delegate_outbound_gate_held_observer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = observer;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_task_delegate_outbound_setter_contention_observer(
+        &self,
+        observer: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) {
+        *self
+            .effects
+            .task_delegate_outbound_setter_contention_observer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = observer;
+    }
+
+    /// Serialize outbound route selection, durable preparation, and synchronous
+    /// stream admission with an exact outbound-assignment CAS. The caller must
+    /// release this before awaiting any remote peer response.
+    pub(crate) fn lock_task_delegate_outbound_authority(&self) -> std::sync::MutexGuard<'_, ()> {
+        #[cfg(test)]
+        self.effects.observe_task_delegate_start_gate();
+        let authority_gate = self
+            .effects
+            .task_delegate_start
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        #[cfg(test)]
+        self.effects.observe_task_delegate_outbound_gate_held();
+        authority_gate
     }
 
     fn connection(&self) -> Result<Connection> {
@@ -3262,9 +3422,20 @@ impl MembershipStore {
                 model_hint: None,
                 scope: Some(scope.clone()),
             },
-        )?;
-        let channel = scope.channel_id.as_deref().unwrap_or("");
-        let account = scope.account_id.as_deref().unwrap_or("");
+    )?;
+    let channel = scope.channel_id.as_deref().unwrap_or("");
+    let account = scope.account_id.as_deref().unwrap_or("");
+        #[cfg(test)]
+        if self.effects.task_delegate_start.try_lock().is_err() {
+            self.effects.observe_task_delegate_outbound_setter_contention();
+        }
+    let _authority_gate = self
+            .effects
+            .task_delegate_start
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        #[cfg(test)]
+        self.effects.observe_task_delegate_setter_gate();
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let active: i64 = tx.query_row("SELECT EXISTS(SELECT 1 FROM members m JOIN transport_bindings b ON b.stable_node_id=m.stable_node_id JOIN authority_meta a ON a.singleton=1 WHERE m.state='active' AND b.carrier='peeroxide' AND b.transport_identity=?1 AND b.auth_epoch=m.auth_epoch AND b.membership_epoch=m.membership_epoch AND m.membership_epoch=a.membership_epoch AND m.membership_epoch>=a.revocation_floor)", [&assignment.peer_key], |row| row.get(0))?;
