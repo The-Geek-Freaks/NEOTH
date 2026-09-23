@@ -3701,10 +3701,14 @@ impl ClusterBudgetRaftAck {
             return Ok(());
         }
         if self.cap_usd_nanos == 0 || self.utc_window <= 0 || self.membership_epoch == 0 {
-            return Err("cluster.budget_raft acknowledgement has an invalid positive policy".into());
+            return Err(
+                "cluster.budget_raft acknowledgement has an invalid positive policy".into(),
+            );
         }
         if self.voters.len() != 3 {
-            return Err("cluster.budget_raft acknowledgement must contain exactly three voters".into());
+            return Err(
+                "cluster.budget_raft acknowledgement must contain exactly three voters".into(),
+            );
         }
         let mut stable_ids = std::collections::BTreeSet::new();
         let mut peeroxide_keys = std::collections::BTreeSet::new();
@@ -3720,7 +3724,9 @@ impl ClusterBudgetRaftAck {
             if !stable_ids.insert(&voter.stable_node_id)
                 || !peeroxide_keys.insert(&voter.peeroxide_key)
             {
-                return Err("cluster.budget_raft acknowledgement has duplicate voter identities".into());
+                return Err(
+                    "cluster.budget_raft acknowledgement has duplicate voter identities".into(),
+                );
             }
         }
         Ok(())

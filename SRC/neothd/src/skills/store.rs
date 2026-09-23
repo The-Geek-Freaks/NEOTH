@@ -6308,14 +6308,10 @@ mod reported_commit_tests {
         let root = open_bound_directory(temp.path(), false, "test store")
             .unwrap()
             .unwrap();
-        atomic_write_private_child(&root.dir, OsStr::new("state.json"), &target, b"old")
-            .unwrap();
-        let (bound_target, _binding) = open_bound_regular_file_readwrite(
-            &root.dir,
-            OsStr::new("state.json"),
-            &target,
-        )
-        .unwrap();
+        atomic_write_private_child(&root.dir, OsStr::new("state.json"), &target, b"old").unwrap();
+        let (bound_target, _binding) =
+            open_bound_regular_file_readwrite(&root.dir, OsStr::new("state.json"), &target)
+                .unwrap();
 
         atomic_write_private_child(&root.dir, OsStr::new("state.json"), &target, b"new")
             .expect("private FileRenameInfoEx publish replaces a DELETE-sharing target");
@@ -6335,15 +6331,18 @@ mod reported_commit_tests {
         let root = open_bound_directory(&ambient_parent, false, "test store")
             .unwrap()
             .unwrap();
-        atomic_write_private_child(&root.dir, OsStr::new("state.json"), &target, b"old")
-            .unwrap();
+        atomic_write_private_child(&root.dir, OsStr::new("state.json"), &target, b"old").unwrap();
 
         let hook_ambient_parent = ambient_parent.clone();
         let hook_displaced_parent = displaced_parent.clone();
         windows_private_atomic_stage::set_before_rename_for_test(move || {
             std::fs::rename(&hook_ambient_parent, &hook_displaced_parent).unwrap();
             std::fs::create_dir(&hook_ambient_parent).unwrap();
-            std::fs::write(hook_ambient_parent.join("state.json"), b"ambient replacement").unwrap();
+            std::fs::write(
+                hook_ambient_parent.join("state.json"),
+                b"ambient replacement",
+            )
+            .unwrap();
         });
 
         atomic_write_private_child(&root.dir, OsStr::new("state.json"), &target, b"new")

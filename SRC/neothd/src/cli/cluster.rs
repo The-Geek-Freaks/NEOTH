@@ -21,8 +21,8 @@ use crate::cli::OutputFormat;
 use crate::cluster::{LeastLoaded, LocalOnly, OrchestratingPolicy, PeerLoad, RoutingDecision};
 use crate::config::credentials::Credentials;
 use crate::config::{
-    BudgetRaftConfig, ClusterAnnouncePolicy, ClusterConfig, ClusterGossipPolicy,
-    ClusterMdnsConfig, ClusterTransport, FreedomConfig,
+    BudgetRaftConfig, ClusterAnnouncePolicy, ClusterConfig, ClusterGossipPolicy, ClusterMdnsConfig,
+    ClusterTransport, FreedomConfig,
 };
 use crate::secret::SecretString;
 

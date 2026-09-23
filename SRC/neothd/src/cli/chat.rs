@@ -8950,9 +8950,7 @@ pub(crate) async fn run_chat_with_to(
     // Public alternate ingress: use the same terminal local-action dispatcher
     // before this helper can create a WAL writer or call the supplied provider.
     admit_incognito_turn_before_runtime(&mut args).await?;
-    if !args.incognito
-        && dispatch_pre_runtime_local_action(&mut args, output).await?
-    {
+    if !args.incognito && dispatch_pre_runtime_local_action(&mut args, output).await? {
         return Ok(());
     }
     run_chat_with_consent_to(
@@ -21412,7 +21410,8 @@ reason = "synthetic secret"
             "an unrelated preparation error is not post-provider block evidence"
         );
         assert!(
-            !blocked_output.0.iter().any(|event| matches!(event,
+            !blocked_output.0.iter().any(|event| matches!(
+                event,
                 ChatTurnEvent::Output(ChatOutput::ProviderDelta { .. })
                     | ChatTurnEvent::Output(ChatOutput::StreamDone { .. })
                     | ChatTurnEvent::Terminal(_)
@@ -21449,17 +21448,22 @@ template = "[REDACTED]"
             crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
             &mut output,
         )
-            .await
-            .expect("replacement streaming run");
+        .await
+        .expect("replacement streaming run");
         let visible = output
             .0
             .iter()
             .filter_map(|event| match event {
-                ChatTurnEvent::Output(ChatOutput::ProviderDelta { text, .. }) => Some(text.as_str()),
+                ChatTurnEvent::Output(ChatOutput::ProviderDelta { text, .. }) => {
+                    Some(text.as_str())
+                }
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(visible, ["first ordinary chunk; [REDACTED]; third ordinary chunk"]);
+        assert_eq!(
+            visible,
+            ["first ordinary chunk; [REDACTED]; third ordinary chunk"]
+        );
         let done_lines = output
             .0
             .iter()
@@ -21468,7 +21472,11 @@ template = "[REDACTED]"
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(done_lines.len(), 1, "Replace commits exactly one terminal receipt");
+        assert_eq!(
+            done_lines.len(),
+            1,
+            "Replace commits exactly one terminal receipt"
+        );
         let done: serde_json::Value = serde_json::from_str(done_lines[0]).unwrap();
         let expected_hash = stream_content_hash(visible[0]);
         assert_eq!(done["count"], 1);
@@ -21479,7 +21487,9 @@ template = "[REDACTED]"
         );
         assert!(matches!(
             output.0.last(),
-            Some(ChatTurnEvent::Terminal(chat_turn_pipeline::ChatTurnTerminal::Complete { .. }))
+            Some(ChatTurnEvent::Terminal(
+                chat_turn_pipeline::ChatTurnTerminal::Complete { .. }
+            ))
         ));
         assert!(
             !format!("{:?}", output.0).contains("sk-w458-never-visible"),

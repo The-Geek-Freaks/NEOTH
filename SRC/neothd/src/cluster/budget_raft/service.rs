@@ -309,9 +309,7 @@ impl BudgetRaftService {
         let members = self.config.raft_voters();
         match self.raft.initialize(members).await {
             Ok(()) => Ok(()),
-            Err(RaftError::APIError(openraft::error::InitializeError::NotAllowed(_))) => {
-                Ok(())
-            }
+            Err(RaftError::APIError(openraft::error::InitializeError::NotAllowed(_))) => Ok(()),
             Err(error) => Err(BudgetServiceError::Unavailable(format!(
                 "bootstrap fixed voters: {error}"
             ))),

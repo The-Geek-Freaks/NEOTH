@@ -8,6 +8,14 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W463 hosted format import (2026-09-23):**
+W462 is published as a96eeba5. Preflight35889935674 reported only formatting;
+its five-file patch was imported after verifying both artifact hashes, source
+HEAD and every full before/after Gitblob. No local formatter ran. Corea96
+35889966328 continues; Group882, GUI144 and Windows16 wait for readiness.
+Inventory730/native1177/Windows23/Linux33/macOS32/GUI144Linux140macOS and
+Road1038checked/284open/2partial,WS-LF31done/87open remain unchanged.
+
 **W462 compiler, Windows publication and producer regressions (2026-09-23):**
 W461 is published as efd5cb72; Preflight35888774668 passed all static contracts.
 W459 repairs the actual OpenRaft API, snapshot, authenticated-peer access,
