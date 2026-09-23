@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T01:54:19.1845355Z",
-  "validationStatus": "W256/W258 source reviewed; hosted formatting imported; Group441/core85c pending",
+  "capturedUtc": "2026-09-23T01:59:59.4478211Z",
+  "validationStatus": "W260 Linux test-only diagnostics reviewed; P2-29 W261 exact scoped acceptance; hosted GUI rerun pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -438,18 +438,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 99788,
-      "sha256": "6F94890D09D21E022796231F08ECB1232B44ACBA90BCF7CCB750BFD82D43E967"
+      "bytes": 101096,
+      "sha256": "B8B0BB02EC3F9DA9F71BE55173F919D4AE2CE28466E26BE8ADC7103E76B22A01"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1102723,
-      "sha256": "30AE0593E3185CED149D4B9CBBD6875C229035BD6C35E0F884C0F9D746AA6BC5"
+      "bytes": 1104044,
+      "sha256": "701339334FAD3067A32BB234560B25DD3C01A02C08ED2FB9CFA43233DAF91C70"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1698291,
-      "sha256": "5C58DC858EAF983A19CF8C8A6AD5DC78F4ADA551A1B2CA5D8E7687A86579802A"
+      "bytes": 1699974,
+      "sha256": "83B6964061EA97CF1A70EF3DA44B8F0C7DDD4C78078A851FE2BE3DAB4860D5A0"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -583,8 +583,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
-      "bytes": 103625,
-      "sha256": "CBF88CDB22B407138FF3093DF801FCDF5CFC2FE90A6DAF825336FA2A62D88785"
+      "bytes": 106408,
+      "sha256": "0B1656B045C93380B877576A485CA9792D5C665E3D1CA0A898DF60EB70FD2DB3"
     },
     {
       "path": "SRC/neothd-gui/src/chat_reasoning.rs",

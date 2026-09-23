@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W256/W258 source reviewed; hosted formatting imported; Group441/core85c pending",
+  "status": "W260 Linux test-only diagnostics reviewed; P2-29 W261 exact scoped acceptance; hosted GUI rerun pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 93036,
-    "sha256": "7975244AA70321113782544D1C8A8953D12E44E6C78A2248BE4ACC1C06B906F9"
+    "bytes": 93061,
+    "sha256": "10E66E11C8A4823A2D2BA7BE17F0148EAFBA356C6F5B5F6FECEF7F8223220FF5"
   },
   "sourceInputs": 538,
   "requiredNativeTests": [
@@ -17050,6 +17050,20 @@
       }
     ],
     "note": "Preflight35808220122 two-path rustfmt receipt source/SHA/preimage/postimage verified; no local formatting or execution",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave260261Source": {
+    "base": "c43e5d0edacf964254d72dc33263b0716063f096",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
+        "bytes": 106408,
+        "sha256": "0B1656B045C93380B877576A485CA9792D5C665E3D1CA0A898DF60EB70FD2DB3",
+        "blob": "e4ca5f49f620b29f8d39e5292172361650c763e6"
+      }
+    ],
+    "note": "Test-only bounded nonblocking failed-helper stderr; P2-29 accepted19 individual terminals atd99 with22sourcepaths unchanged throughc43; W153/W164 retained",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

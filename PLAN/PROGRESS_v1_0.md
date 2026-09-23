@@ -2,6 +2,25 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W260 startup diagnostics / W261 throughput accepted (2026-09-23):**
+P2-29 is accepted from its 12 native/CLI/daemon and seven GUI/Main/Buddy
+individually passing, source-bound terminals on `d99d5c6c`. The display uses
+actual visible stream events/s and rejects invented live token rates. Relevant
+source paths were unchanged through `c43e5d0e`. This does not accept either
+whole failed run: Group432 remains 430/432; GUI124 remains 122/124. W153/W164
+still fail before provider launch with service exit125; P2-28 remains open.
+W260 preserves already-buffered helper stderr only in Linux test builds, after
+failed activation cleanup, with one nonblocking read capped at4096bytes.
+Production containment and successful stream handling are unchanged.
+Coreaf0 `35807294240` passed slimClippy, test-target checking and CLI export;
+the SHA-bound CLI reference matches the committed snapshot. W256/W258 core
+and Group441 runs on `85c87f57` remain pending. Hosted rustfmt was imported
+with exact source/SHA/preimage/postimage verification; no local formatter ran.
+Current Road:1324 leaves,1017checked/305open/2partial; WS-LF10done/108open;
+raw blockers307/release-tag blockers306. No release qualification claimed.
+See `docs/gold-wave260-gui-child-start.md` and
+`docs/gold-wave261-live-throughput-acceptance.md`.
+
 **W256 native search and W258 Unix fixture repair (2026-09-23):**
 `neoth fs grep` adds bounded literal search over one allowlisted UTF-8 file,
 using the existing retained-descriptor read admission. Results carry line
@@ -3881,7 +3900,7 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection accepted on 2026-09-22: **9 done / 109
+> closed with P2-10 registry injection and P2-29 live throughput accepted: **10 done / 108
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

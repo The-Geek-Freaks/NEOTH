@@ -41,7 +41,16 @@ impl OwnedChatChild {
             Err(error) => {
                 let kill_error = child.kill().err();
                 let wait_error = child.wait().err();
-                return Err(append_cleanup_errors(error, kill_error, wait_error));
+                let error = append_cleanup_errors(error, kill_error, wait_error);
+                #[cfg(all(test, target_os = "linux"))]
+                {
+                    let helper_stderr = read_test_linux_systemd_run_stderr(&mut child);
+                    return Err(format!(
+                        "{error}; test-only systemd-run stderr after failed activation: {helper_stderr}"
+                    ));
+                }
+                #[cfg(not(all(test, target_os = "linux")))]
+                return Err(error);
             }
         };
         Ok(Self {
@@ -113,6 +122,62 @@ impl OwnedChatChild {
             std::thread::sleep(CHAT_TREE_POLL_INTERVAL);
         }
     }
+}
+
+/// Capture only already-buffered test-helper stderr after an activation error.
+///
+/// The production path deliberately never reads this pipe here: it belongs to
+/// the streamed child interface. Linux test fixtures need the helper's early
+/// exit diagnostic, but may not block while the systemd-run pipe remains open.
+#[cfg(all(test, target_os = "linux"))]
+fn read_test_linux_systemd_run_stderr(child: &mut Child) -> String {
+    use std::io::Read as _;
+    use std::os::fd::AsRawFd as _;
+
+    const MAX_BYTES: usize = 4096;
+    let Some(stderr) = child.stderr.as_mut() else {
+        return "<stderr pipe unavailable>".to_string();
+    };
+    let descriptor = stderr.as_raw_fd();
+    // SAFETY: descriptor is borrowed from the live ChildStderr above. fcntl
+    // only inspects flags; it does not close or transfer the owned descriptor.
+    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFL) };
+    if flags < 0 {
+        return format!(
+            "<fcntl(F_GETFL) failed: {}>",
+            std::io::Error::last_os_error()
+        );
+    }
+    // SAFETY: ChildStderr retains this live descriptor throughout this call;
+    // F_SETFL changes flags without closing or transferring its ownership.
+    if unsafe { libc::fcntl(descriptor, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return format!(
+            "<fcntl(F_SETFL O_NONBLOCK) failed: {}>",
+            std::io::Error::last_os_error()
+        );
+    }
+
+    let mut bytes = [0_u8; MAX_BYTES];
+    let result = match stderr.read(&mut bytes) {
+        Ok(0) => "<empty>".to_string(),
+        Ok(read) => {
+            let suffix = if read == MAX_BYTES { " [truncated]" } else { "" };
+            format!("{}{}", String::from_utf8_lossy(&bytes[..read]), suffix)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+            "<no buffered bytes>".to_string()
+        }
+        Err(error) => format!("<nonblocking read failed: {error}>"),
+    };
+    // SAFETY: the same ChildStderr still owns descriptor after the read;
+    // restoring its saved flags neither closes nor transfers that descriptor.
+    if unsafe { libc::fcntl(descriptor, libc::F_SETFL, flags) } < 0 {
+        return format!(
+            "{result}; <fcntl(restore flags) failed: {}>",
+            std::io::Error::last_os_error()
+        );
+    }
+    result
 }
 
 impl Drop for OwnedChatChild {
