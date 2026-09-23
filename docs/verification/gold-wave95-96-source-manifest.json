@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-23T04:37:52.4830310Z",
-  "validationStatus": "P2-05 accepted with Group489+Group484+7exactGUI quality cases; W279 hostedformat imported and7Clippy diagnostics narrowly repaired, recheckpending",
+  "capturedUtc": "2026-09-23T04:54:05.1248875Z",
+  "validationStatus": "W285 actual background role binding and W279 fixture repairs; Group504 pending hosted validation; W280 excluded",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -73,8 +73,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 13063,
-      "sha256": "61DB94B2CE83C87FE982D166986258E1B1D1D88ED01A1E04269CC4A09F9EF0A8"
+      "bytes": 13115,
+      "sha256": "AE2FCCA53A93DAF745F46D66889F3C3B4FA9D0819514F68E00E1225F9D57D3EB"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -358,8 +358,8 @@
     },
     {
       "path": "docs/gold-wave279-native-glob-enrichment.md",
-      "bytes": 2733,
-      "sha256": "583A2348ABB287A5D6A8CDC81B6438AB93604FE6E226F98C87769C28AD9B0735"
+      "bytes": 3504,
+      "sha256": "F01C292CEF88B4EE460E7F1E179E254E8157BD8650BC3492A5293023AD3580B0"
     },
     {
       "path": "docs/gold-wave281-cgroup-mount.md",
@@ -473,18 +473,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 121008,
-      "sha256": "F16096B048DB095CDB4561F6B64BB5E0F85A4A46F318F0395BC2511BD80CFB39"
+      "bytes": 122706,
+      "sha256": "8E3709E800425868B1A6BC73445E8CFFCD3BB058F6BF7063A273FE9BE082B780"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1123986,
-      "sha256": "955B0218942B30FEFAD11FB49180D23090C6D8B4336D8ACE3EC22714B1743C9D"
+      "bytes": 1125684,
+      "sha256": "0912A7DD509C31CD529263104D3355FF8AD364D7FCCE8D5C201E8EF6747FBC51"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1720549,
-      "sha256": "251C42A0561713D9971AF4C153D7CA64F1A0060EF7A7941F51ACB60F880B26B5"
+      "bytes": 1722247,
+      "sha256": "23DE2190C82895F2FBB5BE4F577F1053163A849835F1C0846D3BAFFA55F27C3A"
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
@@ -1053,8 +1053,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/bg_session.rs",
-      "bytes": 124018,
-      "sha256": "A32AE3910BDBEF6ABC6707DFB49C782CEA8E557F4630C1D29A2DDD5AFE371B7C"
+      "bytes": 131903,
+      "sha256": "9A62629EC39C92656DAA042E2DD5A0AB8829FA3DA37C8C9E82B22115CC663E12"
     },
     {
       "path": "SRC/neothd/src/cli/buddy.rs",
@@ -1183,8 +1183,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/fs.rs",
-      "bytes": 76369,
-      "sha256": "E8EE7124EEB5C71335B3F43F5E804B04F327369879E2073D3C27F4D4CA8DB526"
+      "bytes": 77278,
+      "sha256": "3D47ACA124324937A8250F34F9B0B893DF2176AD297B33B0799F6B8ED30E4CB1"
     },
     {
       "path": "SRC/neothd/src/cli/gui_stream.rs",
@@ -2805,6 +2805,11 @@
       "path": "THIRD_PARTY_LICENSES",
       "bytes": 2299156,
       "sha256": "A2F73733618DE347F4876EDD4325391DB8C2F11D853614CC4D8EDC2A82CA497D"
+    },
+    {
+      "path": "docs/gold-wave285-background-role-binding.md",
+      "bytes": 2086,
+      "sha256": "5093E6F3CE3054D758BEB2F1CA77D364582A695E13833E54937BC4B60EAE7D49"
     }
   ]
 }

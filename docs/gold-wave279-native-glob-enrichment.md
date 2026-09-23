@@ -28,3 +28,7 @@ hosted export.
 ## W284 hosted follow-up
 
 Preflight run35818238243 supplied the exact four-path formatter patch for source7f84dbdc. Core run35818250744 stopped at seven Clippy diagnostics: Boolean simplification, helper argument count and collapsible conditionals. The narrow repair retains discovery/permission/audit semantics, groups the two limits in GlobBounds and removes an unnecessary test-DB mutable binding. No warning is suppressed. Fresh hosted compilation and execution remain required.
+
+## Hosted fixture correction
+
+Grouped run35818252940 for source7f84dbdc executed 502 selected tests: 500 passed and two fixture assertions failed. The hook fixture had expected a replacement template as the whole enrichment, while the configured replace hook correctly substitutes only its matching `"max_results":20` substring in the serialized typed arguments. It now derives the exact serialized arguments and asserts one replacement. The zero-duration cancellation fixture had unwrapped the context constructor even though admission correctly rejects it with `PreToolUseContextError::DeadlineElapsed`; it now asserts that admission refusal directly. These are fixture-only corrections and do not alter glob production behavior. A fresh hosted run is still required.

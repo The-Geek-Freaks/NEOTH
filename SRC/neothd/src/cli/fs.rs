@@ -245,8 +245,8 @@ fn validate_glob_pattern(pattern: &str) -> Result<()> {
         !pattern.is_empty() && pattern.len() <= MAX_GREP_LITERAL_BYTES,
         "glob pattern must contain 1..={MAX_GREP_LITERAL_BYTES} UTF-8 bytes"
     );
-    let drive_qualified = pattern.as_bytes().get(1) == Some(&b':')
-        && pattern.as_bytes()[0].is_ascii_alphabetic();
+    let drive_qualified =
+        pattern.as_bytes().get(1) == Some(&b':') && pattern.as_bytes()[0].is_ascii_alphabetic();
     let forbidden = Path::new(pattern).is_absolute()
         || pattern.starts_with(['/', '\\'])
         || drive_qualified
@@ -1457,7 +1457,20 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(output["matches"], serde_json::json!(["selected.rs"]));
-        assert_eq!(output["hook_enrichment"], "[glob-hook]");
+        let expected_hook_enrichment = serde_json::json!({
+            "root": root.path().canonicalize().unwrap().display().to_string(),
+            "pattern": "*.rs",
+            "max_results": 20,
+            "max_depth": 0,
+            "repository_root": serde_json::Value::Null,
+        })
+        .to_string()
+        .replacen("\"max_results\":20", "[glob-hook]", 1);
+        assert_eq!(
+            output["hook_enrichment"],
+            expected_hook_enrichment,
+            "the replace hook transforms its matching argument substring exactly once"
+        );
         let nohit = glob_with_pre_tool_use(
             root.path(),
             "*.absent",
@@ -1546,13 +1559,22 @@ mod tests {
         cancelled.store(true, std::sync::atomic::Ordering::Release);
         let cap = crate::os_tools::gate::open_absolute_directory_no_follow(root.path()).unwrap();
         assert!(discover_glob(cap, "*.rs", 20, 0, &cancelled_context).is_err());
-        let expired_context = w279_context(
+        let expired = crate::hooks::PreToolUseContext::admitted(
+            crate::hooks::PreToolUseOrigin::DirectCliOsDirectoryGlob,
+            "native-os-directory-glob",
+            "fs-glob",
+            &serde_json::json!({"root": root.path().display().to_string(), "pattern": "**/*.rs", "max_results": 20, "max_depth": 8}),
             root.path(),
-            crate::hooks::PreToolUseCancellation::unbound(),
+            root.path(),
             std::time::Duration::ZERO,
-        );
-        let cap = crate::os_tools::gate::open_absolute_directory_no_follow(root.path()).unwrap();
-        assert!(discover_glob(cap, "*.rs", 20, 0, &expired_context).is_err());
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+        )
+        .expect_err("zero deadline must refuse admission before enumeration");
+        assert!(matches!(
+            expired,
+            crate::hooks::PreToolUseContextError::DeadlineElapsed
+        ));
     }
 
     #[cfg(unix)]

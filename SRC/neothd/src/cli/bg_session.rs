@@ -1470,12 +1470,22 @@ async fn run_background_worker_with_key_and_attestor(
             provider.name(),
         )?;
         let post_mint: Result<String> = async {
-            let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::explicit_request_capability(
-                live_config.autonomy_policy(),
-                writer.clone(),
-                live_config.tokens.max_per_request,
-                verified_approval.expires_unix,
-            )
+            // Bind this detached consumer to the same Left-role authority as
+            // the configured background route. Reload once more before the
+            // permit exists, so a changed role policy rejects before any
+            // fallback leaf can reserve or send an effect.
+            let dispatch_config = load_unchanged_live_background_config(&instance_home, &spec)?;
+            crate::consent::ensure_all_still_granted(&instance_home, &dispatch_config)
+                .context("background provider consent was revoked before dispatch")?;
+            let authorizer = background_role_authorizer(
+                crate::providers::cost_authorization::ProviderCallAuthorizer::explicit_request_capability(
+                    live_config.autonomy_policy(),
+                    writer.clone(),
+                    live_config.tokens.max_per_request,
+                    verified_approval.expires_unix,
+                ),
+                Arc::new(dispatch_config.clone()),
+            )?
             .with_usage_home(instance_home.clone())
             .with_usage_automated(true)
             .with_audit_context(
@@ -1496,9 +1506,6 @@ async fn run_background_worker_with_key_and_attestor(
                 request.model.clone(),
                 "background_session",
             );
-            let dispatch_config = load_unchanged_live_background_config(&instance_home, &spec)?;
-            crate::consent::ensure_all_still_granted(&instance_home, &dispatch_config)
-                .context("background provider consent was revoked before dispatch")?;
             let completion = provider.complete(request).await?;
             ensure_background_canary_absent(&canary, &completion.text)?;
             Ok(completion.text)
@@ -1558,6 +1565,29 @@ async fn run_background_worker_with_key_and_attestor(
     }
     wal_result?;
     Ok(job_id)
+}
+
+fn background_left_role_provider(
+    config: &FreedomConfig,
+) -> Result<crate::config::inference::InferenceProvider> {
+    config
+        .inference
+        .slot_for(crate::config::inference::HemisphereRole::Left)
+        .provider
+        .or_else(|| config.provider_kind.map(|kind| kind.to_inference()))
+        .ok_or_else(|| anyhow::anyhow!("background Left role has no configured provider identity"))
+}
+
+fn background_role_authorizer(
+    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
+    config: Arc<FreedomConfig>,
+) -> Result<crate::providers::cost_authorization::ProviderCallAuthorizer> {
+    let provider = background_left_role_provider(config.as_ref())?;
+    Ok(authorizer.with_role_dispatch(
+        crate::config::inference::HemisphereRole::Left,
+        provider,
+        config,
+    ))
 }
 
 /// Spawn a background provider call. Returns the [`BgJobId`] so the
@@ -2266,6 +2296,83 @@ mod tests {
         }
     }
 
+    struct W285CountingProvider {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for W285CountingProvider {
+        fn name(&self) -> &'static str {
+            "local_ollama"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("qwen-background")
+        }
+
+        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+            Some(64)
+        }
+
+        async fn complete(&self, req: Request) -> Result<crate::providers::Completion> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(crate::providers::Completion {
+                termination: Default::default(),
+                text: "background leaf response".to_owned(),
+                identity: Default::default(),
+                model: req.model.unwrap_or_default(),
+                latency: std::time::Duration::ZERO,
+                input_tokens: None,
+                output_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                usage_measurements: None,
+            })
+        }
+    }
+
+    fn w285_background_role_config(allowed_model: &str) -> Arc<FreedomConfig> {
+        let mut config = FreedomConfig::default();
+        config.inference.default_slot.provider =
+            Some(crate::config::inference::InferenceProvider::LocalOllama);
+        config.inference.role_policy = Some(crate::config::role_policy::RolePolicyConfig {
+            rules: vec![crate::config::role_policy::RolePolicyRule {
+                role: crate::config::inference::HemisphereRole::Left,
+                provider: crate::config::inference::InferenceProvider::LocalOllama,
+                model: Some(allowed_model.to_owned()),
+            }],
+        });
+        Arc::new(config)
+    }
+
+    fn w285_lifecycle_event_types(segment: &Path) -> Vec<u8> {
+        let bytes = std::fs::read(segment).expect("read W285 lifecycle WAL");
+        let header = crate::wal::segment_header::parse_segment_header(&bytes)
+            .expect("parse W285 lifecycle WAL header");
+        let mut cursor = header.header_len();
+        let mut events = Vec::new();
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..])
+                .expect("decode W285 lifecycle WAL frame");
+            if frame.header.event_type != crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
+                events.push(frame.header.event_type);
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        events
+    }
+
+    fn w285_background_request(model: &str) -> Request {
+        let mut request = exact_test_request();
+        request.model = Some(model.to_owned());
+        request.temperature = None;
+        request.top_p = None;
+        request.sampling_seed = None;
+        request.stop_sequences.clear();
+        request.thinking_budget = None;
+        request
+    }
+
     #[test]
     fn detached_canary_is_not_persisted_but_is_bound_before_dispatch() {
         let config = FreedomConfig::default();
@@ -2683,6 +2790,88 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("specification binding mismatch"));
+    }
+
+    #[tokio::test]
+    async fn w285_background_left_role_binding_admits_exact_leaf_once() {
+        let dir = tempfile::tempdir().expect("temporary W285 WAL directory");
+        let segment = dir.path().join("w285-background-allowed-000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("start W285 WAL writer");
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let config = w285_background_role_config("qwen-background");
+        let authorizer = background_role_authorizer(
+            crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+                crate::permissions::AutonomyLevel::Full,
+                Some(writer.clone()),
+                crate::config::TokensConfig::default_max_per_request(),
+            ),
+            config,
+        )
+        .expect("configured background Left role");
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+            Box::new(W285CountingProvider {
+                calls: Arc::clone(&calls),
+            }),
+            authorizer,
+            Some("qwen-background".to_owned()),
+            "background_session",
+        );
+        let request = w285_background_request("qwen-background");
+
+        provider
+            .complete(request)
+            .await
+            .expect("admitted background leaf");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        drop(provider);
+        drop(writer);
+        join.await.expect("W285 WAL writer drained");
+        assert!(
+            w285_lifecycle_event_types(&segment)
+                .contains(&crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST)
+        );
+    }
+
+    #[tokio::test]
+    async fn w285_background_left_role_binding_denies_disallowed_model_before_effect() {
+        let dir = tempfile::tempdir().expect("temporary W285 WAL directory");
+        let segment = dir.path().join("w285-background-denied-000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("start W285 WAL writer");
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let config = w285_background_role_config("qwen-background");
+        let authorizer = background_role_authorizer(
+            crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+                crate::permissions::AutonomyLevel::Full,
+                Some(writer.clone()),
+                crate::config::TokensConfig::default_max_per_request(),
+            ),
+            config,
+        )
+        .expect("configured background Left role");
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+            Box::new(W285CountingProvider {
+                calls: Arc::clone(&calls),
+            }),
+            authorizer,
+            Some("qwen-background".to_owned()),
+            "background_session",
+        );
+        let request = w285_background_request("qwen-disallowed");
+
+        let error = provider
+            .complete(request)
+            .await
+            .expect_err("Left policy must reject the final model before dispatch");
+        assert!(error.to_string().contains("role dispatch denied"), "{error:#}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        drop(provider);
+        drop(writer);
+        join.await.expect("W285 WAL writer drained");
+        assert!(
+            !w285_lifecycle_event_types(&segment)
+                .contains(&crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST),
+            "a denied role route must not open a provider effect"
+        );
     }
 
     #[test]

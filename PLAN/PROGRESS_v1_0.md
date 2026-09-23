@@ -2,6 +2,31 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W285 background role binding and W279 fixture repair (2026-09-23):**
+The detached background worker now carries its configured Left-role authority
+through the existing final provider authorization. Two new fixtures use the actual
+AuthorizedProvider and WAL authorizer: allowed model reaches one leaf and records
+a request; disallowed model reaches zero leaves and writes no request event.
+P2-15 remains open beyond this consumer. Hosted validation is pending.
+
+Group502 run35818252940 at7f84dbdc is source-bound:502 executed,500 passed,
+2 failed,0 unstarted; all109 source bindings and ordered terminals verified.
+The two failures were the replace-hook expectation and a zero-deadline constructor
+unwrap. Both fixtures are repaired without changing production glob behavior.
+Preflighte700's exact one-file format patch is imported; Coree700 passed slim
+Clippy and test-target typecheck and is still building/exporting the public CLI.
+GUI125b7ca executed125 with123 passed and W153/W164 failed. W153 reports EBUSY
+at the fresh cgroup2 mount; W164's narrower cause remains unproven.
+W280 stays unpublished while yearly-input, rename-identity and crash-recovery
+defects and real recovery fixtures are repaired. FullCIce0 remains active on macOS;
+Windows failed and Linux lost runner communication. No replacement FullCI dispatch.
+
+Inventory:561 paths,910 universal native identities; platform extras unchanged
+(Windows19/Linux30/macOS29); grouped selection504, plus two separate BGE tests.
+GUI98 universal plus Linux27/macOS26; Linux selection125.
+Road remains1324 =1021 checked/301 open/2 partial; WS-LF14 done/104 open.
+No local executable validation ran. No additional roadmap item is accepted.
+
 **P2-05 Self-improve quality accepted (2026-09-23):**
 Group489 run35816919838 passed489/489 atb7ca8bf4 with all107 source bindings,
 matrix/lock and ordered terminals admitted. This includes the four passive

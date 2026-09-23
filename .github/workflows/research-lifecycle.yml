@@ -135,6 +135,7 @@ jobs:
               "wave277ChannelDoctorAcceptance": 9,
               "wave278RetryRoleReceiptAcceptance": 1,
               "wave279NativeGlobAcceptance": 13,
+              "wave285BackgroundRoleAcceptance": 2,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():
