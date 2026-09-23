@@ -149,6 +149,7 @@ jobs:
               "wave299GraphifyWitnessAcceptance": 4,
               "wave308AdversarialRoleAcceptance": 2,
               "wave310LiveEgressSessionAcceptance": 3,
+              "wave316WalSessionParentAcceptance": 44,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():

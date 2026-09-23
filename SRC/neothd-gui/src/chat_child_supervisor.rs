@@ -1503,9 +1503,8 @@ fn linux_manager_helper_main() -> Result<i32, String> {
     // These static progress markers are intentionally best-effort. They add
     // no launch input or environment data and cannot change readiness or the
     // fail-closed containment path when systemd declines an advisory status.
-    let _ = notify.send(
-        b"STATUS=GUI chat launch frame, cgroup binding, and parent PID identity verified",
-    );
+    let _ = notify
+        .send(b"STATUS=GUI chat launch frame, cgroup binding, and parent PID identity verified");
 
     enter_linux_request_namespaces(&envelope.unit_name)?;
     let _ = notify.send(b"STATUS=GUI chat request namespaces entered");

@@ -188,6 +188,7 @@ pub(crate) async fn emit_egress_intent_in(
 /// Account-bound variant for the admitted nonlegacy Telegram map live path.
 /// Other channel paths deliberately keep using the unbound wrapper, whose JSON
 /// payload remains byte-compatible because it has no channel_ref key.
+#[cfg(test)]
 pub(crate) async fn emit_account_bound_egress_intent(
     writer: &crate::wal::writer::WalWriterHandle,
     channel: &str,
@@ -409,6 +410,7 @@ pub(crate) async fn emit_egress_result_in(
 /// is deliberately identical to the unbound result; the authenticated marker
 /// binds it to the earlier authenticated mapped intent without copying account
 /// data into the result frame.
+#[cfg(test)]
 pub(crate) async fn emit_account_bound_egress_result(
     writer: &crate::wal::writer::WalWriterHandle,
     intent_id: &str,

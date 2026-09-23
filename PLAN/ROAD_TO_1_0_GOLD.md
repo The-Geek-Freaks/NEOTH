@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W316 complete session selection / W317 hosted lint repair (2026-09-23):**
+P2-08 now selects all48 original W159 emitter/migration/header/query regressions
+plus3W310 live-egress cases. Seven were already grouped;44 additional existing
+native identities expand Group599 to643. Native995 and GUI129/125 unchanged.
+Core699 run35831257004 stopped at two dead-code diagnostics: the old mapped
+intent/result wrappers are now used only by tests, which W317 makes explicit.
+Production retains the contextual APIs. Fresh Core remains required.
+Preflightd6da35831804454 requested one supervisor-format correction; exact patch
+SHA256223C74EB and Git pre/postimages verified before import. GUI129d6da
+run35831827281 continues. Inventory600 paths; Road/WS-LF counts unchanged.
+No local executable validation, no parent acceptance, no crash-fix claim.
+
 **W314 startup diagnostics and exact hosted formatting (2026-09-23):**
 The unresolved Linux crash fixture now reports optional systemd terminal fields
 and static helper-stage milestones. Existing required authority fields and
