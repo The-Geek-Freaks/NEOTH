@@ -5748,6 +5748,28 @@ fn spawn_shared_channel_run_for_ref<C: Channel + 'static>(
     channel_tasks.entry(channel_ref).or_default().push(task);
 }
 
+/// Run a live-instance-owned adapter and retire its proactive publication as
+/// soon as its receive task ends. The fleet supervisor repeats this revocation
+/// as a crash/reload backstop; doing it here closes the completed-task window.
+#[cfg(feature = "gchat-channel")]
+fn spawn_live_instance_channel_run_for_ref<C: Channel + 'static>(
+    channel: Arc<C>,
+    handler: PipelineHandler,
+    channel_ref: ChannelRef,
+    label: &'static str,
+    channel_tasks: &mut ChannelFleet,
+    live_channels: Arc<ChannelLiveRegistry>,
+) {
+    let task_ref = channel_ref.clone();
+    let task = tokio::spawn(async move {
+        if let Err(error) = channel.run(handler).await {
+            tracing::error!(error = %error, "{label} channel task exited with error");
+        }
+        live_channels.revoke_and_drain(&task_ref).await;
+    });
+    channel_tasks.entry(channel_ref).or_default().push(task);
+}
+
 /// Clone only one adapter's credential surface. Reconciliation can then reuse
 /// the canonical bootstrap function without allowing an unrelated adapter to
 /// spawn or log during a targeted restart.
@@ -7044,11 +7066,30 @@ pub(crate) async fn spawn_channel_adapters(
                     subscription,
                 ) {
                     Ok(channel) => {
-                        let channel = channel.with_allowlist(Some(allowed_sender), writer.clone());
+                        let channel = Arc::new(
+                            channel.with_allowlist(Some(allowed_sender), writer.clone()),
+                        );
+                        let channel_ref = ChannelRef::default_account(ChannelKind::GoogleChat);
+                        if let Some(fingerprint) = channel_fingerprints.get(&channel_ref).copied()
+                        {
+                            let lease = live_channels
+                                .begin_replacement(channel_ref.clone(), fingerprint)
+                                .await;
+                            let live_channel: Arc<dyn Channel> = channel.clone();
+                            if !live_channels.publish(&lease, live_channel).await {
+                                warn!(
+                                    channel = "gchat",
+                                    "Google Chat live proactive publication was superseded"
+                                );
+                            }
+                        } else {
+                            warn!(
+                                channel = "gchat",
+                                "Google Chat has no current lifecycle fingerprint; proactive publication skipped"
+                            );
+                        }
                         let handler: PipelineHandler = build_channel_handler(
-                            AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
-                                ChannelKind::GoogleChat,
-                            )),
+                            AuthenticatedInboundBinding::for_account(channel_ref.clone()),
                             provider.clone(),
                             config,
                             writer,
@@ -7061,12 +7102,13 @@ pub(crate) async fn spawn_channel_adapters(
                             confirm_bus.clone(),
                             views_executor.clone(),
                         );
-                        spawn_channel_run(
+                        spawn_live_instance_channel_run_for_ref(
                             channel,
                             handler,
-                            ChannelKind::GoogleChat,
+                            channel_ref,
                             "GoogleChat",
                             channel_tasks,
+                            Arc::clone(live_channels),
                         );
                         info!(
                             channel = "gchat",
@@ -8125,7 +8167,7 @@ pub(crate) struct BackgroundHandles {
     /// Readiness waits are lifecycle-owned, separate from inbound adapter
     /// handles because normal publication completion is not adapter failure.
     pub readiness_publishers: Arc<std::sync::Mutex<ChannelReadinessPublishers>>,
-    /// The only daemon-owned source of connection-bound proactive adapters.
+    /// The only daemon-owned source of live-instance-bound proactive adapters.
     pub live_channels: Arc<ChannelLiveRegistry>,
     /// The fleet supervisor itself — aborted BEFORE the channel tasks
     /// so a reload racing shutdown can't respawn into a dying daemon.
@@ -9180,7 +9222,11 @@ mod tests {
     ) {
         tokio::time::timeout(std::time::Duration::from_secs(1), async {
             loop {
-                if registry.acquire(channel_ref, fingerprint).await.is_some() {
+                if registry
+                    .acquire_for_test(channel_ref, fingerprint)
+                    .await
+                    .is_some()
+                {
                     return;
                 }
                 tokio::task::yield_now().await;
@@ -9212,17 +9258,20 @@ mod tests {
         ready_tx.send(true).unwrap();
         wait_for_live_channel(&registry, &channel_ref, 41).await;
 
-        let acquired = registry.acquire(&channel_ref, 41).await.unwrap();
+        let acquired = registry.acquire_for_test(&channel_ref, 41).await.unwrap();
         let entered = Arc::clone(&channel.entered);
         let release = Arc::clone(&channel.release);
         let send = tokio::spawn(async move {
-            acquired.send_proactive("#ops", "drain").await.unwrap();
+            acquired
+                .send_once("#ops".to_string(), "drain".to_string())
+                .await
+                .unwrap();
         });
         entered.notified().await;
         ready_tx.send(false).unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(1), async {
             loop {
-                if registry.acquire(&channel_ref, 41).await.is_none() {
+                if registry.acquire_for_test(&channel_ref, 41).await.is_none() {
                     return;
                 }
                 tokio::task::yield_now().await;
@@ -9242,7 +9291,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            registry.acquire(&channel_ref, 41).await.is_none(),
+            registry.acquire_for_test(&channel_ref, 41).await.is_none(),
             "false readiness must revoke the published channel before return"
         );
 
@@ -9263,8 +9312,8 @@ mod tests {
             .expect("stale publisher remains lifecycle-owned until it loses publication")
             .await
             .unwrap();
-        assert!(registry.acquire(&channel_ref, 42).await.is_none());
-        assert!(registry.acquire(&channel_ref, 43).await.is_none());
+        assert!(registry.acquire_for_test(&channel_ref, 42).await.is_none());
+        assert!(registry.acquire_for_test(&channel_ref, 43).await.is_none());
         assert!(
             registry
                 .publish(&replacement, Arc::new(ReadinessProbeChannel))

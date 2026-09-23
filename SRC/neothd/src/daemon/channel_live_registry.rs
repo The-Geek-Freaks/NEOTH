@@ -1,9 +1,11 @@
-//! Generation-bound access to connection-owned proactive channel adapters.
+//! Generation-bound access to live-instance-owned proactive channel adapters.
 //!
-//! IRC, Twitch and Nostr own long-lived receive connections.  This registry
-//! never builds a replacement transport: it publishes only an already-ready
-//! adapter and returns a lease wrapper rather than the raw adapter.  The
-//! wrapper rechecks the same entry at the actual proactive effect boundary.
+//! IRC, Twitch and Nostr own long-lived receive connections; Google Chat owns
+//! a running Pub/Sub pull adapter with its parsed service-account authority and
+//! token cache. This registry never builds a replacement transport: it
+//! publishes only an already-ready adapter and returns a lease wrapper rather
+//! than the raw adapter. The wrapper rechecks the same entry at the actual
+//! proactive effect boundary.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -237,9 +239,22 @@ impl ChannelLiveRegistry {
             Self::revoke_entry_and_drain(&entry).await;
         }
     }
+
+    /// Test-only opaque forwarding preserves the production permit boundary
+    /// while allowing sibling crate test modules to exercise lifecycle races.
+    #[cfg(test)]
+    pub(crate) async fn acquire_for_test(
+        &self,
+        channel_ref: &ChannelRef,
+        fingerprint: u64,
+    ) -> Option<ConnectionBoundProactiveTestPermit> {
+        self.acquire(channel_ref, fingerprint)
+            .await
+            .map(ConnectionBoundProactiveTestPermit)
+    }
 }
 
-/// Non-cloneable authority for one connection-owned proactive effect.  It is
+/// Non-cloneable authority for one live-instance-owned proactive effect. It is
 /// intentionally not a `Channel`: handing out an `Arc<dyn Channel>` would
 /// let callers duplicate the capability and later send outside the durable
 /// claim path.  The egress executor consumes this permit exactly once after
@@ -252,6 +267,20 @@ pub(super) struct ConnectionBoundProactivePermit {
     fingerprint: u64,
     closed: Arc<std::sync::atomic::AtomicBool>,
     closing_gate: Arc<AsyncMutex<()>>,
+}
+
+#[cfg(test)]
+pub(crate) struct ConnectionBoundProactiveTestPermit(ConnectionBoundProactivePermit);
+
+#[cfg(test)]
+impl ConnectionBoundProactiveTestPermit {
+    pub(crate) async fn send_once(
+        self,
+        chat_id: String,
+        text: String,
+    ) -> std::result::Result<crate::channels::MessageId, ChannelError> {
+        self.0.send_once(chat_id, text).await
+    }
 }
 
 impl ConnectionBoundProactivePermit {
@@ -461,7 +490,6 @@ mod tests {
             0,
             "a revoked lease must never reach the raw adapter"
         );
-        drop(acquired);
         finished_rx.await.unwrap();
         revocation.await.unwrap();
         assert!(registry.acquire(&irc_ref(), 41).await.is_none());

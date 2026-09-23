@@ -4,10 +4,10 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 135644,
-    "sha256": "7A287BFE0A3D2759E61A5C862AC7B32C1C7F6AF09ACE8C155D98CABD4ACAD63D"
+    "bytes": 136180,
+    "sha256": "55C511C3C55C0690C263734A0BF6303B4217DA02C2062E8835EB402E9E3B95C4"
   },
-  "sourceInputs": 773,
+  "sourceInputs": 776,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -552,73 +552,73 @@
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::paired_reply_binding_releases_a_retired_telegram_adapter",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "5DE947E583DBC87A14AB32334C8059A503CE42A4C8940B43DC4DC3C7B91A6EBA",
+      "sourceSha256": "ED530D7E3B8F4B7F7B32BD20A374E8AFB6F59A7F9E28E7BFC615F97EFBD15850",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::channel_live_registry::tests::acquire_returns_only_matching_published_generation",
       "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
-      "sourceSha256": "444F01D312BD0A0A7F5E3FE84681C85191B1A174AEFA09D7F7A49924DD79A085",
+      "sourceSha256": "27F381DDB9EBD7F0A49DC5F986E312931019AE239C7BFD960387CB1F96CC6E49",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::channel_live_registry::tests::stale_publication_cannot_reanimate_replaced_adapter",
       "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
-      "sourceSha256": "444F01D312BD0A0A7F5E3FE84681C85191B1A174AEFA09D7F7A49924DD79A085",
+      "sourceSha256": "27F381DDB9EBD7F0A49DC5F986E312931019AE239C7BFD960387CB1F96CC6E49",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::channel_live_registry::tests::shutdown_rejects_even_a_previously_uncreated_channel_reference",
       "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
-      "sourceSha256": "444F01D312BD0A0A7F5E3FE84681C85191B1A174AEFA09D7F7A49924DD79A085",
+      "sourceSha256": "27F381DDB9EBD7F0A49DC5F986E312931019AE239C7BFD960387CB1F96CC6E49",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::channel_live_registry::tests::revocation_waits_for_an_acquired_lease_then_refuses_new_egress",
       "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
-      "sourceSha256": "444F01D312BD0A0A7F5E3FE84681C85191B1A174AEFA09D7F7A49924DD79A085",
+      "sourceSha256": "27F381DDB9EBD7F0A49DC5F986E312931019AE239C7BFD960387CB1F96CC6E49",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::channel_live_registry::tests::shutdown_waits_for_an_effect_already_inside_the_real_send_boundary",
       "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
-      "sourceSha256": "444F01D312BD0A0A7F5E3FE84681C85191B1A174AEFA09D7F7A49924DD79A085",
+      "sourceSha256": "27F381DDB9EBD7F0A49DC5F986E312931019AE239C7BFD960387CB1F96CC6E49",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::connection_bound_delivery_uses_only_the_exact_live_channel_ref",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "7AE1A60AF7F27EC2F8CD1FDEA8768737FAF83AAA6E4CB04229FF471BE6A9CF39",
+      "sourceSha256": "D93E6C7AC561C32F4032D8915FCBB5C128232E25EF0D13BFAD1C6EB6B6D08000",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::unavailable_connection_bound_handles_settle_sidecar_before_transport",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "7AE1A60AF7F27EC2F8CD1FDEA8768737FAF83AAA6E4CB04229FF471BE6A9CF39",
+      "sourceSha256": "D93E6C7AC561C32F4032D8915FCBB5C128232E25EF0D13BFAD1C6EB6B6D08000",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::malformed_connection_bound_targets_never_acquire_or_arm_live_transport",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "7AE1A60AF7F27EC2F8CD1FDEA8768737FAF83AAA6E4CB04229FF471BE6A9CF39",
+      "sourceSha256": "D93E6C7AC561C32F4032D8915FCBB5C128232E25EF0D13BFAD1C6EB6B6D08000",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::failed_connection_bound_adapter_never_records_delivered",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "7AE1A60AF7F27EC2F8CD1FDEA8768737FAF83AAA6E4CB04229FF471BE6A9CF39",
+      "sourceSha256": "D93E6C7AC561C32F4032D8915FCBB5C128232E25EF0D13BFAD1C6EB6B6D08000",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::plan_delivery_connection_bound_channels_require_the_live_registry",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "7AE1A60AF7F27EC2F8CD1FDEA8768737FAF83AAA6E4CB04229FF471BE6A9CF39",
+      "sourceSha256": "D93E6C7AC561C32F4032D8915FCBB5C128232E25EF0D13BFAD1C6EB6B6D08000",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::tests::readiness_publisher_revokes_on_false_and_cannot_republish_a_replaced_lease",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "5DE947E583DBC87A14AB32334C8059A503CE42A4C8940B43DC4DC3C7B91A6EBA",
+      "sourceSha256": "ED530D7E3B8F4B7F7B32BD20A374E8AFB6F59A7F9E28E7BFC615F97EFBD15850",
       "junitClass": "neoth"
     },
     {
@@ -1266,43 +1266,43 @@
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::reasoning_live_delivery_is_leased_and_replay_is_checkpoint_only",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "90C9B8DC3447108B47049B5AA2ED50D07CADF13C835097AE7E711AC854765566",
+      "sourceSha256": "A2009B170E151B8436D5A3C17BBE518C17C59D3C69F92FA1E36882144C3082A9",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::reasoning_terminal_revokes_live_queue_without_changing_live_cursor",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "90C9B8DC3447108B47049B5AA2ED50D07CADF13C835097AE7E711AC854765566",
+      "sourceSha256": "A2009B170E151B8436D5A3C17BBE518C17C59D3C69F92FA1E36882144C3082A9",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::reasoning_overflow_keeps_counters_transactional_and_closes_live_delivery",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "90C9B8DC3447108B47049B5AA2ED50D07CADF13C835097AE7E711AC854765566",
+      "sourceSha256": "A2009B170E151B8436D5A3C17BBE518C17C59D3C69F92FA1E36882144C3082A9",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::public_exchange_and_attach_handoff_has_one_turn_owner_and_checkpoint_replay",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "90C9B8DC3447108B47049B5AA2ED50D07CADF13C835097AE7E711AC854765566",
+      "sourceSha256": "A2009B170E151B8436D5A3C17BBE518C17C59D3C69F92FA1E36882144C3082A9",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::gui_cancel_after_real_intent_before_start_does_not_spend_allow_once",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "90C9B8DC3447108B47049B5AA2ED50D07CADF13C835097AE7E711AC854765566",
+      "sourceSha256": "A2009B170E151B8436D5A3C17BBE518C17C59D3C69F92FA1E36882144C3082A9",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::cancel_waits_for_held_real_handshake_terminal_ack_before_accepting",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "90C9B8DC3447108B47049B5AA2ED50D07CADF13C835097AE7E711AC854765566",
+      "sourceSha256": "A2009B170E151B8436D5A3C17BBE518C17C59D3C69F92FA1E36882144C3082A9",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::registered_blocked_worker_is_cancelled_and_joined_before_w39_drain",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "90C9B8DC3447108B47049B5AA2ED50D07CADF13C835097AE7E711AC854765566",
+      "sourceSha256": "A2009B170E151B8436D5A3C17BBE518C17C59D3C69F92FA1E36882144C3082A9",
       "junitClass": "neoth"
     },
     {
@@ -1338,13 +1338,13 @@
     {
       "test": "every_live_route_uses_the_choke_point_and_keet_binds_raw_capability",
       "sourcePath": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
-      "sourceSha256": "707264F2AAAB192A3B518778681DC13056CB4809B0A3403C252EEF890867D819",
+      "sourceSha256": "156566ADE603FECA3E062C2DBEE7DEC10AE8E9B467682A8488BEBAFF6C0F9DF0",
       "junitClass": "neoth::proactive_egress_contract_source_gate"
     },
     {
       "test": "exactly_one_production_proactive_transport_seam_exists",
       "sourcePath": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
-      "sourceSha256": "707264F2AAAB192A3B518778681DC13056CB4809B0A3403C252EEF890867D819",
+      "sourceSha256": "156566ADE603FECA3E062C2DBEE7DEC10AE8E9B467682A8488BEBAFF6C0F9DF0",
       "junitClass": "neoth::proactive_egress_contract_source_gate"
     },
     {
@@ -2334,7 +2334,7 @@
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::recall_chip_mapping_preserves_typed_same_query_rows",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "90C9B8DC3447108B47049B5AA2ED50D07CADF13C835097AE7E711AC854765566",
+      "sourceSha256": "A2009B170E151B8436D5A3C17BBE518C17C59D3C69F92FA1E36882144C3082A9",
       "junitClass": "neoth"
     },
     {
@@ -2352,7 +2352,7 @@
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::throughput_mapping_preserves_the_producer_state_without_rederivation",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "90C9B8DC3447108B47049B5AA2ED50D07CADF13C835097AE7E711AC854765566",
+      "sourceSha256": "A2009B170E151B8436D5A3C17BBE518C17C59D3C69F92FA1E36882144C3082A9",
       "junitClass": "neoth"
     },
     {
@@ -2532,7 +2532,7 @@
     {
       "test": "cli::serve_tasks::tests::write_usage_snapshot_roundtrips_json",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "5DE947E583DBC87A14AB32334C8059A503CE42A4C8940B43DC4DC3C7B91A6EBA",
+      "sourceSha256": "ED530D7E3B8F4B7F7B32BD20A374E8AFB6F59A7F9E28E7BFC615F97EFBD15850",
       "junitClass": "neoth"
     },
     {
@@ -2916,13 +2916,13 @@
     {
       "test": "cli::serve_tasks::vault_mirror_scheduler_tests::vault_mirror_scheduler_requires_both_nightly_gates",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "5DE947E583DBC87A14AB32334C8059A503CE42A4C8940B43DC4DC3C7B91A6EBA",
+      "sourceSha256": "ED530D7E3B8F4B7F7B32BD20A374E8AFB6F59A7F9E28E7BFC615F97EFBD15850",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::vault_mirror_scheduler_tests::accepted_reload_revoking_nightly_push_stops_scheduler",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "5DE947E583DBC87A14AB32334C8059A503CE42A4C8940B43DC4DC3C7B91A6EBA",
+      "sourceSha256": "ED530D7E3B8F4B7F7B32BD20A374E8AFB6F59A7F9E28E7BFC615F97EFBD15850",
       "junitClass": "neoth"
     },
     {
@@ -3180,7 +3180,7 @@
     {
       "test": "cli::serve_tasks::local_models_lifecycle_tests::local_models_runtime_requires_active_native_ollama_provider",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "5DE947E583DBC87A14AB32334C8059A503CE42A4C8940B43DC4DC3C7B91A6EBA",
+      "sourceSha256": "ED530D7E3B8F4B7F7B32BD20A374E8AFB6F59A7F9E28E7BFC615F97EFBD15850",
       "junitClass": "neoth"
     },
     {
@@ -5274,7 +5274,7 @@
     {
       "test": "cli::serve_tasks::tests::admitted_legacy_live_factories_seal_distinct_default_capabilities",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "5DE947E583DBC87A14AB32334C8059A503CE42A4C8940B43DC4DC3C7B91A6EBA",
+      "sourceSha256": "ED530D7E3B8F4B7F7B32BD20A374E8AFB6F59A7F9E28E7BFC615F97EFBD15850",
       "junitClass": "neoth"
     },
     {
@@ -6540,13 +6540,13 @@
     {
       "test": "cli::serve_tasks::tests::spawn_cron_scheduler_blocks_strict_and_fail_closed_custom",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "5DE947E583DBC87A14AB32334C8059A503CE42A4C8940B43DC4DC3C7B91A6EBA",
+      "sourceSha256": "ED530D7E3B8F4B7F7B32BD20A374E8AFB6F59A7F9E28E7BFC615F97EFBD15850",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::zf06_fleet_tests::desired_dream_cron_uses_explicit_fail_closed_autonomy_rail",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "5DE947E583DBC87A14AB32334C8059A503CE42A4C8940B43DC4DC3C7B91A6EBA",
+      "sourceSha256": "ED530D7E3B8F4B7F7B32BD20A374E8AFB6F59A7F9E28E7BFC615F97EFBD15850",
       "junitClass": "neoth"
     },
     {
@@ -7086,7 +7086,7 @@
     {
       "test": "daemon::gui_chat_runtime::lifecycle_tests::w458_real_producer_post_hook_is_visible_to_main_and_buddy_only_after_acceptance",
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "sourceSha256": "90C9B8DC3447108B47049B5AA2ED50D07CADF13C835097AE7E711AC854765566",
+      "sourceSha256": "A2009B170E151B8436D5A3C17BBE518C17C59D3C69F92FA1E36882144C3082A9",
       "junitClass": "neoth"
     },
     {
@@ -7170,25 +7170,25 @@
     {
       "test": "cli::paperless::tests::paperless_status_cli_rejects_token_arguments",
       "sourcePath": "SRC/neothd/src/cli/paperless.rs",
-      "sourceSha256": "F59AEFF0114BDE663017321B0418A404694BCFED36E7695C3A19EC162BCC6502",
+      "sourceSha256": "CDC2606D0700D136BA67FB410ACE2F45A6AA5B94C319F070428108BCADA7BC26",
       "junitClass": "neoth"
     },
     {
       "test": "cli::paperless::tests::paperless_status_missing_credentials_never_claims_readiness",
       "sourcePath": "SRC/neothd/src/cli/paperless.rs",
-      "sourceSha256": "F59AEFF0114BDE663017321B0418A404694BCFED36E7695C3A19EC162BCC6502",
+      "sourceSha256": "CDC2606D0700D136BA67FB410ACE2F45A6AA5B94C319F070428108BCADA7BC26",
       "junitClass": "neoth"
     },
     {
       "test": "cli::paperless::tests::paperless_status_credential_parse_errors_are_redacted",
       "sourcePath": "SRC/neothd/src/cli/paperless.rs",
-      "sourceSha256": "F59AEFF0114BDE663017321B0418A404694BCFED36E7695C3A19EC162BCC6502",
+      "sourceSha256": "CDC2606D0700D136BA67FB410ACE2F45A6AA5B94C319F070428108BCADA7BC26",
       "junitClass": "neoth"
     },
     {
       "test": "cli::paperless::tests::paperless_status_uses_stored_token_for_authenticated_profile_denial_without_leaking",
       "sourcePath": "SRC/neothd/src/cli/paperless.rs",
-      "sourceSha256": "F59AEFF0114BDE663017321B0418A404694BCFED36E7695C3A19EC162BCC6502",
+      "sourceSha256": "CDC2606D0700D136BA67FB410ACE2F45A6AA5B94C319F070428108BCADA7BC26",
       "junitClass": "neoth"
     },
     {
@@ -7200,55 +7200,55 @@
     {
       "test": "daemon::proactive_egress::tests::v6_connection_binding_authenticates_exact_live_identity_without_raw_body",
       "sourcePath": "SRC/neothd/src/daemon/proactive_egress.rs",
-      "sourceSha256": "A8EE11D58019A4DC775A9E804DBDF750C5CFFFA3F0B0D6CFAFF6012BFC44C5CB",
+      "sourceSha256": "CEBB2AABE4FA3776EAF03E85F2D996239ECFF78DE8C7BB1E987D4B184139A844",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_egress::tests::expired_v6_armed_recovery_records_crash_unknown_without_live_reacquire",
       "sourcePath": "SRC/neothd/src/daemon/proactive_egress.rs",
-      "sourceSha256": "A8EE11D58019A4DC775A9E804DBDF750C5CFFFA3F0B0D6CFAFF6012BFC44C5CB",
+      "sourceSha256": "CEBB2AABE4FA3776EAF03E85F2D996239ECFF78DE8C7BB1E987D4B184139A844",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_staging::tests::renderer_is_pinned_loopback_and_secret_free",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "B521B023982F14AD06CB4B026354B926B109755DF7FDEC3D957F77E9CA873DEB",
+      "sourceSha256": "2CB04A71620781837DD103AF76D0025117E9ACFA8706621190BF80AF548A0FC8",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_staging::tests::prepare_is_deterministic_and_preserves_operator_env_and_state",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "B521B023982F14AD06CB4B026354B926B109755DF7FDEC3D957F77E9CA873DEB",
+      "sourceSha256": "2CB04A71620781837DD103AF76D0025117E9ACFA8706621190BF80AF548A0FC8",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_staging::tests::foreign_entry_after_prepare_is_rejected_without_touching_operator_env",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "B521B023982F14AD06CB4B026354B926B109755DF7FDEC3D957F77E9CA873DEB",
+      "sourceSha256": "2CB04A71620781837DD103AF76D0025117E9ACFA8706621190BF80AF548A0FC8",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_staging::tests::changed_owned_file_is_rejected_without_touching_operator_env",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "B521B023982F14AD06CB4B026354B926B109755DF7FDEC3D957F77E9CA873DEB",
+      "sourceSha256": "2CB04A71620781837DD103AF76D0025117E9ACFA8706621190BF80AF548A0FC8",
       "junitClass": "neoth"
     },
     {
       "test": "cli::paperless::tests::paperless_prepare_cli_preserves_explicit_directory",
       "sourcePath": "SRC/neothd/src/cli/paperless.rs",
-      "sourceSha256": "F59AEFF0114BDE663017321B0418A404694BCFED36E7695C3A19EC162BCC6502",
+      "sourceSha256": "CDC2606D0700D136BA67FB410ACE2F45A6AA5B94C319F070428108BCADA7BC26",
       "junitClass": "neoth"
     },
     {
       "test": "cli::paperless::tests::preparation_output_is_secret_free_and_never_claims_artifact_proof",
       "sourcePath": "SRC/neothd/src/cli/paperless.rs",
-      "sourceSha256": "F59AEFF0114BDE663017321B0418A404694BCFED36E7695C3A19EC162BCC6502",
+      "sourceSha256": "CDC2606D0700D136BA67FB410ACE2F45A6AA5B94C319F070428108BCADA7BC26",
       "junitClass": "neoth"
     },
     {
       "test": "cli::paperless::tests::prepare_helper_then_status_reports_instance_scoped_staging",
       "sourcePath": "SRC/neothd/src/cli/paperless.rs",
-      "sourceSha256": "F59AEFF0114BDE663017321B0418A404694BCFED36E7695C3A19EC162BCC6502",
+      "sourceSha256": "CDC2606D0700D136BA67FB410ACE2F45A6AA5B94C319F070428108BCADA7BC26",
       "junitClass": "neoth"
     },
     {
@@ -7285,6 +7285,18 @@
       "test": "config::instance_paths::tests::default_instance_config_is_scoped_to_the_explicit_home",
       "sourcePath": "SRC/neothd/src/config/instance_paths.rs",
       "sourceSha256": "AC365E98B80A93E0486A573AB055E58E4179578334F7C6561B8D9CF21420ADE8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "installers::paperless_staging::tests::competing_root_before_publication_is_preserved",
+      "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
+      "sourceSha256": "2CB04A71620781837DD103AF76D0025117E9ACFA8706621190BF80AF548A0FC8",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "installers::paperless_staging::tests::stage_source_swap_before_bound_publish_is_refused",
+      "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
+      "sourceSha256": "2CB04A71620781837DD103AF76D0025117E9ACFA8706621190BF80AF548A0FC8",
       "junitClass": "neoth"
     }
   ],
@@ -7965,8 +7977,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "bytes": 172366,
-      "sha256": "90C9B8DC3447108B47049B5AA2ED50D07CADF13C835097AE7E711AC854765566"
+      "bytes": 172761,
+      "sha256": "A2009B170E151B8436D5A3C17BBE518C17C59D3C69F92FA1E36882144C3082A9"
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_bridge.rs",
@@ -9264,7 +9276,19 @@
       {
         "test": "installers::paperless_staging::tests::symlink_root_is_rejected_without_following_target",
         "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-        "sourceSha256": "B521B023982F14AD06CB4B026354B926B109755DF7FDEC3D957F77E9CA873DEB",
+        "sourceSha256": "2CB04A71620781837DD103AF76D0025117E9ACFA8706621190BF80AF548A0FC8",
+        "junitClass": "neoth"
+      },
+      {
+        "test": "installers::paperless_staging::tests::ancestor_swap_does_not_publish_into_replacement",
+        "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
+        "sourceSha256": "2CB04A71620781837DD103AF76D0025117E9ACFA8706621190BF80AF548A0FC8",
+        "junitClass": "neoth"
+      },
+      {
+        "test": "installers::paperless_staging::tests::inspection_parent_swap_reports_mismatch",
+        "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
+        "sourceSha256": "2CB04A71620781837DD103AF76D0025117E9ACFA8706621190BF80AF548A0FC8",
         "junitClass": "neoth"
       }
     ],
@@ -9464,7 +9488,19 @@
       {
         "test": "installers::paperless_staging::tests::symlink_root_is_rejected_without_following_target",
         "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-        "sourceSha256": "B521B023982F14AD06CB4B026354B926B109755DF7FDEC3D957F77E9CA873DEB",
+        "sourceSha256": "2CB04A71620781837DD103AF76D0025117E9ACFA8706621190BF80AF548A0FC8",
+        "junitClass": "neoth"
+      },
+      {
+        "test": "installers::paperless_staging::tests::ancestor_swap_does_not_publish_into_replacement",
+        "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
+        "sourceSha256": "2CB04A71620781837DD103AF76D0025117E9ACFA8706621190BF80AF548A0FC8",
+        "junitClass": "neoth"
+      },
+      {
+        "test": "installers::paperless_staging::tests::inspection_parent_swap_reports_mismatch",
+        "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
+        "sourceSha256": "2CB04A71620781837DD103AF76D0025117E9ACFA8706621190BF80AF548A0FC8",
         "junitClass": "neoth"
       }
     ]
@@ -25238,6 +25274,135 @@
       }
     ],
     "note": "Single actual Clippy lint repaired per established scoped convention;4exact source-bound hosted format files imported; W547publicationrace repair separate pending",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave547PaperlessPublicationAcceptance": {
+    "requiredTests": [
+      "installers::paperless_staging::tests::competing_root_before_publication_is_preserved",
+      "installers::paperless_staging::tests::stage_source_swap_before_bound_publish_is_refused",
+      "installers::paperless_staging::tests::ancestor_swap_does_not_publish_into_replacement",
+      "installers::paperless_staging::tests::inspection_parent_swap_reports_mismatch"
+    ],
+    "status": "source-reviewed hosted-pending",
+    "scope": "Exact bound source directory, exclusive destination, parent swaps and inspection identity"
+  },
+  "wave551OneShotTestAdapterAcceptance": {
+    "requiredTests": [
+      "cli::serve_tasks::tests::readiness_publisher_revokes_on_false_and_cannot_republish_a_replaced_lease"
+    ],
+    "status": "source-reviewed hosted-pending",
+    "scope": "Readiness revocation and active-send drain through opaque test-only consuming permit"
+  },
+  "wave548GChatLiveFeatureAcceptance": {
+    "workflow": ".github/workflows/gchat-live-regressions.yml",
+    "features": [
+      "gchat-channel"
+    ],
+    "defaultNativeCountIncludesTheseTests": false,
+    "requiredTests": [
+      "daemon::proactive_dispatcher::tests::gchat_connection_bound_delivery_uses_the_published_instance_for_both_aliases",
+      "daemon::proactive_dispatcher::tests::gchat_missing_or_revoked_live_instance_is_sidecar_only_without_send",
+      "daemon::proactive_dispatcher::tests::plan_delivery_gchat_feature_on_requires_complete_canonical_config",
+      "proactive_egress_contract_source_gate::google_chat_proactivity_uses_only_the_published_live_instance"
+    ],
+    "status": "source-reviewed hosted-pending"
+  },
+  "wave547551PublicationEvidence": {
+    "base": "6d0fa73c82952b6333638e1ce434c93d3e20dc3a",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 6875,
+        "sha256": "27F897997FAAA82453905785F40346A37422B058DB1502E29FAF7F1D4695E398",
+        "blob": "16d5674059ef05a0d7930c85793615dc54fc7ff3"
+      },
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 20976,
+        "sha256": "F0D97AF9EE1D8F2E64F8C0EEBC0EBDE5688BB3B0AD857220F6C805D6CA084820",
+        "blob": "db58bf3cc7de9bde1b178e5e05d4bf875bc63d60"
+      },
+      {
+        "path": "docs/gold-wave547-551-followup.md",
+        "bytes": 3675,
+        "sha256": "BFCB7C158FF7E5AAD3DCE73D5E5D1568BBD35844896728D22BBFDE6F8032E5EF",
+        "blob": "e94e80840daa892e63d92da183851865e472f60a"
+      },
+      {
+        "path": "docs/verification/gold-wave549-selected-terminals.json",
+        "bytes": 5805,
+        "sha256": "919006E9245BB78BCD3BBA3311C37D9EE59F84F25740D20E6E188A7E61ADFD16",
+        "blob": "c111e8365926fcde94709bd420cd185be191904b"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 198054,
+        "sha256": "DD4E2A41A0D793784085CB6697761BD00CFB686724495C2B24FA952E7769BDD4",
+        "blob": "7612640641c551ac6f8314ab1a2baa36178c801b"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1208378,
+        "sha256": "DA702BB1DE9F423F416E7D2EA30BD254F563065E6A12C89AF19A278DEBE9FCFB",
+        "blob": "47196c7129694f4811d77bc2e909bf25dfe7f6af"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1807011,
+        "sha256": "171C1E63BAB9D941565FCB8F012469414B6EABA7F241FF864050593C4EB32E05",
+        "blob": "3cd394d5673b92f85acf642fa2fc8f6ddf47ff03"
+      },
+      {
+        "path": "SRC/neothd/src/cli/paperless.rs",
+        "bytes": 25137,
+        "sha256": "CDC2606D0700D136BA67FB410ACE2F45A6AA5B94C319F070428108BCADA7BC26",
+        "blob": "cebb9f408289fa85e3157b71da5c324716f16a97"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_tasks.rs",
+        "bytes": 532285,
+        "sha256": "ED530D7E3B8F4B7F7B32BD20A374E8AFB6F59A7F9E28E7BFC615F97EFBD15850",
+        "blob": "3c239e51e4c305ce676c60553b25551e523b0315"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/channel_live_registry.rs",
+        "bytes": 18685,
+        "sha256": "27F381DDB9EBD7F0A49DC5F986E312931019AE239C7BFD960387CB1F96CC6E49",
+        "blob": "ce19ffd9433db828b7a3310b6d6688dcbf32f496"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+        "bytes": 172761,
+        "sha256": "A2009B170E151B8436D5A3C17BBE518C17C59D3C69F92FA1E36882144C3082A9",
+        "blob": "f4cf5b60a0b1fb10dd55c2f88606a30b7d26df94"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+        "bytes": 124478,
+        "sha256": "D93E6C7AC561C32F4032D8915FCBB5C128232E25EF0D13BFAD1C6EB6B6D08000",
+        "blob": "eb8813d4084b8bc6ebd210c5afad5ae9154db73d"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/proactive_egress.rs",
+        "bytes": 409161,
+        "sha256": "CEBB2AABE4FA3776EAF03E85F2D996239ECFF78DE8C7BB1E987D4B184139A844",
+        "blob": "0752183a183e289ac67745a0e34081d2b207a084"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_staging.rs",
+        "bytes": 22036,
+        "sha256": "2CB04A71620781837DD103AF76D0025117E9ACFA8706621190BF80AF548A0FC8",
+        "blob": "d74e39af6c1fc2cd914ba37816a6885ef3a8b771"
+      },
+      {
+        "path": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
+        "bytes": 59648,
+        "sha256": "156566ADE603FECA3E062C2DBEE7DEC10AE8E9B467682A8488BEBAFF6C0F9DF0",
+        "blob": "11b2422331eb02a77d770394c75590badbbda2a0"
+      }
+    ],
+    "note": "W547boundPaperlesspublication,W548same-live-GChat,W550strictfixturecapability,W551opaque test-adapter repair;W549actual903/902/1/0 admitted;hosted execution pending",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

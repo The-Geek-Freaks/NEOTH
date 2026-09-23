@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W547-W551 publication and live-chat follow-up (2026-09-24):**
+Group903a53 run35930437377 is admitted902PASS/1FAIL/0missing with179bindings;
+all13Paperless readiness and13Wizard IPC support cases passed. W550 repairs
+the sole W458 test-adapter capability omission while keeping strict stream checks.
+W547 capability-binds Paperless creation/inspection and exclusive source-bound
+publication; four race regressions join the lane. W548 routes both Google Chat
+aliases through the running instance and revokes on receive-task exit; four
+feature-specific cases have a separate hosted lane. W551 adapts existing test
+callers to opaque one-shot permits after7actual hosted test-compile errors.
+Independent static reviews complete; executable verification of these changes
+is pending. Inventory776/native1215+Win25Linux36mac35, Group934+GChat4;
+GUI148Linux144macOS unchanged. Road1044checked/278open/2partial, WS-LF37/81
+unchanged. Evidence:docs/gold-wave547-551-followup.md.
+
 **W545/W546 hosted gate follow-up (2026-09-24):**
 Core535 run35930665250 reached the new constructor and failed one Clippy
 too-many-arguments lint; its explicit authority inputs now use the established

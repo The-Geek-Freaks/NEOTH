@@ -1,0 +1,153 @@
+name: W548 GChat live regressions
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gchat-live-regressions:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 1
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_TERM_COLOR: never
+      RUST_BACKTRACE: 1
+      W548_ROOT: ${{ runner.temp }}/w548-gchat-live-regressions
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Require main branch dispatch
+        run: |
+          test "${GITHUB_REF}" = "refs/heads/main"
+
+      - name: Set up Rust 1.91.0
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+
+      - name: Restore Cargo cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-w548-gchat-cargo-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-w548-gchat-cargo-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-gold-smoke-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-gold-smoke-cargo-
+
+      - name: Record source provenance
+        run: |
+          set -euo pipefail
+          mkdir -p "$W548_ROOT"/{source,log,receipt}
+          git -C SRC rev-parse HEAD > "$W548_ROOT/source/head.txt"
+          sha256sum \
+            SRC/neothd/src/cli/serve_tasks.rs \
+            SRC/neothd/src/daemon/channel_live_registry.rs \
+            SRC/neothd/src/daemon/proactive_dispatcher.rs \
+            SRC/neothd/src/daemon/proactive_egress.rs \
+            SRC/neothd/tests/proactive_egress_contract_source_gate.rs \
+            SRC/neothd/Cargo.toml \
+            SRC/Cargo.lock \
+            .github/workflows/gchat-live-regressions.yml \
+            > "$W548_ROOT/source/SHA256SUMS.txt"
+          : > "$W548_ROOT/receipt/started.txt"
+          : > "$W548_ROOT/receipt/passed.txt"
+          : > "$W548_ROOT/receipt/failed.txt"
+          : > "$W548_ROOT/receipt/executed.txt"
+
+      - name: Run focused GChat regressions
+        working-directory: SRC
+        run: |
+          set -euo pipefail
+
+          run_case() {
+            local ordinal="$1"
+            local kind="$2"
+            local case_id="$3"
+            local test_name="$4"
+            shift 4
+            local slug
+            slug="$(printf '%s' "$case_id" | tr ':' '-' | tr -c '[:alnum:]' '-')"
+            local discovery_log="$W548_ROOT/log/${ordinal}-discovery-${kind}-${slug}.log"
+            local actual_log="$W548_ROOT/log/${ordinal}-actual-${kind}-${slug}.log"
+
+            printf '%s\n' "$case_id" >> "$W548_ROOT/receipt/started.txt"
+            if ! timeout --kill-after=10s 1800s cargo test -p neoth --locked --features gchat-channel "$@" "$test_name" -- --exact --list >"$discovery_log" 2>&1; then
+              printf '%s\n' "$case_id" >> "$W548_ROOT/receipt/failed.txt"
+              cat "$discovery_log"
+              exit 1
+            fi
+            if [ "$(grep -Fxc "$test_name: test" "$discovery_log")" -ne 1 ]; then
+              printf '%s\n' "$case_id" >> "$W548_ROOT/receipt/failed.txt"
+              cat "$discovery_log"
+              exit 1
+            fi
+
+            printf '%s\n' "$case_id" >> "$W548_ROOT/receipt/executed.txt"
+            if timeout --kill-after=10s 180s cargo test -p neoth --locked --features gchat-channel "$@" "$test_name" -- --exact --test-threads=1 >"$actual_log" 2>&1 \
+              && [ "$(grep -Fxc "test $test_name ... ok" "$actual_log")" -eq 1 ] \
+              && [ "$(grep -Fc 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$actual_log")" -eq 1 ]; then
+              printf '%s\n' "$case_id" >> "$W548_ROOT/receipt/passed.txt"
+            else
+              printf '%s\n' "$case_id" >> "$W548_ROOT/receipt/failed.txt"
+              cat "$actual_log"
+            fi
+          }
+
+          run_case 01 lib daemon::proactive_dispatcher::tests::gchat_connection_bound_delivery_uses_the_published_instance_for_both_aliases daemon::proactive_dispatcher::tests::gchat_connection_bound_delivery_uses_the_published_instance_for_both_aliases --lib
+          run_case 02 lib daemon::proactive_dispatcher::tests::gchat_missing_or_revoked_live_instance_is_sidecar_only_without_send daemon::proactive_dispatcher::tests::gchat_missing_or_revoked_live_instance_is_sidecar_only_without_send --lib
+          run_case 03 lib daemon::proactive_dispatcher::tests::plan_delivery_gchat_feature_on_requires_complete_canonical_config daemon::proactive_dispatcher::tests::plan_delivery_gchat_feature_on_requires_complete_canonical_config --lib
+          run_case 04 integration proactive_egress_contract_source_gate::google_chat_proactivity_uses_only_the_published_live_instance google_chat_proactivity_uses_only_the_published_live_instance --test proactive_egress_contract_source_gate
+
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 4
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 4
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 4
+          test ! -s "$W548_ROOT/receipt/failed.txt"
+
+      - name: Save Cargo cache
+        if: always()
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-w548-gchat-cargo-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
+
+      - name: Upload source provenance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w548-gchat-live-regressions-source-${{ github.sha }}
+          path: ${{ runner.temp }}/w548-gchat-live-regressions/source/
+          retention-days: 14
+
+      - name: Upload GChat regression logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w548-gchat-live-regressions-log-${{ github.sha }}
+          path: ${{ runner.temp }}/w548-gchat-live-regressions/log/
+          retention-days: 14
+
+      - name: Upload GChat regression receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w548-gchat-live-regressions-receipt-${{ github.sha }}
+          path: ${{ runner.temp }}/w548-gchat-live-regressions/receipt/
+          retention-days: 14

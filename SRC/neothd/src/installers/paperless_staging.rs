@@ -5,8 +5,9 @@
 //! or runtime verification.
 
 use std::{
+    ffi::OsStr,
     fmt, fs,
-    io::{self, Read},
+    io,
     path::Path,
 };
 
@@ -22,6 +23,42 @@ const MARKER: &str = "ownership.json";
 const COMPOSE: &str = "compose.yaml";
 const ENV_EXAMPLE: &str = "paperless.env.example";
 const OWNED_FILE_MAX_BYTES: usize = 16 * 1024;
+
+#[cfg(test)]
+thread_local! {
+    static BEFORE_PUBLICATION_FOR_TEST: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+    static BEFORE_INSPECTION_REBIND_FOR_TEST: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn set_before_publication_for_test(hook: impl FnOnce() + 'static) {
+    BEFORE_PUBLICATION_FOR_TEST.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+#[cfg(test)]
+fn run_before_publication_for_test() {
+    BEFORE_PUBLICATION_FOR_TEST.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(test)]
+fn set_before_inspection_rebind_for_test(hook: impl FnOnce() + 'static) {
+    BEFORE_INSPECTION_REBIND_FOR_TEST.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+#[cfg(test)]
+fn run_before_inspection_rebind_for_test() {
+    BEFORE_INSPECTION_REBIND_FOR_TEST.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -71,24 +108,100 @@ pub fn prepare_at(root: &Path) -> Result<PaperlessStagingView, PaperlessStagingE
         Ok(false) => {}
         Err(error) => return Err(error),
     }
-    let stage = staging_sibling(root)?;
-    fs::create_dir(&stage).map_err(|_| PaperlessStagingError::Io)?;
+    let parent_path = root.parent().ok_or(PaperlessStagingError::UnsafePath)?;
+    let root_name = root.file_name().ok_or(PaperlessStagingError::UnsafePath)?;
+    let parent = match crate::skills::store::open_absolute_bound_directory(
+        parent_path,
+        false,
+        "paperless",
+    ) {
+        Ok(Some(parent)) => parent,
+        Ok(None) => return Err(PaperlessStagingError::Io),
+        Err(_) => return Err(PaperlessStagingError::Io),
+    };
+    let stage_name = staging_child_name(root_name);
+    let stage_display = parent.physical_display_path.join(&stage_name);
+    parent
+        .dir
+        .create_dir(&stage_name)
+        .map_err(|_| PaperlessStagingError::Io)?;
+    let (stage_dir, _stage_directory_binding) = crate::skills::store::open_bound_real_child_dir(
+        &parent.dir,
+        &stage_name,
+        &stage_display,
+    )
+    .map_err(|_| PaperlessStagingError::Io)?;
+    let stage_binding = crate::skills::store::bind_child_object(
+        &parent.dir,
+        &stage_name,
+        &stage_display,
+    )
+    .map_err(|_| PaperlessStagingError::Io)?;
     for (name, bytes) in expected_files() {
-        let path = stage.join(name);
-        if crate::util::atomic_write::write_private_create_new_durable(&path, bytes).is_err() {
-            let _ = fs::remove_dir_all(&stage);
+        let file_display = stage_display.join(name);
+        if crate::skills::store::atomic_write_private_child_create_new(
+            &stage_dir,
+            OsStr::new(name),
+            &file_display,
+            bytes,
+        )
+        .is_err()
+        {
+            let _ = crate::skills::store::remove_bound_real_directory_tree(
+                &parent.dir,
+                &stage_name,
+                &stage_display,
+                stage_binding.identity_token(),
+            );
             return Err(PaperlessStagingError::Io);
         }
     }
-    if let Err(error) = fs::rename(&stage, root) {
-        let _ = fs::remove_dir_all(&stage);
-        return Err(if error.kind() == io::ErrorKind::AlreadyExists {
-            PaperlessStagingError::UnownedOrMismatch
-        } else {
-            PaperlessStagingError::Io
-        });
+    #[cfg(test)]
+    run_before_publication_for_test();
+    if crate::skills::store::rename_bound_child(
+        &stage_binding,
+        &parent.dir,
+        &stage_name,
+        &parent.dir,
+        root_name,
+        &stage_display,
+        root,
+    )
+    .is_err()
+    {
+        let _ = crate::skills::store::remove_bound_real_directory_tree(
+            &parent.dir,
+            &stage_name,
+            &stage_display,
+            stage_binding.identity_token(),
+        );
+        return Err(PaperlessStagingError::UnownedOrMismatch);
+    }
+    if !requested_namespace_still_names_stage(root, stage_binding.identity_token()) {
+        return Err(PaperlessStagingError::UnownedOrMismatch);
     }
     Ok(view(PaperlessStagingStatus::PreparedPinned))
+}
+
+fn requested_namespace_still_names_stage(root: &Path, expected_identity: &str) -> bool {
+    let Some(parent_path) = root.parent() else {
+        return false;
+    };
+    let Some(root_name) = root.file_name() else {
+        return false;
+    };
+    let Ok(Some(parent)) = crate::skills::store::open_absolute_bound_directory(parent_path, false, "paperless") else {
+        return false;
+    };
+    let display = parent.physical_display_path.join(root_name);
+    let Ok((_root_dir, binding)) = crate::skills::store::open_bound_real_child_dir(
+        &parent.dir,
+        root_name,
+        &display,
+    ) else {
+        return false;
+    };
+    binding.identity_token() == expected_identity
 }
 
 fn view(status: PaperlessStagingStatus) -> PaperlessStagingView {
@@ -121,71 +234,74 @@ fn compose_bytes() -> &'static [u8] {
 
 fn inspect_owned(root: &Path) -> Result<bool, PaperlessStagingError> {
     validate_existing_ancestors(root)?;
-    match fs::symlink_metadata(root) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+    let parent_path = root.parent().ok_or(PaperlessStagingError::UnsafePath)?;
+    let root_name = root.file_name().ok_or(PaperlessStagingError::UnsafePath)?;
+    let parent = match crate::skills::store::open_absolute_bound_directory(
+        parent_path,
+        false,
+        "paperless",
+    ) {
+        Ok(Some(parent)) => parent,
+        Ok(None) => return Ok(false),
         Err(_) => return Err(PaperlessStagingError::Io),
-        Ok(metadata) => {
-            if !metadata.is_dir() || unsafe_metadata(&metadata) {
-                return Err(PaperlessStagingError::UnsafePath);
-            }
-        }
-    }
-    for (name, expected) in expected_files() {
-        let path = root.join(name);
-        let metadata =
-            fs::symlink_metadata(&path).map_err(|_| PaperlessStagingError::UnownedOrMismatch)?;
-        if !metadata.is_file()
-            || unsafe_metadata(&metadata)
-            || metadata.len() != expected.len() as u64
-            || metadata.len() > OWNED_FILE_MAX_BYTES as u64
+    };
+    let (root_dir, root_binding) = match crate::skills::store::open_bound_real_child_dir(&parent.dir, root_name, root) {
+        Ok(bound) => bound,
+        Err(error)
+            if error
+                .root_cause()
+                .downcast_ref::<io::Error>()
+                .is_some_and(|cause| cause.kind() == io::ErrorKind::NotFound) =>
         {
-            return Err(PaperlessStagingError::UnownedOrMismatch);
+            return Ok(false);
         }
-        if !read_owned_exact(&path, expected)? {
+        Err(_) => return Err(PaperlessStagingError::UnsafePath),
+    };
+    for (name, expected) in expected_files() {
+        let bytes = crate::skills::store::read_regular_file_bounded(
+            &root_dir,
+            OsStr::new(name),
+            &root.join(name),
+            OWNED_FILE_MAX_BYTES,
+        )
+        .map_err(|_| PaperlessStagingError::UnownedOrMismatch)?;
+        if bytes != expected {
             return Err(PaperlessStagingError::UnownedOrMismatch);
         }
     }
-    for entry in fs::read_dir(root).map_err(|_| PaperlessStagingError::Io)? {
+    for entry in root_dir.entries().map_err(|_| PaperlessStagingError::Io)? {
         let entry = entry.map_err(|_| PaperlessStagingError::Io)?;
         let name = entry.file_name();
-        let path = entry.path();
-        let metadata = fs::symlink_metadata(&path).map_err(|_| PaperlessStagingError::Io)?;
         match name.to_str() {
-            Some(MARKER | COMPOSE | ENV_EXAMPLE) => {
-                if !metadata.is_file() || unsafe_metadata(&metadata) {
-                    return Err(PaperlessStagingError::UnownedOrMismatch);
-                }
-            }
+            Some(MARKER | COMPOSE | ENV_EXAMPLE) => {}
             Some("paperless.env") => {
-                if !metadata.is_file() || unsafe_metadata(&metadata) {
-                    return Err(PaperlessStagingError::UnownedOrMismatch);
-                }
+                crate::skills::store::open_regular_file(&root_dir, &name, &root.join(&name))
+                    .map_err(|_| PaperlessStagingError::UnownedOrMismatch)?;
             }
             Some("state") => {
-                if !metadata.is_dir() || unsafe_metadata(&metadata) {
-                    return Err(PaperlessStagingError::UnownedOrMismatch);
-                }
+                crate::skills::store::open_real_child_dir(&root_dir, &name, &root.join(&name))
+                    .map_err(|_| PaperlessStagingError::UnownedOrMismatch)?;
             }
             _ => return Err(PaperlessStagingError::UnownedOrMismatch),
         }
     }
+    #[cfg(test)]
+    run_before_inspection_rebind_for_test();
+    if !root_binding
+        .matches_directory_child(&parent.dir, root_name, root)
+        .map_err(|_| PaperlessStagingError::Io)?
+    {
+        return Err(PaperlessStagingError::UnownedOrMismatch);
+    }
+    if !requested_namespace_still_names_stage(root, root_binding.identity_token()) {
+        return Err(PaperlessStagingError::UnownedOrMismatch);
+    }
     Ok(true)
 }
-fn read_owned_exact(path: &Path, expected: &[u8]) -> Result<bool, PaperlessStagingError> {
-    let mut bounded = fs::File::open(path)
-        .map_err(|_| PaperlessStagingError::Io)?
-        .take(expected.len() as u64 + 1);
-    let mut bytes = Vec::with_capacity(expected.len() + 1);
-    bounded
-        .read_to_end(&mut bytes)
-        .map_err(|_| PaperlessStagingError::Io)?;
-    Ok(bytes == expected)
-}
-fn staging_sibling(root: &Path) -> Result<std::path::PathBuf, PaperlessStagingError> {
-    let name = root.file_name().ok_or(PaperlessStagingError::UnsafePath)?;
-    let mut staged = name.to_os_string();
+fn staging_child_name(root_name: &OsStr) -> std::ffi::OsString {
+    let mut staged = root_name.to_os_string();
     staged.push(format!(".neoth-stage-{}", std::process::id()));
-    Ok(root.with_file_name(staged))
+    staged
 }
 fn validate_existing_ancestors(root: &Path) -> Result<(), PaperlessStagingError> {
     for ancestor in root.ancestors() {
@@ -216,6 +332,10 @@ fn unsafe_metadata(metadata: &fs::Metadata) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn canonical_temp_root(temp: &tempfile::TempDir) -> std::path::PathBuf {
+        fs::canonicalize(temp.path()).unwrap()
+    }
     #[test]
     fn renderer_is_pinned_loopback_and_secret_free() {
         let compose = std::str::from_utf8(compose_bytes()).unwrap();
@@ -235,7 +355,7 @@ mod tests {
     #[test]
     fn prepare_is_deterministic_and_preserves_operator_env_and_state() {
         let parent = tempfile::tempdir().unwrap();
-        let root = parent.path().join("paperless");
+        let root = canonical_temp_root(&parent).join("paperless");
         assert_eq!(
             prepare_at(&root).unwrap().status,
             PaperlessStagingStatus::PreparedPinned
@@ -255,7 +375,7 @@ mod tests {
     #[test]
     fn foreign_entry_after_prepare_is_rejected_without_touching_operator_env() {
         let parent = tempfile::tempdir().unwrap();
-        let root = parent.path().join("paperless");
+        let root = canonical_temp_root(&parent).join("paperless");
         prepare_at(&root).unwrap();
         fs::write(root.join("foreign"), b"keep").unwrap();
         fs::write(root.join("paperless.env"), b"operator-secret").unwrap();
@@ -272,7 +392,7 @@ mod tests {
     #[test]
     fn changed_owned_file_is_rejected_without_touching_operator_env() {
         let parent = tempfile::tempdir().unwrap();
-        let root = parent.path().join("paperless");
+        let root = canonical_temp_root(&parent).join("paperless");
         prepare_at(&root).unwrap();
         fs::write(root.join(COMPOSE), b"changed").unwrap();
         fs::write(root.join("paperless.env"), b"operator-secret").unwrap();
@@ -294,12 +414,147 @@ mod tests {
         let target = parent.path().join("target");
         fs::create_dir(&target).unwrap();
         fs::write(target.join("keep"), b"unchanged").unwrap();
-        let root = parent.path().join("paperless");
+        let root = canonical_temp_root(&parent).join("paperless");
         symlink(&target, &root).unwrap();
         assert!(matches!(
             prepare_at(&root),
             Err(PaperlessStagingError::UnsafePath)
         ));
         assert_eq!(fs::read(target.join("keep")).unwrap(), b"unchanged");
+    }
+
+    #[test]
+    fn competing_root_before_publication_is_preserved() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = canonical_temp_root(&parent).join("paperless");
+        let competing_root = root.clone();
+        let parent_path = root.parent().unwrap().to_path_buf();
+        let competitor_identity = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let captured_identity = competitor_identity.clone();
+        set_before_publication_for_test(move || {
+            fs::create_dir(&competing_root).unwrap();
+            let bound_parent = crate::skills::store::open_absolute_bound_directory(
+                &parent_path,
+                false,
+                "test paperless parent",
+            )
+            .unwrap()
+            .unwrap();
+            let (_competitor, binding) = crate::skills::store::open_bound_real_child_dir(
+                &bound_parent.dir,
+                OsStr::new("paperless"),
+                &competing_root,
+            )
+            .unwrap();
+            *captured_identity.borrow_mut() = Some(binding.identity_token().to_owned());
+        });
+
+        assert!(matches!(
+            prepare_at(&root),
+            Err(PaperlessStagingError::UnownedOrMismatch)
+        ));
+        let bound_parent = crate::skills::store::open_absolute_bound_directory(
+            root.parent().unwrap(),
+            false,
+            "test paperless parent",
+        )
+        .unwrap()
+        .unwrap();
+        let (_competitor, binding) = crate::skills::store::open_bound_real_child_dir(
+            &bound_parent.dir,
+            OsStr::new("paperless"),
+            &root,
+        )
+        .unwrap();
+        assert_eq!(
+            Some(binding.identity_token().to_owned()),
+            *competitor_identity.borrow()
+        );
+        assert!(fs::read_dir(&root).unwrap().next().is_none());
+        assert!(!root
+            .parent()
+            .unwrap()
+            .join(staging_child_name(OsStr::new("paperless")))
+            .exists());
+    }
+
+    #[test]
+    fn stage_source_swap_before_bound_publish_is_refused() {
+        let parent = tempfile::tempdir().unwrap();
+        let parent_root = canonical_temp_root(&parent);
+        let root = parent_root.join("paperless");
+        let stage = parent_root.join(staging_child_name(OsStr::new("paperless")));
+        let displaced = parent_root.join("displaced-stage");
+        let swapped_stage = stage.clone();
+        set_before_publication_for_test(move || {
+            fs::rename(&swapped_stage, &displaced).unwrap();
+            fs::create_dir(&swapped_stage).unwrap();
+            fs::write(swapped_stage.join("attacker"), b"preserve").unwrap();
+        });
+
+        assert!(matches!(
+            prepare_at(&root),
+            Err(PaperlessStagingError::UnownedOrMismatch)
+        ));
+        assert!(!root.exists());
+        assert_eq!(fs::read(stage.join("attacker")).unwrap(), b"preserve");
+        assert!(displaced.is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ancestor_swap_does_not_publish_into_replacement() {
+        use std::os::unix::fs::symlink;
+
+        let base = tempfile::tempdir().unwrap();
+        let parent = base.path().join("bound-parent");
+        let moved_parent = base.path().join("moved-parent");
+        let replacement = base.path().join("replacement");
+        fs::create_dir(&parent).unwrap();
+        fs::create_dir(&replacement).unwrap();
+        let root = parent.join("paperless");
+        let swap_parent = parent.clone();
+        let swap_moved = moved_parent.clone();
+        let swap_replacement = replacement.clone();
+        set_before_publication_for_test(move || {
+            fs::rename(&swap_parent, &swap_moved).unwrap();
+            symlink(&swap_replacement, &swap_parent).unwrap();
+        });
+
+        assert!(matches!(
+            prepare_at(&root),
+            Err(PaperlessStagingError::UnownedOrMismatch)
+        ));
+        assert!(moved_parent.join("paperless").is_dir());
+        assert!(!replacement.join("paperless").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inspection_parent_swap_reports_mismatch() {
+        use std::os::unix::fs::symlink;
+
+        let base = tempfile::tempdir().unwrap();
+        let base_root = fs::canonicalize(base.path()).unwrap();
+        let parent = base_root.join("parent");
+        let moved = base_root.join("moved");
+        let replacement = base_root.join("replacement");
+        fs::create_dir(&parent).unwrap();
+        fs::create_dir(&replacement).unwrap();
+        let root = parent.join("paperless");
+        prepare_at(&root).unwrap();
+        let swap_parent = parent.clone();
+        let swap_moved = moved.clone();
+        let swap_replacement = replacement.clone();
+        set_before_inspection_rebind_for_test(move || {
+            fs::rename(&swap_parent, &swap_moved).unwrap();
+            symlink(&swap_replacement, &swap_parent).unwrap();
+        });
+        assert_eq!(
+            inspect_at(&root).status,
+            PaperlessStagingStatus::UnownedOrMismatch
+        );
+        assert!(moved.join("paperless").is_dir());
+        assert!(!replacement.join("paperless").exists());
     }
 }

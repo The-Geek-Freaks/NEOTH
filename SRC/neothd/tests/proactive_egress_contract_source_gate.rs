@@ -1213,7 +1213,6 @@ fn every_live_route_uses_the_choke_point_and_keet_binds_raw_capability() {
     let route_code = rust_code_only(route);
     let route = route_code.as_str();
     let live_route_arms = [
-        "DeliveryRoute::ConnectionBound",
         "DeliveryRoute::Telegram",
         "DeliveryRoute::Slack",
         "DeliveryRoute::Discord",
@@ -1225,7 +1224,6 @@ fn every_live_route_uses_the_choke_point_and_keet_binds_raw_capability() {
         "DeliveryRoute::Mattermost",
         "DeliveryRoute::IMessage",
         "DeliveryRoute::Matrix",
-        "DeliveryRoute::GoogleChat",
     ];
     for variant in live_route_arms {
         assert!(
@@ -1233,28 +1231,33 @@ fn every_live_route_uses_the_choke_point_and_keet_binds_raw_capability() {
             "unwired proactive route: {variant}"
         );
     }
-    for pair in live_route_arms.windows(2) {
-        let arm = between(route, pair[0], pair[1]);
+    for (index, variant) in live_route_arms.iter().enumerate() {
+        let arm = match live_route_arms.get(index + 1).copied() {
+            Some(next) => between(route, variant, next),
+            None => &route[route.find(variant).expect("last live route arm")..],
+        };
         assert!(
             arm.contains("execute!("),
             "live proactive route bypasses durable choke point: {}",
-            pair[0]
+            variant
         );
     }
-    let google_chat_start = route
-        .find("DeliveryRoute::GoogleChat")
-        .expect("Google Chat live-route arm");
-    let google_chat_open = route[google_chat_start..]
-        .find("=> {")
-        .map(|relative| google_chat_start + relative + "=> ".len())
-        .expect("Google Chat live-route arm body");
-    let google_chat_end = matching_rust_brace(route, google_chat_open)
-        .expect("complete Google Chat live-route arm body");
-    let google_chat_arm = &route[google_chat_start..=google_chat_end];
     assert!(
-        google_chat_arm.contains("execute!("),
-        "live proactive route bypasses durable choke point: DeliveryRoute::GoogleChat"
+        route.contains("DeliveryRoute::ConnectionBound"),
+        "connection-bound live routes require their dedicated durable wrapper"
     );
+    let connection_bound_arm = between(
+        route,
+        "DeliveryRoute::ConnectionBound",
+        "DeliveryRoute::Telegram",
+    );
+    assert!(
+        connection_bound_arm.contains("live.live_channels.acquire(&channel_ref, fingerprint).await")
+    );
+    assert!(connection_bound_arm.contains("execute_claimed_once_connection_bound("));
+    assert!(!connection_bound_arm.contains(".send_proactive("));
+    assert!(!connection_bound_arm.contains("Arc::new("));
+    assert!(!connection_bound_arm.contains("GChatChannel::new("));
     assert_eq!(
         route.matches("execute!(").count(),
         live_route_arms.len(),
@@ -1300,6 +1303,59 @@ fn every_live_route_uses_the_choke_point_and_keet_binds_raw_capability() {
     assert_eq!(keet_compact.matches("topic_capability").count(), 3);
     assert!(keet_compact.ends_with("execute!(topic_capability,channel)}"));
     assert!(!keet_arm.contains("topic_alias"));
+}
+
+#[test]
+fn google_chat_proactivity_uses_only_the_published_live_instance() {
+    let gchat_plan = between(
+        DISPATCHER,
+        "#[cfg(feature = \"gchat-channel\")]\n        \"gchat\" | \"google_chat\" => {",
+        "#[cfg(not(feature = \"gchat-channel\"))]",
+    );
+    assert!(gchat_plan.contains("DeliveryRoute::ConnectionBound"));
+    assert!(gchat_plan.contains("ChannelId::GoogleChat"));
+    assert!(gchat_plan.contains("recipient: space"));
+
+    let route = between(
+        DISPATCHER,
+        "async fn deliver_live_route(",
+        "fn canonical_target_channel(",
+    );
+    assert!(!route.contains("GChatChannel::new("));
+    assert!(!route.contains("gchat_service_account_json"));
+
+    let gchat_startup = between(
+        SERVE_TASKS,
+        "// B9 — Google Chat via a GCP Pub/Sub PULL subscription",
+        "// WhatsApp inbound via Meta webhook listener.",
+    );
+    assert!(gchat_startup.contains("Arc::new("));
+    assert!(gchat_startup.contains("ChannelKind::GoogleChat"));
+    assert!(gchat_startup.contains("begin_replacement(channel_ref.clone(), fingerprint)"));
+    assert!(gchat_startup.contains("live_channels.publish(&lease, live_channel).await"));
+    assert!(gchat_startup.contains("spawn_live_instance_channel_run_for_ref("));
+    let live_runner = between(
+        SERVE_TASKS,
+        "fn spawn_live_instance_channel_run_for_ref<",
+        "/// Clone only one adapter's credential surface.",
+    );
+    assert!(live_runner.contains("channel.run(handler).await"));
+    assert!(live_runner.contains("live_channels.revoke_and_drain(&task_ref).await"));
+
+    let connection_validation = between(
+        EGRESS,
+        "fn validate_connection_bound_binding(",
+        "fn validate_connection_bound_frame_binding(",
+    );
+    assert!(connection_validation.contains("ChannelId::GoogleChat"));
+    assert!(connection_validation.contains("\"gchat\" | \"google_chat\""));
+    let frame_validation = between(
+        EGRESS,
+        "fn validate_connection_bound_frame_binding(",
+        "fn claim_in_phase(",
+    );
+    assert!(frame_validation.contains("ChannelId::GoogleChat"));
+    assert!(frame_validation.contains("\"gchat\" | \"google_chat\""));
 }
 
 #[test]

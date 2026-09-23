@@ -1,0 +1,155 @@
+{
+  "schema": "neoth-criterion-terminals/v1",
+  "run": 35930437377,
+  "source": "a53a95f426607b476b6d9ac1937e26c871b8244e",
+  "executed": 903,
+  "passed": 902,
+  "failed": 1,
+  "missingTerminal": 0,
+  "sourceBindingCount": 179,
+  "archiveDigests": {
+    "receipt": "sha256:adc1617b2614129b5f4b66713d3b5cfa7c468fc7338fbd55bc0fe4fc63ac6fde",
+    "log": "sha256:257d321d51c329b5a572c0b35139bbd329037fa4f2469e84442faa2277d90d64",
+    "source": "sha256:38ff58209732126a1c8d7952e7ddb24f1f862d4f51a12b6e4d74c90c2c180e6e"
+  },
+  "logSha256": "C063FF9204AFB4C8657198ED7DB35E39ECADCDEF3E59AECBAEB50C99A7450641",
+  "terminals": [
+    {
+      "test": "daemon::wizard_ipc::tests::prepared_hash_requires_exact_lowercase_sha256",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::terminal_response_write_failure_still_stops_admission",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::stalled_owner_bounds_command_admission_and_reply_waits",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::wrong_bearer_is_rejected_before_owner_mutation",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::fresh_home_open_or_resume_creates_only_pending_transaction",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::reopen_preserves_sequence_and_rejects_stale_identity_or_status_injection",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::cancellation_returns_terminal_snapshot_and_drains_listener",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::prepared_config_hash_commits_marker_then_returns_completed_and_drains",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::restart_resumes_pending_transaction_but_rejects_old_boot",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::second_bootstrap_bind_is_refused_while_the_first_owner_holds_the_pid_lease",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::idle_long_poll_returns_before_the_client_deadline",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::long_poll_receives_the_next_accepted_mutation",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::read_only_waiters_do_not_wake_each_other",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::gui_chat_runtime::lifecycle_tests::w458_real_producer_post_hook_is_visible_to_main_and_buddy_only_after_acceptance",
+      "status": "failed"
+    },
+    {
+      "test": "installers::paperless_readiness::tests::configured_probe_requires_unauthenticated_rejection_then_returns_stable_version",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_readiness::tests::unauthenticated_generic_200_is_not_readiness_evidence",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_readiness::tests::authenticated_profile_401_and_403_are_unauthorized",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_readiness::tests::redirect_is_not_followed_and_does_not_send_token_to_the_redirect_target",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_readiness::tests::malformed_profile_and_non_json_profile_are_invalid_response",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_readiness::tests::authenticated_status_forbidden_reports_ready_without_version",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_readiness::tests::chunked_profile_over_body_cap_is_rejected",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_readiness::tests::absolute_timeout_bounds_an_authenticated_profile_request",
+      "status": "passed"
+    },
+    {
+      "test": "cli::paperless::tests::paperless_status_cli_rejects_token_arguments",
+      "status": "passed"
+    },
+    {
+      "test": "cli::paperless::tests::paperless_status_missing_credentials_never_claims_readiness",
+      "status": "passed"
+    },
+    {
+      "test": "cli::paperless::tests::paperless_status_credential_parse_errors_are_redacted",
+      "status": "passed"
+    },
+    {
+      "test": "cli::paperless::tests::paperless_status_uses_stored_token_for_authenticated_profile_denial_without_leaking",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless::tests::scan_struct_does_not_treat_open_port_as_running",
+      "status": "passed"
+    }
+  ],
+  "bindings": [
+    {
+      "path": "SRC/neothd/src/cli/paperless.rs",
+      "blob": "0736cfd1e54531235b29f5a8d2e73ecc1a939726",
+      "sha256": "F34EA59DD10DF050940F634CA56390949BC74036618B12F21DBE6E0F65890513"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+      "blob": "6927c9fac7f5f1a409088bb8bb065d9f60f6ae26",
+      "sha256": "90C9B8DC3447108B47049B5AA2ED50D07CADF13C835097AE7E711AC854765566"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
+      "blob": "541d3cc708ce1f0da6cdd733ca9eae92b89bc530",
+      "sha256": "043EB3FD3141FC71B659BE51F25351404DCAFB7C4DD92BC8DDDE19D2AC34B116"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_readiness_tests.rs",
+      "blob": "0259b6e374e8b39f928b3654ec2d59fe924e4496",
+      "sha256": "3F2CE600453C6E47808C5ECFFCDC9159BDFF0ADC40CBC8F33632CB7EB239FC5C"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless.rs",
+      "blob": "c79af2c0f5bb5f935290c84a3d43109164705dd4",
+      "sha256": "5C49EFC483A295922ED35DF2D7B35CE10484660CA7270F1A14FC29C7A0081E09"
+    }
+  ],
+  "limits": "13Paperless API-readiness and13Wizard IPC supporting passes; no P118GUI or W535/W540 behavior inferred; sole W458producer failure retained",
+  "localExecutableValidationRan": false
+}

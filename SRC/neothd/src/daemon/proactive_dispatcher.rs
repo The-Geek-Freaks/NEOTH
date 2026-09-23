@@ -133,12 +133,7 @@ pub(crate) enum DeliveryRoute {
     /// operator-configured room. Room policy and E2EE are re-applied at send.
     #[cfg(feature = "matrix-channel")]
     Matrix { room_id: String },
-    /// Google Chat is feature-gated but constructible on demand from its
-    /// service-account key and Pub/Sub subscription; the receive-loop
-    /// instance is deliberately not reused as delivery authority.
-    #[cfg(feature = "gchat-channel")]
-    GoogleChat { space: String },
-    /// A connection-owned adapter. The dispatcher may acquire only the
+    /// A live-instance-owned adapter. The dispatcher may acquire only the
     /// exact ready live handle published by the daemon under this reference;
     /// it must never construct a replacement transport for these lanes.
     ConnectionBound {
@@ -203,8 +198,7 @@ fn is_valid_nostr_proactive_target(value: &str) -> bool {
 /// `SidecarOnly` (the operator still sees it in the ledger). Wired:
 /// Telegram/Slack/Discord/WhatsApp + B9 Signal/LINE/Mattermost/iMessage and,
 /// when compiled, Matrix and Google Chat. Matrix restores its persistent SDK
-/// session lazily; Google Chat constructs a fresh short-lived adapter from its
-/// complete operator configuration. IRC/Twitch/Nostr acquire only a ready,
+/// session lazily; IRC/Twitch/Nostr/Google Chat acquire only a ready,
 /// generation-bound daemon-owned adapter. Keet is constructible on demand
 /// through its authenticated local companion.
 pub(crate) fn plan_delivery(
@@ -370,7 +364,12 @@ pub(crate) fn plan_delivery(
             let space =
                 dest.and_then(|value| crate::channels::gchat::validate_space_resource(value).ok());
             match (service_account, subscription, allowed_sender, space) {
-                (true, Some(_), Some(_), Some(space)) => DeliveryRoute::GoogleChat { space },
+                (true, Some(_), Some(_), Some(space)) => DeliveryRoute::ConnectionBound {
+                    channel_ref: crate::channels::registry::ChannelRef::default_account(
+                        crate::channels::registry::ChannelId::GoogleChat,
+                    ),
+                    recipient: space,
+                },
                 _ => DeliveryRoute::SidecarOnly,
             }
         }
@@ -402,7 +401,7 @@ pub(crate) fn plan_delivery(
                 DeliveryRoute::SidecarOnly
             }
         }
-        // Connection-owned adapters are never reconstructed for proactive
+        // Live-instance-owned adapters are never reconstructed for proactive
         // delivery. The later registry lookup binds the exact default account,
         // current credential fingerprint, and live generation before it can
         // cross the durable egress seam.
@@ -833,67 +832,6 @@ async fn deliver_live_route(
             );
             execute!(&room_id, channel)
         }
-        #[cfg(feature = "gchat-channel")]
-        DeliveryRoute::GoogleChat { space } => {
-            let service_account = live
-                .credentials
-                .gchat_service_account_json
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| {
-                    LiveRouteError::AdapterConfiguration(
-                        "Google Chat proactive route lost its service-account key path".to_string(),
-                    )
-                })?;
-            let subscription = live
-                .credentials
-                .gchat_subscription
-                .as_deref()
-                .ok_or_else(|| {
-                    LiveRouteError::AdapterConfiguration(
-                        "Google Chat proactive route lost its subscription".to_string(),
-                    )
-                })
-                .and_then(|value| {
-                    crate::channels::gchat::validate_subscription_resource(value).map_err(|_| {
-                        LiveRouteError::AdapterConfiguration(
-                            "Google Chat proactive route has an invalid subscription".to_string(),
-                        )
-                    })
-                })?;
-            let allowed_sender = live
-                .credentials
-                .gchat_allowed_sender
-                .as_deref()
-                .ok_or_else(|| {
-                    LiveRouteError::AdapterConfiguration(
-                        "Google Chat proactive route lost its sender allowlist".to_string(),
-                    )
-                })
-                .and_then(|value| {
-                    crate::channels::gchat::validate_allowed_sender_resource(value).map_err(|_| {
-                        LiveRouteError::AdapterConfiguration(
-                            "Google Chat proactive route has an invalid sender allowlist"
-                                .to_string(),
-                        )
-                    })
-                })?;
-            let space = crate::channels::gchat::validate_space_resource(&space).map_err(|_| {
-                LiveRouteError::AdapterConfiguration(
-                    "Google Chat proactive route has an invalid space destination".to_string(),
-                )
-            })?;
-            let channel: Arc<dyn crate::channels::Channel> = Arc::new(
-                crate::channels::gchat::GChatChannel::new(Path::new(service_account), subscription)
-                    .map_err(|_| {
-                        LiveRouteError::AdapterConfiguration(
-                            "construct Google Chat proactive adapter: rejected".to_string(),
-                        )
-                    })?
-                    .with_allowlist(Some(allowed_sender), egress.writer().clone()),
-            );
-            execute!(&space, channel)
-        }
     }
 }
 
@@ -1118,7 +1056,7 @@ pub(crate) async fn run_proactive_delivery_tick_with_accepted(
         now_unix,
         Duration::from_secs(config.proactive.delivery_attempt_timeout_secs),
     );
-    // Connection-owned adapters are selected only by a current exact
+    // Live-instance-owned adapters are selected only by a current exact
     // default-account fingerprint. This map is derived from the same coherent
     // config/credential pair used for ordinary route planning; stale or
     // missing handles therefore settle as SidecarOnly before a Prepared claim.
@@ -1500,6 +1438,27 @@ mod tests {
             is_failure: false,
             expires_unix: 0,
         }
+    }
+
+    #[cfg(feature = "gchat-channel")]
+    fn gchat_credentials(home: &std::path::Path) -> Credentials {
+        let key_path = home.join("gchat-service-account.json");
+        std::fs::write(&key_path, b"gchat-test-key-sentinel").unwrap();
+        Credentials {
+            gchat_service_account_json: Some(key_path.display().to_string()),
+            gchat_subscription: Some("projects/test/subscriptions/gchat".to_string()),
+            gchat_allowed_sender: Some("users/12345".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[cfg(feature = "gchat-channel")]
+    fn write_gchat_routing(home: &std::path::Path) {
+        let mut routing = crate::channels::routing::ChannelRouting::default();
+        routing.destinations.gchat_space = Some("spaces/AAAA".to_string());
+        routing
+            .save_to(&home.join(crate::channels::routing::CHANNEL_ROUTING_FILE))
+            .unwrap();
     }
 
     #[tokio::test]
@@ -2017,6 +1976,179 @@ mod tests {
             1,
             "repeated tick must not reach the live adapter"
         );
+    }
+
+    #[cfg(feature = "gchat-channel")]
+    #[tokio::test]
+    async fn gchat_connection_bound_delivery_uses_the_published_instance_for_both_aliases() {
+        for alias in ["gchat", "google_chat"] {
+            let tmp = TempDir::new().unwrap();
+            let queue_path = tmp.path().join("proactive_queue.json");
+            let mut queued = item(&format!("gchat-live-{alias}"), 50, 0);
+            queued.channel = alias.to_string();
+            let mut queue = ProactiveQueue::new();
+            assert!(queue.enqueue(queued).unwrap());
+            queue.save_to(&queue_path).unwrap();
+            write_gchat_routing(tmp.path());
+
+            let mut config = FreedomConfig::default();
+            config.proactive.enabled = true;
+            config.autonomy = AutonomyLevel::Full;
+            let credentials = gchat_credentials(tmp.path());
+            let gchat_ref = crate::channels::registry::ChannelRef::default_account(
+                crate::channels::registry::ChannelId::GoogleChat,
+            );
+            let fingerprint = *crate::cli::serve_tasks::channel_account_fingerprints(
+                &config,
+                &credentials,
+                &[],
+                tmp.path(),
+            )
+            .get(&gchat_ref)
+            .unwrap();
+            let registry = empty_live_channels();
+            let gchat = Arc::new(CountingConnectionChannel::new("gchat"));
+            let lease = registry
+                .begin_replacement(gchat_ref.clone(), fingerprint)
+                .await;
+            assert!(registry.publish(&lease, gchat.clone()).await);
+
+            let wal_dir = tmp.path().join("wal");
+            std::fs::create_dir_all(&wal_dir).unwrap();
+            let segment = wal_dir.join("000001.wal");
+            let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
+                segment.clone(),
+                tmp.path().to_path_buf(),
+            )
+            .unwrap();
+            ready.wait().await.unwrap();
+            assert_eq!(
+                run_proactive_delivery_tick(
+                    tmp.path(),
+                    &segment,
+                    &config,
+                    &credentials,
+                    &writer,
+                    1_700_000_000,
+                    Arc::clone(&registry),
+                )
+                .await
+                .unwrap(),
+                1,
+                "{alias} must use the exact published live GChat instance"
+            );
+            assert_eq!(
+                run_proactive_delivery_tick(
+                    tmp.path(),
+                    &segment,
+                    &config,
+                    &credentials,
+                    &writer,
+                    1_700_000_001,
+                    Arc::clone(&registry),
+                )
+                .await
+                .unwrap(),
+                0,
+                "{alias} terminal v6 evidence must make a repeated tick a zero-send no-op"
+            );
+            drop(writer);
+            join.await.unwrap().unwrap();
+
+            assert_eq!(
+                gchat.sends(),
+                1,
+                "{alias} must not construct a replacement"
+            );
+            let history =
+                crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
+            assert_eq!(history.len(), 1);
+            assert_eq!(
+                history[0].outcome(),
+                crate::daemon::proactive_egress::ProactiveEgressOutcome::Delivered
+            );
+            assert_eq!(
+                history[0].connection_binding_identity_for_test(),
+                Some((&gchat_ref, 1, fingerprint)),
+                "{alias} durable evidence must name the published GChat generation"
+            );
+        }
+    }
+
+    #[cfg(feature = "gchat-channel")]
+    #[tokio::test]
+    async fn gchat_missing_or_revoked_live_instance_is_sidecar_only_without_send() {
+        for state in ["missing", "revoked"] {
+            let tmp = TempDir::new().unwrap();
+            let queue_path = tmp.path().join("proactive_queue.json");
+            let mut queued = item(&format!("gchat-{state}"), 50, 0);
+            queued.channel = "gchat".to_string();
+            let mut queue = ProactiveQueue::new();
+            assert!(queue.enqueue(queued).unwrap());
+            queue.save_to(&queue_path).unwrap();
+            write_gchat_routing(tmp.path());
+
+            let mut config = FreedomConfig::default();
+            config.proactive.enabled = true;
+            config.autonomy = AutonomyLevel::Full;
+            let credentials = gchat_credentials(tmp.path());
+            let gchat_ref = crate::channels::registry::ChannelRef::default_account(
+                crate::channels::registry::ChannelId::GoogleChat,
+            );
+            let fingerprint = *crate::cli::serve_tasks::channel_account_fingerprints(
+                &config,
+                &credentials,
+                &[],
+                tmp.path(),
+            )
+            .get(&gchat_ref)
+            .unwrap();
+            let registry = empty_live_channels();
+            let gchat = Arc::new(CountingConnectionChannel::new("gchat"));
+            if state == "revoked" {
+                let lease = registry
+                    .begin_replacement(gchat_ref.clone(), fingerprint)
+                    .await;
+                assert!(registry.publish(&lease, gchat.clone()).await);
+                registry.revoke_and_drain(&gchat_ref).await;
+            }
+
+            let wal_dir = tmp.path().join("wal");
+            std::fs::create_dir_all(&wal_dir).unwrap();
+            let segment = wal_dir.join("000001.wal");
+            let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
+                segment.clone(),
+                tmp.path().to_path_buf(),
+            )
+            .unwrap();
+            ready.wait().await.unwrap();
+            assert_eq!(
+                run_proactive_delivery_tick(
+                    tmp.path(),
+                    &segment,
+                    &config,
+                    &credentials,
+                    &writer,
+                    1_700_000_000,
+                    Arc::clone(&registry),
+                )
+                .await
+                .unwrap(),
+                0,
+                "{state} GChat must not start transport"
+            );
+            drop(writer);
+            join.await.unwrap().unwrap();
+
+            assert_eq!(gchat.sends(), 0, "{state} GChat must remain zero-send");
+            let history =
+                crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
+            assert_eq!(history.len(), 1);
+            assert_eq!(
+                history[0].outcome(),
+                crate::daemon::proactive_egress::ProactiveEgressOutcome::SidecarOnly
+            );
+        }
     }
 
     #[tokio::test]
@@ -2599,10 +2731,10 @@ channel_accounts:
 
     #[test]
     fn plan_delivery_connection_bound_channels_require_the_live_registry() {
-        // IRC/Twitch/Nostr retain their live socket/relay ownership. Planning
-        // carries the configured recipient and exact default ref, while the
-        // later registry acquisition remains the authority that may permit a
-        // live effect.
+        // IRC/Twitch/Nostr retain live socket/relay ownership; Google Chat
+        // retains its running Pub/Sub adapter instance. Planning carries the
+        // configured recipient and exact default ref, while the later registry
+        // acquisition remains the authority that may permit a live effect.
         let cfg = cfg_with_telegram(AutonomyLevel::Full);
         let mut rt = default_rt();
         rt.destinations.irc_channel = Some("#neoth".to_string());
@@ -2681,8 +2813,11 @@ channel_accounts:
         for channel in ["gchat", "google_chat"] {
             assert_eq!(
                 plan_delivery(channel, AutonomyLevel::Full, &cfg, &rt, &complete),
-                DeliveryRoute::GoogleChat {
-                    space: "spaces/AAAA".to_string()
+                DeliveryRoute::ConnectionBound {
+                    channel_ref: crate::channels::registry::ChannelRef::default_account(
+                        crate::channels::registry::ChannelId::GoogleChat,
+                    ),
+                    recipient: "spaces/AAAA".to_string(),
                 },
                 "{channel} aliases must select the identical GChat route"
             );

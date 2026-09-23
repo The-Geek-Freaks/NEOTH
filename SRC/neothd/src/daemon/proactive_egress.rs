@@ -44,9 +44,9 @@ const ACCOUNT_BOUND_CLAIM_VERSION: u8 = 4;
 /// v5 binds a mapped Telegram send to its durable account incarnation.  v4
 /// remains a readable historical generation and is never silently upgraded.
 const INCARNATION_BOUND_CLAIM_VERSION: u8 = 5;
-/// v6 binds a connection-owned IRC/Twitch/Nostr effect to the exact published
-/// live adapter generation and configuration fingerprint. Earlier formats are
-/// immutable recovery grammars and must never gain this authority.
+/// v6 binds a live-instance-owned IRC/Twitch/Nostr/Google Chat effect to the
+/// exact published adapter generation and configuration fingerprint. Earlier
+/// formats are immutable recovery grammars and must never gain this authority.
 const CONNECTION_BOUND_CLAIM_VERSION: u8 = 6;
 const PREVIOUS_CLAIM_VERSION: u8 = 2;
 const LEGACY_CLAIM_VERSION: u8 = 1;
@@ -515,7 +515,7 @@ pub(crate) struct ProactiveEgressClaim {
     /// display/projection field; this sealed binding is effect authority.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_binding: Option<crate::config::ChannelAccountBinding>,
-    /// v6-only identity of a connection-owned adapter. It carries no raw
+    /// v6-only identity of a live-instance-owned adapter. It carries no raw
     /// transport capability; the non-cloneable permit remains process-local.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection_binding: Option<ConnectionBoundEgressBinding>,
@@ -1516,12 +1516,16 @@ fn validate_connection_bound_binding(
     target_channel: &str,
     item: &ProactiveItem,
 ) -> Result<()> {
+    let names_exact_live_route = match binding.channel_ref.channel_id {
+        ChannelId::GoogleChat => matches!(target_channel, "gchat" | "google_chat"),
+        ChannelId::Irc | ChannelId::Twitch | ChannelId::Nostr => {
+            binding.channel_ref.channel_id.as_str() == target_channel
+        }
+        _ => false,
+    };
     anyhow::ensure!(
-        matches!(
-            binding.channel_ref.channel_id,
-            ChannelId::Irc | ChannelId::Twitch | ChannelId::Nostr
-        ) && binding.channel_ref.channel_id.as_str() == target_channel,
-        "v6 proactive binding must name its exact connection-owned route"
+        names_exact_live_route,
+        "v6 proactive binding must name its exact live-instance-owned route"
     );
     anyhow::ensure!(
         item.account_id.as_ref() == Some(&binding.channel_ref.account_id),
@@ -1539,13 +1543,16 @@ fn validate_connection_bound_frame_binding(
     target_channel: &str,
     channel_ref: &ChannelRef,
 ) -> Result<()> {
+    let names_exact_live_route = match channel_ref.channel_id {
+        ChannelId::GoogleChat => matches!(target_channel, "gchat" | "google_chat"),
+        ChannelId::Irc | ChannelId::Twitch | ChannelId::Nostr => {
+            channel_ref.channel_id.as_str() == target_channel
+        }
+        _ => false,
+    };
     anyhow::ensure!(
         &binding.channel_ref == channel_ref
-            && matches!(
-                channel_ref.channel_id,
-                ChannelId::Irc | ChannelId::Twitch | ChannelId::Nostr
-            )
-            && channel_ref.channel_id.as_str() == target_channel
+            && names_exact_live_route
             && binding.generation != 0,
         "v6 proactive frame has an invalid connection binding"
     );
@@ -5460,7 +5467,7 @@ pub(crate) async fn execute_claimed_once(
     .await
 }
 
-/// Connection-owned egress has no reconstructible transport authority.  The
+/// Live-instance-owned egress has no reconstructible transport authority. The
 /// caller transfers one opaque registry permit, which this executor binds into
 /// v6 durable evidence and consumes only after it is Armed.
 pub(super) async fn execute_claimed_once_connection_bound(

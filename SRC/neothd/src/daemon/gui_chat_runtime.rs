@@ -2321,6 +2321,17 @@ pub(crate) mod w458_test_support {
         fn name(&self) -> &'static str {
             "claude_cli"
         }
+
+        // This fixture is the explicitly reviewed W458 streaming leaf. The
+        // trait defaults to false so ordinary test doubles cannot accidentally
+        // cross the real effect-start boundary before `stream_raw` is reached.
+        fn w41_effect_start_adapter(
+            &self,
+            _: crate::providers::W41EffectStartProbe,
+        ) -> bool {
+            true
+        }
+
         fn default_model(&self) -> Option<&str> {
             Some("w458-stream")
         }

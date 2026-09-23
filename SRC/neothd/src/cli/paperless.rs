@@ -465,20 +465,23 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_helper_then_status_reports_instance_scoped_staging() {
-        let home = tempfile::tempdir().unwrap();
-        let prepared = paperless_prepare_at(home.path(), None).unwrap();
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = std::fs::canonicalize(home_dir.path()).unwrap();
+        let prepared = paperless_prepare_at(&home, None).unwrap();
         assert!(prepared.prepared);
-        assert!(home.path().join("paperless").is_dir());
-        let status = paperless_status_at(home.path()).await.unwrap();
+        assert!(home.join("paperless").is_dir());
+        let status = paperless_status_at(&home).await.unwrap();
         assert_eq!(status.staging, "already_prepared");
         assert!(!status.artifact_verified);
 
         let explicit = tempfile::tempdir().unwrap();
-        let explicit_root = explicit.path().join("exact-directory");
-        let explicit_prepared = paperless_prepare_at(home.path(), Some(&explicit_root)).unwrap();
+        let explicit_root = std::fs::canonicalize(explicit.path())
+            .unwrap()
+            .join("exact-directory");
+        let explicit_prepared = paperless_prepare_at(&home, Some(&explicit_root)).unwrap();
         assert!(explicit_prepared.prepared);
         assert!(explicit_root.is_dir());
-        assert!(home.path().join("paperless").is_dir());
+        assert!(home.join("paperless").is_dir());
     }
 
     #[tokio::test]
