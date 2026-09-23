@@ -8,6 +8,15 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W537/W538 hosted correction (2026-09-24):**
+Paperless acquisition's7contract tests passed; remote acquisition failed before
+any admitted receipt. Verified upstream Docker metadata uses3.2.1 without the
+GitHub tag'sv prefix; corrected selector and bounded HTTP-status diagnostics
+are covered by an eighth test. Core d2f4 slim production Clippy passed; its test
+typecheck exposed one stale Credentials path in the CLI fixture, now corrected.
+Exact hosted GUI formatting was imported. Inventory759/native1198/Group903,
+GUI148Linux144macOS and Road1044checked/278open/2partial are unchanged.
+Execution follow-up pending; no local executable checks or closure claims.
 **W531 Paperless OCI provenance; W534/W536 stream diagnostics (2026-09-24):**
 A main-only hosted workflow acquires and retains three OCI indexes and six
 exact platform manifests with bounded HTTPS and digest/size/media checks.

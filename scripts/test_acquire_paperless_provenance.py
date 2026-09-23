@@ -44,7 +44,7 @@ class PaperlessProvenanceContractTests(unittest.TestCase):
         self.assertEqual(
             module.SELECTORS,
             (
-                ("paperless", "ghcr.io", "paperless-ngx/paperless-ngx", "v3.2.1"),
+                ("paperless", "ghcr.io", "paperless-ngx/paperless-ngx", "3.2.1"),
                 ("valkey", "registry-1.docker.io", "valkey/valkey", "9-alpine"),
                 ("postgres", "registry-1.docker.io", "library/postgres", "18"),
             ),
@@ -95,7 +95,7 @@ class PaperlessProvenanceContractTests(unittest.TestCase):
                 self.FakeClient([(body, {"docker-content-digest": wrong_digest, "content-type": "application/vnd.oci.image.index.v1+json"})]),
                 "ghcr.io",
                 "paperless-ngx/paperless-ngx",
-                "v3.2.1",
+                "3.2.1",
                 "unused-token",
             )
         client = module.BoundedClient()
@@ -105,6 +105,21 @@ class PaperlessProvenanceContractTests(unittest.TestCase):
         client.requests = module.MAX_REQUESTS
         with self.assertRaises(module.AcquisitionError):
             client.get("https://ghcr.io/token?service=ghcr.io&scope=repository:paperless-ngx/paperless-ngx:pull", 3)
+
+    def test_http_failure_diagnostic_keeps_only_status_and_request_number(self):
+        class FailingOpener:
+            def open(self, _request, timeout):
+                raise module.urllib.error.HTTPError(
+                    "https://ghcr.io/private-query-secret", 404, "sensitive-server-body", {}, None
+                )
+
+        client = module.BoundedClient()
+        client.opener = FailingOpener()
+        with self.assertRaises(module.AcquisitionError) as caught:
+            client.get("https://ghcr.io/token", 64)
+        self.assertEqual(str(caught.exception), "bounded HTTPS request failed: HTTP 404, request 1")
+        self.assertNotIn("secret", str(caught.exception))
+        self.assertNotIn("sensitive", str(caught.exception))
 
     def test_child_receipt_binds_digest_size_media_and_records_large_layer_metadata_without_pull(self):
         digest = "sha256:" + "e" * 64

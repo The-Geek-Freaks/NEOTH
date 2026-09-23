@@ -49420,8 +49420,7 @@ exit 0
 
         for (name, capture) in [("Block", &block), ("Replace", &replace)] {
             assert_eq!(
-                capture.provider_invocations,
-                1,
+                capture.provider_invocations, 1,
                 "W480 {name} provider opens once; {}",
                 capture.terminal_diagnostic,
             );

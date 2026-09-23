@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W531_W536_SOURCE_REVIEWED_HOSTED_PENDING",
+  "status": "W537_W538_SOURCE_REVIEWED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 132367,
-    "sha256": "5F87EF1DAB92542B1519338BF8ABACC8A2815502CD6C2D66154604673036BE49"
+    "sha256": "D355BE457A33AE876DC53CA230D6D23AEE6C5029555D8724FF2350E53ADE5A44"
   },
   "sourceInputs": 759,
   "requiredNativeTests": [
@@ -7170,25 +7170,25 @@
     {
       "test": "cli::paperless::tests::paperless_status_cli_rejects_token_arguments",
       "sourcePath": "SRC/neothd/src/cli/paperless.rs",
-      "sourceSha256": "94B6FBD1001461FE8614D1CC3CE12A08F5BBF376C1FCAB8BB0ECC75446068DE8",
+      "sourceSha256": "F34EA59DD10DF050940F634CA56390949BC74036618B12F21DBE6E0F65890513",
       "junitClass": "neoth"
     },
     {
       "test": "cli::paperless::tests::paperless_status_missing_credentials_never_claims_readiness",
       "sourcePath": "SRC/neothd/src/cli/paperless.rs",
-      "sourceSha256": "94B6FBD1001461FE8614D1CC3CE12A08F5BBF376C1FCAB8BB0ECC75446068DE8",
+      "sourceSha256": "F34EA59DD10DF050940F634CA56390949BC74036618B12F21DBE6E0F65890513",
       "junitClass": "neoth"
     },
     {
       "test": "cli::paperless::tests::paperless_status_credential_parse_errors_are_redacted",
       "sourcePath": "SRC/neothd/src/cli/paperless.rs",
-      "sourceSha256": "94B6FBD1001461FE8614D1CC3CE12A08F5BBF376C1FCAB8BB0ECC75446068DE8",
+      "sourceSha256": "F34EA59DD10DF050940F634CA56390949BC74036618B12F21DBE6E0F65890513",
       "junitClass": "neoth"
     },
     {
       "test": "cli::paperless::tests::paperless_status_uses_stored_token_for_authenticated_profile_denial_without_leaking",
       "sourcePath": "SRC/neothd/src/cli/paperless.rs",
-      "sourceSha256": "94B6FBD1001461FE8614D1CC3CE12A08F5BBF376C1FCAB8BB0ECC75446068DE8",
+      "sourceSha256": "F34EA59DD10DF050940F634CA56390949BC74036618B12F21DBE6E0F65890513",
       "junitClass": "neoth"
     },
     {
@@ -7815,8 +7815,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2209209,
-      "sha256": "0E1CDE3B7D86C1D4A070A8287D77225158D353985E9AFAFF3A4BFE29DAF2265F"
+      "bytes": 2209193,
+      "sha256": "63130A2E81E124844D163FE0195274F3B88F0E1D9659B598D2A574D9CB2D8E4E"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -24676,6 +24676,62 @@
       }
     ],
     "note": "W531 bounded OCI metadata acquisition and raw manifest custody; W534 hosted formatting; W536 GUI diagnostic projection; no artifact/runtime acceptance or Road closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave538Evidence": {
+    "base": "e1ee4c673bb573ef823ce0164fbacda3ddc24b5c",
+    "sources": [
+      {
+        "path": "docs/gold-wave531-paperless-provenance.md",
+        "bytes": 3311,
+        "sha256": "85DC00187879AE99B6A83B2B7BE14105CAD423F66E1383599F036D4B98F5C419",
+        "blob": "496e1d6876e132a98dbd5b3318f0ca16e31696b2"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 193767,
+        "sha256": "1E678CFB5E79E9ADC8FA5C6A0B1B6D51CA18B4893737EE91886D89100C5E019A",
+        "blob": "e52e9637a2153928894e6622e398adfc16ab740a"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1204091,
+        "sha256": "229FFB2D136EE34C7D6CEFD02F487A2AEE9B3E0ADFBA7F7A79C07AECF697E47F",
+        "blob": "7c4aa346120c165cfa632747a7ddf24ca049d1d4"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1802724,
+        "sha256": "3D86B1CD5B59EDAB50959E77EC36CF50103C16D02770D35EE84048C68794E981",
+        "blob": "e36152e095007f87b0a2f8d98519d28aad35ca93"
+      },
+      {
+        "path": "scripts/acquire_paperless_provenance.py",
+        "bytes": 15289,
+        "sha256": "2B0BE4C8F24AE8AB64B9C49754B297DAE2D355D7E496BE3DAB3FEF6C99D91C74",
+        "blob": "1a4a4ac375d52daa808ff3e4f19097929af81cb7"
+      },
+      {
+        "path": "scripts/test_acquire_paperless_provenance.py",
+        "bytes": 7245,
+        "sha256": "6F9799AE73CCF43AC5568B46BC4D45FCBDA964B852BA5B7B7A3C12FE4EAF503A",
+        "blob": "82aa489aa6c634f525f552ce2376a3fd709b7255"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2209193,
+        "sha256": "63130A2E81E124844D163FE0195274F3B88F0E1D9659B598D2A574D9CB2D8E4E",
+        "blob": "26d43cf63ed820b9e0f5b33d0d8aba353e3d9d91"
+      },
+      {
+        "path": "SRC/neothd/src/cli/paperless.rs",
+        "bytes": 21137,
+        "sha256": "F34EA59DD10DF050940F634CA56390949BC74036618B12F21DBE6E0F65890513",
+        "blob": "0736cfd1e54531235b29f5a8d2e73ecc1a939726"
+      }
+    ],
+    "note": "Verified upstream OCI selector3.2.1, bounded HTTP diagnostics8fixtures, canonicalCredentialsCLItest, exacthostedGUIformat. SlimprodClippy atd2f4 passed; receipt/runtime pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

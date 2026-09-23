@@ -448,7 +448,7 @@ mod tests {
 
         let home = tempfile::tempdir().unwrap();
         let credentials_path = home.path().join("credentials.yaml");
-        crate::config::Credentials {
+        crate::config::credentials::Credentials {
             paperless_url: Some(format!("http://127.0.0.1:{port}")),
             paperless_token: Some(crate::secret::SecretString::from(TOKEN)),
             ..Default::default()

@@ -35,3 +35,15 @@ pending runtime evidence. P1-18/P2-20/P2-26a remain open. Inventory759sources,
 1198native+Win25Linux33mac32, Group903, GUI148Linux144macOS. Road1324 total,
 1044checked/278open/2partial,280raw/279pre-tag; WS-LF37done/81open.
 No local compiler, formatter, code parser, test, browser, GUI or runtime ran.
+
+W537/W538 follow-up: Hosted35928271580 passed all seven acquisition contract
+tests, then failed during its first registry acquisition with a redacted HTTPS
+failure. The immutable upstream ci-docker.yml uses semver {{version}} tags, so
+the Paperless OCI selector is corrected to3.2.1; the source release remains
+v3.2.1. HTTP errors now expose only numeric status and bounded request ordinal,
+with an eighth test proving URL/reason content stays out. No registry receipts
+have yet been accepted. Core35927364092 passed slim production Clippy, then
+found one remaining stale Credentials path in the CLI's test fixture; its type
+now uses config::credentials::Credentials. GUI formatting artifact10779923485
+from35928270572 was imported with source/hash/before-after Gitblob checks.
+These narrow repairs await fresh hosted execution; all counts remain unchanged.

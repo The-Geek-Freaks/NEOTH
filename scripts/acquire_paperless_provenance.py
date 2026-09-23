@@ -45,7 +45,7 @@ UPSTREAM_COMMIT = "7575d6078227ebdb4cf443f263d53ebc7575aa37"
 UPSTREAM_COMPOSE_SHA256 = "85206b8ae6cd74db70998de6479b4c1f7b50c077772a1af2c026c9ecb35b689c"
 UPSTREAM_SOURCE_ARCHIVE_SHA256 = "7391e75706d9dafe84dd2235df12c932c0034a4f453725437d07918eee7a35b8"
 SELECTORS = (
-    ("paperless", "ghcr.io", "paperless-ngx/paperless-ngx", "v3.2.1"),
+    ("paperless", "ghcr.io", "paperless-ngx/paperless-ngx", "3.2.1"),
     ("valkey", "registry-1.docker.io", "valkey/valkey", "9-alpine"),
     ("postgres", "registry-1.docker.io", "library/postgres", "18"),
 )
@@ -110,8 +110,14 @@ class BoundedClient:
                 return body, {key.lower(): value for key, value in response.headers.items()}
         except AcquisitionError:
             raise
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as error:
-            raise AcquisitionError("bounded HTTPS request failed") from error
+        except urllib.error.HTTPError as error:
+            raise AcquisitionError(
+                f"bounded HTTPS request failed: HTTP {error.code}, request {self.requests}"
+            ) from None
+        except (urllib.error.URLError, TimeoutError):
+            raise AcquisitionError(
+                f"bounded HTTPS transport failed: request {self.requests}"
+            ) from None
 
 
 def parse_token(raw: bytes) -> str:
