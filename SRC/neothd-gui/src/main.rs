@@ -47700,11 +47700,7 @@ exit 0
                 },
                 |window| !window.get_chat_send_in_flight(),
             );
-            w153_wait_for_child_cleanup(
-                &window,
-                &runtime,
-                "W153 manager-owned child cleanup",
-            );
+            w153_wait_for_child_cleanup(&window, &runtime, "W153 manager-owned child cleanup");
             assert!(
                 runtime
                     .chat_reasoning_projections
@@ -48157,11 +48153,7 @@ exit 0
                         .is_some_and(|overlay| overlay.get_response_feedback_available()),
                 },
             );
-            w153_wait_for_child_cleanup(
-                &window,
-                &runtime,
-                "W164 manager-owned child cleanup",
-            );
+            w153_wait_for_child_cleanup(&window, &runtime, "W164 manager-owned child cleanup");
             match surface {
                 ChatStreamSurface::Main => {
                     window.invoke_chat_response_feedback_action("accepted".into())

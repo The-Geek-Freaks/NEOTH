@@ -741,7 +741,12 @@ impl LinuxChatUnitSetup {
                             && snapshot.load_state != "not-found"
                         {
                             return Err(format!(
-                                "{LINUX_SERVICE_ERROR}: manager reported {last_state}"
+                                "{LINUX_SERVICE_ERROR}: manager reported {last_state}; result={}, \
+                                 exec_main_code={}, exec_main_status={}, status_text={}",
+                                snapshot.result,
+                                snapshot.exec_main_code,
+                                snapshot.exec_main_status,
+                                snapshot.status_text,
                             ));
                         }
                     }
@@ -1236,6 +1241,10 @@ struct LinuxUnitSnapshot {
     kill_mode: String,
     send_sigkill: String,
     main_pid: u32,
+    result: String,
+    exec_main_code: String,
+    exec_main_status: String,
+    status_text: String,
 }
 
 #[cfg(target_os = "linux")]
@@ -1299,6 +1308,7 @@ fn parse_linux_unit_snapshot(contents: &str) -> Result<LinuxUnitSnapshot, String
             .copied()
             .ok_or_else(|| format!("systemctl show omitted {name}"))
     };
+    let diagnostic = |name: &str| properties.get(name).copied().unwrap_or("<unavailable>");
     Ok(LinuxUnitSnapshot {
         load_state: required("LoadState")?.to_string(),
         active_state: required("ActiveState")?.to_string(),
@@ -1310,6 +1320,10 @@ fn parse_linux_unit_snapshot(contents: &str) -> Result<LinuxUnitSnapshot, String
         main_pid: required("MainPID")?
             .parse()
             .map_err(|_| "systemctl show MainPID is not numeric".to_string())?,
+        result: diagnostic("Result").to_string(),
+        exec_main_code: diagnostic("ExecMainCode").to_string(),
+        exec_main_status: diagnostic("ExecMainStatus").to_string(),
+        status_text: diagnostic("StatusText").to_string(),
     })
 }
 
@@ -1333,6 +1347,10 @@ fn inspect_linux_unit(
             "--property=KillMode",
             "--property=SendSIGKILL",
             "--property=MainPID",
+            "--property=Result",
+            "--property=ExecMainCode",
+            "--property=ExecMainStatus",
+            "--property=StatusText",
         ],
     )?;
     if output.stdout.len() > 64 * 1024 {
@@ -1482,8 +1500,15 @@ fn linux_manager_helper_main() -> Result<i32, String> {
     verify_linux_cgroup_mount_has_nsdelegate()?;
     let parent_pidfd = open_verified_linux_pidfd(envelope.parent_pid, envelope.parent_start_ticks)?;
     let notify = connect_linux_notify_socket()?;
+    // These static progress markers are intentionally best-effort. They add
+    // no launch input or environment data and cannot change readiness or the
+    // fail-closed containment path when systemd declines an advisory status.
+    let _ = notify.send(
+        b"STATUS=GUI chat launch frame, cgroup binding, and parent PID identity verified",
+    );
 
     enter_linux_request_namespaces(&envelope.unit_name)?;
+    let _ = notify.send(b"STATUS=GUI chat request namespaces entered");
 
     let mut ready_pipe = [-1; 2];
     if unsafe { libc::pipe2(ready_pipe.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
@@ -1509,6 +1534,7 @@ fn linux_manager_helper_main() -> Result<i32, String> {
     drop(ready_write);
 
     wait_for_linux_guardian_ready(parent_pidfd.as_raw_fd(), ready_read.as_raw_fd(), guardian)?;
+    let _ = notify.send(b"STATUS=GUI chat PID namespace guardian ready");
     notify
         .send(b"READY=1\nSTATUS=GUI chat request contained")
         .map_err(|error| format!("{LINUX_SERVICE_ERROR}: notify systemd READY: {error}"))?;
@@ -3231,13 +3257,29 @@ mod tests {
         let snapshot = parse_linux_unit_snapshot(
             "LoadState=loaded\nActiveState=active\nSubState=running\n\
              ControlGroup=/user.slice/neoth-gui-chat-r1-p2-n00000000000000000000000000000000.service\n\
-             Delegate=no\nKillMode=control-group\nSendSIGKILL=yes\nMainPID=99\n",
+             Delegate=no\nKillMode=control-group\nSendSIGKILL=yes\nMainPID=99\n\
+             Result=success\nExecMainCode=exited\nExecMainStatus=0\nStatusText=GUI chat request contained\n",
         )
         .unwrap();
         assert_eq!(snapshot.delegate, "no");
         assert_eq!(snapshot.kill_mode, "control-group");
         assert_eq!(snapshot.send_sigkill, "yes");
         assert_eq!(snapshot.main_pid, 99);
+        assert_eq!(snapshot.result, "success");
+        assert_eq!(snapshot.exec_main_code, "exited");
+        assert_eq!(snapshot.exec_main_status, "0");
+        assert_eq!(snapshot.status_text, "GUI chat request contained");
+
+        let legacy_snapshot = parse_linux_unit_snapshot(
+            "LoadState=loaded\nActiveState=active\nSubState=running\n\
+             ControlGroup=/user.slice/neoth-gui-chat-r1-p2-n00000000000000000000000000000000.service\n\
+             Delegate=no\nKillMode=control-group\nSendSIGKILL=yes\nMainPID=99\n",
+        )
+        .unwrap();
+        assert_eq!(legacy_snapshot.result, "<unavailable>");
+        assert_eq!(legacy_snapshot.exec_main_code, "<unavailable>");
+        assert_eq!(legacy_snapshot.exec_main_status, "<unavailable>");
+        assert_eq!(legacy_snapshot.status_text, "<unavailable>");
     }
 
     #[cfg(target_os = "linux")]

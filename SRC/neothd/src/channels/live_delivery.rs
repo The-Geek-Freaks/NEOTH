@@ -1402,7 +1402,8 @@ mod tests {
             } else if frame.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_SEND {
                 relevant.push("audit");
                 assert_eq!(frame.header.session_id, session.header_id());
-                failed_send = Some(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+                failed_send =
+                    Some(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
             } else if frame.header.event_subtype
                 == crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8
             {
@@ -1741,9 +1742,11 @@ mod tests {
                 == crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8
             {
                 let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
-                Some(*intent_labels.get(payload["intent_id"].as_str().unwrap()).expect(
-                    "every result must retain its preceding intent identity",
-                ))
+                Some(
+                    *intent_labels
+                        .get(payload["intent_id"].as_str().unwrap())
+                        .expect("every result must retain its preceding intent identity"),
+                )
             } else if frame.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_SEND {
                 let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
                 Some(label_for_payload(&payload))
@@ -1766,8 +1769,10 @@ mod tests {
                         b_frames += 1;
                     }
                     "unbound" => {
-                        assert!(crate::wal::SessionPartition::UNATTRIBUTED
-                            .matches(frame.header.session_id));
+                        assert!(
+                            crate::wal::SessionPartition::UNATTRIBUTED
+                                .matches(frame.header.session_id)
+                        );
                         unbound_frames += 1;
                     }
                     _ => unreachable!("known live-delivery label"),
@@ -1775,8 +1780,14 @@ mod tests {
             }
             cursor += frame.header.total_len as usize;
         }
-        assert_eq!(a_frames, 3, "A intent/result/send stay in exact A partition");
-        assert_eq!(b_frames, 3, "B intent/result/send stay in exact B partition");
+        assert_eq!(
+            a_frames, 3,
+            "A intent/result/send stay in exact A partition"
+        );
+        assert_eq!(
+            b_frames, 3,
+            "B intent/result/send stay in exact B partition"
+        );
         assert_eq!(unbound_frames, 3, "unbound delivery remains legacy ZERO");
     }
 
@@ -1964,7 +1975,10 @@ mod tests {
         assert!(saw_interruption);
         assert!(saw_send, "preview delivery records CHANNEL_SEND");
         assert!(saw_edit, "interruption notice records CHANNEL_EDIT");
-        assert_eq!(lifecycle_frames, 2, "interruption preserves intent/result pairing");
+        assert_eq!(
+            lifecycle_frames, 2,
+            "interruption preserves intent/result pairing"
+        );
     }
 
     #[tokio::test]

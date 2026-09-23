@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-23
 
+**W314 startup diagnostics and exact hosted formatting (2026-09-23):**
+The unresolved Linux crash fixture now reports optional systemd terminal fields
+and static helper-stage milestones. Existing required authority fields and
+READY/containment ordering remain unchanged; missing diagnostics are explicitly
+unavailable. Independent re-review passed. The existing snapshot parser fixture
+now covers present and absent diagnostic fields and joins the Linux GUI lane:
+129selected=99universal+30Linux. macOS125 remains unchanged.
+Preflight699 run35831231907 requested formatting in3W310/W311 files. Exact
+patch SHA256B46840C2 plus every Git pre/postimage verified before import.
+Core699 run35831257004 continues; GUI129 rerun is next. Inventory598 paths,
+native995,Group599; Road/WS-LF counters unchanged. No local executable validation
+and no crash-test repair or parent acceptance claimed.
+
 **W310/W311/W312 source and hosted recovery (2026-09-23):**
 Accepted channel streams now retain their admission-minted WAL session through
 egress intent/result, send, edit and interruption. Three frame-level fixtures

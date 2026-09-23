@@ -173,7 +173,16 @@ pub(crate) async fn emit_egress_intent_in(
     ts_unix: u64,
     wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Option<String> {
-    emit_egress_intent_inner(writer, channel, recipient, message, ts_unix, None, wal_session).await
+    emit_egress_intent_inner(
+        writer,
+        channel,
+        recipient,
+        message,
+        ts_unix,
+        None,
+        wal_session,
+    )
+    .await
 }
 
 /// Account-bound variant for the admitted nonlegacy Telegram map live path.
@@ -361,7 +370,15 @@ pub async fn emit_egress_result(
     provider_message_id: Option<&str>,
     ts_unix: u64,
 ) {
-    emit_egress_result_in(writer, intent_id, outcome, provider_message_id, ts_unix, None).await;
+    emit_egress_result_in(
+        writer,
+        intent_id,
+        outcome,
+        provider_message_id,
+        ts_unix,
+        None,
+    )
+    .await;
 }
 
 pub(crate) async fn emit_egress_result_in(
@@ -401,7 +418,13 @@ pub(crate) async fn emit_account_bound_egress_result(
     provenance: &crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance,
 ) -> std::result::Result<(), ()> {
     emit_account_bound_egress_result_in(
-        writer, intent_id, outcome, provider_message_id, ts_unix, provenance, None,
+        writer,
+        intent_id,
+        outcome,
+        provider_message_id,
+        ts_unix,
+        provenance,
+        None,
     )
     .await
 }
@@ -455,7 +478,13 @@ pub(crate) async fn emit_legacy_live_egress_result(
     provenance: &crate::cli::serve_tasks::LegacyLiveEgressProvenance,
 ) -> std::result::Result<(), ()> {
     emit_legacy_live_egress_result_in(
-        writer, intent_id, outcome, provider_message_id, ts_unix, provenance, None,
+        writer,
+        intent_id,
+        outcome,
+        provider_message_id,
+        ts_unix,
+        provenance,
+        None,
     )
     .await
 }

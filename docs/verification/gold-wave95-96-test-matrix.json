@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W310 live session + W311 GUI fixtures + W312 imports source-reviewed; exact hosted execution pending",
+  "status": "W314 diagnostic-only source-reviewed + exact hosted699 format imported; GUI129/Core pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 103453,
-    "sha256": "6F8C993DBBEF977F9D1947B6DBC5D8EAE198CCD24E1046E3FC452D728F93C9A5"
+    "bytes": 103629,
+    "sha256": "BE7CED79CD98F455D69F5DE28005F3873B0D8FDA4D42C33CD3618DE67344235C"
   },
-  "sourceInputs": 597,
+  "sourceInputs": 598,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -5250,7 +5250,7 @@
     {
       "test": "channels::send_gate::intent_tests::sealed_default_discord_intent_and_result_are_authenticated_and_bound",
       "sourcePath": "SRC/neothd/src/channels/send_gate.rs",
-      "sourceSha256": "ADA8DDAB3EFA65FB7EDD545209D3E687720D0B97C15BFB7F5D4D85D18365EE7B",
+      "sourceSha256": "60FF33534A8310CA338265AFD96F34B137520B6C0B5EBDA2980A22544AF2C394",
       "junitClass": "neoth"
     },
     {
@@ -5964,19 +5964,19 @@
     {
       "test": "channels::live_delivery::tests::admitted_live_deliveries_keep_wal_session_partitions_isolated",
       "sourcePath": "SRC/neothd/src/channels/live_delivery.rs",
-      "sourceSha256": "8E0394D8D2945198D4B94043861C17C8224B12F11A5FEA6236C4A454F8C69CC9",
+      "sourceSha256": "1713472D60916B7EA2C5AAC1419937626293779BB469ED11BA17B2C68D1DEAD6",
       "junitClass": "neoth"
     },
     {
       "test": "channels::live_delivery::tests::provider_stream_error_replaces_preview_and_wal_stays_metadata_only",
       "sourcePath": "SRC/neothd/src/channels/live_delivery.rs",
-      "sourceSha256": "8E0394D8D2945198D4B94043861C17C8224B12F11A5FEA6236C4A454F8C69CC9",
+      "sourceSha256": "1713472D60916B7EA2C5AAC1419937626293779BB469ED11BA17B2C68D1DEAD6",
       "junitClass": "neoth"
     },
     {
       "test": "channels::live_delivery::tests::mapped_failure_audits_before_its_authenticated_terminal_result",
       "sourcePath": "SRC/neothd/src/channels/live_delivery.rs",
-      "sourceSha256": "8E0394D8D2945198D4B94043861C17C8224B12F11A5FEA6236C4A454F8C69CC9",
+      "sourceSha256": "1713472D60916B7EA2C5AAC1419937626293779BB469ED11BA17B2C68D1DEAD6",
       "junitClass": "neoth"
     }
   ],
@@ -6581,8 +6581,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2177681,
-      "sha256": "0C070DEAF573D1A72237F56AC921CEC2FDCB3A0DF0C296DF5A5008D778D87D16"
+      "bytes": 2177555,
+      "sha256": "B6A91F71D55671D107D1F3A714471B4E1356313613AE81233F72CE6D9111E922"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -6631,8 +6631,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
-      "bytes": 124287,
-      "sha256": "D10D212E9C8A74EC404F92D9AF2EB2919245C19E56F8FC41F70FBC043205FDDD"
+      "bytes": 126644,
+      "sha256": "408FF14AF1A82F7A35D07BCA8CC36830987E90396AB58EFCCD8013CDD1B996D3"
     }
   ],
   "remoteFormatCorrection": {
@@ -6961,7 +6961,8 @@
       "w58_gui_callback_runtime_tests::w233_task_delegate_inspect_null_projects_effective_default_deny",
       "chat_child_supervisor::tests::cgroup_namespace_root_mount_plan_stages_without_unmounting_inherited_mount",
       "chat_child_supervisor::tests::linux_manager_stop_reaps_setsid_and_double_fork_tree",
-      "chat_child_supervisor::tests::linux_gui_crash_kills_complete_manager_unit"
+      "chat_child_supervisor::tests::linux_gui_crash_kills_complete_manager_unit",
+      "chat_child_supervisor::tests::linux_unit_snapshot_pins_manager_owned_kill_contract"
     ],
     "macOS": [
       "w58_gui_callback_runtime_tests::w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt",
@@ -19591,6 +19592,49 @@
       }
     ],
     "note": "Three live session fixtures; W311 preserves containment and leaves crash failure open; W312 all five hosted errors fixed as test imports; GUI128424 fully admitted failure. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave314StartupDiagnosticAcceptance": {
+    "report": "docs/gold-wave314-contained-startup-diagnostics.md",
+    "requiredGuiTests": [
+      "chat_child_supervisor::tests::linux_unit_snapshot_pins_manager_owned_kill_contract",
+      "chat_child_supervisor::tests::linux_gui_crash_kills_complete_manager_unit"
+    ],
+    "scope": "Optional terminal diagnostics and static helper milestones only; no containment/readiness change, crash cause unresolved",
+    "review": "W226 SOURCE PASS after Root optional-field correction",
+    "hosted": "pending",
+    "localValidationRan": false
+  },
+  "wave314DiagnosticsAndHostedFormatting": {
+    "base": "699dd4262681f96f91b6a2a156019de8e3320bd2",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
+        "bytes": 126644,
+        "sha256": "408FF14AF1A82F7A35D07BCA8CC36830987E90396AB58EFCCD8013CDD1B996D3",
+        "blob": "b7dec4cd0a5b40898f859448ec2adcfeda611250"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2177555,
+        "sha256": "B6A91F71D55671D107D1F3A714471B4E1356313613AE81233F72CE6D9111E922",
+        "blob": "067261d2c1a9dea15c0e06629a216923696aed27"
+      },
+      {
+        "path": "SRC/neothd/src/channels/live_delivery.rs",
+        "bytes": 81094,
+        "sha256": "1713472D60916B7EA2C5AAC1419937626293779BB469ED11BA17B2C68D1DEAD6",
+        "blob": "b66a228ed7219bf7cb574f1a8c4228bc7acc330b"
+      },
+      {
+        "path": "SRC/neothd/src/channels/send_gate.rs",
+        "bytes": 37251,
+        "sha256": "60FF33534A8310CA338265AFD96F34B137520B6C0B5EBDA2980A22544AF2C394",
+        "blob": "95a1b3257cf96cb008768d04b44cb90befc8b42d"
+      }
+    ],
+    "note": "Optional systemd terminal diagnostics preserve original readiness; parser legacy regression selected. Format patch SHA256B46840C2257FA9B19E263AB45C139757302045EEC34A91ACC24AC62D6B3968B9 exact pre/postimage. Crash cause unresolved.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
