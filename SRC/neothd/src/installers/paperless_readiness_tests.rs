@@ -19,8 +19,8 @@ fn response(status: &str, content_type: &str, body: &str) -> String {
     )
 }
 
-fn credentials(port: u16) -> crate::config::Credentials {
-    crate::config::Credentials {
+fn credentials(port: u16) -> crate::config::credentials::Credentials {
+    crate::config::credentials::Credentials {
         paperless_url: Some(format!("http://127.0.0.1:{port}")),
         paperless_token: Some(crate::secret::SecretString::new(TOKEN.to_owned())),
         ..Default::default()
@@ -55,7 +55,7 @@ impl<T> Drop for ReapedTask<T> {
 }
 
 struct ScriptedLoopback {
-    credentials: crate::config::Credentials,
+    credentials: crate::config::credentials::Credentials,
     task: ReapedTask<Vec<String>>,
 }
 
@@ -69,7 +69,10 @@ async fn read_headers(stream: &mut TcpStream) -> String {
             .expect("read loopback request");
         assert!(count > 0, "loopback client closed before complete headers");
         headers.extend_from_slice(&chunk[..count]);
-        assert!(headers.len() <= 8 * 1024, "loopback request headers exceeded cap");
+        assert!(
+            headers.len() <= 8 * 1024,
+            "loopback request headers exceeded cap"
+        );
         if headers.windows(4).any(|window| window == b"\r\n\r\n") {
             return String::from_utf8_lossy(&headers).into_owned();
         }
@@ -146,12 +149,7 @@ async fn configured_probe_requires_unauthenticated_rejection_then_returns_stable
 
 #[tokio::test]
 async fn unauthenticated_generic_200_is_not_readiness_evidence() {
-    let fixture = scripted_loopback(vec![response(
-        "200 OK",
-        "application/json",
-        PROFILE,
-    )])
-    .await;
+    let fixture = scripted_loopback(vec![response("200 OK", "application/json", PROFILE)]).await;
 
     assert_eq!(
         probe_with_timeout(&fixture.credentials, Duration::from_millis(200))
@@ -201,14 +199,22 @@ async fn redirect_is_not_followed_and_does_not_send_token_to_the_redirect_target
         "redirect_rejected"
     );
     let requests = fixture.task.finish().await;
-    assert_eq!(requests.len(), 2, "redirect policy must make no third request");
+    assert_eq!(
+        requests.len(),
+        2,
+        "redirect policy must make no third request"
+    );
     assert!(has_test_authorization(&requests[1]));
 }
 
 #[tokio::test]
 async fn malformed_profile_and_non_json_profile_are_invalid_response() {
     for profile in [
-        response("200 OK", "application/json", r#"{"has_usable_password":true}"#),
+        response(
+            "200 OK",
+            "application/json",
+            r#"{"has_usable_password":true}"#,
+        ),
         response("200 OK", "text/plain", PROFILE),
     ] {
         let fixture = scripted_loopback(vec![
@@ -282,8 +288,8 @@ async fn absolute_timeout_bounds_an_authenticated_profile_request() {
             ),
         )
         .await
-            .expect("bounded timeout-fixture control write")
-            .expect("write timeout-fixture control response");
+        .expect("bounded timeout-fixture control write")
+        .expect("write timeout-fixture control response");
         let (mut authenticated, _) = tokio::time::timeout(FIXTURE_TIMEOUT, listener.accept())
             .await
             .expect("bounded timeout-fixture authenticated accept")

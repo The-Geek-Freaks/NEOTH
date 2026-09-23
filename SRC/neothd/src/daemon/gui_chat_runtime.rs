@@ -696,6 +696,8 @@ impl DaemonGuiChatRuntime {
                         Some(effect),
                     )
                     .await;
+                #[cfg(any(test, feature = "gui-bridge-test-support"))]
+                w458_test_support::record_terminal_failure_stage(result.as_ref().err());
                 let silence_timeout = result.as_ref().err().is_some_and(|error| {
                     error
                         .downcast_ref::<crate::cli::chat_turn_watchdog::TurnSilenceTimeout>()
@@ -2190,10 +2192,59 @@ pub(crate) mod w458_test_support {
     use crate::providers::{ChunkStream, Completion, CompletionChunk, Provider, Request};
     use async_trait::async_trait;
     use futures_util::{StreamExt as _, stream};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
     static STREAM_OPENS: AtomicUsize = AtomicUsize::new(0);
     static STREAM_ITEMS_POLLED: AtomicUsize = AtomicUsize::new(0);
+    // The real producer regression deliberately runs through the normal GUI
+    // terminal boundary. Keep only a bounded, content-free failure stage so a
+    // hosted failure can distinguish an admission/preparation rejection from
+    // a provider-side failure without printing the error chain or prompt.
+    static TERMINAL_FAILURE_STAGE: AtomicU8 = AtomicU8::new(0);
+
+    const FAILURE_NONE: u8 = 0;
+    const FAILURE_ADMISSION: u8 = 1;
+    const FAILURE_PREPARATION: u8 = 2;
+    const FAILURE_PRE_PROVIDER: u8 = 3;
+    const FAILURE_PROVIDER_OR_POST_PROVIDER: u8 = 4;
+    const FAILURE_OTHER: u8 = 5;
+
+    pub(crate) fn record_terminal_failure_stage(error: Option<&anyhow::Error>) {
+        let Some(error) = error else {
+            TERMINAL_FAILURE_STAGE.store(FAILURE_NONE, Ordering::SeqCst);
+            return;
+        };
+        let stage = if error
+            .chain()
+            .any(|cause| cause.to_string().starts_with("GUI admission failed:"))
+        {
+            FAILURE_ADMISSION
+        } else if error.chain().any(|cause| {
+            let message = cause.to_string();
+            message.starts_with("daemon GUI chat rejects")
+                || message.starts_with("daemon selected home")
+                || message.starts_with("load MCP server configuration")
+                || message.starts_with("tweaks.toml invalid")
+                || message.starts_with("load profile extension registry")
+        }) {
+            FAILURE_PREPARATION
+        } else if error.chain().any(|cause| {
+            cause
+                .to_string()
+                .starts_with("chat post-mint provider/orchestration failure at pre_provider_call")
+        }) {
+            FAILURE_PRE_PROVIDER
+        } else if error.chain().any(|cause| {
+            cause
+                .to_string()
+                .starts_with("chat post-mint provider/orchestration failure")
+        }) {
+            FAILURE_PROVIDER_OR_POST_PROVIDER
+        } else {
+            FAILURE_OTHER
+        };
+        TERMINAL_FAILURE_STAGE.store(stage, Ordering::SeqCst);
+    }
 
     pub(crate) struct W458RuntimeCapture {
         pub(crate) turn_id: Uuid,
@@ -2208,6 +2259,56 @@ pub(crate) mod w458_test_support {
         pub(crate) provider_invocations: usize,
         pub(crate) provider_chunks: usize,
         pub(crate) post_provider_hook_observed: bool,
+    }
+
+    impl W458RuntimeCapture {
+        pub(crate) fn terminal_diagnostic(&self) -> String {
+            fn terminal_label(
+                frames: &[GuiChatStreamFrame],
+            ) -> (&'static str, &'static str, &'static str) {
+                let Some(GuiChatStreamFrame {
+                    payload: GuiChatFramePayload::Terminal { terminal },
+                    ..
+                }) = frames.last() else {
+                    return ("missing", "missing", "missing");
+                };
+                let state = match terminal.state {
+                    GuiChatTerminalState::Complete => "complete",
+                    GuiChatTerminalState::Cancelled => "cancelled",
+                    GuiChatTerminalState::Failed => "failed",
+                    GuiChatTerminalState::CrashUnknown => "crash_unknown",
+                    GuiChatTerminalState::Indeterminate => "indeterminate",
+                };
+                let provider = match terminal.provider.as_str() {
+                    "claude_cli" => "claude_cli",
+                    "provider_indeterminate" => "provider_indeterminate",
+                    "provider_silence_timeout" => "provider_silence_timeout",
+                    _ => "other",
+                };
+                let model = match terminal.model.as_str() {
+                    "w458-stream" => "w458-stream",
+                    "accepted_model" => "accepted_model",
+                    _ => "other",
+                };
+                (state, provider, model)
+            }
+
+            let (main_state, main_provider, main_model) = terminal_label(&self.main_frames);
+            let (buddy_state, buddy_provider, buddy_model) = terminal_label(&self.buddy_frames);
+            let stage = match TERMINAL_FAILURE_STAGE.load(Ordering::SeqCst) {
+                FAILURE_NONE => "none",
+                FAILURE_ADMISSION => "admission",
+                FAILURE_PREPARATION => "preparation",
+                FAILURE_PRE_PROVIDER => "pre_provider_hook",
+                FAILURE_PROVIDER_OR_POST_PROVIDER => "provider_or_post_provider",
+                _ => "other",
+            };
+            format!(
+                "failure_stage={stage}; main=({main_state},{main_provider},{main_model}); buddy=({buddy_state},{buddy_provider},{buddy_model}); frames=({}, {})",
+                self.main_frames.len(),
+                self.buddy_frames.len(),
+            )
+        }
     }
 
     struct W458StreamProvider {
@@ -2463,6 +2564,7 @@ pub(crate) mod w458_test_support {
         const REPLACE: &str = "\nname = \"w458-post-provider-replace\"\nstage = \"post_provider_call\"\n[matcher]\npattern = \"sk-w458-never-visible\"\n[action]\nkind = \"replace\"\ntemplate = \"[REDACTED]\"\n";
         STREAM_OPENS.store(0, Ordering::SeqCst);
         STREAM_ITEMS_POLLED.store(0, Ordering::SeqCst);
+        TERMINAL_FAILURE_STAGE.store(FAILURE_NONE, Ordering::SeqCst);
         let (runtime, start, completion, home, release) =
             runtime_with_admitted_turn(if replace { REPLACE } else { BLOCK }).await?;
         macro_rules! cleanup_w458_failure {
@@ -3172,7 +3274,8 @@ mod lifecycle_tests {
                 .expect("W458 shared real producer fixture");
             assert_eq!(
                 capture.provider_invocations, 1,
-                "{name} reached the real streaming provider exactly once"
+                "{name} reached the real streaming provider exactly once; {}",
+                capture.terminal_diagnostic(),
             );
             assert_eq!(
                 capture.provider_chunks, 3,

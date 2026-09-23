@@ -21519,6 +21519,17 @@ template = "[REDACTED]"
             provider_done[0].get("text").is_none(),
             "the provider boundary remains content-free"
         );
+        assert_eq!(
+            provider_done[0]["refused"],
+            false,
+            "accepted PostProviderCall replacement must clear native final-stream refusal metadata"
+        );
+        assert!(
+            provider_done[0]["finish_reason"].is_null()
+                && provider_done[0]["refusal_origin"].is_null()
+                && provider_done[0]["refusal_reason"].is_null(),
+            "accepted replacement must not retain native final-stream termination fields"
+        );
         let done_lines = output
             .0
             .iter()
@@ -21697,8 +21708,8 @@ template = "[REDACTED]"
             "visible stream content must not enter terminal reasoning metadata"
         );
         assert!(
-            refusal_observed,
-            "native final-stream refusal must reach post-reply observation"
+            !refusal_observed,
+            "accepted PostProviderCall replacement must suppress native final-stream refusal observation"
         );
         let request_payload = request_payload.unwrap();
         let response_payload = response_payload.unwrap();

@@ -9,7 +9,7 @@ use reqwest::{Client, Response, StatusCode, header};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use crate::config::{Credentials, LoopbackHttpEndpoint};
+use crate::config::{LoopbackHttpEndpoint, credentials::Credentials};
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const BODY_LIMIT: usize = 32 * 1024;
@@ -39,10 +39,7 @@ pub async fn probe_configured_paperless(credentials: &Credentials) -> PaperlessR
     probe_with_timeout(credentials, PROBE_TIMEOUT).await
 }
 
-async fn probe_with_timeout(
-    credentials: &Credentials,
-    timeout: Duration,
-) -> PaperlessReadiness {
+async fn probe_with_timeout(credentials: &Credentials, timeout: Duration) -> PaperlessReadiness {
     let Some(url) = credentials.paperless_url.as_deref() else {
         return PaperlessReadiness::unavailable("not_configured");
     };
@@ -89,7 +86,10 @@ async fn probe(
     if control.status().is_redirection() {
         return Err("redirect_rejected");
     }
-    if !matches!(control.status(), StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+    if !matches!(
+        control.status(),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+    ) {
         return Err("authentication_not_enforced");
     }
     drop(control);
@@ -170,7 +170,10 @@ fn transport_error(error: reqwest::Error) -> &'static str {
 fn require_success(response: &Response) -> Result<(), &'static str> {
     if response.status().is_redirection() {
         Err("redirect_rejected")
-    } else if matches!(response.status(), StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+    } else if matches!(
+        response.status(),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+    ) {
         Err("unauthorized")
     } else if response.status() != StatusCode::OK {
         Err("invalid_response")
@@ -185,12 +188,18 @@ async fn bounded_json_body(response: Response) -> Result<Zeroizing<Vec<u8>>, &'s
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| {
-            value.split(';').next().is_some_and(|mime| mime.trim().eq_ignore_ascii_case("application/json"))
+            value
+                .split(';')
+                .next()
+                .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("application/json"))
         });
     if !json_type {
         return Err("invalid_response");
     }
-    if response.content_length().is_some_and(|size| size > BODY_LIMIT as u64) {
+    if response
+        .content_length()
+        .is_some_and(|size| size > BODY_LIMIT as u64)
+    {
         return Err("response_too_large");
     }
     let mut body = Zeroizing::new(Vec::new());

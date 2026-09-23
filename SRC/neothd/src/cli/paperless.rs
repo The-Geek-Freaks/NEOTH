@@ -111,7 +111,8 @@ pub enum QuarantineAction {
 /// Async CLI entry; retain the synchronous local-document API for its callers.
 pub async fn run_paperless_command(args: PaperlessArgs, output: OutputFormat) -> Result<()> {
     if matches!(args.action, PaperlessAction::Status) {
-        let status = paperless_status_at(&crate::config::FreedomConfig::default_neoth_home()).await?;
+        let status =
+            paperless_status_at(&crate::config::FreedomConfig::default_neoth_home()).await?;
         print!("{}", render_paperless_status(&status, output)?);
         Ok(())
     } else {
@@ -122,7 +123,9 @@ pub async fn run_paperless_command(args: PaperlessArgs, output: OutputFormat) ->
 async fn paperless_status_at(home: &std::path::Path) -> Result<PaperlessReadiness> {
     let (_, credentials) =
         crate::config::load_optional_runtime_config_pair_from_path(&home.join("freedom.yaml"))
-            .map_err(|_| anyhow::anyhow!("Paperless status could not read the configured credentials"))?;
+            .map_err(|_| {
+                anyhow::anyhow!("Paperless status could not read the configured credentials")
+            })?;
     Ok(probe_configured_paperless(&credentials).await)
 }
 
@@ -418,7 +421,10 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let fixture = AbortOnDrop(Some(tokio::spawn(async move {
             for (expect_auth, response) in [
-                (false, "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n"),
+                (
+                    false,
+                    "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n",
+                ),
                 (true, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n"),
             ] {
                 let (mut stream, _) = listener.accept().await.unwrap();

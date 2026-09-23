@@ -43601,7 +43601,7 @@ mod w58_gui_callback_runtime_tests {
     use super::{
         CHAT_STREAM_CONTROL_PREFIX, ChatRecallChipProjections, ChatResponseFeedbackProjections,
         ChatThroughputProjections, RecallChipControlFrame, ThroughputControlFrame,
-        apply_chat_recall_chip_controls, apply_chat_throughput_controls,
+        WIZARD_DAEMON_FROZEN, apply_chat_recall_chip_controls, apply_chat_throughput_controls,
         begin_chat_recall_chip_projection, begin_chat_throughput_projection, cancel_citation_child,
         cancel_citation_live_flow, chat_recall_chips, chat_stream_request_id,
         citation_gui::{CitationGuiBindingStore, CitationGuiRequest},
@@ -43616,7 +43616,7 @@ mod w58_gui_callback_runtime_tests {
         provider_done_chat_recall_chip_projection, provider_done_chat_throughput_projection,
         register_citation_gui_callbacks, register_response_feedback_callbacks,
         register_wizard_daemon_callbacks, spawn_neothd_plain, start_wizard_session_projection,
-        wizard_daemon_session, WIZARD_DAEMON_FROZEN,
+        wizard_daemon_session,
     };
 
     static GUI_CALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());

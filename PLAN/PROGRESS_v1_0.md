@@ -1,7 +1,21 @@
 # PROGRESS — v1.0 working backlog
 
-**Created:** 2026-05-24  **Last updated:** 2026-09-23
+**Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W525-W529 hosted Chat/Paperless follow-up (2026-09-24):**
+Group8906b is admitted888PASS/2FAIL/0missing with176bindings. W526 aligns
+accepted Replace termination/refusal expectations with production while keeping
+the positive native-refusal path strict. W525 adds only allowlisted diagnostics
+to the real GUI producer regression; its pre-provider cause remains unresolved.
+Core8945 and GUI1488945 failed the same Credentials import; W527/W528 repair
+its canonical module path. GUI ran0fixtures; no behavior is accepted from it.
+Quality8945 passed both CodeQL jobs. W529 imports the four exact hosted format
+patches after SHA256 and before/after Gitblob verification. W515's actual source
+count was754, now corrected in its note. Inventory755sources/1198native,
+Group903/GUI148Linux144macOS; Road1044checked/278open/2partial,
+280raw/279pre-tag; WS-LF37done/81open. Fresh hosted execution and CLI export
+remain pending. No local executable checks or Slint edits.
+Evidence:docs/gold-wave525-529-hosted-followup.md.
 **W515 Paperless readiness; W521/W523 hosted gate repairs (2026-09-24):**
 `neoth paperless status` now reaches a bounded authenticated local API probe
 through existing coherent file/keychain credentials. Unauthenticated profile
@@ -13,7 +27,7 @@ port-only regression join the hosted catalog. W523 imports the six existing
 production names needed by P118's nested GUI test module; GUI8003/Core8003 had
 15scope errors and0GUIexecution. W521 synchronizes the human WS-LF dashboard
 with37done/81open; the machine-readable Road summary was already corrected.
-Inventory751sources,1198native+Win25Linux33mac32,Group903;
+Inventory754sources,1198native+Win25Linux33mac32,Group903;
 GUI148Linux144macOS,macNative33. Road1044checked/278open/2partial,
 280raw/279pre-tag;WS-LF37done/81open. Reviewed source; fresh hosted checks and
 CLI-reference export pending. No local executables or Slint edits.
