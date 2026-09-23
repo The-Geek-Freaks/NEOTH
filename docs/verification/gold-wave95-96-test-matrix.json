@@ -4,10 +4,10 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 136719,
-    "sha256": "A291791D12B73F4102E6CC91E59F540E65F31D5892B7DB1C58B4C0835A5C3397"
+    "bytes": 138032,
+    "sha256": "20CBF1EC40DF12AF82381EF5EE6D9E1BE50EF6769B4F9490375E80F98367B788"
   },
-  "sourceInputs": 779,
+  "sourceInputs": 786,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -7917,8 +7917,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2211547,
-      "sha256": "B55E3F9F17841D40B55B27353811EB46326C01FE7DEAF55C489501F4CB1B86FA"
+      "bytes": 2212048,
+      "sha256": "03C1FB655412697E286E422887180DA96D929EB861BC67486A8A2A8196378BAC"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -25547,6 +25547,80 @@
       }
     ],
     "note": "GUI1486146 admitted145PASS3FAIL28bindings148terminals; P118 production/test shared Finish guard and true same-boot liveness repair reviewed, rerun pending",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave558560Evidence": {
+    "base": "829c37c370475bde91a46ab94bad38efe099e4b6",
+    "sources": [
+      {
+        "path": ".github/workflows/obsidian-bridge-artifact.yml",
+        "bytes": 5975,
+        "sha256": "CCBDE9534CE3B2734DACAD9EC9958CEB397CB44F03AA30EAAD902D0599FC636D",
+        "blob": "db7a6dc918df351dcc1a4954f68f4754daa973b4"
+      },
+      {
+        "path": "docs/gold-wave558-560-obsidian-artifact.md",
+        "bytes": 2250,
+        "sha256": "37FDD693B7393E24226E1C85A64A77B98FCA5819B0A5ECF840BF98A123429F42",
+        "blob": "9bff65a52d0f34041aef65daa3701a6ec1f5cc4b"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 200749,
+        "sha256": "4387C902A847696F19D109403C7BAA2BAA5F72B1220D887E33E6AB06244B5C42",
+        "blob": "04db8a61304b8eb8e7e9b267965bbdba28c8ae9d"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1211073,
+        "sha256": "550AE78744373F510C9DA32D44009CC79D28E3950062608FFE1814C169D3C7C1",
+        "blob": "a912148e643e04475f9e77ffee244fecf1bef5d9"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1809706,
+        "sha256": "D11F239D6252D19B284B3CDCE8CCA9F74A895343C2695F64B7238758AB9B8154",
+        "blob": "900b89425c227ff6c8dadfeb8549510ccec94f4a"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2212048,
+        "sha256": "03C1FB655412697E286E422887180DA96D929EB861BC67486A8A2A8196378BAC",
+        "blob": "3c40dd8109d9a94171136a464fec5b3dd78dd1ab"
+      },
+      {
+        "path": "SRC/neothd/assets/obsidian_archive_bridge/manifest.json",
+        "bytes": 297,
+        "sha256": "1CE56B6932804F962B8BE7FF09393EB4CA2760FD626273B04C6878B89801B232",
+        "blob": "e01b004546ef2c1981010c73aa4b627b6a5ebee1"
+      },
+      {
+        "path": "SRC/neothd/assets/obsidian_archive_bridge/package.json",
+        "bytes": 489,
+        "sha256": "A328EF541CCCF8D13D0C87AD33C0BEF6FB797B7E85A64383B19F3EE054D011F6",
+        "blob": "c8ce8b0356b84faa0a430c73414e379a311bccc6"
+      },
+      {
+        "path": "SRC/neothd/assets/obsidian_archive_bridge/src/main.ts",
+        "bytes": 1474,
+        "sha256": "E589737FF519A82D840539D2EB7EB8E95BF77C379C4965040CE08614BBE99F3F",
+        "blob": "00d7ec6f04948090fb7b884ae5a92c84796f51ae"
+      },
+      {
+        "path": "SRC/neothd/assets/obsidian_archive_bridge/test/plugin-contract.mjs",
+        "bytes": 2746,
+        "sha256": "B1DD4FD4CA949EDECD4F2BBA4C123B8A07912D3F9AAE0113AE8FAE31330C26F6",
+        "blob": "271c3588917bc315f4580c124c5a4e822859b971"
+      },
+      {
+        "path": "SRC/neothd/assets/obsidian_archive_bridge/tsconfig.json",
+        "bytes": 185,
+        "sha256": "E1EDE62B44C7DF043A8CEF2E335C68724628B6F313832674AC7F5DE4F7CBC0B5",
+        "blob": "e2a85a5b3e0be6ce35e444db7e26f29615d8fafe"
+      }
+    ],
+    "note": "Pinned read-only Obsidian Plugin0.1.0 artifact source and hosted build/receipts; actual artifact build/import pending. Exact W560 GUI format admitted. No pairing/sync/road acceptance",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

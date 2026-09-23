@@ -1,0 +1,135 @@
+name: W558 Obsidian Archive Bridge artifact
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-artifact:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      BRIDGE_DIR: SRC/neothd/assets/obsidian_archive_bridge
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Require main branch dispatch
+        run: test "$GITHUB_REF" = "refs/heads/main"
+
+      - name: Set up Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.14.0'
+
+      - name: Initialize artifact receipts
+        run: |
+          set -euo pipefail
+          receipt_dir="$RUNNER_TEMP/w558-obsidian-bridge-receipt"
+          mkdir -p "$receipt_dir"/{source,log,receipt,bundle}
+          for stage in 01-lock-generation 02-install 03-typecheck 04-build 05-tracked-bundle-drift 06-test; do
+            printf '%s\n' 125 > "$receipt_dir/receipt/$stage.exit-code"
+            printf '%s\n' 'not run' > "$receipt_dir/log/$stage.log"
+          done
+          printf 'W558_RECEIPT_DIR=%s\n' "$receipt_dir" >> "$GITHUB_ENV"
+
+      - name: Build and test loadable artifact
+        working-directory: ${{ env.BRIDGE_DIR }}
+        run: |
+          set +e
+          status=0
+          if [ ! -f package-lock.json ]; then
+            npm install --package-lock-only --ignore-scripts --no-audit --no-fund >"$W558_RECEIPT_DIR/log/01-lock-generation.log" 2>&1
+            lock_status=$?
+            printf '%s\n' "$lock_status" > "$W558_RECEIPT_DIR/receipt/01-lock-generation.exit-code"
+            [ "$lock_status" -eq 0 ] || status=1
+          else
+            printf '%s\n' 'existing lockfile retained; immutable install required' > "$W558_RECEIPT_DIR/log/01-lock-generation.log"
+            printf '%s\n' 0 > "$W558_RECEIPT_DIR/receipt/01-lock-generation.exit-code"
+          fi
+          if [ "$status" -eq 0 ]; then
+            npm ci --no-audit --no-fund >"$W558_RECEIPT_DIR/log/02-install.log" 2>&1
+            install_status=$?
+            printf '%s\n' "$install_status" > "$W558_RECEIPT_DIR/receipt/02-install.exit-code"
+            [ "$install_status" -eq 0 ] || status=1
+          fi
+          if [ "$status" -eq 0 ]; then
+            npm run typecheck >"$W558_RECEIPT_DIR/log/03-typecheck.log" 2>&1
+            typecheck_status=$?
+            printf '%s\n' "$typecheck_status" > "$W558_RECEIPT_DIR/receipt/03-typecheck.exit-code"
+            [ "$typecheck_status" -eq 0 ] || status=1
+          fi
+          if [ "$status" -eq 0 ]; then
+            npm run build >"$W558_RECEIPT_DIR/log/04-build.log" 2>&1
+            build_status=$?
+            printf '%s\n' "$build_status" > "$W558_RECEIPT_DIR/receipt/04-build.exit-code"
+            [ "$build_status" -eq 0 ] || status=1
+          fi
+          if [ "$status" -eq 0 ] && git ls-files --error-unmatch main.js > /dev/null 2>&1; then
+            git diff --exit-code -- main.js >"$W558_RECEIPT_DIR/log/05-tracked-bundle-drift.log" 2>&1
+            drift_status=$?
+            printf '%s\n' "$drift_status" > "$W558_RECEIPT_DIR/receipt/05-tracked-bundle-drift.exit-code"
+            [ "$drift_status" -eq 0 ] || status=1
+          elif [ "$status" -eq 0 ]; then
+            printf '%s\n' 'main.js is an initial hosted candidate, not yet a tracked artifact' > "$W558_RECEIPT_DIR/log/05-tracked-bundle-drift.log"
+            printf '%s\n' 0 > "$W558_RECEIPT_DIR/receipt/05-tracked-bundle-drift.exit-code"
+          fi
+          if [ "$status" -eq 0 ]; then
+            npm test >"$W558_RECEIPT_DIR/log/06-test.log" 2>&1
+            test_status=$?
+            printf '%s\n' "$test_status" > "$W558_RECEIPT_DIR/receipt/06-test.exit-code"
+            [ "$test_status" -eq 0 ] || status=1
+          fi
+          printf '%s\n' "$status" > "$W558_RECEIPT_DIR/receipt/overall.exit-code"
+          exit "$status"
+
+      - name: Record artifact provenance
+        if: always()
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > "$W558_RECEIPT_DIR/source/head.txt"
+          sha256sum \
+            "$BRIDGE_DIR"/package.json \
+            "$BRIDGE_DIR"/tsconfig.json \
+            "$BRIDGE_DIR"/manifest.json \
+            "$BRIDGE_DIR"/src/main.ts \
+            "$BRIDGE_DIR"/test/plugin-contract.mjs \
+            .github/workflows/obsidian-bridge-artifact.yml \
+            > "$W558_RECEIPT_DIR/source/SHA256SUMS.txt"
+          if [ -f "$BRIDGE_DIR/package-lock.json" ] && [ -f "$BRIDGE_DIR/main.js" ]; then
+            sha256sum \
+              "$BRIDGE_DIR"/manifest.json \
+              "$BRIDGE_DIR"/package-lock.json \
+              "$BRIDGE_DIR"/main.js \
+              > "$W558_RECEIPT_DIR/bundle/SHA256SUMS.txt"
+            cp "$BRIDGE_DIR"/manifest.json "$BRIDGE_DIR"/package-lock.json "$BRIDGE_DIR"/main.js "$W558_RECEIPT_DIR/bundle/"
+          fi
+
+      - name: Upload source provenance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w558-obsidian-bridge-source-${{ github.sha }}
+          path: ${{ runner.temp }}/w558-obsidian-bridge-receipt/source/
+          retention-days: 14
+
+      - name: Upload locked plugin bundle
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w558-obsidian-bridge-bundle-${{ github.sha }}
+          path: ${{ runner.temp }}/w558-obsidian-bridge-receipt/bundle/
+          retention-days: 14
+
+      - name: Upload build logs and receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w558-obsidian-bridge-log-receipt-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/w558-obsidian-bridge-receipt/log/
+            ${{ runner.temp }}/w558-obsidian-bridge-receipt/receipt/
+          retention-days: 14

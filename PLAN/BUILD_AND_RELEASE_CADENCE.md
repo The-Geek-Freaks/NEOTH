@@ -3,6 +3,18 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W558 pinned Obsidian artifact source; W560 hosted format (2026-09-24):**
+The Archive Bridge now has a real TypeScript Obsidian Plugin entry, manifest,
+pinned SDK/compiler/bundler and a main-only hosted artifact lane. Version0.1.0
+is a read-only inspector for NEOTH-sessions; pairing/sync remain visibly disabled.
+GitHub will typecheck/build/test and retain source hashes, generated lock/bundle
+and per-stage logs/exit receipts. Native installation is not published until the
+actual bundle is admitted. Independent source review complete; execution pending.
+W560 imports the exact GUI format patch from35935063648/artifact10782528643
+with source/SHA256/before-after blob verification. Native1215/Group934+GChat4,
+GUI148Linux144macOS and all Road counts unchanged; P2-21 stays open.
+Details:docs/gold-wave558-560-obsidian-artifact.md.
+
 **W554/W557 real Wizard callback and GUI evidence (2026-09-24):**
 GUI1486146 run35929972686 is source-admitted:148executed/145PASS/3FAIL/0missing,
 with28input/source bindings and148actual test terminals. Cancellation reached

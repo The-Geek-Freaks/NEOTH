@@ -13402,169 +13402,210 @@ fn main() -> Result<()> {
     // explicitly chosen).
     let reentry_config_ok_for_finish = std::sync::Arc::clone(&reentry_config_ok);
     register_wizard_finish_callback(&window, move |w| {
-            // Re-entry guard: if freedom.yaml already existed but could not be
-            // parsed, refuse to write rather than stomp it with type defaults.
-            // The operator must fix / inspect the YAML manually first.
-            if config_present
-                && !reentry_config_ok_for_finish.load(std::sync::atomic::Ordering::Acquire)
-            {
-                w.set_status_line(
-                    "Cannot re-write config: the existing freedom.yaml could not be \
+        // Re-entry guard: if freedom.yaml already existed but could not be
+        // parsed, refuse to write rather than stomp it with type defaults.
+        // The operator must fix / inspect the YAML manually first.
+        if config_present
+            && !reentry_config_ok_for_finish.load(std::sync::atomic::Ordering::Acquire)
+        {
+            w.set_status_line(
+                "Cannot re-write config: the existing freedom.yaml could not be \
                      read back. Fix or remove it manually, then reopen the wizard."
-                        .into(),
-                );
-                return;
-            }
-            if !initialization_state_valid {
-                w.set_status_line(
+                    .into(),
+            );
+            return;
+        }
+        if !initialization_state_valid {
+            w.set_status_line(
                     "Cannot finish setup while the existing initialization state is invalid. Run `neoth init --force`, then reopen the GUI."
                         .into(),
                 );
-                return;
-            }
-            let state = WizardSnapshot {
-                operator_id: w.get_operator_id().to_string(),
-                provider_kind: w.get_provider_choice().to_string(),
-                hemisphere_use_single: w.get_hemisphere_use_single(),
-                hemisphere_left_provider: w.get_hemisphere_left_provider().to_string(),
-                hemisphere_right_provider: w.get_hemisphere_right_provider().to_string(),
-                hemisphere_cerebellum_provider: w
-                    .get_hemisphere_cerebellum_provider()
-                    .to_string(),
-                hemisphere_left_model: w.get_hemisphere_left_model().to_string(),
-                hemisphere_right_model: w.get_hemisphere_right_model().to_string(),
-                hemisphere_cerebellum_model: w.get_hemisphere_cerebellum_model().to_string(),
-                hemisphere_shared_model: w.get_hemisphere_shared_model().to_string(),
-                autonomy: w.get_autonomy_choice().to_string(),
-                license_accepted: w.get_license_accepted(),
-                enable_telegram: w.get_enable_telegram(),
-                dream_cron_enabled: w.get_wizard_dream_cron_enabled(),
-                provider_key: w.get_provider_key().to_string(),
-                hemisphere_left_key: w.get_hemisphere_left_key().to_string(),
-                hemisphere_right_key: w.get_hemisphere_right_key().to_string(),
-                hemisphere_cerebellum_key: w.get_hemisphere_cerebellum_key().to_string(),
-                telegram_token: w.get_telegram_token().to_string(),
-                cluster_discovery_disabled: w.get_cluster_discovery_disabled(),
-                // ZF-05 parity fields
-                wizard_preset_choice: w.get_wizard_preset_choice().to_string(),
-                wz_hmac_enabled: w.get_wz_hmac_enabled(),
-                wz_hmac_webhook_url: w.get_wz_hmac_webhook_url().to_string(),
-                wz_hmac_webhook_secret: w.get_wz_hmac_webhook_secret().to_string(),
-                wz_obsidian_vault: w.get_wz_obsidian_vault().to_string(),
-                wz_obsidian_subdir: w.get_wz_obsidian_subdir().to_string(),
-                wz_obsidian_reader_enabled: w.get_wz_obsidian_reader(),
-                wz_n8n_enabled: w.get_wz_n8n_enabled(),
-                wz_n8n_port: w.get_wz_n8n_port().to_string(),
-                wz_wasm_enabled: w.get_wz_wasm_enabled(),
-                omi_enabled: w.get_wz_omi_enabled(),
-                omi_mode: w.get_wz_omi_mode().to_string(),
-                omi_endpoint: w.get_wz_omi_endpoint().to_string(),
-                omi_listen_addr: w.get_wz_omi_listen_addr().to_string(),
-                omi_retention_days: w.get_wz_omi_retention_days().to_string(),
-                omi_developer_key: w.get_wz_omi_developer_key().to_string(),
-                omi_native_token: w.get_wz_omi_native_token().to_string(),
-                omi_retain_transcripts: w.get_wz_omi_retain_transcripts(),
-                omi_audio_enabled: w.get_wz_omi_audio_enabled(),
-                omi_image_enabled: w.get_wz_omi_image_enabled(),
-                omi_video_enabled: w.get_wz_omi_video_enabled(),
-                omi_allow_cloud_api: w.get_wz_omi_allow_cloud_api(),
-                omi_allow_cloud_summary: w.get_wz_omi_allow_cloud_summary(),
-                omi_create_actions: w.get_wz_omi_create_actions(),
-                omi_seed_groundtruth: w.get_wz_omi_seed_groundtruth(),
-                omi_summary_enabled: w.get_wz_omi_summary_enabled(),
-            };
-            if let Err(error) = validate_finish_state(&state) {
-                w.set_status_line(
-                    format!("Setup details need attention before contacting the setup daemon: {error}")
-                        .into(),
-                );
-                return;
-            }
-            // W204 keeps the init completion capability solely in the bootstrap
-            // daemon. Every potentially blocking request and existing file
-            // preparation runs off Slint's event loop.
-            w.set_wizard_daemon_available(true);
-            w.set_wizard_daemon_operation_in_flight(true);
-            w.set_status_line("Connecting to the private setup daemon…".into());
-            let weak_completion = w.as_weak();
-            std::thread::spawn(move || {
-                let neoth_dir = default_neoth_home();
-                let result = (|| -> WizardDaemonFinishResult {
-                    let mut slot = wizard_daemon_session().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                    let Some(session) = slot.as_mut() else {
+            return;
+        }
+        let state = WizardSnapshot {
+            operator_id: w.get_operator_id().to_string(),
+            provider_kind: w.get_provider_choice().to_string(),
+            hemisphere_use_single: w.get_hemisphere_use_single(),
+            hemisphere_left_provider: w.get_hemisphere_left_provider().to_string(),
+            hemisphere_right_provider: w.get_hemisphere_right_provider().to_string(),
+            hemisphere_cerebellum_provider: w.get_hemisphere_cerebellum_provider().to_string(),
+            hemisphere_left_model: w.get_hemisphere_left_model().to_string(),
+            hemisphere_right_model: w.get_hemisphere_right_model().to_string(),
+            hemisphere_cerebellum_model: w.get_hemisphere_cerebellum_model().to_string(),
+            hemisphere_shared_model: w.get_hemisphere_shared_model().to_string(),
+            autonomy: w.get_autonomy_choice().to_string(),
+            license_accepted: w.get_license_accepted(),
+            enable_telegram: w.get_enable_telegram(),
+            dream_cron_enabled: w.get_wizard_dream_cron_enabled(),
+            provider_key: w.get_provider_key().to_string(),
+            hemisphere_left_key: w.get_hemisphere_left_key().to_string(),
+            hemisphere_right_key: w.get_hemisphere_right_key().to_string(),
+            hemisphere_cerebellum_key: w.get_hemisphere_cerebellum_key().to_string(),
+            telegram_token: w.get_telegram_token().to_string(),
+            cluster_discovery_disabled: w.get_cluster_discovery_disabled(),
+            // ZF-05 parity fields
+            wizard_preset_choice: w.get_wizard_preset_choice().to_string(),
+            wz_hmac_enabled: w.get_wz_hmac_enabled(),
+            wz_hmac_webhook_url: w.get_wz_hmac_webhook_url().to_string(),
+            wz_hmac_webhook_secret: w.get_wz_hmac_webhook_secret().to_string(),
+            wz_obsidian_vault: w.get_wz_obsidian_vault().to_string(),
+            wz_obsidian_subdir: w.get_wz_obsidian_subdir().to_string(),
+            wz_obsidian_reader_enabled: w.get_wz_obsidian_reader(),
+            wz_n8n_enabled: w.get_wz_n8n_enabled(),
+            wz_n8n_port: w.get_wz_n8n_port().to_string(),
+            wz_wasm_enabled: w.get_wz_wasm_enabled(),
+            omi_enabled: w.get_wz_omi_enabled(),
+            omi_mode: w.get_wz_omi_mode().to_string(),
+            omi_endpoint: w.get_wz_omi_endpoint().to_string(),
+            omi_listen_addr: w.get_wz_omi_listen_addr().to_string(),
+            omi_retention_days: w.get_wz_omi_retention_days().to_string(),
+            omi_developer_key: w.get_wz_omi_developer_key().to_string(),
+            omi_native_token: w.get_wz_omi_native_token().to_string(),
+            omi_retain_transcripts: w.get_wz_omi_retain_transcripts(),
+            omi_audio_enabled: w.get_wz_omi_audio_enabled(),
+            omi_image_enabled: w.get_wz_omi_image_enabled(),
+            omi_video_enabled: w.get_wz_omi_video_enabled(),
+            omi_allow_cloud_api: w.get_wz_omi_allow_cloud_api(),
+            omi_allow_cloud_summary: w.get_wz_omi_allow_cloud_summary(),
+            omi_create_actions: w.get_wz_omi_create_actions(),
+            omi_seed_groundtruth: w.get_wz_omi_seed_groundtruth(),
+            omi_summary_enabled: w.get_wz_omi_summary_enabled(),
+        };
+        if let Err(error) = validate_finish_state(&state) {
+            w.set_status_line(
+                format!("Setup details need attention before contacting the setup daemon: {error}")
+                    .into(),
+            );
+            return;
+        }
+        // W204 keeps the init completion capability solely in the bootstrap
+        // daemon. Every potentially blocking request and existing file
+        // preparation runs off Slint's event loop.
+        w.set_wizard_daemon_available(true);
+        w.set_wizard_daemon_operation_in_flight(true);
+        w.set_status_line("Connecting to the private setup daemon…".into());
+        let weak_completion = w.as_weak();
+        std::thread::spawn(move || {
+            let neoth_dir = default_neoth_home();
+            let result = (|| -> WizardDaemonFinishResult {
+                let mut slot = wizard_daemon_session()
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let Some(session) = slot.as_mut() else {
+                    return WizardDaemonFinishResult::LocalFailure {
+                        error: anyhow::anyhow!(
+                            "setup daemon session request is already active; retry Finish shortly"
+                        ),
+                        dream_readback: None,
+                    };
+                };
+                let report = match finish(&state) {
+                    Ok(report) => report,
+                    Err(error) => {
                         return WizardDaemonFinishResult::LocalFailure {
-                            error: anyhow::anyhow!("setup daemon session request is already active; retry Finish shortly"),
+                            error,
                             dream_readback: None,
                         };
-                    };
-                    let report = match finish(&state) {
-                        Ok(report) => report,
-                        Err(error) => return WizardDaemonFinishResult::LocalFailure { error, dream_readback: None },
-                    };
-                    // `finish()` has written the merged configuration. Invalidate
-                    // older startup samples before the existing Dream receipt.
-                    DREAM_CRON_UI_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-                    let freedom_path = neoth_dir.join("freedom.yaml");
-                    let reload_path = neoth_dir.join(".reload-requested");
-                    if let Err(error) = write_zf05_fields(&freedom_path, &reload_path, &state) {
-                        return WizardDaemonFinishResult::LocalFailure { error, dream_readback: None };
                     }
-                    let dream_readback = match persist_wizard_dream_cron(state.dream_cron_enabled) {
-                        Ok(readback) => readback,
-                        Err(error) => return WizardDaemonFinishResult::LocalFailure { error, dream_readback: None },
+                };
+                // `finish()` has written the merged configuration. Invalidate
+                // older startup samples before the existing Dream receipt.
+                DREAM_CRON_UI_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                let freedom_path = neoth_dir.join("freedom.yaml");
+                let reload_path = neoth_dir.join(".reload-requested");
+                if let Err(error) = write_zf05_fields(&freedom_path, &reload_path, &state) {
+                    return WizardDaemonFinishResult::LocalFailure {
+                        error,
+                        dream_readback: None,
                     };
-                    let config_sha256 = match wizard_session_controller::prepared_config_sha256(&freedom_path) {
+                }
+                let dream_readback = match persist_wizard_dream_cron(state.dream_cron_enabled) {
+                    Ok(readback) => readback,
+                    Err(error) => {
+                        return WizardDaemonFinishResult::LocalFailure {
+                            error,
+                            dream_readback: None,
+                        };
+                    }
+                };
+                let config_sha256 =
+                    match wizard_session_controller::prepared_config_sha256(&freedom_path) {
                         Ok(hash) => hash,
-                        Err(error) => return WizardDaemonFinishResult::LocalFailure { error, dream_readback: Some(dream_readback) },
+                        Err(error) => {
+                            return WizardDaemonFinishResult::LocalFailure {
+                                error,
+                                dream_readback: Some(dream_readback),
+                            };
+                        }
                     };
-                    // Only the daemon's Completed acknowledgement authorizes
-                    // the transition to Chat. No marker or config-file probe is
-                    // treated as a completion receipt.
-                    match session.prepare_for_commit(config_sha256) {
-                        Ok(_) => WizardDaemonFinishResult::Completed { report, dream_readback },
-                        Err(error) => WizardDaemonFinishResult::DaemonFailure { error, dream_readback: Some(dream_readback) },
+                // Only the daemon's Completed acknowledgement authorizes
+                // the transition to Chat. No marker or config-file probe is
+                // treated as a completion receipt.
+                match session.prepare_for_commit(config_sha256) {
+                    Ok(_) => WizardDaemonFinishResult::Completed {
+                        report,
+                        dream_readback,
+                    },
+                    Err(error) => WizardDaemonFinishResult::DaemonFailure {
+                        error,
+                        dream_readback: Some(dream_readback),
+                    },
+                }
+            })();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(w) = weak_completion.upgrade() else {
+                    return;
+                };
+                w.set_wizard_daemon_operation_in_flight(false);
+                match result {
+                    WizardDaemonFinishResult::Completed {
+                        report,
+                        dream_readback,
+                    } => {
+                        info!(?report.freedom_path, ?report.credentials_path, "wizard completed by daemon acknowledgement");
+                        apply_dream_cron_status(&w, dream_readback);
+                        w.set_dream_cron_operation_in_flight(false);
+                        w.set_wizard_daemon_available(true);
+                        w.set_step(WizardStep::Chat);
+                        w.set_status_line(
+                            "Setup complete and verified by the setup daemon.".into(),
+                        );
                     }
-                })();
-                let _ = slint::invoke_from_event_loop(move || {
-                    let Some(w) = weak_completion.upgrade() else {
-                        return;
-                    };
-                    w.set_wizard_daemon_operation_in_flight(false);
-                    match result {
-                        WizardDaemonFinishResult::Completed { report, dream_readback } => {
-                            info!(?report.freedom_path, ?report.credentials_path, "wizard completed by daemon acknowledgement");
-                            apply_dream_cron_status(&w, dream_readback);
-                            w.set_dream_cron_operation_in_flight(false);
-                            w.set_wizard_daemon_available(true);
-                            w.set_step(WizardStep::Chat);
-                            w.set_status_line("Setup complete and verified by the setup daemon.".into());
+                    WizardDaemonFinishResult::LocalFailure {
+                        error,
+                        dream_readback,
+                    } => {
+                        if let Some(readback) = dream_readback {
+                            apply_dream_cron_status(&w, readback);
                         }
-                        WizardDaemonFinishResult::LocalFailure { error, dream_readback } => {
-                            if let Some(readback) = dream_readback {
-                                apply_dream_cron_status(&w, readback);
-                            }
-                            tracing::error!(error = %error, "GUI wizard local preparation failed");
-                            w.set_wizard_daemon_available(true);
-                            w.set_status_line(format!("Setup files need attention before daemon completion: {error}").into());
+                        tracing::error!(error = %error, "GUI wizard local preparation failed");
+                        w.set_wizard_daemon_available(true);
+                        w.set_status_line(
+                            format!("Setup files need attention before daemon completion: {error}")
+                                .into(),
+                        );
+                    }
+                    WizardDaemonFinishResult::DaemonFailure {
+                        error,
+                        dream_readback,
+                    } => {
+                        // The failed operation can have reached the daemon.
+                        // Keep controls unavailable for this GUI lifetime;
+                        // reopening performs OpenOrResume before any action.
+                        tracing::error!(error = %error, "GUI wizard daemon operation unavailable");
+                        WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
+                        if let Some(readback) = dream_readback {
+                            apply_dream_cron_status(&w, readback);
                         }
-                        WizardDaemonFinishResult::DaemonFailure { error, dream_readback } => {
-                            // The failed operation can have reached the daemon.
-                            // Keep controls unavailable for this GUI lifetime;
-                            // reopening performs OpenOrResume before any action.
-                            tracing::error!(error = %error, "GUI wizard daemon operation unavailable");
-                            WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
-                            if let Some(readback) = dream_readback {
-                                apply_dream_cron_status(&w, readback);
-                            }
-                            w.set_wizard_daemon_available(false);
-                            w.set_status_line(
+                        w.set_wizard_daemon_available(false);
+                        w.set_status_line(
                                 "Setup daemon became unavailable or rejected this action. Setup was not claimed complete; reopen NEOTH to resume its authoritative status."
                                     .into(),
                             );
-                        }
                     }
-                });
+                }
             });
+        });
     });
 
     // ── Companion overlay wiring ──────────────────────────────────────────────
@@ -19362,10 +19403,7 @@ fn spawn_neothd_plain(bin: &Path) -> std::process::Command {
     cmd
 }
 
-fn register_wizard_finish_callback(
-    window: &MainWindow,
-    on_finish: impl Fn(MainWindow) + 'static,
-) {
+fn register_wizard_finish_callback(window: &MainWindow, on_finish: impl Fn(MainWindow) + 'static) {
     let weak = window.as_weak();
     window.on_finish_clicked(move || {
         let Some(window) = weak.upgrade() else {
@@ -43419,7 +43457,9 @@ mod dream_cron_gui_tests {
     #[test]
     fn wizard_completion_is_daemon_acknowledged_and_fails_closed_on_loss() {
         let source = include_str!("main.rs");
-        let start = source.find("register_wizard_finish_callback(&window, move |w| {").unwrap();
+        let start = source
+            .find("register_wizard_finish_callback(&window, move |w| {")
+            .unwrap();
         let end = source[start..]
             .find("// ── Companion overlay wiring")
             .unwrap()
@@ -43441,7 +43481,9 @@ mod dream_cron_gui_tests {
     #[test]
     fn daemon_completion_failure_retains_existing_dream_readback_and_revision_order() {
         let source = include_str!("main.rs");
-        let start = source.find("register_wizard_finish_callback(&window, move |w| {").unwrap();
+        let start = source
+            .find("register_wizard_finish_callback(&window, move |w| {")
+            .unwrap();
         let end = source[start..]
             .find("// ── Companion overlay wiring")
             .unwrap()
@@ -43490,7 +43532,9 @@ mod dream_cron_gui_tests {
         assert_eq!(ui.matches("root.finish-clicked();").count(), 1);
 
         let source = include_str!("main.rs");
-        let handler_start = source.find("register_wizard_finish_callback(&window, move |w| {").unwrap();
+        let handler_start = source
+            .find("register_wizard_finish_callback(&window, move |w| {")
+            .unwrap();
         let handler_end = source[handler_start..]
             .find("// ── Companion overlay wiring")
             .unwrap()
@@ -43627,8 +43671,8 @@ mod w58_gui_callback_runtime_tests {
         project_chat_recall_chip_snapshot, project_chat_throughput_snapshot,
         provider_done_chat_recall_chip_projection, provider_done_chat_throughput_projection,
         register_citation_gui_callbacks, register_response_feedback_callbacks,
-        register_wizard_daemon_callbacks, register_wizard_finish_callback, spawn_neothd_plain, start_wizard_session_projection,
-        wizard_daemon_session,
+        register_wizard_daemon_callbacks, register_wizard_finish_callback, spawn_neothd_plain,
+        start_wizard_session_projection, wizard_daemon_session,
     };
 
     static GUI_CALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());
