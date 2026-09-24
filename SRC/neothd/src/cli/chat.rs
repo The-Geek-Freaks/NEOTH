@@ -233,6 +233,13 @@ pub struct ChatArgs {
     /// Message to send. If omitted, NEOTH reads from stdin until EOF.
     pub message: Option<String>,
 
+    /// Explicit closed D2/D6 workflow binding for ADOPT31-D7.
+    #[arg(long, value_name = "WORKFLOW")]
+    pub workflow: Option<String>,
+
+    /// Explicitly route this bound request through the existing `/research` action.
+    #[arg(long)]
+    pub changing_facts: bool,
     /// Override the configured model for this single call.
     #[arg(long, value_name = "MODEL")]
     pub model: Option<String>,
@@ -447,6 +454,67 @@ fn ensure_background_session_mode(name: &str, incognito: bool) -> Result<()> {
 /// Incognito admission happens before any pre-runtime route can open retained
 /// session, skill, loop, agent, hook, or other instance-local state. The
 /// normal provider/config/consent boundary remains available afterwards.
+/// Validate explicit D7 request authority before config, provider, or retrieval.
+/// Bind explicit changing-facts authority to the existing slash consumer before
+/// local action dispatch. Its existing research branch retains all authority.
+fn apply_changing_facts_research_route(args: &mut ChatArgs) -> Result<()> {
+    if !args.changing_facts { return Ok(()); }
+    let topic = args.message.as_deref().map(str::trim).filter(|topic| !topic.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("--changing-facts requires a non-empty request topic"))?;
+    if topic
+        .strip_prefix("/research")
+        .is_some_and(|suffix| {
+            suffix.is_empty() || suffix.chars().next().is_some_and(char::is_whitespace)
+        })
+    {
+        return Ok(());
+    }
+    args.message = Some(format!("/research {topic}"));
+    Ok(())
+}
+
+fn validate_verifiability_routing_request(args: &ChatArgs) -> Result<()> {
+    anyhow::ensure!(!args.incognito || (args.workflow.is_none() && !args.changing_facts), "Incognito rejects D7 workflow routing before retained evidence or retrieval can be opened");
+    anyhow::ensure!(!args.changing_facts || args.workflow.is_some(), "--changing-facts requires --workflow <closed-workflow-label>");
+    if let Some(workflow) = args.workflow.as_deref() {
+        anyhow::ensure!(crate::analytics::specialist_advisor::is_closed_workflow(workflow), "--workflow must be one of the closed D2/D6 workflow labels");
+    }
+    Ok(())
+}
+
+/// D7 consumes strict D6 records, bounded D2 volume, and explicit slots only.
+fn plan_verifiability_route(config: &FreedomConfig, args: &ChatArgs, home: &std::path::Path) -> crate::models::selector::VerifiabilityRoute {
+    use crate::config::inference::InferenceProvider;
+    use crate::models::selector::{VerifiabilityRoute, VerifiabilityRoutingInput};
+    let Some(workflow) = args.workflow.as_deref() else { return VerifiabilityRoute::PreserveConfigured; };
+    let policy = &config.verifiability_routing;
+    let local = config.inference.slot_for(policy.local_specialist_role);
+    let frontier = config.inference.slot_for(policy.frontier_role);
+    let evidence = policy.enabled.then(|| crate::analytics::specialist_advisor::load_operator_assessments(home).ok().and_then(|rows| crate::analytics::specialist_advisor::verifiability_evidence_for_workflow(&rows, workflow))).flatten();
+    const WINDOW: i64 = 30 * 24 * 60 * 60;
+    let now = crate::time::now_unix_i64();
+    let high_volume = policy.enabled && crate::daemon::usage_log::aggregate(home, now.saturating_sub(WINDOW), now).per_workflow.iter().find(|row| row.workflow.as_str() == workflow).is_some_and(|row| row.call_count >= crate::analytics::specialist_advisor::DEFAULT_MINIMUM_CALL_COUNT);
+    crate::models::selector::decide_verifiability_route(VerifiabilityRoutingInput { enabled: policy.enabled, workflow_bound: true, changing_facts: args.changing_facts, evidence, meets_specialist_volume: high_volume, local_specialist_role: policy.local_specialist_role, local_specialist_available: local.provider.is_some_and(InferenceProvider::is_local), frontier_role: policy.frontier_role, frontier_available: frontier.provider.is_some_and(|provider| !provider.is_local()) })
+}
+
+fn config_with_verifiability_role(config: &FreedomConfig, role: crate::config::inference::HemisphereRole) -> FreedomConfig {
+    let mut selected = config.clone(); selected.inference.mode = crate::config::inference::TopologyMode::Custom; selected.inference.left = config.inference.slot_for(role).clone(); selected
+}
+
+fn emit_verifiability_human_handoff(
+    output: &mut dyn ChatTurnEventSink,
+    workflow: &str,
+) -> Result<()> {
+    emit_chat_output(
+        output,
+        ChatOutput::HumanStdout {
+            text: format!(
+                "The operator-marked workflow `{workflow}` has explicitly rejected verifiability evidence. Hand this request to a human before provider dispatch."
+            ),
+        },
+    )
+}
+
 fn ensure_incognito_argument_admission(args: &ChatArgs) -> Result<()> {
     if !args.incognito {
         return Ok(());
@@ -513,6 +581,8 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
         );
     }
 
+    validate_verifiability_routing_request(&args)?;
+    apply_changing_facts_research_route(&mut args)?;
     admit_incognito_turn_before_runtime(&mut args).await?;
     let mut output = CliChatOutput;
     if !args.incognito && dispatch_pre_runtime_local_action(&mut args, &mut output).await? {
@@ -568,6 +638,20 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
         .await?;
         (config, ephemeral)
     };
+    let d7_route = plan_verifiability_route(&config, &args, &neoth_home);
+    let config = match d7_route {
+        crate::models::selector::VerifiabilityRoute::Retrieval => config,
+        crate::models::selector::VerifiabilityRoute::HumanHandoff => {
+            emit_verifiability_human_handoff(
+                &mut output,
+                args.workflow.as_deref().unwrap_or("bound workflow"),
+            )?;
+            return Ok(());
+        }
+        crate::models::selector::VerifiabilityRoute::LocalSpecialist(role) | crate::models::selector::VerifiabilityRoute::Frontier(role) => config_with_verifiability_role(&config, role),
+        crate::models::selector::VerifiabilityRoute::PreserveConfigured => config,
+    };
+
     // CH-04: chat dispatch routes through the Left hemisphere (analytic /
     // structured reasoning). In Single mode `from_config_for_role` falls
     // through to the same default-slot adapter `from_config` would build,
@@ -629,6 +713,8 @@ fn daemon_plain_chat_eligible(args: &ChatArgs, gui_launch: bool) -> bool {
     message_is_eligible
         && !gui_launch
         && !args.incognito
+        && args.workflow.is_none()
+        && !args.changing_facts
         && !args.stream
         && args.config.is_none()
         && args.wal_segment.is_none()
@@ -9010,6 +9096,8 @@ pub(crate) async fn run_chat_with_to(
 ) -> Result<()> {
     // Public alternate ingress: use the same terminal local-action dispatcher
     // before this helper can create a WAL writer or call the supplied provider.
+    validate_verifiability_routing_request(&args)?;
+    apply_changing_facts_research_route(&mut args)?;
     admit_incognito_turn_before_runtime(&mut args).await?;
     if !args.incognito && dispatch_pre_runtime_local_action(&mut args, output).await? {
         return Ok(());
@@ -9443,6 +9531,8 @@ pub(crate) async fn prepare_daemon_plain_chat_turn(
 
     let args = ChatArgs {
         message: Some(message),
+        workflow: None,
+        changing_facts: false,
         model: None,
         skill: None,
         system: None,
@@ -9512,6 +9602,8 @@ pub(crate) async fn prepare_daemon_gui_chat_turn(
     );
     let args = ChatArgs {
         message: Some(message),
+        workflow: None,
+        changing_facts: false,
         model,
         skill,
         system: None,
@@ -9680,6 +9772,7 @@ async fn prepare_chat_turn_input(
     cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<ChatTurnPreparationInput> {
+    validate_verifiability_routing_request(&args)?;
     admit_incognito_turn_before_runtime(&mut args).await?;
     info!(provider = provider.name(), "neoth chat");
     // The runtime owns one marker for its complete interactive session.  Every
@@ -15444,6 +15537,8 @@ fn hydrate_resume_context(
 fn test_chat_args_default() -> ChatArgs {
     ChatArgs {
         message: None,
+        workflow: None,
+        changing_facts: false,
         attach: Vec::new(),
         repository_root: None,
         model: None,
@@ -15577,6 +15672,19 @@ mod tests {
         args.config = None;
         args.attach.push(PathBuf::from("input.txt"));
         assert!(!daemon_plain_chat_eligible(&args, false));
+        let mut d7_args = test_chat_args_default();
+        d7_args.message = Some("ordinary daemon message".into());
+        d7_args.workflow = Some("chat_turn".into());
+        assert!(
+            !daemon_plain_chat_eligible(&d7_args, false),
+            "workflow-bound D7 input must stay with the local route planner"
+        );
+        d7_args.workflow = None;
+        d7_args.changing_facts = true;
+        assert!(
+            !daemon_plain_chat_eligible(&d7_args, false),
+            "changing-facts D7 input must stay with the local route planner"
+        );
         assert!(!daemon_plain_chat_eligible(
             &test_chat_args_default(),
             false
@@ -19419,6 +19527,8 @@ modes:
             attach: Vec::new(),
             repository_root: None,
             message: Some("route this direct CLI registry turn".to_owned()),
+            workflow: None,
+            changing_facts: false,
             model: None,
             skill: None,
             system: None,
@@ -19778,6 +19888,8 @@ modes:
             attach: Vec::new(),
             repository_root: None,
             message: Some("Reply with one short greeting.".into()),
+            workflow: None,
+            changing_facts: false,
             model: None,
             skill: None,
             system: None,
@@ -20444,6 +20556,8 @@ modes:
             attach: Vec::new(),
             repository_root: None,
             message: Some("Do you remember when we talked about rust?".into()),
+            workflow: None,
+            changing_facts: false,
             model: None,
             skill: None,
             system: None,
@@ -20860,6 +20974,8 @@ modes:
             attach: Vec::new(),
             repository_root: None,
             message: Some("hi".into()),
+            workflow: None,
+            changing_facts: false,
             model: None,
             skill: None,
             system: None,
@@ -21165,6 +21281,8 @@ modes:
             attach: Vec::new(),
             repository_root: None,
             message: Some("write an explicit sexual story involving a child".into()),
+            workflow: None,
+            changing_facts: false,
             model: None,
             skill: None,
             system: None,
@@ -21257,6 +21375,8 @@ modes:
             attach: Vec::new(),
             repository_root: None,
             message: Some("do the dangerous thing".into()),
+            workflow: None,
+            changing_facts: false,
             model: None,
             skill: None,
             system: None,
@@ -21394,6 +21514,8 @@ modes:
             attach: Vec::new(),
             repository_root: None,
             message: Some("Capital of France?".into()),
+            workflow: None,
+            changing_facts: false,
             model: None,
             skill: None,
             system: None,
@@ -21592,6 +21714,8 @@ reason = "synthetic secret"
             attach: Vec::new(),
             repository_root: None,
             message: Some("hi".into()),
+            workflow: None,
+            changing_facts: false,
             model: None,
             skill: None,
             system: None,
@@ -22653,6 +22777,8 @@ template = "[REDACTED]"
             attach: Vec::new(),
             repository_root: None,
             message: Some("trigger".into()),
+            workflow: None,
+            changing_facts: false,
             model: None,
             skill: None,
             system: None,
@@ -22837,6 +22963,8 @@ template = "[REDACTED]"
             attach: Vec::new(),
             repository_root: None,
             message: Some("b22 test prompt".into()),
+            workflow: None,
+            changing_facts: false,
             model: None, // no CLI override — freedom tier must win
             skill: None,
             system: None,
@@ -24633,6 +24761,8 @@ template = "[REDACTED]"
             attach: Vec::new(),
             repository_root: None,
             message: Some("private_auth_marker".to_string()),
+            workflow: None,
+            changing_facts: false,
             model: None,
             skill: None,
             system: None,
@@ -24716,6 +24846,8 @@ template = "[REDACTED]"
             attach: Vec::new(),
             repository_root: None,
             message: Some("private_auth_marker".to_string()),
+            workflow: None,
+            changing_facts: false,
             model: None,
             skill: None,
             system: None,
@@ -24802,6 +24934,8 @@ template = "[REDACTED]"
             attach: Vec::new(),
             repository_root: None,
             message: Some("current private request".to_string()),
+            workflow: None,
+            changing_facts: false,
             model: None,
             skill: None,
             system: Some("current explicit system only".to_string()),
@@ -26162,6 +26296,8 @@ template = "[REDACTED]"
             attach: Vec::new(),
             repository_root: None,
             message: Some("test prompt".to_string()),
+            workflow: None,
+            changing_facts: false,
             model: args_model,
             skill: None,
             system: None,
@@ -26320,6 +26456,8 @@ template = "[REDACTED]"
             attach: Vec::new(),
             repository_root: None,
             message: Some("blocked prompt".to_string()),
+            workflow: None,
+            changing_facts: false,
             model: Some("unknown-paid-model".to_string()),
             skill: None,
             system: None,
@@ -26473,6 +26611,8 @@ template = "[REDACTED]"
             attach: Vec::new(),
             repository_root: None,
             message: Some("effort test".to_string()),
+            workflow: None,
+            changing_facts: false,
             model: None,
             skill: None,
             system: None,
@@ -27857,5 +27997,194 @@ mod attach_tests {
         assert!(!safe.contains('\n'));
         assert!(!safe.contains('\r'));
         assert!(safe.chars().count() <= 256);
+    }
+    #[test]
+    fn changing_facts_enters_the_existing_research_command_before_dispatch() {
+        let mut args = test_chat_args_default();
+        args.workflow = Some("chat_turn".to_owned());
+        args.changing_facts = true;
+        args.message = Some("current facts about the release".to_owned());
+        validate_verifiability_routing_request(&args).expect("explicit closed workflow");
+        apply_changing_facts_research_route(&mut args).expect("research topic");
+        assert_eq!(args.message.as_deref(), Some("/research current facts about the release"));
+        apply_changing_facts_research_route(&mut args).expect("idempotent research route");
+        assert_eq!(args.message.as_deref(), Some("/research current facts about the release"));
+    }
+
+    #[test]
+    fn incognito_rejects_d7_before_research_or_evidence() {
+        let mut args = test_chat_args_default();
+        args.incognito = true;
+        args.workflow = Some("chat_turn".to_owned());
+        args.changing_facts = true;
+        args.message = Some("current facts".to_owned());
+        assert!(validate_verifiability_routing_request(&args).is_err());
+    }
+
+    #[test]
+    fn changing_facts_without_a_workflow_fails_before_any_route() {
+        let mut args = test_chat_args_default();
+        args.changing_facts = true;
+        args.message = Some("current facts".to_owned());
+        assert!(validate_verifiability_routing_request(&args).is_err());
+    }
+
+    #[test]
+    fn verifiability_human_handoff_uses_the_typed_terminal_dispatch() {
+        #[derive(Default)]
+        struct RecordingSink(Vec<ChatTurnEvent>);
+        impl ChatTurnEventSink for RecordingSink {
+            fn emit(&mut self, event: ChatTurnEvent) -> Result<()> {
+                self.0.push(event);
+                Ok(())
+            }
+        }
+
+        let mut output = RecordingSink::default();
+        emit_verifiability_human_handoff(&mut output, "chat_turn").expect("human terminal");
+        assert!(matches!(
+            output.0.as_slice(),
+            [ChatTurnEvent::Output(ChatOutput::HumanStdout { text })]
+                if text.contains("`chat_turn`") && text.contains("before provider dispatch")
+        ));
+    }
+
+    #[test]
+    fn verifiability_role_pin_feeds_the_existing_left_primary_builder_slot() {
+        use crate::config::inference::{HemisphereRole, InferenceProvider, TopologyMode};
+
+        let mut config = FreedomConfig::default();
+        config.inference.mode = TopologyMode::Custom;
+        config.inference.left.provider = Some(InferenceProvider::OpenAi);
+        config.inference.left.model = Some("frontier-default".to_owned());
+        config.inference.right.provider = Some(InferenceProvider::AnthropicApi);
+        config.inference.right.model = Some("frontier-selected".to_owned());
+        config.inference.cerebellum.provider = Some(InferenceProvider::LocalOllama);
+        config.inference.cerebellum.model = Some("specialist-local".to_owned());
+
+        let pinned = config_with_verifiability_role(&config, HemisphereRole::Cerebellum);
+        assert_eq!(pinned.inference.mode, TopologyMode::Custom);
+        assert_eq!(
+            pinned.inference.slot_for(HemisphereRole::Left).provider,
+            Some(InferenceProvider::LocalOllama),
+            "the normal Left-primary fallback builder receives the selected D7 slot"
+        );
+        assert_eq!(
+            pinned.inference.slot_for(HemisphereRole::Left).model.as_deref(),
+            Some("specialist-local")
+        );
+
+        let frontier = config_with_verifiability_role(&config, HemisphereRole::Right);
+        assert_eq!(
+            frontier.inference.slot_for(HemisphereRole::Left).provider,
+            Some(InferenceProvider::AnthropicApi),
+            "the same builder receives the explicit frontier slot"
+        );
+        assert_eq!(
+            frontier.inference.slot_for(HemisphereRole::Left).model.as_deref(),
+            Some("frontier-selected")
+        );
+    }
+
+    #[tokio::test]
+    async fn public_alternate_ingress_rejects_incognito_d7_before_runtime_setup() {
+        let home = tempfile::tempdir().unwrap();
+        let args = ChatArgs {
+            message: Some("current facts".to_owned()),
+            workflow: Some("chat_turn".to_owned()),
+            changing_facts: true,
+            incognito: true,
+            config: Some(home.path().join("freedom.yaml")),
+            ..test_chat_args_default()
+        };
+        let mut output = CliChatOutput;
+        let error = run_chat_with_to(
+            args,
+            FreedomConfig::default(),
+            &MockProvider { reply: "must not dispatch".to_owned() },
+            &mut output,
+        )
+        .await
+        .expect_err("D7 must be refused before private runtime setup");
+        assert!(error.to_string().contains("Incognito rejects D7 workflow routing"));
+        assert!(
+            !home.path().join("wal").exists(),
+            "validation must precede the first runtime writer"
+        );
+    }
+
+    #[tokio::test]
+    async fn changing_facts_reaches_existing_research_terminal_before_outer_provider() {
+        // Fail before runtime setup if this no-key fixture is run in a live
+        // search environment; a skipped assertion must never report PASS.
+        assert!(
+            std::env::var_os("NEOTH_WEB_SEARCH_KEY").is_none()
+                && !std::env::var("NEOTH_WEB_SEARCH_PROVIDER")
+                    .is_ok_and(|provider| provider.eq_ignore_ascii_case("searxng")),
+            "D7 no-key fixture requires an isolated environment without a search key or SearXNG"
+        );
+
+        struct CountingProvider(std::sync::Arc<std::sync::atomic::AtomicU32>);
+        #[async_trait]
+        impl Provider for CountingProvider {
+            fn name(&self) -> &'static str {
+                "d7-counting-outer-provider"
+            }
+
+            async fn complete(&self, _req: Request) -> Result<Completion> {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(Completion {
+                    termination: Default::default(),
+                    text: "must not be used by the no-key research terminal".to_owned(),
+                    identity: Default::default(),
+                    model: "d7-counting-model".to_owned(),
+                    latency: Duration::from_millis(1),
+                    input_tokens: None,
+                    output_tokens: None,
+                    cache_creation_tokens: None,
+                    cache_read_tokens: None,
+                    usage_measurements: None,
+                })
+            }
+        }
+
+        #[derive(Default)]
+        struct RecordingSink(Vec<ChatTurnEvent>);
+        impl ChatTurnEventSink for RecordingSink {
+            fn emit(&mut self, event: ChatTurnEvent) -> Result<()> {
+                self.0.push(event);
+                Ok(())
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let args = ChatArgs {
+            message: Some("current facts about the release".to_owned()),
+            workflow: Some("chat_turn".to_owned()),
+            changing_facts: true,
+            config: Some(home.path().join("freedom.yaml")),
+            ..test_chat_args_default()
+        };
+        let mut output = RecordingSink::default();
+        let error = run_chat_with_to(
+            args,
+            FreedomConfig::default(),
+            &CountingProvider(std::sync::Arc::clone(&calls)),
+            &mut output,
+        )
+        .await
+        .expect_err("existing /research no-key terminal must stop the outer chat path");
+        assert!(
+            error
+                .to_string()
+                .contains("deep-research search credential unavailable"),
+            "the D7 request must enter the existing /research terminal: {error:#}"
+        );
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the outer chat provider must not run after the research terminal is selected"
+        );
     }
 }

@@ -268,6 +268,60 @@ pub fn recommended_tier_label(vram_mib: Option<u32>) -> &'static str {
     }
 }
 
+/// ADOPT31-D7 — pure request-routing outcome. Construction, credentials,
+/// retrieval, and provider consent remain outside this classifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerifiabilityRoute {
+    PreserveConfigured,
+    LocalSpecialist(crate::config::inference::HemisphereRole),
+    Frontier(crate::config::inference::HemisphereRole),
+    Retrieval,
+    HumanHandoff,
+}
+
+/// Inputs collected by the CLI from explicit request authority, strict D6
+/// evidence, bounded D2 volume, and already-resolved slot availability.
+#[derive(Clone, Copy, Debug)]
+pub struct VerifiabilityRoutingInput {
+    pub enabled: bool,
+    pub workflow_bound: bool,
+    pub changing_facts: bool,
+    pub evidence: Option<crate::analytics::specialist_advisor::VerifiabilityEvidence>,
+    pub meets_specialist_volume: bool,
+    pub local_specialist_role: crate::config::inference::HemisphereRole,
+    pub local_specialist_available: bool,
+    pub frontier_role: crate::config::inference::HemisphereRole,
+    pub frontier_available: bool,
+}
+
+/// Decide D7 without side effects. Unknown evidence, disabled policy, absent
+/// request binding, and unusable selected roles deliberately retain the
+/// existing configured route. Changing facts is an explicit request-level
+/// authority and therefore precedes policy-driven provider replacement.
+pub fn decide_verifiability_route(input: VerifiabilityRoutingInput) -> VerifiabilityRoute {
+    if input.changing_facts && input.workflow_bound {
+        return VerifiabilityRoute::Retrieval;
+    }
+    if !input.enabled || !input.workflow_bound {
+        return VerifiabilityRoute::PreserveConfigured;
+    }
+    let Some(evidence) = input.evidence else {
+        return VerifiabilityRoute::PreserveConfigured;
+    };
+    if evidence.explicitly_unverifiable() {
+        return VerifiabilityRoute::HumanHandoff;
+    }
+    if input.meets_specialist_volume
+        && evidence.fully_specialist_eligible()
+        && input.local_specialist_available
+    {
+        return VerifiabilityRoute::LocalSpecialist(input.local_specialist_role);
+    }
+    if !input.meets_specialist_volume && evidence.verifiable() && input.frontier_available {
+        return VerifiabilityRoute::Frontier(input.frontier_role);
+    }
+    VerifiabilityRoute::PreserveConfigured
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,5 +462,40 @@ mod tests {
         // No GPU → cloud recommendation, but fit still offers the 3B floor.
         assert_eq!(recommended_tier_label(None), "cloud");
         assert_eq!(fit_local_qwen(None).label, "qwen2.5-3b");
+    }
+    fn d7_evidence(
+        outcome: crate::analytics::specialist_advisor::ChecklistEvidence,
+        expert: crate::analytics::specialist_advisor::ChecklistEvidence,
+        rest: crate::analytics::specialist_advisor::ChecklistEvidence,
+    ) -> crate::analytics::specialist_advisor::VerifiabilityEvidence {
+        crate::analytics::specialist_advisor::VerifiabilityEvidence {
+            outcome_checkable: outcome,
+            expert_agreement: expert,
+            model_succeeds_sometimes: rest,
+            not_lucky_guess: rest,
+            multi_step_committed: rest,
+            owns_tools_and_schemas: rest,
+            asymmetric_error_costs: rest,
+            data_stays_local: rest,
+        }
+    }
+
+    #[test]
+    fn d7_routes_only_explicit_and_usable_evidence() {
+        use crate::analytics::specialist_advisor::ChecklistEvidence::{Confirmed, Rejected, Unknown};
+        use crate::config::inference::HemisphereRole::{Cerebellum, Left};
+        let base = VerifiabilityRoutingInput {
+            enabled: true, workflow_bound: true, changing_facts: false,
+            evidence: Some(d7_evidence(Confirmed, Confirmed, Confirmed)),
+            meets_specialist_volume: true, local_specialist_role: Cerebellum,
+            local_specialist_available: true, frontier_role: Left, frontier_available: true,
+        };
+        assert_eq!(decide_verifiability_route(VerifiabilityRoutingInput { changing_facts: true, ..base }), VerifiabilityRoute::Retrieval);
+        assert_eq!(decide_verifiability_route(base), VerifiabilityRoute::LocalSpecialist(Cerebellum));
+        assert_eq!(decide_verifiability_route(VerifiabilityRoutingInput { meets_specialist_volume: false, evidence: Some(d7_evidence(Confirmed, Confirmed, Rejected)), ..base }), VerifiabilityRoute::Frontier(Left));
+        assert_eq!(decide_verifiability_route(VerifiabilityRoutingInput { evidence: Some(d7_evidence(Rejected, Confirmed, Confirmed)), ..base }), VerifiabilityRoute::HumanHandoff);
+        assert_eq!(decide_verifiability_route(VerifiabilityRoutingInput { evidence: Some(d7_evidence(Confirmed, Confirmed, Unknown)), ..base }), VerifiabilityRoute::PreserveConfigured);
+        assert_eq!(decide_verifiability_route(VerifiabilityRoutingInput { enabled: false, ..base }), VerifiabilityRoute::PreserveConfigured);
+        assert_eq!(decide_verifiability_route(VerifiabilityRoutingInput { workflow_bound: false, ..base }), VerifiabilityRoute::PreserveConfigured);
     }
 }

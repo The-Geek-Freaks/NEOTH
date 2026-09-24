@@ -262,6 +262,8 @@ async fn run_one(
         attach: Vec::new(),
         repository_root: None,
         message: Some(rendered.prompt.clone()),
+        workflow: None,
+        changing_facts: false,
         skill: None,
         model: rendered.settings.model.clone(),
         system: rendered.system.clone(),

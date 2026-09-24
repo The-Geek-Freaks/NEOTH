@@ -380,6 +380,36 @@ pub struct HemisphereSlot {
     pub voice: Option<crate::council::types::CouncilVoice>,
 }
 
+/// Operator-controlled D7 per-request routing. This policy only selects from
+/// existing hemisphere slots; it never creates a provider, credential, or
+/// consent capability. Disabled is the compatibility default.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct VerifiabilityRoutingConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_local_specialist_role")]
+    pub local_specialist_role: HemisphereRole,
+    #[serde(default = "default_frontier_role")]
+    pub frontier_role: HemisphereRole,
+}
+
+fn default_local_specialist_role() -> HemisphereRole {
+    HemisphereRole::Cerebellum
+}
+
+fn default_frontier_role() -> HemisphereRole {
+    HemisphereRole::Left
+}
+
+impl Default for VerifiabilityRoutingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            local_specialist_role: default_local_specialist_role(),
+            frontier_role: default_frontier_role(),
+        }
+    }
+}
 /// Top-level inference topology. v0.1 wizard fills `default_slot` only —
 /// `hemispheres.left/right/cerebellum` come online once the brain router
 /// (R-9+) actually consults them.
@@ -2336,5 +2366,18 @@ trigger:
                 "{invalid} must fail"
             );
         }
+    }
+    #[test]
+    fn verifiability_routing_defaults_off_with_closed_role_defaults() {
+        let config: VerifiabilityRoutingConfig = serde_yaml::from_str("{}").unwrap();
+        assert!(!config.enabled);
+        assert_eq!(config.local_specialist_role, HemisphereRole::Cerebellum);
+        assert_eq!(config.frontier_role, HemisphereRole::Left);
+        let parsed: VerifiabilityRoutingConfig = serde_yaml::from_str(
+            "enabled: true\nlocal_specialist_role: right\nfrontier_role: left\n",
+        )
+        .unwrap();
+        assert!(parsed.enabled);
+        assert_eq!(parsed.local_specialist_role, HemisphereRole::Right);
     }
 }

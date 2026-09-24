@@ -169,6 +169,91 @@ fn is_closed_workflow_label(workflow: &str) -> bool {
     )
 }
 
+/// D7's routing-relevant operator evidence for one explicitly named closed
+/// workflow. It is a copy of the strict D6 row, so callers cannot infer facts
+/// from usage, provider success, or G02 notifications.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VerifiabilityEvidence {
+    pub outcome_checkable: ChecklistEvidence,
+    pub expert_agreement: ChecklistEvidence,
+    pub model_succeeds_sometimes: ChecklistEvidence,
+    pub not_lucky_guess: ChecklistEvidence,
+    pub multi_step_committed: ChecklistEvidence,
+    pub owns_tools_and_schemas: ChecklistEvidence,
+    pub asymmetric_error_costs: ChecklistEvidence,
+    pub data_stays_local: ChecklistEvidence,
+}
+
+impl VerifiabilityEvidence {
+    /// A human handoff is reserved for an explicit rejection of the two facts
+    /// that establish whether a result can be verified at all. Rejections of
+    /// specialist/residency facts are not a claim that the workflow is
+    /// unverifiable.
+    pub fn explicitly_unverifiable(self) -> bool {
+        matches!(self.outcome_checkable, ChecklistEvidence::Rejected)
+            || matches!(self.expert_agreement, ChecklistEvidence::Rejected)
+    }
+
+    /// The minimum evidence for the rare-workflow frontier direction. D7 does
+    /// not require a specialist-only checklist (tools, residency, or committed
+    /// multi-step execution) before a rare outcome can be verified.
+    pub fn verifiable(self) -> bool {
+        matches!(self.outcome_checkable, ChecklistEvidence::Confirmed)
+            && matches!(self.expert_agreement, ChecklistEvidence::Confirmed)
+    }
+
+    /// The existing D6 specialist threshold remains intentionally stronger.
+    pub fn fully_specialist_eligible(self) -> bool {
+        [
+            self.outcome_checkable,
+            self.expert_agreement,
+            self.model_succeeds_sometimes,
+            self.not_lucky_guess,
+            self.multi_step_committed,
+            self.owns_tools_and_schemas,
+            self.asymmetric_error_costs,
+            self.data_stays_local,
+        ]
+        .into_iter()
+        .all(|evidence| matches!(evidence, ChecklistEvidence::Confirmed))
+    }
+}
+
+/// Return D7 evidence only for one unique D6 closed-workflow assessment.
+/// Missing, duplicate, or unclassified input deliberately becomes unavailable
+/// rather than a route decision. The file loader already rejects duplicates;
+/// retaining this check keeps direct callers fail-closed too.
+pub fn verifiability_evidence_for_workflow(
+    assessments: &[WorkflowAssessment],
+    workflow: &str,
+) -> Option<VerifiabilityEvidence> {
+    if !is_closed_workflow_label(workflow) {
+        return None;
+    }
+    let matching = assessments
+        .iter()
+        .filter(|assessment| assessment.workflow == workflow)
+        .collect::<Vec<_>>();
+    let [assessment] = matching.as_slice() else {
+        return None;
+    };
+    Some(VerifiabilityEvidence {
+        outcome_checkable: assessment.outcome_checkable,
+        expert_agreement: assessment.expert_agreement,
+        model_succeeds_sometimes: assessment.model_succeeds_sometimes,
+        not_lucky_guess: assessment.not_lucky_guess,
+        multi_step_committed: assessment.multi_step_committed,
+        owns_tools_and_schemas: assessment.owns_tools_and_schemas,
+        asymmetric_error_costs: assessment.asymmetric_error_costs,
+        data_stays_local: assessment.data_stays_local,
+    })
+}
+
+/// Public closed-label guard shared by request-bound consumers. Workflow names
+/// are never inferred from prompt text or later usage attribution.
+pub fn is_closed_workflow(workflow: &str) -> bool {
+    is_closed_workflow_label(workflow)
+}
 /// The only conclusion D6 may make about a workflow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpecialistVerdict {
@@ -565,5 +650,25 @@ mod tests {
         };
         let report = analyze(&rollup, 100, &[]);
         assert_eq!(report.workflows[0].verdict, SpecialistVerdict::NotCandidate);
+    }
+    #[test]
+    fn d7_evidence_requires_one_closed_unique_assessment() {
+        let assessment = confirmed_assessment();
+        let evidence = verifiability_evidence_for_workflow(&[assessment.clone()], "chat_turn").expect("unique closed row");
+        assert_eq!(evidence.outcome_checkable, ChecklistEvidence::Confirmed);
+        assert_eq!(evidence.expert_agreement, ChecklistEvidence::Confirmed);
+        assert!(verifiability_evidence_for_workflow(&[], "chat_turn").is_none());
+        assert!(verifiability_evidence_for_workflow(&[assessment.clone(), assessment], "chat_turn").is_none());
+        assert!(verifiability_evidence_for_workflow(&[], "unclassified").is_none());
+    }
+
+    #[test]
+    fn d7_human_evidence_is_limited_to_outcome_or_expert_rejection() {
+        let mut assessment = confirmed_assessment();
+        assessment.owns_tools_and_schemas = ChecklistEvidence::Rejected;
+        let evidence = verifiability_evidence_for_workflow(&[assessment], "chat_turn").unwrap();
+        assert!(evidence.verifiable());
+        assert!(!evidence.explicitly_unverifiable());
+        assert!(!evidence.fully_specialist_eligible());
     }
 }

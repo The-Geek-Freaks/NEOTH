@@ -3,6 +3,24 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W805/W806 routing and bounded text chapters (2026-09-24):**
+D7 adds explicit workflow/changing-facts inputs and a default-off route policy.
+It reuses the real research terminal and existing configured provider builder,
+keeps human handoff before provider dispatch, refuses D7 in Incognito, and
+excludes these requests from daemon forwarding. Independent review is clear;
+12cases cover evidence, consumers, role selection and admission. The no-key
+research test fails instead of silently skipping on a live-search environment.
+B3 adds explicit large-UTF8-text chapter discovery and selection with retained
+source custody,64MiB source/256KiB range/4096range limits, UTF8-safe coverage,
+mutation refusal and metadata-only JSON plus defanged review.11cases include
+actual CLI route functions. PDF/Office remain on their existing full extractor;
+no binary byte-range capability is claimed. Independent review is clear.
+Both remain OPEN pending hosted compile/format/behavior and scope acceptance.
+Group1251run36005780610 at2b38a54a tests the preceding D5/F4 source; next catalog
+is1274/native1510. Counts remain1067checked255open2partial; no local executables.
+See docs/gold-wave805-verifiability-routing.md and
+ docs/gold-wave806-document-chapters.md.
+
 **W812 replay/video hosted core (2026-09-24):**
 Core36004158300 atc2179922 passes test-target typecheck, CLI build and export.
 Root verified artifact10810630207 ZIP/source/innerdigest and imports its real

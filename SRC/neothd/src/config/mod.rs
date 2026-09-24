@@ -1782,6 +1782,11 @@ pub struct FreedomConfig {
     /// Defaults to `single` mode that mirrors the legacy provider_kind path.
     #[serde(default)]
     pub inference: crate::config::inference::InferenceTopology,
+    /// ADOPT31-D7 — explicit default-off request routing policy. The roles
+    /// select only already configured inference slots; all provider consent
+    /// and residency gates remain owned by their existing dispatch paths.
+    #[serde(default)]
+    pub verifiability_routing: crate::config::inference::VerifiabilityRoutingConfig,
     /// The local embedding model family. This is deliberately independent of
     /// chat/profile provider routing: `qwen3_q8` preserves the existing route,
     /// while `bge_m3` is an explicit local-only opt-in.

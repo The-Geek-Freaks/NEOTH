@@ -507,6 +507,8 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     } = prepared;
     let args = ChatArgs {
         message: input.message.clone(),
+        workflow: None,
+        changing_facts: false,
         model: input.model.clone(),
         skill: input.skill.clone(),
         system: input.system.clone(),

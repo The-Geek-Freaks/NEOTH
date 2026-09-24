@@ -121,6 +121,37 @@ struct DocumentReviewReceipt<'a> {
     document: &'a crate::skills::doc_distill::DistilledDoc,
 }
 
+#[derive(Serialize)]
+struct ChapterMetadataReceipt<'a> {
+    chapter_index: usize,
+    range: &'a crate::skills::doc_distill::TextChapterRange,
+    source_bytes: u64,
+    source_bytes_sha256: &'a str,
+}
+
+#[derive(Serialize)]
+struct DocumentChapterReviewReceipt<'a> {
+    review_only: bool,
+    provider_dispatched: bool,
+    chapter: ChapterMetadataReceipt<'a>,
+    rendered_review: &'a str,
+}
+
+#[derive(Serialize)]
+struct DocumentChapterListEntry<'a> {
+    chapter_index: usize,
+    range: &'a crate::skills::doc_distill::TextChapterRange,
+}
+
+#[derive(Serialize)]
+struct DocumentChapterListReceipt<'a> {
+    review_only: bool,
+    provider_dispatched: bool,
+    source_bytes: u64,
+    source_bytes_sha256: &'a str,
+    chapters: Vec<DocumentChapterListEntry<'a>>,
+}
+
 /// Human-readable mutation status deliberately omits skill identifiers and
 /// filesystem locations. Structured output retains the explicit receipt for
 /// callers that require those fields.
@@ -206,11 +237,40 @@ pub struct SkillsArgs {
         long = "from-doc",
         value_name = "PATH",
         conflicts_with_all = [
-            "list", "check_routing", "test", "run_tests", "install", "inspect_install",
+            "list_doc_chapters", "list", "check_routing", "test", "run_tests", "install", "inspect_install",
             "inspect_target", "uninstall", "create", "enable", "disable", "revoke", "force"
         ]
     )]
     pub from_doc: Option<PathBuf>,
+
+    /// Review exactly one explicitly selected chapter/segment from a large
+    /// UTF-8 `.txt` or Markdown source without materializing the whole file.
+    #[arg(
+        long = "from-doc-chapter",
+        value_name = "PATH",
+        requires = "chapter_index",
+        conflicts_with_all = [
+            "from_doc", "list_doc_chapters", "list", "check_routing", "test", "run_tests", "install", "inspect_install",
+            "inspect_target", "uninstall", "create", "enable", "disable", "revoke", "force"
+        ]
+    )]
+    pub from_doc_chapter: Option<PathBuf>,
+
+    /// Zero-based chapter/segment number emitted by the bounded scanner.
+    #[arg(long = "chapter-index", value_name = "INDEX", requires = "from_doc_chapter")]
+    pub chapter_index: Option<usize>,
+
+    /// Discover the read-only chapter/segment table for a large UTF-8 text
+    /// source. Use an emitted zero-based index with --from-doc-chapter.
+    #[arg(
+        long = "list-doc-chapters",
+        value_name = "PATH",
+        conflicts_with_all = [
+            "from_doc", "from_doc_chapter", "list", "check_routing", "test", "run_tests", "install", "inspect_install",
+            "inspect_target", "uninstall", "create", "enable", "disable", "revoke", "force"
+        ]
+    )]
+    pub list_doc_chapters: Option<PathBuf>,
 
     /// Print the table of installed skills.
     #[arg(long, conflicts_with_all = ["test", "run_tests", "install", "inspect_install", "inspect_target", "uninstall", "create", "enable", "disable", "revoke"])]
@@ -749,6 +809,12 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
     // skill as an incidental side effect.
     if let Some(source) = &args.from_doc {
         return run_document_review(source, args.output).await;
+    }
+    if let Some(source) = &args.list_doc_chapters {
+        return run_large_text_chapter_discovery(source, args.output).await;
+    }
+    if let (Some(source), Some(chapter_index)) = (&args.from_doc_chapter, args.chapter_index) {
+        return run_large_text_document_review(source, chapter_index, args.output).await;
     }
 
     let home = FreedomConfig::default_neoth_home();
@@ -1449,6 +1515,88 @@ pub async fn run_document_review(path: &Path, output: OutputFormat) -> Result<()
     Ok(())
 }
 
+/// Read-only chapter discovery. It retains the source capability for the full
+/// scan and reports offsets only; no source text crosses this CLI boundary.
+pub async fn run_large_text_chapter_discovery(path: &Path, output: OutputFormat) -> Result<()> {
+    let source = path.to_path_buf();
+    let (source_bytes, source_bytes_sha256, chapters) = tokio::task::spawn_blocking(move || {
+        let mut snapshot = crate::skills::doc_distill::admit_large_text_snapshot(&source)?;
+        let chapters = snapshot.discover_chapters()?;
+        Ok::<_, crate::skills::doc_distill::DocDistillError>((
+            snapshot.source_bytes(), snapshot.source_bytes_sha256().to_owned(), chapters,
+        ))
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("large text chapter discovery worker failed"))??;
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string(&DocumentChapterListReceipt {
+            review_only: true,
+            provider_dispatched: false,
+            source_bytes,
+            source_bytes_sha256: &source_bytes_sha256,
+            chapters: chapters.iter().enumerate().map(|(chapter_index, range)| DocumentChapterListEntry {
+                chapter_index,
+                range,
+            }).collect(),
+        })?),
+        OutputFormat::Table => {
+            println!("source bytes: {source_bytes}");
+            println!("source sha256: {source_bytes_sha256}");
+            println!("index  start_byte  end_byte  truncated");
+            for (index, chapter) in chapters.iter().enumerate() {
+                println!("{index:<5}  {:<10}  {:<8}  {}", chapter.start_byte, chapter.end_byte, chapter.truncated);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Connected large-text chapter review. This path deliberately never invokes a
+/// document/PDF extractor: only an explicit selected UTF-8 range is defanged.
+pub async fn run_large_text_document_review(
+    path: &Path,
+    chapter_index: usize,
+    output: OutputFormat,
+) -> Result<()> {
+    let source = path.to_path_buf();
+    let selected = tokio::task::spawn_blocking(move || {
+        let mut snapshot = crate::skills::doc_distill::admit_large_text_snapshot(&source)?;
+        snapshot.select_chapter(chapter_index)
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("large text chapter admission worker failed"))??;
+    let document = crate::skills::doc_distill::distill_doc(
+        crate::media::Extraction { text: selected.text.clone(), metadata: serde_json::Value::Null },
+        crate::skills::doc_distill::DocumentSourceKind::PlainText,
+        selected.source_bytes,
+        selected.source_bytes_sha256.clone(),
+    )?;
+    let rendered = document.render_operator_review();
+    let chapter = ChapterMetadataReceipt {
+        chapter_index: selected.chapter_index,
+        range: &selected.range,
+        source_bytes: selected.source_bytes,
+        source_bytes_sha256: &selected.source_bytes_sha256,
+    };
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", chapter_review_receipt_json(chapter, &rendered)?),
+        OutputFormat::Table => println!("{}", rendered),
+    }
+    Ok(())
+}
+fn chapter_review_receipt_json(
+    chapter: ChapterMetadataReceipt<'_>,
+    rendered_review: &str,
+) -> Result<String> {
+    Ok(serde_json::to_string(&DocumentChapterReviewReceipt {
+        review_only: true,
+        provider_dispatched: false,
+        chapter,
+        rendered_review,
+    })?)
+}
+
 fn print_skill_inventory(
     inventory: &[SkillInventoryRow],
     output: OutputFormat,
@@ -1748,6 +1896,78 @@ mod tests {
         );
     }
 
+    #[test]
+    fn large_text_chapter_cli_requires_explicit_selection_and_rejects_mutators() {
+        let cli = crate::cli::Cli::try_parse_from([
+            "neoth", "skills", "--from-doc-chapter", "guide.md", "--chapter-index", "2",
+        ]).expect("parse explicit chapter review");
+        let crate::cli::Commands::Skills(args) = cli.command else { panic!("expected skills command"); };
+        assert_eq!(args.from_doc_chapter, Some(PathBuf::from("guide.md")));
+        assert_eq!(args.chapter_index, Some(2));
+        assert!(crate::cli::Cli::try_parse_from([
+            "neoth", "skills", "--from-doc-chapter", "guide.md",
+        ]).is_err());
+        assert!(crate::cli::Cli::try_parse_from([
+            "neoth", "skills", "--from-doc-chapter", "guide.md", "--chapter-index", "0", "--install", "x",
+        ]).is_err());
+    }
+
+    #[test]
+    fn large_text_chapter_discovery_cli_is_read_only_and_conflicts_with_selection() {
+        let cli = crate::cli::Cli::try_parse_from([
+            "neoth", "skills", "--list-doc-chapters", "guide.md",
+        ]).expect("parse chapter discovery");
+        let crate::cli::Commands::Skills(args) = cli.command else { panic!("expected skills command"); };
+        assert_eq!(args.list_doc_chapters, Some(PathBuf::from("guide.md")));
+        assert!(crate::cli::Cli::try_parse_from([
+            "neoth", "skills", "--list-doc-chapters", "guide.md", "--from-doc-chapter", "guide.md", "--chapter-index", "0",
+        ]).is_err());
+        assert!(crate::cli::Cli::try_parse_from([
+            "neoth", "skills", "--list-doc-chapters", "guide.md", "--install", "x",
+        ]).is_err());
+    }
+
+    #[tokio::test]
+    async fn connected_large_text_review_keeps_raw_text_out_of_json_receipt() {
+        let root = tempfile::tempdir().expect("temp root");
+        let source = root.path().join("guide.md");
+        let raw_marker = "RAW_SELECTED_MARKER";
+        std::fs::write(&source, format!("# One\n{raw_marker}\n{}", "safe\n".repeat(45_000)))
+            .expect("write large source");
+
+        // Exercise the real admission, chapter selection, distillation, and
+        // table route. JSON is built through the same receipt helper below.
+        run_large_text_chapter_discovery(&source, OutputFormat::Table)
+            .await
+            .expect("connected chapter discovery route");
+        run_large_text_document_review(&source, 0, OutputFormat::Table)
+            .await
+            .expect("connected review route");
+
+        let mut snapshot = crate::skills::doc_distill::admit_large_text_snapshot(&source).unwrap();
+        let selected = snapshot.select_chapter(0).unwrap();
+        let document = crate::skills::doc_distill::distill_doc(
+            crate::media::Extraction { text: selected.text.clone(), metadata: serde_json::Value::Null },
+            crate::skills::doc_distill::DocumentSourceKind::PlainText,
+            selected.source_bytes,
+            selected.source_bytes_sha256.clone(),
+        ).unwrap();
+        let rendered = document.render_operator_review();
+        let json = chapter_review_receipt_json(ChapterMetadataReceipt {
+            chapter_index: selected.chapter_index,
+            range: &selected.range,
+            source_bytes: selected.source_bytes,
+            source_bytes_sha256: &selected.source_bytes_sha256,
+        }, &rendered).unwrap();
+        let receipt: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(receipt["provider_dispatched"], false);
+        assert_eq!(receipt["chapter"]["chapter_index"], 0);
+        assert_eq!(receipt["chapter"]["source_bytes_sha256"].as_str().unwrap().len(), 64);
+        assert!(receipt["chapter"]["range"]["end_byte"].as_u64().unwrap() > 0);
+        assert!(receipt.get("text").is_none());
+        assert!(receipt["chapter"].get("text").is_none());
+        assert!(receipt["rendered_review"].as_str().unwrap().contains("| RAW_SELECTED_MARKER"));
+    }
     #[test]
     fn document_review_backends_keep_disabled_docling_before_native_fallbacks() {
         assert_eq!(
