@@ -11,8 +11,9 @@
 //! (it is also used by the daemon-side `handle_reload_sentinel`) and is reached
 //! here via `crate::cli::serve::emit_required_audit`.
 
+use std::collections::VecDeque;
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -349,6 +350,62 @@ fn canonical_admitted_channel_wal_identity(
         append_field(&mut identity, tag, field);
     }
     Ok(identity)
+}
+
+/// Handler-local, capacity-bounded canary registry. The key is the existing
+/// canonical account/conversation identity and remains process memory only;
+/// neither it nor the token is written to WAL, archives, diagnostics, or
+/// provider metadata. LRU reuse gives one token to a continuing conversation,
+/// while deterministic eviction keeps an adapter that receives many unique
+/// conversations from growing memory without bound.
+const CHANNEL_CANARY_REGISTRY_CAPACITY: usize = 1_024;
+
+struct ChannelCanaryRegistry {
+    capacity: usize,
+    entries: Mutex<
+        VecDeque<(
+            Vec<u8>,
+            Arc<crate::security::injection_tracker::CanaryToken>,
+        )>,
+    >,
+}
+
+impl ChannelCanaryRegistry {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            entries: Mutex::new(VecDeque::with_capacity(capacity.max(1))),
+        }
+    }
+
+    fn acquire(
+        &self,
+        conversation_identity: Vec<u8>,
+    ) -> Result<Arc<crate::security::injection_tracker::CanaryToken>> {
+        let mut entries = self
+            .entries
+            .lock()
+            .map_err(|_| anyhow::anyhow!("channel canary registry lock poisoned"))?;
+        if let Some(index) = entries
+            .iter()
+            .position(|(identity, _)| identity == &conversation_identity)
+        {
+            let (identity, token) = entries
+                .remove(index)
+                .expect("canary registry position was derived from this deque");
+            let retained = Arc::clone(&token);
+            entries.push_back((identity, token));
+            return Ok(retained);
+        }
+
+        let token = crate::cli::chat::mint_chat_session_canary()
+            .context("mint channel conversation canary")?;
+        if entries.len() >= self.capacity {
+            let _ = entries.pop_front();
+        }
+        entries.push_back((conversation_identity, Arc::clone(&token)));
+        Ok(token)
+    }
 }
 
 /// Mint only after the binding, identity, edit, hook, rate-limit, and sanitizer
@@ -1230,6 +1287,9 @@ pub(crate) async fn release_channel_reply_in<P: crate::permissions::PolicyArgume
     // claim-before-effect atomically — no manual pre-filter or post-insert.
     once_guard: &crate::hooks::SessionOnceGuard,
     wal_session: Option<crate::wal::WalSessionContext>,
+    // Only provider-backed channel turns carry a conversation canary. Local
+    // notices and test compatibility paths remain token-free by construction.
+    session_canary: Option<&crate::security::injection_tracker::CanaryToken>,
 ) -> Result<Option<OutboundMessage>> {
     // ── PreEgress hooks (BUG-W2-P1-HOOK-ONCE-PARITY) ──
     // Last filter before the channel adapter sends the reply. A Replace
@@ -1337,6 +1397,18 @@ pub(crate) async fn release_channel_reply_in<P: crate::permissions::PolicyArgume
         }
     };
 
+    // PreEgress hooks are allowed to replace the completed body. Re-check the
+    // exact post-hook representation before its first durable or transport
+    // consumer; this is the final channel equivalent of the CLI post-reply
+    // guard and makes a hook-produced echo fail closed too.
+    if let Some(canary) = session_canary {
+        crate::cli::chat::ensure_chat_canary_absent(
+            canary,
+            crate::cli::chat::CanaryOutputPhase::FinalPostReply,
+            &reply_text,
+        )?;
+    }
+
     // ── Permission gate: ChannelSend ──────────────────────────────────
     // Before the channel adapter ships the reply outbound, gate it through
     // the autonomy ladder. Strict: denies + emits a WAL audit frame. An
@@ -1439,6 +1511,7 @@ pub(crate) async fn release_channel_reply<P: crate::permissions::PolicyArgument 
         live_delivery,
         once_guard,
         None,
+        None,
     )
     .await
 }
@@ -1484,6 +1557,7 @@ async fn release_local_channel_notice_in<P: crate::permissions::PolicyArgument +
         None,
         once_guard,
         wal_session,
+        None,
     )
     .await
 }
@@ -1718,6 +1792,7 @@ async fn release_counterparty_consent_reply<P: crate::permissions::PolicyArgumen
         None,
         once_guard,
         wal_session,
+        None,
     )
     .await
 }
@@ -2185,6 +2260,12 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
     // or the channel reconnects. SessionOnceGuard is Arc-backed internally, so
     // the outer Arc is a cheap pointer to the guard, not a double-wrap.
     let session_fired_once_arc = Arc::new(crate::hooks::SessionOnceGuard::new());
+    // This is deliberately separate from `SessionOnceGuard`: the hook guard
+    // spans the adapter handler, whereas canaries must be scoped to the
+    // canonical bound conversation and never shared between channel peers.
+    let channel_canary_registry = Arc::new(ChannelCanaryRegistry::new(
+        CHANNEL_CANARY_REGISTRY_CAPACITY,
+    ));
 
     Box::new(move |inbound: InboundMessage| {
         let provider = Arc::clone(&provider);
@@ -2220,6 +2301,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
         let views_executor = views_executor.clone();
         // GOLD-CCPARITY-ONCE: clone the session Arc so the async future owns it.
         let session_fired_once = Arc::clone(&session_fired_once_arc);
+        let channel_canary_registry = Arc::clone(&channel_canary_registry);
         Box::pin(async move {
             let Some(mut inbound) = admit_bound_inbound(&inbound_binding, inbound) else {
                 return Ok(None);
@@ -2805,6 +2887,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             None,
                             &session_fired_once,
                             channel_wal_session,
+                            None,
                         )
                         .await;
                     }
@@ -4267,6 +4350,70 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             }
 
             // ── Route-bound MCP catalogue (channel path) ───────────────────
+            // Mint/reuse only after this inbound has passed every admission
+            // gate and route decision. The canary is inserted into the same
+            // typed A-E bundle before MCP catalogue insertion, so its required
+            // retention participates in the final budget and the catalogue
+            // slot is shifted by the shared CLI helper.
+            let channel_canary = match channel_canary_registry.acquire(
+                canonical_admitted_channel_wal_identity(&inbound_binding, &inbound)
+                    .context("canonical channel canary identity")?,
+            ) {
+                Ok(canary) => canary,
+                Err(error) => {
+                    warn!(
+                        channel = channel_str,
+                        error = %error,
+                        "channel canary mint failed; provider dispatch blocked"
+                    );
+                    return release_local_channel_notice_in(
+                        &writer,
+                        &neoth_home,
+                        &hooks,
+                        &autonomy_policy,
+                        &inbound,
+                        &inbound_binding,
+                        channel_str,
+                        &sender_hash,
+                        "[NEOTH] Request blocked before sending: session integrity setup failed.",
+                        "channel-canary-setup-error",
+                        channel_asker.as_ref().map(Arc::clone),
+                        &session_fired_once,
+                        channel_wal_session,
+                    )
+                    .await;
+                }
+            };
+            channel_mcp_catalogue_slot = match crate::cli::chat::insert_chat_canary(
+                &mut channel_budget_items,
+                channel_mcp_catalogue_slot,
+                channel_canary.as_ref(),
+            ) {
+                Ok(slot) => slot,
+                Err(error) => {
+                    warn!(
+                        channel = channel_str,
+                        error = %error,
+                        "channel canary insertion failed; provider dispatch blocked"
+                    );
+                    return release_local_channel_notice_in(
+                        &writer,
+                        &neoth_home,
+                        &hooks,
+                        &autonomy_policy,
+                        &inbound,
+                        &inbound_binding,
+                        channel_str,
+                        &sender_hash,
+                        "[NEOTH] Request blocked before sending: session integrity setup failed.",
+                        "channel-canary-insertion-error",
+                        channel_asker.as_ref().map(Arc::clone),
+                        &session_fired_once,
+                        channel_wal_session,
+                    )
+                    .await;
+                }
+            };
             // The exact leaf is fixed above. Council/MIF/direct and skill-only
             // refinement therefore never start catalogue discovery processes.
             let channel_mcp_catalogue: Option<crate::mcp::catalogue::McpPromptCatalogue> =
@@ -4471,12 +4618,19 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 provider.as_ref(),
                 request_token_cap,
             );
+            // All channel provider leaves, including retries reached through
+            // fallback/cost wrappers, cross this concrete completion boundary
+            // before orchestration, logging, transcript, or egress consumers.
+            let guarded_provider = crate::cli::chat::CanaryGuardedProvider::new(
+                &token_capped_provider,
+                channel_canary.as_ref(),
+            );
             // Every retry/helper starts from this exact degraded request. The
             // live dispatch consumes `req` in one of the branches below.
             let recovery_base_req = req.clone();
             let authorized_provider =
                 crate::providers::cost_authorization::CostAuthorizingProvider::new(
-                    &token_capped_provider,
+                    &guarded_provider,
                     provider_call_authorizer.clone(),
                     req.model.clone(),
                     "channel_provider_round",
@@ -4547,13 +4701,14 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     decision = ?decision,
                     "channel council convened — running 3-hemisphere debate",
                 );
-                match crate::cli::chat::dispatch_council_with_recovery(
+                match crate::cli::chat::dispatch_council_with_recovery_with_session_canary(
                     &req,
                     config_for_handler.as_ref(),
                     &neoth_home,
                     &writer,
                     provider_call_authorizer.clone(),
                     &channel_tool_scope,
+                    Arc::clone(&channel_canary),
                 )
                 .await
                 {
@@ -4635,8 +4790,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     match crate::loop_engine::engine::run_loop(
                         &loop_cfg,
                         // The loop installs its own per-leaf authorizer. Keep
-                        // the token cap, but do not nest the channel boundary.
-                        &token_capped_provider,
+                        // the token cap and the concrete canary completion
+                        // boundary, but do not nest the channel cost boundary.
+                        &guarded_provider,
                         req.clone(),
                         &mcp_servers_for_loop,
                         &writer,
@@ -4895,7 +5051,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 4096,
                                 crate::channels::live_delivery::MAX_LIVE_RESPONSE_BYTES,
                             );
-                    let stream = authorized_provider.stream(req).await?;
+                    let stream = crate::cli::chat::guard_chat_canary_stream(
+                        Arc::clone(&channel_canary),
+                        authorized_provider.stream(req).await?,
+                    );
                     match crate::channels::live_delivery::collect_provider_stream(
                         stream,
                         delivery,
@@ -5229,6 +5388,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 &retry_completion,
                             );
                         }
+                        let error = crate::cli::chat::opaque_chat_post_mint_failure(
+                            "channel_refusal_recovery_provider_error",
+                            &error,
+                        );
                         warn!(
                             channel = channel_str,
                             reframing = reframing_id,
@@ -5237,7 +5400,11 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         );
                     }
                     Err(e) => {
-                        warn!(error = %e, "channel refusal recovery failed (non-fatal)");
+                        let error = crate::cli::chat::opaque_chat_post_mint_failure(
+                            "channel_refusal_recovery",
+                            &e,
+                        );
+                        warn!(error = %error, "channel refusal recovery failed (non-fatal)");
                     }
                 }
             }
@@ -5272,6 +5439,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                     .as_deref(),
                                 writer: Some(&writer),
                                 now_unix: crate::time::now_unix_secs() as i64,
+                                session_canary: Some(channel_canary.as_ref()),
                                 #[cfg(test)]
                                 loader_override: abliterated_loader.as_deref(),
                             },
@@ -5320,6 +5488,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 crate::security::refusal_abliterated::AbliteratedOutcome::NotRecovered,
                             ) => {}
                             Err(error) => {
+                                let error = crate::cli::chat::opaque_chat_post_mint_failure(
+                                    "channel_abliterated_fallback",
+                                    &error,
+                                );
                                 warn!(
                                     channel = channel_str,
                                     error = %error,
@@ -5359,6 +5531,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         &instance_paths.home,
                         &provider_call_authorizer,
                         Some(&writer),
+                        Some(channel_canary.as_ref()),
                         now_unix_ch,
                         &mut recovery_attempt_budget,
                     )
@@ -5394,8 +5567,12 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         }
                         Ok(crate::skills::teacher::TeacherOutcome::NotEscalated) => {}
                         Err(e) => {
+                            let error = crate::cli::chat::opaque_chat_post_mint_failure(
+                                "channel_teacher_escalation",
+                                &e,
+                            );
                             warn!(
-                                error = %e,
+                                error = %error,
                                 channel = channel_str,
                                 "ODY-08 teacher escalation failed (non-fatal)"
                             );
@@ -5407,6 +5584,17 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             if let Some(notice) = crate::providers::operator_refusal_notice(&completion) {
                 completion.text = notice;
             }
+
+            // Hooks, refusal recovery, abliterated fallback, teacher
+            // correction, and the operator-refusal presentation can all
+            // replace the original completion. Check that settled text before
+            // any archive, profile pipeline, prepared-result receipt, or
+            // channel egress is allowed to consume it.
+            crate::cli::chat::ensure_chat_canary_absent(
+                channel_canary.as_ref(),
+                crate::cli::chat::CanaryOutputPhase::FinalPostReply,
+                &completion.text,
+            )?;
 
             // ── ADR auto-extraction (Phase 31 R-21 ADR-1) ─────────────────
             // Scan the reply for `DECISION:` / `Beschluss:` / `ADR:` markers
@@ -5823,6 +6011,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 live_delivery.as_mut(),
                 &session_fired_once,
                 channel_wal_session,
+                Some(channel_canary.as_ref()),
             )
             .await
         })
@@ -6377,6 +6566,25 @@ async fn retain_channel_repo_context_unavailable_outcome(
 mod tests {
     use super::*;
 
+    #[test]
+    fn channel_canary_registry_reuses_per_conversation_and_evicts_at_capacity() {
+        let registry = ChannelCanaryRegistry::new(2);
+        let first = registry.acquire(b"bound-conversation-a".to_vec()).unwrap();
+        let second = registry.acquire(b"bound-conversation-b".to_vec()).unwrap();
+        let first_reused = registry.acquire(b"bound-conversation-a".to_vec()).unwrap();
+        assert!(Arc::ptr_eq(&first, &first_reused));
+        assert!(!Arc::ptr_eq(&first, &second));
+
+        // Touching A makes B the oldest entry. A third conversation may evict
+        // only B; the registry stays bounded and never derives a token from
+        // message text or durable state.
+        let _third = registry.acquire(b"bound-conversation-c".to_vec()).unwrap();
+        let first_after_pressure = registry.acquire(b"bound-conversation-a".to_vec()).unwrap();
+        let second_after_eviction = registry.acquire(b"bound-conversation-b".to_vec()).unwrap();
+        assert!(Arc::ptr_eq(&first, &first_after_pressure));
+        assert!(!Arc::ptr_eq(&second, &second_after_eviction));
+    }
+
     #[tokio::test]
     async fn paired_sender_cannot_consume_confirm_bus_but_pinned_operator_can() {
         use std::time::Duration;
@@ -6817,6 +7025,104 @@ mod tests {
         }
     }
 
+    /// Exercises the real handler boundary rather than a guard surrogate: the
+    /// provider reads the canary only from the request system finalized by the
+    /// channel pipeline, then deliberately echoes it for quarantine coverage.
+    struct ChannelFinalizedCanaryEchoProvider {
+        calls: AtomicUsize,
+        echo_finalized_canary: AtomicBool,
+        captured_systems: std::sync::Mutex<Vec<String>>,
+        echoed_outputs: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl ChannelFinalizedCanaryEchoProvider {
+        fn new() -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+                echo_finalized_canary: AtomicBool::new(true),
+                captured_systems: std::sync::Mutex::new(Vec::new()),
+                echoed_outputs: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn set_echo_finalized_canary(&self, enabled: bool) {
+            self.echo_finalized_canary.store(enabled, Ordering::SeqCst);
+        }
+
+        fn captured_systems(&self) -> Vec<String> {
+            self.captured_systems
+                .lock()
+                .expect("finalized canary system capture lock")
+                .clone()
+        }
+
+        fn echoed_outputs(&self) -> Vec<String> {
+            self.echoed_outputs
+                .lock()
+                .expect("finalized canary echo capture lock")
+                .clone()
+        }
+    }
+
+    #[async_trait]
+    impl Provider for ChannelFinalizedCanaryEchoProvider {
+        fn name(&self) -> &'static str {
+            "channel-finalized-canary-echo"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("channel-finalized-canary-echo-model")
+        }
+
+        async fn complete(
+            &self,
+            request: crate::providers::Request,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let system = request
+                .system
+                .expect("real finalized channel provider request has a system field");
+            let canary = system
+                .split_once(crate::cli::chat::CHAT_CANARY_CONTEXT_PREFIX)
+                .and_then(|(_, suffix)| suffix.split_whitespace().next())
+                .expect("real finalized channel provider request retains one canary")
+                .to_owned();
+            self.captured_systems
+                .lock()
+                .expect("finalized canary system capture lock")
+                .push(system);
+
+            let text = if self.echo_finalized_canary.load(Ordering::SeqCst) {
+                // The detector deliberately treats whitespace-split literals
+                // as one leak. Exercise that exact body form through the real
+                // channel provider leaf instead of returning a test token.
+                let split_at = canary
+                    .char_indices()
+                    .nth(canary.chars().count() / 2)
+                    .map(|(index, _)| index)
+                    .unwrap_or(canary.len());
+                let echoed = format!("{}\n{}", &canary[..split_at], &canary[split_at..]);
+                self.echoed_outputs
+                    .lock()
+                    .expect("finalized canary echo capture lock")
+                    .push(echoed.clone());
+                echoed
+            } else {
+                "clean channel response after quarantine".to_owned()
+            };
+            Ok(crate::providers::Completion {
+                text,
+                identity: crate::providers::CompletionIdentity {
+                    provider: self.name().to_owned(),
+                    wire_model: "channel-finalized-canary-echo-model".to_owned(),
+                    dispatch_route: Vec::new(),
+                },
+                model: "channel-finalized-canary-echo-model".to_owned(),
+                ..Default::default()
+            })
+        }
+    }
+
     fn retained_skill_registry_context(system: &str) -> String {
         use crate::pipeline::untrusted_context::{GUARD_CLOSE, GUARD_OPEN};
 
@@ -7086,6 +7392,243 @@ mod tests {
             frames, 0,
             "the WAL segment header is allowed, but no checkpoint or audit frame was written"
         );
+    }
+
+    #[test]
+    fn pipeline_handler_quarantines_a_real_finalized_canary_before_receipts_archive_wal_and_egress(
+    ) {
+        let _environment = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build real finalized channel canary runtime")
+            .block_on(async {
+        fn contains_whitespace_normalized_canary(value: &str, canary: &str) -> bool {
+            let normalized_value: String = value.chars().filter(|ch| !ch.is_whitespace()).collect();
+            let normalized_canary: String = canary.chars().filter(|ch| !ch.is_whitespace()).collect();
+            normalized_value.contains(&normalized_canary)
+        }
+
+        fn json_value_omits_canary(value: &serde_json::Value, canary: &str) -> bool {
+            match value {
+                serde_json::Value::String(text) => !contains_whitespace_normalized_canary(text, canary),
+                serde_json::Value::Array(values) => values
+                    .iter()
+                    .all(|value| json_value_omits_canary(value, canary)),
+                serde_json::Value::Object(values) => values
+                    .values()
+                    .all(|value| json_value_omits_canary(value, canary)),
+                _ => true,
+            }
+        }
+
+        fn assert_tree_omits_canary(path: &std::path::Path, canary: &str) {
+            let entries = std::fs::read_dir(path).expect("read isolated channel fixture tree");
+            for entry in entries {
+                let entry = entry.expect("read isolated channel fixture entry");
+                let file_type = entry.file_type().expect("read isolated channel fixture type");
+                if file_type.is_dir() {
+                    assert_tree_omits_canary(&entry.path(), canary);
+                } else if file_type.is_file() {
+                    let bytes = std::fs::read(entry.path()).expect("read isolated channel fixture file");
+                    assert!(
+                        !bytes.windows(canary.len()).any(|window| window == canary.as_bytes()),
+                        "persisted channel fixture data must never contain the echoed canary"
+                    );
+                    if let Ok(text) = std::str::from_utf8(&bytes) {
+                        assert!(
+                            !contains_whitespace_normalized_canary(text, canary),
+                            "persisted text must not contain a whitespace-split canary"
+                        );
+                        if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
+                            assert!(
+                                json_value_omits_canary(&value, canary),
+                                "persisted JSON fields must not contain a whitespace-split canary"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        let fixture = tempfile::tempdir().expect("create canary channel fixture");
+        let home = fixture.path().join("home");
+        let repo = fixture.path().join("repo");
+        std::fs::create_dir_all(repo.join("src")).expect("create canary channel source root");
+        std::fs::create_dir_all(&home).expect("create canary channel home");
+        std::fs::write(
+            repo.join("src/real_finalized_channel_canary.rs"),
+            "pub fn real_finalized_channel_canary_fixture() {}\n",
+        )
+        .expect("write canary channel source marker");
+        let paths = crate::config::InstancePaths::for_home(&home);
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo)
+            .expect("discover canary channel repository root");
+        crate::code_map::rebuild_snapshot(
+            &root,
+            &paths.code_map,
+            crate::code_map::RebuildOptions::default(),
+        )
+        .expect("seed canary channel code-map snapshot");
+        let original_cwd = std::env::current_dir().expect("capture canary channel CWD");
+        std::env::set_current_dir(&repo).expect("enter canary channel repository root");
+        struct RestoreCanaryChannelCwd(std::path::PathBuf);
+        impl Drop for RestoreCanaryChannelCwd {
+            fn drop(&mut self) {
+                let _ = std::env::set_current_dir(&self.0);
+            }
+        }
+        let _cwd = RestoreCanaryChannelCwd(original_cwd);
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).expect("create canary channel WAL directory");
+        let wal_path = wal_dir.join("000001.wal");
+        let (writer, writer_join) = crate::wal::spawn_for_home(
+            wal_path.clone(),
+            home.clone(),
+        )
+        .expect("spawn canary channel WAL");
+        let mut config = FreedomConfig::default();
+        config.autonomy = crate::permissions::AutonomyLevel::Full;
+        config.council.disabled = Some(true);
+        config.memory.recall_shortcut = false;
+        config.code_map.auto_context_max_files = 1;
+        config.refusal_recovery.enabled = false;
+        config.refusal_recovery.abliterated_fallback_enabled = false;
+        config.refusal_recovery.teacher_escalation_enabled = false;
+        let provider = Arc::new(ChannelFinalizedCanaryEchoProvider::new());
+        let handler = build_pipeline_handler(PipelineHandlerDeps {
+            inbound_binding: AuthenticatedInboundBinding::for_account(
+                ChannelRef::default_account(ChannelId::Telegram),
+            ),
+            provider: provider.clone(),
+            live_channel: None,
+            writer: writer.clone(),
+            operator_id: None,
+            goal_max_turns: 1,
+            meter: crate::providers::meter::Meter::with_default_window(),
+            rate_limiter: Arc::new(crate::channels::rate_limit::RateLimiter::with_defaults()),
+            segment_path: wal_path.clone(),
+            neoth_home: home.clone(),
+            profile_config: crate::config::ProfileConfig::default(),
+            reload_controller: Arc::new(crate::config::reload::ReloadController::new(
+                config,
+                home.join("freedom.yaml"),
+            )),
+            views_conn: None,
+            views_executor: None,
+            confirm_bus: None,
+            abliterated_loader: None,
+        });
+
+        let quarantined = handler(inbound(
+            Some("find real_finalized_channel_canary_fixture"),
+            None,
+        ))
+            .await
+            .expect_err("the echoed finalized request canary must be quarantined");
+        assert_eq!(
+            provider.calls.load(Ordering::SeqCst),
+            1,
+            "the mock leaf must receive the actual finalized channel request"
+        );
+        let systems = provider.captured_systems();
+        assert_eq!(systems.len(), 1);
+        let canary = systems[0]
+            .split_once(crate::cli::chat::CHAT_CANARY_CONTEXT_PREFIX)
+            .and_then(|(_, suffix)| suffix.split_whitespace().next())
+            .expect("captured finalized request has the canary the mock echoed")
+            .to_owned();
+        assert!(systems[0].contains(&canary));
+        let echoed = provider.echoed_outputs();
+        assert_eq!(echoed.len(), 1);
+        assert!(echoed[0].contains('\n'));
+        assert!(quarantined.to_string().contains("content quarantined"));
+        assert!(
+            !quarantined.to_string().contains(&canary),
+            "the caller receives an opaque quarantine error, never the token"
+        );
+        assert!(
+            !quarantined.to_string().contains(&echoed[0]),
+            "the caller receives neither a whitespace-split canary nor its literal"
+        );
+        assert!(
+            !home.join("archive").exists(),
+            "the leaking response cannot reach the session archive"
+        );
+
+        // Reuse the same handler and canonical conversation after the failed
+        // leaf. The clean response proves the real direct channel wiring still
+        // reaches its provider and emits its ordinary result.
+        provider.set_echo_finalized_canary(false);
+        let clean = handler(inbound(
+            Some("clean response after real_finalized_channel_canary_fixture"),
+            None,
+        ))
+            .await
+            .expect("a later clean provider completion remains deliverable")
+            .expect("headless channel receives the clean outbound reply");
+        assert_eq!(clean.text, "clean channel response after quarantine");
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+        let systems = provider.captured_systems();
+        assert_eq!(systems.len(), 2);
+        let reused_canary = systems[1]
+            .split_once(crate::cli::chat::CHAT_CANARY_CONTEXT_PREFIX)
+            .and_then(|(_, suffix)| suffix.split_whitespace().next())
+            .expect("clean finalized request retains the conversation canary");
+        assert_eq!(reused_canary, canary);
+
+        drop(handler);
+        drop(writer);
+        writer_join.await.expect("drain canary channel WAL");
+        let wal = std::fs::read(&wal_path).expect("read canary channel WAL");
+        assert!(
+            !wal.windows(canary.len()).any(|window| window == canary.as_bytes()),
+            "the raw canary must not reach any WAL frame, including prepared receipts"
+        );
+        assert!(
+            !wal.windows(echoed[0].len()).any(|window| window == echoed[0].as_bytes()),
+            "the whitespace-split provider body must not reach any WAL frame"
+        );
+        let mut prepared_receipts = 0usize;
+        let mut egress_frames = 0usize;
+        crate::wal::scan::for_each_frame(&wal, |_, frame| {
+            if let Ok(text) = std::str::from_utf8(frame.payload) {
+                assert!(
+                    !contains_whitespace_normalized_canary(text, &canary),
+                    "decoded WAL text must not contain a whitespace-split canary"
+                );
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
+                    assert!(
+                        json_value_omits_canary(&value, &canary),
+                        "decoded WAL JSON fields must not contain a whitespace-split canary"
+                    );
+                }
+            }
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS {
+                egress_frames += 1;
+            }
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8
+                && let Ok(payload) = serde_json::from_slice::<serde_json::Value>(frame.payload)
+                && payload["status"] == "final_reply_prepared"
+            {
+                prepared_receipts += 1;
+            }
+            Ok(())
+        })
+        .expect("scan canary channel WAL");
+        assert_eq!(
+            prepared_receipts, 1,
+            "only the later clean response may create the retained prepared-result receipt"
+        );
+        assert_eq!(
+            egress_frames, 1,
+            "only the later clean response may create channel egress"
+        );
+        assert_tree_omits_canary(&home, &canary);
+        assert_tree_omits_canary(&home, &echoed[0]);
+            });
     }
 
     #[tokio::test]
@@ -8999,6 +9542,7 @@ mod tests {
             None,
             &once_guard_test,
             Some(wal_session),
+            None,
         )
         .await
         .expect("release ok");

@@ -88,6 +88,64 @@ fn teacher_trigger(
     )
 }
 
+/// Dispatch the one teacher provider leaf and quarantine its raw completion
+/// before any caller can inspect, account for, persist, or turn it into a
+/// skill. Keeping this exact leaf separate makes the ordering testable without
+/// widening the production teacher-provider selection surface.
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_teacher_completion(
+    teacher: &dyn crate::providers::Provider,
+    teacher_req: crate::providers::Request,
+    authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+    writer: Option<&WalWriterHandle>,
+    provider_name: &str,
+    local_hash: &str,
+    prompt_hash: &str,
+    is_refusal: bool,
+    is_low_conf: bool,
+    ts: i64,
+    session_canary: Option<&crate::security::injection_tracker::CanaryToken>,
+    attempt_budget: &mut crate::security::refusal_recovery::RecoveryAttemptBudget,
+) -> Result<Option<crate::providers::Completion>> {
+    let corrected = match attempt_budget
+        .dispatch(|| async {
+            // Emit only after the shared gate reserves this provider leaf.
+            // Exhausted recovery must not leave a false attempted record.
+            emit_wal(
+                writer,
+                EVENT_TYPE_TEACHER_ESCALATION_ATTEMPTED,
+                serde_json::json!({
+                    "provider": provider_name,
+                    "local_response_hash_xxh3": local_hash,
+                    "prompt_hash_xxh3": prompt_hash,
+                    "is_refusal": is_refusal,
+                    "is_low_confidence": is_low_conf,
+                    "ts_unix": ts,
+                }),
+            )?;
+            teacher
+                .complete_authorized(teacher_req, authorizer, "teacher.escalation")
+                .await
+        })
+        .await
+    {
+        crate::security::refusal_recovery::RecoveryDispatch::Completed(completion) => completion,
+        crate::security::refusal_recovery::RecoveryDispatch::ProviderError(error) => {
+            return Err(error);
+        }
+        crate::security::refusal_recovery::RecoveryDispatch::Exhausted => return Ok(None),
+        crate::security::refusal_recovery::RecoveryDispatch::DeadlineElapsed => {
+            anyhow::bail!("turn-wide refusal-recovery deadline elapsed before teacher escalation")
+        }
+    };
+
+    crate::cli::chat::guard_optional_chat_canary_completion(session_canary, corrected)
+        .map(Some)
+        .map_err(|error| {
+            crate::cli::chat::opaque_chat_post_mint_failure("teacher_escalation", &error)
+        })
+}
+
 /// Try the SOTA teacher escalation path.
 ///
 /// # Arguments
@@ -105,6 +163,9 @@ fn teacher_trigger(
 /// * `authorizer` — the live per-leaf cost/permission boundary inherited from
 ///   the calling chat or channel turn.
 /// * `writer` — optional WAL writer (absent in unit tests / dry-run callers).
+/// * `session_canary` — the optional opaque token rendered into the finalized
+///   request. The teacher leaf checks it before it can classify, persist, or
+///   write a correction skill.
 /// * `ts` — `now_unix() as i64` from the calling turn.
 ///
 /// # Returns
@@ -130,6 +191,7 @@ pub(crate) async fn try_teacher_escalation(
     home: &std::path::Path,
     authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
     writer: Option<&WalWriterHandle>,
+    session_canary: Option<&crate::security::injection_tracker::CanaryToken>,
     ts: i64,
     attempt_budget: &mut crate::security::refusal_recovery::RecoveryAttemptBudget,
 ) -> Result<TeacherOutcome> {
@@ -226,38 +288,23 @@ pub(crate) async fn try_teacher_escalation(
     }
 
     // ── Call the teacher ────────────────────────────────────────────────────
-    let corrected = match attempt_budget
-        .dispatch(|| async {
-            // Emit only after the shared gate reserves this provider leaf.
-            // Exhausted recovery must not leave a false attempted record.
-            emit_wal(
-                writer,
-                EVENT_TYPE_TEACHER_ESCALATION_ATTEMPTED,
-                serde_json::json!({
-                    "provider": provider_name,
-                    "local_response_hash_xxh3": &local_hash,
-                    "prompt_hash_xxh3": &prompt_hash,
-                    "is_refusal": is_refusal,
-                    "is_low_confidence": is_low_conf,
-                    "ts_unix": ts,
-                }),
-            )?;
-            teacher
-                .complete_authorized(teacher_req, authorizer, "teacher.escalation")
-                .await
-        })
-        .await
-    {
-        crate::security::refusal_recovery::RecoveryDispatch::Completed(completion) => completion,
-        crate::security::refusal_recovery::RecoveryDispatch::ProviderError(error) => {
-            return Err(error);
-        }
-        crate::security::refusal_recovery::RecoveryDispatch::Exhausted => {
-            return Ok(TeacherOutcome::NotEscalated);
-        }
-        crate::security::refusal_recovery::RecoveryDispatch::DeadlineElapsed => {
-            anyhow::bail!("turn-wide refusal-recovery deadline elapsed before teacher escalation")
-        }
+    let Some(corrected) = dispatch_teacher_completion(
+        teacher.as_ref(),
+        teacher_req,
+        authorizer,
+        writer,
+        provider_name,
+        &local_hash,
+        &prompt_hash,
+        is_refusal,
+        is_low_conf,
+        ts,
+        session_canary,
+        attempt_budget,
+    )
+    .await?
+    else {
+        return Ok(TeacherOutcome::NotEscalated);
     };
     let corrected_bytes = corrected.text.len();
     let teacher_refused =
@@ -446,6 +493,7 @@ mod tests {
                 crate::permissions::AutonomyLevel::Full,
             ),
             None,
+            None,
             0,
             &mut attempt_budget,
         )
@@ -484,6 +532,77 @@ mod tests {
         assert!(low_confidence_local("I'M NOT SURE about this."));
         assert!(low_confidence_local("I DON'T KNOW."));
         assert!(low_confidence_local("CANNOT DETERMINE."));
+    }
+
+    struct LeakingTeacherProvider {
+        reply: String,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for LeakingTeacherProvider {
+        fn name(&self) -> &'static str {
+            "teacher_fixture"
+        }
+
+        async fn complete(
+            &self,
+            _request: crate::providers::Request,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            Ok(crate::providers::Completion {
+                text: self.reply.clone(),
+                ..Default::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn teacher_leaf_canary_leak_is_opaque_before_correction_persistence() {
+        let canary = crate::security::injection_tracker::CanaryToken::generate().unwrap();
+        let literal = canary.as_context_literal();
+        let leaked = format!("{}\n{}", &literal[..10], &literal[10..]);
+        let teacher = LeakingTeacherProvider {
+            reply: leaked.clone(),
+        };
+        let initial = crate::providers::Completion {
+            text: "I am not sure.".to_owned(),
+            ..Default::default()
+        };
+        let mut attempt_budget =
+            crate::security::refusal_recovery::RecoveryAttemptBudget::after_initial_completion(
+                &initial,
+            );
+        let skill_home = tempfile::tempdir().unwrap();
+
+        let error = dispatch_teacher_completion(
+            &teacher,
+            crate::providers::Request {
+                prompt: "operator request".to_owned(),
+                ..Default::default()
+            },
+            &crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            None,
+            "local_fixture",
+            "local-hash",
+            "prompt-hash",
+            false,
+            true,
+            0,
+            Some(&canary),
+            &mut attempt_budget,
+        )
+        .await
+        .expect_err("split canary in teacher response must be quarantined");
+
+        let surfaced = format!("{error:#}");
+        assert!(surfaced.contains("content quarantined"));
+        assert!(!surfaced.contains(literal));
+        assert!(!surfaced.contains(&leaked));
+        assert!(
+            !skill_home.path().join("skills").exists(),
+            "the guarded teacher leaf returns before the caller can write a correction skill"
+        );
     }
 
     #[test]

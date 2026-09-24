@@ -185,6 +185,30 @@ jobs:
           cli::serve_tasks::document_ingest_fleet_tests::disabled_document_ingest_returns_before_worker_construction	neothd/src/cli/serve_tasks.rs
           cli::serve::document_ingest_cron_fingerprint_tests::document_ingest_fingerprint_binds_roots_quota_and_vault	neothd/src/cli/serve.rs
           daemon::doc_ingest_cron::tests::drive_case_aliases_share_one_physical_root_inventory	neothd/src/daemon/doc_ingest_cron.rs
+          cli::chat::tests::chat_canary_renders_only_from_the_typed_system_bundle	neothd/src/cli/chat.rs
+          cli::chat::tests::chat_canary_preserves_identity_order_and_shifts_mcp_slot	neothd/src/cli/chat.rs
+          cli::chat::tests::chat_session_canary_is_shared_by_two_typed_provider_turns	neothd/src/cli/chat.rs
+          cli::chat::tests::chat_canary_is_retained_or_the_final_budget_boundary_fails_closed	neothd/src/cli/chat.rs
+          cli::chat::tests::chat_canary_output_observation_is_clean_or_digest_only	neothd/src/cli/chat.rs
+          cli::chat::tests::chat_canary_detects_a_leak_introduced_by_final_replacement	neothd/src/cli/chat.rs
+          cli::chat::tests::stream_canary_prefix_is_not_emitted_before_the_next_chunk_completes_it	neothd/src/cli/chat.rs
+          cli::chat::tests::guarded_channel_stream_quarantines_a_split_canary_before_live_delivery	neothd/src/cli/chat.rs
+          cli::chat::tests::stream_canary_clean_end_flushes_only_the_verified_suffix	neothd/src/cli/chat.rs
+          cli::chat::tests::stream_canary_unicode_whitespace_prefix_is_bounded_and_terminal	neothd/src/cli/chat.rs
+          cli::chat::tests::stream_canary_ascii_whitespace_prefix_never_reaches_a_sink_before_error	neothd/src/cli/chat.rs
+          cli::chat::tests::stream_canary_utf8_boundary_preserves_clean_text	neothd/src/cli/chat.rs
+          cli::chat::tests::stream_canary_huge_clean_chunk_is_linear_and_never_grows_pending	neothd/src/cli/chat.rs
+          cli::chat::tests::guarded_provider_error_never_returns_post_mint_request_or_canary_content	neothd/src/cli/chat.rs
+          cli::chat::tests::guarded_provider_preserves_only_sanitized_quota_control_data	neothd/src/cli/chat.rs
+          cli::chat::tests::mcp_intermediate_provider_leaf_is_quarantined_before_driver_consumes_it	neothd/src/cli/chat.rs
+          cli::chat::tests::loop_round_provider_leaf_is_quarantined_before_round_state_updates	neothd/src/cli/chat.rs
+          cli::chat::tests::guarded_raw_loop_provider_reaches_clean_transport_without_nested_authorization	neothd/src/cli/chat.rs
+          cli::chat::tests::council_nonfinal_leaf_is_quarantined_before_debate_aggregation	neothd/src/cli/chat.rs
+          cli::chat::tests::council_post_mint_provider_error_is_opaque_before_debate_orchestration	neothd/src/cli/chat.rs
+          cli::serve_pipeline::tests::channel_canary_registry_reuses_per_conversation_and_evicts_at_capacity	neothd/src/cli/serve_pipeline.rs
+          cli::serve_pipeline::tests::pipeline_handler_quarantines_a_real_finalized_canary_before_receipts_archive_wal_and_egress	neothd/src/cli/serve_pipeline.rs
+          security::refusal_abliterated::tests::local_shadow_canary_leak_is_opaque_and_never_reaches_cloud_continuation	neothd/src/security/refusal_abliterated.rs
+          skills::teacher::tests::teacher_leaf_canary_leak_is_opaque_before_correction_persistence	neothd/src/skills/teacher.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -201,7 +225,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 115 ]]; then
+          if [[ "$expected" -ne 139 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -211,7 +235,7 @@ jobs:
             cargo test -p neoth --lib --locked --no-run > "$evidence/compile.log" 2>&1 || compile_status=$?
           else
             compile_status=64
-            printf 'selection is not the required 115 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 139 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

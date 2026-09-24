@@ -3,6 +3,23 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W880 channel conversation canary publication (2026-09-24):** W869/W873/W876
+wire an in-memory, bounded canonical-conversation canary into Required Block A,
+direct/recovery/MCP/loop/Council provider leaves and the stream before previews.
+Local-shadow and teacher completions are quarantined before cloud continuation
+or correction-skill persistence; settled output is checked before archive and
+prepared receipts, then checked again after PreEgress hooks. Post-mint provider
+and Council errors are opaque. W877 final independent static review APPROVED.
+The actual-handler regression reaches a finalized provider request, rejects a
+whitespace-split echo before durable sinks and then verifies a clean next turn
+with the same conversation token and exactly one prepared/egress receipt.
+Twenty-four selected cases bring Native1614 (+Win40/Linux55/mac55), Group1381
+and Windows139. The provider-callsite guard retains all five channel calls with
+its changed stream-guard context explicitly rebound. Hosted validation remains
+pending; C1a, B7 and B8 stay OPEN and all roadmap counts remain unchanged.
+Claude ACK011 received; its final source review is still pending. GitHub-only
+validation remains mandatory under the BSOD hold. See docs/gold-wave869-channel-canary.md.
+
 **W874 watcher Core accepted (2026-09-24):** Core36039185385 at
 aec43ce600e7dc277747bbea9dee2c17f9d68dc5 passed slim production Clippy,
 default-feature core-test typecheck, CLI build and reference export.

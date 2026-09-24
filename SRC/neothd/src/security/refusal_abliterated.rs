@@ -59,6 +59,11 @@ pub(crate) struct AbliteratedFallbackOptions<'a> {
     pub(crate) model: Option<&'a str>,
     pub(crate) writer: Option<&'a WalWriterHandle>,
     pub(crate) now_unix: i64,
+    /// The already-rendered channel/CLI request owns this token.  A recovery
+    /// leaf must inspect its raw completion before it may classify, persist,
+    /// or compose that completion into another provider request.
+    pub(crate) session_canary:
+        Option<&'a crate::security::injection_tracker::CanaryToken>,
     #[cfg(test)]
     /// Per-invocation fixture dependency. This stays crate-private and is
     /// absent from production builds; it cannot alter another turn's loader.
@@ -285,6 +290,7 @@ async fn try_abliterated_fallback_with_loader(
         model,
         writer,
         now_unix,
+        session_canary,
         #[cfg(test)]
             loader_override: _,
     } = options;
@@ -340,6 +346,13 @@ async fn try_abliterated_fallback_with_loader(
             anyhow::bail!("turn-wide refusal-recovery deadline elapsed before local shadow")
         }
     };
+    let shadow = crate::cli::chat::guard_optional_chat_canary_completion(
+        session_canary,
+        shadow,
+    )
+    .map_err(|error| {
+        crate::cli::chat::opaque_chat_post_mint_failure("abliterated_local_shadow", &error)
+    })?;
 
     if crate::security::refusal_recovery::observe_completion_refusal(&shadow).is_some() {
         emit_wal(
@@ -399,6 +412,16 @@ async fn try_abliterated_fallback_with_loader(
         .await
     {
         crate::security::refusal_recovery::RecoveryDispatch::Completed(completion) => {
+            let completion = crate::cli::chat::guard_optional_chat_canary_completion(
+                session_canary,
+                completion,
+            )
+            .map_err(|error| {
+                crate::cli::chat::opaque_chat_post_mint_failure(
+                    "abliterated_cloud_continuation",
+                    &error,
+                )
+            })?;
             let completion =
                 crate::security::refusal_recovery::merge_recovered_completion(&shadow, completion);
             if crate::security::refusal_recovery::observe_completion_refusal(&completion).is_some()
@@ -819,6 +842,7 @@ mod tests {
                 operator_origin: local_operator_origin(),
                 model: None,
                 writer: None,
+                session_canary: None,
                 now_unix: 0,
                 loader_override: None,
             },
@@ -853,6 +877,7 @@ mod tests {
                 operator_origin: local_operator_origin(),
                 model: Some("some-model-id"),
                 writer: None,
+                session_canary: None,
                 now_unix: 0,
                 loader_override: None,
             },
@@ -884,6 +909,7 @@ mod tests {
                 operator_origin: None,
                 model: Some("nonexistent-model"),
                 writer: None,
+                session_canary: None,
                 now_unix: 0,
                 loader_override: None,
             },
@@ -944,6 +970,101 @@ mod tests {
         }
     }
 
+    struct LeakingAbliteratedLoader {
+        reply: String,
+    }
+
+    #[async_trait::async_trait]
+    impl AbliteratedProviderLoader for LeakingAbliteratedLoader {
+        async fn load(&self, _model: &str) -> Result<Box<dyn Provider>> {
+            Ok(Box::new(LeakingAbliteratedProvider {
+                reply: self.reply.clone(),
+            }))
+        }
+    }
+
+    struct LeakingAbliteratedProvider {
+        reply: String,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for LeakingAbliteratedProvider {
+        fn name(&self) -> &'static str {
+            "local_abliterated"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("leaking-local-wire")
+        }
+
+        async fn complete(&self, _request: Request) -> anyhow::Result<Completion> {
+            Ok(Completion {
+                text: self.reply.clone(),
+                ..Default::default()
+            })
+        }
+    }
+
+    struct CountingCloudProvider(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    #[async_trait::async_trait]
+    impl Provider for CountingCloudProvider {
+        fn name(&self) -> &'static str {
+            "cloud"
+        }
+
+        async fn complete(&self, _request: Request) -> anyhow::Result<Completion> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(Completion::default())
+        }
+    }
+
+    #[tokio::test]
+    async fn local_shadow_canary_leak_is_opaque_and_never_reaches_cloud_continuation() {
+        let canary = crate::security::injection_tracker::CanaryToken::generate().unwrap();
+        let literal = canary.as_context_literal();
+        let leaked = format!("{}\n{}", &literal[..10], &literal[10..]);
+        let loader = LeakingAbliteratedLoader { reply: leaked.clone() };
+        let cloud_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cloud = CountingCloudProvider(std::sync::Arc::clone(&cloud_calls));
+        let refused = cloud_refusal();
+        let mut attempt_budget =
+            crate::security::refusal_recovery::RecoveryAttemptBudget::after_initial_completion(
+                &refused,
+            );
+
+        let error = try_abliterated_fallback_with_loader(
+            &loader,
+            &cloud,
+            &crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            &request("explain recursion"),
+            &refused,
+            AbliteratedFallbackOptions {
+                operator_origin: local_operator_origin(),
+                model: Some("fixture-local-model"),
+                writer: None,
+                session_canary: Some(&canary),
+                now_unix: 0,
+                loader_override: None,
+            },
+            &mut attempt_budget,
+        )
+        .await
+        .expect_err("split canary in local shadow must be quarantined");
+
+        let surfaced = format!("{error:#}");
+        assert!(surfaced.contains("content quarantined"));
+        assert!(!surfaced.contains(literal));
+        assert!(!surfaced.contains(&leaked));
+        assert_eq!(
+            cloud_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the local-shadow leak must not compose or dispatch a cloud continuation"
+        );
+    }
+
     #[tokio::test]
     async fn local_fallback_loader_receives_selected_model_and_dispatches_canonical_context() {
         let hostile = concat!(
@@ -998,6 +1119,7 @@ mod tests {
                 operator_origin: local_operator_origin(),
                 model: Some("operator-selected-abliterated-model"),
                 writer: None,
+                session_canary: None,
                 now_unix: 0,
                 loader_override: None,
             },

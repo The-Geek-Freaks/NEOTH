@@ -8915,7 +8915,7 @@ mod tests {
             (
                 "cli/serve_pipeline.rs",
                 5,
-                "e40ddccb850086dfeccf3805c24fea8a70242c05ad2adfb0314920c639d656f1",
+                "98044379c7170479c2fd8a055ecbfa829d2927ea68759ce1132569f5f6415ca1",
             ),
             (
                 "cli/serve_tasks.rs",
