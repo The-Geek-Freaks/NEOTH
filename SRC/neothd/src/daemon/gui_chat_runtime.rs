@@ -1450,10 +1450,7 @@ impl ChatTurnEventSink for RuntimeSink {
                 self.response.update(text.as_bytes());
                 DaemonGuiChatRuntime::emit(turn, GuiChatFramePayload::Delta { text });
             }
-            ChatTurnEvent::Output(ChatOutput::DeferredProviderFrames {
-                accepted_body,
-                ..
-            }) => {
+            ChatTurnEvent::Output(ChatOutput::DeferredProviderFrames { accepted_body, .. }) => {
                 self.response.update(accepted_body.as_bytes());
                 DaemonGuiChatRuntime::emit(
                     turn,
@@ -3351,7 +3348,9 @@ mod lifecycle_tests {
                         let done_index = frames
                             .iter()
                             .position(|frame| frame["payload"]["type"] == "provider_done")
-                            .expect("Replace provider boundary is present in the shared runtime replay");
+                            .expect(
+                                "Replace provider boundary is present in the shared runtime replay",
+                            );
                         let terminal_index = frames.len() - 1;
                         assert!(
                             delta_index < done_index && done_index < terminal_index,
