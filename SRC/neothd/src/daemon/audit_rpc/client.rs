@@ -597,7 +597,12 @@ pub(crate) async fn webchat_resume_handoff_mint(
     home: &Path,
     session_id: &str,
 ) -> Result<crate::daemon::webchat::WebChatHandoffResponse, GuiChatClientError> {
-    gui_chat_post(home, "/webchat/handoff/resume", &serde_json::json!({"session_id":session_id})).await
+    gui_chat_post(
+        home,
+        "/webchat/handoff/resume",
+        &serde_json::json!({"session_id":session_id}),
+    )
+    .await
 }
 
 /// Read WebChat listener readiness over the same-user daemon endpoint.

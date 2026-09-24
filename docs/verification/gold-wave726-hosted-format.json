@@ -1,0 +1,69 @@
+{
+  "schema": "neoth-gold-hosted-format-admission/v1",
+  "wave": 726,
+  "source": "2871b03a001f1aebc54e7331b20202d38140d48d",
+  "run": 35981339974,
+  "artifact": 10799878653,
+  "artifactZipSha256": "1a304f7b74abb27c00f87eb0d33d50cb98690d7b13d144cea5a83bb04f87ee99",
+  "patchSha256": "06490866d1e503bcf55fa11634a90a8cb0d2a840bb56bd4391ff48c76c4bfa76",
+  "status": "ROOT_VERIFIED_IMPORTED",
+  "paths": [
+    {
+      "path": "SRC/neothd/src/channels/slack.rs",
+      "oldBlob": "4f28b7983e7cb91ca94c508d46753cb60709f50a",
+      "expectedNewBlob": "09cb4a9c3e8bdcd33683b9fb9c640e27ce5dc8bd"
+    },
+    {
+      "path": "SRC/neothd/src/channels/slack_api.rs",
+      "oldBlob": "322c9ba010542d7de68565d04d598c3f9a569d28",
+      "expectedNewBlob": "6b82fcd0194e3056f3e0d0b4391e0b934f46d2e7"
+    },
+    {
+      "path": "SRC/neothd/src/cli/companion.rs",
+      "oldBlob": "6e4bc432d2a73b634bab2e889e03e863d0beb7b1",
+      "expectedNewBlob": "455c830334b89be2cd3ad1bdfde799ee361e9353"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
+      "oldBlob": "106703d79c487013a2245dbcfb2dd72d3fffc7bf",
+      "expectedNewBlob": "5edcf9c2268fa91a600974731ad6a73bed12ba71"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+      "oldBlob": "58aee0805fd19be427fd4dda1fbb4b7c31b8c63a",
+      "expectedNewBlob": "563ea004e0fd6e29ee0006652c0dfb9a9c6dc47f"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_protocol.rs",
+      "oldBlob": "58b423ed367cf52681982b11b28994abbd5752c4",
+      "expectedNewBlob": "1a66a049d9293660eded3dda4a9f3e351ab0bb95"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+      "oldBlob": "6a966cd6832edc60944a8325f25bf2f310edb17d",
+      "expectedNewBlob": "1a4ededf194ddb474fc3ad48348d642bd309a1b6"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/proactive_egress.rs",
+      "oldBlob": "af78e3cf72718548a4d056fa253b0475ae0365ec",
+      "expectedNewBlob": "b12c1c2a1a619768225b909ea9b8a17b8ae9d24e"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/webchat.rs",
+      "oldBlob": "e8ae10dcf4fbef78535368337992ab40b750ee5c",
+      "expectedNewBlob": "6e04677d2c62f278136fef92b6174c0e53f087ef"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/webchat/tests.rs",
+      "oldBlob": "76d0718aaccbf5ba2772d932d0c0aa47e2da5665",
+      "expectedNewBlob": "9406ef53c1b9f7bb725246d6fa0f65c541b432f5"
+    }
+  ],
+  "rootVerified": [
+    "ZIP digest and all3 entry hashes",
+    "internal checksums and source receipt",
+    "ten same-path old source/worktree blobs",
+    "git apply --check and ten exact resulting blobs"
+  ],
+  "localExecutableValidationRan": false
+}

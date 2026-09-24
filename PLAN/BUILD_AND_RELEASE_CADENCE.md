@@ -3,6 +3,18 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W726/W728 hosted format and fixture compilation repair (2026-09-24):**
+Root imported the exact ten-file formatter artifact for2871b03a after ZIP,
+checksum and old/new blob verification. Group1104 run35981343867 stopped at
+five compiler diagnostics in two test helpers; no fixture executed. The Slack
+scripted adapter now converts String errors explicitly, and the provenance
+fixture serializes JSONL directly into bytes. Production behavior and test
+assertions stay intact; new hosted execution is pending. Prior40d56291 Core
+run35979624562 passed Clippy/typecheck/CLI build/export; its exact reference
+is unchanged. Native1374/Group1104 and Road1324/1046checked/276open/2partial
+remain unchanged. No local executable validation. See W726 format/Core receipts
+and docs/verification/gold-wave728-group1104-compile-repair.json.
+
 **W719/W723-W725 WebChat rejoin and named Slack app DMs (2026-09-24):**
 WebChat resumes only durable WebChat/default sessions through authenticated
 same-user RPC; fresh cookies restore saved history without old turn authority.

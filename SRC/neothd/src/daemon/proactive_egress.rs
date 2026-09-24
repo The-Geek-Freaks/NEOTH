@@ -5558,7 +5558,9 @@ pub(crate) async fn execute_claimed_once_account_bound<F>(
 where
     F: FnOnce(crate::secret::SecretString, u64) -> Arc<dyn Channel>,
 {
-    if account_binding.channel_ref().channel_id != ChannelId::Telegram || target_channel != "telegram" {
+    if account_binding.channel_ref().channel_id != ChannelId::Telegram
+        || target_channel != "telegram"
+    {
         return Err("Telegram account-bound executor received a non-Telegram binding".to_string());
     }
     execute_claimed_once_inner(
@@ -5574,8 +5576,12 @@ where
         Some(account_binding),
         Some(config_source_path),
         move |credentials| match credentials {
-            FreshBoundAccount::Telegram(token, allowed_user_id) => build_channel(token, allowed_user_id),
-            FreshBoundAccount::Slack(_, _, _) => unreachable!("Telegram factory received Slack account"),
+            FreshBoundAccount::Telegram(token, allowed_user_id) => {
+                build_channel(token, allowed_user_id)
+            }
+            FreshBoundAccount::Slack(_, _, _) => {
+                unreachable!("Telegram factory received Slack account")
+            }
         },
     )
     .await
@@ -5595,11 +5601,7 @@ pub(crate) async fn execute_claimed_once_slack_account_bound<F>(
     build_channel: F,
 ) -> Result<Option<ProactiveStatus>, String>
 where
-    F: FnOnce(
-        crate::secret::SecretString,
-        crate::secret::SecretString,
-        String,
-    ) -> Arc<dyn Channel>,
+    F: FnOnce(crate::secret::SecretString, crate::secret::SecretString, String) -> Arc<dyn Channel>,
 {
     if account_binding.channel_ref().channel_id != ChannelId::Slack || target_channel != "slack" {
         return Err("Slack account-bound executor received a non-Slack binding".to_string());
@@ -5620,7 +5622,9 @@ where
             FreshBoundAccount::Slack(bot_token, app_token, allowed_user_id) => {
                 build_channel(bot_token, app_token, allowed_user_id)
             }
-            FreshBoundAccount::Telegram(_, _) => unreachable!("Slack factory received Telegram account"),
+            FreshBoundAccount::Telegram(_, _) => {
+                unreachable!("Slack factory received Telegram account")
+            }
         },
     )
     .await
@@ -5657,8 +5661,12 @@ where
         None,
         Some(config_source_path),
         move |credentials| match credentials {
-            FreshBoundAccount::Telegram(token, allowed_user_id) => build_channel(token, allowed_user_id),
-            FreshBoundAccount::Slack(_, _, _) => unreachable!("historic Telegram factory received Slack account"),
+            FreshBoundAccount::Telegram(token, allowed_user_id) => {
+                build_channel(token, allowed_user_id)
+            }
+            FreshBoundAccount::Slack(_, _, _) => {
+                unreachable!("historic Telegram factory received Slack account")
+            }
         },
     )
     .await
@@ -5789,11 +5797,9 @@ where
                     let channel_ref_for_read = channel_ref.clone();
                     let fresh =
                         tokio::task::spawn_blocking(move || match binding_for_read.as_ref() {
-                            Some(binding) => fresh_bound_account(
-                                &config_source_path,
-                                &accepted_config,
-                                binding,
-                            ),
+                            Some(binding) => {
+                                fresh_bound_account(&config_source_path, &accepted_config, binding)
+                            }
                             None => fresh_historic_bound_telegram_account(
                                 &config_source_path,
                                 &accepted_config,
@@ -5808,12 +5814,18 @@ where
                     match fresh {
                         Ok(credentials) => {
                             let transport_recipient = match &credentials {
-                                FreshBoundAccount::Telegram(_, allowed_user_id) => allowed_user_id.to_string(),
-                                FreshBoundAccount::Slack(_, _, allowed_user_id) => allowed_user_id.clone(),
+                                FreshBoundAccount::Telegram(_, allowed_user_id) => {
+                                    allowed_user_id.to_string()
+                                }
+                                FreshBoundAccount::Slack(_, _, allowed_user_id) => {
+                                    allowed_user_id.clone()
+                                }
                             };
                             let channel = build_channel
                                 .take()
-                                .expect("account-bound channel factory is consumed once")(credentials);
+                                .expect("account-bound channel factory is consumed once")(
+                                credentials,
+                            );
                             (transport_recipient, Some(channel), None)
                         }
                         Err(FreshBoundAccountRefusal::AcceptedConfigMismatch) => {
@@ -8826,7 +8838,9 @@ mod tests {
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .push((chat_id.to_string(), text.to_string()));
             if self.fail_after_send {
-                return Err(ChannelError::Transport("scripted unknown post result".to_string()));
+                return Err(ChannelError::Transport(
+                    "scripted unknown post result".to_string(),
+                ));
             }
             Ok(MessageId("observed".to_string()))
         }
@@ -9034,7 +9048,11 @@ mod tests {
         account_id: &str,
         allowed_user_id: &str,
         incarnation: &str,
-    ) -> (PathBuf, crate::config::FreedomConfig, crate::config::ChannelAccountBinding) {
+    ) -> (
+        PathBuf,
+        crate::config::FreedomConfig,
+        crate::config::ChannelAccountBinding,
+    ) {
         let account_id = crate::channels::registry::ChannelAccountId::new(account_id)
             .expect("canonical Slack test account id");
         let mut config = crate::config::FreedomConfig::default();
@@ -9271,8 +9289,9 @@ mod tests {
         );
         assert_ne!(old_binding, new_binding);
         let (segment, writer, join) = ready_writer(home.path()).await;
-        let accepted = crate::config::reload::ReloadController::new(new_config, source_path.clone())
-            .accepted_snapshot();
+        let accepted =
+            crate::config::reload::ReloadController::new(new_config, source_path.clone())
+                .accepted_snapshot();
         let context = ProactiveEgressContext::new(
             home.path(),
             &segment,
@@ -9318,7 +9337,10 @@ mod tests {
         );
         let history = read_delivery_history(home.path()).unwrap();
         assert_eq!(history.len(), 1);
-        assert_eq!(history[0].outcome(), ProactiveEgressOutcome::AdapterConfigurationError);
+        assert_eq!(
+            history[0].outcome(),
+            ProactiveEgressOutcome::AdapterConfigurationError
+        );
         drop(writer);
         join.await.unwrap().unwrap();
     }

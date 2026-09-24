@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use crate::daemon::gui_chat_protocol as gui;
 use crate::channels::registry::ChannelAccountId;
+use crate::daemon::gui_chat_protocol as gui;
 use base64::Engine as _;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
@@ -296,8 +296,18 @@ impl WebChatState {
         if handoffs.len() >= MAX_HANDOFFS {
             return Err("webchat handoff capacity reached");
         }
-        handoffs.insert(digest_key(&handoff), Handoff { session_id: session_id.clone(), expires_at: now.saturating_add(HANDOFF_TTL_SECS) });
-        Ok(WebChatHandoffResponse { url: format!("http://127.0.0.1:{}/webchat#handoff={handoff}", self.port), handoff, session_id })
+        handoffs.insert(
+            digest_key(&handoff),
+            Handoff {
+                session_id: session_id.clone(),
+                expires_at: now.saturating_add(HANDOFF_TTL_SECS),
+            },
+        );
+        Ok(WebChatHandoffResponse {
+            url: format!("http://127.0.0.1:{}/webchat#handoff={handoff}", self.port),
+            handoff,
+            session_id,
+        })
     }
     async fn consume_handoff(&self, handoff: &str) -> Option<String> {
         if !valid_opaque(handoff) {

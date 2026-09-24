@@ -210,7 +210,9 @@ impl Channel for SlackChannel {
                 "Slack proactive recipient conflicts with the configured account member".into(),
             ));
         }
-        let opened = self.proactive_api.open_dm(&self.bot_token, allowed_member)
+        let opened = self
+            .proactive_api
+            .open_dm(&self.bot_token, allowed_member)
             .await
             .map_err(|error| ChannelError::Transport(error.to_string()))?;
         if !opened.ok {
@@ -230,7 +232,9 @@ impl Channel for SlackChannel {
                 "slack conversations.open returned a non-IM channel id (protocol violation)".into(),
             ));
         }
-        let posted = self.proactive_api.post_dm(&self.bot_token, &dm_id, text)
+        let posted = self
+            .proactive_api
+            .post_dm(&self.bot_token, &dm_id, text)
             .await
             .map_err(|error| ChannelError::Transport(error.to_string()))?;
         if !posted.ok {
@@ -289,9 +293,7 @@ pub fn normalize_allowed_user_id(raw: &str) -> Result<String> {
 }
 
 fn is_slack_im_id(raw: &str) -> bool {
-    raw.len() >= 2
-        && raw.starts_with('D')
-        && raw.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    raw.len() >= 2 && raw.starts_with('D') && raw.bytes().all(|byte| byte.is_ascii_alphanumeric())
 }
 
 #[cfg(test)]
@@ -340,7 +342,7 @@ mod tests {
         ) -> Result<super::super::slack_api::ConversationsOpenResult> {
             let step = self.take(&format!("open:{allowed_member}"))?;
             match step {
-                ScriptStep::Open(result) => result.map_err(Into::into),
+                ScriptStep::Open(result) => result.map_err(anyhow::Error::msg),
                 ScriptStep::Post(_) => anyhow::bail!("post occurred before conversations.open"),
             }
         }
@@ -353,7 +355,7 @@ mod tests {
         ) -> Result<super::super::slack_api::PostMessageResult> {
             let step = self.take(&format!("post:{dm_id}:{text}"))?;
             match step {
-                ScriptStep::Post(result) => result.map_err(Into::into),
+                ScriptStep::Post(result) => result.map_err(anyhow::Error::msg),
                 ScriptStep::Open(_) => anyhow::bail!("conversations.open was attempted twice"),
             }
         }
@@ -386,12 +388,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(channel.proactive_dm_member.as_deref(), Some("U123ABC"));
-        assert!(SlackChannel::new_proactive_dm(
-            SecretString::from("xoxb-test"),
-            SecretString::from("xapp-test"),
-            "#general".into(),
-        )
-        .is_err());
+        assert!(
+            SlackChannel::new_proactive_dm(
+                SecretString::from("xoxb-test"),
+                SecretString::from("xapp-test"),
+                "#general".into(),
+            )
+            .is_err()
+        );
     }
 
     fn scripted_proactive_channel(api: Arc<ScriptedProactiveApi>) -> SlackChannel {
@@ -421,7 +425,10 @@ mod tests {
         ]));
         let channel = scripted_proactive_channel(Arc::clone(&api));
         assert_eq!(
-            channel.send_proactive("U123ABC", "private body").await.unwrap(),
+            channel
+                .send_proactive("U123ABC", "private body")
+                .await
+                .unwrap(),
             MessageId("1700000000.000100".into())
         );
         assert_eq!(
@@ -442,7 +449,12 @@ mod tests {
         ] {
             let api = Arc::new(ScriptedProactiveApi::new(vec![ScriptStep::Open(opened)]));
             let channel = scripted_proactive_channel(Arc::clone(&api));
-            assert!(channel.send_proactive("U123ABC", "private body").await.is_err());
+            assert!(
+                channel
+                    .send_proactive("U123ABC", "private body")
+                    .await
+                    .is_err()
+            );
             assert_eq!(api.calls(), vec!["open:U123ABC"]);
         }
     }
@@ -458,7 +470,12 @@ mod tests {
             ScriptStep::Post(Err("post outcome unknown".to_string())),
         ]));
         let channel = scripted_proactive_channel(Arc::clone(&api));
-        assert!(channel.send_proactive("U123ABC", "private body").await.is_err());
+        assert!(
+            channel
+                .send_proactive("U123ABC", "private body")
+                .await
+                .is_err()
+        );
         assert_eq!(
             api.calls(),
             vec!["open:U123ABC", "post:D123IM:private body"],

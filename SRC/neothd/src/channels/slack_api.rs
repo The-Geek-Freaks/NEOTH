@@ -349,9 +349,13 @@ mod tests {
         let parsed: ConversationsOpenBody =
             serde_json::from_str(r#"{"ok":true,"channel":{"id":"D12345"}}"#).unwrap();
         assert!(parsed.ok);
-        assert_eq!(parsed.channel.and_then(|channel| channel.id).as_deref(), Some("D12345"));
+        assert_eq!(
+            parsed.channel.and_then(|channel| channel.id).as_deref(),
+            Some("D12345")
+        );
 
-        let malformed: ConversationsOpenBody = serde_json::from_str(r#"{"ok":true,"channel":{}}"#).unwrap();
+        let malformed: ConversationsOpenBody =
+            serde_json::from_str(r#"{"ok":true,"channel":{}}"#).unwrap();
         assert!(malformed.ok);
         assert!(malformed.channel.and_then(|channel| channel.id).is_none());
     }

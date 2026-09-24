@@ -81,13 +81,18 @@ pub async fn run_companion(args: CompanionArgs, output: OutputFormat) -> Result<
 async fn run_webchat(resume: Option<&str>, output: OutputFormat) -> Result<()> {
     let home = crate::config::FreedomConfig::default_neoth_home();
     let handoff = match resume {
-        Some(session_id) => crate::daemon::audit_rpc::webchat_resume_handoff_mint(&home, session_id).await,
+        Some(session_id) => {
+            crate::daemon::audit_rpc::webchat_resume_handoff_mint(&home, session_id).await
+        }
         None => crate::daemon::audit_rpc::webchat_handoff_mint(&home).await,
     }
-        .map_err(|error| anyhow::anyhow!("mint WebChat handoff from running daemon: {error:?}"))?;
+    .map_err(|error| anyhow::anyhow!("mint WebChat handoff from running daemon: {error:?}"))?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            println!("{}", serde_json::json!({"url": handoff.url, "session_id": handoff.session_id}))
+            println!(
+                "{}",
+                serde_json::json!({"url": handoff.url, "session_id": handoff.session_id})
+            )
         }
         OutputFormat::Table => {
             println!("{}", handoff.url);

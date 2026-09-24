@@ -1,0 +1,93 @@
+{
+  "schema": "neoth-w728-group1104-compile-repair/v1",
+  "run": 35981343867,
+  "source": "2871b03a001f1aebc54e7331b20202d38140d48d",
+  "status": "COMPILE_BLOCKED",
+  "selected": 1104,
+  "executed": 0,
+  "passed": 0,
+  "failed": 0,
+  "notStarted": 1104,
+  "artifactDigests": [
+    {
+      "id": 10800012605,
+      "name": "w190-research-lifecycle-source-2871b03a001f1aebc54e7331b20202d38140d48d",
+      "digest": "sha256:f610fe9856bf7f12f87db8dda111f951c602aface441d23dc709bd82ce66c41b"
+    },
+    {
+      "id": 10799838074,
+      "name": "w190-research-lifecycle-log-2871b03a001f1aebc54e7331b20202d38140d48d",
+      "digest": "sha256:8786bb5488737b7a5cac16d2ae50bc832ffbdabc0798b497572fb0a14534cd84"
+    },
+    {
+      "id": 10799524638,
+      "name": "w190-research-lifecycle-receipt-2871b03a001f1aebc54e7331b20202d38140d48d",
+      "digest": "sha256:ba143998ef4c5932a680d47c33e834bc5ee59358c78f5bcec94ae21ada60a00e"
+    }
+  ],
+  "compileErrors": [
+    {
+      "code": "E0277",
+      "message": "the trait bound `std::string::String: StdError` is not satisfied",
+      "spans": [
+        {
+          "file_name": "neothd/src/channels/slack.rs",
+          "line_start": 343,
+          "line_end": 343
+        }
+      ]
+    },
+    {
+      "code": "E0277",
+      "message": "the trait bound `std::string::String: StdError` is not satisfied",
+      "spans": [
+        {
+          "file_name": "neothd/src/channels/slack.rs",
+          "line_start": 356,
+          "line_end": 356
+        }
+      ]
+    },
+    {
+      "code": "E0277",
+      "message": "the trait bound `Vec<u8>: Borrow<[[u8; 1]]>` is not satisfied",
+      "spans": [
+        {
+          "file_name": "neothd/src/daemon/gui_chat_runtime.rs",
+          "line_start": 265,
+          "line_end": 265
+        }
+      ]
+    },
+    {
+      "code": "E0308",
+      "message": "mismatched types",
+      "spans": [
+        {
+          "file_name": "neothd/src/daemon/gui_chat_runtime.rs",
+          "line_start": 266,
+          "line_end": 266
+        }
+      ]
+    },
+    {
+      "code": "E0277",
+      "message": "the trait bound `Vec<[u8; 1]>: AsRef<[u8]>` is not satisfied",
+      "spans": [
+        {
+          "file_name": "neothd/src/daemon/gui_chat_runtime.rs",
+          "line_start": 267,
+          "line_end": 267
+        }
+      ]
+    }
+  ],
+  "repair": "Two test-only String errors now use anyhow::Error::msg; JSONL fixture serializes directly to Vec<u8> with explicit newline bytes. Production behavior and assertions unchanged.",
+  "rootVerified": [
+    "three ZIP API digests",
+    "source receipt and selected count",
+    "five actual compiler diagnostics",
+    "no fixture execution"
+  ],
+  "localExecutableValidationRan": false
+}

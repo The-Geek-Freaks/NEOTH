@@ -1,0 +1,23 @@
+{
+  "schema": "neoth-core-cli-admission/v1",
+  "wave": 726,
+  "run": 35979624562,
+  "job": 107568154317,
+  "source": "40d56291901c957affd9825095fa9fec5d81cd61",
+  "status": "ROOT_VERIFIED_SUCCESS",
+  "hostedSteps": [
+    "slim-core Clippy",
+    "core test-target typecheck",
+    "public CLI build",
+    "reference export"
+  ],
+  "artifact": 10799634791,
+  "artifactZipSha256": "ee66f9b63fbcbde284d94653be042589327a0f6981d9e70691ea1c24549df748",
+  "referenceSha256": "4445F7B2FA74FB54EB62D8841085EE757E12D6F33AB46AA30C4C4C9B1B0B18C8",
+  "referenceBytes": 249367,
+  "trackedReference": "docs/cli-commands.md",
+  "referenceBlob": "c38263947bcdcb6e49152184f77fbfe2d7923ca9",
+  "referenceMatchesTracked": true,
+  "productImportApplied": false,
+  "localExecutableValidationRan": false
+}

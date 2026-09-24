@@ -436,11 +436,21 @@ async fn resume_requires_durable_webchat_default_provenance_and_restarts_without
     let session_id = uuid::Uuid::now_v7().to_string();
     let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
     crate::memory::transcript_store::insert_turn(
-        &conn, &session_id, "operator", 1, "saved conversation",
-    ).unwrap();
+        &conn,
+        &session_id,
+        "operator",
+        1,
+        "saved conversation",
+    )
+    .unwrap();
     crate::memory::transcript_store::insert_turn(
-        &conn, &uuid::Uuid::now_v7().to_string(), "operator", 2, "foreign conversation",
-    ).unwrap();
+        &conn,
+        &uuid::Uuid::now_v7().to_string(),
+        "operator",
+        2,
+        "foreign conversation",
+    )
+    .unwrap();
     drop(conn);
 
     // A saved transcript alone cannot establish WebChat origin.
@@ -542,20 +552,35 @@ async fn resume_requires_durable_webchat_default_provenance_and_restarts_without
     let transcript = client
         .get(format!("{base}/api/v1/webchat/transcript"))
         .header("Cookie", &cookie)
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert_eq!(transcript.status(), reqwest::StatusCode::OK);
     let transcript: serde_json::Value = transcript.json().await.unwrap();
     assert_eq!(transcript["turns"].as_array().unwrap().len(), 1);
     assert_eq!(transcript["turns"][0]["text"], "saved conversation");
     for (path, body) in [
-        ("/api/v1/webchat/start", serde_json::json!({"request_id":old_request})),
-        ("/api/v1/webchat/attach", serde_json::json!({"request_id":old_request,"after_sequence":0})),
-        ("/api/v1/webchat/cancel", serde_json::json!({"request_id":old_request})),
+        (
+            "/api/v1/webchat/start",
+            serde_json::json!({"request_id":old_request}),
+        ),
+        (
+            "/api/v1/webchat/attach",
+            serde_json::json!({"request_id":old_request,"after_sequence":0}),
+        ),
+        (
+            "/api/v1/webchat/cancel",
+            serde_json::json!({"request_id":old_request}),
+        ),
     ] {
         let response = post(&client, &base, &cookie, path, body).await;
         assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
     }
-    assert_eq!(runtime.calls(), calls_before_resume, "resume must not revive old runtime authority");
+    assert_eq!(
+        runtime.calls(),
+        calls_before_resume,
+        "resume must not revive old runtime authority"
+    );
     stop(shutdown, server).await;
 }
 

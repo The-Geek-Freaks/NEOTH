@@ -12,8 +12,8 @@ use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::daemon::audit_rpc::AuditStream;
 use crate::channels::registry::ChannelAccountId;
+use crate::daemon::audit_rpc::AuditStream;
 
 // Proposal-02 keeps this wire module crate-private. The public GUI facade is
 // gui_chat_bridge and never exposes this stream or engine event type.
@@ -776,7 +776,12 @@ pub(crate) fn preflight_descriptor_digest(
     let mut encoder = DigestEncoder::new("neoth/gui-chat/preflight/v1");
     encoder.field(request.request_id.0.as_bytes());
     encoder.field(surface_discriminant(request.origin_surface));
-    encoder.option_field(request.surface_account_id.as_ref().map(ChannelAccountId::as_str));
+    encoder.option_field(
+        request
+            .surface_account_id
+            .as_ref()
+            .map(ChannelAccountId::as_str),
+    );
     if request.incognito {
         let key = incognito_message_key.filter(|key| !key.is_empty()).ok_or(
             GuiChatProtocolError::Invalid("incognito_message_key_missing"),
@@ -1855,8 +1860,9 @@ mod tests {
 
         let mut webchat_default = webchat_missing.clone();
         webchat_default.surface_account_id = Some(ChannelAccountId::default_account());
-        let webchat_digest = preflight_descriptor_digest(&webchat_default, &[], 7, Some(b"key-one"))
-            .expect("WebChat default account is valid");
+        let webchat_digest =
+            preflight_descriptor_digest(&webchat_default, &[], 7, Some(b"key-one"))
+                .expect("WebChat default account is valid");
         assert_ne!(digest, webchat_digest);
 
         let mut webchat_other = webchat_default.clone();
