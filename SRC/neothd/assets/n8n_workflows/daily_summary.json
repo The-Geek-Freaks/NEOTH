@@ -1,6 +1,6 @@
 {
   "name": "NEOTH Daily Summary",
-  "description": "Every evening at 21:00 local time, pulls the day's NEOTH activity from the localhost API + sends a summary via the configured channel (default Telegram). Operator edits the schedule + channel in the n8n UI after import.",
+  "description": "Inactive template. At 21:00 local time it recalls the day's NEOTH activity, asks the configured provider for a concise summary, and queues it through an operator-configured NEOTH channel.",
   "active": false,
   "nodes": [
     {
@@ -11,89 +11,113 @@
       "position": [0, 0],
       "parameters": {
         "rule": {
-          "interval": [{ "field": "hours", "hoursInterval": 24 }]
+          "interval": [
+            { "field": "cronExpression", "expression": "0 21 * * *" }
+          ]
         }
-      }
+      },
+      "notesInFlow": true,
+      "notes": "Runs at 21:00 in the n8n instance timezone after this inactive template is explicitly activated."
+    },
+    {
+      "id": "configuration",
+      "name": "Operator Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [220, 0],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "daily-neoth-base-url",
+              "name": "neothBaseUrl",
+              "value": "http://REPLACE_WITH_NEOTH_HOST:9744",
+              "type": "string"
+            },
+            {
+              "id": "daily-channel",
+              "name": "channel",
+              "value": "REPLACE_WITH_CHANNEL",
+              "type": "string"
+            },
+            {
+              "id": "daily-recipient",
+              "name": "recipient",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "Set neothBaseUrl to an address reachable from the n8n runtime, then set the channel and its channel-native recipient. 127.0.0.1 works only when n8n shares NEOTH's host network. Bind an HTTP Header Auth credential containing Authorization: Bearer <NEOTH n8n API token> on every NEOTH HTTP node."
     },
     {
       "id": "recall",
       "name": "NEOTH Recall (today)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [200, 0],
+      "position": [460, 0],
       "parameters": {
-        "url": "http://127.0.0.1:9744/api/recall",
+        "url": "={{ $json.neothBaseUrl + '/api/recall' }}",
         "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            { "name": "query", "value": "today's activity" },
-            { "name": "tier", "value": "hot" },
-            { "name": "limit", "value": "20" }
-          ]
-        },
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
-          ]
-        }
-      }
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: \"today's activity\", limit: 20 }) }}",
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "POST /api/recall accepts query and numeric limit. Select the operator's HTTP Header Auth credential before activation; this template contains no token."
     },
     {
       "id": "summarize",
       "name": "NEOTH Provider Call (summarise)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [400, 0],
+      "position": [700, 0],
       "parameters": {
-        "url": "http://127.0.0.1:9744/api/provider/call",
+        "url": "={{ $('Operator Configuration').first().json.neothBaseUrl + '/api/provider/call' }}",
         "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "prompt",
-              "value": "Summarise today's NEOTH activity in 5 bullet points. Highlight any consent denials and unanswered questions.\n\n{{$json.recall_results}}"
-            },
-            { "name": "provider", "value": "default" }
-          ]
-        },
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
-          ]
-        }
-      }
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ prompt: \"Summarise today's NEOTH activity in five bullet points. Highlight consent denials and unanswered questions.\\n\\nRecall hits:\\n\" + JSON.stringify($('NEOTH Recall (today)').first().json.data.hits), system: \"Produce a concise, factual operational summary from the supplied NEOTH recall hits only.\", incognito: true }) }}",
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "POST /api/provider/call receives the recall envelope's data.hits. Incognito prevents this automated prompt from contributing communication-profile evidence."
     },
     {
       "id": "send",
       "name": "Send via NEOTH channel",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [600, 0],
+      "position": [940, 0],
       "parameters": {
-        "url": "http://127.0.0.1:9744/api/channel/send",
+        "url": "={{ $('Operator Configuration').first().json.neothBaseUrl + '/api/channel/send' }}",
         "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            { "name": "channel", "value": "telegram" },
-            { "name": "text", "value": "Daily Summary:\n\n{{$json.completion}}" }
-          ]
-        },
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
-          ]
-        }
-      }
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Operator Configuration').first().json.channel, recipient: $('Operator Configuration').first().json.recipient, text: 'Daily Summary:\\n\\n' + $json.data.completion }) }}",
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "POST /api/channel/send requires channel, recipient, and text. The recipient stays an explicit operator setting; the request only queues delivery through NEOTH."
     }
   ],
   "connections": {
-    "Schedule (21:00 local)": { "main": [[{ "node": "NEOTH Recall (today)", "type": "main", "index": 0 }]] },
+    "Schedule (21:00 local)": { "main": [[{ "node": "Operator Configuration", "type": "main", "index": 0 }]] },
+    "Operator Configuration": { "main": [[{ "node": "NEOTH Recall (today)", "type": "main", "index": 0 }]] },
     "NEOTH Recall (today)": { "main": [[{ "node": "NEOTH Provider Call (summarise)", "type": "main", "index": 0 }]] },
     "NEOTH Provider Call (summarise)": { "main": [[{ "node": "Send via NEOTH channel", "type": "main", "index": 0 }]] }
   },

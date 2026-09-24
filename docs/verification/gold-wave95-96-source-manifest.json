@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T22:57:21.3877274Z",
-  "validationStatus": "W1009 reviewed test helper repair; hosted validation pending",
+  "capturedUtc": "2026-09-24T23:03:49.4237142Z",
+  "validationStatus": "W1005/W1012 static review approved; actual execution pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -68,8 +68,8 @@
     },
     {
       "path": ".github/workflows/n8n-bootstrap-canary.yml",
-      "bytes": 1138,
-      "sha256": "154EB175C706A81A45A3AE9A20CEED42E3EE565B692498835551F1051F56323C"
+      "bytes": 1403,
+      "sha256": "2224A7C87BDFC263611AFFCF964C4FD1B69F57125E72038D8E1D9B43B28A322C"
     },
     {
       "path": ".github/workflows/obsidian-bridge-artifact.yml",
@@ -1242,6 +1242,11 @@
       "sha256": "332FC8FAAFEE9AAEEEE9CA4042E66870858C1BC9E013C3C77D829085C33D7D2E"
     },
     {
+      "path": "docs/n8n-api.md",
+      "bytes": 8763,
+      "sha256": "8A2A49447D1C9DABD531905C9F393D4BC3D4B7607D6F1872959B560BF14BE075"
+    },
+    {
       "path": "docs/obsidian-archive-bridge.md",
       "bytes": 4905,
       "sha256": "23E91BBE7EEAC91691589B8B371A6BF2D6BD86A22711EFA6032261CE80AF677D"
@@ -2133,8 +2138,13 @@
     },
     {
       "path": "packaging/n8n_bootstrap_canary.py",
-      "bytes": 32270,
-      "sha256": "7F9207E2F7F3EA670F5BC1870AAB8805E4C6FA330F6507467E889AE76D48ADB9"
+      "bytes": 33214,
+      "sha256": "23118857E4655BAD3FEDBB702E4D0840AEC9114482386AAB5FEE783EF688500A"
+    },
+    {
+      "path": "packaging/n8n_template_execution_canary.py",
+      "bytes": 18813,
+      "sha256": "F4DAADCF06541F980C713E9D9FB6BEA58AF318FF8FBEA44D616CB3F007F3C3A9"
     },
     {
       "path": "packaging/rust-license-snapshots.json",
@@ -2158,8 +2168,8 @@
     },
     {
       "path": "packaging/tests/test_n8n_bootstrap_canary.py",
-      "bytes": 10430,
-      "sha256": "7BD189FE4602B25DCE3D1D7CE818CCFD5534762F90D44E7972B1CFDEB4C2966C"
+      "bytes": 16835,
+      "sha256": "424D31FE33CADE5D0FB1DC23D3910EA5B0DFE722AED5BB03A4F5FE4B157ED056"
     },
     {
       "path": "packaging/tests/test_preview_windows_workflow_contract.py",
@@ -2213,18 +2223,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 300525,
-      "sha256": "57A66BA0727EB8580654A4E977A886C927AFD0FA04682E5D665A288831441BF6"
+      "bytes": 301559,
+      "sha256": "9B72116E285810B8E73F42B29DF83E8761352A76D90097AEA791CDC7EB25C2B4"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1316463,
-      "sha256": "7C665A8A34314D0951B2925C231B44EB7A976F491C9E2B0671CD7A8842CF8B8A"
+      "bytes": 1317437,
+      "sha256": "55740A89AAD41FBD3D74697B1C6759E896B86328D544FF285869FA022D9E8487"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1926404,
-      "sha256": "3EC21463EBF105EC2C480C2147A03EC00328AF20894C4C40A55C022A82989E0C"
+      "bytes": 1927378,
+      "sha256": "4A9D16802E948E117706C1D1C575CADAA1C7A0F9CADBF40F2F8C53A29FFCA328"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -2663,18 +2673,18 @@
     },
     {
       "path": "SRC/neothd/assets/n8n_workflows/daily_summary.json",
-      "bytes": 3355,
-      "sha256": "162AF106CB6712E88B4F80F80DEB3132A3177D13CFCFA5A0A8C7C193A2988F2B"
+      "bytes": 5377,
+      "sha256": "1F4087959463BBFF751F8D9BE6BEB5F6DD1B2EB55D85A662F01CD8E2EC0562C7"
     },
     {
       "path": "SRC/neothd/assets/n8n_workflows/morning_brief.json",
-      "bytes": 3426,
-      "sha256": "77FC2E89ACC11218FA8BA95B417E699A867472E808B12158B1B60AA03B703BE2"
+      "bytes": 5483,
+      "sha256": "35C68F9F5A05BB9AF17A46E8B0A8D48E4E5A10E2742BEC24AA4831400A9B44D0"
     },
     {
       "path": "SRC/neothd/assets/n8n_workflows/weekly_stats.json",
-      "bytes": 3651,
-      "sha256": "7B5C415A53910C03ACF7D49890EC1973426899FC0EE7AB91106DB173C89B3165"
+      "bytes": 7612,
+      "sha256": "F16326F0E1ED99946438A1AEA69AB0F8E0FCB8E2A6ACB7E267418AF0C53B6328"
     },
     {
       "path": "SRC/neothd/assets/obsidian_archive_bridge/main.js",

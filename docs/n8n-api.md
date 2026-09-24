@@ -166,10 +166,43 @@ NEOTH ships 3 example n8n workflows under `SRC/neothd/assets/n8n_workflows/`:
 | :-- | :-- | :-- |
 | `daily_summary.json` | 21:00 every day | Today's activity → 5-bullet summary via `/api/recall` + `/api/channel/send` |
 | `morning_brief.json` | 07:30 weekdays | Open threads → motivating brief |
-| `weekly_stats.json` | Sunday 18:00 | Week stats via `/api/stats` → markdown archive + channel summary |
+| `weekly_stats.json` | Sunday 18:00 | Snapshot of cumulative `/api/stats` counters → markdown archive → channel summary |
 
-All ship INACTIVE — operator must enable them in the n8n UI per the
-hard rule "no destructive auto-action without operator GO".
+All ship inactive. Before enabling a workflow, configure its **Operator
+Configuration** node and bind an **HTTP Header Auth** credential on each NEOTH
+HTTP node. The credential header is `Authorization`, with value `Bearer <NEOTH
+n8n API token>`. This is the token described above; an n8n instance's own API
+key authorizes a different API. Tokens are not embedded in the workflow JSON.
+
+Set `neothBaseUrl`, `channel`, and the channel's `recipient`. The templates use
+ordinary Set-node fields, so they do not require n8n's licensed Variables
+feature or access to process environment variables. HTTP requests use typed
+JSON bodies and read NEOTH's `data.hits` and `data.completion` envelopes.
+Automated provider calls use `incognito: true` to avoid communication-profile
+reads.
+
+The base URL must reach NEOTH from the n8n process. For a native n8n process on
+the same host, it is normally `http://127.0.0.1:9744`. A bridged container has
+its own loopback interface; the managed Docker installation's connection to
+this host API still needs deployment acceptance. Keep the workflow inactive
+until that route and its credential work. The NEOTH listener and its loopback
+peer check remain private.
+
+The weekly workflow writes a real text-to-binary conversion through n8n's
+Read/Write Files node before queueing its channel message. `archiveDirectory`
+defaults to `/home/node/.n8n-files`, n8n's permitted file directory. Container
+deployments must mount separate persistent storage there; the current managed
+installer does not yet provision that archive mount. Do not use n8n's `.n8n`
+configuration directory, which contains its database and credentials. The
+message reads the original provider completion after the successful write.
+
+The four stats fields are cumulative event/provider/channel counts. The
+weekly schedule takes a snapshot of them; it does not turn them into a
+seven-day cost, skill-usage, or consent-denial report.
+
+The pinned-image import check proves that inactive graphs can be stored and
+read back. Workflow execution, channel delivery, persistent archive storage,
+and managed host connectivity require their respective runtime checks.
 
 ---
 

@@ -49,7 +49,8 @@ const main = async () => {
   try { r = await fetch(base + '/rest/login', {method:'POST', headers, body:JSON.stringify({emailOrLdapLoginId:p.email,password:p.password})}); } catch (_) { fail('owner_login', 0, true); }
   const login = await r.json().catch(() => null); const cookie = r.headers.get('set-cookie');
   if (!r.ok) fail('owner_login', r.status); if (!login?.data || !cookie) fail('owner_login', r.status, true);
-  try { r = await fetch(base + '/rest/api-keys', {method:'POST', headers:{...headers, cookie}, body:JSON.stringify({label:p.label,scopes:['workflow:list','workflow:create','workflow:read'],expiresAt:null})}); } catch (_) { fail('key_mint', 0, true); }
+  const scopes=['workflow:list','workflow:create','workflow:read']; if(p.executeTemplates===true) scopes.push('credential:create');
+  try { r = await fetch(base + '/rest/api-keys', {method:'POST', headers:{...headers, cookie}, body:JSON.stringify({label:p.label,scopes,expiresAt:null})}); } catch (_) { fail('key_mint', 0, true); }
   const key = await r.json().catch(() => null);
   if (!r.ok) fail('key_mint', r.status); if (typeof key?.data?.rawApiKey !== 'string' || key.data.rawApiKey.length < 8) fail('key_mint', r.status, true);
   process.stdout.write(JSON.stringify({ok:true,rawApiKey:key.data.rawApiKey,keyId:typeof key.data.id==='string'?key.data.id:null,mintStatus:r.status})+'\n');
@@ -182,6 +183,8 @@ def prove_absent(kind: str, identifier: str) -> None:
         expected = {f"no such container: {identifier}"}
     elif kind == "volume":
         expected = {f"get {identifier}: no such volume", f"no such volume: {identifier}"}
+    elif kind == "network":
+        expected = {f"network {identifier} not found", f"no such network: {identifier}"}
     else:
         raise CanaryFailure("absence_kind_invalid")
     valid_lines = expected | {f"error response from daemon: {line}" for line in expected}
@@ -302,8 +305,7 @@ def runtime_observation(identifier: str) -> dict[str, object]:
         return {"observation_error": "inspect_unavailable"}
 
 
-def workflow_payload(path: Path) -> dict:
-    value = json.loads(path.read_bytes())
+def workflow_payload_from_value(value: object) -> dict:
     if not isinstance(value, dict) or set(value).difference(WORKFLOW_FIELDS):
         raise CanaryFailure("workflow_payload_invalid")
     payload = {key: value[key] for key in WORKFLOW_FIELDS if key in value}
@@ -311,6 +313,10 @@ def workflow_payload(path: Path) -> dict:
         raise CanaryFailure("workflow_payload_invalid")
     # The pinned public create DTO accepts description only on update.
     return {key: value for key, value in payload.items() if key not in {"active", "tags", "description"}}
+
+
+def workflow_payload(path: Path) -> dict:
+    return workflow_payload_from_value(json.loads(path.read_bytes()))
 
 
 def workflow_request(port: int, raw_key: str, method: str, path: str, payload: dict | None = None) -> tuple[int, dict | None]:
@@ -453,24 +459,27 @@ def main() -> int:
     github_sha = os.environ.get("GITHUB_SHA", "")
     github_run_id = os.environ.get("GITHUB_RUN_ID", "")
     github_run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
+    execute_templates = os.environ.get("NEOTH_EXECUTE_TEMPLATES", "false")
     if (
         os.environ.get("GITHUB_ACTIONS") != "true"
         or os.environ.get("GITHUB_REF") != "refs/heads/main"
         or re.fullmatch(r"[0-9a-fA-F]{40}", github_sha) is None
         or re.fullmatch(r"[1-9][0-9]*", github_run_id) is None
         or re.fullmatch(r"[1-9][0-9]*", github_run_attempt) is None
+        or execute_templates not in ("true", "false")
     ):
         return 1
     repository = Path(__file__).resolve().parents[1]
     workflow = repository / ".github" / "workflows" / "n8n-bootstrap-canary.yml"
     receipt: dict[str, object] = {
-        "schema": 2,
+        "schema": 3,
         "github_sha": github_sha,
         "image_digest": IMAGE_DIGEST,
         "upstream_commit": UPSTREAM_COMMIT,
         "script_sha256": sha256_file(Path(__file__).resolve()),
         "workflow_sha256": sha256_file(workflow),
         "stages": [],
+        "execute_templates": execute_templates == "true",
         "outcome": "failed",
     }
     runner_temp = os.environ.get("RUNNER_TEMP")
@@ -509,7 +518,7 @@ def main() -> int:
         receipt["stages"].append("isolated_bootstrap_bound")
         receipt["node_version"] = docker("exec", "-u", "node", bootstrap_id, "node", "--version").decode("utf-8", "replace").strip()[:64]
         browser_id = secrets.token_urlsafe(24); password = "N9" + secrets.token_urlsafe(30); email = f"canary-{suffix}@invalid.test"; label = f"neoth-bootstrap-{suffix}-{secrets.token_hex(8)}"
-        payload = json.dumps({"browserId": browser_id, "password": password, "email": email, "label": label}, separators=(",", ":")).encode()
+        payload = json.dumps({"browserId": browser_id, "password": password, "email": email, "label": label, "executeTemplates": execute_templates == "true"}, separators=(",", ":")).encode()
         node = bootstrap_node_response(bootstrap_id, payload)
         if node.get("ok") is not True or not isinstance(node.get("rawApiKey"), str):
             stage = node.get("stage") if isinstance(node.get("stage"), str) else "bootstrap_protocol"
@@ -548,6 +557,12 @@ def main() -> int:
             raise
         receipt["negative_status"] = probe.get("negativeStatus"); receipt["positive_status"] = probe.get("positiveStatus"); receipt["stages"].append("negative_and_authenticated_probe_passed")
         import_workflows(repository, assigned_port, raw_key, receipt)
+        if execute_templates == "true":
+            import n8n_template_execution_canary as execution_canary
+            assert runtime_id is not None
+            receipt["execution_script_sha256"] = sha256_file(Path(execution_canary.__file__).resolve())
+            execution_canary.execute_templates(sys.modules[__name__], repository, job, volume, runtime_id, assigned_port, raw_key, receipt)
+            runtime_id = None
         receipt["outcome"] = "passed"
         exit_code = 0
     except UnknownEffect as error:

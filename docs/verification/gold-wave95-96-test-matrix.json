@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1009 reviewed test helper repair; hosted validation pending",
+  "status": "W1005/W1012 static review approved; actual execution pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 186086,
-    "sha256": "911D451752516C3C6435C9C78FF401721FF57ADEC4686CD815D8F0F5F462A60C"
+    "bytes": 186414,
+    "sha256": "DA0F10C783B236D90B99B206E57A74577AAB970B61D75A387A6C22E5744CB9E4"
   },
-  "sourceInputs": 1051,
+  "sourceInputs": 1053,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -37915,6 +37915,80 @@
       }
     ],
     "note": "Core36069478916 production Clippy passed; only two unresolved test helper calls repaired. No local executable validation. Native Group1477/Windows260 pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1014": {
+    "base": "04f648ecda315180a9db21a6cb3f221551b54f15",
+    "sources": [
+      {
+        "path": ".github/workflows/n8n-bootstrap-canary.yml",
+        "bytes": 1403,
+        "sha256": "2224A7C87BDFC263611AFFCF964C4FD1B69F57125E72038D8E1D9B43B28A322C",
+        "blob": "3ebf308033086336a4c54efc85339c29b815f5eb"
+      },
+      {
+        "path": "docs/n8n-api.md",
+        "bytes": 8763,
+        "sha256": "8A2A49447D1C9DABD531905C9F393D4BC3D4B7607D6F1872959B560BF14BE075",
+        "blob": "3183203fba6c724d78896889a98017897d4c6d93"
+      },
+      {
+        "path": "packaging/n8n_bootstrap_canary.py",
+        "bytes": 33214,
+        "sha256": "23118857E4655BAD3FEDBB702E4D0840AEC9114482386AAB5FEE783EF688500A",
+        "blob": "1550e751dbc1e674062a5ce86eba846fbc2510ca"
+      },
+      {
+        "path": "packaging/n8n_template_execution_canary.py",
+        "bytes": 18813,
+        "sha256": "F4DAADCF06541F980C713E9D9FB6BEA58AF318FF8FBEA44D616CB3F007F3C3A9",
+        "blob": "8b753092bb493293c8c77cf1129fc99665450fd4"
+      },
+      {
+        "path": "packaging/tests/test_n8n_bootstrap_canary.py",
+        "bytes": 16835,
+        "sha256": "424D31FE33CADE5D0FB1DC23D3910EA5B0DFE722AED5BB03A4F5FE4B157ED056",
+        "blob": "5e7e131ed0148b33f683db5e934157571329f2e3"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 301559,
+        "sha256": "9B72116E285810B8E73F42B29DF83E8761352A76D90097AEA791CDC7EB25C2B4",
+        "blob": "b38ccf7cc304eb0fd7cc8ff276d9a52563aa08f9"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1317437,
+        "sha256": "55740A89AAD41FBD3D74697B1C6759E896B86328D544FF285869FA022D9E8487",
+        "blob": "e4b2c797c89f566d310045801ad5ab9cd332448c"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1927378,
+        "sha256": "4A9D16802E948E117706C1D1C575CADAA1C7A0F9CADBF40F2F8C53A29FFCA328",
+        "blob": "d38040d3b19c79c5486c6a47993ca2dc6d12f949"
+      },
+      {
+        "path": "SRC/neothd/assets/n8n_workflows/daily_summary.json",
+        "bytes": 5377,
+        "sha256": "1F4087959463BBFF751F8D9BE6BEB5F6DD1B2EB55D85A662F01CD8E2EC0562C7",
+        "blob": "114da8333f1733f43692d5e7d49be0dd447f44aa"
+      },
+      {
+        "path": "SRC/neothd/assets/n8n_workflows/morning_brief.json",
+        "bytes": 5483,
+        "sha256": "35C68F9F5A05BB9AF17A46E8B0A8D48E4E5A10E2742BEC24AA4831400A9B44D0",
+        "blob": "d6742615a8c4f478fa23cb4eb1b4ba179cb056f8"
+      },
+      {
+        "path": "SRC/neothd/assets/n8n_workflows/weekly_stats.json",
+        "bytes": 7612,
+        "sha256": "F16326F0E1ED99946438A1AEA69AB0F8E0FCB8E2A6ACB7E267418AF0C53B6328",
+        "blob": "f122c72624db63558f07fc550cf02f00ea54b486"
+      }
+    ],
+    "note": "Three corrected inactive templates; opt-in two-template mock-only pinned-image execution with22helper tests. No local executable validation. Product importer/archive/hostreachability remain open.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

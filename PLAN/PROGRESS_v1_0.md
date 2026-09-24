@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W995/W1000/W1003/W1007 n8n template execution batch (2026-09-25):**
+The three inactive assets now use explicit Set-node configuration, HTTP Header
+Auth credentials, typed request bodies and NEOTH's actual data.hits and
+data.completion envelopes. Weekly reporting labels the four lifetime counters
+honestly and writes a converted archive file before channel queueing. Its
+persistent archive mount and managed container-to-host route remain open.
+The hosted pinned-image canary adds an opt-in execution lane for two in-memory
+Daily/Morning copies on an internal mock network, with one CLI execution per
+copy, real credential decryption and six ordered payload assertions. The
+reviewed repair preserves caller exception identity, explicit Docker
+entrypoints, matching network alias, module hash custody and independent
+cleanup. Runtime acceptance is pending; this does not close the all13 managed
+importer, remaining starter routes, archive persistence or delivery criteria.
 **W1009 hosted test-target repair (2026-09-25):** Core36069478916 at
 abac29e7 passed strict slim-core production Clippy. Its test-target check then
 found two stale `enqueue` calls in the managed-runtime fixtures. Both now call

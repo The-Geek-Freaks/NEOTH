@@ -2,6 +2,12 @@ name: W937 isolated n8n bootstrap canary
 
 on:
   workflow_dispatch:
+    inputs:
+      execute_templates:
+        description: Run the isolated template execution lane after the inactive import lane
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -26,6 +32,7 @@ jobs:
         timeout-minutes: 12
         env:
           PYTHONDONTWRITEBYTECODE: '1'
+          NEOTH_EXECUTE_TEMPLATES: ${{ inputs.execute_templates }}
         run: python3 packaging/n8n_bootstrap_canary.py
 
       - name: Upload redacted compact receipt

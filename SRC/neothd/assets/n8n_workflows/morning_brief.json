@@ -1,6 +1,6 @@
 {
   "name": "NEOTH Morning Brief",
-  "description": "Every weekday at 07:30 local time, generates a personalised morning brief: weather + calendar + 3 most-important open NEOTH threads. Sends via the operator's preferred channel.",
+  "description": "Inactive template. At 07:30 on weekdays it recalls open NEOTH threads, creates a concise morning brief, and queues it through an operator-configured NEOTH channel.",
   "active": false,
   "nodes": [
     {
@@ -15,89 +15,111 @@
             { "field": "cronExpression", "expression": "30 7 * * 1-5" }
           ]
         }
-      }
+      },
+      "notesInFlow": true,
+      "notes": "Runs at 07:30 on weekdays in the n8n instance timezone after this inactive template is explicitly activated."
+    },
+    {
+      "id": "configuration",
+      "name": "Operator Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [220, 0],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "morning-neoth-base-url",
+              "name": "neothBaseUrl",
+              "value": "http://REPLACE_WITH_NEOTH_HOST:9744",
+              "type": "string"
+            },
+            {
+              "id": "morning-channel",
+              "name": "channel",
+              "value": "REPLACE_WITH_CHANNEL",
+              "type": "string"
+            },
+            {
+              "id": "morning-recipient",
+              "name": "recipient",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "Set neothBaseUrl to an address reachable from the n8n runtime, then set the channel and its channel-native recipient. 127.0.0.1 works only when n8n shares NEOTH's host network. Bind an HTTP Header Auth credential containing Authorization: Bearer <NEOTH n8n API token> on every NEOTH HTTP node."
     },
     {
       "id": "recall_threads",
       "name": "NEOTH Recall (open threads)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [200, 0],
+      "position": [460, 0],
       "parameters": {
-        "url": "http://127.0.0.1:9744/api/recall",
+        "url": "={{ $json.neothBaseUrl + '/api/recall' }}",
         "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            { "name": "query", "value": "open question OR unanswered" },
-            { "name": "tier", "value": "warm" },
-            { "name": "limit", "value": "3" }
-          ]
-        },
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
-          ]
-        }
-      }
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: 'open question OR unanswered', limit: 3 }) }}",
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "POST /api/recall accepts query and numeric limit. Select the operator's HTTP Header Auth credential before activation; this template contains no token."
     },
     {
       "id": "compose",
-      "name": "Compose brief",
+      "name": "NEOTH Provider Call (compose brief)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [400, 0],
+      "position": [700, 0],
       "parameters": {
-        "url": "http://127.0.0.1:9744/api/provider/call",
+        "url": "={{ $('Operator Configuration').first().json.neothBaseUrl + '/api/provider/call' }}",
         "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "prompt",
-              "value": "Compose a 4-line morning brief. Include: 1) one motivating intent for the day, 2) the 3 most important open NEOTH threads from below, 3) recommended first task. Keep it tight.\n\nOpen threads:\n{{$json.recall_results}}"
-            },
-            { "name": "provider", "value": "default" }
-          ]
-        },
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
-          ]
-        }
-      }
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ prompt: 'Compose a four-line morning brief. Include one motivating intent, the three most important open NEOTH threads below, and a recommended first task. Keep it tight.\\n\\nOpen threads:\\n' + JSON.stringify($('NEOTH Recall (open threads)').first().json.data.hits), system: 'Use only the supplied NEOTH recall hits. Do not invent calendar or weather information.', incognito: true }) }}",
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "POST /api/provider/call receives the recall envelope's data.hits. Incognito prevents this automated prompt from contributing communication-profile evidence."
     },
     {
       "id": "send",
       "name": "Send via NEOTH channel",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [600, 0],
+      "position": [940, 0],
       "parameters": {
-        "url": "http://127.0.0.1:9744/api/channel/send",
+        "url": "={{ $('Operator Configuration').first().json.neothBaseUrl + '/api/channel/send' }}",
         "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            { "name": "channel", "value": "telegram" },
-            { "name": "text", "value": "Morning Brief:\n\n{{$json.completion}}" }
-          ]
-        },
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
-          ]
-        }
-      }
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Operator Configuration').first().json.channel, recipient: $('Operator Configuration').first().json.recipient, text: 'Morning Brief:\\n\\n' + $json.data.completion }) }}",
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "POST /api/channel/send requires channel, recipient, and text. The recipient stays an explicit operator setting; the request only queues delivery through NEOTH."
     }
   ],
   "connections": {
-    "Schedule (07:30 weekdays)": { "main": [[{ "node": "NEOTH Recall (open threads)", "type": "main", "index": 0 }]] },
-    "NEOTH Recall (open threads)": { "main": [[{ "node": "Compose brief", "type": "main", "index": 0 }]] },
-    "Compose brief": { "main": [[{ "node": "Send via NEOTH channel", "type": "main", "index": 0 }]] }
+    "Schedule (07:30 weekdays)": { "main": [[{ "node": "Operator Configuration", "type": "main", "index": 0 }]] },
+    "Operator Configuration": { "main": [[{ "node": "NEOTH Recall (open threads)", "type": "main", "index": 0 }]] },
+    "NEOTH Recall (open threads)": { "main": [[{ "node": "NEOTH Provider Call (compose brief)", "type": "main", "index": 0 }]] },
+    "NEOTH Provider Call (compose brief)": { "main": [[{ "node": "Send via NEOTH channel", "type": "main", "index": 0 }]] }
   },
   "settings": {},
   "tags": [{ "name": "neoth-bootstrap" }]

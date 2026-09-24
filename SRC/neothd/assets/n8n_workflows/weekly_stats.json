@@ -1,6 +1,6 @@
 {
   "name": "NEOTH Weekly Stats",
-  "description": "Every Sunday at 18:00 local time, pulls the week's NEOTH activity stats (chats / consent denials / memory tier transitions / cost) + drops a markdown report into the operator's archive folder + sends a short summary via the configured channel.",
+  "description": "Inactive template. Each Sunday at 18:00 local time it renders NEOTH's available lifetime activity counters into a weekly snapshot, archives the report to the configured n8n file mount, then queues it through an operator-configured NEOTH channel.",
   "active": false,
   "nodes": [
     {
@@ -15,98 +15,149 @@
             { "field": "cronExpression", "expression": "0 18 * * 0" }
           ]
         }
-      }
+      },
+      "notesInFlow": true,
+      "notes": "Runs at 18:00 each Sunday in the n8n instance timezone after this inactive template is explicitly activated."
+    },
+    {
+      "id": "configuration",
+      "name": "Operator Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [220, 0],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "weekly-neoth-base-url",
+              "name": "neothBaseUrl",
+              "value": "http://REPLACE_WITH_NEOTH_HOST:9744",
+              "type": "string"
+            },
+            {
+              "id": "weekly-channel",
+              "name": "channel",
+              "value": "REPLACE_WITH_CHANNEL",
+              "type": "string"
+            },
+            {
+              "id": "weekly-recipient",
+              "name": "recipient",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "weekly-archive-directory",
+              "name": "archiveDirectory",
+              "value": "/home/node/.n8n-files",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "Set neothBaseUrl to an address reachable from the n8n runtime, then set the channel and its channel-native recipient. Bind an HTTP Header Auth credential containing Authorization: Bearer <NEOTH n8n API token> on every NEOTH HTTP node. archiveDirectory is n8n's default file-node allowlist path; persist it with a separate host mount before enabling this archive workflow. The current managed runtime does not provide that mount."
     },
     {
       "id": "stats",
-      "name": "NEOTH stats (this week)",
+      "name": "NEOTH Stats",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [200, 0],
+      "position": [460, 0],
       "parameters": {
-        "url": "http://127.0.0.1:9744/api/stats",
+        "url": "={{ $json.neothBaseUrl + '/api/stats' }}",
         "method": "GET",
-        "qs": "window=7d",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
-          ]
-        }
-      }
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "GET /api/stats returns NEOTH's available lifetime counters only: events_total, provider_requests, channel_inbound, and channel_outbound. It has no weekly-window query contract."
     },
     {
       "id": "report",
-      "name": "Format markdown report",
+      "name": "NEOTH Provider Call (format snapshot)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [400, 0],
+      "position": [700, 0],
       "parameters": {
-        "url": "http://127.0.0.1:9744/api/provider/call",
+        "url": "={{ $('Operator Configuration').first().json.neothBaseUrl + '/api/provider/call' }}",
         "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "prompt",
-              "value": "Render a 12-line weekly NEOTH report from the stats JSON below. Sections: chats by provider, consent denials, memory tier transitions, total cost, top-3 most-used skills.\n\nStats:\n{{$json}}"
-            },
-            { "name": "provider", "value": "default" }
-          ]
-        },
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
-          ]
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ prompt: 'Render a concise markdown weekly snapshot using only the supplied NEOTH lifetime counters. State clearly that the counters are lifetime totals, not a seven-day window. Include events_total, provider_requests, channel_inbound, and channel_outbound. Do not invent costs, consent denials, skill usage, memory transitions, chats by provider, or unavailable metrics.\\n\\nStats:\\n' + JSON.stringify($('NEOTH Stats').first().json.data), system: 'Report only values supplied in the NEOTH stats payload. Preserve metric names and explain their lifetime-total scope.', incognito: true }) }}",
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "POST /api/provider/call formats only the data returned by NEOTH Stats. Incognito prevents this automated prompt from contributing communication-profile evidence."
+    },
+    {
+      "id": "convert",
+      "name": "Convert report to archive file",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [940, 0],
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "data.completion",
+        "binaryPropertyName": "data",
+        "options": {
+          "fileName": "weekly-stats.md"
         }
-      }
+      },
+      "notesInFlow": true,
+      "notes": "Converts the provider envelope's data.completion text into binary property data. This exact sourceProperty supports dot notation in pinned n8n 2.40.5."
     },
     {
       "id": "write",
-      "name": "Write to archive",
-      "type": "n8n-nodes-base.writeBinaryFile",
-      "typeVersion": 1,
-      "position": [600, -100],
+      "name": "Write report to archive",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [1180, 0],
       "parameters": {
-        "fileName": "{{$env.NEOTH_ARCHIVE_DIR}}/weekly-stats-{{$now.format('yyyy-MM-dd')}}.md",
-        "options": {}
-      }
+        "operation": "write",
+        "fileName": "={{ $('Operator Configuration').first().json.archiveDirectory + '/weekly-stats-' + $now.format('yyyy-MM-dd') + '.md' }}",
+        "dataPropertyName": "data",
+        "options": {
+          "append": false
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Writes binary property data after conversion. archiveDirectory must be a separately mounted persistent directory within n8n's file-node allowlist; it must not be the protected .n8n configuration directory."
     },
     {
       "id": "send",
-      "name": "Send summary via channel",
+      "name": "Send archived snapshot via NEOTH channel",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [600, 100],
+      "position": [1420, 0],
       "parameters": {
-        "url": "http://127.0.0.1:9744/api/channel/send",
+        "url": "={{ $('Operator Configuration').first().json.neothBaseUrl + '/api/channel/send' }}",
         "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            { "name": "channel", "value": "telegram" },
-            { "name": "text", "value": "Weekly stats archived. Highlights:\n\n{{$json.completion}}" }
-          ]
-        },
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
-          ]
-        }
-      }
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Operator Configuration').first().json.channel, recipient: $('Operator Configuration').first().json.recipient, text: 'Weekly NEOTH snapshot archived.\\n\\n' + $('NEOTH Provider Call (format snapshot)').first().json.data.completion }) }}",
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "Runs only after the archive write succeeds. The body reads the named provider node because the file-write response does not retain the provider envelope. NEOTH queues channel delivery; delivery itself needs a separate runtime check."
     }
   ],
   "connections": {
-    "Schedule (Sun 18:00)": { "main": [[{ "node": "NEOTH stats (this week)", "type": "main", "index": 0 }]] },
-    "NEOTH stats (this week)": { "main": [[{ "node": "Format markdown report", "type": "main", "index": 0 }]] },
-    "Format markdown report": {
-      "main": [[
-        { "node": "Write to archive", "type": "main", "index": 0 },
-        { "node": "Send summary via channel", "type": "main", "index": 0 }
-      ]]
-    }
+    "Schedule (Sun 18:00)": { "main": [[{ "node": "Operator Configuration", "type": "main", "index": 0 }]] },
+    "Operator Configuration": { "main": [[{ "node": "NEOTH Stats", "type": "main", "index": 0 }]] },
+    "NEOTH Stats": { "main": [[{ "node": "NEOTH Provider Call (format snapshot)", "type": "main", "index": 0 }]] },
+    "NEOTH Provider Call (format snapshot)": { "main": [[{ "node": "Convert report to archive file", "type": "main", "index": 0 }]] },
+    "Convert report to archive file": { "main": [[{ "node": "Write report to archive", "type": "main", "index": 0 }]] },
+    "Write report to archive": { "main": [[{ "node": "Send archived snapshot via NEOTH channel", "type": "main", "index": 0 }]] }
   },
   "settings": {},
   "tags": [{ "name": "neoth-bootstrap" }]
