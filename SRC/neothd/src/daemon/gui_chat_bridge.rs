@@ -756,6 +756,7 @@ impl GuiChatBridge for CoreGuiChatBridge {
                 input.request_id.as_uuid(),
             ),
             session_id: input.session_id,
+            surface_account_id: None,
             origin_surface: match input.origin_surface {
                 GuiChatSurface::Main => crate::daemon::gui_chat_protocol::GuiChatSurface::Main,
                 GuiChatSurface::Buddy => crate::daemon::gui_chat_protocol::GuiChatSurface::Buddy,

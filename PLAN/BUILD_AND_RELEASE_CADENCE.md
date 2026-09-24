@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W719/W723-W725 WebChat rejoin and named Slack app DMs (2026-09-24):**
+WebChat resumes only durable WebChat/default sessions through authenticated
+same-user RPC; fresh cookies restore saved history without old turn authority.
+Incognito identity stays absent; ledger reads are bounded per record. Slack
+named-account delivery now uses its freshly verified binding and allowed member,
+then opens/posts to the actual app DM inside the one-shot Armed transport seam.
+Fourteen new regressions yield native1374/Group1104; independent source review
+passes, new execution pending. Root admits40d56291 Group1090:1089PASS1FAIL,
+205sources+2inputs, all nine W710/W712 cases PASS. The remaining recovery fixture
+now sets the intended Full autonomy; assertions unchanged. macOS limits/cache
+were adjusted after measured hosted timeouts, without weakening package checks.
+Road1324/1046checked/276open/2partial; WS-LF38done80open. No local runtime.
+See docs/gold-wave725-webchat-rejoin-and-slack-dm.md and its Group1090 receipt.
 **W722 hosted-format and Slack gate correction (2026-09-24):**
 Main99a0f650 contains W710/W712-W718. Preflight35978618380 supplied three
 exact formatter rewrites; Root verified ZIP, checksums and old/new Git blobs

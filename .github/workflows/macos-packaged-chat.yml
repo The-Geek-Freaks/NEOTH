@@ -14,7 +14,7 @@ jobs:
   packaged-chat:
     name: Packaged chat ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 180
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
@@ -79,6 +79,18 @@ jobs:
           date -u +%FT%TZ > "$evidence/daemon-build-started.txt"
           cargo build --release --locked -p neoth --bin neoth --bin neothd --features release-desktop 2>&1 | tee "$evidence/daemon-build.log"
           date -u +%FT%TZ > "$evidence/daemon-build-completed.txt"
+
+      # Retain the completed daemon build even if the later GUI/package phase
+      # fails or reaches the job limit. Cargo still validates current inputs.
+      - name: Save completed desktop daemon Cargo checkpoint
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: packaged-chat-${{ matrix.arch }}-1.93-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}-daemon
 
       - name: Build the actual desktop GUI
         id: desktop-build

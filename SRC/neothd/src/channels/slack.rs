@@ -17,6 +17,7 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use std::sync::Arc;
 
 use super::{Channel, ChannelError, MessageId, PipelineHandler};
 use crate::secret::SecretString;
@@ -30,6 +31,46 @@ pub struct SlackChannel {
     /// loop dials Slack's WSS endpoint with this token.
     app_token: SecretString,
     inbound_gate: Option<SlackInboundGate>,
+    proactive_dm_member: Option<String>,
+    proactive_api: Arc<dyn SlackProactiveApi>,
+}
+
+#[async_trait]
+trait SlackProactiveApi: Send + Sync {
+    async fn open_dm(
+        &self,
+        bot_token: &SecretString,
+        allowed_member: &str,
+    ) -> Result<super::slack_api::ConversationsOpenResult>;
+
+    async fn post_dm(
+        &self,
+        bot_token: &SecretString,
+        dm_id: &str,
+        text: &str,
+    ) -> Result<super::slack_api::PostMessageResult>;
+}
+
+struct LiveSlackProactiveApi;
+
+#[async_trait]
+impl SlackProactiveApi for LiveSlackProactiveApi {
+    async fn open_dm(
+        &self,
+        bot_token: &SecretString,
+        allowed_member: &str,
+    ) -> Result<super::slack_api::ConversationsOpenResult> {
+        super::slack_api::conversations_open(bot_token, allowed_member).await
+    }
+
+    async fn post_dm(
+        &self,
+        bot_token: &SecretString,
+        dm_id: &str,
+        text: &str,
+    ) -> Result<super::slack_api::PostMessageResult> {
+        super::slack_api::post_message(bot_token, dm_id, text).await
+    }
 }
 
 struct SlackInboundGate {
@@ -43,7 +84,33 @@ impl SlackChannel {
             bot_token,
             app_token,
             inbound_gate: None,
+            proactive_dm_member: None,
+            proactive_api: Arc::new(LiveSlackProactiveApi),
         }
+    }
+
+    /// Build the account-bound proactive adapter. The member is normalized at
+    /// construction and never accepted from a queued item's mutable route.
+    pub fn new_proactive_dm(
+        bot_token: SecretString,
+        app_token: SecretString,
+        allowed_user_id: String,
+    ) -> Result<Self> {
+        let mut channel = Self::new(bot_token, app_token);
+        channel.proactive_dm_member = Some(normalize_allowed_user_id(&allowed_user_id)?);
+        Ok(channel)
+    }
+
+    #[cfg(test)]
+    fn new_proactive_dm_with_api(
+        bot_token: SecretString,
+        app_token: SecretString,
+        allowed_user_id: String,
+        proactive_api: Arc<dyn SlackProactiveApi>,
+    ) -> Result<Self> {
+        let mut channel = Self::new_proactive_dm(bot_token, app_token, allowed_user_id)?;
+        channel.proactive_api = proactive_api;
+        Ok(channel)
     }
 
     pub fn new_inbound(
@@ -63,6 +130,7 @@ impl SlackChannel {
     /// Operator-visible hint surfaced by the wizard + `neoth doctor`.
     pub const SETUP_HINT: &'static str = "Slack socket mode: create an app at api.slack.com/apps, enable Socket Mode, \
          copy the xoxb- bot token + xapp- app token into credentials.yaml. \
+         Bot messages need chat:write; named proactive DMs also need im:write. \
          `neoth serve` opens the outbound WebSocket, receives events, ACKs \
          envelopes, and sends replies through chat.postMessage.";
 }
@@ -125,17 +193,58 @@ impl Channel for SlackChannel {
         Ok(MessageId(ts))
     }
 
-    /// C-11 wire-up (Session 21): proactive send delegates to `send_text`.
-    /// Slack's chat.postMessage is identical for solicited replies vs
-    /// daemon-initiated proactive — the operator-gate
-    /// (`FreedomConfig::proactive.enabled`) is the CALLER's
-    /// responsibility per the C-11 trait contract.
+    /// Named-account proactive delivery resolves the configured immutable
+    /// member to the app's IM conversation and posts only to that returned
+    /// `D…` id. The caller owns the proactive policy gate and durable Armed
+    /// admission before this adapter performs either provider operation.
     async fn send_proactive(
         &self,
         chat_id: &str,
         text: &str,
     ) -> std::result::Result<MessageId, ChannelError> {
-        self.send_text(chat_id, text).await
+        let Some(allowed_member) = self.proactive_dm_member.as_deref() else {
+            return self.send_text(chat_id, text).await;
+        };
+        if chat_id != allowed_member {
+            return Err(ChannelError::Transport(
+                "Slack proactive recipient conflicts with the configured account member".into(),
+            ));
+        }
+        let opened = self.proactive_api.open_dm(&self.bot_token, allowed_member)
+            .await
+            .map_err(|error| ChannelError::Transport(error.to_string()))?;
+        if !opened.ok {
+            return Err(ChannelError::Transport(format!(
+                "slack conversations.open: {}",
+                opened.error.as_deref().unwrap_or("unknown error")
+            )));
+        }
+        let dm_id = opened.channel_id.ok_or_else(|| {
+            ChannelError::Transport(
+                "slack conversations.open returned ok=true with no channel id (protocol violation)"
+                    .into(),
+            )
+        })?;
+        if !is_slack_im_id(&dm_id) {
+            return Err(ChannelError::Transport(
+                "slack conversations.open returned a non-IM channel id (protocol violation)".into(),
+            ));
+        }
+        let posted = self.proactive_api.post_dm(&self.bot_token, &dm_id, text)
+            .await
+            .map_err(|error| ChannelError::Transport(error.to_string()))?;
+        if !posted.ok {
+            return Err(ChannelError::Transport(format!(
+                "slack chat.postMessage: {}",
+                posted.error.as_deref().unwrap_or("unknown error")
+            )));
+        }
+        let ts = posted.ts.ok_or_else(|| {
+            ChannelError::Transport(
+                "slack chat.postMessage returned ok=true with no ts (protocol violation)".into(),
+            )
+        })?;
+        Ok(MessageId(ts))
     }
 
     /// SPEC-11: edit a previously-sent message via `chat.update`. `message_id`
@@ -179,9 +288,76 @@ pub fn normalize_allowed_user_id(raw: &str) -> Result<String> {
     Ok(value.to_string())
 }
 
+fn is_slack_im_id(raw: &str) -> bool {
+    raw.len() >= 2
+        && raw.starts_with('D')
+        && raw.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    enum ScriptStep {
+        Open(std::result::Result<super::super::slack_api::ConversationsOpenResult, String>),
+        Post(std::result::Result<super::super::slack_api::PostMessageResult, String>),
+    }
+
+    struct ScriptedProactiveApi {
+        steps: Mutex<VecDeque<ScriptStep>>,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl ScriptedProactiveApi {
+        fn new(steps: Vec<ScriptStep>) -> Self {
+            Self {
+                steps: Mutex::new(steps.into()),
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
+        }
+
+        fn take(&self, expected: &str) -> std::result::Result<ScriptStep, anyhow::Error> {
+            let step = self.steps.lock().unwrap().pop_front().ok_or_else(|| {
+                anyhow::anyhow!("unexpected proactive Slack API call: {expected}")
+            })?;
+            self.calls.lock().unwrap().push(expected.to_string());
+            Ok(step)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl SlackProactiveApi for ScriptedProactiveApi {
+        async fn open_dm(
+            &self,
+            _bot_token: &SecretString,
+            allowed_member: &str,
+        ) -> Result<super::super::slack_api::ConversationsOpenResult> {
+            let step = self.take(&format!("open:{allowed_member}"))?;
+            match step {
+                ScriptStep::Open(result) => result.map_err(Into::into),
+                ScriptStep::Post(_) => anyhow::bail!("post occurred before conversations.open"),
+            }
+        }
+
+        async fn post_dm(
+            &self,
+            _bot_token: &SecretString,
+            dm_id: &str,
+            text: &str,
+        ) -> Result<super::super::slack_api::PostMessageResult> {
+            let step = self.take(&format!("post:{dm_id}:{text}"))?;
+            match step {
+                ScriptStep::Post(result) => result.map_err(Into::into),
+                ScriptStep::Open(_) => anyhow::bail!("conversations.open was attempted twice"),
+            }
+        }
+    }
 
     #[test]
     fn allowed_user_id_is_trimmed_and_rejects_mutable_names() {
@@ -199,6 +375,95 @@ mod tests {
             SecretString::from("xapp-test"),
         );
         assert_eq!(c.name(), "slack");
+    }
+
+    #[test]
+    fn proactive_dm_constructor_keeps_only_immutable_member_authority() {
+        let channel = SlackChannel::new_proactive_dm(
+            SecretString::from("xoxb-test"),
+            SecretString::from("xapp-test"),
+            " U123ABC ".into(),
+        )
+        .unwrap();
+        assert_eq!(channel.proactive_dm_member.as_deref(), Some("U123ABC"));
+        assert!(SlackChannel::new_proactive_dm(
+            SecretString::from("xoxb-test"),
+            SecretString::from("xapp-test"),
+            "#general".into(),
+        )
+        .is_err());
+    }
+
+    fn scripted_proactive_channel(api: Arc<ScriptedProactiveApi>) -> SlackChannel {
+        SlackChannel::new_proactive_dm_with_api(
+            SecretString::from("xoxb-test"),
+            SecretString::from("xapp-test"),
+            "U123ABC".into(),
+            api,
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn proactive_dm_opens_exact_member_then_posts_only_returned_im() {
+        let api = Arc::new(ScriptedProactiveApi::new(vec![
+            ScriptStep::Open(Ok(super::super::slack_api::ConversationsOpenResult {
+                ok: true,
+                channel_id: Some("D123IM".into()),
+                error: None,
+            })),
+            ScriptStep::Post(Ok(super::super::slack_api::PostMessageResult {
+                ok: true,
+                ts: Some("1700000000.000100".into()),
+                channel: Some("D123IM".into()),
+                error: None,
+            })),
+        ]));
+        let channel = scripted_proactive_channel(Arc::clone(&api));
+        assert_eq!(
+            channel.send_proactive("U123ABC", "private body").await.unwrap(),
+            MessageId("1700000000.000100".into())
+        );
+        assert_eq!(
+            api.calls(),
+            vec!["open:U123ABC", "post:D123IM:private body"]
+        );
+    }
+
+    #[tokio::test]
+    async fn proactive_dm_resolver_error_or_malformed_id_never_posts() {
+        for opened in [
+            Err("resolver timeout".to_string()),
+            Ok(super::super::slack_api::ConversationsOpenResult {
+                ok: true,
+                channel_id: Some("D-not-a-valid-im".into()),
+                error: None,
+            }),
+        ] {
+            let api = Arc::new(ScriptedProactiveApi::new(vec![ScriptStep::Open(opened)]));
+            let channel = scripted_proactive_channel(Arc::clone(&api));
+            assert!(channel.send_proactive("U123ABC", "private body").await.is_err());
+            assert_eq!(api.calls(), vec!["open:U123ABC"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn proactive_dm_post_failure_is_one_open_and_one_post_without_retry() {
+        let api = Arc::new(ScriptedProactiveApi::new(vec![
+            ScriptStep::Open(Ok(super::super::slack_api::ConversationsOpenResult {
+                ok: true,
+                channel_id: Some("D123IM".into()),
+                error: None,
+            })),
+            ScriptStep::Post(Err("post outcome unknown".to_string())),
+        ]));
+        let channel = scripted_proactive_channel(Arc::clone(&api));
+        assert!(channel.send_proactive("U123ABC", "private body").await.is_err());
+        assert_eq!(
+            api.calls(),
+            vec!["open:U123ABC", "post:D123IM:private body"],
+            "an unknown post result cannot trigger a resolver or post retry"
+        );
     }
 
     #[tokio::test]

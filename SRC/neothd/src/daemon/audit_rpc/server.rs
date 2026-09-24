@@ -948,9 +948,11 @@ async fn handle_one_pre_admission(
             | "/skill-mutation-audit"
             | "/trust-decision-once"
             | "/webchat/handoff/mint"
+            | "/webchat/handoff/resume"
             | "/webchat/runtime-status"
     );
     let webchat_mint_route = req.path == "/webchat/handoff/mint";
+    let webchat_resume_route = req.path == "/webchat/handoff/resume";
     let webchat_status_route = req.path == "/webchat/runtime-status";
     if req.method != "POST"
         || !(membership_route
@@ -997,6 +999,9 @@ async fn handle_one_pre_admission(
     }
     if webchat_mint_route {
         return handle_webchat_handoff_mint(stream, state).await;
+    }
+    if webchat_resume_route {
+        return handle_webchat_handoff_resume(stream, state, &req.body).await;
     }
     if webchat_status_route {
         return handle_webchat_runtime_status(stream, state).await;
@@ -1761,6 +1766,30 @@ async fn handle_webchat_handoff_mint(
             let _ = stream
                 .write_all(http_response(503, "webchat handoff unavailable").as_bytes())
                 .await;
+        }
+    }
+    let _ = stream.shutdown().await;
+    Ok(ConnectionOutcome::Complete)
+}
+async fn handle_webchat_handoff_resume(
+    mut stream: super::transport::AuditStream,
+    state: &AuditRpcState,
+    body: &[u8],
+) -> Result<ConnectionOutcome> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ResumeRequest { session_id: String }
+    let reply = match (state.webchat.as_ref(), serde_json::from_slice::<ResumeRequest>(body)) {
+        (Some(webchat), Ok(request)) => webchat.mint_resume_handoff(&request.session_id).await,
+        _ => Err("webchat resume unavailable"),
+    };
+    match reply {
+        Ok(reply) => {
+            let body = serde_json::to_string(&reply).context("encode webchat resume handoff")?;
+            let _ = stream.write_all(http_response_json(200, &body).as_bytes()).await;
+        }
+        Err(_) => {
+            let _ = stream.write_all(http_response(403, "webchat session cannot be resumed").as_bytes()).await;
         }
     }
     let _ = stream.shutdown().await;

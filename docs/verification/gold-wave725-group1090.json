@@ -1,0 +1,121 @@
+{
+  "schema": "neoth-gold-grouped-admission/v1",
+  "wave": 725,
+  "run": 35979627776,
+  "source": "40d56291901c957affd9825095fa9fec5d81cd61",
+  "sourceRef": "refs/heads/main",
+  "status": "ROOT_VERIFIED_SOURCE_BOUND_PARTIAL_FAILURE",
+  "selected": 1090,
+  "executed": 1090,
+  "passed": 1089,
+  "failed": 1,
+  "missing": 0,
+  "fixtureSourceBindings": 205,
+  "inputBindings": [
+    {
+      "path": "docs/verification/gold-wave95-96-test-matrix.json",
+      "blob": "d1deef36f94a9063afc495fcb045991b2d5608ed",
+      "sha256": "3078b73a6e78210047c4266866567ac357bdc076784776caf8e34af61c2b39e0",
+      "expected": "3078b73a6e78210047c4266866567ac357bdc076784776caf8e34af61c2b39e0",
+      "snapshot": null,
+      "fixtureCount": 0
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "blob": "a49b0e51cbc8d33d1f351352e856fc89961f02e1",
+      "sha256": "722ee0446dbac05b3e7d4eb9d44c7174e98e6e6fff5b633b5a30993edbcb61f0",
+      "expected": "722ee0446dbac05b3e7d4eb9d44c7174e98e6e6fff5b633b5a30993edbcb61f0",
+      "snapshot": null,
+      "fixtureCount": 0
+    }
+  ],
+  "artifacts": [
+    {
+      "id": 10799847475,
+      "name": "w190-research-lifecycle-receipt-40d56291901c957affd9825095fa9fec5d81cd61",
+      "digest": "sha256:de19f7a3325e9bfe7235d4954d090eb62f946fd48eca24b64e1bfa95a840ed06"
+    },
+    {
+      "id": 10800261265,
+      "name": "w190-research-lifecycle-log-40d56291901c957affd9825095fa9fec5d81cd61",
+      "digest": "sha256:d86db108f64e9028928a7314c85c81076232e63e838e3477e1596f1067f97524"
+    },
+    {
+      "id": 10800096856,
+      "name": "w190-research-lifecycle-source-40d56291901c957affd9825095fa9fec5d81cd61",
+      "digest": "sha256:cadb0257dc448fb3a1aa97af2aa80af92b7b2125dfcd2dd37c01e5f9f9cd53be"
+    }
+  ],
+  "rootVerificationSha256": "AF74A4E0AFE7AD220AEB0D36588409F1E748F01C600CFCC461397FB6681D0C8D",
+  "verifiedZipEntries": 12,
+  "targetedResults": [
+    {
+      "ordinal": 1082,
+      "test": "cli::onboarding_status::tests::companion_config_projects_configured_webchat_advisory_without_ready_claim",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1083,
+      "test": "cli::onboarding_status::tests::default_config_projects_disabled_webchat_advisory",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1084,
+      "test": "cli::channel::tests::slack_account_add_refuses_missing_or_malformed_auth_test_team_without_writes",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1085,
+      "test": "cli::channel::tests::slack_account_test_refuses_known_team_mismatch_missing_or_malformed_auth_test_team",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1086,
+      "test": "cli::channel::tests::slack_account_test_permits_unknown_prior_team_auth_test_results",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1087,
+      "test": "cli::serve_tasks::channel_reconcile_tests::slack_workspace_change_retires_only_matching_runtime_health_and_reload_generation",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1088,
+      "test": "config::credentials::slack_account_transaction_tests::slack_workspace_binding_reuses_only_the_same_known_team",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1089,
+      "test": "config::credentials::slack_account_transaction_tests::slack_unknown_workspace_and_invalid_observation_never_reuse_authority",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1090,
+      "test": "config::credentials::slack_account_transaction_tests::slack_known_workspace_without_an_incarnation_mints_one_at_verified_commit",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "failures": [
+    "daemon::proactive_dispatcher::tests::oversized_legacy_route_rejects_before_queue_mutation"
+  ],
+  "repair": "The oversized legacy route recovery fixture now explicitly permits local-inbox delivery with Full autonomy; production policy and existing SidecarOnly/no-duplicate assertions remain unchanged.",
+  "localExecutableValidationRan": false
+}

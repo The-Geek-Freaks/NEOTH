@@ -5,6 +5,7 @@
 //! lifecycle ledger, replay and the one shared W39 provider admission.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
@@ -25,6 +26,7 @@ use crate::daemon::chat_runtime::DaemonChatRuntime;
 use crate::daemon::gui_chat_protocol::*;
 
 const LEDGER_FILE: &str = "gui-chat-v1-ledger.jsonl";
+const WEBCHAT_PROVENANCE_LEDGER_MAX_RECORD_BYTES: u64 = 16 * 1024;
 const STAGING_DIRECTORY: &str = "gui-chat-v1-staging";
 const REPLAY_FRAME_LIMIT: usize = 1024;
 const REPLAY_BYTE_LIMIT: usize = GUI_CHAT_REPLAY_MAX_BYTES;
@@ -109,6 +111,7 @@ struct Turn {
     /// The surface that created this turn is part of its attach authority.
     /// WebChat deliberately never shares a turn with native GUI surfaces.
     origin_surface: GuiChatSurface,
+    surface_account_id: Option<crate::channels::registry::ChannelAccountId>,
     message: String,
     model: Option<String>,
     skill: Option<String>,
@@ -165,8 +168,17 @@ struct Replay {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LedgerRow {
     request_id: Uuid,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    origin_surface: Option<GuiChatSurface>,
+    #[serde(default)]
+    surface_account_id: Option<crate::channels::registry::ChannelAccountId>,
+    #[serde(default)]
+    incognito: bool,
     intent_digest: String,
     provenance_digest: String,
     config_epoch: u64,
@@ -174,13 +186,139 @@ struct LedgerRow {
     terminal: Option<String>,
 }
 
+/// Returns true only when every typed lifecycle row for `session_id` proves
+/// durable non-incognito WebChat/default custody. The reader bounds each
+/// record before allocating it; malformed, oversized and mixed-attribution
+/// ledgers fail closed without expiring valid old sessions merely because the
+/// append-only history has grown.
+pub(crate) fn has_webchat_default_session_provenance(
+    home: &std::path::Path,
+    session_id: &str,
+) -> bool {
+    let Ok(file) = std::fs::File::open(home.join(LEDGER_FILE)) else {
+        return false;
+    };
+    let mut reader = BufReader::new(file);
+    let mut found = false;
+    loop {
+        let mut line = Vec::new();
+        let bytes = reader
+            .by_ref()
+            .take(WEBCHAT_PROVENANCE_LEDGER_MAX_RECORD_BYTES.saturating_add(1))
+            .read_until(b'\n', &mut line);
+        let Ok(bytes) = bytes else {
+            return false;
+        };
+        if bytes == 0 {
+            break;
+        }
+        if line.len() as u64 > WEBCHAT_PROVENANCE_LEDGER_MAX_RECORD_BYTES {
+            return false;
+        }
+        if line.last() == Some(&b'\n') {
+            line.pop();
+        }
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(row) = serde_json::from_slice::<LedgerRow>(&line) else {
+            return false;
+        };
+        if row.session_id.as_deref() != Some(session_id) {
+            continue;
+        }
+        if row.incognito
+            || row.origin_surface != Some(GuiChatSurface::WebChat)
+            || !row.surface_account_id.as_ref().is_some_and(|account| account.is_default())
+        {
+            return false;
+        }
+        found = true;
+    }
+    found
+}
+
+#[cfg(test)]
+mod webchat_provenance_tests {
+    use super::*;
+
+    fn row(session_id: Option<&str>, surface: Option<GuiChatSurface>, account: Option<&str>, incognito: bool) -> LedgerRow {
+        LedgerRow {
+            request_id: Uuid::now_v7(),
+            session_id: session_id.map(str::to_owned),
+            origin_surface: surface,
+            surface_account_id: account.map(|value| crate::channels::registry::ChannelAccountId::new(value).unwrap()),
+            incognito,
+            intent_digest: "a".repeat(64),
+            provenance_digest: "b".repeat(64),
+            config_epoch: 1,
+            receipt: "receipt".into(),
+            terminal: None,
+        }
+    }
+
+    fn write_rows(home: &std::path::Path, rows: &[LedgerRow]) {
+        let mut bytes = rows
+            .iter()
+            .map(|entry| serde_json::to_vec(entry).unwrap())
+            .collect::<Vec<_>>()
+            .join(&[b'\n']);
+        bytes.push(b'\n');
+        std::fs::write(home.join(LEDGER_FILE), bytes).unwrap();
+    }
+
+    #[test]
+    fn durable_webchat_provenance_rejects_wrong_origin_incognito_legacy_and_mixed_rows() {
+        let home = tempfile::tempdir().unwrap();
+        let session = Uuid::now_v7().to_string();
+        write_rows(home.path(), &[row(Some(&session), Some(GuiChatSurface::WebChat), Some("default"), false)]);
+        assert!(has_webchat_default_session_provenance(home.path(), &session));
+
+        write_rows(home.path(), &[row(Some(&session), Some(GuiChatSurface::Main), None, false)]);
+        assert!(!has_webchat_default_session_provenance(home.path(), &session));
+        write_rows(home.path(), &[row(Some(&session), Some(GuiChatSurface::WebChat), Some("default"), true)]);
+        assert!(!has_webchat_default_session_provenance(home.path(), &session));
+        write_rows(home.path(), &[row(None, None, None, false)]);
+        assert!(!has_webchat_default_session_provenance(home.path(), &session));
+        write_rows(home.path(), &[
+            row(Some(&session), Some(GuiChatSurface::WebChat), Some("default"), false),
+            row(Some(&session), Some(GuiChatSurface::Buddy), None, false),
+        ]);
+        assert!(!has_webchat_default_session_provenance(home.path(), &session));
+        std::fs::write(home.path().join(LEDGER_FILE), b"not-json\n").unwrap();
+        assert!(!has_webchat_default_session_provenance(home.path(), &session));
+    }
+
+    #[test]
+    fn durable_webchat_provenance_streams_historical_rows_and_rejects_overlong_records() {
+        let home = tempfile::tempdir().unwrap();
+        let session = Uuid::now_v7().to_string();
+        let mut rows = (0..3_000)
+            .map(|_| row(Some(&Uuid::now_v7().to_string()), Some(GuiChatSurface::Main), None, false))
+            .collect::<Vec<_>>();
+        rows.push(row(Some(&session), Some(GuiChatSurface::WebChat), Some("default"), false));
+        write_rows(home.path(), &rows);
+        assert!(has_webchat_default_session_provenance(home.path(), &session));
+
+        std::fs::write(
+            home.path().join(LEDGER_FILE),
+            vec![b'x'; WEBCHAT_PROVENANCE_LEDGER_MAX_RECORD_BYTES as usize + 1],
+        )
+        .unwrap();
+        assert!(!has_webchat_default_session_provenance(home.path(), &session));
+    }
+}
+
 impl DaemonGuiChatRuntime {
-    fn allowed_surfaces(origin: GuiChatSurface) -> Vec<GuiChatSurface> {
-        match origin {
-            GuiChatSurface::WebChat => vec![GuiChatSurface::WebChat],
-            GuiChatSurface::Main | GuiChatSurface::Buddy => {
+    fn allowed_surfaces(turn: &Turn) -> Vec<GuiChatSurface> {
+        match (turn.origin_surface, turn.surface_account_id.as_ref()) {
+            (GuiChatSurface::WebChat, Some(account)) if account.is_default() => {
+                vec![GuiChatSurface::WebChat]
+            }
+            (GuiChatSurface::Main | GuiChatSurface::Buddy, None) => {
                 vec![GuiChatSurface::Main, GuiChatSurface::Buddy]
             }
+            _ => Vec::new(),
         }
     }
 
@@ -1738,7 +1876,7 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
                             grant: GuiChatOpaqueCapability(existing.grant.clone()),
                             turn_id: GuiChatTurnId(*existing_id),
                             session_id: existing.session.clone(),
-                            allowed_surfaces: Self::allowed_surfaces(existing.origin_surface),
+                            allowed_surfaces: Self::allowed_surfaces(existing),
                         },
                         initial_sequence: existing.next_sequence.saturating_sub(1),
                     });
@@ -1792,6 +1930,14 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
                 .map_err(|_| Self::reject(GuiChatErrorCode::Unavailable, "provider_epoch"))?;
             let row = LedgerRow {
                 request_id: request.request_id.0,
+                session_id: (!preflight.request.incognito)
+                    .then(|| preflight.request.session_id.clone()),
+                origin_surface: (!preflight.request.incognito)
+                    .then_some(preflight.request.origin_surface),
+                surface_account_id: (!preflight.request.incognito)
+                    .then(|| preflight.request.surface_account_id.clone())
+                    .flatten(),
+                incognito: preflight.request.incognito,
                 intent_digest: request.turn_intent_digest.0.clone(),
                 provenance_digest: provenance.0,
                 config_epoch: epoch,
@@ -1809,6 +1955,7 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
                 intent: request.turn_intent_digest.clone(),
                 session: request.session_id.clone(),
                 origin_surface: preflight.request.origin_surface,
+                surface_account_id: preflight.request.surface_account_id.clone(),
                 message: preflight.request.message.clone(),
                 model: preflight.request.model.clone(),
                 skill: preflight.request.skill_id.clone(),
@@ -1854,7 +2001,7 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
                         grant: GuiChatOpaqueCapability(grant),
                         turn_id: GuiChatTurnId(id),
                         session_id: turn.session.clone(),
-                        allowed_surfaces: Self::allowed_surfaces(turn.origin_surface),
+                        allowed_surfaces: Self::allowed_surfaces(turn),
                     },
                     initial_sequence: turn.next_sequence.saturating_sub(1),
                 }
@@ -1884,7 +2031,7 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
         ) {
             return Err(Self::reject(GuiChatErrorCode::Forbidden, "attach_surface"));
         }
-        if !Self::allowed_surfaces(t.origin_surface).contains(&request.desired_surface) {
+        if !Self::allowed_surfaces(t).contains(&request.desired_surface) {
             return Err(Self::reject(GuiChatErrorCode::Forbidden, "attach_surface"));
         }
         if !t.subscriptions.contains_key(&request.desired_surface) {
@@ -2283,6 +2430,7 @@ pub(crate) mod w458_test_support {
 
     static STREAM_OPENS: AtomicUsize = AtomicUsize::new(0);
     static STREAM_ITEMS_POLLED: AtomicUsize = AtomicUsize::new(0);
+    static CAPTURE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     // The real producer regression deliberately runs through the normal GUI
     // terminal boundary. Keep only a bounded, content-free failure stage so a
     // hosted failure can distinguish an admission/preparation rejection from
@@ -2484,6 +2632,9 @@ pub(crate) mod w458_test_support {
 
     async fn runtime_with_admitted_turn(
         hook_toml: &str,
+        origin_surface: GuiChatSurface,
+        surface_account_id: Option<crate::channels::registry::ChannelAccountId>,
+        incognito: bool,
     ) -> anyhow::Result<(
         DaemonGuiChatRuntime,
         GuiChatStartResponse,
@@ -2549,12 +2700,13 @@ pub(crate) mod w458_test_support {
             schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
             expected_boot_id: "w458-boot".into(),
             request_id,
-            session_id: "w458-session".into(),
-            origin_surface: GuiChatSurface::Main,
+            session_id: Uuid::now_v7().to_string(),
+            origin_surface,
+            surface_account_id,
             message: "W458 exercise the real GUI producer".into(),
             model: None,
             skill_id: None,
-            incognito: false,
+            incognito,
             reasoning_display: false,
             attachments: Vec::new(),
         };
@@ -2681,13 +2833,19 @@ pub(crate) mod w458_test_support {
     }
 
     pub(crate) async fn capture_real_producer(replace: bool) -> anyhow::Result<W458RuntimeCapture> {
+        let _capture_guard = CAPTURE_LOCK.lock().await;
         const BLOCK: &str = "\nname = \"w458-post-provider-block\"\nstage = \"post_provider_call\"\n[matcher]\npattern = \"sk-w458-never-visible\"\n[action]\nkind = \"block\"\nreason = \"synthetic secret\"\n";
         const REPLACE: &str = "\nname = \"w458-post-provider-replace\"\nstage = \"post_provider_call\"\n[matcher]\npattern = \"sk-w458-never-visible\"\n[action]\nkind = \"replace\"\ntemplate = \"[REDACTED]\"\n";
         STREAM_OPENS.store(0, Ordering::SeqCst);
         STREAM_ITEMS_POLLED.store(0, Ordering::SeqCst);
         TERMINAL_FAILURE_STAGE.store(FAILURE_NONE, Ordering::SeqCst);
-        let (runtime, start, completion, home, release) =
-            runtime_with_admitted_turn(if replace { REPLACE } else { BLOCK }).await?;
+        let (runtime, start, completion, home, release) = runtime_with_admitted_turn(
+            if replace { REPLACE } else { BLOCK },
+            GuiChatSurface::Main,
+            None,
+            false,
+        )
+        .await?;
         macro_rules! cleanup_w458_failure {
             () => {{
                 // `start` has registered the producer before this fixture can
@@ -2875,6 +3033,41 @@ pub(crate) mod w458_test_support {
             provider_chunks: STREAM_ITEMS_POLLED.load(Ordering::SeqCst),
             post_provider_hook_observed,
         })
+    }
+
+    #[cfg(test)]
+    #[tokio::test]
+    async fn real_start_persists_only_non_incognito_webchat_default_provenance() {
+        let _capture_guard = CAPTURE_LOCK.lock().await;
+        let (runtime, start, completion, home, release) = runtime_with_admitted_turn(
+            "",
+            GuiChatSurface::WebChat,
+            Some(crate::channels::registry::ChannelAccountId::default_account()),
+            false,
+        )
+        .await
+        .expect("real WebChat start");
+        let session_id = start.same_session_attach_grant.session_id.clone();
+        assert!(has_webchat_default_session_provenance(home.path(), &session_id));
+        release.add_permits(1);
+        runtime.close_and_drain().await;
+        drop(runtime);
+        completion.wait().await.expect("real writer drain");
+
+        let (runtime, start, completion, home, release) = runtime_with_admitted_turn(
+            "",
+            GuiChatSurface::WebChat,
+            Some(crate::channels::registry::ChannelAccountId::default_account()),
+            true,
+        )
+        .await
+        .expect("real incognito WebChat start");
+        let session_id = start.same_session_attach_grant.session_id.clone();
+        assert!(!has_webchat_default_session_provenance(home.path(), &session_id));
+        release.add_permits(1);
+        runtime.close_and_drain().await;
+        drop(runtime);
+        completion.wait().await.expect("real writer drain");
     }
 }
 
@@ -3075,6 +3268,7 @@ mod lifecycle_tests {
                 intent: GuiChatDigest("0".repeat(64)),
                 session: "fixture".into(),
                 origin_surface: GuiChatSurface::Main,
+                surface_account_id: None,
                 message: "fixture message".into(),
                 model: None,
                 skill: None,
@@ -4329,14 +4523,11 @@ mod lifecycle_tests {
     #[tokio::test]
     async fn webchat_turn_grant_cannot_attach_native_gui_surfaces() {
         let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;
-        runtime
-            .state
-            .lock()
-            .await
-            .turns
-            .get_mut(&turn_id)
-            .expect("fixture turn")
-            .origin_surface = GuiChatSurface::WebChat;
+        let mut state = runtime.state.lock().await;
+        let turn = state.turns.get_mut(&turn_id).expect("fixture turn");
+        turn.origin_surface = GuiChatSurface::WebChat;
+        turn.surface_account_id = Some(crate::channels::registry::ChannelAccountId::default_account());
+        drop(state);
         let request = |surface| GuiChatAttachExchangeRequest {
             schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
             expected_boot_id: "fixture-boot".into(),
@@ -4357,6 +4548,17 @@ mod lifecycle_tests {
                 .await
                 .is_err()
         );
+        runtime.state.lock().await.turns.get_mut(&turn_id).unwrap().surface_account_id =
+            Some(crate::channels::registry::ChannelAccountId::new("other").unwrap());
+        assert!(
+            runtime
+                .exchange_attach(request(GuiChatSurface::WebChat))
+                .await
+                .is_err(),
+            "a WebChat turn cannot attach with a foreign account"
+        );
+        runtime.state.lock().await.turns.get_mut(&turn_id).unwrap().surface_account_id =
+            Some(crate::channels::registry::ChannelAccountId::default_account());
         assert!(
             runtime
                 .exchange_attach(request(GuiChatSurface::WebChat))
@@ -4374,14 +4576,11 @@ mod lifecycle_tests {
     #[tokio::test]
     async fn webchat_exchange_capability_authorizes_real_runtime_status() {
         let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;
-        runtime
-            .state
-            .lock()
-            .await
-            .turns
-            .get_mut(&turn_id)
-            .expect("fixture turn")
-            .origin_surface = GuiChatSurface::WebChat;
+        let mut state = runtime.state.lock().await;
+        let turn = state.turns.get_mut(&turn_id).expect("fixture turn");
+        turn.origin_surface = GuiChatSurface::WebChat;
+        turn.surface_account_id = Some(crate::channels::registry::ChannelAccountId::default_account());
+        drop(state);
         assert!(
             runtime
                 .status(GuiChatStatusRequest {
@@ -4427,14 +4626,11 @@ mod lifecycle_tests {
     #[tokio::test]
     async fn webchat_replay_orders_missing_frames_and_advances_cursor() {
         let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;
-        runtime
-            .state
-            .lock()
-            .await
-            .turns
-            .get_mut(&turn_id)
-            .expect("fixture turn")
-            .origin_surface = GuiChatSurface::WebChat;
+        let mut state = runtime.state.lock().await;
+        let turn = state.turns.get_mut(&turn_id).expect("fixture turn");
+        turn.origin_surface = GuiChatSurface::WebChat;
+        turn.surface_account_id = Some(crate::channels::registry::ChannelAccountId::default_account());
+        drop(state);
         let exchange = runtime
             .exchange_attach(GuiChatAttachExchangeRequest {
                 schema_version: GUI_CHAT_V1_SCHEMA_VERSION,

@@ -13,6 +13,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::daemon::audit_rpc::AuditStream;
+use crate::channels::registry::ChannelAccountId;
 
 // Proposal-02 keeps this wire module crate-private. The public GUI facade is
 // gui_chat_bridge and never exposes this stream or engine event type.
@@ -115,6 +116,10 @@ pub(crate) struct GuiChatPreflightRequest {
     pub(crate) request_id: GuiChatRequestId,
     pub(crate) session_id: String,
     pub(crate) origin_surface: GuiChatSurface,
+    /// A surface-owned account identity. Only server-created WebChat sessions
+    /// carry the canonical default account in this P1-15 slice.
+    #[serde(default)]
+    pub(crate) surface_account_id: Option<ChannelAccountId>,
     pub(crate) message: String,
     pub(crate) model: Option<String>,
     pub(crate) skill_id: Option<String>,
@@ -771,6 +776,7 @@ pub(crate) fn preflight_descriptor_digest(
     let mut encoder = DigestEncoder::new("neoth/gui-chat/preflight/v1");
     encoder.field(request.request_id.0.as_bytes());
     encoder.field(surface_discriminant(request.origin_surface));
+    encoder.option_field(request.surface_account_id.as_ref().map(ChannelAccountId::as_str));
     if request.incognito {
         let key = incognito_message_key.filter(|key| !key.is_empty()).ok_or(
             GuiChatProtocolError::Invalid("incognito_message_key_missing"),
@@ -855,6 +861,16 @@ pub(crate) fn validate_preflight_request(request: &GuiChatPreflightRequest) -> G
         &request.expected_boot_id,
         GUI_CHAT_BOOT_ID_MAX_BYTES,
     )?;
+    match (request.origin_surface, request.surface_account_id.as_ref()) {
+        (GuiChatSurface::WebChat, Some(account)) if account.is_default() => {}
+        (GuiChatSurface::WebChat, _) => {
+            return Err(GuiChatProtocolError::Invalid("webchat_surface_account"));
+        }
+        (GuiChatSurface::Main | GuiChatSurface::Buddy, None) => {}
+        (GuiChatSurface::Main | GuiChatSurface::Buddy, Some(_)) => {
+            return Err(GuiChatProtocolError::Invalid("native_surface_account"));
+        }
+    }
     validate_request_id(request.request_id)?;
     validate_nonempty(
         "session_id",
@@ -1510,6 +1526,7 @@ mod tests {
             request_id: GuiChatRequestId(Uuid::now_v7()),
             session_id: "session-a".into(),
             origin_surface: GuiChatSurface::Main,
+            surface_account_id: None,
             message: "hello".into(),
             model: Some("model-a".into()),
             skill_id: None,
@@ -1825,6 +1842,30 @@ mod tests {
         validate_attach_exchange_request(&buddy_attach).unwrap();
         assert_ne!(main_attach.desired_surface, buddy_attach.desired_surface);
         assert_eq!(final_one, final_two);
+    }
+
+    #[test]
+    fn surface_account_is_closed_by_surface_and_bound_into_preflight_digest() {
+        let request = preflight();
+        let digest = preflight_descriptor_digest(&request, &[], 7, Some(b"key-one"))
+            .expect("native account-free preflight is valid");
+        let mut webchat_missing = request.clone();
+        webchat_missing.origin_surface = GuiChatSurface::WebChat;
+        assert!(validate_preflight_request(&webchat_missing).is_err());
+
+        let mut webchat_default = webchat_missing.clone();
+        webchat_default.surface_account_id = Some(ChannelAccountId::default_account());
+        let webchat_digest = preflight_descriptor_digest(&webchat_default, &[], 7, Some(b"key-one"))
+            .expect("WebChat default account is valid");
+        assert_ne!(digest, webchat_digest);
+
+        let mut webchat_other = webchat_default.clone();
+        webchat_other.surface_account_id = Some(ChannelAccountId::new("other").unwrap());
+        assert!(validate_preflight_request(&webchat_other).is_err());
+
+        let mut native_account = request;
+        native_account.surface_account_id = Some(ChannelAccountId::default_account());
+        assert!(validate_preflight_request(&native_account).is_err());
     }
 
     #[test]

@@ -1503,7 +1503,13 @@ fn validate_incarnation_bound_account(
     binding: &crate::config::ChannelAccountBinding,
     target_channel: &str,
 ) -> Result<()> {
-    validate_account_bound_channel_ref(binding.channel_ref(), target_channel)?;
+    anyhow::ensure!(
+        matches!(
+            (binding.channel_ref().channel_id, target_channel),
+            (ChannelId::Telegram, "telegram") | (ChannelId::Slack, "slack")
+        ),
+        "v5 proactive account binding must be an exact Telegram or Slack channel reference"
+    );
     anyhow::ensure!(
         binding.incarnation().is_some(),
         "v5 proactive account binding must carry an account incarnation"
@@ -3263,7 +3269,9 @@ fn validate_delivery_record(record: &ProactiveDeliveryRecord) -> Result<()> {
             "proactive history connection binding conflicts with its route"
         );
     } else if let Some(channel_ref) = record.channel_ref.as_ref() {
-        validate_account_bound_channel_ref(channel_ref, &record.target_channel)?;
+        if record.account_binding.is_none() {
+            validate_account_bound_channel_ref(channel_ref, &record.target_channel)?;
+        }
         anyhow::ensure!(
             record.item.account_id.as_ref() == Some(&channel_ref.account_id),
             "proactive history account binding conflicts with its queued item"
@@ -5381,11 +5389,20 @@ enum FreshBoundAccountRefusal {
     AccountUnavailable,
 }
 
-fn fresh_bound_telegram_account(
+enum FreshBoundAccount {
+    Telegram(crate::secret::SecretString, u64),
+    Slack(
+        crate::secret::SecretString,
+        crate::secret::SecretString,
+        String,
+    ),
+}
+
+fn fresh_bound_account(
     config_source_path: &Path,
     accepted_config: &crate::config::FreedomConfig,
     binding: &crate::config::ChannelAccountBinding,
-) -> std::result::Result<(crate::secret::SecretString, u64), FreshBoundAccountRefusal> {
+) -> std::result::Result<FreshBoundAccount, FreshBoundAccountRefusal> {
     let runtime = crate::config::load_runtime_config_pair_from_path(config_source_path)
         .map_err(|_| FreshBoundAccountRefusal::AccountUnavailable)?;
     let matches_accepted = matches!(
@@ -5396,15 +5413,40 @@ fn fresh_bound_telegram_account(
     if !matches_accepted {
         return Err(FreshBoundAccountRefusal::AcceptedConfigMismatch);
     }
-    let account = runtime
-        .authenticated_telegram_accounts()
-        .map_err(|_| FreshBoundAccountRefusal::AccountUnavailable)?
-        .into_iter()
-        .find(|account| {
-            !account.is_legacy_singleton() && account.account_binding().as_ref() == Some(binding)
-        })
-        .ok_or(FreshBoundAccountRefusal::AccountUnavailable)?;
-    Ok((account.token().clone(), account.allowed_user_id()))
+    match binding.channel_ref().channel_id {
+        ChannelId::Telegram => {
+            let account = runtime
+                .authenticated_telegram_accounts()
+                .map_err(|_| FreshBoundAccountRefusal::AccountUnavailable)?
+                .into_iter()
+                .find(|account| {
+                    !account.is_legacy_singleton()
+                        && account.account_binding().as_ref() == Some(binding)
+                })
+                .ok_or(FreshBoundAccountRefusal::AccountUnavailable)?;
+            Ok(FreshBoundAccount::Telegram(
+                account.token().clone(),
+                account.allowed_user_id(),
+            ))
+        }
+        ChannelId::Slack => {
+            let account = runtime
+                .authenticated_slack_accounts()
+                .map_err(|_| FreshBoundAccountRefusal::AccountUnavailable)?
+                .into_iter()
+                .find(|account| {
+                    !account.is_legacy_singleton()
+                        && account.account_binding().as_ref() == Some(binding)
+                })
+                .ok_or(FreshBoundAccountRefusal::AccountUnavailable)?;
+            Ok(FreshBoundAccount::Slack(
+                account.bot_token().clone(),
+                account.app_token().clone(),
+                account.allowed_user_id().to_string(),
+            ))
+        }
+        _ => Err(FreshBoundAccountRefusal::AccountUnavailable),
+    }
 }
 
 fn fresh_historic_bound_telegram_account(
@@ -5460,7 +5502,7 @@ pub(crate) async fn execute_claimed_once(
         None,
         None,
         None,
-        |_, _| unreachable!("unbound proactive delivery never invokes the account factory"),
+        |_| unreachable!("unbound proactive delivery never invokes the account factory"),
     )
     .await
 }
@@ -5495,7 +5537,7 @@ pub(super) async fn execute_claimed_once_connection_bound(
         None,
         None,
         None,
-        |_, _| unreachable!("connection-bound proactive delivery has no account factory"),
+        |_| unreachable!("connection-bound proactive delivery has no account factory"),
     )
     .await
 }
@@ -5516,6 +5558,9 @@ pub(crate) async fn execute_claimed_once_account_bound<F>(
 where
     F: FnOnce(crate::secret::SecretString, u64) -> Arc<dyn Channel>,
 {
+    if account_binding.channel_ref().channel_id != ChannelId::Telegram || target_channel != "telegram" {
+        return Err("Telegram account-bound executor received a non-Telegram binding".to_string());
+    }
     execute_claimed_once_inner(
         context,
         item,
@@ -5528,7 +5573,55 @@ where
         Some(account_binding.channel_ref().clone()),
         Some(account_binding),
         Some(config_source_path),
-        build_channel,
+        move |credentials| match credentials {
+            FreshBoundAccount::Telegram(token, allowed_user_id) => build_channel(token, allowed_user_id),
+            FreshBoundAccount::Slack(_, _, _) => unreachable!("Telegram factory received Slack account"),
+        },
+    )
+    .await
+}
+
+/// Execute one exact incarnated Slack account. Its factory receives both
+/// Slack credentials and the immutable configured member; the transport still
+/// records that member as the durable recipient and resolves the ephemeral
+/// `D…` id only after Armed admission.
+pub(crate) async fn execute_claimed_once_slack_account_bound<F>(
+    context: &ProactiveEgressContext<'_>,
+    item: ProactiveItem,
+    queue_generation: &str,
+    target_channel: &str,
+    account_binding: crate::config::ChannelAccountBinding,
+    config_source_path: &Path,
+    build_channel: F,
+) -> Result<Option<ProactiveStatus>, String>
+where
+    F: FnOnce(
+        crate::secret::SecretString,
+        crate::secret::SecretString,
+        String,
+    ) -> Arc<dyn Channel>,
+{
+    if account_binding.channel_ref().channel_id != ChannelId::Slack || target_channel != "slack" {
+        return Err("Slack account-bound executor received a non-Slack binding".to_string());
+    }
+    execute_claimed_once_inner(
+        context,
+        item,
+        queue_generation,
+        target_channel,
+        None,
+        None,
+        None,
+        None,
+        Some(account_binding.channel_ref().clone()),
+        Some(account_binding),
+        Some(config_source_path),
+        move |credentials| match credentials {
+            FreshBoundAccount::Slack(bot_token, app_token, allowed_user_id) => {
+                build_channel(bot_token, app_token, allowed_user_id)
+            }
+            FreshBoundAccount::Telegram(_, _) => unreachable!("Slack factory received Telegram account"),
+        },
     )
     .await
 }
@@ -5548,6 +5641,9 @@ pub(crate) async fn execute_claimed_once_account_bound_v4<F>(
 where
     F: FnOnce(crate::secret::SecretString, u64) -> Arc<dyn Channel>,
 {
+    if channel_ref.channel_id != ChannelId::Telegram || target_channel != "telegram" {
+        return Err("historic Telegram executor received a non-Telegram binding".to_string());
+    }
     execute_claimed_once_inner(
         context,
         item,
@@ -5560,7 +5656,10 @@ where
         Some(channel_ref),
         None,
         Some(config_source_path),
-        build_channel,
+        move |credentials| match credentials {
+            FreshBoundAccount::Telegram(token, allowed_user_id) => build_channel(token, allowed_user_id),
+            FreshBoundAccount::Slack(_, _, _) => unreachable!("historic Telegram factory received Slack account"),
+        },
     )
     .await
 }
@@ -5584,7 +5683,7 @@ async fn execute_claimed_once_inner<F>(
     build_channel: F,
 ) -> Result<Option<ProactiveStatus>, String>
 where
-    F: FnOnce(crate::secret::SecretString, u64) -> Arc<dyn Channel>,
+    F: FnOnce(FreshBoundAccount) -> Arc<dyn Channel>,
 {
     let home = context.home;
     let wal_segment_path = context.wal_segment_path;
@@ -5659,8 +5758,6 @@ where
             }
             None => match channel_ref.as_ref() {
                 Some(channel_ref) => {
-                    validate_account_bound_channel_ref(channel_ref, target_channel)
-                        .map_err(|error| format!("validate account-bound route: {error:#}"))?;
                     if item.account_id.as_ref() != Some(&channel_ref.account_id) {
                         return Err("account-bound route conflicts with queued account".to_string());
                     }
@@ -5679,6 +5776,9 @@ where
                             "historic account-bound route unexpectedly carries an incarnation"
                                 .to_string(),
                         );
+                    } else {
+                        validate_account_bound_channel_ref(channel_ref, target_channel)
+                            .map_err(|error| format!("validate account-bound route: {error:#}"))?;
                     }
                     let config_source_path = config_source_path.ok_or_else(|| {
                         "account-bound delivery is missing its config source path".to_string()
@@ -5689,7 +5789,7 @@ where
                     let channel_ref_for_read = channel_ref.clone();
                     let fresh =
                         tokio::task::spawn_blocking(move || match binding_for_read.as_ref() {
-                            Some(binding) => fresh_bound_telegram_account(
+                            Some(binding) => fresh_bound_account(
                                 &config_source_path,
                                 &accepted_config,
                                 binding,
@@ -5698,19 +5798,23 @@ where
                                 &config_source_path,
                                 &accepted_config,
                                 &channel_ref_for_read,
-                            ),
+                            )
+                            .map(|(token, allowed_user_id)| {
+                                FreshBoundAccount::Telegram(token, allowed_user_id)
+                            }),
                         })
                         .await
                         .map_err(|error| format!("join account-bound pair admission: {error}"))?;
                     match fresh {
-                        Ok((token, allowed_user_id)) => {
+                        Ok(credentials) => {
+                            let transport_recipient = match &credentials {
+                                FreshBoundAccount::Telegram(_, allowed_user_id) => allowed_user_id.to_string(),
+                                FreshBoundAccount::Slack(_, _, allowed_user_id) => allowed_user_id.clone(),
+                            };
                             let channel = build_channel
                                 .take()
-                                .expect("account-bound channel factory is consumed once")(
-                                token,
-                                allowed_user_id,
-                            );
-                            (allowed_user_id.to_string(), Some(channel), None)
+                                .expect("account-bound channel factory is consumed once")(credentials);
+                            (transport_recipient, Some(channel), None)
                         }
                         Err(FreshBoundAccountRefusal::AcceptedConfigMismatch) => {
                             drop(delivery_lock);
@@ -8676,12 +8780,14 @@ mod tests {
 
     struct ObservedChannel {
         calls: std::sync::Mutex<Vec<(String, String)>>,
+        fail_after_send: bool,
     }
 
     impl ObservedChannel {
         fn new() -> Self {
             Self {
                 calls: std::sync::Mutex::new(Vec::new()),
+                fail_after_send: false,
             }
         }
 
@@ -8690,6 +8796,13 @@ mod tests {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .clone()
+        }
+
+        fn failing() -> Self {
+            Self {
+                calls: std::sync::Mutex::new(Vec::new()),
+                fail_after_send: true,
+            }
         }
     }
 
@@ -8712,6 +8825,9 @@ mod tests {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .push((chat_id.to_string(), text.to_string()));
+            if self.fail_after_send {
+                return Err(ChannelError::Transport("scripted unknown post result".to_string()));
+            }
             Ok(MessageId("observed".to_string()))
         }
     }
@@ -8913,6 +9029,61 @@ mod tests {
         queued
     }
 
+    fn write_incarnated_slack_runtime_pair(
+        home: &Path,
+        account_id: &str,
+        allowed_user_id: &str,
+        incarnation: &str,
+    ) -> (PathBuf, crate::config::FreedomConfig, crate::config::ChannelAccountBinding) {
+        let account_id = crate::channels::registry::ChannelAccountId::new(account_id)
+            .expect("canonical Slack test account id");
+        let mut config = crate::config::FreedomConfig::default();
+        config.autonomy = crate::permissions::AutonomyLevel::Full;
+        config.proactive.enabled = true;
+        config.channel_accounts.slack.insert(
+            account_id.clone(),
+            crate::config::SlackAccountConfig {
+                allowed_user_id: allowed_user_id.to_string(),
+                team_id: Some("TTEST1".to_string()),
+                incarnation: Some(
+                    serde_yaml::from_str(&format!("\"{incarnation}\""))
+                        .expect("canonical Slack test incarnation"),
+                ),
+            },
+        );
+        let source_path = home.join("freedom.yaml");
+        std::fs::write(&source_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+        let mut credentials = crate::config::credentials::Credentials::default();
+        credentials.channel_accounts.slack.insert(
+            account_id,
+            crate::config::credentials::SlackAccountCredentials {
+                bot_token: Some(crate::secret::SecretString::new("bot-test".to_string())),
+                app_token: Some(crate::secret::SecretString::new("app-test".to_string())),
+            },
+        );
+        credentials
+            .write(&home.join("credentials.yaml"))
+            .expect("write coherent Slack test credentials");
+        let binding = crate::config::load_runtime_config_pair_from_path(&source_path)
+            .expect("load incarnated Slack runtime pair")
+            .authenticated_slack_accounts()
+            .expect("authenticate Slack account")
+            .remove(0)
+            .account_binding()
+            .expect("mapped Slack account has a binding");
+        (source_path, config, binding)
+    }
+
+    fn incarnated_slack_item(
+        key: &str,
+        binding: crate::config::ChannelAccountBinding,
+    ) -> ProactiveItem {
+        let mut queued = bound_item(key, binding.channel_ref().account_id.as_str());
+        queued.channel = "slack".to_string();
+        queued.account_binding = Some(binding);
+        queued
+    }
+
     fn legacy_trust_request_binding_sha256(claim: &ProactiveEgressClaim) -> String {
         let mut bytes = Vec::with_capacity(512);
         for value in [
@@ -9023,6 +9194,293 @@ mod tests {
             0,
             "B binding must not mint A transport"
         );
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn slack_v5_binding_admits_only_its_member_without_global_destination() {
+        let home = tempfile::tempdir().unwrap();
+        let (source_path, config, binding) = write_incarnated_slack_runtime_pair(
+            home.path(),
+            "work",
+            "UWORK123",
+            "018f3d1e-2c50-7000-8000-000000000021",
+        );
+        let queued = incarnated_slack_item("slack-v5-work", binding.clone());
+        let generation = seed_queue(home.path(), queued.clone());
+        let (segment, writer, join) = ready_writer(home.path()).await;
+        let accepted = crate::config::reload::ReloadController::new(config, source_path.clone())
+            .accepted_snapshot();
+        let context = ProactiveEgressContext::new(
+            home.path(),
+            &segment,
+            &writer,
+            accepted,
+            160,
+            DEFAULT_DELIVERY_ATTEMPT_TIMEOUT,
+        );
+        let sent = Arc::new(ObservedChannel::new());
+        let sent_factory = Arc::clone(&sent);
+        let factory_calls = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::clone(&factory_calls);
+        assert_eq!(
+            execute_claimed_once_slack_account_bound(
+                &context,
+                queued,
+                &generation,
+                "slack",
+                binding,
+                &source_path,
+                move |_bot_token, _app_token, member| {
+                    assert_eq!(member, "UWORK123");
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    sent_factory
+                },
+            )
+            .await
+            .unwrap(),
+            Some(ProactiveStatus::Delivered)
+        );
+        assert_eq!(factory_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            sent.calls(),
+            vec![("UWORK123".to_string(), "private body".to_string())],
+            "the persisted recipient is the bound member; no global Slack destination can enter the factory"
+        );
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn slack_v5_binding_drift_settles_before_factory_and_cannot_resend() {
+        let home = tempfile::tempdir().unwrap();
+        let (source_path, _old_config, old_binding) = write_incarnated_slack_runtime_pair(
+            home.path(),
+            "work",
+            "UWORK123",
+            "018f3d1e-2c50-7000-8000-000000000022",
+        );
+        let queued = incarnated_slack_item("slack-v5-drift", old_binding.clone());
+        let generation = seed_queue(home.path(), queued.clone());
+        let (_same_path, new_config, new_binding) = write_incarnated_slack_runtime_pair(
+            home.path(),
+            "work",
+            "UWORK123",
+            "018f3d1e-2c50-7000-8000-000000000023",
+        );
+        assert_ne!(old_binding, new_binding);
+        let (segment, writer, join) = ready_writer(home.path()).await;
+        let accepted = crate::config::reload::ReloadController::new(new_config, source_path.clone())
+            .accepted_snapshot();
+        let context = ProactiveEgressContext::new(
+            home.path(),
+            &segment,
+            &writer,
+            accepted,
+            170,
+            DEFAULT_DELIVERY_ATTEMPT_TIMEOUT,
+        );
+        let factory_calls = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::clone(&factory_calls);
+        assert_eq!(
+            execute_claimed_once_slack_account_bound(
+                &context,
+                queued.clone(),
+                &generation,
+                "slack",
+                old_binding.clone(),
+                &source_path,
+                move |_, _, _| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Arc::new(ObservedChannel::new())
+                },
+            )
+            .await
+            .unwrap(),
+            Some(ProactiveStatus::Failed)
+        );
+        assert_eq!(factory_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            execute_claimed_once_slack_account_bound(
+                &context,
+                queued,
+                &generation,
+                "slack",
+                old_binding,
+                &source_path,
+                |_, _, _| Arc::new(ObservedChannel::new()),
+            )
+            .await
+            .unwrap(),
+            None,
+            "the configuration-error settlement consumes this generation and cannot resend"
+        );
+        let history = read_delivery_history(home.path()).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].outcome(), ProactiveEgressOutcome::AdapterConfigurationError);
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn slack_v5_terminal_transport_error_is_not_reopened_on_second_invocation() {
+        let home = tempfile::tempdir().unwrap();
+        let (source_path, config, binding) = write_incarnated_slack_runtime_pair(
+            home.path(),
+            "work",
+            "UWORK123",
+            "018f3d1e-2c50-7000-8000-000000000026",
+        );
+        let queued = incarnated_slack_item("slack-v5-no-resend", binding.clone());
+        let generation = seed_queue(home.path(), queued.clone());
+        let (segment, writer, join) = ready_writer(home.path()).await;
+        let accepted = crate::config::reload::ReloadController::new(config, source_path.clone())
+            .accepted_snapshot();
+        let context = ProactiveEgressContext::new(
+            home.path(),
+            &segment,
+            &writer,
+            accepted,
+            170,
+            DEFAULT_DELIVERY_ATTEMPT_TIMEOUT,
+        );
+        let sent = Arc::new(ObservedChannel::failing());
+        let sent_factory = Arc::clone(&sent);
+        assert_eq!(
+            execute_claimed_once_slack_account_bound(
+                &context,
+                queued.clone(),
+                &generation,
+                "slack",
+                binding.clone(),
+                &source_path,
+                move |_, _, _| sent_factory,
+            )
+            .await
+            .unwrap(),
+            Some(ProactiveStatus::Failed)
+        );
+        assert_eq!(sent.calls().len(), 1);
+        assert_eq!(
+            execute_claimed_once_slack_account_bound(
+                &context,
+                queued,
+                &generation,
+                "slack",
+                binding,
+                &source_path,
+                |_, _, _| Arc::new(ObservedChannel::new()),
+            )
+            .await
+            .unwrap(),
+            None,
+            "the terminal transport result settles the queued generation before recovery can retry"
+        );
+        assert_eq!(sent.calls().len(), 1);
+        let history = read_delivery_history(home.path()).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].outcome(), ProactiveEgressOutcome::TransportError);
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn account_bound_executor_factories_reject_cross_channel_bindings() {
+        let home = tempfile::tempdir().unwrap();
+        let (source_path, config, slack_binding) = write_incarnated_slack_runtime_pair(
+            home.path(),
+            "work",
+            "UWORK123",
+            "018f3d1e-2c50-7000-8000-000000000024",
+        );
+        let (segment, writer, join) = ready_writer(home.path()).await;
+        let accepted = crate::config::reload::ReloadController::new(config, source_path.clone())
+            .accepted_snapshot();
+        let context = ProactiveEgressContext::new(
+            home.path(),
+            &segment,
+            &writer,
+            accepted,
+            170,
+            DEFAULT_DELIVERY_ATTEMPT_TIMEOUT,
+        );
+        let calls = Arc::new(AtomicUsize::new(0));
+        let factory_calls = Arc::clone(&calls);
+        let item = incarnated_slack_item("slack-cross-channel", slack_binding.clone());
+        assert_eq!(
+            execute_claimed_once_account_bound(
+                &context,
+                item,
+                "unseeded",
+                "telegram",
+                slack_binding.clone(),
+                &source_path,
+                move |_, _| {
+                    factory_calls.fetch_add(1, Ordering::SeqCst);
+                    Arc::new(ObservedChannel::new())
+                },
+            )
+            .await
+            .unwrap_err(),
+            "Telegram account-bound executor received a non-Telegram binding"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let slack_factory_calls = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::clone(&slack_factory_calls);
+        let item = incarnated_slack_item("slack-wrong-target", slack_binding);
+        let binding = item.account_binding.clone().expect("Slack test binding");
+        assert_eq!(
+            execute_claimed_once_slack_account_bound(
+                &context,
+                item,
+                "unseeded",
+                "telegram",
+                binding,
+                &source_path,
+                move |_, _, _| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Arc::new(ObservedChannel::new())
+                },
+            )
+            .await
+            .unwrap_err(),
+            "Slack account-bound executor received a non-Slack binding"
+        );
+        assert_eq!(slack_factory_calls.load(Ordering::SeqCst), 0);
+        let telegram_home = tempfile::tempdir().unwrap();
+        let (telegram_source, _telegram_config, mut telegram_bindings) =
+            write_incarnated_runtime_pair(
+                telegram_home.path(),
+                &[(
+                    "ops",
+                    42,
+                    "telegram-test",
+                    "018f3d1e-2c50-7000-8000-000000000025",
+                )],
+            );
+        let telegram_binding = telegram_bindings.pop().expect("Telegram test binding");
+        let telegram_item = incarnated_item("telegram-cross-channel", telegram_binding.clone());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let factory_calls = Arc::clone(&calls);
+        assert_eq!(
+            execute_claimed_once_slack_account_bound(
+                &context,
+                telegram_item,
+                "unseeded",
+                "slack",
+                telegram_binding,
+                &telegram_source,
+                move |_, _, _| {
+                    factory_calls.fetch_add(1, Ordering::SeqCst);
+                    Arc::new(ObservedChannel::new())
+                },
+            )
+            .await
+            .unwrap_err(),
+            "Slack account-bound executor received a non-Slack binding"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
         drop(writer);
         join.await.unwrap().unwrap();
     }

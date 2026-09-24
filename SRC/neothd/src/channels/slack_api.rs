@@ -119,6 +119,60 @@ pub struct PostMessageResult {
     pub error: Option<String>,
 }
 
+/// Narrow `conversations.open` envelope used only to resolve the named
+/// account's configured member into the app's IM (`D…`) conversation.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ConversationsOpenResult {
+    pub ok: bool,
+    pub channel_id: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Open or resume the app DM for one already-authorized Slack member.
+///
+/// Slack's one-member route requires `im:write`; callers must use the
+/// returned IM id for `chat.postMessage` (`chat:write`) rather than treating a
+/// member id as a general outbound destination.
+pub async fn conversations_open(
+    bot_token: &SecretString,
+    allowed_user_id: &str,
+) -> Result<ConversationsOpenResult> {
+    let client = http_client::build_client()?;
+    let resp = client
+        .post("https://slack.com/api/conversations.open")
+        .bearer_auth(bot_token.expose())
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .form(&[("users", allowed_user_id)])
+        .send()
+        .await
+        .context("slack conversations.open request")?;
+    let body: ConversationsOpenBody = resp
+        .json()
+        .await
+        .context("slack conversations.open decode")?;
+    let channel_id = body.channel.and_then(|channel| channel.id);
+    Ok(ConversationsOpenResult {
+        ok: body.ok,
+        channel_id,
+        error: body.error,
+    })
+}
+
+#[derive(Deserialize)]
+struct ConversationsOpenBody {
+    ok: bool,
+    #[serde(default)]
+    channel: Option<ConversationsOpenChannel>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ConversationsOpenChannel {
+    #[serde(default)]
+    id: Option<String>,
+}
+
 /// POST `chat.postMessage`. `channel` accepts a channel id (`Cxxxxxx`),
 /// a channel name with the `#` prefix, or a DM id (`Dxxxxxx`). Slack
 /// resolves the addressing server-side.
@@ -288,6 +342,18 @@ mod tests {
         assert!(!parsed.ok);
         assert_eq!(parsed.error.as_deref(), Some("not_in_channel"));
         assert!(parsed.ts.is_none());
+    }
+
+    #[test]
+    fn conversations_open_body_only_admits_returned_channel_id() {
+        let parsed: ConversationsOpenBody =
+            serde_json::from_str(r#"{"ok":true,"channel":{"id":"D12345"}}"#).unwrap();
+        assert!(parsed.ok);
+        assert_eq!(parsed.channel.and_then(|channel| channel.id).as_deref(), Some("D12345"));
+
+        let malformed: ConversationsOpenBody = serde_json::from_str(r#"{"ok":true,"channel":{}}"#).unwrap();
+        assert!(malformed.ok);
+        assert!(malformed.channel.and_then(|channel| channel.id).is_none());
     }
 
     #[test]

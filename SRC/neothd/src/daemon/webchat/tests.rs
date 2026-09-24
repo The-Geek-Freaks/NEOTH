@@ -401,6 +401,164 @@ async fn start_owned_request_with_incognito(
     request_id
 }
 
+fn write_resume_provenance(
+    home: &std::path::Path,
+    session_id: &str,
+    origin_surface: gui::GuiChatSurface,
+    account_id: Option<&str>,
+    incognito: bool,
+) {
+    let row = serde_json::json!({
+        "request_id": uuid::Uuid::now_v7(),
+        "session_id": if incognito { serde_json::Value::Null } else { serde_json::Value::String(session_id.into()) },
+        "origin_surface": if incognito { serde_json::Value::Null } else { serde_json::to_value(origin_surface).unwrap() },
+        "surface_account_id": if incognito { serde_json::Value::Null } else { account_id.map(serde_json::Value::from).unwrap_or(serde_json::Value::Null) },
+        "incognito": incognito,
+        "intent_digest": "a".repeat(64),
+        "provenance_digest": "b".repeat(64),
+        "config_epoch": 1,
+        "receipt": "fixture-receipt",
+        "terminal": null,
+    });
+    std::fs::write(
+        home.join("gui-chat-v1-ledger.jsonl"),
+        format!("{}\n", serde_json::to_string(&row).unwrap()),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn resume_requires_durable_webchat_default_provenance_and_restarts_without_old_requests() {
+    let runtime = Arc::new(RecordingRuntime::default());
+    let (base, state, shutdown, server, home) = spawn_webchat(Arc::clone(&runtime)).await;
+    prepare_ready_consent_home(home.path());
+    let client = reqwest::Client::new();
+    let session_id = uuid::Uuid::now_v7().to_string();
+    let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+    crate::memory::transcript_store::insert_turn(
+        &conn, &session_id, "operator", 1, "saved conversation",
+    ).unwrap();
+    crate::memory::transcript_store::insert_turn(
+        &conn, &uuid::Uuid::now_v7().to_string(), "operator", 2, "foreign conversation",
+    ).unwrap();
+    drop(conn);
+
+    // A saved transcript alone cannot establish WebChat origin.
+    assert!(state.mint_resume_handoff(&session_id).await.is_err());
+    write_resume_provenance(
+        home.path(),
+        &session_id,
+        gui::GuiChatSurface::Main,
+        None,
+        false,
+    );
+    assert!(state.mint_resume_handoff(&session_id).await.is_err());
+    write_resume_provenance(
+        home.path(),
+        &session_id,
+        gui::GuiChatSurface::WebChat,
+        Some("default"),
+        true,
+    );
+    assert!(state.mint_resume_handoff(&session_id).await.is_err());
+    write_resume_provenance(
+        home.path(),
+        &session_id,
+        gui::GuiChatSurface::WebChat,
+        Some("other"),
+        false,
+    );
+    assert!(state.mint_resume_handoff(&session_id).await.is_err());
+
+    write_resume_provenance(
+        home.path(),
+        &session_id,
+        gui::GuiChatSurface::WebChat,
+        Some("default"),
+        false,
+    );
+    let original_cookie = format!(
+        "{COOKIE_NAME}={}",
+        state.establish_session(session_id.clone()).await.unwrap()
+    );
+    let old_request = start_owned_request(&client, &base, &original_cookie).await;
+    let calls_before_resume = runtime.calls();
+    let restart_runtime: Arc<dyn gui::GuiChatRuntime> = runtime.clone();
+    let restarted = WebChatState::new(
+        state.port,
+        home.path().to_path_buf(),
+        "new-daemon-boot".into(),
+        restart_runtime,
+    );
+    restarted.set_listener_ready(true);
+    let restart_handoff = restarted
+        .mint_resume_handoff(&session_id)
+        .await
+        .expect("restart accepts only durable provenance");
+    let resumed_session_id = restarted
+        .consume_handoff(&restart_handoff.handoff)
+        .await
+        .expect("restart handoff is one-use");
+    let restart_cookie = restarted
+        .establish_session(resumed_session_id)
+        .await
+        .expect("restart establishes a fresh browser session");
+    let restart_session = restarted
+        .sessions
+        .lock()
+        .await
+        .get(&digest_key(&restart_cookie))
+        .cloned()
+        .expect("restart browser session");
+    assert!(
+        restart_session.requests.lock().await.is_empty(),
+        "restart rejoin must not resurrect request or attach authority"
+    );
+    let handoff = state
+        .mint_resume_handoff(&session_id)
+        .await
+        .expect("typed WebChat/default lifecycle row resumes");
+    assert_eq!(handoff.session_id, session_id);
+    let response = client
+        .post(format!("{base}/api/v1/webchat/bootstrap"))
+        .header("Origin", &base)
+        .json(&serde_json::json!({"handoff":handoff.handoff}))
+        .send()
+        .await
+        .expect("resume bootstrap");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let cookie = response
+        .headers()
+        .get(reqwest::header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    assert_eq!(session_id_for_test(&state, &cookie).await, session_id);
+
+    let transcript = client
+        .get(format!("{base}/api/v1/webchat/transcript"))
+        .header("Cookie", &cookie)
+        .send().await.unwrap();
+    assert_eq!(transcript.status(), reqwest::StatusCode::OK);
+    let transcript: serde_json::Value = transcript.json().await.unwrap();
+    assert_eq!(transcript["turns"].as_array().unwrap().len(), 1);
+    assert_eq!(transcript["turns"][0]["text"], "saved conversation");
+    for (path, body) in [
+        ("/api/v1/webchat/start", serde_json::json!({"request_id":old_request})),
+        ("/api/v1/webchat/attach", serde_json::json!({"request_id":old_request,"after_sequence":0})),
+        ("/api/v1/webchat/cancel", serde_json::json!({"request_id":old_request})),
+    ] {
+        let response = post(&client, &base, &cookie, path, body).await;
+        assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
+    }
+    assert_eq!(runtime.calls(), calls_before_resume, "resume must not revive old runtime authority");
+    stop(shutdown, server).await;
+}
+
 #[tokio::test]
 async fn handoff_is_one_shot_and_expired_handoffs_never_reach_runtime() {
     let runtime = Arc::new(RecordingRuntime::default());

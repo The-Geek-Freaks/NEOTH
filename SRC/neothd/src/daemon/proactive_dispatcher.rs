@@ -1162,15 +1162,7 @@ pub(crate) async fn run_proactive_delivery_tick_with_accepted(
             let action = Action::ProactiveChannelSend {
                 channel: target_channel.clone(),
             };
-            let status = if target_channel != "telegram" {
-                crate::daemon::proactive_egress::record_adapter_configuration_error_once(
-                    &egress,
-                    item,
-                    &queue_generation,
-                    &target_channel,
-                )
-                .await?
-            } else {
+            let status = if target_channel == "telegram" {
                 let stored_account = item
                     .account_id
                     .clone()
@@ -1226,6 +1218,63 @@ pub(crate) async fn run_proactive_delivery_tick_with_accepted(
                     )
                     .await?
                 }
+            } else if target_channel == "slack" {
+                let stored_account = item
+                    .account_id
+                    .clone()
+                    .expect("account-bound branch requires an account id");
+                let channel_ref = crate::channels::registry::ChannelRef::new(
+                    crate::channels::registry::ChannelId::Slack,
+                    stored_account,
+                );
+                if !evaluate(&action, &policy).is_allow() {
+                    crate::daemon::proactive_egress::record_account_bound_policy_suppressed_once(
+                        &egress,
+                        item,
+                        &queue_generation,
+                        &target_channel,
+                        channel_ref,
+                    )
+                    .await?
+                } else if let Some(binding) = item.account_binding.clone() {
+                    crate::daemon::proactive_egress::execute_claimed_once_slack_account_bound(
+                        &egress,
+                        item,
+                        &queue_generation,
+                        &target_channel,
+                        binding,
+                        config_source_path,
+                        |bot_token, app_token, allowed_user_id| {
+                            Arc::new(
+                                crate::channels::slack::SlackChannel::new_proactive_dm(
+                                    bot_token,
+                                    app_token,
+                                    allowed_user_id,
+                                )
+                                .expect("fresh authenticated Slack account must have a canonical member"),
+                            )
+                        },
+                    )
+                    .await?
+                } else {
+                    // Slack account maps always carry a sealed incarnation;
+                    // unlike Telegram, there is no historic v4 Slack route.
+                    crate::daemon::proactive_egress::record_adapter_configuration_error_once(
+                        &egress,
+                        item,
+                        &queue_generation,
+                        &target_channel,
+                    )
+                    .await?
+                }
+            } else {
+                crate::daemon::proactive_egress::record_adapter_configuration_error_once(
+                    &egress,
+                    item,
+                    &queue_generation,
+                    &target_channel,
+                )
+                .await?
             };
             if let Some(status) = status {
                 delivered += usize::from(status.is_delivered());
@@ -1590,6 +1639,9 @@ mod tests {
         let (writer, join) = crate::wal::spawn(segment.clone()).unwrap();
         let mut config = FreedomConfig::default();
         config.proactive.enabled = true;
+        // The recovery half exercises successful local-inbox settlement;
+        // default assisted autonomy correctly suppresses that delivery.
+        config.autonomy = AutonomyLevel::Full;
         let error = run_proactive_delivery_tick(
             tmp.path(),
             &segment,

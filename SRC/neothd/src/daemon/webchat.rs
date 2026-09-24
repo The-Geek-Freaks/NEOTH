@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::daemon::gui_chat_protocol as gui;
+use crate::channels::registry::ChannelAccountId;
 use base64::Engine as _;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
@@ -42,6 +43,7 @@ struct Handoff {
 }
 struct BrowserSession {
     session_id: String,
+    surface_account_id: ChannelAccountId,
     expires_at: u64,
     requests: Mutex<HashMap<uuid::Uuid, Arc<Mutex<BrowserRequest>>>>,
     capacity: Arc<Semaphore>,
@@ -75,6 +77,7 @@ pub(crate) struct WebChatRuntimeStatus {
 pub(crate) struct WebChatHandoffResponse {
     pub(crate) handoff: String,
     pub(crate) url: String,
+    pub(crate) session_id: String,
 }
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -239,17 +242,62 @@ impl WebChatState {
         if handoffs.len() >= MAX_HANDOFFS {
             return Err("webchat handoff capacity reached");
         }
+        let session_id = uuid::Uuid::now_v7().to_string();
         handoffs.insert(
             digest_key(&handoff),
             Handoff {
-                session_id: uuid::Uuid::now_v7().to_string(),
+                session_id: session_id.clone(),
                 expires_at: now.saturating_add(HANDOFF_TTL_SECS),
             },
         );
         Ok(WebChatHandoffResponse {
             url: format!("http://127.0.0.1:{}/webchat#handoff={handoff}", self.port),
             handoff,
+            session_id,
         })
+    }
+    pub(crate) async fn mint_resume_handoff(
+        &self,
+        session_id: &str,
+    ) -> Result<WebChatHandoffResponse, &'static str> {
+        if !self.listener_ready.load(Ordering::Acquire) {
+            return Err("webchat listener is not ready");
+        }
+        let Ok(parsed) = uuid::Uuid::parse_str(session_id) else {
+            return Err("webchat session id is invalid");
+        };
+        if parsed.get_version_num() != 7 || parsed.to_string() != session_id {
+            return Err("webchat session id is invalid");
+        }
+        let home = Arc::clone(&self.home);
+        let session_id = session_id.to_owned();
+        let provenance_session_id = session_id.clone();
+        let proven = tokio::task::spawn_blocking(move || {
+            crate::daemon::gui_chat_runtime::has_webchat_default_session_provenance(
+                &home,
+                &provenance_session_id,
+            )
+        })
+        .await
+        .map_err(|_| "webchat provenance unavailable")?;
+        if !proven {
+            return Err("webchat session cannot be resumed");
+        }
+        self.mint_handoff_for_session(session_id).await
+    }
+    async fn mint_handoff_for_session(
+        &self,
+        session_id: String,
+    ) -> Result<WebChatHandoffResponse, &'static str> {
+        let handoff = random_opaque()?;
+        let now = crate::time::now_unix_secs();
+        let mut handoffs = self.handoffs.lock().await;
+        handoffs.retain(|_, entry| entry.expires_at > now);
+        if handoffs.len() >= MAX_HANDOFFS {
+            return Err("webchat handoff capacity reached");
+        }
+        handoffs.insert(digest_key(&handoff), Handoff { session_id: session_id.clone(), expires_at: now.saturating_add(HANDOFF_TTL_SECS) });
+        Ok(WebChatHandoffResponse { url: format!("http://127.0.0.1:{}/webchat#handoff={handoff}", self.port), handoff, session_id })
     }
     async fn consume_handoff(&self, handoff: &str) -> Option<String> {
         if !valid_opaque(handoff) {
@@ -280,6 +328,7 @@ impl WebChatState {
             digest_key(&value),
             Arc::new(BrowserSession {
                 session_id,
+                surface_account_id: ChannelAccountId::default_account(),
                 expires_at: now.saturating_add(SESSION_TTL_SECS),
                 requests: Mutex::new(HashMap::new()),
                 capacity: Arc::new(Semaphore::new(MAX_REQUESTS)),
@@ -499,6 +548,7 @@ async fn route(
                 request_id: gui::GuiChatRequestId(request_id),
                 session_id: session.session_id.clone(),
                 origin_surface: gui::GuiChatSurface::WebChat,
+                surface_account_id: Some(session.surface_account_id.clone()),
                 message: input.message,
                 model: input.model,
                 skill_id: input.skill_id,
