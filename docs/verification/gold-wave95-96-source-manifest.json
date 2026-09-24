@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T00:37:25.3126978Z",
+  "capturedUtc": "2026-09-24T00:40:19.8817694Z",
   "validationStatus": "SOURCE_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -1053,8 +1053,8 @@
     },
     {
       "path": "docs/gold-wave568-572-paperless-followup.md",
-      "bytes": 2507,
-      "sha256": "1D1B5E6DE0349CF8AB5AFE729CFD6EF1A7C1ED1DBA61652B91910FFE33F94A95"
+      "bytes": 2963,
+      "sha256": "F9285097CD26183219B95922BD0CCDF576C88397F2B4AFD5E1DFD64EB8650551"
     },
     {
       "path": "docs/gold-wave571-wizard-acceptance.md",
@@ -1398,18 +1398,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 205090,
-      "sha256": "DD1879C649C74C8344E54F36F81722DD671DE7669D81EF0F1D8B94FBA03512CC"
+      "bytes": 205523,
+      "sha256": "00E4A34D4BF524AF93417DF67C635B1E0EEDC94D0917157D797CC80C26F9897E"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1216418,
-      "sha256": "14338127917CBEFC05B1CD30E77452F8AC07760B50F273B93280082FD3EF2B06"
+      "bytes": 1216851,
+      "sha256": "6C806758A978EB14F2F9ECFE994568B8B3C925EAAB21AAB373783863E5335506"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1815700,
-      "sha256": "98D56025A482F36AD632F2AE26FF62403AF9926D86D073CC7CE11696ACBA4626"
+      "bytes": 1816133,
+      "sha256": "ECB23D9DF6D30A59F4DE3B8D944EC55345A74466E39997507813E96CEFBDFF8A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -1433,8 +1433,8 @@
     },
     {
       "path": "scripts/acquire_paperless_provenance.py",
-      "bytes": 24507,
-      "sha256": "FEB61B3DEEE2D180A3B12D149E08F597D134702844B90F4F3B080DDE17017D51"
+      "bytes": 24551,
+      "sha256": "EA94F50A699D7D878140D3F11EE76F955271724E84D7E8706470A42F98AD7667"
     },
     {
       "path": "scripts/extract_openclaw_channel_schema.py",
@@ -1443,8 +1443,8 @@
     },
     {
       "path": "scripts/test_acquire_paperless_provenance.py",
-      "bytes": 16825,
-      "sha256": "F6E7A977CDEB89435F355F1263802B3DC1E1700A8607A0B4ADCD4C3C997EBD40"
+      "bytes": 17141,
+      "sha256": "3ACAD7AD93F0B854B491A505CE7B2ECDD48FFE71F8CA3A21BB3BBE01B825C161"
     },
     {
       "path": "scripts/test_extract_openclaw_channel_schema.py",

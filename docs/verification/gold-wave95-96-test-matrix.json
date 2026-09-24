@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 140601,
-    "sha256": "B553D8375B0CBF02C226AD3876F68DCA9EB797670F99E14346A41376DEE62B3C"
+    "sha256": "F4D015EF34B12FDB471851DB9A0AF70B05F5DD192421D2A202D221910E8E36CA"
   },
   "sourceInputs": 800,
   "requiredNativeTests": [
@@ -26110,6 +26110,50 @@
       }
     ],
     "note": "W568 recursive OCI stream finalreviewPASS; W570 marker/coverage2casesreviewPASS. Rebound priorpublication sources; native1228Group951. Corec21Clippy/typecheck/CLIpass boundreferenceimported. P118closure1045/277/2 summaryreconciled. Recursive acquisition pending unknownCDN diagnostic.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave573Evidence": {
+    "base": "c38fae1cfb86bf4397214a3187f45e94a3fb4391",
+    "sources": [
+      {
+        "path": "docs/gold-wave568-572-paperless-followup.md",
+        "bytes": 2963,
+        "sha256": "F9285097CD26183219B95922BD0CCDF576C88397F2B4AFD5E1DFD64EB8650551",
+        "blob": "4234c86cf1a582b4a8a547af44b4e473932d83d5"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 205523,
+        "sha256": "00E4A34D4BF524AF93417DF67C635B1E0EEDC94D0917157D797CC80C26F9897E",
+        "blob": "0f6b4d85e73a16d45a7ba7ed03ebcc0277d049dd"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1216851,
+        "sha256": "6C806758A978EB14F2F9ECFE994568B8B3C925EAAB21AAB373783863E5335506",
+        "blob": "7ef7e8a5cc7b8b4c720c3733efeba9a982b5068a"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1816133,
+        "sha256": "ECB23D9DF6D30A59F4DE3B8D944EC55345A74466E39997507813E96CEFBDFF8A",
+        "blob": "de5652f53657bf337d578963016f6bbb1a4034a6"
+      },
+      {
+        "path": "scripts/acquire_paperless_provenance.py",
+        "bytes": 24551,
+        "sha256": "EA94F50A699D7D878140D3F11EE76F955271724E84D7E8706470A42F98AD7667",
+        "blob": "7c63364d6d0ff6e63627fc98301b2a5ada22a8fb"
+      },
+      {
+        "path": "scripts/test_acquire_paperless_provenance.py",
+        "bytes": 17141,
+        "sha256": "3ACAD7AD93F0B854B491A505CE7B2ECDD48FFE71F8CA3A21BB3BBE01B825C161",
+        "blob": "b91eae6ef4e70bc57e347d75ad68c7a9de51f353"
+      }
+    ],
+    "note": "Observed sourcebound Docker registry redirects to production.cloudfront.docker.com; exactDocker-only allowlist+GHCRreject regression. Previous13contractsPASS. No recursiveblobadmissionyet; freshhostedrequired. Preflightc38PASS.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

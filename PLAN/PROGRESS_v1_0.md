@@ -2,6 +2,13 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W573 observed Docker CDN (2026-09-24):**
+Paperless35939400996 atc38fae1c passed13contracts, then rejected the actual
+Docker CDN production.cloudfront.docker.com. That exact hostname is added only
+to Docker's redirect set; a regression rejects it for GHCR. Digest/size checks,
+limits and credential stripping remain unchanged. Fresh acquisition pending.
+Preflight35939387138 passed, including the repaired Road/LF count contracts.
+
 **W568/W570 integration and W572 core/reference (2026-09-24):**
 The recursive OCI checker now hashes actual configs/layers with bounded
 streaming, explicit CDN hosts, stripped redirect credentials and exact size/

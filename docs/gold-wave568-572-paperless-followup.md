@@ -35,3 +35,10 @@ public CLI build and export passed. The exact SHA-bound reference now includes
 Obsidian bridge commands. W570 postdates that compile source. Group951 must
 supply its new behavior and the W559/W566 behavior evidence. No local executable
 validation, formatter, image download or container execution occurred.
+
+W573 hosted upstream correction: run35939400996 atc38fae1c passed all13contract
+cases, then the real Docker registry redirected to
+`production.cloudfront.docker.com`. This exact Docker-operated hostname is now
+accepted only for registry-1.docker.io; the regression also rejects it for GHCR.
+Redirect count, digest/size verification and credential stripping are unchanged.
+No recursive acquisition is accepted from the failed run; a fresh run is required.

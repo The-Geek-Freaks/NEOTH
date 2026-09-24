@@ -67,6 +67,7 @@ APPROVED_BLOB_REDIRECT_HOSTS = {
     "registry-1.docker.io": {
         "registry-1.docker.io",
         "production.cloudflare.docker.com",
+        "production.cloudfront.docker.com",
         "docker-images-prod.s3.dualstack.us-east-1.amazonaws.com",
     },
 }

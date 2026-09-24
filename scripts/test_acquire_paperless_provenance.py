@@ -232,6 +232,10 @@ class PaperlessProvenanceContractTests(unittest.TestCase):
         redirected.verified_blob("ghcr.io", "paperless-ngx/paperless-ngx", "token", descriptor, "layer")
         self.assertIn("Authorization", redirect_opener.requests[0])
         self.assertNotIn("Authorization", redirect_opener.requests[1])
+        docker_cdn = "https://production.cloudfront.docker.com/blob?signature=not-logged"
+        self.assertEqual(module.approved_blob_redirect("registry-1.docker.io", docker_cdn), docker_cdn)
+        with self.assertRaises(module.AcquisitionError):
+            module.approved_blob_redirect("ghcr.io", docker_cdn)
         for location in ("http://pkg-containers.githubusercontent.com/blob", "https://token@pkg-containers.githubusercontent.com/blob", "https://127.0.0.1/blob"):
             with self.assertRaises(module.AcquisitionError):
                 module.approved_blob_redirect("ghcr.io", location)
