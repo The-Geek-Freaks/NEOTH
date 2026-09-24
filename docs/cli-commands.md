@@ -3364,6 +3364,16 @@ Mark a proposal Approved. For a **Skill** proposal (KF-04 idle forge) this insta
 - `<ID>`
 - `--note <NOTE>`
 
+### `neoth proactive dismiss-document`
+
+Dismiss one discovered document revision without changing its source
+
+- `<REVISION_ID>`
+
+### `neoth proactive documents`
+
+List discovered document revisions awaiting an operator review as JSON. Discovery never starts extraction, a provider call, or document staging
+
 ### `neoth proactive intelligence`
 
 GOLD-ADAPT-OH-08 — list reflection observations from the Intelligence view (`~/.neoth/reflections/staged_observations.jsonl`). Read-only; observations are NEVER auto-posted into chat

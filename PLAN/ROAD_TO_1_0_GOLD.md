@@ -8,6 +8,15 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W874 watcher Core accepted (2026-09-24):** Core36039185385 at
+aec43ce600e7dc277747bbea9dee2c17f9d68dc5 passed slim production Clippy,
+default-feature core-test typecheck, CLI build and reference export.
+Root verified artifact10825624412 against the GitHub ZIP digest, exact source
+and inner SHA256 before importing the ten-line watcher command reference.
+This proves the compiled source, not behavior or the in-progress C1a changes.
+Windows115 run36040413126 is running at the same source. Group1357 follows
+the bound CLI import. B7/B8 remain open pending behavior and GUI scope.
+Evidence: docs/verification/gold-wave874-core-cli.json.
 **W872 hosted watcher lint repair (2026-09-24):** W870 Core36038306012 at1f37a107
 gets past the four compiler errors and fails only unnecessary_sort_by in the
 bounded directory inventory. Use sort_by_key over the same OsString filename;

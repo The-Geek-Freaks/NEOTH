@@ -1,0 +1,33 @@
+{
+  "schema": "neoth-hosted-core-cli-admission/v1",
+  "sourceHead": "aec43ce600e7dc277747bbea9dee2c17f9d68dc5",
+  "runId": 36039185385,
+  "artifactId": 10825624412,
+  "artifactSha256": "b059f9648949607342f8f84b79e04291c8488069f490f9e6c484f24c88741a91",
+  "cliSha256": "330311454996805216fe541380fb5d15064c67064dec26b549831f67b8bc329d",
+  "rootVerified": true,
+  "steps": [
+    {
+      "name": "Check exact-source slim-core production Clippy",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Type-check core test targets before native validation",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Build current public CLI",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Export generated reference",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "acceptance": "Slim production Clippy, core-test typecheck, CLI build/export PASS for watcher/B7fix source aec43ce6. No behavior or dirty C1a acceptance."
+}

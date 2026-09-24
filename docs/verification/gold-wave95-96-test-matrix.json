@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W872identicalsortkey;corepending",
+  "status": "W874corePASS;Group1357Windows115pending;C1adirtyexcluded",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 177005,
-    "sha256": "70E5D39FD409333E569FB874571893CF407FCB053A3B64A1F5A6476AA93E1D62"
+    "bytes": 177208,
+    "sha256": "1D1B59C561E9111F82AB982235B10C05A5C1E99B1496D695F8852F1F5922A7A1"
   },
-  "sourceInputs": 1001,
+  "sourceInputs": 1002,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -35304,6 +35304,44 @@
       }
     ],
     "note": "Exact hosted clippy unnecessary_sort_by repair, same OsString filename ordering and bounds. Compiler4 errors passed prior run; later gates were skipped. Strict lint unchanged, no local execution.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave874WatcherCoreCliAdmission": {
+    "base": "aec43ce600e7dc277747bbea9dee2c17f9d68dc5",
+    "sources": [
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 252456,
+        "sha256": "330311454996805216FE541380FB5D15064C67064DEC26B549831F67B8BC329D",
+        "blob": "a88b6d1306a0eabfb3e5dc8f2fb0ab6120984140"
+      },
+      {
+        "path": "docs/verification/gold-wave874-core-cli.json",
+        "bytes": 1086,
+        "sha256": "6E372FB1854225A06463E8413C5F31535F4E480ABA23C71EC8B6C9D769644991",
+        "blob": "e7d736680719d55c50ce6529615426ea0d91e2ca"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 277577,
+        "sha256": "9055ECA9EF201ECAECE11EE0279C44B27F18EF3BE70FDA084A5F911DFD3D4520",
+        "blob": "105f8b68d291f4e071a58cc906f210b084a0fe92"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1288905,
+        "sha256": "8A683E8CFA2FE4B107CFF7C4E6D7F8F0C5D7F50F7769796390A8DF77E1574E4C",
+        "blob": "828390ffe537115d4a750455ab8d98ce7b28fc8b"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1897517,
+        "sha256": "10C6E72DB2755DFF19A531A23D7CECA299320E77DC7CDAD842EB15A0FAA846BD",
+        "blob": "3e3feb13f7080f316a9188735be6612bf897c793"
+      }
+    ],
+    "note": "Exact-source aec43ce6 core four gates PASS; Root verified ZIP/source/inner SHA and imported generated CLI docs. Uncommitted C1a source excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
