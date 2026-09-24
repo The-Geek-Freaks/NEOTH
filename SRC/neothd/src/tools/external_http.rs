@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
+use reqwest::{header::HeaderMap, StatusCode};
 use sha2::{Digest, Sha256};
 
 use crate::permissions::gate::{ChannelAsker, PermissionAuditSink};
@@ -169,16 +170,17 @@ fn released_search_query_sha256(
     Some(hex::encode(Sha256::digest(query.as_bytes())))
 }
 
-/// Capability minted only by [`ExternalHttpAuthorizer::execute`]. Its fields
+/// Capability minted only by the private authorization lifecycle. Its fields
 /// are private so a caller cannot fabricate authority or reuse it for another
 /// URL/body/surface tuple.
-pub struct ExternalHttpPermit {
+struct ExternalHttpPermit {
     request_id: String,
     permit_binding_sha256: String,
     egress_provenance_binding: String,
 }
 
 impl ExternalHttpPermit {
+    #[cfg(test)]
     pub fn require(&self, request: &ExternalHttpRequest) -> Result<()> {
         let binding = request.binding_sha256(&self.egress_provenance_binding);
         if binding != self.permit_binding_sha256 {
@@ -190,6 +192,7 @@ impl ExternalHttpPermit {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn request_id(&self) -> &str {
         &self.request_id
     }
@@ -204,6 +207,40 @@ impl fmt::Debug for ExternalHttpPermit {
             .field("egress_provenance_binding", &"<redacted>")
             .finish()
     }
+}
+
+/// A built request that cannot escape the authorization module as a sendable
+/// client operation. Construction binds method, URL and body to the same
+/// audited descriptor before any policy or release side effect occurs.
+pub(crate) struct ExternalHttpTransportRequest {
+    request: reqwest::Request,
+    pre_send: Option<std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send>>>,
+}
+
+impl ExternalHttpTransportRequest {
+    pub(crate) fn new(request: &ExternalHttpRequest, builder: reqwest::RequestBuilder) -> Result<Self> {
+        let built = builder.build().context("build sealed external HTTP request")?;
+        anyhow::ensure!(built.method().as_str() == request.method && built.url().as_str() == request.url,
+            "sealed external HTTP request method or URL mismatch");
+        let body = match built.body() { None => &[][..], Some(body) => body.as_bytes().ok_or_else(|| anyhow::anyhow!("sealed external HTTP request body is not inspectable"))? };
+        anyhow::ensure!(hex::encode(Sha256::digest(body)) == request.body_binding_sha256,
+            "sealed external HTTP request body mismatch");
+        Ok(Self { request: built, pre_send: None })
+    }
+    pub(crate) fn with_pre_send(mut self, pre_send: impl Future<Output = Result<()>> + Send + 'static) -> Self {
+        self.pre_send = Some(Box::pin(pre_send)); self
+    }
+}
+
+/// Response wrapper intentionally exposes parsing and bounded streaming, but
+/// never the client or a send method. The actual network effect stays above.
+pub(crate) struct ExternalHttpResponse { response: reqwest::Response }
+impl ExternalHttpResponse {
+    pub(crate) fn status(&self) -> StatusCode { self.response.status() }
+    pub(crate) fn headers(&self) -> &HeaderMap { self.response.headers() }
+    pub(crate) fn content_length(&self) -> Option<u64> { self.response.content_length() }
+    pub(crate) async fn chunk(&mut self) -> Result<Option<bytes::Bytes>> { self.response.chunk().await.context("external HTTP response read") }
+    pub(crate) async fn json<T: serde::de::DeserializeOwned>(self) -> Result<T> { self.response.json().await.context("external HTTP response decode") }
 }
 
 #[async_trait::async_trait]
@@ -379,6 +416,17 @@ enum ReleasedExternalHttpFailure {
     TerminalAudit,
     #[error("released external HTTP request and terminal audit failed")]
     TransportAndTerminalAudit,
+}
+
+/// Typed only enough to preserve a caller-visible deadline result.  It never
+/// carries the reqwest error, URL, headers, or response text across the audit
+/// boundary (especially for released research).
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ExternalHttpTransportFailure {
+    #[error("external HTTP transport timed out")]
+    Timeout,
+    #[error("external HTTP transport failed")]
+    Unavailable,
 }
 
 impl ExternalHttpPolicySource {
@@ -690,14 +738,39 @@ impl ExternalHttpAuthorizer {
         )
     }
 
-    /// Gate and audit an external request before returning its outcome.
+    /// Perform the sole production HTTP send after IFC, release consumption,
+    /// URL/policy checks, required intent and autonomy audit all succeed.
+    pub(crate) async fn execute_transport<F, Fut, T>(
+        &self,
+        request: ExternalHttpRequest,
+        transport: ExternalHttpTransportRequest,
+        process: F,
+    ) -> Result<T>
+    where
+        F: FnOnce(ExternalHttpResponse) -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
+        transport_matches(&transport, &request)?;
+        self.execute_with_permit_verifier(request, |_permit, _request| Ok(()), move |_permit| async move {
+            if let Some(pre_send) = transport.pre_send { pre_send.await?; }
+            let client = crate::providers::http_client::build_client_no_redirect()?;
+            let response = client.execute(transport.request).await.map_err(|error| {
+                if error.is_timeout() { ExternalHttpTransportFailure::Timeout } else { ExternalHttpTransportFailure::Unavailable }
+            })?;
+            process(ExternalHttpResponse { response }).await
+        }).await
+    }
+
+    /// Test-only lifecycle seam. Production sends use `execute_transport`,
+    /// which owns the sealed request and the only client execution boundary.
+    /// Tests may supply a synthetic result after the same gate/audit lifecycle
+    /// without exposing that callback to production consumers.
+    #[cfg(test)]
+    /// Gate and audit an external request before returning its test outcome.
     ///
-    /// The permit is cryptographically bound to the exact request, but the
-    /// supplied transport closure must still call [`ExternalHttpPermit::require`]
-    /// before it performs an effect. Rust's type system does not prevent that
-    /// closure from contacting another destination or acting before it verifies
-    /// the permit. Compiler-enforced non-substitution requires moving transport
-    /// execution behind this boundary; that larger C7 refactor remains open.
+    /// The permit is cryptographically bound to the exact request. This helper
+    /// exists solely for lifecycle fixtures; real outbound HTTP cannot enter
+    /// through it.
     pub async fn execute<F, Fut, T>(&self, request: ExternalHttpRequest, network: F) -> Result<T>
     where
         F: FnOnce(ExternalHttpPermit) -> Fut,
@@ -948,6 +1021,21 @@ impl ExternalHttpAuthorizer {
     }
 
     #[cfg(test)]
+    pub(crate) fn test_policy_with_sink(
+        policy: AutonomyPolicySnapshot,
+        confirm: ConfirmStrategy,
+        sink: Arc<dyn ExternalHttpAuditSink>,
+    ) -> Self {
+        Self {
+            policy: ExternalHttpPolicySource::Fixed(policy),
+            confirm,
+            channel_asker: None,
+            sink,
+            egress_provenance: EgressProvenance::LegacyUnscoped,
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn test_reload(
         controller: Arc<crate::config::reload::ReloadController>,
         confirm: ConfirmStrategy,
@@ -960,6 +1048,15 @@ impl ExternalHttpAuthorizer {
             egress_provenance: EgressProvenance::LegacyUnscoped,
         }
     }
+}
+
+fn transport_matches(transport: &ExternalHttpTransportRequest, request: &ExternalHttpRequest) -> Result<()> {
+    anyhow::ensure!(transport.request.method().as_str() == request.method && transport.request.url().as_str() == request.url,
+        "sealed external HTTP request method or URL mismatch");
+    let body = match transport.request.body() { None => &[][..], Some(body) => body.as_bytes().ok_or_else(|| anyhow::anyhow!("sealed external HTTP request body is not inspectable"))? };
+    anyhow::ensure!(hex::encode(Sha256::digest(body)) == request.body_binding_sha256,
+        "sealed external HTTP request body mismatch");
+    Ok(())
 }
 
 fn validate_request_url(raw: &str) -> Result<url::Url> {
@@ -1074,6 +1171,8 @@ impl ExternalHttpAuditSink for NoopAuditSink {
 mod tests {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
 
@@ -2606,5 +2705,102 @@ mod tests {
             !called.load(Ordering::SeqCst),
             "request drift must be rejected before the transport call"
         );
+    }
+
+    #[test]
+    fn sealed_transport_body_drift_is_rejected_before_authorization_or_send() {
+        let request = ExternalHttpRequest::post(
+            "https://example.com/research", ExternalHttpSurface::SearchTavily, b"approved",
+        );
+        let client = crate::providers::http_client::build_client_no_redirect().expect("test client");
+        assert!(ExternalHttpTransportRequest::new(&request, client
+            .post("https://example.com/research").body("drifted"))
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn execute_transport_response_processing_failure_writes_failure_terminal() {
+        let server = MockServer::start().await;
+        Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("unexpected-body"))
+            .mount(&server)
+            .await;
+        let sink = Arc::new(RecordingSink::default());
+        let auth = authorizer(sink.clone());
+        let url = format!("{}/response", server.uri());
+        let request = ExternalHttpRequest::get(&url, ExternalHttpSurface::Fetch);
+        let client = crate::providers::http_client::build_client_no_redirect().unwrap();
+        let transport = ExternalHttpTransportRequest::new(&request, client.get(&url)).unwrap();
+
+        let result: Result<()> = auth.execute_transport(request, transport, |response| async move {
+            anyhow::ensure!(response.status() == StatusCode::OK, "response status did not satisfy sealed consumer");
+            let _: serde_json::Value = response.json().await?;
+            Ok(())
+        }).await;
+        assert!(result.is_err());
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, ExtendedSubtype::ExternalHttpIntent);
+        assert_eq!(events[1].0, ExtendedSubtype::ExternalHttpResult);
+        assert_eq!(events[1].1["status"], "failure");
+    }
+
+    #[tokio::test]
+    async fn denied_or_intent_failed_transport_never_runs_pre_send_or_sends() {
+        let server = MockServer::start().await;
+        let url = format!("{}/guarded", server.uri());
+        for auth in [
+            ExternalHttpAuthorizer::test_policy(
+                AutonomyPolicySnapshot::test_level(crate::permissions::AutonomyLevel::Strict),
+                ConfirmStrategy::FailClosed,
+            ),
+            authorizer(Arc::new(RecordingSink { fail: Some(ExtendedSubtype::ExternalHttpIntent), ..RecordingSink::default() })),
+        ] {
+            let pre_send_called = Arc::new(AtomicBool::new(false));
+            let pre_send_mark = Arc::clone(&pre_send_called);
+            let request = ExternalHttpRequest::get(&url, ExternalHttpSurface::Fetch);
+            let client = crate::providers::http_client::build_client_no_redirect().unwrap();
+            let transport = ExternalHttpTransportRequest::new(&request, client.get(&url)).unwrap()
+                .with_pre_send(async move { pre_send_mark.store(true, Ordering::SeqCst); Ok(()) });
+            let result: Result<()> = auth.execute_transport(request, transport, |_response| async move { Ok(()) }).await;
+            assert!(result.is_err());
+            assert!(!pre_send_called.load(Ordering::SeqCst));
+        }
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn released_execute_transport_failure_is_coarse_and_provider_neutral() {
+        let topic = "released transport private topic";
+        let server = MockServer::start().await;
+        Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+            .mount(&server)
+            .await;
+        let url = format!("{}/search?q=released%20transport%20private%20topic", server.uri());
+        let sink = Arc::new(RecordingSink::default());
+        let auth = ExternalHttpAuthorizer {
+            policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(crate::permissions::AutonomyLevel::Full)),
+            confirm: ConfirmStrategy::AlwaysAllow,
+            channel_asker: None,
+            sink: sink.clone(),
+            egress_provenance: ExplicitExternalResearchRelease::test_for_exact_topic(topic).into_egress_provenance(),
+        };
+        auth.arm_operator_released_exact_topic(topic).unwrap();
+        let request = ExternalHttpRequest::get(&url, ExternalHttpSurface::SearchSearxng);
+        let client = crate::providers::http_client::build_client_no_redirect().unwrap();
+        let transport = ExternalHttpTransportRequest::new(&request, client.get(&url)).unwrap();
+        let private_error = format!("response body/hash failure for {url}");
+        let result: Result<()> = auth.execute_transport(request, transport, move |_response| async move { Err(anyhow::anyhow!(private_error)) }).await;
+        let error = result.expect_err("released response processing must remain opaque");
+        assert!(matches!(error.downcast_ref::<ReleasedExternalHttpFailure>(), Some(ReleasedExternalHttpFailure::Transport)));
+        assert_eq!(error.to_string(), "released external HTTP request failed");
+        assert!(!format!("{error:#}").contains(topic));
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1].1["status"], "failure");
+        for (_, payload) in events.iter() { assert_released_payload_is_provider_neutral(payload, &[topic, &url, "search_searxng"]); }
     }
 }

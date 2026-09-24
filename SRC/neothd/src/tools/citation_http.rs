@@ -20,7 +20,7 @@ use crate::tools::citation_lookup::{
     CitationRecord, MAX_PROVIDER_RESPONSE_BYTES, REQUEST_TIMEOUT_SECS, validate_claim,
 };
 use crate::tools::external_http::{
-    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface,
+    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface, ExternalHttpResponse, ExternalHttpTransportRequest, ExternalHttpTransportFailure,
 };
 
 /// Cache persistence is a separate outcome from a live provider result.  A
@@ -401,68 +401,54 @@ async fn lookup_live_at(
     }
 
     let request = ExternalHttpRequest::get(&endpoint, surface_for(provider));
-    let permitted_request = request.clone();
-    let network = authorizer
-        .execute(request, move |permit| async move {
-            // The permit verification must precede construction of the client
-            // and every transport effect.
-            permit.require(&permitted_request)?;
-            Ok(fetch_one_bounded(&endpoint, remaining).await)
-        })
-        .await;
-
-    let response = match network {
-        // The authorizer is the only path that can issue the permit.  Its
-        // denied/audit failure is deliberately a closed, data-free outcome.
-        Err(_) => {
-            return CitationLookupResult::unavailable(
-                provider,
-                CitationLookupState::PermissionDenied,
-            );
+    let client = match http_client::build_client_no_redirect() { Ok(client) => client, Err(_) => return CitationLookupResult::unavailable(provider, CitationLookupState::ProviderUnavailable) };
+    let deadline = tokio::time::Instant::now() + remaining;
+    let transport = match ExternalHttpTransportRequest::new(&request, client.get(&endpoint).timeout(remaining)) { Ok(transport) => transport, Err(_) => return CitationLookupResult::unavailable(provider, CitationLookupState::InvalidQuery) };
+    let terminal = match authorizer.execute_transport(request, transport, move |response| async move {
+        let response = fetch_one_bounded(response, deadline).await?;
+        if response.status == reqwest::StatusCode::TOO_MANY_REQUESTS.as_u16() {
+            // A rate limit means this lookup did not complete. Return an error
+            // so the required lifecycle result is durably `failure`; cooldown
+            // state is installed only after that terminal append succeeds.
+            return Err(CitationTransportFailure::RateLimited(response.retry_after.as_deref().and_then(parse_retry_after_secs)).into());
         }
-        Ok(ProviderNetworkOutcome::Timeout) => {
-            return CitationLookupResult::unavailable(provider, CitationLookupState::Timeout);
+        if response.status == reqwest::StatusCode::NOT_FOUND.as_u16() {
+            // A documented 404 is a complete, valid lookup with no record.
+            return Ok(CitationTransportTerminal::NotFound);
         }
-        Ok(ProviderNetworkOutcome::Unavailable) => {
-            return CitationLookupResult::unavailable(
-                provider,
-                CitationLookupState::ProviderUnavailable,
-            );
+        if !(200..300).contains(&response.status) {
+            // A no-redirect client leaves 3xx here.  The response is an
+            // unsuccessful provider exchange and must receive a failure frame.
+            return Err(CitationTransportFailure::ProviderUnavailable.into());
         }
-        Ok(ProviderNetworkOutcome::Response(response)) => response,
+        let record = parse_provider_record(query, &response.body, now_secs)
+            .ok_or(CitationTransportFailure::ProviderUnavailable)?;
+        let result = CitationLookupResult::from_live(query, claim, record)
+            .map_err(|_| CitationTransportFailure::ProviderUnavailable)?;
+        Ok(CitationTransportTerminal::Found(result))
+    }).await {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            if let Some(CitationTransportFailure::RateLimited(retry_after_secs)) = error.downcast_ref::<CitationTransportFailure>() {
+                let retry_after_secs = *retry_after_secs;
+                if let Some(retry_after_secs) = retry_after_secs { install_cooldown(provider, now_secs, retry_after_secs); }
+                return CitationLookupResult::unavailable(provider, CitationLookupState::RateLimited { retry_after_secs });
+            }
+            if matches!(error.downcast_ref::<CitationTransportFailure>(), Some(CitationTransportFailure::Timeout))
+                || matches!(error.downcast_ref::<ExternalHttpTransportFailure>(), Some(ExternalHttpTransportFailure::Timeout)) {
+                return CitationLookupResult::unavailable(provider, CitationLookupState::Timeout);
+            }
+            if matches!(error.downcast_ref::<CitationTransportFailure>(), Some(CitationTransportFailure::ProviderUnavailable))
+                || matches!(error.downcast_ref::<ExternalHttpTransportFailure>(), Some(ExternalHttpTransportFailure::Unavailable)) {
+                return CitationLookupResult::unavailable(provider, CitationLookupState::ProviderUnavailable);
+            }
+            return CitationLookupResult::unavailable(provider, CitationLookupState::PermissionDenied);
+        }
     };
 
-    if response.status == reqwest::StatusCode::TOO_MANY_REQUESTS.as_u16() {
-        let retry_after_secs = response
-            .retry_after
-            .as_deref()
-            .and_then(parse_retry_after_secs);
-        if let Some(retry_after_secs) = retry_after_secs {
-            install_cooldown(provider, now_secs, retry_after_secs);
-        }
-        return CitationLookupResult::unavailable(
-            provider,
-            CitationLookupState::RateLimited { retry_after_secs },
-        );
-    }
-    if response.status == reqwest::StatusCode::NOT_FOUND.as_u16() {
-        return CitationLookupResult::unavailable(provider, CitationLookupState::NotFound);
-    }
-    if !(200..300).contains(&response.status) {
-        // A no-redirect client leaves 3xx responses here.  They are closed
-        // provider failures and cannot cause a second request to `Location`.
-        return CitationLookupResult::unavailable(
-            provider,
-            CitationLookupState::ProviderUnavailable,
-        );
-    }
-
-    let record = parse_provider_record(query, &response.body, now_secs);
-    match record.and_then(|record| CitationLookupResult::from_live(query, claim, record).ok()) {
-        Some(result) => result,
-        None => {
-            CitationLookupResult::unavailable(provider, CitationLookupState::ProviderUnavailable)
-        }
+    match terminal {
+        CitationTransportTerminal::Found(result) => result,
+        CitationTransportTerminal::NotFound => CitationLookupResult::unavailable(provider, CitationLookupState::NotFound),
     }
 }
 
@@ -489,10 +475,16 @@ fn parse_retry_after_secs(value: &str) -> Option<u64> {
     (seconds <= MAX_RETRY_AFTER_SECS).then_some(seconds)
 }
 
-enum ProviderNetworkOutcome {
-    Response(ProviderHttpResponse),
+enum CitationTransportTerminal { Found(CitationLookupResult), NotFound }
+
+#[derive(Debug, thiserror::Error)]
+enum CitationTransportFailure {
+    #[error("citation provider response timed out")]
     Timeout,
-    Unavailable,
+    #[error("citation provider rate limited the lookup")]
+    RateLimited(Option<u64>),
+    #[error("citation provider response was unavailable")]
+    ProviderUnavailable,
 }
 
 struct ProviderHttpResponse {
@@ -501,10 +493,8 @@ struct ProviderHttpResponse {
     body: Vec<u8>,
 }
 
-async fn fetch_one_bounded(endpoint: &str, timeout: Duration) -> ProviderNetworkOutcome {
+async fn fetch_one_bounded(mut response: ExternalHttpResponse, deadline: tokio::time::Instant) -> Result<ProviderHttpResponse, CitationTransportFailure> {
     let exchange = async {
-        let client = http_client::build_client_no_redirect().ok()?;
-        let mut response = client.get(endpoint).send().await.ok()?;
         let status = response.status().as_u16();
         let retry_after = response
             .headers()
@@ -515,27 +505,26 @@ async fn fetch_one_bounded(endpoint: &str, timeout: Duration) -> ProviderNetwork
             .content_length()
             .is_some_and(|length| length > MAX_PROVIDER_RESPONSE_BYTES as u64)
         {
-            return None;
+            return Err(CitationTransportFailure::ProviderUnavailable);
         }
         let mut body = Vec::with_capacity(8 * 1024);
-        while let Some(chunk) = response.chunk().await.ok()? {
-            let total = body.len().checked_add(chunk.len())?;
+        while let Some(chunk) = response.chunk().await.map_err(|_| CitationTransportFailure::ProviderUnavailable)? {
+            let total = body.len().checked_add(chunk.len()).ok_or(CitationTransportFailure::ProviderUnavailable)?;
             if total > MAX_PROVIDER_RESPONSE_BYTES {
-                return None;
+                return Err(CitationTransportFailure::ProviderUnavailable);
             }
             body.extend_from_slice(&chunk);
         }
-        Some(ProviderHttpResponse {
+        Ok(ProviderHttpResponse {
             status,
             retry_after,
             body,
         })
     };
 
-    match tokio::time::timeout(timeout, exchange).await {
-        Err(_) => ProviderNetworkOutcome::Timeout,
-        Ok(Some(response)) => ProviderNetworkOutcome::Response(response),
-        Ok(None) => ProviderNetworkOutcome::Unavailable,
+    match tokio::time::timeout(deadline.saturating_duration_since(tokio::time::Instant::now()), exchange).await {
+        Err(_) => Err(CitationTransportFailure::Timeout),
+        Ok(response) => response,
     }
 }
 
@@ -716,13 +705,15 @@ fn clear_cooldowns_for_test() {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::sync::OnceLock;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+    use crate::tools::external_http::ExternalHttpAuditSink;
+    use crate::wal::events::ExtendedSubtype;
 
     use super::*;
 
@@ -743,6 +734,25 @@ mod tests {
         format!(
             r#"{{"message":{{"DOI":"{doi}","title":["Citation title"],"author":[{{"given":"Ada","family":"Lovelace"}}],"published-online":{{"date-parts":[[2024]]}},"container-title":["Journal"]}}}}"#
         )
+    }
+
+    #[derive(Default)]
+    struct TerminalSink { events: Mutex<Vec<(ExtendedSubtype, serde_json::Value)>> }
+    #[async_trait::async_trait]
+    impl ExternalHttpAuditSink for TerminalSink {
+        fn requires_permission_audit(&self) -> bool { false }
+        async fn append_external_http(&self, subtype: ExtendedSubtype, payload: Vec<u8>) -> anyhow::Result<()> {
+            self.events.lock().unwrap().push((subtype, serde_json::from_slice(&payload)?)); Ok(())
+        }
+    }
+    fn terminal_authorizer(sink: Arc<TerminalSink>) -> ExternalHttpAuthorizer {
+        ExternalHttpAuthorizer::test_policy_with_sink(
+            crate::permissions::AutonomyPolicySnapshot::test_level(crate::permissions::AutonomyLevel::Standard),
+            crate::permissions::ConfirmStrategy::AlwaysAllow, sink,
+        )
+    }
+    fn assert_terminal_status(sink: &TerminalSink, status: &str) {
+        let events = sink.events.lock().unwrap(); assert_eq!(events.len(), 2); assert_eq!(events[0].0, ExtendedSubtype::ExternalHttpIntent); assert_eq!(events[1].0, ExtendedSubtype::ExternalHttpResult); assert_eq!(events[1].1["status"], status);
     }
 
     #[test]
@@ -1075,6 +1085,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn response_status_decode_and_size_failures_write_failure_terminals() {
+        let _serial = serial_test_guard().await;
+        clear_cooldowns_for_test();
+        for response in [
+            ResponseTemplate::new(500).set_body_string("provider-status-failure"),
+            ResponseTemplate::new(200).set_body_string("not-provider-json"),
+            ResponseTemplate::new(200).set_body_string("x".repeat(MAX_PROVIDER_RESPONSE_BYTES + 1)),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET")).respond_with(response).mount(&server).await;
+            let sink = Arc::new(TerminalSink::default());
+            let result = lookup_live_against(&query(CitationProvider::Crossref), "claim", &terminal_authorizer(sink.clone()), server.uri()).await;
+            assert_eq!(result, CitationLookupResult::unavailable(CitationProvider::Crossref, CitationLookupState::ProviderUnavailable));
+            assert_terminal_status(&sink, "failure");
+        }
+    }
+
+    #[tokio::test]
+    async fn truncated_stream_writes_failure_terminal_and_valid_record_writes_success_terminal() {
+        let _serial = serial_test_guard().await;
+        clear_cooldowns_for_test();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 64\r\nConnection: close\r\n\r\nshort").await.unwrap();
+        });
+        let truncated_sink = Arc::new(TerminalSink::default());
+        let truncated = lookup_live_against(&query(CitationProvider::Crossref), "claim", &terminal_authorizer(truncated_sink.clone()), endpoint).await;
+        assert_eq!(truncated, CitationLookupResult::unavailable(CitationProvider::Crossref, CitationLookupState::ProviderUnavailable));
+        assert_terminal_status(&truncated_sink, "failure");
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).respond_with(ResponseTemplate::new(200).set_body_string(crossref_body("10.1000/example"))).mount(&server).await;
+        let success_sink = Arc::new(TerminalSink::default());
+        let valid = lookup_live_against(&query(CitationProvider::Crossref), "claim", &terminal_authorizer(success_sink.clone()), server.uri()).await;
+        assert!(matches!(valid, CitationLookupResult::Found { .. }));
+        assert_terminal_status(&success_sink, "success");
+    }
+
+    #[tokio::test]
     async fn timeout_maps_to_a_typed_outcome_through_the_authorized_client_path() {
         let _serial = serial_test_guard().await;
         clear_cooldowns_for_test();
@@ -1102,6 +1154,21 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[tokio::test]
+    async fn header_timeout_preserves_timeout_state_and_writes_failure_terminal() {
+        let _serial = serial_test_guard().await;
+        clear_cooldowns_for_test();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(100)).set_body_string(crossref_body("10.1000/example")))
+            .mount(&server)
+            .await;
+        let sink = Arc::new(TerminalSink::default());
+        let timed_out = lookup_live_against_with_timeout(&query(CitationProvider::Crossref), "claim", &terminal_authorizer(sink.clone()), server.uri(), Duration::from_millis(1)).await;
+        assert_eq!(timed_out, CitationLookupResult::unavailable(CitationProvider::Crossref, CitationLookupState::Timeout));
+        assert_terminal_status(&sink, "failure");
     }
 
     #[tokio::test]
@@ -1177,6 +1244,30 @@ mod tests {
             }
         ));
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn rate_limit_is_failure_terminal_before_cooldown_and_not_found_is_success_terminal() {
+        let _serial = serial_test_guard().await;
+        clear_cooldowns_for_test();
+        let limited_server = MockServer::start().await;
+        Mock::given(method("GET")).respond_with(ResponseTemplate::new(429).insert_header("retry-after", "30")).mount(&limited_server).await;
+        let limited_sink = Arc::new(TerminalSink::default());
+        let limited_auth = terminal_authorizer(limited_sink.clone());
+        let first = lookup_live_against(&query(CitationProvider::Crossref), "claim", &limited_auth, limited_server.uri()).await;
+        assert_eq!(first, CitationLookupResult::unavailable(CitationProvider::Crossref, CitationLookupState::RateLimited { retry_after_secs: Some(30) }));
+        assert_terminal_status(&limited_sink, "failure");
+        let second = lookup_live_against(&query(CitationProvider::Crossref), "claim", &limited_auth, limited_server.uri()).await;
+        assert!(matches!(second, CitationLookupResult::Unavailable { state: CitationLookupState::RateLimited { retry_after_secs: Some(_) }, .. }));
+        assert_eq!(limited_server.received_requests().await.unwrap().len(), 1);
+
+        clear_cooldowns_for_test();
+        let missing_server = MockServer::start().await;
+        Mock::given(method("GET")).respond_with(ResponseTemplate::new(404)).mount(&missing_server).await;
+        let missing_sink = Arc::new(TerminalSink::default());
+        let missing = lookup_live_against(&query(CitationProvider::Crossref), "claim", &terminal_authorizer(missing_sink.clone()), missing_server.uri()).await;
+        assert_eq!(missing, CitationLookupResult::unavailable(CitationProvider::Crossref, CitationLookupState::NotFound));
+        assert_terminal_status(&missing_sink, "success");
     }
 
     #[tokio::test]
@@ -1268,6 +1359,31 @@ mod tests {
                 ..
             }
         ));
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn authorized_send_failure_is_provider_unavailable_while_gate_denial_is_permission_denied() {
+        let _serial = serial_test_guard().await;
+        clear_cooldowns_for_test();
+        // Accept one connection and close it without an HTTP response. This is
+        // a bounded localhost send/response failure through execute_transport,
+        // without relying on a public address or a timing-sensitive closed port.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { let _ = listener.accept().await; });
+        let unavailable = lookup_live_against(
+            &query(CitationProvider::Crossref), "claim", &ExternalHttpAuthorizer::test_allow(), endpoint,
+        ).await;
+        assert_eq!(unavailable, CitationLookupResult::unavailable(CitationProvider::Crossref, CitationLookupState::ProviderUnavailable));
+
+        let server = MockServer::start().await;
+        let denied = ExternalHttpAuthorizer::test_policy(
+            crate::permissions::AutonomyPolicySnapshot::test_level(crate::permissions::AutonomyLevel::Strict),
+            crate::permissions::ConfirmStrategy::FailClosed,
+        );
+        let refused = lookup_live_against(&query(CitationProvider::Crossref), "claim", &denied, server.uri()).await;
+        assert_eq!(refused, CitationLookupResult::unavailable(CitationProvider::Crossref, CitationLookupState::PermissionDenied));
         assert!(server.received_requests().await.unwrap().is_empty());
     }
 

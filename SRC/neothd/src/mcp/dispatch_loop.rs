@@ -294,7 +294,7 @@ where
         max_iterations,
         security_policy,
         subject,
-        crate::permissions::McpInvocationProvenance::unclassified_compatibility(),
+        mcp_ifc,
         goal_context,
         hints_enabled,
         compaction,
@@ -3097,6 +3097,74 @@ mod tests {
         assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 0);
     }
 
+    #[tokio::test]
+    async fn trusted_nonpublic_source_refuses_before_spawn_through_budget_wrapper() {
+        let home = test_instance_home();
+        let counter = home.path().join("wrapper-calls.txt");
+        let cfg = crate::mcp::client::stdio_fixture_config(&counter);
+        let server_id = cfg.id.clone();
+        let servers = McpServers {
+            servers: vec![cfg],
+            smart_loading: true,
+        };
+        let reply = format!(
+            "```mcp-tool-call\n{}\n```",
+            serde_json::json!({
+                "server": server_id,
+                "tool": "read",
+                "arguments": {"private": true}
+            })
+        );
+        let mut driver = ScriptedDriver::new(vec![reply.as_str()]);
+        let provenance =
+            crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
+                crate::permissions::InformationLabel::Secret,
+                "trusted-wrapper",
+            );
+        let mut compaction_budget = CompactionBudget::default();
+        let once = crate::hooks::SessionOnceGuard::new();
+
+        let outcome = run_tool_loop_with_budget(
+            &mut driver,
+            "do not disclose private content".into(),
+            &servers,
+            AutonomyLevel::Full,
+            None,
+            None,
+            &McpToolScope::default(),
+            1,
+            &crate::config::SecurityPolicy::default(),
+            None,
+            provenance,
+            crate::mcp::goal_tracker::GoalContext { goal: None, grind: None },
+            false,
+            crate::context::compaction::CompactionPolicy::disabled(),
+            None,
+            None,
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
+            &crate::config::tools::McpHarnessConfig::default(),
+            &mut compaction_budget,
+            None,
+            None,
+            home.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &once,
+            crate::hooks::PreToolUseCancellation::unbound(),
+            false,
+            Vec::new(),
+            crate::config::CodeMapImpactPolicy::default(),
+            crate::config::CodeMapConfig::default()
+                .requested_context_policy()
+                .expect("default requested context policy"),
+        )
+        .await
+        .expect("IFC refusal is rendered as a failed tool result");
+
+        assert_eq!(outcome.successful_calls, 0);
+        assert_eq!(outcome.failed_calls, 1);
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 0);
+    }
+
     /// A private home whose HMAC identity lets SmartApprove verify and pin the
     /// real stdio fixture's declared tool contract.
     fn smart_approve_fixture_home() -> crate::test_env::CanonicalTempDir {
@@ -3366,6 +3434,7 @@ mod tests {
                     4,
                     &crate::config::SecurityPolicy::default(),
                     None,
+                    crate::permissions::McpInvocationProvenance::unclassified_compatibility(),
                     crate::mcp::goal_tracker::GoalContext {
                         goal: None,
                         grind: None,
@@ -5874,6 +5943,7 @@ mod tests {
             5,
             &crate::config::SecurityPolicy::default(),
             None,
+            crate::permissions::McpInvocationProvenance::unclassified_compatibility(),
             crate::mcp::goal_tracker::GoalContext {
                 goal: Some("finish the bounded work".into()),
                 grind: None,

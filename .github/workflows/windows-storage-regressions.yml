@@ -266,6 +266,16 @@ jobs:
           config::slack_account_tests::slack_ifc_labels_require_an_existing_account_and_reach_its_binding	neothd/src/config/mod.rs
           mcp::gate::tests::trusted_public_provenance_reaches_tools_call_only_in_its_bound_turn	neothd/src/mcp/gate.rs
           integrations::n8n::tests::missing_custody_after_prepare_remains_fail_closed	neothd/src/integrations/n8n_tests.rs
+          tools::external_http::tests::sealed_transport_body_drift_is_rejected_before_authorization_or_send	neothd/src/tools/external_http.rs
+          tools::external_http::tests::execute_transport_response_processing_failure_writes_failure_terminal	neothd/src/tools/external_http.rs
+          tools::external_http::tests::denied_or_intent_failed_transport_never_runs_pre_send_or_sends	neothd/src/tools/external_http.rs
+          tools::external_http::tests::released_execute_transport_failure_is_coarse_and_provider_neutral	neothd/src/tools/external_http.rs
+          tools::citation_http::tests::authorized_send_failure_is_provider_unavailable_while_gate_denial_is_permission_denied	neothd/src/tools/citation_http.rs
+          tools::citation_http::tests::response_status_decode_and_size_failures_write_failure_terminals	neothd/src/tools/citation_http.rs
+          tools::citation_http::tests::truncated_stream_writes_failure_terminal_and_valid_record_writes_success_terminal	neothd/src/tools/citation_http.rs
+          tools::citation_http::tests::header_timeout_preserves_timeout_state_and_writes_failure_terminal	neothd/src/tools/citation_http.rs
+          tools::citation_http::tests::rate_limit_is_failure_terminal_before_cooldown_and_not_found_is_success_terminal	neothd/src/tools/citation_http.rs
+          mcp::dispatch_loop::tests::trusted_nonpublic_source_refuses_before_spawn_through_budget_wrapper	neothd/src/mcp/dispatch_loop.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -282,7 +292,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 196 ]]; then
+          if [[ "$expected" -ne 206 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -292,7 +302,7 @@ jobs:
             cargo test -p neoth --lib --locked --no-run > "$evidence/compile.log" 2>&1 || compile_status=$?
           else
             compile_status=64
-            printf 'selection is not the required 196 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 206 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 
 use crate::providers::http_client;
 use crate::tools::external_http::{
-    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface,
+    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface, ExternalHttpTransportRequest,
 };
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -75,16 +75,9 @@ pub(crate) async fn search_against_authorized(
         max
     );
     let request = ExternalHttpRequest::get(&url, ExternalHttpSurface::Arxiv);
-    let permitted_request = request.clone();
-    http.execute(request, move |permit| async move {
-        permit.require(&permitted_request)?;
-        let client = http_client::build_client_no_redirect()?;
-        let mut resp = client
-            .get(url)
-            .header("User-Agent", "NEOTH-arxiv/0.1")
-            .send()
-            .await
-            .context("arxiv API request")?;
+    let client = http_client::build_client_no_redirect()?;
+    let transport = ExternalHttpTransportRequest::new(&request, client.get(url).header("User-Agent", "NEOTH-arxiv/0.1"))?;
+    http.execute_transport(request, transport, move |mut resp| async move {
         if !resp.status().is_success() {
             anyhow::bail!("arxiv API returned {}", resp.status());
         }
@@ -95,9 +88,8 @@ pub(crate) async fn search_against_authorized(
         }
         let body = std::str::from_utf8(&body)
             .map_err(|_| anyhow::anyhow!("arxiv response is not valid UTF-8"))?;
-        parse_atom(body, max)
-    })
-    .await
+    parse_atom(body, max)
+    }).await
 }
 
 /// A Content-Length preflight avoids reading a declared oversized response, but

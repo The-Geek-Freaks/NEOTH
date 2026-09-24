@@ -27,7 +27,7 @@ use tokio::net::lookup_host;
 use crate::providers::http_client;
 use crate::providers::{Completion, Provider, Request};
 use crate::tools::external_http::{
-    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface,
+    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface, ExternalHttpResponse, ExternalHttpTransportRequest,
 };
 use crate::tools::web_doc_cache;
 
@@ -259,13 +259,10 @@ async fn fetch_inner(url: &str, http: &ExternalHttpAuthorizer) -> Result<(String
     // external-HTTP authorization boundary below.
     let canonical_url = parse_http_url(url)?.to_string();
     let request = ExternalHttpRequest::get(&canonical_url, ExternalHttpSurface::Fetch);
-    let permitted_request = request.clone();
-    http.execute(request, move |permit| async move {
-        permit.require(&permitted_request)?;
         // SX-01: SSRF guard — strict URL parsing + scheme filtering + DNS
         // pre-resolution to block private/loopback/link-local/cloud-metadata
         // targets BEFORE the HTTP client opens a socket.
-        let parsed = validate_url(&canonical_url).await?;
+        let parsed = parse_http_url(&canonical_url)?;
         let safe_target = parsed.origin().ascii_serialization();
         // Use the no-redirect variant so an attacker cannot 302 us into a
         // private network after `validate_url` cleared the initial host.
@@ -285,7 +282,7 @@ async fn fetch_inner(url: &str, http: &ExternalHttpAuthorizer) -> Result<(String
             .and_then(|d| web_doc_cache::lookup(d, &canonical_url));
 
         let mut req = client
-            .get(parsed.as_str())
+            .get(&canonical_url)
             .header("User-Agent", "NEOTH-fetch/0.1 (+self-hosted)");
         if let Some(c) = &cached {
             if let Some(etag) = &c.etag {
@@ -295,10 +292,10 @@ async fn fetch_inner(url: &str, http: &ExternalHttpAuthorizer) -> Result<(String
                 req = req.header(reqwest::header::IF_MODIFIED_SINCE, lm.as_str());
             }
         }
-        let mut resp = req
-            .send()
-            .await
-            .with_context(|| format!("GET {safe_target}"))?;
+        let dns_target = canonical_url.clone();
+        let transport = ExternalHttpTransportRequest::new(&request, req)?
+            .with_pre_send(async move { validate_url(&dns_target).await.map(|_| ()) });
+        http.execute_transport(request, transport, move |mut resp| async move {
         let status = resp.status().as_u16();
 
         // 304 Not Modified — the origin confirms our cached copy is current. Serve
@@ -386,12 +383,11 @@ async fn fetch_inner(url: &str, http: &ExternalHttpAuthorizer) -> Result<(String
                 truncated,
             },
         ))
-    })
-    .await
+        }).await
 }
 
 async fn read_response_body_bounded(
-    response: &mut reqwest::Response,
+    response: &mut ExternalHttpResponse,
     url: &str,
 ) -> Result<Vec<u8>> {
     if response

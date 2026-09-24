@@ -2,6 +2,14 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W936 HTTP effect boundary and W932 MCP repair (2026-09-24):** The external
+HTTP authorizer owns its sealed request and actual send. Citation validates
+body/status/record before audit success;429 is failure before cooldown,404 is
+valid NotFound, timeouts keep their original classification. W933 independently
+reviewed all seven HTTP consumers. Core4386 exposed a missing CLI denial arm
+and a budget-wrapper provenance downgrade; both are repaired with a real
+wrapper regression. Ten new tests are registered: native1657/Group1424/Windows206.
+Hosted formatting/compile/behavior pending; C7 remains open. No local execution.
 **W935 n8n cleanup repair (2026-09-24):** Group1408 atc652 is Root-verified
 1400PASS/8FAIL/0missing with251source/input bindings and3API ZIP digests.
 Seven failures share a pre-prepare cleanup error; Windows190 independently

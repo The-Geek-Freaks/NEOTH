@@ -15,7 +15,7 @@ use serde::Deserialize;
 use crate::providers::http_client;
 use crate::secret::SecretString;
 use crate::tools::external_http::{
-    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface,
+    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface, ExternalHttpTransportRequest,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -196,17 +196,11 @@ async fn brave_search_against_authorized(
         .append_pair("q", query)
         .append_pair("count", &count.to_string());
     let request = ExternalHttpRequest::get(request_url.as_str(), ExternalHttpSurface::SearchBrave);
-    let permitted_request = request.clone();
-    http.execute(request, move |permit| async move {
-        permit.require(&permitted_request)?;
-        let client = http_client::build_client_no_redirect()?;
-        let resp = client
-            .get(request_url)
-            .header("Accept", "application/json")
-            .header("X-Subscription-Token", api_key.expose())
-            .send()
-            .await
-            .context("brave search request")?;
+    let client = http_client::build_client_no_redirect()?;
+    let transport = ExternalHttpTransportRequest::new(&request, client
+        .get(request_url).header("Accept", "application/json")
+        .header("X-Subscription-Token", api_key.expose()))?;
+    http.execute_transport(request, transport, move |resp| async move {
         if !resp.status().is_success() {
             anyhow::bail!("brave search returned {}", resp.status());
         }
@@ -224,8 +218,7 @@ async fn brave_search_against_authorized(
                     .collect()
             })
             .unwrap_or_default())
-    })
-    .await
+    }).await
 }
 
 pub const TAVILY_API_URL: &str = "https://api.tavily.com/search";
@@ -269,18 +262,11 @@ async fn tavily_search_against_authorized(
         "search_depth": "basic",
     }))?;
     let request = ExternalHttpRequest::post(endpoint, ExternalHttpSurface::SearchTavily, &body);
-    let permitted_request = request.clone();
-    http.execute(request, move |permit| async move {
-        permit.require(&permitted_request)?;
-        let client = http_client::build_client_no_redirect()?;
-        let resp = client
-            .post(endpoint)
-            .header("Content-Type", "application/json")
-            .header("Authorization", format!("Bearer {}", api_key.expose()))
-            .body(body)
-            .send()
-            .await
-            .context("tavily search request")?;
+    let client = http_client::build_client_no_redirect()?;
+    let transport = ExternalHttpTransportRequest::new(&request, client.post(endpoint)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key.expose())).body(body))?;
+    http.execute_transport(request, transport, move |resp| async move {
         if !resp.status().is_success() {
             anyhow::bail!("tavily search returned {}", resp.status());
         }
@@ -294,8 +280,7 @@ async fn tavily_search_against_authorized(
                 snippet: r.content,
             })
             .collect())
-    })
-    .await
+    }).await
 }
 
 /// Default SearXNG instance when `NEOTH_SEARXNG_URL` is unset — the loopback
@@ -378,16 +363,9 @@ async fn searxng_search_against_authorized(
         .query_pairs_mut()
         .extend_pairs(searxng_query_params(query, lang));
     let request = ExternalHttpRequest::get(endpoint.as_str(), ExternalHttpSurface::SearchSearxng);
-    let permitted_request = request.clone();
-    http.execute(request, move |permit| async move {
-        permit.require(&permitted_request)?;
-        let client = http_client::build_client_no_redirect()?;
-        let resp = client
-            .get(endpoint)
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .context("searxng search request")?;
+    let client = http_client::build_client_no_redirect()?;
+    let transport = ExternalHttpTransportRequest::new(&request, client.get(endpoint).header("Accept", "application/json"))?;
+    http.execute_transport(request, transport, move |resp| async move {
         if !resp.status().is_success() {
             anyhow::bail!("searxng search returned {}", resp.status());
         }
@@ -402,8 +380,7 @@ async fn searxng_search_against_authorized(
                 snippet: r.content.unwrap_or_default(),
             })
             .collect())
-    })
-    .await
+    }).await
 }
 
 fn interactive_http() -> Result<ExternalHttpAuthorizer> {

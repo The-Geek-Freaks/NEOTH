@@ -32,7 +32,7 @@ use crate::skills::store::{
     rename_child, sync_parent_directory,
 };
 use crate::tools::external_http::{
-    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface,
+    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface, ExternalHttpTransportRequest,
 };
 
 pub const MANAGED_BROWSER_DIR: &str = "managed-browser";
@@ -559,22 +559,16 @@ async fn download_reviewed_archive_at(
     cancelled: &AtomicBool,
 ) -> Result<Vec<u8>> {
     let request = ExternalHttpRequest::get(url, ExternalHttpSurface::ManagedBrowserInstall);
-    let permitted_request = request.clone();
     let url = url.to_owned();
     let expected_sha256 = expected_sha256.to_owned();
-    http.execute(request, move |permit| async move {
-        permit.require(&permitted_request)?;
-        ensure!(
+    ensure!(
             !cancelled.load(Ordering::Acquire),
             "managed-browser install cancelled"
         );
-        let client = crate::providers::http_client::build_client_no_redirect()
+    let client = crate::providers::http_client::build_client_no_redirect()
             .context("build no-redirect managed-browser HTTP client")?;
-        let mut response = client
-            .get(&url)
-            .send()
-            .await
-            .with_context(|| format!("download reviewed managed-browser archive {url}"))?;
+    let transport = ExternalHttpTransportRequest::new(&request, client.get(&url))?;
+    http.execute_transport(request, transport, move |mut response| async move {
         ensure!(
             !response.status().is_redirection(),
             "managed-browser archive returned an unexpected redirect"
@@ -625,9 +619,8 @@ async fn download_reviewed_archive_at(
             hex::encode(digest.finalize()) == expected_sha256,
             "managed-browser archive digest does not match reviewed target"
         );
-        Ok(archive)
-    })
-    .await
+    Ok(archive)
+    }).await
 }
 
 fn install_verified_archive(

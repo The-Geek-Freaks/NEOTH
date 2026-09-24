@@ -851,6 +851,14 @@ async fn run_call(
         | Err(GateError::PreToolUsePermitMismatch { .. }) => {
             anyhow::bail!("MCP `{server_id}::{tool}` blocked by PreToolUse authorization")
         }
+        // The direct CLI path normally supplies unclassified compatibility
+        // provenance, but an IFC denial must remain an explicit fail-closed
+        // outcome if a future caller threads a trusted source through here.
+        Err(GateError::InformationFlowDenied { reason, .. }) => {
+            anyhow::bail!(
+                "MCP `{server_id}::{tool}` blocked by information-flow policy: {reason}"
+            )
+        }
         Err(GateError::Mcp(e)) => return Err(e.into()),
         Err(GateError::Wal(e)) => return Err(e),
     };
