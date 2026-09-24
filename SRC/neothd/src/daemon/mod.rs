@@ -123,6 +123,10 @@ pub mod model_download_audit;
 /// `0x48 WAL_CRC_ALERT` / `0x49 CRASH_LOG_ALERT` /
 /// `0x4A CHANNEL_SILENCE_ALERT` on anomalies. Off by default.
 pub mod monitor_cron;
+/// W622 — same-user IPC endpoint for an already-paired Archive Bridge plugin.
+pub(crate) mod obsidian_archive_bridge_ipc;
+/// W622 — daemon-owned pairing authority for the local Obsidian Archive Bridge.
+pub(crate) mod obsidian_archive_bridge_owner;
 /// GOLD-ADAPT-JV-IMP-05 — Obsidian vault bidirectional sync cron.
 ///
 /// **Reader**: walks the vault on a 6h cadence, finds files with managed
@@ -142,10 +146,6 @@ pub mod monitor_cron;
 /// WAL-free (groundtruth insert is the durable record).  Off by default
 /// (`obsidian_vault_reader_enabled = false`).
 pub mod obsidian_vault_reader_cron;
-/// W622 — daemon-owned pairing authority for the local Obsidian Archive Bridge.
-pub(crate) mod obsidian_archive_bridge_owner;
-/// W622 — same-user IPC endpoint for an already-paired Archive Bridge plugin.
-pub(crate) mod obsidian_archive_bridge_ipc;
 /// Official OMI Developer API client: bounded paginated reads, full-detail
 /// revision digests, and idempotent transcript-segment export.
 pub mod omi_client;

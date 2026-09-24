@@ -29284,12 +29284,29 @@ fn resize_companion_overlay(overlay: &MiniOverlay) {
     });
 }
 
-fn sync_companion_recent_lines_from_canonical(window: &MainWindow, overlay: &MiniOverlay) {
+pub(crate) fn sync_companion_recent_lines_from_canonical(
+    window: &MainWindow,
+    overlay: &MiniOverlay,
+) {
     use slint::{Model, ModelRc, VecModel};
-    let mut lines: Vec<slint::SharedString> = window
+    let rows: Vec<ChatMessage> = window
         .get_chat_live_messages()
         .iter()
+        .collect();
+    overlay.set_recent_lines(ModelRc::new(VecModel::from(
+        companion_recent_lines_from_canonical_rows(&rows),
+    )));
+}
+
+fn companion_recent_lines_from_canonical_rows(
+    rows: &[ChatMessage],
+) -> Vec<slint::SharedString> {
+    let mut lines: Vec<slint::SharedString> = rows
+        .iter()
         .filter_map(|message| {
+            if message.incognito {
+                return None;
+            }
             let normalized = message
                 .text
                 .split_whitespace()
@@ -29318,7 +29335,7 @@ fn sync_companion_recent_lines_from_canonical(window: &MainWindow, overlay: &Min
         let drain_count = lines.len() - 6;
         lines.drain(..drain_count);
     }
-    overlay.set_recent_lines(ModelRc::new(VecModel::from(lines)));
+    lines
 }
 
 /// Mirror the canonical request phase into the companion surface. This is a
@@ -34865,6 +34882,36 @@ mod chat_subprocess_tests {
             )]),
             (String::new(), String::new())
         );
+    }
+
+    #[test]
+    fn companion_recents_exclude_prior_incognito_rows_but_keep_normal_rows() {
+        let row = |role: &str, text: &str, incognito: bool| ChatMessage {
+            role: role.into(),
+            text: text.into(),
+            incognito,
+            ..Default::default()
+        };
+        let rows = vec![
+            row("operator", "PRIVATE_OPERATOR_SENTINEL", true),
+            row("assistant", "PRIVATE_ASSISTANT_SENTINEL", true),
+            row("operator", "normal operator", false),
+            row("assistant", "normal assistant", false),
+        ];
+
+        let lines = companion_recent_lines_from_canonical_rows(&rows)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            lines,
+            vec![
+                "▶ normal operator".to_string(),
+                "NEOTH · normal assistant".to_string(),
+            ]
+        );
+        assert!(lines.iter().all(|line| !line.contains("PRIVATE_")));
     }
 
     #[test]

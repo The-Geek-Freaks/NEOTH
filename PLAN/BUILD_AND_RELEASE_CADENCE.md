@@ -3,6 +3,27 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W639-W644 hosted failure admission and focused repairs (2026-09-24):**
+Root independently admitted GUI148 run35952003959 at701d5ebf:147PASS/1FAIL,
+29 source/input bindings and every ordered terminal/execution receipt. W480
+passed the typed captured Block/Replace checks but timed out on missing Buddy
+recents. The production BridgeSink now syncs canonical recents after current
+operation/turn/surface projection. Review found retained private rows could
+leak on a later normal turn; the common helper now filters each incognito row,
+with a new mixed-session regression. W480 itself remains unchanged.
+Windows46 run35953571699 at83dd6ae1 is independently admitted42PASS/4FAIL:
+54 internal hashes,10 sources,2 build inputs and46 terminals. W635 did not
+repair the sharing violation. A test-only twin drops just the retained DELETE
+binding before nested create-new, preserving the original failure witness.
+Obsidian0.2 actual hosted compile errors are corrected: TFile event guard,
+immutable pairing capture, unused Rust import and explicit anyhow conversion.
+The exact12-file hosted rustfmt patch at2a09cc5d is digest/blob verified and
+imported. New behavior remains hosted-pending; main.js is still the prior
+artifact until the real0.2 build is imported. GUI116 universal/149Linux/145macOS;
+Windows-only native31, focused Windows47; Group990 unchanged. The macOS package
+run35947230118 timed out during both actual builds; no packaged runtime passed.
+No Road closure or local executable validation.
+
 **W638 Obsidian0.2 pairing and exact-revision source batch (2026-09-24):**
 Pair/unpair/pairing-status now use authenticated resident Connector-Control;
 the plugin receives only its scoped pairing payload. Pair and sync retain the

@@ -118,7 +118,9 @@ export default class NeothArchiveBridge extends Plugin {
       callback: () => this.inspectLocalArchiveNotes(),
     });
 
-    this.registerEvent(this.app.vault.on("modify", (file) => void this.queueFile(file)));
+    this.registerEvent(this.app.vault.on("modify", (file) => {
+      if (file instanceof TFile) void this.queueFile(file);
+    }));
     this.registerEvent(this.app.vault.on("rename", (file) => {
       if (file instanceof TFile) void this.queueFile(file);
     }));
@@ -231,9 +233,10 @@ export default class NeothArchiveBridge extends Plugin {
     const epoch = this.pairingEpoch;
     let syncedEntry = false;
     let reachedDaemon = false;
-    let pairing: Required<Pick<BridgeSettings, "pairingSecret" | "pairingGeneration" | "endpoint">> | undefined;
+    let pairingForCatch: Required<Pick<BridgeSettings, "pairingSecret" | "pairingGeneration" | "endpoint">> | undefined;
     try {
-      pairing = this.requirePairing();
+      const pairing = this.requirePairing();
+      pairingForCatch = pairing;
       const status = await this.exchange(pairing.endpoint, {
         op: "status",
         protocol: PROTOCOL_VERSION,
@@ -266,7 +269,7 @@ export default class NeothArchiveBridge extends Plugin {
       }
     } catch {
       // Daemon absence and a broken pipe leave descriptors durable for retry.
-      if (pairing && this.isCurrentPairing(pairing, epoch)) this.updateStatus("daemon unavailable; queued locally");
+      if (pairingForCatch && this.isCurrentPairing(pairingForCatch, epoch)) this.updateStatus("daemon unavailable; queued locally");
     } finally {
       this.syncing = false;
       const requested = this.syncRequested;

@@ -304,7 +304,9 @@ struct LifecycleRequest {
 #[cfg(any(unix, windows))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ArchiveBridgeVaultRequest { vault: String }
+struct ArchiveBridgeVaultRequest {
+    vault: String,
+}
 
 /// Attach the one daemon-owned Obsidian runtime while this module still owns
 /// the sealed daemon session constructor.  Request data cannot mint, select,
@@ -315,10 +317,14 @@ pub(crate) fn attach_archive_bridge_runtime(
     plane: &Arc<ConnectorControlPlane>,
     daemon_subject: Option<SubjectId>,
 ) -> Result<()> {
-    let Some(owner) = owner else { return Ok(()); };
-    let subject = daemon_subject.context("Archive Bridge requires a configured connector-control daemon subject")?;
+    let Some(owner) = owner else {
+        return Ok(());
+    };
+    let subject = daemon_subject
+        .context("Archive Bridge requires a configured connector-control daemon subject")?;
     let instance = ConnectorInstanceId::accountless(ConnectorId::Obsidian);
-    let authority = plane.authorize_context_import(&daemon_authenticated_session(subject), &instance)?;
+    let authority =
+        plane.authorize_context_import(&daemon_authenticated_session(subject), &instance)?;
     owner.attach_context_import_runtime(authority.acquire_context_import_runtime()?)
 }
 
@@ -2285,20 +2291,45 @@ fn process_route(
             Ok(Some(outcome))
         }
         "/cc/obsidian-archive-bridge/pair" => {
-            let request: ArchiveBridgeVaultRequest = serde_json::from_slice(body).map_err(|_| "invalid_obsidian_bridge_request")?;
-            let owner = state.archive_bridge.as_ref().ok_or("obsidian_bridge_unavailable")?;
-            owner.matches_vault(Path::new(&request.vault)).map_err(|_| "obsidian_bridge_vault_mismatch")?;
-            serde_json::to_string(&owner.pair().map_err(|_| "obsidian_bridge_pair_failed")?).map(Some).map_err(|_| "response_encode_failed")
+            let request: ArchiveBridgeVaultRequest =
+                serde_json::from_slice(body).map_err(|_| "invalid_obsidian_bridge_request")?;
+            let owner = state
+                .archive_bridge
+                .as_ref()
+                .ok_or("obsidian_bridge_unavailable")?;
+            owner
+                .matches_vault(Path::new(&request.vault))
+                .map_err(|_| "obsidian_bridge_vault_mismatch")?;
+            serde_json::to_string(&owner.pair().map_err(|_| "obsidian_bridge_pair_failed")?)
+                .map(Some)
+                .map_err(|_| "response_encode_failed")
         }
         "/cc/obsidian-archive-bridge/unpair" => {
-            let request: ArchiveBridgeVaultRequest = serde_json::from_slice(body).map_err(|_| "invalid_obsidian_bridge_request")?;
-            let owner = state.archive_bridge.as_ref().ok_or("obsidian_bridge_unavailable")?;
-            owner.matches_vault(Path::new(&request.vault)).map_err(|_| "obsidian_bridge_vault_mismatch")?;
-            serde_json::to_string(&owner.unpair().map_err(|_| "obsidian_bridge_unpair_failed")?).map(Some).map_err(|_| "response_encode_failed")
+            let request: ArchiveBridgeVaultRequest =
+                serde_json::from_slice(body).map_err(|_| "invalid_obsidian_bridge_request")?;
+            let owner = state
+                .archive_bridge
+                .as_ref()
+                .ok_or("obsidian_bridge_unavailable")?;
+            owner
+                .matches_vault(Path::new(&request.vault))
+                .map_err(|_| "obsidian_bridge_vault_mismatch")?;
+            serde_json::to_string(
+                &owner
+                    .unpair()
+                    .map_err(|_| "obsidian_bridge_unpair_failed")?,
+            )
+            .map(Some)
+            .map_err(|_| "response_encode_failed")
         }
         "/cc/obsidian-archive-bridge/status" if body.is_empty() => {
-            let owner = state.archive_bridge.as_ref().ok_or("obsidian_bridge_unavailable")?;
-            serde_json::to_string(&owner.status()).map(Some).map_err(|_| "response_encode_failed")
+            let owner = state
+                .archive_bridge
+                .as_ref()
+                .ok_or("obsidian_bridge_unavailable")?;
+            serde_json::to_string(&owner.status())
+                .map(Some)
+                .map_err(|_| "response_encode_failed")
         }
         _ => Err("not_found"),
     }

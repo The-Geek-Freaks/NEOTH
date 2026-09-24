@@ -1,0 +1,392 @@
+{
+  "schema": "neoth-w640-windows46/v1",
+  "run": 35953571699,
+  "source": "83dd6ae19b40f5da1bf9cb81bb7213b0d31c74c2",
+  "artifact": {
+    "id": 10789912785,
+    "sha256": "6a7dbc36fb787238a9cc99f16915d19a2005c39099b5680a509875abe5cf0b4f",
+    "verified": true
+  },
+  "compileStatus": 0,
+  "selected": 46,
+  "executed": 46,
+  "passed": 42,
+  "failed": 4,
+  "missingTerminal": 0,
+  "status": "SOURCE_ADMITTED_PARTIAL_FAILURE",
+  "failedTerminals": [
+    {
+      "index": 38,
+      "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_keeps_existing_token_and_binds_full_install",
+      "status": "failed",
+      "sourcePath": "neothd/src/installers/paperless_lifecycle.rs",
+      "logSha256": "45c0cfe845e882f687004cb08bfe9acb85c0408c4573eb8f235451d16b570ba7"
+    },
+    {
+      "index": 39,
+      "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_rejects_remote_engine_before_pull",
+      "status": "failed",
+      "sourcePath": "neothd/src/installers/paperless_lifecycle.rs",
+      "logSha256": "edd9172ff7479c294ef11bcf61bf1f4b9728f842ae83e26f9e77ae4c870bc85e"
+    },
+    {
+      "index": 40,
+      "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_bootstraps_missing_token_after_verified_containers",
+      "status": "failed",
+      "sourcePath": "neothd/src/installers/paperless_lifecycle.rs",
+      "logSha256": "c49328eeaff9be41d352fb69aace686c4451f8e54da78505019f8ff3a1f66540"
+    },
+    {
+      "index": 46,
+      "test": "skills::store::reported_commit_tests::private_stage_create_new_composes_with_retained_delete_bound_parent",
+      "status": "failed",
+      "sourcePath": "neothd/src/skills/store.rs",
+      "logSha256": "506ee3695ccf777b150a8b561bd6096965fe56cb9a36a5935d2ec923edf3b585"
+    }
+  ],
+  "sourceBindings": [
+    {
+      "sourcePath": "neothd/src/installers/paperless_bootstrap.rs",
+      "gitPath": "SRC/neothd/src/installers/paperless_bootstrap.rs",
+      "blob": "1832b2137176e9d8305bceb65409f5acfa7177fe",
+      "sha256": "e9c4681b4aa7dbb0d9963a594232e12c9c99cedef03fbdd4f575829bfaae598d"
+    },
+    {
+      "sourcePath": "neothd/src/installers/paperless_lifecycle.rs",
+      "gitPath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "blob": "eecb9da6eedebb8871d6480d5e97d2ce0172bdce",
+      "sha256": "05fc7a5cf2519868166687d367d4731029959b513d22bf7a235666b9f0229b56"
+    },
+    {
+      "sourcePath": "neothd/src/tools/managed_browser.rs",
+      "gitPath": "SRC/neothd/src/tools/managed_browser.rs",
+      "blob": "775434abbd17d4e872d84c7be23f59d7498dfff1",
+      "sha256": "2f2d9a6b351d74a1a076fd8756169bda170adc06bea24ef698fe821f5c8a02b7"
+    },
+    {
+      "sourcePath": "neothd/src/reflection/periodic.rs",
+      "gitPath": "SRC/neothd/src/reflection/periodic.rs",
+      "blob": "df4819842fbe54205978ea2385b5710f95ed902a",
+      "sha256": "168ac0e1905d4352d234738fcb0e4a3538974b1cdb07b8f7c0532a3f03814a7f"
+    },
+    {
+      "sourcePath": "neothd/src/installers/obsidian_archive_bridge.rs",
+      "gitPath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
+      "blob": "b8d8f3821d865d940b6e72c3c29913b208241ffb",
+      "sha256": "7f290fb9fa09679d1657ef9518fe4bf89cd5dd9f8f41300e59eb4ffcaeab4562"
+    },
+    {
+      "sourcePath": "neothd/src/cli/memory.rs",
+      "gitPath": "SRC/neothd/src/cli/memory.rs",
+      "blob": "36d16239c636bb8934f9a5a89d2db47e913ffb72",
+      "sha256": "51595ecbcbb45914d85fe49a8d506ce8365c53d1395e0d978a30ac99e8ca7602"
+    },
+    {
+      "sourcePath": "neothd/src/skills/store.rs",
+      "gitPath": "SRC/neothd/src/skills/store.rs",
+      "blob": "9fcd517576d3888ce6e1568dc0f003feff3babb3",
+      "sha256": "7e8530a9028c08514e5fcdd237bb17adf98380c170a34325ae0e80fb35c1da65"
+    },
+    {
+      "sourcePath": "neothd/src/connectors/local_import/windows_source.rs",
+      "gitPath": "SRC/neothd/src/connectors/local_import/windows_source.rs",
+      "blob": "943b63748eb75391708b8d4da5ca75563341b6c5",
+      "sha256": "d04f297c44832528c44b884af1d8725ef8077bf83f7c1b95a0d71dea036b5c94"
+    },
+    {
+      "sourcePath": "neothd/src/wal/redact.rs",
+      "gitPath": "SRC/neothd/src/wal/redact.rs",
+      "blob": "1d4f652dbafb054605f294e83d4ed118273658c2",
+      "sha256": "b1564c3555aa338b3e99b0d5f85ff26ed67dca1b2e37be3800ff24e97f5d6c9b"
+    },
+    {
+      "sourcePath": "neothd/src/reflection/retention_v2_tests.rs",
+      "gitPath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
+      "blob": "7d111771053bc9161a7f800099812505c0d8bd44",
+      "sha256": "2b90a61e0aa8138e41aef8f87db9b1f464a4af78ca30ee0fa543d45f71b6ca63"
+    }
+  ],
+  "sourceBindingCount": 10,
+  "internalHashEntries": 54,
+  "localTestsRan": false,
+  "rootVerifiedUtc": "2026-09-24T04:27:44.7310764Z",
+  "terminals": [
+    {
+      "index": 1,
+      "test": "tools::managed_browser::tests::controlled_install_publishes_marker_resolves_and_is_idempotent",
+      "status": "passed",
+      "logSha256": "1EF0853C28257A97EE0D1E73D0076F2B8BDBD9D516E500D9816191B15687F777"
+    },
+    {
+      "index": 2,
+      "test": "tools::managed_browser::tests::controlled_zip_fixture_extracts_only_the_expected_root_and_executable",
+      "status": "passed",
+      "logSha256": "B5CF5C55E235A43850ABEB0795FCC5C7C3128329E426CE540CB4F2D82B18145C"
+    },
+    {
+      "index": 3,
+      "test": "tools::managed_browser::tests::controlled_zip_fixture_rejects_escape_and_case_collision_before_write",
+      "status": "passed",
+      "logSha256": "CF4C64D9CECE2948BE0EA3B4C2779370F62A653E07082BAB18DB8329A65FF46A"
+    },
+    {
+      "index": 4,
+      "test": "tools::managed_browser::tests::controlled_zip_fixture_rejects_excessive_member_inventory",
+      "status": "passed",
+      "logSha256": "02304B64F92FAE38FDEFBE8A98DDEF9962D4B8541465F84B6C29108C89AB3AE3"
+    },
+    {
+      "index": 5,
+      "test": "tools::managed_browser::tests::exact_marker_and_executable_resolve_and_revalidate",
+      "status": "passed",
+      "logSha256": "5F9B17CCB42A909DEFA7819F71723D47D495A5A7FCC25420007BA6E00E6C8F9D"
+    },
+    {
+      "index": 6,
+      "test": "tools::managed_browser::tests::missing_generation_fails_closed_without_ambient_fallback",
+      "status": "passed",
+      "logSha256": "AA7C3FBF0F24B1CCCDEE760F3BB0BB1FA82414CA5517FA07ABE7AA8A742A420C"
+    },
+    {
+      "index": 7,
+      "test": "tools::managed_browser::tests::replaced_published_generation_fails_identity_confirmation_without_cleanup",
+      "status": "passed",
+      "logSha256": "06CE2BD36B375C274E8B5E61F506D59C50683C8F420377DBF14E4D552FFE856F"
+    },
+    {
+      "index": 8,
+      "test": "tools::managed_browser::tests::replaced_stage_binding_refuses_cleanup_without_deleting_foreign_tree",
+      "status": "passed",
+      "logSha256": "7A2AD785168E7377F33F79C4F4E71BDD42D49D4720C157182168F329D6FF6CC4"
+    },
+    {
+      "index": 9,
+      "test": "skills::store::tests::windows_verbatim_local_disk_root_remains_capability_walkable",
+      "status": "passed",
+      "logSha256": "E44B1465EAA11C3E960F98804DF54C97A6B1CCBD17DE359CDB7FCEE3B8A54809"
+    },
+    {
+      "index": 10,
+      "test": "skills::store::tests::windows_unc_and_device_prefixes_remain_outside_local_capability_walks",
+      "status": "passed",
+      "logSha256": "D95C70B788BB8EE9BEEEDB02443F46836FDA699A56D666040A10D81CED2CF1F5"
+    },
+    {
+      "index": 11,
+      "test": "cli::memory::tests::physical_redaction_authenticated_sealed_leaf_rebinds_and_receipts_without_generic_marker",
+      "status": "passed",
+      "logSha256": "558D5E1AAA2F6A963EDCBB87C6D17BE49CAC1B3B069AAC20B3A0D4E95CF6DF22"
+    },
+    {
+      "index": 12,
+      "test": "cli::memory::tests::physical_redaction_restart_delivers_published_leaf_without_reapplying_payload",
+      "status": "passed",
+      "logSha256": "B9369E890BC19F798D3BE7D2623D20429A472CDE3AC7E99877CDD82F9ED4B356"
+    },
+    {
+      "index": 13,
+      "test": "wal::redact::tests::stage_then_publish_authenticated_leaf_preserves_writer_marker_hmac",
+      "status": "passed",
+      "logSha256": "85C4C575EBB3A3EC9BDC294A4EE2B510224E460788BD3F3ECB444303B704E6B8"
+    },
+    {
+      "index": 14,
+      "test": "wal::redact::tests::staged_leaf_in_independent_namespace_is_accepted_when_another_namespace_is_last",
+      "status": "passed",
+      "logSha256": "0957AB886F04F8C6D27801C54051DF7D8F4AAC8E59A6BBC7457A2EEC6EFF3FBF"
+    },
+    {
+      "index": 15,
+      "test": "skills::store::reported_commit_tests::private_stage_replaces_a_delete_sharing_bound_target_without_closing_it",
+      "status": "passed",
+      "logSha256": "8672C5D1C7C7AB7118FBBDC21731D7F829AFFEC940C856C7832EB8FC26804A55"
+    },
+    {
+      "index": 16,
+      "test": "skills::store::reported_commit_tests::live_bound_parent_native_rename_is_denied",
+      "status": "passed",
+      "logSha256": "E203BD8CFAECCC48A10EE844B797C4860A7B53292A9298DF808EBF142588AC5A"
+    },
+    {
+      "index": 17,
+      "test": "skills::store::reported_commit_tests::private_stage_publishes_through_bound_parent_despite_mismatched_display_path",
+      "status": "passed",
+      "logSha256": "5D1B50051F353AF32EBFFBA3D9FBB63C03CDC55C87D28CA2DF3D2E10C3A89293"
+    },
+    {
+      "index": 18,
+      "test": "reflection::periodic::tests::windows_retention_reads_through_a_handle_withholding_delete_share",
+      "status": "passed",
+      "logSha256": "5F7EDB45E7A112E942093AEBEED393DEAE3746C602085A810947BA4E32A19106"
+    },
+    {
+      "index": 19,
+      "test": "reflection::periodic::retention_v2_tests::v2_enabled_quarantines_real_archive_and_receipt_owned_note_without_losing_period_input",
+      "status": "passed",
+      "logSha256": "B3689B9FBA3E912742B2622820304F67568C94726B171ADF9B61770B05F38996"
+    },
+    {
+      "index": 20,
+      "test": "reflection::periodic::retention_v2_tests::v2_identical_byte_note_replacement_refuses_receipt_owned_quarantine",
+      "status": "passed",
+      "logSha256": "A7D11B0D94A5FC96501A9687B85095C1BA660BD509930CDE87EBFB32BAAAC359"
+    },
+    {
+      "index": 21,
+      "test": "reflection::periodic::retention_v2_tests::v2_post_archive_rename_before_transition_reconciles_source_identity",
+      "status": "passed",
+      "logSha256": "C1529EB7554A954DFE76DEE93B680ECDB5B2CDC6589751E30554D5ED247E1AC2"
+    },
+    {
+      "index": 22,
+      "test": "reflection::periodic::retention_v2_tests::v2_post_note_rename_before_transition_reconciles_deterministic_destination",
+      "status": "passed",
+      "logSha256": "C6EEA8E0A3D844250098F042B6E57AC935C9993CAA62C4BC65E37FFBD5AB4E52"
+    },
+    {
+      "index": 23,
+      "test": "reflection::periodic::retention_v2_tests::v2_receipt_before_committed_ordering_is_idempotent_after_restart",
+      "status": "passed",
+      "logSha256": "AB585141D5641F9818ED7C4C1BAB6FDABFD129D0664A164EC30FF0ECF58A28A0"
+    },
+    {
+      "index": 24,
+      "test": "reflection::periodic::retention_v2_tests::v2_unlink_attempted_after_partial_unlink_is_reconciled_truthfully",
+      "status": "passed",
+      "logSha256": "38BE0DEEF948ED01CF9D8915B6B358E9F91914F20DE17CE0ECCB1DD500F22920"
+    },
+    {
+      "index": 25,
+      "test": "installers::paperless_bootstrap::tests::dotenv_parser_accepts_literal_and_basic_quoted_admin_values",
+      "status": "passed",
+      "logSha256": "C3AD3B257F93DED6172B1D24380CD37A621F177E48E3DF79FF60B02CABE14DC6"
+    },
+    {
+      "index": 26,
+      "test": "installers::paperless_bootstrap::tests::dotenv_parser_rejects_ambiguous_or_duplicate_admin_values",
+      "status": "passed",
+      "logSha256": "3C7D461786383C27CF8192ABE50711522D02767EDDF01FA7965EEA997CF85085"
+    },
+    {
+      "index": 27,
+      "test": "installers::paperless_bootstrap::tests::canonical_origin_accepts_only_literal_ipv4_loopback",
+      "status": "passed",
+      "logSha256": "ACAC2C602181B83B4FF6F1EAD0A15043D529ABF5B3360CD58505916D7F12AEF0"
+    },
+    {
+      "index": 28,
+      "test": "installers::paperless_bootstrap::tests::file_persistence_refuses_existing_token_and_preserves_url",
+      "status": "passed",
+      "logSha256": "505EC177E515905B251158716F8515895F4EDB16DDD3CD198E90D99D2DFDFB2E"
+    },
+    {
+      "index": 29,
+      "test": "installers::paperless_bootstrap::tests::keychain_write_follows_real_pair_publication_and_rechecks_effective_state",
+      "status": "passed",
+      "logSha256": "61DF09C72EE0FD4A523082A775A012E1002100B7D5E678602A17B0595C4F0005"
+    },
+    {
+      "index": 30,
+      "test": "installers::paperless_bootstrap::tests::obtains_token_from_a_bounded_local_http_endpoint",
+      "status": "passed",
+      "logSha256": "0BA95761E95014ADFF9C71F278939E032D993AE638B5DAC7888532D42590D501"
+    },
+    {
+      "index": 31,
+      "test": "installers::paperless_lifecycle::tests::parses_only_a_single_literal_env_port",
+      "status": "passed",
+      "logSha256": "8E2334B1C09FA2684F956978F993A51A6163E281EE5B6C8DDED62A9AAC1B3586"
+    },
+    {
+      "index": 32,
+      "test": "installers::paperless_lifecycle::tests::exact_identifier_rejects_multiple_or_spaced_container_ids",
+      "status": "passed",
+      "logSha256": "01E3333B2408609BB68E74D5C572266F7D552809446E97DD27452D545B064C57"
+    },
+    {
+      "index": 33,
+      "test": "installers::paperless_lifecycle::tests::compose_never_pulls_and_uses_pinned_engine_endpoint",
+      "status": "passed",
+      "logSha256": "34C0009E8968BF7EB860B87C4A41328478A1D81BE1DF5EF0842E70E2E00C6B7C"
+    },
+    {
+      "index": 34,
+      "test": "installers::paperless_lifecycle::tests::receipt_matches_all_pinned_indexes_and_contains_config_proof",
+      "status": "passed",
+      "logSha256": "55E644E5C21CFEFF5ACDEA06D2AF438350B6DCE8C21EBBED3ED1A059957CA3C4"
+    },
+    {
+      "index": 35,
+      "test": "installers::paperless_lifecycle::tests::container_validation_rejects_stopped_and_mixed_bindings",
+      "status": "passed",
+      "logSha256": "F1CDE647212E323841F9E88437A045542BCB36DD68186ED4C4933FE54BBCE63F"
+    },
+    {
+      "index": 36,
+      "test": "installers::paperless_lifecycle::tests::image_verification_uses_engine_platform_not_windows_host",
+      "status": "passed",
+      "logSha256": "4FABDBCFE1DB9267D7F69F692DFD38BCA3B92D863549435E7281AD432C7D149B"
+    },
+    {
+      "index": 37,
+      "test": "installers::paperless_lifecycle::tests::docker_command_removes_only_compose_interpolation_overrides",
+      "status": "passed",
+      "logSha256": "900623B77FE037BB27ED3D28DA1BE97915A0797B022AD608278B00351DA544F8"
+    },
+    {
+      "index": 38,
+      "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_keeps_existing_token_and_binds_full_install",
+      "status": "failed",
+      "logSha256": "45C0CFE845E882F687004CB08BFE9ACB85C0408C4573EB8F235451D16B570BA7"
+    },
+    {
+      "index": 39,
+      "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_rejects_remote_engine_before_pull",
+      "status": "failed",
+      "logSha256": "EDD9172FF7479C294EF11BCF61BF1F4B9728F842AE83E26F9E77AE4C870BC85E"
+    },
+    {
+      "index": 40,
+      "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_bootstraps_missing_token_after_verified_containers",
+      "status": "failed",
+      "logSha256": "C49328EEAFF9BE41D352FB69AACE686C4451F8E54DA78505019F8FF3A1F66540"
+    },
+    {
+      "index": 41,
+      "test": "connectors::local_import::windows_source::tests::held_regular_file_fence_blocks_writer_and_rename",
+      "status": "passed",
+      "logSha256": "C70013A437C97793CCD588A06663DBD50C240E4F9FD5AD162F6D3AB98C74D604"
+    },
+    {
+      "index": 42,
+      "test": "installers::obsidian_archive_bridge::tests::update_exact_predecessor_preserves_settings_extensions_and_vault",
+      "status": "passed",
+      "logSha256": "D6D1E31615ACA4764D14DBB87D92CC6D007DD38208F6CE07CB74E75AA4F5970E"
+    },
+    {
+      "index": 43,
+      "test": "installers::obsidian_archive_bridge::tests::update_rejects_tampered_predecessor_without_mutating_any_file",
+      "status": "passed",
+      "logSha256": "1A216A46D9DEAE5CD337FF5863159E390FB7001043EB204E7B9146F2F738F896"
+    },
+    {
+      "index": 44,
+      "test": "installers::obsidian_archive_bridge::tests::repair_resumes_panic_interrupted_predecessor_update_without_losing_additions",
+      "status": "passed",
+      "logSha256": "D92A7ED2C8E94669991267FE4284D425B6E6178B328E23125945C0E68D3C2D09"
+    },
+    {
+      "index": 45,
+      "test": "installers::obsidian_archive_bridge::tests::repair_recovers_concurrent_payload_replacement_during_update",
+      "status": "passed",
+      "logSha256": "33E01C19B9F0634BBB0CD656CC0D38695EA3596321B24544B9FD5AB7F010979C"
+    },
+    {
+      "index": 46,
+      "test": "skills::store::reported_commit_tests::private_stage_create_new_composes_with_retained_delete_bound_parent",
+      "status": "failed",
+      "logSha256": "506EE3695CCF777B150A8B561BD6096965FE56CB9A36A5935D2EC923EDF3B585"
+    }
+  ],
+  "verifiedBuildInputs": 2
+}

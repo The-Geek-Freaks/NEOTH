@@ -599,6 +599,9 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
                 }
                 if let Some(overlay) = overlay.upgrade() {
                     crate::project_companion_chat_stream(&overlay, phase, Some(&text));
+                    if !incognito {
+                        crate::sync_companion_recent_lines_from_canonical(&window, &overlay);
+                    }
                 }
                 if let (Some((throughput_sequence, state)), Some(operation)) =
                     (throughput_state, operation)

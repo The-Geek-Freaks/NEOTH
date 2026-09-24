@@ -396,7 +396,11 @@ pub async fn run_one_reader_pass(vault: &Path, home: &Path) -> Result<(usize, us
 /// the one current note from the opaque source/revision descriptor before the
 /// existing ingress sanitizer and GroundTruth path see any content.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BridgeReaderOutcome { Accepted, AlreadyCurrent, StaleRevision }
+pub(crate) enum BridgeReaderOutcome {
+    Accepted,
+    AlreadyCurrent,
+    StaleRevision,
+}
 
 fn bridge_state_file_path(home: &Path) -> PathBuf {
     home.join("obsidian_archive_bridge_state.v1.json")
@@ -416,8 +420,12 @@ fn load_bridge_state(home: &Path) -> Result<HashMap<String, String>> {
 fn save_bridge_state(home: &Path, state: &HashMap<String, String>) -> Result<()> {
     let body = serde_json::to_vec(state).context("serialize Archive Bridge reader state")?;
     let path = bridge_state_file_path(home);
-    crate::util::atomic_write::atomic_write_private(&path, &body)
-        .with_context(|| format!("atomically write Archive Bridge reader state {}", path.display()))
+    crate::util::atomic_write::atomic_write_private(&path, &body).with_context(|| {
+        format!(
+            "atomically write Archive Bridge reader state {}",
+            path.display()
+        )
+    })
 }
 
 /// Runs only from the Archive Bridge controller's bounded blocking operation.
@@ -498,7 +506,8 @@ pub(crate) fn run_one_archive_bridge_note(
             if error
                 .downcast_ref::<crate::connectors::obsidian::ObsidianPlanError>()
                 .is_some_and(|error| {
-                    *error == crate::connectors::obsidian::ObsidianPlanError::SelectedDraftNotCurrent
+                    *error
+                        == crate::connectors::obsidian::ObsidianPlanError::SelectedDraftNotCurrent
                 }) =>
         {
             Ok(BridgeReaderOutcome::StaleRevision)
@@ -873,8 +882,10 @@ async fn run_tick(vault: &Path, home: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::connectors::{ConnectorConfiguration, ConnectorId, ConnectorPolicySnapshot, SubjectId};
     use crate::config::FreedomConfig;
+    use crate::connectors::{
+        ConnectorConfiguration, ConnectorId, ConnectorPolicySnapshot, SubjectId,
+    };
     use crate::memory::store;
     use tempfile::tempdir;
 
@@ -947,13 +958,23 @@ mod tests {
             "hmac-sha256:dd5c7eda320b4131f69a2e5c7ab238fa57f61b22a768484a851dffdecf52d8f4",
         );
         set_archive_bridge_fail_before_commit_for_test(false);
-        assert!(result.is_err(), "test failpoint must abort the whole transaction");
+        assert!(
+            result.is_err(),
+            "test failpoint must abort the whole transaction"
+        );
         assert_eq!(count_groundtruth_rows(&db_path, "import:obsidian"), 0);
         let ledger_rows: i64 = store::open(&db_path)
             .unwrap()
-            .query_row("SELECT COUNT(*) FROM obsidian_archive_bridge_dedup_v1", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM obsidian_archive_bridge_dedup_v1",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
-        assert_eq!(ledger_rows, 0, "rollback must not consume the source revision");
+        assert_eq!(
+            ledger_rows, 0,
+            "rollback must not consume the source revision"
+        );
     }
 
     #[test]
@@ -980,7 +1001,8 @@ mod tests {
         )
         .unwrap();
         let source_id = "obsidian:source:hmac-sha256:ec978485727c39cbe54a22dc64cfb0cbccc6e6921bf2d82eeea731585fe83654";
-        let revision = "hmac-sha256:dd5c7eda320b4131f69a2e5c7ab238fa57f61b22a768484a851dffdecf52d8f4";
+        let revision =
+            "hmac-sha256:dd5c7eda320b4131f69a2e5c7ab238fa57f61b22a768484a851dffdecf52d8f4";
 
         assert_eq!(
             run_one_archive_bridge_note(

@@ -41,7 +41,9 @@ pub(crate) fn active_archive_bridge_configuration(
         return Err(ObsidianPlanError::AdmissionDenied);
     }
     let instance = super::ConnectorInstanceId::accountless(ConnectorId::Obsidian);
-    let account = control.account(&instance).ok_or(ObsidianPlanError::AdmissionDenied)?;
+    let account = control
+        .account(&instance)
+        .ok_or(ObsidianPlanError::AdmissionDenied)?;
     if !account.lifecycle.admits_context_import() {
         return Err(ObsidianPlanError::AuthorityNoLongerLive);
     }
@@ -231,14 +233,18 @@ pub(crate) struct ArchiveBridgeVaultBinding([u8; 32]);
 
 impl ArchiveBridgeVaultBinding {
     pub(crate) fn encoded(self) -> String {
-        format!("obsidian:archive-bridge-root:hmac-sha256:{}", hex::encode(self.0))
+        format!(
+            "obsidian:archive-bridge-root:hmac-sha256:{}",
+            hex::encode(self.0)
+        )
     }
 
     pub(crate) fn parse(value: &str) -> Result<Self, ObsidianPlanError> {
         let encoded = value
             .strip_prefix("obsidian:archive-bridge-root:hmac-sha256:")
             .ok_or(ObsidianPlanError::InvalidArchiveBridgeVaultBinding)?;
-        let bytes = hex::decode(encoded).map_err(|_| ObsidianPlanError::InvalidArchiveBridgeVaultBinding)?;
+        let bytes = hex::decode(encoded)
+            .map_err(|_| ObsidianPlanError::InvalidArchiveBridgeVaultBinding)?;
         let binding: [u8; 32] = bytes
             .try_into()
             .map_err(|_| ObsidianPlanError::InvalidArchiveBridgeVaultBinding)?;
@@ -583,7 +589,7 @@ pub(crate) fn with_selected_archive_bridge_draft<T>(
         .next()
         .ok_or(ObsidianPlanError::SelectedDraftNotCurrent)?;
     if matches.next().is_some() {
-        return Err(ObsidianPlanError::SelectedDraftAmbiguous);
+        return Err(ObsidianPlanError::SelectedDraftAmbiguous.into());
     }
     ensure_vault_unchanged(&vault)?;
     ensure_archive_bridge_root_binding(&vault, expected_root_binding)?;
@@ -650,7 +656,12 @@ fn plan_import_with_archive_bridge_descriptor(
     limits: ObsidianImportLimits,
     descriptor: ArchiveBridgeDescriptor<'_>,
 ) -> Result<ObsidianImportPlan, ObsidianPlanError> {
-    plan_import_with_selector(vault, limits, Some("neoth-archive-bridge"), Some(descriptor))
+    plan_import_with_selector(
+        vault,
+        limits,
+        Some("neoth-archive-bridge"),
+        Some(descriptor),
+    )
 }
 
 fn plan_import_with_selector(
@@ -891,14 +902,12 @@ fn walk_directory(
         }
 
         if let Some(descriptor) = state.archive_bridge_descriptor {
-            let protocol_source_id = archive_bridge_source_id(descriptor.pairing_secret, &relative_path);
-            let raw_note = std::str::from_utf8(&source.bytes)
-                .map_err(|_| ObsidianPlanError::InvalidUtf8)?;
-            let protocol_revision = archive_bridge_revision(
-                descriptor.pairing_secret,
-                &protocol_source_id,
-                raw_note,
-            );
+            let protocol_source_id =
+                archive_bridge_source_id(descriptor.pairing_secret, &relative_path);
+            let raw_note =
+                std::str::from_utf8(&source.bytes).map_err(|_| ObsidianPlanError::InvalidUtf8)?;
+            let protocol_revision =
+                archive_bridge_revision(descriptor.pairing_secret, &protocol_source_id, raw_note);
             if protocol_source_id != descriptor.expected_source_id
                 || protocol_revision != descriptor.expected_revision
             {
@@ -1978,7 +1987,8 @@ mod tests {
         // plugin's `descriptorFor` does; it is intentionally not derived from
         // this Rust planner.
         let protocol_source_id = "obsidian:source:hmac-sha256:ec978485727c39cbe54a22dc64cfb0cbccc6e6921bf2d82eeea731585fe83654";
-        let protocol_revision = "hmac-sha256:dd5c7eda320b4131f69a2e5c7ab238fa57f61b22a768484a851dffdecf52d8f4";
+        let protocol_revision =
+            "hmac-sha256:dd5c7eda320b4131f69a2e5c7ab238fa57f61b22a768484a851dffdecf52d8f4";
         let root_binding = archive_bridge_vault_binding(
             &configuration(),
             root.path().to_path_buf(),
@@ -2011,10 +2021,8 @@ mod tests {
             "---\nsource: neoth-archive-bridge\n---\nfirst body\n",
         )
         .unwrap();
-        let source_id = archive_bridge_source_id(
-            "fixed-test-pairing-secret",
-            "NEOTH-sessions/selected.md",
-        );
+        let source_id =
+            archive_bridge_source_id("fixed-test-pairing-secret", "NEOTH-sessions/selected.md");
         let stale_revision = archive_bridge_revision(
             "fixed-test-pairing-secret",
             &source_id,
@@ -2036,10 +2044,10 @@ mod tests {
         let error = with_selected_archive_bridge_draft(
             &configuration(),
             root.path().to_path_buf(),
-                "primary-vault",
-                TEST_KEY,
-                root_binding,
-                "fixed-test-pairing-secret",
+            "primary-vault",
+            TEST_KEY,
+            root_binding,
+            "fixed-test-pairing-secret",
             &source_id,
             &stale_revision,
             |draft| Ok(draft.body().to_owned()),

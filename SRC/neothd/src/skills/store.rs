@@ -6496,6 +6496,41 @@ mod reported_commit_tests {
 
     #[cfg(windows)]
     #[test]
+    fn private_stage_create_new_succeeds_after_releasing_delete_binding() {
+        let _scope = windows_private_atomic_stage::qualified_local_ntfs_for_test();
+        let temp = tempdir().unwrap();
+        let stage_path = temp.path().join("stage");
+        std::fs::create_dir(&stage_path).unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+        let stage_binding =
+            bind_child_object(&root.dir, OsStr::new("stage"), &stage_path).unwrap();
+        let stage = open_bound_real_child_dir_for_read(
+            &root.dir,
+            &stage_binding,
+            OsStr::new("stage"),
+            &stage_path,
+        )
+        .expect("DELETE-sharing stage reader must retain the bound parent");
+        let target = stage_path.join("state.json");
+
+        // This differs from the retained-binding regression only by releasing
+        // the live DELETE requester before the nested private-file rename.
+        drop(stage_binding);
+        atomic_write_private_child_create_new(
+            &stage,
+            OsStr::new("state.json"),
+            &target,
+            b"private state",
+        )
+        .expect("private create-new rename must proceed after DELETE binding release");
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"private state");
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn live_bound_parent_native_rename_is_denied() {
         let _scope = windows_private_atomic_stage::qualified_local_ntfs_for_test();
         let temp = tempdir().unwrap();

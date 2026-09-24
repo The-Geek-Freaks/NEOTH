@@ -107,11 +107,11 @@ pub use token::{init_rpc_token, read_rpc_token, rpc_token_path};
 #[cfg(test)]
 pub(crate) use transport::AuditEndpointV2;
 pub(crate) use transport::AuditStream;
-#[cfg(unix)]
-pub(crate) use transport::probe_unix_socket_refused;
 #[cfg(test)]
 pub(crate) use transport::endpoint_for_home;
 pub(crate) use transport::homes_same_identity;
+#[cfg(unix)]
+pub(crate) use transport::probe_unix_socket_refused;
 
 /// W39's sealed same-user chat contract.  It deliberately carries only one
 /// ordinary plaintext message; all configuration, provider, consent, WAL and

@@ -243,22 +243,44 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
     match args.action {
         ObsidianAction::Bridge { action } => {
             if let BridgeAction::Pair { vault } = &action {
-                let installed = crate::installers::obsidian_archive_bridge::status(&vault).map_err(anyhow::Error::msg)?;
-                anyhow::ensure!(matches!(installed.status, crate::installers::obsidian_archive_bridge::BridgeStatus::InstalledDisabled), "install or update the authenticated Obsidian Archive Bridge before pairing");
+                let installed = crate::installers::obsidian_archive_bridge::status(&vault)
+                    .map_err(anyhow::Error::msg)?;
+                anyhow::ensure!(
+                    matches!(
+                        installed.status,
+                        crate::installers::obsidian_archive_bridge::BridgeStatus::InstalledDisabled
+                    ),
+                    "install or update the authenticated Obsidian Archive Bridge before pairing"
+                );
                 let home = crate::config::FreedomConfig::default_neoth_home();
-                let response = crate::cli::context::request_route_at(&home, "/cc/obsidian-archive-bridge/pair", &serde_json::to_vec(&serde_json::json!({"vault": vault}))?).await?;
+                let response = crate::cli::context::request_route_at(
+                    &home,
+                    "/cc/obsidian-archive-bridge/pair",
+                    &serde_json::to_vec(&serde_json::json!({"vault": vault}))?,
+                )
+                .await?;
                 render_pairing_response(&response, args.output)?;
                 return Ok(());
             }
             if let BridgeAction::Unpair { vault } = &action {
                 let home = crate::config::FreedomConfig::default_neoth_home();
-                let response = crate::cli::context::request_route_at(&home, "/cc/obsidian-archive-bridge/unpair", &serde_json::to_vec(&serde_json::json!({"vault": vault}))?).await?;
+                let response = crate::cli::context::request_route_at(
+                    &home,
+                    "/cc/obsidian-archive-bridge/unpair",
+                    &serde_json::to_vec(&serde_json::json!({"vault": vault}))?,
+                )
+                .await?;
                 render_pairing_response(&response, args.output)?;
                 return Ok(());
             }
             if matches!(action, BridgeAction::PairingStatus) {
                 let home = crate::config::FreedomConfig::default_neoth_home();
-                let response = crate::cli::context::request_route_at(&home, "/cc/obsidian-archive-bridge/status", b"").await?;
+                let response = crate::cli::context::request_route_at(
+                    &home,
+                    "/cc/obsidian-archive-bridge/status",
+                    b"",
+                )
+                .await?;
                 render_pairing_response(&response, args.output)?;
                 return Ok(());
             }
@@ -278,7 +300,9 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
                 BridgeAction::Uninstall { vault } => {
                     crate::installers::obsidian_archive_bridge::uninstall(&vault)
                 }
-                BridgeAction::Pair { .. } | BridgeAction::Unpair { .. } | BridgeAction::PairingStatus => unreachable!("handled above"),
+                BridgeAction::Pair { .. }
+                | BridgeAction::Unpair { .. }
+                | BridgeAction::PairingStatus => unreachable!("handled above"),
             }
             .map_err(anyhow::Error::msg)?;
             match args.output {
@@ -286,7 +310,10 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
                     println!("{}", serde_json::to_string(&view)?);
                 }
                 OutputFormat::Table => {
-                    println!("Archive bridge: {:?}\nPairing status: neoth obsidian bridge pairing-status\n", view.status);
+                    println!(
+                        "Archive bridge: {:?}\nPairing status: neoth obsidian bridge pairing-status\n",
+                        view.status
+                    );
                 }
             }
         }
@@ -430,9 +457,15 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
 }
 
 fn pairing_response_data(response: &str, output: OutputFormat) -> Result<String> {
-    let value: serde_json::Value = serde_json::from_str(response).context("connector-control returned invalid pairing JSON")?;
-    anyhow::ensure!(value.get("ok").and_then(serde_json::Value::as_bool) == Some(true), "connector-control pairing response did not report success");
-    let data = value.get("data").context("connector-control pairing response has no data")?;
+    let value: serde_json::Value = serde_json::from_str(response)
+        .context("connector-control returned invalid pairing JSON")?;
+    anyhow::ensure!(
+        value.get("ok").and_then(serde_json::Value::as_bool) == Some(true),
+        "connector-control pairing response did not report success"
+    );
+    let data = value
+        .get("data")
+        .context("connector-control pairing response has no data")?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => Ok(serde_json::to_string(data)?),
         OutputFormat::Table => Ok(serde_json::to_string_pretty(data)?),
@@ -2895,9 +2928,13 @@ mod tests {
         let parsed = Cli::try_parse_from(["neoth", "obsidian", "bridge", "pairing-status"])
             .expect("pairing-status must not require a vault path");
         let Commands::Obsidian(ObsidianArgs {
-            action: ObsidianAction::Bridge { action: BridgeAction::PairingStatus },
+            action:
+                ObsidianAction::Bridge {
+                    action: BridgeAction::PairingStatus,
+                },
             ..
-        }) = parsed.command else {
+        }) = parsed.command
+        else {
             panic!("expected daemon-owned bridge pairing status action");
         };
     }
@@ -2908,7 +2945,10 @@ mod tests {
         for output in [OutputFormat::Json, OutputFormat::Jsonl, OutputFormat::Table] {
             let rendered = pairing_response_data(envelope, output).unwrap();
             let data: serde_json::Value = serde_json::from_str(&rendered).unwrap();
-            assert_eq!(data, serde_json::json!({"protocol": 1, "endpoint": "pipe", "pairingSecret": "secret", "pairingGeneration": 7}));
+            assert_eq!(
+                data,
+                serde_json::json!({"protocol": 1, "endpoint": "pipe", "pairingSecret": "secret", "pairingGeneration": 7})
+            );
         }
         assert!(pairing_response_data(r#"{"ok":false,"data":{}}"#, OutputFormat::Json).is_err());
         assert!(pairing_response_data(r#"{"ok":true}"#, OutputFormat::Json).is_err());

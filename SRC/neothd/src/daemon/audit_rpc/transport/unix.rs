@@ -401,8 +401,13 @@ fn connect_std_with_deadline(path: &Path, deadline: Instant) -> Result<StdUnixSt
 pub(super) fn probe_refused_with_deadline(path: &Path, deadline: Instant) -> Result<bool> {
     match connect_std_with_deadline(path, deadline) {
         Ok(_) => Ok(true),
-        Err(error) if error.downcast_ref::<std::io::Error>()
-            .is_some_and(|error| error.kind() == std::io::ErrorKind::ConnectionRefused) => Ok(false),
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::ConnectionRefused) =>
+        {
+            Ok(false)
+        }
         Err(error) => Err(error),
     }
 }

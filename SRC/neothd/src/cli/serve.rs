@@ -631,7 +631,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // lifecycle; no bridge listener exists until a paired generation is present.
     let obsidian_archive_bridge_runtime =
         crate::cli::serve_tasks::spawn_obsidian_archive_bridge_runtime(&config, &neoth_home)?;
-    let obsidian_archive_bridge_owner = obsidian_archive_bridge_runtime.map(|runtime| runtime.owner);
+    let obsidian_archive_bridge_owner =
+        obsidian_archive_bridge_runtime.map(|runtime| runtime.owner);
     #[cfg(any(unix, windows))]
     let connector_control_replay_enabled = config.context_connectors.enabled
         && config
@@ -664,7 +665,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     .context("attach sealed connector-control runtime to Obsidian Archive Bridge")?;
     #[cfg(any(unix, windows))]
     if let Some(owner) = obsidian_archive_bridge_owner.as_ref() {
-        owner.start_if_paired()
+        owner
+            .start_if_paired()
             .context("bind existing private Obsidian Archive Bridge IPC")?;
     }
     #[cfg(any(unix, windows))]

@@ -795,9 +795,18 @@ mod tests {
         });
         let interrupted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| update(&vault)));
         assert!(interrupted.is_err());
-        assert_eq!(fs::read(root.join(MARKER)).unwrap(), PREDECESSOR_OWNERSHIP_BYTES);
-        assert_eq!(repair(&vault).unwrap().status, BridgeStatus::InstalledDisabled);
-        assert_eq!(fs::read(root.join("data.json")).unwrap(), b"operator settings");
+        assert_eq!(
+            fs::read(root.join(MARKER)).unwrap(),
+            PREDECESSOR_OWNERSHIP_BYTES
+        );
+        assert_eq!(
+            repair(&vault).unwrap().status,
+            BridgeStatus::InstalledDisabled
+        );
+        assert_eq!(
+            fs::read(root.join("data.json")).unwrap(),
+            b"operator settings"
+        );
         assert_eq!(fs::read(root.join(MARKER)).unwrap(), ownership_bytes());
     }
 
@@ -808,9 +817,18 @@ mod tests {
         let root = vault.join(".obsidian/plugins").join(PLUGIN_ID);
         fs::write(root.join("data.json"), b"operator settings").unwrap();
         fs::write(root.join("extension.js"), b"extension").unwrap();
-        assert_eq!(status(&vault).unwrap().status, BridgeStatus::UpdateAvailable);
-        assert_eq!(update(&vault).unwrap().status, BridgeStatus::InstalledDisabled);
-        assert_eq!(fs::read(root.join("data.json")).unwrap(), b"operator settings");
+        assert_eq!(
+            status(&vault).unwrap().status,
+            BridgeStatus::UpdateAvailable
+        );
+        assert_eq!(
+            update(&vault).unwrap().status,
+            BridgeStatus::InstalledDisabled
+        );
+        assert_eq!(
+            fs::read(root.join("data.json")).unwrap(),
+            b"operator settings"
+        );
         assert_eq!(fs::read(root.join("extension.js")).unwrap(), b"extension");
         assert_eq!(fs::read(root.join(MARKER)).unwrap(), ownership_bytes());
     }

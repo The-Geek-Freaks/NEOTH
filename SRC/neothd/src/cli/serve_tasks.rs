@@ -4386,7 +4386,9 @@ pub(crate) fn spawn_obsidian_archive_bridge_runtime(
     config: &FreedomConfig,
     home: &std::path::Path,
 ) -> anyhow::Result<Option<ArchiveBridgeRuntime>> {
-    let Some(owner) = crate::daemon::obsidian_archive_bridge_owner::ArchiveBridgeOwner::open(config, home)? else {
+    let Some(owner) =
+        crate::daemon::obsidian_archive_bridge_owner::ArchiveBridgeOwner::open(config, home)?
+    else {
         return Ok(None);
     };
     Ok(Some(ArchiveBridgeRuntime { owner }))
@@ -8236,7 +8238,8 @@ pub(crate) struct BackgroundHandles {
     pub local_models_controller: Option<Arc<crate::daemon::local_models::LocalModelController>>,
     /// W185: after its guard withdrew discovery, join every accepted local-model IPC handler.
     pub local_models_ipc_task: Option<JoinHandle<anyhow::Result<()>>>,
-    pub obsidian_archive_bridge_owner: Option<Arc<crate::daemon::obsidian_archive_bridge_owner::ArchiveBridgeOwner>>,
+    pub obsidian_archive_bridge_owner:
+        Option<Arc<crate::daemon::obsidian_archive_bridge_owner::ArchiveBridgeOwner>>,
     pub healthz_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub decay_task: Option<JoinHandle<()>>,
     pub gc_task: Option<JoinHandle<anyhow::Result<()>>>,

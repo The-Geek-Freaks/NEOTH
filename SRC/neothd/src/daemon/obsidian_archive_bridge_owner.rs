@@ -5,9 +5,13 @@
 //! calls the existing managed-note reader; it never accepts note text, paths,
 //! SQL, or WAL authority from Obsidian.
 
-use std::{collections::VecDeque, path::{Path, PathBuf}, sync::{Arc, Mutex}};
+use std::{
+    collections::VecDeque,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 
-use anyhow::{Context as _, Result, bail, ensure};
+use anyhow::{Context as _, Result, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -94,7 +98,10 @@ pub(crate) struct ArchiveBridgeOwner {
 }
 
 impl ArchiveBridgeOwner {
-    pub(crate) fn open(config: &crate::config::FreedomConfig, home: &Path) -> Result<Option<Arc<Self>>> {
+    pub(crate) fn open(
+        config: &crate::config::FreedomConfig,
+        home: &Path,
+    ) -> Result<Option<Arc<Self>>> {
         if !bridge_enabled(config) {
             return Ok(None);
         }
@@ -131,18 +138,28 @@ impl ArchiveBridgeOwner {
     ) -> Result<()> {
         ensure!(
             runtime.instance_id()
-                == &crate::connectors::ConnectorInstanceId::accountless(crate::connectors::ConnectorId::Obsidian)
+                == &crate::connectors::ConnectorInstanceId::accountless(
+                    crate::connectors::ConnectorId::Obsidian
+                )
                 && runtime.subject_id() == &self.configuration.subject_id
                 && runtime.policy_revision() == self.configuration.policy.revision,
             "Archive Bridge runtime binding does not match its admitted Obsidian configuration"
         );
-        let mut slot = self.runtime.lock().map_err(|_| anyhow::anyhow!("Archive Bridge runtime controller poisoned"))?;
-        ensure!(slot.is_none(), "Archive Bridge runtime binding already attached");
+        let mut slot = self
+            .runtime
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Archive Bridge runtime controller poisoned"))?;
+        ensure!(
+            slot.is_none(),
+            "Archive Bridge runtime binding already attached"
+        );
         *slot = Some(runtime);
         Ok(())
     }
 
-    fn acquire_operation_lease(&self) -> Result<crate::connectors::control_plane::ContextImportOperationLease> {
+    fn acquire_operation_lease(
+        &self,
+    ) -> Result<crate::connectors::control_plane::ContextImportOperationLease> {
         self.runtime
             .lock()
             .map_err(|_| anyhow::anyhow!("Archive Bridge runtime controller poisoned"))?
@@ -161,7 +178,10 @@ impl ArchiveBridgeOwner {
     /// its first listener without restarting the daemon.
     pub(crate) fn start_if_paired(self: &Arc<Self>) -> Result<()> {
         self.acquire_operation_lease()?;
-        let mut lifecycle = self.lifecycle.lock().map_err(|_| anyhow::anyhow!("Archive Bridge lifecycle controller poisoned"))?;
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Archive Bridge lifecycle controller poisoned"))?;
         if lifecycle.is_some() || self.endpoint_name().is_none() {
             return Ok(());
         }
@@ -181,13 +201,25 @@ impl ArchiveBridgeOwner {
     }
 
     fn pair_under_live_lease(self: &Arc<Self>) -> Result<PairingPayload> {
-        let mut lifecycle = self.lifecycle.lock().map_err(|_| anyhow::anyhow!("Archive Bridge lifecycle controller poisoned"))?;
-        ensure!(lifecycle.is_none(), "Obsidian Archive Bridge is already paired; unpair before rotating the listener");
-        let mut state = self.state.lock().map_err(|_| anyhow::anyhow!("Archive Bridge controller poisoned"))?;
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Archive Bridge lifecycle controller poisoned"))?;
+        ensure!(
+            lifecycle.is_none(),
+            "Obsidian Archive Bridge is already paired; unpair before rotating the listener"
+        );
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Archive Bridge controller poisoned"))?;
         let prior = state.clone();
         let pairing_id = uuid::Uuid::now_v7().simple().to_string();
-        let pairing_secret = uuid::Uuid::new_v4().simple().to_string() + &uuid::Uuid::new_v4().simple().to_string();
-        let generation = state.as_ref().map_or(1, |record| record.pairing_generation.saturating_add(1));
+        let pairing_secret =
+            uuid::Uuid::new_v4().simple().to_string() + &uuid::Uuid::new_v4().simple().to_string();
+        let generation = state
+            .as_ref()
+            .map_or(1, |record| record.pairing_generation.saturating_add(1));
         let stable_policy_vault_id = vault_identity(&self.vault)?;
         let vault_root_binding = crate::connectors::obsidian::archive_bridge_vault_binding(
             &self.configuration,
@@ -198,15 +230,34 @@ impl ArchiveBridgeOwner {
         .map_err(anyhow::Error::new)
         .context("bind paired physical Obsidian vault root")?
         .encoded();
-        let record = PairingRecord { schema_version: SCHEMA_VERSION, pairing_id, pairing_generation: generation, secret_verifier_sha256: secret_verifier(&pairing_secret), stable_policy_vault_id, vault_root_binding, enabled: true, receipts: VecDeque::new() };
+        let record = PairingRecord {
+            schema_version: SCHEMA_VERSION,
+            pairing_id,
+            pairing_generation: generation,
+            secret_verifier_sha256: secret_verifier(&pairing_secret),
+            stable_policy_vault_id,
+            vault_root_binding,
+            enabled: true,
+            receipts: VecDeque::new(),
+        };
         persist_record(&self.home, &record)?;
-        let payload = PairingPayload { protocol: PAIRING_PROTOCOL, endpoint: endpoint_for(&self.home, &record), pairing_secret, pairing_generation: generation };
+        let payload = PairingPayload {
+            protocol: PAIRING_PROTOCOL,
+            endpoint: endpoint_for(&self.home, &record),
+            pairing_secret,
+            pairing_generation: generation,
+        };
         *state = Some(record);
         drop(state);
-        match crate::daemon::obsidian_archive_bridge_ipc::bind_and_serve(&self.home, Arc::clone(self)) {
+        match crate::daemon::obsidian_archive_bridge_ipc::bind_and_serve(
+            &self.home,
+            Arc::clone(self),
+        ) {
             Ok(binding) => *lifecycle = Some(binding),
             Err(error) => {
-                let mut state = self.state.lock().map_err(|_| anyhow::anyhow!("Archive Bridge controller poisoned during pair rollback"))?;
+                let mut state = self.state.lock().map_err(|_| {
+                    anyhow::anyhow!("Archive Bridge controller poisoned during pair rollback")
+                })?;
                 match prior.as_ref() {
                     Some(record) => persist_record(&self.home, record)?,
                     None => remove_record(&self.home)?,
@@ -219,14 +270,30 @@ impl ArchiveBridgeOwner {
     }
 
     pub(crate) fn unpair(&self) -> Result<BridgeStatus> {
-        let mut lifecycle = self.lifecycle.lock().map_err(|_| anyhow::anyhow!("Archive Bridge lifecycle controller poisoned"))?;
-        let mut state = self.state.lock().map_err(|_| anyhow::anyhow!("Archive Bridge controller poisoned"))?;
-        let Some(record) = state.as_mut() else { return Ok(BridgeStatus { paired: false, enabled: false, pairing_generation: None }); };
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Archive Bridge lifecycle controller poisoned"))?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Archive Bridge controller poisoned"))?;
+        let Some(record) = state.as_mut() else {
+            return Ok(BridgeStatus {
+                paired: false,
+                enabled: false,
+                pairing_generation: None,
+            });
+        };
         record.enabled = false;
         record.pairing_generation = record.pairing_generation.saturating_add(1);
         record.receipts.clear();
         persist_record(&self.home, record)?;
-        let response = BridgeStatus { paired: true, enabled: false, pairing_generation: Some(record.pairing_generation) };
+        let response = BridgeStatus {
+            paired: true,
+            enabled: false,
+            pairing_generation: Some(record.pairing_generation),
+        };
         // Release state before draining.  An admitted IPC request may be in
         // `spawn_blocking` and needs this mutex to observe the durable revoke.
         drop(state);
@@ -238,13 +305,19 @@ impl ArchiveBridgeOwner {
 
     pub(crate) fn endpoint_name(&self) -> Option<String> {
         self.state.lock().ok().and_then(|state| {
-            state.as_ref().filter(|record| record.enabled).map(|record| endpoint_for(&self.home, record))
+            state
+                .as_ref()
+                .filter(|record| record.enabled)
+                .map(|record| endpoint_for(&self.home, record))
         })
     }
 
     pub(crate) fn endpoint_nonce(&self) -> Option<String> {
         self.state.lock().ok().and_then(|state| {
-            state.as_ref().filter(|record| record.enabled).map(|record| record.pairing_id.clone())
+            state
+                .as_ref()
+                .filter(|record| record.enabled)
+                .map(|record| record.pairing_id.clone())
         })
     }
 
@@ -253,67 +326,166 @@ impl ArchiveBridgeOwner {
         let record = state.as_ref().and_then(|state| state.as_ref());
         BridgeStatus {
             paired: record.is_some(),
-            enabled: self.enabled && self.runtime_is_live() && record.is_some_and(|record| record.enabled),
+            enabled: self.enabled
+                && self.runtime_is_live()
+                && record.is_some_and(|record| record.enabled),
             pairing_generation: record.map(|record| record.pairing_generation),
         }
     }
 
     pub(crate) fn matches_vault(&self, requested: &Path) -> Result<()> {
-        ensure!(same_vault(&self.vault, requested)?, "requested vault does not match the configured Obsidian vault");
+        ensure!(
+            same_vault(&self.vault, requested)?,
+            "requested vault does not match the configured Obsidian vault"
+        );
         Ok(())
     }
 
-    pub(crate) fn authorize_status(&self, protocol: u8, pairing_secret: &str, pairing_generation: u64) -> SyncResponse {
-        let state = match self.state.lock() { Ok(state) => state, Err(_) => return SyncResponse { status: "error", generation: None } };
-        let Some(record) = state.as_ref() else { return SyncResponse { status: "unpaired", generation: None }; };
-        if protocol != PAIRING_PROTOCOL || !self.enabled || !record.enabled || !self.runtime_is_live() { return SyncResponse { status: "revoked", generation: Some(record.pairing_generation) }; }
-        if pairing_generation != record.pairing_generation { return SyncResponse { status: "generation_mismatch", generation: Some(record.pairing_generation) }; }
-        if !constant_time_hex_eq(&record.secret_verifier_sha256, &secret_verifier(pairing_secret)) { return SyncResponse { status: "unpaired", generation: Some(record.pairing_generation) }; }
-        SyncResponse { status: "ok", generation: Some(record.pairing_generation) }
+    pub(crate) fn authorize_status(
+        &self,
+        protocol: u8,
+        pairing_secret: &str,
+        pairing_generation: u64,
+    ) -> SyncResponse {
+        let state = match self.state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                return SyncResponse {
+                    status: "error",
+                    generation: None,
+                };
+            }
+        };
+        let Some(record) = state.as_ref() else {
+            return SyncResponse {
+                status: "unpaired",
+                generation: None,
+            };
+        };
+        if protocol != PAIRING_PROTOCOL
+            || !self.enabled
+            || !record.enabled
+            || !self.runtime_is_live()
+        {
+            return SyncResponse {
+                status: "revoked",
+                generation: Some(record.pairing_generation),
+            };
+        }
+        if pairing_generation != record.pairing_generation {
+            return SyncResponse {
+                status: "generation_mismatch",
+                generation: Some(record.pairing_generation),
+            };
+        }
+        if !constant_time_hex_eq(
+            &record.secret_verifier_sha256,
+            &secret_verifier(pairing_secret),
+        ) {
+            return SyncResponse {
+                status: "unpaired",
+                generation: Some(record.pairing_generation),
+            };
+        }
+        SyncResponse {
+            status: "ok",
+            generation: Some(record.pairing_generation),
+        }
     }
 
     /// This is invoked only from the bridge IPC's bounded blocking task.  Keep
     /// the controller mutex across descriptor authentication, fresh vault
     /// selection, GroundTruth commit, state update, and receipt persistence.
     pub(crate) fn sync(&self, request: SyncRequest) -> SyncResponse {
-        if request.protocol != PAIRING_PROTOCOL || !valid_event_component(&request.event_id)
-            || !valid_event_component(&request.source_id) || !valid_event_component(&request.source_revision)
+        if request.protocol != PAIRING_PROTOCOL
+            || !valid_event_component(&request.event_id)
+            || !valid_event_component(&request.source_id)
+            || !valid_event_component(&request.source_revision)
         {
-            return SyncResponse { status: "invalid_request", generation: None };
+            return SyncResponse {
+                status: "invalid_request",
+                generation: None,
+            };
         }
         // Keep the configuration/pairing decision and state receipt serial. The
         // existing reader owns the only ingestion state map and DB dedup path.
         let mut state = match self.state.lock() {
             Ok(state) => state,
-            Err(_) => return SyncResponse { status: "error", generation: None },
+            Err(_) => {
+                return SyncResponse {
+                    status: "error",
+                    generation: None,
+                };
+            }
         };
         let Some(record) = state.as_mut() else {
-            return SyncResponse { status: "unpaired", generation: None };
+            return SyncResponse {
+                status: "unpaired",
+                generation: None,
+            };
         };
         if !self.enabled || !record.enabled {
-            return SyncResponse { status: "revoked", generation: Some(record.pairing_generation) };
+            return SyncResponse {
+                status: "revoked",
+                generation: Some(record.pairing_generation),
+            };
         }
         if request.pairing_generation != record.pairing_generation {
-            return SyncResponse { status: "generation_mismatch", generation: Some(record.pairing_generation) };
+            return SyncResponse {
+                status: "generation_mismatch",
+                generation: Some(record.pairing_generation),
+            };
         }
-        if !constant_time_hex_eq(&record.secret_verifier_sha256, &secret_verifier(&request.pairing_secret)) {
-            return SyncResponse { status: "unpaired", generation: Some(record.pairing_generation) };
+        if !constant_time_hex_eq(
+            &record.secret_verifier_sha256,
+            &secret_verifier(&request.pairing_secret),
+        ) {
+            return SyncResponse {
+                status: "unpaired",
+                generation: Some(record.pairing_generation),
+            };
         }
-        let root_binding = match crate::connectors::obsidian::ArchiveBridgeVaultBinding::parse(&record.vault_root_binding) {
+        let root_binding = match crate::connectors::obsidian::ArchiveBridgeVaultBinding::parse(
+            &record.vault_root_binding,
+        ) {
             Ok(binding) => binding,
-            Err(_) => return SyncResponse { status: "vault_mismatch", generation: Some(record.pairing_generation) },
+            Err(_) => {
+                return SyncResponse {
+                    status: "vault_mismatch",
+                    generation: Some(record.pairing_generation),
+                };
+            }
         };
-        let receipt = Receipt { event_id: request.event_id, source_id: request.source_id, source_revision: request.source_revision };
+        let receipt = Receipt {
+            event_id: request.event_id,
+            source_id: request.source_id,
+            source_revision: request.source_revision,
+        };
         if record.receipts.iter().any(|known| known == &receipt) {
-            return SyncResponse { status: "already_current", generation: Some(record.pairing_generation) };
+            return SyncResponse {
+                status: "already_current",
+                generation: Some(record.pairing_generation),
+            };
         }
-        if record.receipts.iter().any(|known| known.event_id == receipt.event_id) {
-            return SyncResponse { status: "event_reuse_conflict", generation: Some(record.pairing_generation) };
+        if record
+            .receipts
+            .iter()
+            .any(|known| known.event_id == receipt.event_id)
+        {
+            return SyncResponse {
+                status: "event_reuse_conflict",
+                generation: Some(record.pairing_generation),
+            };
         }
         let generation = record.pairing_generation;
         let lease = match self.acquire_operation_lease() {
             Ok(lease) => lease,
-            Err(_) => return SyncResponse { status: "revoked", generation: Some(generation) },
+            Err(_) => {
+                return SyncResponse {
+                    status: "revoked",
+                    generation: Some(generation),
+                };
+            }
         };
         // No raw plugin value is used below. The reader freshly opens and
         // selects the configured current note by its HMAC descriptor before
@@ -330,32 +502,46 @@ impl ArchiveBridgeOwner {
                 &receipt.source_id,
                 &receipt.source_revision,
             )?;
-            if matches!(outcome,
+            if matches!(
+                outcome,
                 crate::daemon::obsidian_vault_reader_cron::BridgeReaderOutcome::AlreadyCurrent
-                | crate::daemon::obsidian_vault_reader_cron::BridgeReaderOutcome::Accepted
+                    | crate::daemon::obsidian_vault_reader_cron::BridgeReaderOutcome::Accepted
             ) {
                 record.receipts.push_back(receipt);
-                while record.receipts.len() > MAX_RECEIPTS { record.receipts.pop_front(); }
+                while record.receipts.len() > MAX_RECEIPTS {
+                    record.receipts.pop_front();
+                }
                 persist_record(&self.home, record)?;
             }
             Ok(outcome)
         });
         match outcome {
             Ok(crate::daemon::obsidian_vault_reader_cron::BridgeReaderOutcome::StaleRevision) => {
-                SyncResponse { status: "stale_revision", generation: Some(generation) }
+                SyncResponse {
+                    status: "stale_revision",
+                    generation: Some(generation),
+                }
             }
             Ok(crate::daemon::obsidian_vault_reader_cron::BridgeReaderOutcome::AlreadyCurrent)
             | Ok(crate::daemon::obsidian_vault_reader_cron::BridgeReaderOutcome::Accepted) => {
-                SyncResponse { status: "accepted", generation: Some(record.pairing_generation) }
+                SyncResponse {
+                    status: "accepted",
+                    generation: Some(record.pairing_generation),
+                }
             }
-            Err(_) => SyncResponse { status: "error", generation: Some(generation) },
+            Err(_) => SyncResponse {
+                status: "error",
+                generation: Some(generation),
+            },
         }
     }
 
     /// Daemon shutdown uses the same withdraw-before-drain ordering as CC
     /// unpair.  It must run after connector-control admission is closed.
     pub(crate) fn shutdown(&self) -> Result<()> {
-        let binding = self.lifecycle.lock()
+        let binding = self
+            .lifecycle
+            .lock()
             .map_err(|_| anyhow::anyhow!("Archive Bridge lifecycle controller poisoned"))?
             .take();
         if let Some(binding) = binding {
@@ -368,10 +554,24 @@ impl ArchiveBridgeOwner {
 fn bridge_enabled(config: &crate::config::FreedomConfig) -> bool {
     config.obsidian_archive_bridge_enabled
         && config.obsidian_vault_reader_enabled
-        && crate::connectors::obsidian::active_archive_bridge_configuration(&config.context_connectors).is_ok()
+        && crate::connectors::obsidian::active_archive_bridge_configuration(
+            &config.context_connectors,
+        )
+        .is_ok()
 }
-fn configured_vault(config: &crate::config::FreedomConfig) -> Result<PathBuf> { config.obsidian_vault.as_ref().map(PathBuf::from).context("obsidian_vault is required") }
-fn same_vault(left: &Path, right: &Path) -> Result<bool> { Ok(std::fs::canonicalize(left).context("canonicalize configured vault")? == std::fs::canonicalize(right).context("canonicalize requested vault")?) }
+fn configured_vault(config: &crate::config::FreedomConfig) -> Result<PathBuf> {
+    config
+        .obsidian_vault
+        .as_ref()
+        .map(PathBuf::from)
+        .context("obsidian_vault is required")
+}
+fn same_vault(left: &Path, right: &Path) -> Result<bool> {
+    Ok(
+        std::fs::canonicalize(left).context("canonicalize configured vault")?
+            == std::fs::canonicalize(right).context("canonicalize requested vault")?,
+    )
+}
 /// A persistable opaque binding to the physical vault root.  The actual
 /// device/file identity never leaves the owner record; selector code receives
 /// only this domain-separated digest.
@@ -379,37 +579,87 @@ fn vault_identity(vault: &Path) -> Result<String> {
     use cap_fs_ext::MetadataExt as _;
     let metadata = std::fs::metadata(vault)
         .with_context(|| format!("read configured vault metadata {}", vault.display()))?;
-    ensure!(metadata.is_dir() && metadata.ino() != 0, "configured vault has no stable directory identity");
+    ensure!(
+        metadata.is_dir() && metadata.ino() != 0,
+        "configured vault has no stable directory identity"
+    );
     let mut digest = Sha256::new();
     digest.update(b"neoth/obsidian-archive-bridge/physical-root/v1\0");
     digest.update(metadata.dev().to_le_bytes());
     digest.update(metadata.ino().to_le_bytes());
     Ok(hex::encode(digest.finalize()))
 }
-fn secret_verifier(secret: &str) -> String { hex::encode(Sha256::digest(secret.as_bytes())) }
+fn secret_verifier(secret: &str) -> String {
+    hex::encode(Sha256::digest(secret.as_bytes()))
+}
 #[cfg(windows)]
 fn endpoint_for(home: &Path, record: &PairingRecord) -> String {
     let canonical = std::fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
     let home_hash = hex::encode(Sha256::digest(canonical.as_os_str().as_encoded_bytes()));
-    format!(r"\\.\pipe\neoth-obsidian-bridge-v1-{home_hash}-{}", record.pairing_id)
+    format!(
+        r"\\.\pipe\neoth-obsidian-bridge-v1-{home_hash}-{}",
+        record.pairing_id
+    )
 }
 
 #[cfg(unix)]
 fn endpoint_for(home: &Path, record: &PairingRecord) -> String {
-    home.join(format!("obsidian-bridge-{}.sock", record.pairing_id)).display().to_string()
+    home.join(format!("obsidian-bridge-{}.sock", record.pairing_id))
+        .display()
+        .to_string()
 }
 
 #[cfg(not(any(unix, windows)))]
-fn endpoint_for(_: &Path, record: &PairingRecord) -> String { format!("unsupported-{}", record.pairing_id) }
-fn valid_event_component(value: &str) -> bool { !value.is_empty() && value.len() <= 256 && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':' | b'.')) }
-fn constant_time_hex_eq(left: &str, right: &str) -> bool { left.len() == right.len() && left.as_bytes().iter().zip(right.as_bytes()).fold(0u8, |difference, (a, b)| difference | (a ^ b)) == 0 }
-fn record_path(home: &Path) -> PathBuf { home.join(RECORD_FILE) }
-fn load_record(home: &Path) -> Result<Option<PairingRecord>> { let path = record_path(home); if !path.exists() { return Ok(None); } let bytes = std::fs::read(&path).with_context(|| format!("read bridge pairing record {}", path.display()))?; let record: PairingRecord = serde_json::from_slice(&bytes).context("parse bridge pairing record")?; ensure!(record.schema_version == SCHEMA_VERSION && !record.pairing_id.is_empty() && record.receipts.len() <= MAX_RECEIPTS, "invalid bridge pairing record"); Ok(Some(record)) }
-fn persist_record(home: &Path, record: &PairingRecord) -> Result<()> { std::fs::create_dir_all(home).context("create NEOTH home for bridge pairing")?; let bytes = serde_json::to_vec(record).context("serialize bridge pairing record")?; crate::util::atomic_write::atomic_write_private(&record_path(home), &bytes).context("persist bridge pairing record") }
+fn endpoint_for(_: &Path, record: &PairingRecord) -> String {
+    format!("unsupported-{}", record.pairing_id)
+}
+fn valid_event_component(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 256
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':' | b'.'))
+}
+fn constant_time_hex_eq(left: &str, right: &str) -> bool {
+    left.len() == right.len()
+        && left
+            .as_bytes()
+            .iter()
+            .zip(right.as_bytes())
+            .fold(0u8, |difference, (a, b)| difference | (a ^ b))
+            == 0
+}
+fn record_path(home: &Path) -> PathBuf {
+    home.join(RECORD_FILE)
+}
+fn load_record(home: &Path) -> Result<Option<PairingRecord>> {
+    let path = record_path(home);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(&path)
+        .with_context(|| format!("read bridge pairing record {}", path.display()))?;
+    let record: PairingRecord =
+        serde_json::from_slice(&bytes).context("parse bridge pairing record")?;
+    ensure!(
+        record.schema_version == SCHEMA_VERSION
+            && !record.pairing_id.is_empty()
+            && record.receipts.len() <= MAX_RECEIPTS,
+        "invalid bridge pairing record"
+    );
+    Ok(Some(record))
+}
+fn persist_record(home: &Path, record: &PairingRecord) -> Result<()> {
+    std::fs::create_dir_all(home).context("create NEOTH home for bridge pairing")?;
+    let bytes = serde_json::to_vec(record).context("serialize bridge pairing record")?;
+    crate::util::atomic_write::atomic_write_private(&record_path(home), &bytes)
+        .context("persist bridge pairing record")
+}
 fn remove_record(home: &Path) -> Result<()> {
     let path = record_path(home);
     if path.exists() {
-        std::fs::remove_file(&path).with_context(|| format!("remove failed bridge pairing record {}", path.display()))?;
+        std::fs::remove_file(&path)
+            .with_context(|| format!("remove failed bridge pairing record {}", path.display()))?;
     }
     Ok(())
 }
@@ -429,7 +679,9 @@ mod tests {
             policy: crate::connectors::ConnectorPolicySnapshot::local_read_only(7),
         };
         let runtime = crate::connectors::control_plane::test_context_import_runtime_fixture(
-            crate::connectors::ConnectorInstanceId::accountless(crate::connectors::ConnectorId::Obsidian),
+            crate::connectors::ConnectorInstanceId::accountless(
+                crate::connectors::ConnectorId::Obsidian,
+            ),
             subject,
             7,
             11,
@@ -457,7 +709,10 @@ mod tests {
             "pairingSecret": secret,
             "generation": generation,
         });
-        stream.write_all(serde_json::to_string(&frame).unwrap().as_bytes()).await.unwrap();
+        stream
+            .write_all(serde_json::to_string(&frame).unwrap().as_bytes())
+            .await
+            .unwrap();
         stream.write_all(b"\n").await.unwrap();
         let mut response = String::new();
         stream.read_to_string(&mut response).await.unwrap();
@@ -472,21 +727,41 @@ mod tests {
         assert!(!owner.status().paired, "resident owner starts unpaired");
 
         let first = owner.pair().unwrap();
-        let first_reply = status(&first.endpoint, &first.pairing_secret, first.pairing_generation).await;
-        assert!(first_reply.contains("\"ok\""), "paired endpoint accepts its scoped secret");
+        let first_reply = status(
+            &first.endpoint,
+            &first.pairing_secret,
+            first.pairing_generation,
+        )
+        .await;
+        assert!(
+            first_reply.contains("\"ok\""),
+            "paired endpoint accepts its scoped secret"
+        );
 
         owner.unpair().unwrap();
         assert!(
-            tokio::net::UnixStream::connect(&first.endpoint).await.is_err(),
+            tokio::net::UnixStream::connect(&first.endpoint)
+                .await
+                .is_err(),
             "unpair withdraws the old endpoint before returning"
         );
 
         let second = owner.pair().unwrap();
         assert!(second.pairing_generation > first.pairing_generation);
         assert_ne!(second.endpoint, first.endpoint);
-        let replay = status(&second.endpoint, &first.pairing_secret, first.pairing_generation).await;
+        let replay = status(
+            &second.endpoint,
+            &first.pairing_secret,
+            first.pairing_generation,
+        )
+        .await;
         assert!(replay.contains("unpaired") || replay.contains("generation_mismatch"));
-        let second_reply = status(&second.endpoint, &second.pairing_secret, second.pairing_generation).await;
+        let second_reply = status(
+            &second.endpoint,
+            &second.pairing_secret,
+            second.pairing_generation,
+        )
+        .await;
         assert!(second_reply.contains("\"ok\""));
         owner.shutdown().unwrap();
     }
@@ -499,8 +774,17 @@ mod tests {
         let vault = crate::test_env::canonical_tempdir().unwrap();
         let owner = owner(&home, vault.path());
 
-        assert!(owner.pair().is_err(), "AF_UNIX path cap must reject publication");
-        assert!(!record_path(&home).exists(), "failed bind rolls durable pairing state back");
-        assert!(!owner.status().paired, "failed bind rolls in-memory pairing state back");
+        assert!(
+            owner.pair().is_err(),
+            "AF_UNIX path cap must reject publication"
+        );
+        assert!(
+            !record_path(&home).exists(),
+            "failed bind rolls durable pairing state back"
+        );
+        assert!(
+            !owner.status().paired,
+            "failed bind rolls in-memory pairing state back"
+        );
     }
 }
