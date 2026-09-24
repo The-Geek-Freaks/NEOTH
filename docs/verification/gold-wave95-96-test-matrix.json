@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W624/W628 exact hosted formatting imported; Windows46/GUI148 executing",
+  "status": "W631 exact hosted CLI reference admitted; behavioral Group977 pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 147183,
-    "sha256": "8EEBF5EF8B94545B5A2C486877896C671F468B8F1D523D4CF5DE65E01E0B2E7C"
+    "bytes": 147365,
+    "sha256": "30266C8B6319E3F28F3BCBDA2C5B9DB6DAB468ECB87831F303884D345E8942A9"
   },
-  "sourceInputs": 835,
+  "sourceInputs": 836,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -27644,6 +27644,44 @@
       }
     ],
     "note": "Two exact old/new Gitblob bindings; all ZIP/receipt hashes verified; no local formatter",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave631CliReference": {
+    "base": "7d2f77e18b1b6a838ff1070418f2e3111486c6b3",
+    "sources": [
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 248396,
+        "sha256": "A1F5CBC9915ED6F0DAF4EAB7027BE7FFBC2370837117F383371B1E8003843CA9",
+        "blob": "fe9ff0faa7a87121997ebb297ade7081ce39943d"
+      },
+      {
+        "path": "docs/verification/gold-wave631-cli-reference.json",
+        "bytes": 648,
+        "sha256": "5DC2DACF76BCCBB1B9275C3624DDBB827E56F13A8C2E94F9E23C5681C406CC05",
+        "blob": "c1eec0be5433e7ebfeda2d0e288362e162bae128"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 223817,
+        "sha256": "8FB8921190D3D895021AD3A97E6FE81CE303B4064B88E9B4C54361ECB3C1BDCF",
+        "blob": "1c51e52a6d4e67ba52928c8ad7650fd75483595d"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1235145,
+        "sha256": "53C4665CF0F69E81EC18951A49D19AEB0894C8155924FD845662771F5A31E317",
+        "blob": "7e68200654b2f0e21242d3aed551b77d7b6639f6"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1834427,
+        "sha256": "2BA7DC14FE5092616104878B91EDB4D5162D81C69C6A7612B7BA8081264D1269",
+        "blob": "9264e89100d48fde52253800b9050e02c0e16583"
+      }
+    ],
+    "note": "Run35951389963@1a92014b exact generated reference imported; Clippy/typecheck/build/export PASS; no local execution",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

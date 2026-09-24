@@ -1,0 +1,16 @@
+{
+  "schema": "neoth-hosted-cli-reference/v1",
+  "run": 35951389963,
+  "source": "1a92014b07ec61cad031771f6e2dce5b52e0e2ae",
+  "artifactId": 10788029910,
+  "artifactSha256": "83d56a9254019dc8cd08a353da9f7bcd20de78ed1e6f30a90a01ee3e680e9a32",
+  "referenceSha256": "a1f5cbc9915ed6f0daf4eab7027be7ffbc2370837117f383371b1e8003843ca9",
+  "sourceReceiptVerified": true,
+  "zipDigestVerified": true,
+  "referenceHashVerified": true,
+  "subsequentCliChanges": "Only exact hosted rustfmt import88dccde6; source export provenance retained",
+  "slimClippy": "PASS",
+  "coreTestTargets": "PASS",
+  "cliBuild": "PASS",
+  "localExecutableValidationRan": false
+}

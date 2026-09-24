@@ -3659,6 +3659,18 @@ Bind one complete 20-query × two-system operator-anchor label set to a previous
 - `--operator-anchor <PATH>`
 - `--operator-anchor-link <PATH>`
 
+### `neoth recall-parity-harness anchor-link-create`
+
+Seal an explicit twenty-query operator mapping into the canonical link required by `anchor-ingest`. This creates no run or label artifact
+
+- `--grader-config <PATH>`
+- `--goldset <PATH>`
+- `--evidence-dir <DIR>`
+- `--expected-evidence-receipt-pubkey <BASE64>`
+- `--operator-anchor <PATH>`
+- `--selection <PATH>` — JSON array of sorted `{query_id,candidate_id}` selections
+- `--link-output <PATH>` — New output file for the canonical operator-anchor link
+
 ### `neoth recall-parity-harness anchor-validate`
 
 Validate the operator's 20-query × two-system calibration labels before they can be used for a later anchored family-bias correction
@@ -3770,6 +3782,16 @@ Compute the deterministic family-bias report once all graders are imported
 - `--goldset <PATH>`
 - `--import-receipt <PATH>` — Externally held signed receipt binding the complete import vector
 - `--expected-receipt-pubkey <BASE64>` — Out-of-band Ed25519 receipt public key (base64); never read from run state
+
+### `neoth recall-parity-harness responses-prepare`
+
+Prepare canonical actual two-system response inputs for all four configured graders. This is offline file preparation only
+
+- `--grader-config <PATH>`
+- `--goldset <PATH>`
+- `--responses <PATH>`
+- `--rubric <PATH>`
+- `--bundle-dir <DIR>` — Existing directory receiving only new generated input files
 
 ### `neoth recall-parity-harness resume-status`
 

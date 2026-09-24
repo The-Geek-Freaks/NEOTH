@@ -2,6 +2,16 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W631 exact CLI reference admitted (2026-09-24):**
+Core run35951389963 at1a92014b passes slim Clippy, core test-target checking,
+CLI build and export. ZIP digest, exact source receipt and generated reference
+SHA256 are verified; the byte-exact reference now documents `anchor-link-create`
+with `--link-output` and `responses-prepare`. Later CLI changes are solely the
+admitted hosted formatting88dccde6. Group977 now has the updated snapshot for
+its behavioral run. Preflight7d2f77e1 passes. W622 resident pairing/sync and W630
+0.1.1 predecessor support remain uncommitted work; no Road closure or local
+executable validation is claimed.
+
 **W624/W626/W628 focused Windows repair and capture diagnostics (2026-09-24):**
 Windows41 run35950133017 at235fa68e is independently admitted38PASS/3FAIL/
 0missing with49 internal hashes and11 source bindings. All three failures now
