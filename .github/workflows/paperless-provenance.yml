@@ -14,7 +14,7 @@ jobs:
   acquire:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 40
     steps:
       - name: Checkout exact source without credentials
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -34,13 +34,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          ulimit -t 1200
           receipt_dir="$RUNNER_TEMP/paperless-provenance"
           mkdir -p "$receipt_dir"
           python3 scripts/acquire_paperless_provenance.py \
             --output "$receipt_dir/receipt.json" \
             --source-head "$(git rev-parse HEAD)" \
             --script-sha256 "$(sha256sum scripts/acquire_paperless_provenance.py | awk '{print $1}')" \
-            --workflow-sha256 "$(sha256sum .github/workflows/paperless-provenance.yml | awk '{print $1}')"
+            --workflow-sha256 "$(sha256sum .github/workflows/paperless-provenance.yml | awk '{print $1}')" \
+            --test-sha256 "$(sha256sum scripts/test_acquire_paperless_provenance.py | awk '{print $1}')" \
+            --documentation-sha256 "$(sha256sum docs/gold-wave531-paperless-provenance.md | awk '{print $1}')"
           sha256sum "$receipt_dir/receipt.json" > "$receipt_dir/receipt.json.sha256"
 
       - name: Upload candidate provenance receipt

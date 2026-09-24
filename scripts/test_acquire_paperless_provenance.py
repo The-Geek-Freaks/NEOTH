@@ -40,6 +40,36 @@ class PaperlessProvenanceContractTests(unittest.TestCase):
         def open(self, _request, timeout):
             return self.response
 
+    class StreamingResponse:
+        def __init__(self, body, headers=None):
+            self.status = 200
+            self.body = body
+            self.offset = 0
+            self.headers = headers or {}
+
+        def read(self, limit):
+            chunk = self.body[self.offset:self.offset + limit]
+            self.offset += len(chunk)
+            return chunk
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class RecordingBlobOpener:
+        def __init__(self, responses):
+            self.responses = iter(responses)
+            self.requests = []
+
+        def open(self, request, timeout):
+            self.requests.append(dict(request.header_items()))
+            response = next(self.responses)
+            if isinstance(response, Exception):
+                raise response
+            return response
+
     def test_only_the_three_inspected_compose_selectors_are_allowlisted(self):
         self.assertEqual(
             module.SELECTORS,
@@ -145,6 +175,119 @@ class PaperlessProvenanceContractTests(unittest.TestCase):
                 module.child_receipt(
                     self.FakeClient([(child_body, headers)]), "ghcr.io", "paperless-ngx/paperless-ngx", "unused-token", invalid
                 )
+
+    def test_blob_stream_requires_exact_descriptor_size_and_digest_without_retention(self):
+        body = b"verified-config"
+        descriptor = {
+            "digest": module.sha256(body),
+            "size": len(body),
+            "mediaType": "application/vnd.oci.image.config.v1+json",
+        }
+        client = module.BoundedClient()
+        client.blob_opener = self.RecordingBlobOpener([self.StreamingResponse(body, {"Content-Length": str(len(body))})])
+        record = client.verified_blob("ghcr.io", "paperless-ngx/paperless-ngx", "token", descriptor, "config")
+        self.assertEqual(record["observed_bytes"], len(body))
+        self.assertEqual(client.verified_blob_bytes, len(body))
+        self.assertEqual(len(client.verified_blobs), 1)
+
+        for wrong_body, wrong_size in ((body[:-1], len(body)), (body + b"x", len(body)), (body, len(body) + 1)):
+            client = module.BoundedClient()
+            client.blob_opener = self.RecordingBlobOpener([self.StreamingResponse(wrong_body)])
+            with self.assertRaises(module.AcquisitionError):
+                client.verified_blob(
+                    "ghcr.io",
+                    "paperless-ngx/paperless-ngx",
+                    "token",
+                    {**descriptor, "size": wrong_size},
+                    "config",
+                )
+
+    def test_blob_limits_deduplication_and_redirect_credential_stripping(self):
+        body = b"layer"
+        descriptor = {
+            "digest": module.sha256(body),
+            "size": len(body),
+            "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+        }
+        client = module.BoundedClient()
+        opener = self.RecordingBlobOpener([self.StreamingResponse(body)])
+        client.blob_opener = opener
+        first = client.verified_blob("ghcr.io", "paperless-ngx/paperless-ngx", "token", descriptor, "layer")
+        second = client.verified_blob("ghcr.io", "paperless-ngx/paperless-ngx", "token", descriptor, "layer")
+        self.assertFalse(first["deduplicated"])
+        self.assertTrue(second["deduplicated"])
+        self.assertEqual(len(opener.requests), 1)
+
+        over_budget = module.BoundedClient()
+        over_budget.verified_blob_bytes = module.MAX_BLOB_BYTES
+        with self.assertRaises(module.AcquisitionError):
+            over_budget.verified_blob("ghcr.io", "paperless-ngx/paperless-ngx", "token", descriptor, "layer")
+
+        redirect = module.urllib.error.HTTPError(
+            "https://ghcr.io/v2/x", 307, "redirect", {"Location": "https://pkg-containers.githubusercontent.com/blob"}, None
+        )
+        redirected = module.BoundedClient()
+        redirect_opener = self.RecordingBlobOpener([redirect, self.StreamingResponse(body)])
+        redirected.blob_opener = redirect_opener
+        redirected.verified_blob("ghcr.io", "paperless-ngx/paperless-ngx", "token", descriptor, "layer")
+        self.assertIn("Authorization", redirect_opener.requests[0])
+        self.assertNotIn("Authorization", redirect_opener.requests[1])
+        for location in ("http://pkg-containers.githubusercontent.com/blob", "https://token@pkg-containers.githubusercontent.com/blob", "https://127.0.0.1/blob"):
+            with self.assertRaises(module.AcquisitionError):
+                module.approved_blob_redirect("ghcr.io", location)
+
+    def test_request_ceiling_covers_each_blob_with_two_redirects(self):
+        self.assertEqual(module.MAX_REQUESTS, 12 + module.MAX_BLOBS * (module.MAX_BLOB_REDIRECTS + 1))
+        self.assertEqual(module.MAX_REQUESTS, 300)
+        client = module.BoundedClient()
+        client.requests = module.MAX_REQUESTS - 1
+        client._count_request()
+        self.assertEqual(client.requests, module.MAX_REQUESTS)
+        with self.assertRaises(module.AcquisitionError):
+            client._count_request()
+
+    def test_selector_path_passes_child_receipt_canonical_descriptors_to_blob_verifier(self):
+        config_amd64, layer_amd64 = b"config-amd64", b"layer-amd64"
+        config_arm64, layer_arm64 = b"config-arm64", b"layer-arm64"
+
+        def child(config, layer):
+            raw = module.json.dumps({
+                "schemaVersion": 2,
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "config": {"digest": module.sha256(config), "size": len(config), "mediaType": "application/vnd.oci.image.config.v1+json"},
+                "layers": [{"digest": module.sha256(layer), "size": len(layer), "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip"}],
+            }, separators=(",", ":")).encode()
+            return raw
+
+        amd64_body, arm64_body = child(config_amd64, layer_amd64), child(config_arm64, layer_arm64)
+        index_body = module.json.dumps({
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "manifests": [
+                {"digest": module.sha256(amd64_body), "size": len(amd64_body), "mediaType": "application/vnd.oci.image.manifest.v1+json", "platform": {"os": "linux", "architecture": "amd64"}},
+                {"digest": module.sha256(arm64_body), "size": len(arm64_body), "mediaType": "application/vnd.oci.image.manifest.v1+json", "platform": {"os": "linux", "architecture": "arm64"}},
+            ],
+        }, separators=(",", ":")).encode()
+
+        def manifest_response(body, media_type):
+            return body, {"docker-content-digest": module.sha256(body), "content-type": media_type}
+
+        client = module.BoundedClient()
+        responses = iter([
+            (b'{"token":"token"}', {}),
+            manifest_response(index_body, "application/vnd.oci.image.index.v1+json"),
+            manifest_response(amd64_body, "application/vnd.oci.image.manifest.v1+json"),
+            manifest_response(arm64_body, "application/vnd.oci.image.manifest.v1+json"),
+        ])
+        client.get = lambda _url, _limit, headers=None: next(responses)
+        client.blob_opener = self.RecordingBlobOpener([
+            self.StreamingResponse(config_amd64), self.StreamingResponse(layer_amd64),
+            self.StreamingResponse(config_arm64), self.StreamingResponse(layer_arm64),
+        ])
+        selector = module.acquire_selector(client, "paperless", "ghcr.io", "paperless-ngx/paperless-ngx", "3.2.1")
+        self.assertEqual(client.verified_blob_bytes, len(config_amd64) + len(layer_amd64) + len(config_arm64) + len(layer_arm64))
+        self.assertEqual(len(selector["platforms"]["linux/amd64"]["verified_blobs"]), 2)
+        self.assertEqual(len(selector["platforms"]["linux/arm64"]["verified_blobs"]), 2)
 
 
 if __name__ == "__main__":

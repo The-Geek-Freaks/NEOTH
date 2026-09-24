@@ -58,3 +58,28 @@ verification/paperless-oci-v3.2.1/. These are immutable metadata pins, not proof
 of layer contents, an installed image, a running container or Paperless Ready.
 Preflight35928755304 and CodeQL35928755635 at96f86a92 also passed.
 The manifest now contains770paths; native/GUI/Road counts are unchanged.
+
+W568 extends this manual, main-only hosted lane from descriptor metadata to
+recursive OCI blob-byte verification. For every selected linux/amd64 and
+linux/arm64 child manifest it streams the exact config blob and each compressed
+layer through SHA-256, requires the descriptor's exact size and digest, and
+immediately discards the bytes without decompression or persistence. The current
+admitted descriptor set has 81 distinct config/layer blobs totaling
+1,951,142,679 bytes. That fits the fixed 2GiB aggregate ceiling with
+196,340,969 bytes headroom; a config is capped at 1MiB, a layer at 512MiB, and
+the run at 96 distinct blobs and 300 total HTTPS requests. The request ceiling
+covers the twelve token/index/child-manifest requests plus an initial request
+and up to two redirects for every distinct blob.
+
+The script permits a missing Content-Length but always requires the stream to
+end at exactly the descriptor size; when present the header must match exactly.
+Token and manifest requests still reject every redirect. Blob requests allow at
+most two HTTPS redirects only to the pinned public upstream/CDN host set for
+the selected registry, and clear credentials before the redirected request.
+Each request has a 30-second timeout, acquisition has a 30-minute monotonic
+deadline, and the hosted job has a 40-minute wall limit plus a 1,200-second CPU
+limit. The receipt source binds head, script, workflow, test and documentation
+SHA-256 values. Successful recursive checking may state
+`artifact_blob_bytes_verified: true`; it still makes no signature, extraction,
+installation, container, API-readiness or runtime claim, and leaves
+`artifact_verified` false pending later admission and lifecycle work.

@@ -129,6 +129,15 @@ operator environment and state untouched. This establishes a concrete staged
 consumer for the metadata-only receipt, but does not inspect Docker, promote
 `artifact_verified`, or close P2-20. Hosted validation is required.
 
+**W568 recursive Paperless OCI byte acquisition (2026-09-24):**
+The main-only hosted provenance lane is extended from descriptor metadata to
+streamed SHA-256 verification of selected config and compressed layer blobs for
+both supported Linux platforms. Retrieval retains no blob bytes and has strict
+per-blob, aggregate, request, redirect and elapsed-time bounds. Its candidate
+receipt records recursive byte coverage but still leaves `artifact_verified`
+false; it needs hosted execution, admission, then a matching staged-contract
+update before it can inform local artifact identity. P2-20 remains open.
+
 **W535 connection-bound durable delivery (2026-09-24):**
 Opaque one-shot live permits now bind v6 Claim/Intent/Armed/Result/history to
 the exact ChannelRef, generation and fingerprint. Expired Armed recovery

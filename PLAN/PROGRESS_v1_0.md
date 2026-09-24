@@ -123,6 +123,15 @@ metadata-receipt consumer only: no Docker inspection, runtime assertion, or
 `artifact_verified` uplift is claimed. Hosted validation is pending; P2-20
 remains open.
 
+**W568 recursive Paperless OCI byte acquisition (2026-09-24):**
+The hosted main-only provenance lane streams and hashes selected config and
+compressed layer blobs for both supported Linux platforms without retaining,
+extracting, installing or running image bytes. It bounds each request, blob,
+redirect chain, aggregate bytes and total elapsed time. A successful candidate
+receipt reports recursive blob-byte coverage only; it does not set
+`artifact_verified` and still requires admission plus staged-contract consumption.
+P2-20 remains open.
+
 **W535 connection-bound durable delivery (2026-09-24):**
 Opaque one-shot live permits now bind v6 Claim/Intent/Armed/Result/history to
 the exact ChannelRef, generation and fingerprint. Expired Armed recovery

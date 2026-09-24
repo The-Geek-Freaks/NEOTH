@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Hosted-only, bounded OCI manifest receipt acquisition for Paperless P2-20.
+"""Hosted-only, bounded recursive OCI blob receipt acquisition for Paperless P2-20.
 
-This script intentionally retrieves registry metadata only. It never pulls an
-image config or layer, starts no container, and does not claim installation or
-runtime readiness. Bearer tokens remain in memory and are never written or
-printed.
+This script hash-verifies selected config and compressed layer bytes by
+streaming them without retaining, extracting, installing, or running an image.
+Bearer tokens remain in memory and are never written or printed.
 """
 
 from __future__ import annotations
@@ -19,14 +18,24 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 MAX_TOKEN_BYTES = 64 * 1024
 MAX_FETCHED_MANIFEST_BYTES = 512 * 1024
+MAX_CONFIG_BYTES = 1024 * 1024
+MAX_LAYER_BYTES = 512 * 1024 * 1024
+MAX_BLOB_BYTES = 2 * 1024 * 1024 * 1024
 MAX_DESCRIPTOR_SIZE = 1 << 40
 MAX_INDEX_DESCRIPTORS = 256
-REQUEST_TIMEOUT_SECONDS = 15
-MAX_REQUESTS = 12
+MAX_LAYERS_PER_MANIFEST = 32
+MAX_BLOBS = 96
+REQUEST_TIMEOUT_SECONDS = 30
+MAX_ELAPSED_SECONDS = 30 * 60
+MAX_BLOB_REDIRECTS = 2
+# Three token/index/child-manifest sequences take twelve requests. Each unique
+# blob may require its original request plus two bounded redirects.
+MAX_REQUESTS = 12 + MAX_BLOBS * (MAX_BLOB_REDIRECTS + 1)
 SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 MEDIA_TYPES = {
     "application/vnd.oci.image.index.v1+json",
@@ -49,6 +58,18 @@ SELECTORS = (
     ("valkey", "registry-1.docker.io", "valkey/valkey", "9-alpine"),
     ("postgres", "registry-1.docker.io", "library/postgres", "18"),
 )
+APPROVED_BLOB_REDIRECT_HOSTS = {
+    "ghcr.io": {
+        "ghcr.io",
+        "pkg-containers.githubusercontent.com",
+        "github-production-container-registry.s3.amazonaws.com",
+    },
+    "registry-1.docker.io": {
+        "registry-1.docker.io",
+        "production.cloudflare.docker.com",
+        "docker-images-prod.s3.dualstack.us-east-1.amazonaws.com",
+    },
+}
 
 
 class AcquisitionError(RuntimeError):
@@ -58,6 +79,13 @@ class AcquisitionError(RuntimeError):
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise AcquisitionError("redirect rejected")
+
+
+class CaptureRedirect(urllib.request.HTTPRedirectHandler):
+    """Return the 3xx response to the bounded blob caller without following it."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 def sha256(data: bytes) -> str:
@@ -85,17 +113,52 @@ def manifest_url(registry: str, repository: str, reference: str) -> str:
     return f"https://{registry}/v2/{repository}/manifests/{reference}"
 
 
+def blob_url(registry: str, repository: str, digest: str) -> str:
+    if not SHA256.fullmatch(digest):
+        raise AcquisitionError("blob digest is invalid")
+    manifest_url(registry, repository, digest)
+    return f"https://{registry}/v2/{repository}/blobs/{digest}"
+
+
+def approved_blob_redirect(registry: str, location: str) -> str:
+    parsed = urlsplit(location)
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise AcquisitionError("blob redirect is not an approved HTTPS upstream") from error
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+        or port not in (None, 443)
+        or parsed.hostname.lower() not in APPROVED_BLOB_REDIRECT_HOSTS.get(registry, set())
+    ):
+        raise AcquisitionError("blob redirect is not an approved HTTPS upstream")
+    return location
+
+
 class BoundedClient:
     def __init__(self) -> None:
         context = ssl.create_default_context()
         context.minimum_version = ssl.TLSVersion.TLSv1_2
         self.opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=context))
+        self.blob_opener = urllib.request.build_opener(CaptureRedirect(), urllib.request.HTTPSHandler(context=context))
         self.requests = 0
+        self.started_monotonic = time.monotonic()
+        self.verified_blobs: dict[tuple[str, str, str], dict[str, object]] = {}
+        self.verified_blob_bytes = 0
 
-    def get(self, url: str, limit: int, headers: dict[str, str] | None = None) -> tuple[bytes, dict[str, str]]:
+    def _count_request(self) -> None:
+        if time.monotonic() - self.started_monotonic > MAX_ELAPSED_SECONDS:
+            raise AcquisitionError("acquisition deadline exceeded")
         self.requests += 1
         if self.requests > MAX_REQUESTS:
             raise AcquisitionError("request count exceeded")
+
+    def get(self, url: str, limit: int, headers: dict[str, str] | None = None) -> tuple[bytes, dict[str, str]]:
+        self._count_request()
         request = urllib.request.Request(url, headers=headers or {})
         try:
             with self.opener.open(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
@@ -118,6 +181,110 @@ class BoundedClient:
             raise AcquisitionError(
                 f"bounded HTTPS transport failed: request {self.requests}"
             ) from None
+
+    def verified_blob(
+        self,
+        registry: str,
+        repository: str,
+        token: str,
+        descriptor_value: dict[str, object],
+        kind: str,
+    ) -> dict[str, object]:
+        if set(descriptor_value) == {"digest", "size", "media_type"}:
+            digest_value = descriptor_value["digest"]
+            size_value = descriptor_value["size"]
+            media_type_value = descriptor_value["media_type"]
+            if (
+                not isinstance(digest_value, str)
+                or not SHA256.fullmatch(digest_value)
+                or isinstance(size_value, bool)
+                or not isinstance(size_value, int)
+                or size_value < 0
+                or size_value > MAX_DESCRIPTOR_SIZE
+                or not isinstance(media_type_value, str)
+                or len(media_type_value) > 256
+            ):
+                raise AcquisitionError("canonical blob descriptor is invalid")
+            descriptor_data = {"digest": digest_value, "size": size_value, "media_type": media_type_value}
+        else:
+            descriptor_data = descriptor(descriptor_value)
+        digest = str(descriptor_data["digest"])
+        declared_bytes = int(descriptor_data["size"])
+        limit = MAX_CONFIG_BYTES if kind == "config" else MAX_LAYER_BYTES
+        if kind not in {"config", "layer"} or declared_bytes > limit:
+            raise AcquisitionError("blob descriptor exceeds kind byte limit")
+        key = (registry, repository, digest)
+        prior = self.verified_blobs.get(key)
+        if prior is not None:
+            if prior["declared_bytes"] != declared_bytes:
+                raise AcquisitionError("same blob digest has conflicting declared sizes")
+            return {**prior, "kind": kind, "deduplicated": True}
+        if len(self.verified_blobs) >= MAX_BLOBS or self.verified_blob_bytes + declared_bytes > MAX_BLOB_BYTES:
+            raise AcquisitionError("blob count or aggregate byte limit exceeded")
+
+        url = blob_url(registry, repository, digest)
+        headers = {"Authorization": f"Bearer {token}"}
+        redirects = 0
+        while True:
+            self._count_request()
+            request = urllib.request.Request(url, headers=headers)
+            try:
+                response = self.blob_opener.open(request, timeout=REQUEST_TIMEOUT_SECONDS)
+            except urllib.error.HTTPError as error:
+                if error.code not in {301, 302, 303, 307, 308}:
+                    error.close()
+                    raise AcquisitionError(f"bounded HTTPS request failed: HTTP {error.code}, request {self.requests}") from None
+                if redirects >= MAX_BLOB_REDIRECTS:
+                    error.close()
+                    raise AcquisitionError("blob redirect limit exceeded")
+                try:
+                    location = error.headers.get("Location")
+                    if not location:
+                        raise AcquisitionError("blob redirect has no location")
+                    url = approved_blob_redirect(registry, location)
+                finally:
+                    error.close()
+                headers = {}
+                redirects += 1
+                continue
+            except (urllib.error.URLError, TimeoutError):
+                raise AcquisitionError(f"bounded HTTPS transport failed: request {self.requests}") from None
+            try:
+                with response:
+                    if response.status != 200:
+                        raise AcquisitionError("unexpected blob HTTP status")
+                    length = response.headers.get("Content-Length")
+                    if length is not None and (not length.isdigit() or int(length) != declared_bytes):
+                        raise AcquisitionError("blob Content-Length does not match descriptor")
+                    observed_bytes = 0
+                    hasher = hashlib.sha256()
+                    while True:
+                        if time.monotonic() - self.started_monotonic > MAX_ELAPSED_SECONDS:
+                            raise AcquisitionError("acquisition deadline exceeded")
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        observed_bytes += len(chunk)
+                        if observed_bytes > declared_bytes:
+                            raise AcquisitionError("blob response exceeds descriptor size")
+                        hasher.update(chunk)
+                    if observed_bytes != declared_bytes or f"sha256:{hasher.hexdigest()}" != digest:
+                        raise AcquisitionError("blob response does not match descriptor digest or size")
+                    record = {
+                        "kind": kind,
+                        "digest": digest,
+                        "declared_bytes": declared_bytes,
+                        "observed_bytes": observed_bytes,
+                        "redirects": redirects,
+                        "deduplicated": False,
+                    }
+                    self.verified_blobs[key] = record
+                    self.verified_blob_bytes += observed_bytes
+                    return record
+            except AcquisitionError:
+                raise
+            except (urllib.error.URLError, TimeoutError, OSError):
+                raise AcquisitionError(f"bounded blob transport failed: request {self.requests}") from None
 
 
 def parse_token(raw: bytes) -> str:
@@ -214,7 +381,7 @@ def child_receipt(client: BoundedClient, registry: str, repository: str, token: 
         raise AcquisitionError("platform child is not an OCI image manifest")
     config = descriptor(raw.get("config"), CONFIG_MEDIA_TYPES)
     layers = raw.get("layers")
-    if not isinstance(layers, list) or len(layers) > MAX_INDEX_DESCRIPTORS:
+    if not isinstance(layers, list) or len(layers) > MAX_LAYERS_PER_MANIFEST:
         raise AcquisitionError("child manifest layers are invalid")
     for layer in layers:
         layer_descriptor = descriptor(layer)
@@ -238,6 +405,14 @@ def acquire_selector(client: BoundedClient, name: str, registry: str, repository
         raise AcquisitionError("index manifest content type does not match body")
     amd64, amd64_raw = child_receipt(client, registry, repository, token, child_for_platform(index, "linux", "amd64"))
     arm64, arm64_raw = child_receipt(client, registry, repository, token, child_for_platform(index, "linux", "arm64"))
+    for platform in (amd64, arm64):
+        platform["verified_blobs"] = [
+            client.verified_blob(registry, repository, token, platform["config"], "config"),
+            *[
+                client.verified_blob(registry, repository, token, layer, "layer")
+                for layer in platform["layers"]
+            ],
+        ]
     return {
         "name": name,
         "registry": registry,
@@ -270,10 +445,15 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--source-head", required=True)
     parser.add_argument("--script-sha256", required=True)
     parser.add_argument("--workflow-sha256", required=True)
+    parser.add_argument("--test-sha256", required=True)
+    parser.add_argument("--documentation-sha256", required=True)
     args = parser.parse_args(argv)
     if not re.fullmatch(r"[0-9a-f]{40}", args.source_head):
         raise AcquisitionError("source head is invalid")
-    if not all(re.fullmatch(r"[0-9a-f]{64}", value) for value in (args.script_sha256, args.workflow_sha256)):
+    if not all(
+        re.fullmatch(r"[0-9a-f]{64}", value)
+        for value in (args.script_sha256, args.workflow_sha256, args.test_sha256, args.documentation_sha256)
+    ):
         raise AcquisitionError("source binding hash is invalid")
     started = int(time.time())
     client = BoundedClient()
@@ -296,12 +476,14 @@ def main(argv: list[str]) -> int:
                 next(body for candidate, body in raw_manifests if candidate == digest),
             )
     receipt = {
-        "schema_version": 1,
-        "kind": "paperless-oci-manifest-acquisition",
+        "schema_version": 2,
+        "kind": "paperless-oci-recursive-blob-acquisition",
         "source": {
             "head": args.source_head,
             "script_sha256": args.script_sha256,
             "workflow_sha256": args.workflow_sha256,
+            "test_sha256": args.test_sha256,
+            "documentation_sha256": args.documentation_sha256,
         },
         "upstream": {
             "release": UPSTREAM_RELEASE,
@@ -312,11 +494,16 @@ def main(argv: list[str]) -> int:
         "selectors": selectors,
         "raw_manifest_count": len(raw_manifests),
         "request_count": client.requests,
+        "verified_blob_count": len(client.verified_blobs),
+        "verified_blob_bytes": client.verified_blob_bytes,
+        "artifact_blob_bytes_verified": True,
+        "artifact_verified": False,
         "started_unix": started,
         "completed_unix": int(time.time()),
         "claims": [
-            "OCI index and platform-manifest metadata only",
-            "No config blobs, layers, images, containers, installation, or runtime probe were fetched or run",
+            "OCI index, platform manifests, config blobs, and compressed layer bytes were hash-verified",
+            "No blob bytes were retained, decompressed, extracted, installed, or run",
+            "No container, installation, runtime probe, signature verification, or readiness claim was performed",
             "This receipt is candidate provenance for later review; it does not set artifact_verified",
         ],
     }
