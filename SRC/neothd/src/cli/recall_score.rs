@@ -10,7 +10,11 @@
 //! 100% offline: it scores grade FILES — no live legacy-AI, no LLM, no grading
 //! here (the grading is the operator's run; the file format is the contract).
 
-use std::{collections::BTreeSet, ffi::OsStr, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeSet,
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
@@ -27,8 +31,7 @@ use crate::recall::{
     },
     parity_anchor::{
         MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES, create_operator_anchor_evidence_link,
-        load_operator_anchor_bytes,
-        summarize_operator_anchor,
+        load_operator_anchor_bytes, summarize_operator_anchor,
     },
     parity_batch_plan::{
         MAX_FOUR_GRADER_BATCH_BYTES, parse_signed_four_grader_batch_result_receipt,

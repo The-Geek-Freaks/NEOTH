@@ -638,7 +638,8 @@ mod tests {
         .into_validated()
         .unwrap();
         let anchor_bytes = anchor_bytes();
-        let anchor = load_operator_anchor_bytes(&anchor_bytes, "fixture", &goldset, &config).unwrap();
+        let anchor =
+            load_operator_anchor_bytes(&anchor_bytes, "fixture", &goldset, &config).unwrap();
         let candidate_ids = (0..OPERATOR_ANCHOR_QUERY_COUNT)
             .map(|index| format!("candidate-{index:03}"))
             .collect::<Vec<_>>();
@@ -672,29 +673,33 @@ mod tests {
         .unwrap();
         let mut duplicate = selection.clone();
         duplicate[1].query_id = duplicate[0].query_id.clone();
-        assert!(create_operator_anchor_evidence_link_with_provenance(
-            &serde_json::to_vec(&duplicate).unwrap(),
-            &anchor_bytes,
-            &anchor,
-            &manifest_sha,
-            &receipt_sha,
-            &candidate_ids,
-        )
-        .is_err());
+        assert!(
+            create_operator_anchor_evidence_link_with_provenance(
+                &serde_json::to_vec(&duplicate).unwrap(),
+                &anchor_bytes,
+                &anchor,
+                &manifest_sha,
+                &receipt_sha,
+                &candidate_ids,
+            )
+            .is_err()
+        );
         let mut unknown_field = serde_json::to_value(&selection).unwrap();
         unknown_field.as_array_mut().unwrap()[0]
             .as_object_mut()
             .unwrap()
             .insert("unexpected".into(), serde_json::Value::Bool(true));
-        assert!(create_operator_anchor_evidence_link_with_provenance(
-            &serde_json::to_vec(&unknown_field).unwrap(),
-            &anchor_bytes,
-            &anchor,
-            &manifest_sha,
-            &receipt_sha,
-            &candidate_ids,
-        )
-        .is_err());
+        assert!(
+            create_operator_anchor_evidence_link_with_provenance(
+                &serde_json::to_vec(&unknown_field).unwrap(),
+                &anchor_bytes,
+                &anchor,
+                &manifest_sha,
+                &receipt_sha,
+                &candidate_ids,
+            )
+            .is_err()
+        );
     }
 
     #[test]

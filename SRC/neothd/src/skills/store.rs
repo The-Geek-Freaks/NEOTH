@@ -45,10 +45,7 @@ fn clear_private_atomic_io_diagnostic_for_test() {
 }
 
 #[cfg(test)]
-fn record_private_atomic_io_diagnostic_for_test(
-    stage: &'static str,
-    error: &anyhow::Error,
-) {
+fn record_private_atomic_io_diagnostic_for_test(stage: &'static str, error: &anyhow::Error) {
     let detail = error
         .chain()
         .find_map(|cause| cause.downcast_ref::<std::io::Error>())
@@ -3917,10 +3914,11 @@ mod windows_private_atomic_stage {
             #[cfg(test)]
             run_after_rename_for_test();
             #[cfg(test)]
-            super::inject_private_child_post_commit_validation_failure(display_path)
-                .inspect_err(|error| {
+            super::inject_private_child_post_commit_validation_failure(display_path).inspect_err(
+                |error| {
                     super::record_private_atomic_io_diagnostic_for_test("identity", &error);
-                })?;
+                },
+            )?;
             let matches = super::named_regular_file_matches_open_object(
                 parent,
                 target_name,
