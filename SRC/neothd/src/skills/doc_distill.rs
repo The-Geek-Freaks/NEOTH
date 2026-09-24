@@ -581,7 +581,10 @@ pub struct SelectedExtractedTextChapter {
 /// text. This is deliberately post-extraction: PDF/Office bytes are never
 /// sliced or interpreted as text ranges.
 pub fn detect_chapter_offsets(text: &str) -> Result<Vec<TextChapterRange>, DocDistillError> {
-    discover_text_chapter_ranges(&mut std::io::Cursor::new(text.as_bytes()), text.len() as u64)
+    discover_text_chapter_ranges(
+        &mut std::io::Cursor::new(text.as_bytes()),
+        text.len() as u64,
+    )
 }
 
 /// Preserve exact source and extractor-text identities while exposing chapter
@@ -592,7 +595,12 @@ pub fn prepare_extracted_document_chapters(
     source_bytes: u64,
     source_bytes_sha256: String,
 ) -> Result<Option<ExtractedDocumentChapters>, DocDistillError> {
-    if extraction.metadata.get("truncated").and_then(serde_json::Value::as_bool) == Some(true) {
+    if extraction
+        .metadata
+        .get("truncated")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
         return Err(DocDistillError::TruncatedExtraction);
     }
     if extraction.text.len() <= LARGE_TEXT_CHAPTER_THRESHOLD_BYTES as usize {
@@ -615,12 +623,24 @@ impl ExtractedDocumentChapters {
         detect_chapter_offsets(&self.text)
     }
 
-    pub fn select_chapter(&self, chapter_index: usize) -> Result<SelectedExtractedTextChapter, DocDistillError> {
+    pub fn select_chapter(
+        &self,
+        chapter_index: usize,
+    ) -> Result<SelectedExtractedTextChapter, DocDistillError> {
         let ranges = self.discover_chapters()?;
-        let range = ranges.get(chapter_index).cloned().ok_or(DocDistillError::ChapterRangeUnavailable)?;
-        let start = usize::try_from(range.start_byte).map_err(|_| DocDistillError::ChapterRangeChanged)?;
-        let end = usize::try_from(range.end_byte).map_err(|_| DocDistillError::ChapterRangeChanged)?;
-        let text = self.text.get(start..end).ok_or(DocDistillError::ChapterRangeChanged)?.to_owned();
+        let range = ranges
+            .get(chapter_index)
+            .cloned()
+            .ok_or(DocDistillError::ChapterRangeUnavailable)?;
+        let start =
+            usize::try_from(range.start_byte).map_err(|_| DocDistillError::ChapterRangeChanged)?;
+        let end =
+            usize::try_from(range.end_byte).map_err(|_| DocDistillError::ChapterRangeChanged)?;
+        let text = self
+            .text
+            .get(start..end)
+            .ok_or(DocDistillError::ChapterRangeChanged)?
+            .to_owned();
         Ok(SelectedExtractedTextChapter {
             chapter_index,
             range,
@@ -1651,7 +1671,11 @@ mod tests {
     #[test]
     fn extracted_large_document_chapters_keep_identities_and_fit_distillation() {
         let extraction = Extraction {
-            text: format!("# One\n{}\n# Two\n{}", "a".repeat(LARGE_TEXT_CHAPTER_THRESHOLD_BYTES as usize), "b".repeat(MAX_CHAPTER_RANGE_BYTES)),
+            text: format!(
+                "# One\n{}\n# Two\n{}",
+                "a".repeat(LARGE_TEXT_CHAPTER_THRESHOLD_BYTES as usize),
+                "b".repeat(MAX_CHAPTER_RANGE_BYTES)
+            ),
             metadata: serde_json::json!({"extractor": "fixture"}),
         };
         let chapters = prepare_extracted_document_chapters(
@@ -1659,7 +1683,9 @@ mod tests {
             DocumentSourceKind::Pdf,
             123,
             "a".repeat(64),
-        ).unwrap().expect("large extracted text requires selection");
+        )
+        .unwrap()
+        .expect("large extracted text requires selection");
         let ranges = chapters.discover_chapters().unwrap();
         assert!(ranges.len() > 1);
         let selected = chapters.select_chapter(0).unwrap();
@@ -1668,12 +1694,18 @@ mod tests {
         assert_eq!(selected.source_bytes_sha256.len(), 64);
         assert_eq!(selected.extracted_text_sha256.len(), 64);
         assert!(selected.text.len() <= ingress_sanitizer::MAX_INGRESS_BYTES);
-        assert!(distill_doc(
-            Extraction { text: selected.text, metadata: serde_json::Value::Null },
-            selected.source_kind,
-            selected.source_bytes,
-            selected.source_bytes_sha256,
-        ).is_ok());
+        assert!(
+            distill_doc(
+                Extraction {
+                    text: selected.text,
+                    metadata: serde_json::Value::Null
+                },
+                selected.source_kind,
+                selected.source_bytes,
+                selected.source_bytes_sha256,
+            )
+            .is_ok()
+        );
     }
 
     #[test]

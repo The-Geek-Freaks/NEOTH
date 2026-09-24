@@ -1548,15 +1548,28 @@ async fn prepare_document_review_selection(path: &Path) -> Result<PreparedDocume
     let source_kind = admitted.source_kind();
     let source_bytes = admitted.source_bytes();
     let source_bytes_sha256 = admitted.source_bytes_sha256().to_owned();
-    if extraction.text.len() <= crate::skills::doc_distill::LARGE_TEXT_CHAPTER_THRESHOLD_BYTES as usize {
-        return Ok(PreparedDocumentReview::Full(crate::skills::doc_distill::distill_doc(
-            extraction, source_kind, source_bytes, source_bytes_sha256,
-        )?));
+    if extraction.text.len()
+        <= crate::skills::doc_distill::LARGE_TEXT_CHAPTER_THRESHOLD_BYTES as usize
+    {
+        return Ok(PreparedDocumentReview::Full(
+            crate::skills::doc_distill::distill_doc(
+                extraction,
+                source_kind,
+                source_bytes,
+                source_bytes_sha256,
+            )?,
+        ));
     }
     Ok(PreparedDocumentReview::Chapters(
         crate::skills::doc_distill::prepare_extracted_document_chapters(
-            extraction, source_kind, source_bytes, source_bytes_sha256,
-        )?.ok_or_else(|| anyhow::anyhow!("large extracted document chapter preparation unexpectedly unavailable"))?,
+            extraction,
+            source_kind,
+            source_bytes,
+            source_bytes_sha256,
+        )?
+        .ok_or_else(|| {
+            anyhow::anyhow!("large extracted document chapter preparation unexpectedly unavailable")
+        })?,
     ))
 }
 
@@ -1565,7 +1578,9 @@ async fn prepare_document_review_selection(path: &Path) -> Result<PreparedDocume
 async fn prepare_document_review(path: &Path) -> Result<crate::skills::doc_distill::DistilledDoc> {
     match prepare_document_review_selection(path).await? {
         PreparedDocumentReview::Full(document) => Ok(document),
-        PreparedDocumentReview::Chapters(_) => anyhow::bail!("large extracted document requires --list-doc-chapters PATH followed by --from-doc-chapter PATH --chapter-index INDEX"),
+        PreparedDocumentReview::Chapters(_) => anyhow::bail!(
+            "large extracted document requires --list-doc-chapters PATH followed by --from-doc-chapter PATH --chapter-index INDEX"
+        ),
     }
 }
 
@@ -1573,9 +1588,16 @@ async fn prepare_document_review(path: &Path) -> Result<crate::skills::doc_disti
 pub async fn run_document_review(path: &Path, output: OutputFormat) -> Result<()> {
     match prepare_document_review_selection(path).await? {
         PreparedDocumentReview::Full(document) => match output {
-            OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string(&DocumentReviewReceipt {
-                review_only: true, skill_written: false, skill_activated: false, provider_dispatched: false, document: &document,
-            })?),
+            OutputFormat::Json | OutputFormat::Jsonl => println!(
+                "{}",
+                serde_json::to_string(&DocumentReviewReceipt {
+                    review_only: true,
+                    skill_written: false,
+                    skill_activated: false,
+                    provider_dispatched: false,
+                    document: &document,
+                })?
+            ),
             OutputFormat::Table => println!("{}", document.render_operator_review()),
         },
         PreparedDocumentReview::Chapters(chapters) => {
@@ -1589,11 +1611,22 @@ pub async fn run_document_review(path: &Path, output: OutputFormat) -> Result<()
                 source_bytes_sha256: &chapters.source_bytes_sha256,
                 extracted_text_bytes: chapters.extracted_text_bytes,
                 extracted_text_sha256: &chapters.extracted_text_sha256,
-                chapters: ranges.iter().enumerate().map(|(chapter_index, range)| DocumentChapterListEntry { chapter_index, range }).collect(),
+                chapters: ranges
+                    .iter()
+                    .enumerate()
+                    .map(|(chapter_index, range)| DocumentChapterListEntry {
+                        chapter_index,
+                        range,
+                    })
+                    .collect(),
             };
             match output {
-                OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string(&receipt)?),
-                OutputFormat::Table => println!("Large extracted document requires explicit chapter selection; run `neoth skills --list-doc-chapters PATH`, then `neoth skills --from-doc-chapter PATH --chapter-index INDEX`."),
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::to_string(&receipt)?)
+                }
+                OutputFormat::Table => println!(
+                    "Large extracted document requires explicit chapter selection; run `neoth skills --list-doc-chapters PATH`, then `neoth skills --from-doc-chapter PATH --chapter-index INDEX`."
+                ),
             }
         }
     }
@@ -1768,7 +1801,13 @@ async fn run_document_distillation(
 }
 
 fn is_raw_text_chapter_source(path: &Path) -> bool {
-    matches!(path.extension().and_then(|value| value.to_str()).map(str::to_ascii_lowercase).as_deref(), Some("txt" | "md" | "markdown"))
+    matches!(
+        path.extension()
+            .and_then(|value| value.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("txt" | "md" | "markdown")
+    )
 }
 
 /// Discover raw text through the retained handle, or chapters from the actual
@@ -1778,24 +1817,43 @@ pub async fn run_document_chapter_discovery(path: &Path, output: OutputFormat) -
         return run_large_text_chapter_discovery(path, output).await;
     }
     match prepare_document_review_selection(path).await? {
-        PreparedDocumentReview::Full(_) => anyhow::bail!("document extracted text is below the chapter-selection threshold; use --from-doc PATH"),
+        PreparedDocumentReview::Full(_) => anyhow::bail!(
+            "document extracted text is below the chapter-selection threshold; use --from-doc PATH"
+        ),
         PreparedDocumentReview::Chapters(chapters) => {
             let ranges = chapters.discover_chapters()?;
             let receipt = DocumentChapterSelectionReceipt {
-                review_only: true, provider_dispatched: false, chapter_selection_required: false,
-                source_kind: chapters.source_kind, source_bytes: chapters.source_bytes,
+                review_only: true,
+                provider_dispatched: false,
+                chapter_selection_required: false,
+                source_kind: chapters.source_kind,
+                source_bytes: chapters.source_bytes,
                 source_bytes_sha256: &chapters.source_bytes_sha256,
                 extracted_text_bytes: chapters.extracted_text_bytes,
                 extracted_text_sha256: &chapters.extracted_text_sha256,
-                chapters: ranges.iter().enumerate().map(|(chapter_index, range)| DocumentChapterListEntry { chapter_index, range }).collect(),
+                chapters: ranges
+                    .iter()
+                    .enumerate()
+                    .map(|(chapter_index, range)| DocumentChapterListEntry {
+                        chapter_index,
+                        range,
+                    })
+                    .collect(),
             };
             match output {
-                OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string(&receipt)?),
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::to_string(&receipt)?)
+                }
                 OutputFormat::Table => {
                     println!("source bytes: {}", chapters.source_bytes);
                     println!("extracted text bytes: {}", chapters.extracted_text_bytes);
                     println!("index  start_byte  end_byte  truncated");
-                    for (index, range) in ranges.iter().enumerate() { println!("{index:<5}  {:<10}  {:<8}  {}", range.start_byte, range.end_byte, range.truncated); }
+                    for (index, range) in ranges.iter().enumerate() {
+                        println!(
+                            "{index:<5}  {:<10}  {:<8}  {}",
+                            range.start_byte, range.end_byte, range.truncated
+                        );
+                    }
                 }
             }
             Ok(())
@@ -1805,27 +1863,45 @@ pub async fn run_document_chapter_discovery(path: &Path, output: OutputFormat) -
 
 /// Select one extracted PDF/Office/book range and pass exactly that range into
 /// the existing provider-free distillation boundary.
-pub async fn run_document_chapter_review(path: &Path, chapter_index: usize, output: OutputFormat) -> Result<()> {
+pub async fn run_document_chapter_review(
+    path: &Path,
+    chapter_index: usize,
+    output: OutputFormat,
+) -> Result<()> {
     if is_raw_text_chapter_source(path) {
         return run_large_text_document_review(path, chapter_index, output).await;
     }
-    let PreparedDocumentReview::Chapters(chapters) = prepare_document_review_selection(path).await? else {
-        anyhow::bail!("document extracted text is below the chapter-selection threshold; use --from-doc PATH");
+    let PreparedDocumentReview::Chapters(chapters) =
+        prepare_document_review_selection(path).await?
+    else {
+        anyhow::bail!(
+            "document extracted text is below the chapter-selection threshold; use --from-doc PATH"
+        );
     };
     let selected = chapters.select_chapter(chapter_index)?;
     let document = crate::skills::doc_distill::distill_doc(
-        crate::media::Extraction { text: selected.text, metadata: serde_json::Value::Null },
-        selected.source_kind, selected.source_bytes, selected.source_bytes_sha256.clone(),
+        crate::media::Extraction {
+            text: selected.text,
+            metadata: serde_json::Value::Null,
+        },
+        selected.source_kind,
+        selected.source_bytes,
+        selected.source_bytes_sha256.clone(),
     )?;
     let rendered = document.render_operator_review();
     let chapter = ChapterMetadataReceipt {
-        chapter_index: selected.chapter_index, range: &selected.range,
-        source_bytes: selected.source_bytes, source_bytes_sha256: &selected.source_bytes_sha256,
-        source_kind: Some(selected.source_kind), extracted_text_bytes: Some(selected.extracted_text_bytes),
+        chapter_index: selected.chapter_index,
+        range: &selected.range,
+        source_bytes: selected.source_bytes,
+        source_bytes_sha256: &selected.source_bytes_sha256,
+        source_kind: Some(selected.source_kind),
+        extracted_text_bytes: Some(selected.extracted_text_bytes),
         extracted_text_sha256: Some(&selected.extracted_text_sha256),
     };
     match output {
-        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", chapter_review_receipt_json(chapter, &rendered)?),
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", chapter_review_receipt_json(chapter, &rendered)?)
+        }
         OutputFormat::Table => println!("{}", rendered),
     }
     Ok(())
@@ -2207,9 +2283,19 @@ mod tests {
             bytes.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", index + 1).as_bytes());
         }
         let xref = bytes.len();
-        bytes.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
-        for offset in offsets { bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes()); }
-        bytes.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).as_bytes());
+        bytes.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+        );
+        for offset in offsets {
+            bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        bytes.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
         bytes
     }
 
@@ -2226,19 +2312,29 @@ mod tests {
             .expect("write RTF fixture");
 
         for (path, expected_kind) in [
-            (&pdf_path, crate::skills::doc_distill::DocumentSourceKind::Pdf),
-            (&rtf_path, crate::skills::doc_distill::DocumentSourceKind::OfficeOrBook),
+            (
+                &pdf_path,
+                crate::skills::doc_distill::DocumentSourceKind::Pdf,
+            ),
+            (
+                &rtf_path,
+                crate::skills::doc_distill::DocumentSourceKind::OfficeOrBook,
+            ),
         ] {
-            let PreparedDocumentReview::Chapters(chapters) = prepare_document_review_selection(path)
-                .await
-                .expect("admitted large document preparation")
+            let PreparedDocumentReview::Chapters(chapters) =
+                prepare_document_review_selection(path)
+                    .await
+                    .expect("admitted large document preparation")
             else {
                 panic!("large extracted document must require chapter selection");
             };
             assert_eq!(chapters.source_kind, expected_kind);
             let original = std::fs::read(path).expect("read exact fixture bytes");
             assert_eq!(chapters.source_bytes, original.len() as u64);
-            assert_eq!(chapters.source_bytes_sha256, hex::encode(sha2::Sha256::digest(&original)));
+            assert_eq!(
+                chapters.source_bytes_sha256,
+                hex::encode(sha2::Sha256::digest(&original))
+            );
             let ranges = chapters.discover_chapters().expect("chapter discovery");
             assert!(!ranges.is_empty());
             let selection_json = serde_json::to_string(&DocumentChapterSelectionReceipt {
@@ -2250,38 +2346,75 @@ mod tests {
                 source_bytes_sha256: &chapters.source_bytes_sha256,
                 extracted_text_bytes: chapters.extracted_text_bytes,
                 extracted_text_sha256: &chapters.extracted_text_sha256,
-                chapters: ranges.iter().enumerate().map(|(chapter_index, range)| DocumentChapterListEntry { chapter_index, range }).collect(),
-            }).expect("selection receipt JSON");
+                chapters: ranges
+                    .iter()
+                    .enumerate()
+                    .map(|(chapter_index, range)| DocumentChapterListEntry {
+                        chapter_index,
+                        range,
+                    })
+                    .collect(),
+            })
+            .expect("selection receipt JSON");
             let selection: serde_json::Value = serde_json::from_str(&selection_json).unwrap();
             assert_eq!(selection["chapter_selection_required"], true);
             assert_eq!(selection["source_bytes_sha256"].as_str().unwrap().len(), 64);
-            assert_eq!(selection["extracted_text_sha256"].as_str().unwrap().len(), 64);
+            assert_eq!(
+                selection["extracted_text_sha256"].as_str().unwrap().len(),
+                64
+            );
             assert!(selection.get("text").is_none());
             assert!(!selection_json.contains(marker));
 
             let selected = chapters.select_chapter(0).expect("selected chapter");
-            assert!(selected.text.contains(marker), "selected range must exercise the raw-text exclusion assertion");
+            assert!(
+                selected.text.contains(marker),
+                "selected range must exercise the raw-text exclusion assertion"
+            );
             let document = crate::skills::doc_distill::distill_doc(
-                crate::media::Extraction { text: selected.text.clone(), metadata: serde_json::Value::Null },
+                crate::media::Extraction {
+                    text: selected.text.clone(),
+                    metadata: serde_json::Value::Null,
+                },
                 selected.source_kind,
                 selected.source_bytes,
                 selected.source_bytes_sha256.clone(),
-            ).expect("selected extracted chapter distillation");
+            )
+            .expect("selected extracted chapter distillation");
             let rendered = document.render_operator_review();
-            let review_json = chapter_review_receipt_json(ChapterMetadataReceipt {
-                chapter_index: selected.chapter_index,
-                range: &selected.range,
-                source_bytes: selected.source_bytes,
-                source_bytes_sha256: &selected.source_bytes_sha256,
-                source_kind: Some(selected.source_kind),
-                extracted_text_bytes: Some(selected.extracted_text_bytes),
-                extracted_text_sha256: Some(&selected.extracted_text_sha256),
-            }, &rendered).expect("chapter review receipt JSON");
+            let review_json = chapter_review_receipt_json(
+                ChapterMetadataReceipt {
+                    chapter_index: selected.chapter_index,
+                    range: &selected.range,
+                    source_bytes: selected.source_bytes,
+                    source_bytes_sha256: &selected.source_bytes_sha256,
+                    source_kind: Some(selected.source_kind),
+                    extracted_text_bytes: Some(selected.extracted_text_bytes),
+                    extracted_text_sha256: Some(&selected.extracted_text_sha256),
+                },
+                &rendered,
+            )
+            .expect("chapter review receipt JSON");
             let review: serde_json::Value = serde_json::from_str(&review_json).unwrap();
-            assert_eq!(review["chapter"]["source_kind"], serde_json::to_value(expected_kind).unwrap());
-            assert_eq!(review["chapter"]["source_bytes_sha256"], selection["source_bytes_sha256"]);
-            assert_eq!(review["chapter"]["extracted_text_sha256"], selection["extracted_text_sha256"]);
-            assert_eq!(review["chapter"]["extracted_text_sha256"].as_str().unwrap().len(), 64);
+            assert_eq!(
+                review["chapter"]["source_kind"],
+                serde_json::to_value(expected_kind).unwrap()
+            );
+            assert_eq!(
+                review["chapter"]["source_bytes_sha256"],
+                selection["source_bytes_sha256"]
+            );
+            assert_eq!(
+                review["chapter"]["extracted_text_sha256"],
+                selection["extracted_text_sha256"]
+            );
+            assert_eq!(
+                review["chapter"]["extracted_text_sha256"]
+                    .as_str()
+                    .unwrap()
+                    .len(),
+                64
+            );
             assert!(review["chapter"]["range"]["end_byte"].as_u64().unwrap() > 0);
             assert!(review["chapter"].get("text").is_none());
             assert!(!review_json.contains(marker));
@@ -2295,7 +2428,9 @@ mod tests {
             .expect("write small PDF fixture");
         for path in [&small_rtf_path, &small_pdf_path] {
             assert!(matches!(
-                prepare_document_review_selection(path).await.expect("small document preparation"),
+                prepare_document_review_selection(path)
+                    .await
+                    .expect("small document preparation"),
                 PreparedDocumentReview::Full(_)
             ));
         }
@@ -2305,8 +2440,11 @@ mod tests {
     async fn admitted_truncated_rtf_refuses_chapter_selection() {
         let root = tempfile::tempdir().expect("temp root");
         let path = root.path().join("capped.rtf");
-        std::fs::write(&path, format!("{{\\rtf1\\ansi {}}}", "x".repeat(8 * 1024 * 1024)))
-            .expect("write capped RTF fixture");
+        std::fs::write(
+            &path,
+            format!("{{\\rtf1\\ansi {}}}", "x".repeat(8 * 1024 * 1024)),
+        )
+        .expect("write capped RTF fixture");
         let error = match prepare_document_review_selection(&path).await {
             Ok(_) => panic!("truncated extraction must not enter chapter selection"),
             Err(error) => error,
@@ -2642,9 +2780,9 @@ mod tests {
                 range: &selected.range,
                 source_bytes: selected.source_bytes,
                 source_bytes_sha256: &selected.source_bytes_sha256,
-        source_kind: None,
-        extracted_text_bytes: None,
-        extracted_text_sha256: None,
+                source_kind: None,
+                extracted_text_bytes: None,
+                extracted_text_sha256: None,
             },
             &rendered,
         )

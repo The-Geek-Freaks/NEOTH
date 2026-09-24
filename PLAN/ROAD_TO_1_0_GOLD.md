@@ -8,6 +8,14 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W842 hosted extracted-chapter formatting (2026-09-24):**
+Preflight36022122667 exported a two-file format patch for5f21bc06. Root verified
+the archive, both inner digests, source HEAD and all old/new full Git blobs
+before applying it. No local formatter ran. Group1296run36022144878 and
+Core36022150044 retain the preceding behavioral source; no completion is inferred
+from formatting. ROAD1072checked250open2partial stays unchanged.
+Evidence: docs/verification/gold-wave842-hosted-format.json.
+
 **W840 extracted-document chapters; W841 core acceptance (2026-09-24):**
 Large PDF/Office/book text now enters bounded chapter discovery after the
 existing extractor, through the shared /skill-from-doc review preparation.

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T15:40:20.2815691Z",
-  "validationStatus": "W840PDFOfficeextractedchaptersSTATICAPPROVED;Group1296native1532hostedpending;W841Core033allPASS",
+  "capturedUtc": "2026-09-24T15:43:20.5766090Z",
+  "validationStatus": "W842verifiedhostedformat;W840Group1296/Corestillactive",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1827,6 +1827,11 @@
       "sha256": "97D48919E0A2B6C389B2C8AE14FA97F43D1C3EC55C5F47F797B4D58070EBDF2C"
     },
     {
+      "path": "docs/verification/gold-wave842-hosted-format.json",
+      "bytes": 749,
+      "sha256": "FC7FFB9AC3DDCF677AF9F37897A621FDD356E9E69A1B8BA4661FD9FD540DF4F5"
+    },
+    {
       "path": "docs/verification/managed-browser-cft154.json",
       "bytes": 2497,
       "sha256": "80443D2F6E6A6E226F1617F7F5463017071D9D21130D1FCD116470F147455337"
@@ -1983,18 +1988,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 269006,
-      "sha256": "68DB4791B20B1C316074E213125EF0CCF2248C8D7ECC175F2BDF8250940D346C"
+      "bytes": 269503,
+      "sha256": "A2B9A4DCD51B300348E153C34C302D46894BB63A04CC355F2F4892A40C1C38EB"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1280334,
-      "sha256": "4BB5C270343A15EBCB12E476DECE0A05F558BE9E2DDD3325E9AF920085DA6387"
+      "bytes": 1280831,
+      "sha256": "62FC9BAE23BF88443B1397A779E006DB9C6A56CA2990DF25198AD910F307BF33"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1888355,
-      "sha256": "6B8AA2A561A9BFC2AD51F2C0879CDF16B0037A7D17381F59625AE1994841943D"
+      "bytes": 1888852,
+      "sha256": "F328144AD4DEFF6E2389024165B6D472A1E81C0B328DC0836F1AF9F75C004CA4"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -3138,8 +3143,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/skills.rs",
-      "bytes": 175857,
-      "sha256": "C1FAB0244909254511223D6BD874FF77FF38F46BB8D4FF5D96514BAEE2FF21C3"
+      "bytes": 178050,
+      "sha256": "9E532012D68EBBF48DEA683FB3E7975A92443470FFC58279A0B8F8A1617B310F"
     },
     {
       "path": "SRC/neothd/src/cli/status.rs",
@@ -4548,8 +4553,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/doc_distill.rs",
-      "bytes": 77316,
-      "sha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4"
+      "bytes": 77707,
+      "sha256": "E0971FEA33B966477CB8C73039B309FFF337E037C9B50A28B9C69D6C69C4E1EA"
     },
     {
       "path": "SRC/neothd/src/skills/generated_scan.rs",

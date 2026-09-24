@@ -1,0 +1,22 @@
+{
+  "schema": "neoth-hosted-format-admission/v1",
+  "sourceHead": "5f21bc065bb355c19dfbcb9d275a0b56cc0f3c52",
+  "run": 36022122667,
+  "artifactId": 10817176732,
+  "zipSha256": "80ed4527dba7d60decab3a204596869944bbde9e3953dc30a35d0a369f96588d",
+  "patchSha256": "2e26319e44579f62bf09b6f911619079620a23d133e6b1d03eff5d90d2bdd74e",
+  "paths": [
+    {
+      "path": "SRC/neothd/src/cli/skills.rs",
+      "old": "ba6ad5cffc27479d867547b8f1d82dade0bc4262",
+      "new": "6d08d5dce364945551f3774fd3209fa3698c18bc"
+    },
+    {
+      "path": "SRC/neothd/src/skills/doc_distill.rs",
+      "old": "f6425d09fe4cacfd92029ba9818e59ad397a3a80",
+      "new": "4f0f50b2bc02eaa2806d72b81c928b6c36e6d065"
+    }
+  ],
+  "verified": true,
+  "localFormatterRan": false
+}
