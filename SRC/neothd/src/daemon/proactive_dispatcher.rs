@@ -1614,7 +1614,8 @@ mod tests {
             )
             .unwrap();
         let corrected_segment = tmp.path().join("oversized-routing-corrected.wal");
-        let (corrected_writer, corrected_join) = crate::wal::spawn(corrected_segment.clone()).unwrap();
+        let (corrected_writer, corrected_join) =
+            crate::wal::spawn(corrected_segment.clone()).unwrap();
         assert_eq!(
             run_proactive_delivery_tick(
                 tmp.path(),
@@ -2642,7 +2643,10 @@ channel_accounts:
             routing_target_for_item(&routing, &queued),
             RoutingTargetForItem::PersistedAccount
         ));
-        assert_eq!(canonical_target_channel(None, &queued.channel).unwrap(), "telegram");
+        assert_eq!(
+            canonical_target_channel(None, &queued.channel).unwrap(),
+            "telegram"
+        );
     }
 
     #[test]

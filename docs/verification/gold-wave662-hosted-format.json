@@ -1,0 +1,31 @@
+{
+  "schema": "neoth-w662-hosted-format/v1",
+  "patchSha256": "8788A4FF13ED70479D6FA66BB451A7AC319D0A3A267A97EEF4F841FFEA316B7F",
+  "blobs": [
+    {
+      "old": "0cd7c0337aaef2fe87948df788be14b1ccff136c",
+      "path": "SRC/neothd/src/channels/routing.rs",
+      "new": "76aaee9e33a952fb440952ab4a1d0063023fd586"
+    },
+    {
+      "old": "202717c6b44391529a7a9aa382543b6ef9bab6bd",
+      "path": "SRC/neothd/src/cli/proactive.rs",
+      "new": "4602c6e0749ab32698030cab3a36e2131b2aa9d4"
+    },
+    {
+      "old": "10bcabff6c42ff1ac23f90784d05a958bc0393ba",
+      "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "new": "44daf9bd4c4d8fe997584fcf2c16748d35fe06d1"
+    },
+    {
+      "old": "368be790d974e50cc6e441c2433caadd35fe40f4",
+      "path": "SRC/neothd/src/skills/store.rs",
+      "new": "a0f0d1fa4d5a29357f1cd26a291e7e8a6b3a3747"
+    }
+  ],
+  "localFormatterRan": false,
+  "source": "009cabbf64eb5678a27b355d397d5d5ce6618b8d",
+  "zipSha256": "b9dc5685feb3e2d45738e1636ffa8aadf43eb5aae024f5120507ed09346d193b",
+  "run": 35959079194,
+  "artifact": 10791149541
+}

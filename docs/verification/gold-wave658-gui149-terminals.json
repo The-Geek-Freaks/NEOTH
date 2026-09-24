@@ -1,0 +1,1404 @@
+{
+  "schema": "neoth-w658-gui149/v1",
+  "run": 35956046048,
+  "source": "b71ebba3a9756f8b7bd30e44a86980a1187a949b",
+  "status": "SOURCE_ADMITTED_PASS",
+  "gui149": {
+    "expected": 149,
+    "executed": 149,
+    "passed": 149,
+    "failed": 0,
+    "missingTerminal": 0,
+    "guiSourceBindings": 24,
+    "inputBindings": 5,
+    "totalBindings": 29
+  },
+  "artifacts": [
+    {
+      "id": 10791537560,
+      "name": "w228-linux-gui-fixtures-log-b71ebba3a9756f8b7bd30e44a86980a1187a949b",
+      "apiDigest": "sha256:251ebf3294728fb9bb24842d79a4ed2b2152efab5e3a050d160482c11a5a31ba",
+      "localZipSha256": "251ebf3294728fb9bb24842d79a4ed2b2152efab5e3a050d160482c11a5a31ba",
+      "verified": true
+    },
+    {
+      "id": 10791512711,
+      "name": "w228-linux-gui-fixtures-receipt-b71ebba3a9756f8b7bd30e44a86980a1187a949b",
+      "apiDigest": "sha256:979f47b02048040b68e909c98970b49168f9998f6fbe7154a21e0e394a8b0332",
+      "localZipSha256": "979f47b02048040b68e909c98970b49168f9998f6fbe7154a21e0e394a8b0332",
+      "verified": true
+    },
+    {
+      "id": 10791278469,
+      "name": "w228-linux-gui-fixtures-source-b71ebba3a9756f8b7bd30e44a86980a1187a949b",
+      "apiDigest": "sha256:29a60bb563080f2b36c54a376de4733526267e9128706427c23f41d03b651855",
+      "localZipSha256": "29a60bb563080f2b36c54a376de4733526267e9128706427c23f41d03b651855",
+      "verified": true
+    }
+  ],
+  "sourceBindings": [
+    {
+      "path": "SRC/neothd-gui/src/chat_reasoning.rs",
+      "blob": "5e6666e5e317f29bbb94a58bb9006e176b2a17ce",
+      "sha256": "561d447519555e023fc0fc4a3675b26636989792bd10cd6101b29c970ffaaea9"
+    },
+    {
+      "path": "SRC/neothd-gui/src/chat_response_feedback.rs",
+      "blob": "c8b45d206e4b30d630d0918ae67e60cee50db3fe",
+      "sha256": "d363b974b807a0f4eebdaca0296bf8e1e8f5db95f457599131bcec95895f2fda"
+    },
+    {
+      "path": "SRC/neothd-gui/src/chat_stream_phase.rs",
+      "blob": "c768af1745df268c2e45a4599ec7f423122c1bb5",
+      "sha256": "280f37d2500fe57cfa421f978d283ed749b52e9c72250b7119035c83bceda8f6"
+    },
+    {
+      "path": "SRC/neothd-gui/src/citation_gui.rs",
+      "blob": "fefbfdcaa522c08234f7bd2f0b7913c7681cd584",
+      "sha256": "daf70eccc97106319f68524ee8b173d734c4a9338abe572e242c0373789826ac"
+    },
+    {
+      "path": "SRC/neothd-gui/src/coding_controller.rs",
+      "blob": "73b659d4f6a153acdfbab2beb414b745d0feaf66",
+      "sha256": "3ed2cd5be7f325761922c7151e03cc53b6f61d5c32c49450e6c83f8e140a5336"
+    },
+    {
+      "path": "SRC/neothd-gui/src/gui_action/ouro_q8.rs",
+      "blob": "4d34dc10a383f7f5db109441a35208c9eeefebec",
+      "sha256": "8a6164efb6434b6ba9caadd92b5e31548be3867e6c932433f23a97a23f125948"
+    },
+    {
+      "path": "SRC/neothd-gui/src/gui_chat_bridge_controller.rs",
+      "blob": "9a66c02ee7469d0a7f62b2d8a81fef68fdcfbb95",
+      "sha256": "a479d6af3d32cfbc1599a62f4588bbde0b8fb266807a39034f01977c1a1cf1e3"
+    },
+    {
+      "path": "SRC/neothd-gui/src/main.rs",
+      "blob": "e15708e96634c4541ac8bdb961906d9ed400460f",
+      "sha256": "fcf3214da9d6a99af3a8b9c34eee4e06e7479cdc41da4026912dcc02b8de094f"
+    },
+    {
+      "path": "SRC/neothd-gui/src/ouro_gui.rs",
+      "blob": "f5bf3bbb4580dd309bac7996f7a24ca61cac2f9e",
+      "sha256": "8ccbed4c9249eeef0e5c008b87fdef3c2169315191330a9676fb3dc831b8cc3e"
+    },
+    {
+      "path": "SRC/neothd-gui/src/panel_logic.rs",
+      "blob": "6bcd0468e6bcc5cf0014610ef68995d13ef7d495",
+      "sha256": "8482856452414a3ec61e20a069317a2f901d4d95eb57441691bd04194a5bce1c"
+    },
+    {
+      "path": "SRC/neothd-gui/tests/gui_chat_bridge_public_api.rs",
+      "blob": "4819b614deae9550d2340b9a5e132e11922a0c85",
+      "sha256": "b0b3c160376ad869fca6bb92937cace6261b5c5c09f4862761e214d19e923e06"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/chat.slint",
+      "blob": "8fcb49123283f93c16017c075928d4f211bb5759",
+      "sha256": "c96a4b63b1e1b0506e1a21a29cce1f83616d194f158a1673eca1b4346810dd2b"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/citation.slint",
+      "blob": "e4093144ac60a950e555298eb2500592a5e0dfbd",
+      "sha256": "d50c1a0b7e87a3c03d1fe89f46cd35aee08aee73d00b5ed0c4d5badadc968668"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/main.slint",
+      "blob": "37622ca1054ae04bb35dd23bc3807f27a4570c86",
+      "sha256": "bf507e76100283d4fb210e1599e4197230974f068538f863a6256251f192c3f1"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/overlay.slint",
+      "blob": "8e7b0647940925bcfb2ea9660c12b1389416270a",
+      "sha256": "cf1101496e4c3da3d3d8b3a799e96313c20a18ab5e50efaed2818cabc41a3cae"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/tabs.slint",
+      "blob": "aa1b83ce8187ec5d7982462b093c2654f651281c",
+      "sha256": "a0af943faa3aa9c42b2c3862502fd53781c79af145445e2f39fa8a227ed98d32"
+    },
+    {
+      "path": "SRC/neothd-gui/src/wizard_session_controller.rs",
+      "blob": "3d5e41261270c1053b505817b6d1b47594066d88",
+      "sha256": "bcb65a6a479ad2cffa823b77e089857b4ad6ff39ceb360ea10c715558a927ff0"
+    },
+    {
+      "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
+      "blob": "6616090c5a203a4da3f76011f47710f8412b15c5",
+      "sha256": "9614e23d8d8bf435b37bbf7b2e5446afdacdc7e6aa499e607245c3cd1e9dcb04"
+    },
+    {
+      "path": "SRC/neothd-gui/src/gui_action.rs",
+      "blob": "9ce964c9369eeddb63ec85c4945f0dfbbd2708bc",
+      "sha256": "3b438b538f4ec3e822d31d73f9f27164eb7ccd281b7bf108027a40f394c7ab46"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+      "blob": "2a1cb75f891678d2d9eee6fe513fb17125c5fbb8",
+      "sha256": "7a2ce9b629be8e71b9b05323e32519cc86db10694b5d1cd78f2fc93e9a130b2d"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_bridge.rs",
+      "blob": "789db2102c877dd2f1e98695014e60ad5f82e14d",
+      "sha256": "44d4c241ac248249afc4f510ab1dbbe1928209893eea604b5d76f04dcfb75597"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/chat_runtime.rs",
+      "blob": "397489b41f6d994d67471e7676922e754d886b26",
+      "sha256": "a4a95415e3b7733ebf0600d683da7d50d919779495f9fa2fcdbb0fe026346658"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "blob": "66bda01ac4738484ce687adf582b571329ebeec2",
+      "sha256": "01a8c43ed074eb29f2bcd1562dd57bca44464c260e79ecb491f2637e7ec7d414"
+    },
+    {
+      "path": "SRC/neothd-gui/src/packaged_chat_probe.rs",
+      "blob": "907e82eec3cf43cb88bf0e0d692aae3475db8316",
+      "sha256": "b2485af0eaa8f0124dbd87b63ada53ab98039f2c2dd1525e92484cf2aba54173"
+    }
+  ],
+  "inputBindings": [
+    {
+      "name": "matrix",
+      "path": "docs/verification/gold-wave95-96-test-matrix.json",
+      "blob": "b9c3a474a6c270ae92bbd62bd5be9dea303dbfb6",
+      "sha256": "2e9576080c114c3cc7b6cefb7085585a5fe17ae4f04d1845349dab287704f4ed"
+    },
+    {
+      "name": "sourceManifest",
+      "path": "docs/verification/gold-wave95-96-source-manifest.json",
+      "blob": "0b6108bc688187c8b5d525fbdb36b841a15ff017",
+      "sha256": "72b9f348cf0570e4ca6f8ac2576181b3e3f69a1b310739561e337a57ab5fc982"
+    },
+    {
+      "name": "cargoLock",
+      "path": "SRC/Cargo.lock",
+      "blob": "a49b0e51cbc8d33d1f351352e856fc89961f02e1",
+      "sha256": "722ee0446dbac05b3e7d4eb9d44c7174e98e6e6fff5b633b5a30993edbcb61f0"
+    },
+    {
+      "name": "guiCargoToml",
+      "path": "SRC/neothd-gui/Cargo.toml",
+      "blob": "4f00623499277291ee417933c54331f392340f0e",
+      "sha256": "296ef213746c9dd31cd818112ba546f21425b870120181058152b277aead6261"
+    },
+    {
+      "name": "workflow",
+      "path": ".github/workflows/gui-linux-fixtures.yml",
+      "blob": "985d74b71933025d9e7c563ce87b2b081039701b",
+      "sha256": "a8536e8fcbfc6d656c15993e4f04b76bec4d284fb91e38ca64c9beb489100b11"
+    }
+  ],
+  "terminals": [
+    {
+      "index": 1,
+      "test": "coding_controller::tests::gui_reserved_start_reaches_real_provider_worker_with_prepared_code_map_context",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "C2C45F710059E5D15C6DE52225E7DCF37E0F9786F28CA2D6CAE859D4684FD817",
+      "executionSha256": "59A8436C48C6DE98F3B8469A41C42507C63E50054CB7507C77A9CDFE12F41717"
+    },
+    {
+      "index": 2,
+      "test": "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "F8C7BBACF5F95F8361A3A8D0EBCD8DDCA186193F8CB393CA5A0D079F50F789FD",
+      "executionSha256": "FE13BF24E8B55045C30E8D6F086510510E5F59B0D83A97816B8FEB192756E82B"
+    },
+    {
+      "index": 3,
+      "test": "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "E5BCFAE618DC2A70C1E9BCE95C309F025287B71B0A4827D17B052614CF62BEB6",
+      "executionSha256": "0007744D4229B9A725FD05718A878D139BD33ECEFF8F373C522E75421F9A55BF"
+    },
+    {
+      "index": 4,
+      "test": "w58_gui_callback_runtime_tests::w73_buddy_cancel_joins_real_blocked_provider_without_success_repaint",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "7261C57B29FB39BB84B138F00198478E60BA9ACFCFBE4B08F327D8E66E3D0DED",
+      "executionSha256": "16488D9C376FC33EF606CA65C4288D5F01EDFFBC80DDB78C0B94D85C70F79023"
+    },
+    {
+      "index": 5,
+      "test": "w58_gui_callback_runtime_tests::w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "1FBA89C3D9B7874B2DDCD42F513840C8E700DECC93560676987631EDF1B26751",
+      "executionSha256": "A57F300A3DB585BE889A28AF00D0CBA6E0E409395414E418BE8E71FEB5751329"
+    },
+    {
+      "index": 6,
+      "test": "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "D0B4631C584D8EA30DDCF87582E3B7D44BD0CE45B06730C8E68F5C32B7EC0050",
+      "executionSha256": "EC14317C86BF3111D370D7D520AE2422B0BA384966686E65647A30A4F6D5C4C8"
+    },
+    {
+      "index": 7,
+      "test": "panel_logic::tests::lifecycle_impact_identity_uses_the_redacted_digest_and_rejects_another_root",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "34FB876B310223B1AB6EFAFA92EBAB0FD83CFF86A2B900CBF3A2A38B89A694CF",
+      "executionSha256": "F5F39AE285B4F96C3D50A7BC1B426D415825267884B2C7753E71C6260DC77084"
+    },
+    {
+      "index": 8,
+      "test": "panel_logic::tests::private_channel_builder_preserves_typed_fields_without_cli_flags",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "50882C7B85FB7AAF60A483BFE3886BDC9D6E172DB786701D8A6FF8DA80D01B70",
+      "executionSha256": "03508F36ECA9D9F9D8ED9EF9E06198793ABD7F1A1E1DC9616CBC3F18BEFF9E3B"
+    },
+    {
+      "index": 9,
+      "test": "panel_logic::tests::private_channel_builder_routes_matrix_store_path_without_changing_secret_slots",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "B1E562EA0FA4DA00A033BC7DC17D03C5A490E29C203894D1A6E8C7DDC09DF697",
+      "executionSha256": "B71033DCB794CAF0EC0015BDFDB931DB2FDFF054809AF15270FBD8A71FE2F94A"
+    },
+    {
+      "index": 10,
+      "test": "tests::matrix_store_path_request_uses_private_stdin_without_path_or_secret_in_argv",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "971EFA3B7FBA5833259C84A0527B83B3AB20E2D3F1AFE0E6AD99EC3B17D6E801",
+      "executionSha256": "BB0EECCF588F01B5F4F2A37B64C62CCD04DCB721866229A57003C6A1397B67F5"
+    },
+    {
+      "index": 11,
+      "test": "panel_logic::tests::private_channel_builder_routes_line_webhook_port_as_typed_private_stdin_state",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "9D6B8F735E1CCA30DB6C158B7AD717CB6AB05D878FC073120B2FE450DE9CC2A0",
+      "executionSha256": "ED63343615ADBE5F7D486A82EF9E02FAD3DC512AD5DCE8CC2F49BEEB443E7BFE"
+    },
+    {
+      "index": 12,
+      "test": "tests::line_port_request_uses_private_stdin_without_port_or_secrets_in_argv",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "4FAB46390A7D07058D331A2A6B5EADAB63ACA852A0EDB621F97EE61A5867470A",
+      "executionSha256": "DA54E1978768B1C41BA4F931EAB4D64C5638EA2186890DC0D38A00AB467A0214"
+    },
+    {
+      "index": 13,
+      "test": "panel_logic::tests::private_channel_builder_routes_irc_public_settings_without_weakening_account_requirement",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "5CB3864F762D2101EF2BCAFE14C5D6AA3CF528FDC4A02FA82DC25CF0BA6659D2",
+      "executionSha256": "1591234D7FBD7658777F821A72D87A89FAF4FBE75D1FEDDD331F95FF1B04B14D"
+    },
+    {
+      "index": 14,
+      "test": "tests::irc_public_settings_request_uses_private_stdin_without_settings_or_secret_in_argv",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "BB97F12932919E2A0FB18AF9D28672CFEAE46F4E238A2AC6A547FE05DEADE281",
+      "executionSha256": "2E960A228DCB09661C9357A23995B7F891C110548EDD2E47A0D795A56DC10AB5"
+    },
+    {
+      "index": 15,
+      "test": "panel_logic::tests::named_telegram_account_retirement_command_and_ack_bind_the_exact_account",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "C9412F25583D30439E6828D94D1B6CE508381F43017561E43340BFDF2664CAEC",
+      "executionSha256": "3F65ED352B408E9DB97879B03B8192BA36545C5FE2727D317D3A63A40E9718E6"
+    },
+    {
+      "index": 16,
+      "test": "panel_logic::tests::required_sender_form_slots_map_to_private_allowed_sender_and_reject_blank",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "9DD42AD46B901E42C7D3D43BA5F5C3C40E987FE140FC0AD053F2CB83AC618208",
+      "executionSha256": "BDA84B9B846AF7331404D7A574B95C987A85B0A6274F46F544721A14BCD18657"
+    },
+    {
+      "index": 17,
+      "test": "panel_logic::tests::bluebubbles_chat_guid_form_slot_trims_or_clears_without_weakening_sender",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "AB6FCA3436B80FE0E3284BACE4F80A4BB84EB42E227FA6B334A3080701A38EBF",
+      "executionSha256": "4482E441C51071C857868EF7C0DCBAE4A0B97D77871651394FA7F127342E687A"
+    },
+    {
+      "index": 18,
+      "test": "panel_logic::tests::parse_channel_status_requires_boolean_dm_pairing_for_mapped_accounts",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "CBE35E341798AFE6D11189F7B10871E321B0FD5D3E6C931D7679F13EE10C18FD",
+      "executionSha256": "187DD405AFCD19BCB22D6A467C35F024E258998F53A4E94E0FCC3A7B93B90A38"
+    },
+    {
+      "index": 19,
+      "test": "panel_logic::tests::named_telegram_account_dm_pairing_command_and_ack_bind_the_exact_policy",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "752EBE74BEE14A4239C1C68D6ED761B8DFB6619B03A00E5FFA01F4D39C07C2EB",
+      "executionSha256": "CCEF27A26F288B50E730A0A9219241E579FB431071C4628E15D4FF4533B6BFD9"
+    },
+    {
+      "index": 20,
+      "test": "gui_action::tests::skill_autonomy_receipts_are_strict_and_bind_exact_desired_config",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "6B9B5CDD4F0CE13A1A2C770EE551341B7C15120957A9D2BD584BEAC6ED0DCADE",
+      "executionSha256": "FC8157F55230B6024BAB61F46751639A966CA798ED691E9B6E286201445EAA65"
+    },
+    {
+      "index": 21,
+      "test": "panel_logic::tests::parse_buddy_status_happy_path",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "B314C0F40BAC5EA3D4CCE68DAD38581092A2E51D664704BD7C0B7C284B76DF1B",
+      "executionSha256": "598DDCEF9F3994C86DAA3069F1A695A7DAEF5CAB6AF4500E1B85987592DE1D7D"
+    },
+    {
+      "index": 22,
+      "test": "panel_logic::tests::parse_buddy_status_rejects_malformed_or_lossy_payloads",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "13420D88C084DF52E25862259CA79E5E29F7D341E74C9B95C763845283F726BF",
+      "executionSha256": "59FE957342A1217A932A8A714DCA1F092BD6A1186FA88693A17E36BC9A9E2FBB"
+    },
+    {
+      "index": 23,
+      "test": "gui_action::tests::w142_selfimprove_accept_ack_requires_selected_current_evidence",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "8C9B7A3CBEB9EF3F5083B88F9827D56D76D217BA339541249452C2F519E1D2DF",
+      "executionSha256": "AC47B6E50403015C97B2E5B7ADCF4D6EC1B5DC4F274A71654512F8896F5D7BA2"
+    },
+    {
+      "index": 24,
+      "test": "panel_logic::tests::w142_selfimprove_review_projects_only_current_verified_evidence",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "B45CE9C110C9C8A228FE42E267AF16FB8D5702A6A606D4D7FCD70F371C97E702",
+      "executionSha256": "84C41BC20AABFC1EEB5C5C8257530DC48CC5292C2C0BB6C337D15F93971B0CA7"
+    },
+    {
+      "index": 25,
+      "test": "panel_logic::tests::w142_selfimprove_review_rejects_stale_or_mismatched_quality_without_false_success",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "F0756843EEB38E179C2F21EEC5EEAF09CDF8AF9FC9AE9A851EF7475C6E1AC78B",
+      "executionSha256": "E8E14A68B8FC38BBA87743C4FE3E9E48202E4434D151FE983D28A78B4D362538"
+    },
+    {
+      "index": 26,
+      "test": "panel_logic::tests::w142_selfimprove_review_rejects_missing_or_unknown_quality_fields",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "0E8E89135C89124E891002ED3BD49AE1221570EA9B86512B01CA4E67281A2D30",
+      "executionSha256": "BCC13B7A3625C281570C5ABC60B3629ED0F91A98B87EB8D27ACB3B6BFC5E6000"
+    },
+    {
+      "index": 27,
+      "test": "panel_logic::tests::w149_buddy_quality_rejects_partial_evidence_and_keeps_unavailable_explicit",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "A2C3623E76F94186411B4B4C7C7246190A2056CF8E2998C6BFEE2702826B03E0",
+      "executionSha256": "02AF9B3E94797C968491C65BAD8A945232DB2EBCC19EEC10892FF0E780BDD3A1"
+    },
+    {
+      "index": 28,
+      "test": "gui_action::ouro_q8::tests::accepts_verified_q8_even_when_configured_none",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "34F56D4E8838296B2B0596B960044F955171AE332AB0F86C9A6AE767C7F487FC",
+      "executionSha256": "FBFA76AA7613351C4ADEEBAAE54E6377E9DA72C9EC7F8457514D304CDBF9BD62"
+    },
+    {
+      "index": 29,
+      "test": "gui_action::ouro_q8::tests::accepts_typed_nonzero_failure_without_success_identity",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "71E3C6820C91C1CBAD60045D3AC04AB1B5C19073C14CF9993F2AA4F220C789F3",
+      "executionSha256": "4A1E75A20ECA67E22805AB0923692D1014FB075882C95183AF87EA730AC93072"
+    },
+    {
+      "index": 30,
+      "test": "gui_action::ouro_q8::tests::rejects_crossed_exit_and_verification_claims",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "D934FCA2EA418DB5E7D10DBF1ED706754BCDEADA1D9F2F18C535DFA72F6146EB",
+      "executionSha256": "848A443278732D3B622E953E17D4C951DCD635E353FA04FC7B1785B09BA768E6"
+    },
+    {
+      "index": 31,
+      "test": "gui_action::ouro_q8::tests::rejects_missing_nullable_key_and_unknown_fields",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "02F520CFAC4DDEE809E3FD058BE9B768C9E9BD4920D51CB5AD48FFD9759C3CF4",
+      "executionSha256": "46C46DFB4EBF23DB7F28597A6F212FAC19EB5513126DA146250C594AA9E32529"
+    },
+    {
+      "index": 32,
+      "test": "gui_action::ouro_q8::tests::rejects_duplicate_wire_keys",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "9163BDC1528D6221445BF77832BA069EC1BD0AA637536799D483179042B76337",
+      "executionSha256": "FA853F9F1B0C0D4AE756EAA465D70CE4BF315CF94183E401DD4D95445B1118D5"
+    },
+    {
+      "index": 33,
+      "test": "gui_action::ouro_q8::tests::rejects_wrong_loop_mode_and_context_claims",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "18054132D0183BEF19709C4F1312817739031EFED2C334057266D34030B71253",
+      "executionSha256": "D82CDE6C2D1FDBAF1ADF30BF7209E63C1DBA122E662B380B2DAA8362AB7D16DF"
+    },
+    {
+      "index": 34,
+      "test": "gui_action::ouro_q8::tests::rejects_success_data_on_typed_failure_and_normalizes_detail",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "1F1F91D0959B14B4E6FE84C25E7B25F58F3CDF7ED346557955E66AA68EDF5534",
+      "executionSha256": "CFD18E0138F612B9F613A8790DE5FCB82BBD4919EA452ABF58FFB223BF45A8B1"
+    },
+    {
+      "index": 35,
+      "test": "gui_action::ouro_q8::tests::capture_receive_returns_while_the_reader_is_still_held",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "014A93FC230E73A3393977874F96ABAC3F0C268505465AF8A379706379FBCD3D",
+      "executionSha256": "6CB566A0AB47048B8D8565F6AC9386F6A6D12D78EC621BB5B54436D42C06B1E0"
+    },
+    {
+      "index": 36,
+      "test": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_is_grant_bound_and_never_enters_visible_reply_or_preview",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "D169B25109A745A94545C57694A6B840320CB233E5156D0FEDFD19DDE12704E7",
+      "executionSha256": "D8BB0459977C05E6E0176AEF3F4425BE44C4BA8DE263A90A476EA6A3F742A9CC"
+    },
+    {
+      "index": 37,
+      "test": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_is_bounded_zeroized_on_terminal_and_uses_an_independent_sequence",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "9CF83023D93B25F9500659D81F500384518A38A543F5888EE3DCD27CF0779219",
+      "executionSha256": "992CC15D5845F7FB51C85CD50A054294DCDFC6AD40338EEB66FA503C4CBBDD60"
+    },
+    {
+      "index": 38,
+      "test": "chat_stream_phase::daemon_chat_presentation_tests::actual_redacted_terminal_zeroizes_and_rejects_later_delta",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "B8EA24D4D36CC777A5E8BF761C909EAE37C5F174119C4BB98149F9FDDC28F045",
+      "executionSha256": "8DE375FCDDA0FF972B3899D413A56E0385351F099E76656592654FF8341CEC43"
+    },
+    {
+      "index": 39,
+      "test": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_delta_state_and_checkpoint_are_rejected_after_provider_done",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "539C0EA2F8292407112A9A47CABD0CCB03B368F445EAB2B4DCC212C66A744919",
+      "executionSha256": "FCD41EC49399773F73633C02755BE14990E16240DCFFE4E8AE52E27E43CB6FA6"
+    },
+    {
+      "index": 40,
+      "test": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_buffer_rejects_bytes_beyond_sixty_four_kib",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "E3C59CA7D8D5C3FB6D36640FFDEEE3859096F58D0B622CB6ADEC78A12E6B5D82",
+      "executionSha256": "4A05E656953E9A2E9D831FDCEEB4DD79517A811FDF05DEBFB0D85EA5057A822F"
+    },
+    {
+      "index": 41,
+      "test": "chat_reasoning::tests::strict_sequence_limit_and_terminal_clear",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "397ACCD22879B415A783417D2CBE862ADABC0CE503507053E117E75DAEA6AA37",
+      "executionSha256": "D5EC89E8F0BD0D5718338C657ABB5AD472B66FEBCB469A1E68B3CF617E89178B"
+    },
+    {
+      "index": 42,
+      "test": "chat_reasoning::tests::duplicate_or_forged_frame_clears_the_exact_projection",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "491AF0AD30AD5EB157E812C0901EE392995DAF7C5509E869F68F9E17190D6545",
+      "executionSha256": "5A1DE8AD4C88F48B5C1C64F711353B1B69363259729566BC58D8AF078940467E"
+    },
+    {
+      "index": 43,
+      "test": "chat_reasoning::tests::default_off_counts_controls_without_retaining_text",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "71B2E8A91DFF73D02223B28CE5EC398158F27410627B1EDD4B18229E83B3BF89",
+      "executionSha256": "3F624F01729D2F263E3872B27BCA172748ADDD2C5B170CB8738DFDB625EDAE97"
+    },
+    {
+      "index": 44,
+      "test": "gui_chat_bridge_controller::tests::reopen_none_or_error_settles_only_the_current_main_handoff",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "FF54C38D2215C023AB61A20A7429ECB62335A7757727AFEF02EBDE2C6ECBD95F",
+      "executionSha256": "1D2A30DCF67EF47F0043A0A36D245B3E1E5ECD08A023B5BCBA58380D466B6464"
+    },
+    {
+      "index": 45,
+      "test": "gui_crate_has_non_authorizing_reducer_fixtures_and_explicit_consent_types",
+      "class": "neothd-gui::gui_chat_bridge_public_api",
+      "status": "passed",
+      "logSha256": "D9D628886BEDF57B32CDE6F84B6F416E57FECDEAD55795E176389B2F579CB547",
+      "executionSha256": "37A71B3230854FEB933ABC7BFA94C2C4127A54BA63B2E5A9D74FC954D5F6241F"
+    },
+    {
+      "index": 46,
+      "test": "gui_action::tests::targeted_gui_mutations_cannot_regress_to_the_unchecked_probe",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "262903524D86EC919DF9C9421A1B90B34192ADC33BB61C37008A2E7644621BFD",
+      "executionSha256": "D4CC94BED6B3BFAC8D4130F27D2123EB5F46DA507F96E1B85236C78F1637472D"
+    },
+    {
+      "index": 47,
+      "test": "citation_gui::tests::explicit_request_rejects_model_style_or_untrimmed_claims",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "6C1FB54A25E88CC89450B977DBE48083F8B9DB23C911F37277635BA6608EFF5E",
+      "executionSha256": "48E00611315C8511174E00A5F8F905367964BB7DF72179D7D40832320C1FCAEA"
+    },
+    {
+      "index": 48,
+      "test": "citation_gui::tests::provider_indices_are_closed",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "E5CD4C7A35E6CBF8E2051F8FF00E34D9C1E77F160C6D029C26437607B6C5912C",
+      "executionSha256": "9E3C6B6E31DB72A8090A6723258CD26B838F4D829424EA3B49501D9B02D4CFAF"
+    },
+    {
+      "index": 49,
+      "test": "citation_gui::tests::citation_child_policy_is_bounded_and_cancellation_is_shared",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "1D877AF3602B5C7E6E3AAED231B21788E7B76FA4A3548A1B61C3BB06F6546E95",
+      "executionSha256": "60BB8A095EE1989A245A561D4B8F188705FB920C76A0D6C4E1DF4E5AC2C5FA62"
+    },
+    {
+      "index": 50,
+      "test": "citation_gui::tests::gui_preflight_requires_the_current_request_hash_and_nonterminal_cache_state",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "DEA7D452E1F0CA578E373262228EF92E15CDE061CA064135FC17E27F8033AB29",
+      "executionSha256": "6D737FD801888785D04911EF0C5DFDDE8A86D40D441897632C4CA79E8C19DEF8"
+    },
+    {
+      "index": 51,
+      "test": "citation_gui::tests::gui_decision_receipts_reject_unknown_or_inconsistent_proofs",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "34D78C43EAB71A0C0144940E93E981AB6743CA7306B63F9D34746AF9A4CE190F",
+      "executionSha256": "B8B89B103E7049DBF86CB9AEFAA61656F92C45CFDBC246A027D550B85507CE1A"
+    },
+    {
+      "index": 52,
+      "test": "citation_gui::tests::gui_command_builders_bind_only_request_data_and_validate_ids",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "3FB06E92C70BCDD175B863182ACA096E6FD1D85BAE7C951CF7B57D184CBE31ED",
+      "executionSha256": "46F4A546CBF8271FBF8F669EA860A411AB236FF35B87142E952403C13130210F"
+    },
+    {
+      "index": 53,
+      "test": "citation_gui::tests::stale_or_historical_detail_never_survives",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "2ACE87BA53EF24167BA3505BF84549BC3EF607B71EAD2A2981A6297107AEE984",
+      "executionSha256": "86ADD3B6C40338A981BF602AF32BCC82854A24F80B91C49953CDF3FDA1F885D3"
+    },
+    {
+      "index": 54,
+      "test": "citation_gui::tests::typed_unavailable_cannot_carry_a_chip",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "DE06C59D5A4F4CC406FBE7BC480D4FCB55AACCB6218E65BF6FFB200580268F51",
+      "executionSha256": "E7BBFCC93E8EE265FDC6A51E70749F0CA535A14EA4E19F0EB4E5FFF325A2049E"
+    },
+    {
+      "index": 55,
+      "test": "citation_gui::tests::current_core_bound_result_opens_only_its_own_in_app_detail",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "CD4EAFB34BE71EB7983E81F9BDD9F29BF8DD43DDE3FCE82170578F3073B92CDD",
+      "executionSha256": "45222E4BC2673D929655B7E3EBD15F50368F128027417297E81F22AF922672CC"
+    },
+    {
+      "index": 56,
+      "test": "citation_gui::tests::forged_display_binding_and_replayed_child_result_are_rejected",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "D74541B07183D65D1B5137C5FCF2DACCE9C71434219945400B4AFBB821DB54F7",
+      "executionSha256": "15DA747AC58CBF904C7B523BAF1FD47452D47AF856C662EAF10466E00B7BE164"
+    },
+    {
+      "index": 57,
+      "test": "chat_throughput::tests::visible_event_rate_preserves_its_actual_unit",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "8F050BB449769D339600C31D3A43C8EEC186C99723F35306BEDC3ACDC10245BC",
+      "executionSha256": "0D42AEC17E694B96DE00761FD5B021C92EE88440C1D0C17BDC683A8CC4B37D9B"
+    },
+    {
+      "index": 58,
+      "test": "chat_throughput::tests::paused_state_requires_null_rate_but_keeps_the_explicit_basis",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "C176EE97710C6FF5E849CDE776AD1A13CC90EB1FC72C5AC4A2F24A03D2E6B20C",
+      "executionSha256": "12714E61304A6FB0ABB8351A5F36FF27D6776BEC763D346B8B1ACBD968214328"
+    },
+    {
+      "index": 59,
+      "test": "chat_throughput::tests::invalid_unit_and_final_usage_field_fail_closed",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "2B0C0427C678B905FB1FF4482BEF8B7EFE448CED695A5FBF2F308DBB257A4234",
+      "executionSha256": "D908DB0D0F4D5EC9CB5661AE1F3C8E4269CB71F0B2959349DC14F3B38C219857"
+    },
+    {
+      "index": 60,
+      "test": "chat_throughput::tests::stale_gap_and_provider_done_cannot_repaint_a_request",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "FA3EE644A2D0E3A9C5AF6A9A9F5EA0F998A1C01D3CB1086599EFBF47002FC6BD",
+      "executionSha256": "66113A61C13B09F17524D5EA7D949B65DC9D425C8B0F6FCE4777EA676FD4EAA7"
+    },
+    {
+      "index": 61,
+      "test": "chat_throughput::tests::cancellation_is_terminal_until_the_request_is_replaced",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "6F64A9C5CA76F0D9D20C8B3B26D5838D560A91FEBCD418177410131815B93D1E",
+      "executionSha256": "876A6D2332AB2C8A80F5B05A25E64E7024E222481C6535A6F271739E8A0A7281"
+    },
+    {
+      "index": 62,
+      "test": "chat_recall_chips::tests::accepts_only_reduced_ready_rows_without_any_text_or_identity",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "8AE6FDD6212BA038A68C3B367A82CB9E58AA11EA6E539023D74A491387856DFC",
+      "executionSha256": "FC50FC8FBFA09E302E24A94F4B74FE5073B000430FF5657A7F56841952053AD7"
+    },
+    {
+      "index": 63,
+      "test": "chat_recall_chips::tests::unknown_fields_and_non_warm_scores_fail_closed",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "641A1EC8C421207E98F0978761DDE4ECB156FD8A9617F5BB7F30C6BC8BF5658B",
+      "executionSha256": "F6D6B104EB8B8BD10737270DB4CE5C686E84969940AF1ECE932CFE980EFFD25B"
+    },
+    {
+      "index": 64,
+      "test": "chat_recall_chips::tests::wrong_binding_gap_and_over_cap_cannot_publish_rows",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "E9988034AF20EC7E80432363C17BFD0C9C8C40FE045793CA6DC7B31906EED06D",
+      "executionSha256": "EE8E1B3D65D0418B4C7FE7B6D55C7D73FACCA24E7385A71386DA6326637877AF"
+    },
+    {
+      "index": 65,
+      "test": "chat_recall_chips::tests::successful_boundaries_freeze_accepted_rows_but_late_frames_do_not_erase_them",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "E018EFBC62DE25CFD017F65367FADC371A1A311BFD6AF18515ED999897398329",
+      "executionSha256": "4484BA1058E6C46E3CBCF1C39C8BFBD9E2600A161DF8E39733B855F11EA865E0"
+    },
+    {
+      "index": 66,
+      "test": "chat_recall_chips::tests::final_sentinel_replacement_and_clear_remove_only_the_owned_snapshot",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "2D1BBFEFDC4A6B4E72CB867764C96F4AEF0E24A5986A8270AF39FA2190E0D149",
+      "executionSha256": "18FD670B1B894E7510F13EB06AAF08E04FCF05DF73FB4A810A1BBC41FEC0AEBA"
+    },
+    {
+      "index": 67,
+      "test": "chat_recall_chips::tests::no_recall_and_missing_are_explicit_empty_batches",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "5513130F993953EC1414C4DAC44FEE16845E3E83155A0695A0E0D2593121E7EB",
+      "executionSha256": "10AEDD57F52172E8A69BCEC7D6BEB8AFF726FD9F6F6CF606D27931A0C5F92180"
+    },
+    {
+      "index": 68,
+      "test": "chat_response_feedback::tests::target_becomes_actionable_only_after_done_then_exact_authenticated_frame",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "1B760FC5A6C4D9EC707FB51C3F08F3DA0E08BF2E43E5132743B6436F4FFBAC73",
+      "executionSha256": "079EBBD4DAE00C46FD23554099B3E7536FDC0F23B9F907BE30B9EE5B2EF6F21B"
+    },
+    {
+      "index": 69,
+      "test": "chat_response_feedback::tests::malformed_forged_and_unavailable_frames_never_publish_an_id",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "020D893C5DC31C08A67ACB796E31A26E5FB5449BEFCD5D77245F770B1D875F70",
+      "executionSha256": "3167FD7816F9D678B98BF870E283567248BF4284DA5C6C2DE907677A5A491DCE"
+    },
+    {
+      "index": 70,
+      "test": "chat_response_feedback::tests::action_is_singleflight_and_only_exact_fresh_readback_can_repaint_it",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "C8EF62B1411C489DCB9A3B9A0B58E1FE2BB9346D6D0B9A29AAEEEDC2E55C71B0",
+      "executionSha256": "EB4DB5AA6DFAC51723BC81150ECF9D660E4DBD764D69D8B0CC3096D1BF724392"
+    },
+    {
+      "index": 71,
+      "test": "gui_chat_bridge_controller::tests::daemon_terminal_target_reaches_the_shared_action_map_only_for_the_current_turn",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "B3D6D7DC718ACECE8DDFFAC1CCB2C02D923ACA334DAAA534CCE6743424D831CC",
+      "executionSha256": "38CDFD09C570E4BC734DB24C245EBECC386F319F64F110E487E89CF010548587"
+    },
+    {
+      "index": 72,
+      "test": "chat_recall_chips::tests::typed_daemon_batch_reuses_closed_validation_and_provider_done_freeze",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "0174ADDD0E84343220BD46AA3BD07B9AA0180910F83F45564AAADB97F56E2C12",
+      "executionSha256": "0F9423CEDECFD2627C2CC3481A8842D9A4659B9DAF7283A79C3EA0BC0FABEF5D"
+    },
+    {
+      "index": 73,
+      "test": "chat_stream_phase::daemon_chat_presentation_tests::recall_batch_is_cursor_bound_and_rejected_after_provider_done_or_cancel",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "7FD8BE8336C007A64E13BC8954992186CEF3192038C7D7279DAD28B42690ACF1",
+      "executionSha256": "5E0F4125069E4B200A31E08095886FA51DD05B12DC82E6E2AC7EB67BBAE3B603"
+    },
+    {
+      "index": 74,
+      "test": "chat_throughput::tests::typed_daemon_state_preserves_inner_sequence_and_terminal_fence",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "FC5FD03E21789C7550908AC54AEEE502653B58BF41ADC0AB03368E2310078679",
+      "executionSha256": "5E92CF4B0A052143AE349698ECC13E1C48786FCA4ECFCDA680D0A5ECEF0888CA"
+    },
+    {
+      "index": 75,
+      "test": "chat_stream_phase::daemon_chat_presentation_tests::throughput_state_is_cursor_bound_and_rejected_after_provider_done_or_cancel",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "9AA034BD0EDC5E082F1CCA7CAE487AA30C86FAE14B721BD52063EEB2662E58CB",
+      "executionSha256": "6305CE817F22566F0DF35F3A4E3EF851CCCEA69631A183CCA160C1E0B19FE230"
+    },
+    {
+      "index": 76,
+      "test": "panel_logic::tests::w184_vault_mirror_parser_rejects_forged_verified_receipt",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "20BFE7C3ED2F4242A490A8BEFC76A107BE830312FA37CD4294272CB8C63B0A13",
+      "executionSha256": "130B9DABE4D873D990606D9DF6662509EE4B692838F329CCBBE08D96B4E13B60"
+    },
+    {
+      "index": 77,
+      "test": "panel_logic::tests::w184_vault_mirror_parser_keeps_indeterminate_repairable",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "7DCE00617633E17CF9F5FCDF29EF729FA4ABB91938D27D4832B4E747B8A7150A",
+      "executionSha256": "AFD54D8D8F652004946EAD052FC1AE3A89325605622D659F9D4B9E6AFB1CF27F"
+    },
+    {
+      "index": 78,
+      "test": "vault_mirror_gui_tests::w184_repair_reducer_requires_fresh_matching_status",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "004312EC2B86ABC26529C9B01774267E1CD86D3341C3532907D6E0AE42A851C7",
+      "executionSha256": "F6FC4D84DD4C31C9920917D5EDC207449DF21855C77B3F8EDA1D72A864AFA876"
+    },
+    {
+      "index": 79,
+      "test": "panel_logic::tests::local_models_ready_requires_the_core_ready_variant",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "2CD3D4839B8AC45B340A612ECE220CC8747F5A905602D430FB989D296D4FF937",
+      "executionSha256": "BF232D1EEE391595F8B9F3AE9961BB9C48FBEE47EF21338980F150302F7AD3C5"
+    },
+    {
+      "index": 80,
+      "test": "panel_logic::tests::local_models_reject_unknown_readiness_schema",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "66ADF1258EFC1F67D65454FF53FBF5EC76B9144CD144138881E741F49810AF3B",
+      "executionSha256": "73E4F4AC3B2E41EB6B51E6C5D8B62199D7FAA8D1471B44C8FB3B2EF74B96C282"
+    },
+    {
+      "index": 81,
+      "test": "dream_cron_gui_tests::wizard_completion_is_daemon_acknowledged_and_fails_closed_on_loss",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "AE0C4F0778EC1DC8A98B0CB2D7A467AE1FF9666896DB5F76F09C1D463007B8B3",
+      "executionSha256": "E18F552B10050DB10EC0BDBD78D0B2FF0FF9D77FE9B2D89CD317A52543B6F90C"
+    },
+    {
+      "index": 82,
+      "test": "dream_cron_gui_tests::daemon_completion_failure_retains_existing_dream_readback_and_revision_order",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "0E9497646FA35C488CF1E930DA7F51058E2112FE118E8CF48E33411EC4D1F446",
+      "executionSha256": "E3BE400BD2AFFA9D54D8D0AB5A2683A4149306545DF075F340D6FE74FD63BE64"
+    },
+    {
+      "index": 83,
+      "test": "dream_cron_gui_tests::observer_uses_a_separate_read_only_handle_without_holding_mutation_lock",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "99691DB5C09F42C2920D7767D05A34052A07E9640E59F0B29EF301BA99162747",
+      "executionSha256": "F04F63AC93D7431E55AA02AA99AA6CB6EDF610875BB18FC436819C12C5DAABA8"
+    },
+    {
+      "index": 84,
+      "test": "dream_cron_gui_tests::finish_navigation_is_owned_by_verified_rust_completion",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "1AD87C7EA683BD8BE4369FA4162EF9F9B5AC01E8D5ECE6B81C0247FD33B21FC6",
+      "executionSha256": "9F54B63B7596DE597A09A853C7C6AD6AF891B216B0BB39453440E680CA79FC5E"
+    },
+    {
+      "index": 85,
+      "test": "wizard_session_controller::tests::prepared_config_hash_is_stable_and_content_bound",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "4C18FD8B389EFE2FD7FDA245128C56B8484D841596D33A2709E61F038D36B035",
+      "executionSha256": "19716FF866DE82729DE9DB7A915FF2D0F4970C846A84CFF913F49955D48DF94B"
+    },
+    {
+      "index": 86,
+      "test": "wizard_session_controller::tests::binding_uses_exact_next_sequence_and_never_wraps",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "70D7822F761CFD8A40A4ED3872118309D54D7DB9994B56D8393FF1F78A82AB47",
+      "executionSha256": "86C7B4F44C4774BFF682E0CDA49A7FBEFF604CD8E948D88B513C2BFA765312E5"
+    },
+    {
+      "index": 87,
+      "test": "chat_stream_phase::daemon_chat_presentation_tests::timeout_guidance_survives_failed_terminal_and_cannot_cross_generation",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "059D4DA1AD20FD92AF8B59391A265EA24D5BEAA99BDAC477606E13DB24166EB4",
+      "executionSha256": "B1580636A43169434C7AD6B0BF5B5976DDBEAED4CC630E96E14FDD051E38D993"
+    },
+    {
+      "index": 88,
+      "test": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_unknown_fields_and_bad_row_contract",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "7357F27AF01613E27486CA66307A43E9E235E135EE27DE326B63BFF8A30D7C6A",
+      "executionSha256": "D63FB90033598460C0817AE23BFB5B809027526AB80FC0510EC0688D6F9068AC"
+    },
+    {
+      "index": 89,
+      "test": "panel_logic::embedding_models_contract_tests::only_fresh_exact_ready_bge_snapshot_passes_buddy_gate",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "261F997E44E2186BE30F60B2E8979C349A83523C77088B94365AB5E1F92CBFDC",
+      "executionSha256": "1D3292DA21B0C06C454DF098DB229413430568F0D2039C638327B318D833C459"
+    },
+    {
+      "index": 90,
+      "test": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_actions_for_unselected_or_qwen_rows",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "D3B0392F21641D864166F26AA3B38EE2C6402DFAFC54410A24D8628F5BB56459",
+      "executionSha256": "813E9D3D4E5BFDB31146983F69093CA2CA8AB86B030D53DC9E2079BA62089596"
+    },
+    {
+      "index": 91,
+      "test": "panel_logic::embedding_models_contract_tests::buddy_gate_rejects_cache_source_even_with_ready_bge",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "9B1ED9EC3EDA6D2645352FE6FEFCA3E30728C7DD66B267AF2D0D869056E6D3B7",
+      "executionSha256": "F1EEC3B3225BE4367B0844B2552D1A7EC5E32122CC280F7CAA34AF271F42F754"
+    },
+    {
+      "index": 92,
+      "test": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_wrong_pin_and_impossible_observation",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "323877B9BB4EA630C1716CDDEF1E0FC6D627A73AB5049E292417174BCB2E3C4F",
+      "executionSha256": "76BC04A2DAF3C435B6EF72A4E9169BF00158B9A9670D4BC3558E30FB9617B399"
+    },
+    {
+      "index": 93,
+      "test": "buddy_wiring_tests::w218_buddy_embedding_callbacks_use_instance_config_and_shared_freshness_fence",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "83225FCF5738F762CDC06CE026711A4FEF09F6EE5B6B17EEA7B634035BBAE3A8",
+      "executionSha256": "3F82A5D58C530C2C0BA2DF799C1760986CFD7DEBC10DFE55C3F6CBE7DADE13B7"
+    },
+    {
+      "index": 94,
+      "test": "panel_logic::tests::w219_provider_retry_is_strict_bounded_redacted_and_absence_compatible",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "17CB95AB72F3ED245B11BEFF8AC8944B12110500BDE4FC7704E8F0C496321202",
+      "executionSha256": "DEFECF71CB52CDD38589397780799AB70F0488694052382E5BF167F9B3260518"
+    },
+    {
+      "index": 95,
+      "test": "gui_action::task_delegate_assignment_tests::task_delegate_assignment_rejects_unknown_zero_and_mismatched_receipts",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "565677AE973C944E5D24F6BA2F2C68AE8AEDD197F71440C68BAB20ECC18B8E4D",
+      "executionSha256": "B0FEAFEE24E6CB59F5AAFFF8D1D5E8340D2C5127D9AB14710981236E32D929F5"
+    },
+    {
+      "index": 96,
+      "test": "panel_logic::task_delegate_projection_tests::task_delegate_null_projects_absence_as_effective_default_deny",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "467FA696D2E0BE4B28C874827057041ECD64CB4E7760344016A657BBE8F40166",
+      "executionSha256": "50280F6DB24DEE07CE7707B69AEC9517A56EE781DF6123A1186AF300486C6D3F"
+    },
+    {
+      "index": 97,
+      "test": "panel_logic::task_delegate_projection_tests::task_delegate_projection_rejects_mismatched_or_zero_revision_object",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "240F9CD728977282DDDDCABB0263F8DFB442EEBD4C61C37C59FCA9D8D849095C",
+      "executionSha256": "D0AC1E287F09BF7220B139C45D020E3A00BA084281E949135B79EDE2658AB5B5"
+    },
+    {
+      "index": 98,
+      "test": "chat_recall_chips::tests::citations_are_closed_available_source_labels_with_positive_matching_ids",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "904FB3BE1CCF411EFA17F479FC9004E65BEE5A7D9246BD38BCA6990EFC217EE8",
+      "executionSha256": "2D14182C71C855D82C54A143536DF13C98972262EBE279E33B56D767D7D7BB95"
+    },
+    {
+      "index": 99,
+      "test": "chat_child_supervisor::tests::staged_cgroup_final_mount_contract_allows_only_a_read_only_public_top_mount",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "E6E1CFC68E85059FA10C8ED5488DF0ED051C874111F18A18ABBBC3E76C95BBCD",
+      "executionSha256": "6174C829D4612396DE1C73141B26CB958A8D91CAFC72BFECAAEAD174A72D04B7"
+    },
+    {
+      "index": 100,
+      "test": "dream_cron_gui_tests::mutation_requires_reload_receipt_then_matching_readback",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "1A33E51DD75CB694C939CBB6AD37257357A85EAC09133901D844FA35F6AB1D04",
+      "executionSha256": "9DA962AC7481E816057FAFD1BC8EE79B4D52DE6895BE258FC4A170DAB67ABF95"
+    },
+    {
+      "index": 101,
+      "test": "dream_cron_gui_tests::mutation_rejects_acknowledged_but_mismatched_readback",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "E90BA3C709FB01F5C1748111300CFDEAD77232D842EBC15CCFBD88059858D992",
+      "executionSha256": "BF2E38E94AE029A7940CBFD36AAFDF4C9066229945383C3C4195F0C8D850AC7E"
+    },
+    {
+      "index": 102,
+      "test": "dream_cron_gui_tests::settings_dream_control_is_command_only_and_never_flips_verified_state",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "3DB984AC5648CE0EA85CEC83C245145DF100F8C7DDA44BCE79A3E9BFBE4C5F6F",
+      "executionSha256": "731F40E70AA516BE7681D59EAA1A0D665E76F72F4768A76F21E9FBF4B02C22D2"
+    },
+    {
+      "index": 103,
+      "test": "dream_cron_gui_tests::only_verified_readback_publishes_visible_dream_state",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "3D5869CC06BBC39EC7FFBA76BA507C45A6A868E81CB1C4C149875BF0878D69F6",
+      "executionSha256": "8BFC4505556148C601778E2DCDD311E7C307C6446DCB28A78286542276229DFA"
+    },
+    {
+      "index": 104,
+      "test": "dream_cron_gui_tests::refresh_mutation_error_and_concurrency_keep_readback_authoritative",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "0B68A336A1074695C35D69739BF419B83C487C6D2A57CEC3B097F3CD4D32B2E8",
+      "executionSha256": "539078159F0C3D306CE5192564606D1AE0174B5487517157305FC5800C3FC64F"
+    },
+    {
+      "index": 105,
+      "test": "dream_cron_gui_tests::late_status_refresh_cannot_overwrite_the_onboarding_draft",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "C616FBFFAA24E894792EA74245A42189A1F3CBEBBDDD2340E8ACFF5F0CB62493",
+      "executionSha256": "DF10B4619861C2535ED31DD806942B1DD32EC0DD1CCFC7DCEDAFA779AA443693"
+    },
+    {
+      "index": 106,
+      "test": "panel_logic::tests::lf_p1_20_preview_redacts_normalizes_and_truncates_graphemes_once",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "12719D5F8811F88B509557FA83EF680A0261C492885CD29EE945DB476C6071DE",
+      "executionSha256": "98C95F5D68D3BD9E7B35043BDAB03A3A5BF4A759C5BE3149CA118A07800E5C95"
+    },
+    {
+      "index": 107,
+      "test": "panel_logic::tests::lf_p1_20_send_completion_delete_recomputes_to_previous_visible_message",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "F053C4664FF118F0B2B62CB40C45CBD69C3AB3CA1CB28A82343C2029F70BBAF0",
+      "executionSha256": "9DA0FB19ABCD0F6DA39A8E5989FF3662D482CB6A2AB5499A144DF594A64A01FC"
+    },
+    {
+      "index": 108,
+      "test": "panel_logic::tests::lf_p1_20_reload_and_session_switch_keep_a_b_isolated",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "EEA9539F20325C459799ED38C3BD5D78D66259802B9F943B49AB2678B1B086F8",
+      "executionSha256": "2516428808CCD2B8228638B13E8BE952A6DDEC14B42DA03AB9E8E8F43AE6C477"
+    },
+    {
+      "index": 109,
+      "test": "panel_logic::tests::lf_p1_20_session_label_sanitizes_legacy_titles_and_controls",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "ABAE45088F2CC5794694783622058741C3F39E1CD469FA39F7973B97EE2EF935",
+      "executionSha256": "36382321481E284AE08692356CED7401131F8824833815D238DFA3CB5F5DB246"
+    },
+    {
+      "index": 110,
+      "test": "panel_logic::tests::lf_p1_20_session_history_propagates_corrupt_database_errors",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "D149A554EC42892BAEE9BD6B5B88B0C8BBB470567CC3F69D61C52841F5330075",
+      "executionSha256": "47265CB3582CA5E12EC3C6420D470C80DFD5845DFF121C3E072196EDFFBB9B3D"
+    },
+    {
+      "index": 111,
+      "test": "chat_subprocess_tests::lf_p1_20_send_before_channel_probe_hydrates_live_preview",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "2F49A6FF20902FD209B3917CE6D31C67E385A0AE752DB569A9CC2F60CA9E41C0",
+      "executionSha256": "D9933523D24F683EF56AE8D57D4D8BF4E28135762654FF56936CF2B9329B34F8"
+    },
+    {
+      "index": 112,
+      "test": "chat_subprocess_tests::lf_p1_20_session_load_generation_rejects_a_after_b_and_return_to_live",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "C9C7BC09CEB002F649F96AD310F907AD4D713E89B877224825C2E919E9317A1B",
+      "executionSha256": "5BF8CD2FD8353E709E935F36E0A706C4FE51492366D21F6E712C4247BE5913D7"
+    },
+    {
+      "index": 113,
+      "test": "chat_subprocess_tests::lf_p1_20_chat_sidebar_session_selection_is_readonly_and_fully_wired",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "A485F79FFFD0D9A7DD7C1914EA977164825249E68D2B1A57BE5D6BAE56C2B111",
+      "executionSha256": "9B0A23D7020805A879A77A9E5AFD07801943E3103CB8DDF866C55F33DDE7443B"
+    },
+    {
+      "index": 114,
+      "test": "gui_action::tests::cluster_configure_receipt_binds_every_submitted_field_and_path",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "4AA8B4A8113D145B226764482A141BF4F91D896D444F0B1824B8E89FEC08D1A1",
+      "executionSha256": "3CD4F5E2A1AADFD48609CFA943615135CE02364BE7C8DF3EAF421980C8A280DF"
+    },
+    {
+      "index": 115,
+      "test": "interface_preference_tests::p122_custom_topology_survives_shared_commit_and_gui_rerun",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "3FFEA279DB5A823552B25A2D7A839A7E7F4505BB8C2CB8A4B86A7994A4C3D414",
+      "executionSha256": "E7EBF409A3CAC6D01A301DF1C9A5C37776031E0E9B0211E027499D8677E99DE0"
+    },
+    {
+      "index": 116,
+      "test": "chat_subprocess_tests::companion_recents_exclude_prior_incognito_rows_but_keep_normal_rows",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "5F070AF4248761E059B4C2C7DC01CD394A68FC270B423075E7F268A11C7A1661",
+      "executionSha256": "3194AD4A132A02769D95D74EDAAA38CBD7F7D82DDD7CC21FF6483D8F0C1A9A56"
+    },
+    {
+      "index": 117,
+      "test": "w58_gui_callback_runtime_tests::w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "6389826AA98BC2EBC8C95460AE01171DCFECE86CD26E5027280C911A0E4F45F7",
+      "executionSha256": "F1D1B05A44BA6B51A9DF65FEA53B3A8D2230CB6475CEDDD922EF260C16061CBE"
+    },
+    {
+      "index": 118,
+      "test": "w58_gui_callback_runtime_tests::w121_channel_pairing_request_callbacks_require_exact_receipts_before_relisting",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "E940C4B26B69AC66910A24796A220AE39668195AA841CB628C49C27DA8F1F6CF",
+      "executionSha256": "C22D156B90017EE76B8767DD722D79980CF8B141B496A6B9E7DD9D6D9CC185D0"
+    },
+    {
+      "index": 119,
+      "test": "w58_gui_callback_runtime_tests::w122_channel_account_dm_pairing_callback_preserves_projection_until_exact_receipt",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "2FDBB8F69C39D9E1070CF1F3428E34D69A192AC8D50B7E510EC5E24BC1474F27",
+      "executionSha256": "314FCB2AD9954D4757962E25358997D3DEEE5D3A518E455DCD3C77FA6F02A530"
+    },
+    {
+      "index": 120,
+      "test": "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "6E1F648E4BEA2D6E7F79CDC0947BD658D9548A55918AF20EAE589CCFCBDB48F7",
+      "executionSha256": "A894E42CACAB8DB6586B570F1AEDB579976368ABD61D115A936809C02516EC7D"
+    },
+    {
+      "index": 121,
+      "test": "w58_gui_callback_runtime_tests::w130_channel_legacy_migration_callback_preserves_legacy_projection_until_exact_receipt",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "656130706D89EFBF1539F77F46DCBB53EA1F7D171855B242F96DA483B5FF2DA1",
+      "executionSha256": "487135632C294CCECE9B58739FA055999F25BB37A00A99550A5EE6E78F6634A6"
+    },
+    {
+      "index": 122,
+      "test": "w58_gui_callback_runtime_tests::w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "DDCF9FF48A59812BF728F33F674944EFF217FB362D247B6D068A426513661AE8",
+      "executionSha256": "8EF18F35141939A5A1FF7CA750440A1737D015BAC4A10B8B5B820FA3D39D683C"
+    },
+    {
+      "index": 123,
+      "test": "w58_gui_callback_runtime_tests::w142_selfimprove_accept_requires_exact_bound_receipt_and_fresh_readback",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "E6F132279BFDD56ACE10985A0A33357C4F2294D67363CDDD5C121BA1257C8C1C",
+      "executionSha256": "6A9239BBF75465971ECC87CE2D51222EF1459A8AF93A7E510D6796E8C44771C4"
+    },
+    {
+      "index": 124,
+      "test": "w58_gui_callback_runtime_tests::w149_buddy_quality_handoff_selects_the_exact_selfimprove_proposal",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "C414B76B4062AF8248C11701719C40612E67205A9768F332D52E49AE1698F004",
+      "executionSha256": "A1F5DB1A07F8AA57424CB2F30321F0999549081A7BE2FCFB6BDBF329D82B24A3"
+    },
+    {
+      "index": 125,
+      "test": "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "74CDDDDABD17B49A6E97756CF8CE3AA2C8D22C7235FAEF05985F480302F425D3",
+      "executionSha256": "54B4FDCEE5D09C1951C36C09F5F64568801F241F0B41CB2AD0FC758A2F61A0BE"
+    },
+    {
+      "index": 126,
+      "test": "w58_gui_callback_runtime_tests::w153_legacy_child_callbacks_project_only_transient_reasoning",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "37A254BB4719905C6FEA1A7B339B8A757B7DB1CB80C4FFF6148E814765DD1F5A",
+      "executionSha256": "C78F591197FC4723FE37C7D42D68FDBAE64EECB53C3AEB67F7B3BDCA837C5057"
+    },
+    {
+      "index": 127,
+      "test": "w58_gui_callback_runtime_tests::w153_reasoning_child_controls_are_transient_and_history_excluded",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "DE714F9ADDEA5D7B629F3208B042150C1C65FF700DC6A416E95B9C4E1624E5FD",
+      "executionSha256": "683AC2338ABFD625983DE1B8DACF4A19802DAB0361F77CFF5938672AF0CF26C1"
+    },
+    {
+      "index": 128,
+      "test": "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "633D31F215CDC90CCE7AE971F3B7ECC3EB5757BC04751B3074A1082DAE07B40B",
+      "executionSha256": "EA393533AFF5A6AD61D844E87A6FF06C7AB082CF05AA20DF50C04E8EE399F735"
+    },
+    {
+      "index": 129,
+      "test": "w58_gui_callback_runtime_tests::w162_throughput_controls_are_transient_and_provider_done_fenced",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "76F22427B9D9BC78D1E92AC0FA348B4A4FF27F1A8C90C876022D335A1082D810",
+      "executionSha256": "A223641460B07B425D08C94BC5B8B91331FC1450B6251A19CD574675A544EB8D"
+    },
+    {
+      "index": 130,
+      "test": "w58_gui_callback_runtime_tests::w163_recall_chip_controls_freeze_current_response_and_clear_on_turn_change",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "26AD7DF90EFA95CE614A28352189997FFD008F7F5AA4947C9FBD3C28E62F1739",
+      "executionSha256": "51FF0C59F87315459A27361A7EC3B5035086F3E11534EE258D81713C58C12191"
+    },
+    {
+      "index": 131,
+      "test": "w58_gui_callback_runtime_tests::w164_response_feedback_callback_requires_post_done_target_and_verified_readback",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "9A2C1F11DA15D9B35ED70035D4FEDECBF5BC63CAA834CB1BB51B19A778B11B62",
+      "executionSha256": "51FA4065C8FE63BA9B1A14371B5F3BD8EB73F01921A0F28B38C11FE5C2943D91"
+    },
+    {
+      "index": 132,
+      "test": "w58_gui_callback_runtime_tests::w167_daemon_recall_chip_batch_projects_current_surface_and_fences_terminals",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "25CF9EFD1E4C167EE87FD6693C4A719D51332B329C48FD529D1578AC2238CC40",
+      "executionSha256": "3CF51760AD00CD6C155FAC2441C67872CA34D7E21A0C2AA716BD91CC1F4C4CBD"
+    },
+    {
+      "index": 133,
+      "test": "w58_gui_callback_runtime_tests::w168_daemon_throughput_state_projects_main_and_buddy_then_fences_boundaries",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "2556CDE9701A6633B12F21E7032BFD6386A33F65A59964A181A46C4B37ACFBCD",
+      "executionSha256": "BFA59A25C271EA9F999DD78E749092F11428411E5CE37870B0B3A96ADF352B4C"
+    },
+    {
+      "index": 134,
+      "test": "w58_gui_callback_runtime_tests::w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "B4B20F0EE62A35518C04AC94972EDEF60D7CAE479497ED042318ADA98B90836F",
+      "executionSha256": "603E35D4E7138E3B87CCB7E1FFA9D9F5D13BBE7DD2AEC9C492E164F8BF910AAE"
+    },
+    {
+      "index": 135,
+      "test": "w58_gui_callback_runtime_tests::w185_local_model_callbacks_require_typed_ack_and_fresh_readback",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "797C1406FBD10833E41313F2AB4B33867AF51FCD59DFF4FE0A0A7B724EFBD072",
+      "executionSha256": "6D634A00CD3FE2DA0841D138072B1726CE7B1D14B97C132FD7E2A9A7C6D6EBE2"
+    },
+    {
+      "index": 136,
+      "test": "wizard_session_controller::tests::private_server_controller_observer_and_mutation_progress_concurrently",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "75AD094BDCBC8F3F9C33F82BA298A1FD75537965536804B3F17CF3F6C0EDE1F5",
+      "executionSha256": "8C27152A7A5B2F2B6BC1278F3B28965E71E7F55AF7378DD41DD188C1A6D6583A"
+    },
+    {
+      "index": 137,
+      "test": "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "A069DA31F551000397A387574E71456BBB65C126761949ED6D658A12FB875E37",
+      "executionSha256": "A781E005233851CCCF72FE7BB081B9694E76C00EFFE4814982B4DC57E79E2610"
+    },
+    {
+      "index": 138,
+      "test": "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "0BE2A927F01954EFFB245591B0428ADE9AF07E40004CEAC83C9834F70AD06A38",
+      "executionSha256": "F231D5A8E4763ACE72DCE081A22CE3454CF37BD43A4AD54496B2CAEBA6374581"
+    },
+    {
+      "index": 139,
+      "test": "w58_gui_callback_runtime_tests::w233_task_delegate_set_owns_busy_across_edits_and_fences_stale_completion",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "35639AAA44F81B9370027DCD7DC11BFAAE15EB872EDE4045E1BD379A500A5285",
+      "executionSha256": "8DAB3A61116ED08F3A4391599DA9EA11330CD625F10BB90C2D50243107218CBE"
+    },
+    {
+      "index": 140,
+      "test": "w58_gui_callback_runtime_tests::w233_invalid_fresh_readback_keeps_committed_receipt_and_fences_mutation",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "5C7561BD11F02230BC1DB6EF6C472391D240F094ED6FF9B97D000AC8ECEED56F",
+      "executionSha256": "E87D44BC1C601AA85AE6C8D1361350CD2E9128E92C441E1C245012B55A5583EF"
+    },
+    {
+      "index": 141,
+      "test": "w58_gui_callback_runtime_tests::w233_task_delegate_callback_fixture_covers_conflict_receipt_and_newer_readback",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "3B2CE215356582DB62AB61DB48C1DFC112BAF82BBFB214F3E916899DAE7072DB",
+      "executionSha256": "AEEB790CAA6DDAF75241DE9BE6B4E984084444E1D974F82E90096F8E3491C677"
+    },
+    {
+      "index": 142,
+      "test": "w58_gui_callback_runtime_tests::w233_task_delegate_inspect_null_projects_effective_default_deny",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "B4D9E42020D4CD28159633186E50359CBDDAFA386CC3983468FD436995F940EA",
+      "executionSha256": "B7D0792624B6F1886B3148865D4587E13824391901FF34BC9B1795C88214B559"
+    },
+    {
+      "index": 143,
+      "test": "chat_child_supervisor::tests::cgroup_namespace_root_mount_plan_stages_without_unmounting_inherited_mount",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "EFD9F354AAAEBA4F72DF6278568E5E4D3682E8603F7D5E170980A74287F128C4",
+      "executionSha256": "93C693672A14EFC73C5ADF3432287529F811D52D1948EA2FC476902A670297ED"
+    },
+    {
+      "index": 144,
+      "test": "chat_child_supervisor::tests::linux_manager_stop_reaps_setsid_and_double_fork_tree",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "CABD7C0388C2F917F22AAFEFBDAAABDA7EAB40F32E3C0C5A2723EE551EA48FE8",
+      "executionSha256": "0D5E1B238B5E9AB2A5A1F524E20E3D41182EB57C0B1D0FAB206A362CBDE9C1BC"
+    },
+    {
+      "index": 145,
+      "test": "chat_child_supervisor::tests::linux_gui_crash_kills_complete_manager_unit",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "6337F95145C22801D2128F97748A7FC4821B823786A0F5BDE04A9FE966263F0A",
+      "executionSha256": "84D7D8747948D36E804B78D0A8490C46D467FE133807DBE12472F78B6A04F9B2"
+    },
+    {
+      "index": 146,
+      "test": "chat_child_supervisor::tests::linux_unit_snapshot_pins_manager_owned_kill_contract",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "1E1988CBF8DA71D737438FB77B5A35462A68BAD2286B2110C0094E2A3447EE6C",
+      "executionSha256": "3D3F8F4D5D62E9DF22833938DF6EE06E4A843D4A7DED2AD5008035F90932E45A"
+    },
+    {
+      "index": 147,
+      "test": "w58_gui_callback_runtime_tests::w480_real_producer_post_provider_outcomes_replay_through_main_and_buddy",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "0B69DFFC7EE9376F287F5ABBDD125E2EEAEE3A6B58A033017329D736E6ABDC11",
+      "executionSha256": "585030D18B92BF646B5CFD63485A59449C55717B737F938717E4BB625BFB1352"
+    },
+    {
+      "index": 148,
+      "test": "w58_gui_callback_runtime_tests::p118_gui_callbacks_cancel_real_bootstrap_without_replay",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "0417511042E0E350E760495150C898F0D3C5CBB55E2DD03D1B6674DBCC3B3C7B",
+      "executionSha256": "D5A7570072B33472CF3C369F6AC78BACD02300D32DBDFDA561D348C8D2B353BA"
+    },
+    {
+      "index": 149,
+      "test": "w58_gui_callback_runtime_tests::p118_projection_freezes_after_hosted_bootstrap_loss_without_replay",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "97F30A0F3D1311A05162926C35560FF5781BD721E9255AE5D8102F1B2DB34590",
+      "executionSha256": "5AE379AFC51D4FA0FFD8EAF4988F8BA7237634A80279CAD203FE4E32A15B3183"
+    }
+  ],
+  "validation": {
+    "artifactDigestEquality": true,
+    "receiptResult": true,
+    "allExactTerminals": true,
+    "sourceCommitBlobs": true,
+    "currentSourceDrift": true,
+    "localExecutablesRan": false,
+    "rootVerified": true
+  },
+  "sourceCarry": {
+    "scope": "Source-bound Linux fixtures; macOS package/runtime acceptance remains separate",
+    "testedBlob": "e15708e96634c4541ac8bdb961906d9ed400460f",
+    "formattedGuiFile": "SRC/neothd-gui/src/main.rs",
+    "difference": "Only formatter line wrapping in two Buddy-recents helper declarations; root inspected the complete Git diff",
+    "currentBlob": "73347cae2d0abb3d6bfeebec235d1858ebee8479",
+    "unchangedGuiFiles": 23
+  }
+}

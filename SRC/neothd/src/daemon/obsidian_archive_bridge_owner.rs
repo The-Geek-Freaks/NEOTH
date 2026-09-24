@@ -215,8 +215,11 @@ impl ArchiveBridgeOwner {
             .map_err(|_| anyhow::anyhow!("Archive Bridge controller poisoned"))?;
         let prior = state.clone();
         let pairing_id = uuid::Uuid::now_v7().simple().to_string();
-        let pairing_secret =
-            uuid::Uuid::new_v4().simple().to_string() + &uuid::Uuid::new_v4().simple().to_string();
+        let pairing_secret = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
         let generation = state
             .as_ref()
             .map_or(1, |record| record.pairing_generation.saturating_add(1));

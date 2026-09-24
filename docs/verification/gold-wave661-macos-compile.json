@@ -1,0 +1,36 @@
+{
+  "job": 107495375950,
+  "run": 35956343411,
+  "localExecutablesRan": false,
+  "buildLogSha256": "7D4FFBDF89C325B52753FDE1F969280C85B2912D271435341FC838358782BA98",
+  "stage": "actual desktop daemon build",
+  "source": "ce42784ebe96fd8f03a7ab3e9b80f9369e73d643",
+  "errors": [
+    "E0277 String + &String at owner:219",
+    "E0277 unsized str local at owner:218",
+    "E0308 payload expects String at owner:247"
+  ],
+  "schema": "neoth-w661-macos-compile/v1",
+  "artifact": 10791009164,
+  "repair": "Explicit format concatenation preserves two UUID-simple values without overloaded Add inference",
+  "guiBuildRan": false,
+  "sourceBindings": [
+    {
+      "blob": "8b477a650aa8b58292b53d8391f6d9e4142bffab",
+      "path": "SRC/neothd/src/daemon/obsidian_archive_bridge_owner.rs",
+      "sha256": "1d80290adaaa88285c51e6dae33c44e4ddb5e33bf51383362da7003a9c2fb667"
+    },
+    {
+      "blob": "a49b0e51cbc8d33d1f351352e856fc89961f02e1",
+      "path": "SRC/Cargo.lock",
+      "sha256": "722ee0446dbac05b3e7d4eb9d44c7174e98e6e6fff5b633b5a30993edbcb61f0"
+    },
+    {
+      "blob": "959c6c4213c8f910b2b9faca1c2ab8d38096f630",
+      "path": ".github/workflows/macos-packaged-chat.yml",
+      "sha256": "fb1889426d789a32cb2974460c260b902f7378c28550b632a6a0dc168e27af85"
+    }
+  ],
+  "zipSha256": "2BE1C1B2A9CB905E202B0AAD17BB4E70A9320E3930DF46504DD2CDDD19DE52F9",
+  "packagedAcceptanceRan": false
+}

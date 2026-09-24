@@ -502,7 +502,9 @@ impl<'de> Deserialize<'de> for ChannelRouting {
                     destinations: v2.destinations,
                 })
             }
-            RoutingInput::Legacy(legacy) => Self::from_legacy(legacy).map_err(serde::de::Error::custom),
+            RoutingInput::Legacy(legacy) => {
+                Self::from_legacy(legacy).map_err(serde::de::Error::custom)
+            }
         }
     }
 }
@@ -524,14 +526,13 @@ impl ChannelRouting {
             let account = legacy.telegram_account_by_source.0.get(&source).cloned();
             let target = legacy_target(&format!("by_source.{source}"), Some(raw_channel), account)?
                 .context("present legacy source route must resolve to a target")?;
-            by_source.insert(
-                source.clone(),
-                target,
-            );
+            by_source.insert(source.clone(), target);
         }
         for source in legacy.telegram_account_by_source.0.keys() {
             if !by_source.contains_key(source) {
-                anyhow::bail!("legacy telegram account binding has no matching source route: {source}");
+                anyhow::bail!(
+                    "legacy telegram account binding has no matching source route: {source}"
+                );
             }
         }
         Ok(Self {
@@ -662,12 +663,14 @@ mod tests {
             },
         );
         let route = routing.resolve_route("cron:daily", false).unwrap();
-        assert!(matches!(
-            route,
-            RouteTarget::LegacyUnbound {
-                channel: ChannelId::Telegram
-            }
-        ), "source route must not fall back to default account"
+        assert!(
+            matches!(
+                route,
+                RouteTarget::LegacyUnbound {
+                    channel: ChannelId::Telegram
+                }
+            ),
+            "source route must not fall back to default account"
         );
     }
 
@@ -687,14 +690,8 @@ mod tests {
             ),
         });
 
-        assert_eq!(
-            routing.resolve_route("ordinary", false),
-            routing.default
-        );
-        assert_eq!(
-            routing.resolve_route("ordinary", true),
-            routing.failure
-        );
+        assert_eq!(routing.resolve_route("ordinary", false), routing.default);
+        assert_eq!(routing.resolve_route("ordinary", true), routing.failure);
     }
 
     #[test]
@@ -897,12 +894,27 @@ mod tests {
         let legacy = br#"{"default_channel":"telegram","by_source":{},"destinations":{}}"#;
         std::fs::write(&path, legacy).unwrap();
         let loaded = ChannelRouting::load_from(&path).unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), legacy, "load must not rewrite legacy bytes");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            legacy,
+            "load must not rewrite legacy bytes"
+        );
         loaded.save_to(&path).unwrap();
         let first = std::fs::read(&path).unwrap();
-        assert!(std::str::from_utf8(&first).unwrap().contains("\"schema_version\": 2"));
-        ChannelRouting::load_from(&path).unwrap().save_to(&path).unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), first, "canonical v2 save is idempotent");
+        assert!(
+            std::str::from_utf8(&first)
+                .unwrap()
+                .contains("\"schema_version\": 2")
+        );
+        ChannelRouting::load_from(&path)
+            .unwrap()
+            .save_to(&path)
+            .unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            first,
+            "canonical v2 save is idempotent"
+        );
     }
 
     #[test]
@@ -919,7 +931,10 @@ mod tests {
             r#"{"schema_version":2,"default":null,"by_source":{},"failure":null,"destinations":{},"extra":true}"#,
             r#"{"schema_version":2,"default":null,"by_source":{},"failure":null,"destinations":{"keet_topic":"nk1_retired"}}"#,
         ] {
-            assert!(serde_json::from_str::<ChannelRouting>(raw).is_err(), "must reject {raw}");
+            assert!(
+                serde_json::from_str::<ChannelRouting>(raw).is_err(),
+                "must reject {raw}"
+            );
         }
     }
 
@@ -930,7 +945,10 @@ mod tests {
             r#"{"by_source":{"cron:daily":"telegram","cron:daily":"slack"},"telegram_account_by_source":{},"destinations":{}}"#,
             r#"{"by_source":{"cron:daily":"telegram"},"telegram_account_by_source":{"cron:daily":"ops_a","cron:daily":"ops_b"},"destinations":{}}"#,
         ] {
-            assert!(serde_json::from_str::<ChannelRouting>(raw).is_err(), "must reject {raw}");
+            assert!(
+                serde_json::from_str::<ChannelRouting>(raw).is_err(),
+                "must reject {raw}"
+            );
         }
     }
 
@@ -948,7 +966,11 @@ mod tests {
                 },
             );
         }
-        assert!(matches!(routing.resolve_route("cron:ops", false), Some(RouteTarget::Bound { ref channel_ref }) if channel_ref.account_id.as_str() == "ops_a"));
-        assert!(matches!(routing.resolve_route("cron:alerts", false), Some(RouteTarget::Bound { ref channel_ref }) if channel_ref.account_id.as_str() == "ops_b"));
+        assert!(
+            matches!(routing.resolve_route("cron:ops", false), Some(RouteTarget::Bound { ref channel_ref }) if channel_ref.account_id.as_str() == "ops_a")
+        );
+        assert!(
+            matches!(routing.resolve_route("cron:alerts", false), Some(RouteTarget::Bound { ref channel_ref }) if channel_ref.account_id.as_str() == "ops_b")
+        );
     }
 }

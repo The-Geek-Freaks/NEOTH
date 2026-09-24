@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W658/W661-W663 GUI acceptance and hosted build repairs (2026-09-24):**
+GUI149run35956046048 atb71ebba3 is Root-admitted149PASS0FAIL0missing.
+Three ZIPs,29source/inputbindings and149execution receipts plus logs verified.
+W480 real producer Main/Buddy capture and mixed-incognito Recents both pass.
+23GUI files carry byte-identically; main.rs carries only reviewed hosted formatting.
+macOS ARM64run35956343411 atce42784e fails daemon compilation with E0277/E0308
+from overloaded String+&String pairing-secret construction; explicit format!
+concatenation retains both UUIDs. No GUI/bundle/runtime acceptance from that job.
+W662 imports the exact hosted four-file rustfmt patch for009cabbf, verifying
+ZIP,receipt and all old/new Gitblobs. Group1025run35959095156 stopped before
+compilation at one stale990shell count; both catalog checks now require1025.
+New native/Windows/package results remain pending; no local executable validation.
+No Road closure. See W658/W661/W662 verification receipts.
+
 **W654/W655/W657/W659 account routing and Windows stage repair (2026-09-24):**
 Routing saves schema2 with explicit legacy-unbound or exact ChannelRef targets;
 load remains read-only, duplicate/mixed inputs reject, retired legacy Keet input

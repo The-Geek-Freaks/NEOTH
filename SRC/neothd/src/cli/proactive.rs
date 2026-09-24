@@ -999,7 +999,9 @@ mod tests {
         let routing = ChannelRouting::load_from(&home.path().join(CHANNEL_ROUTING_FILE)).unwrap();
         assert!(matches!(
             routing.by_source.get("cron:daily"),
-            Some(RouteTarget::LegacyUnbound { channel: ChannelId::Slack })
+            Some(RouteTarget::LegacyUnbound {
+                channel: ChannelId::Slack
+            })
         ));
     }
 

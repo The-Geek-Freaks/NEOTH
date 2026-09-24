@@ -6494,13 +6494,21 @@ mod reported_commit_tests {
         )
         .expect_err("retained parent DELETE access must report the Windows sharing conflict");
         assert_eq!(
-            error.downcast_ref::<std::io::Error>().and_then(std::io::Error::raw_os_error),
+            error
+                .downcast_ref::<std::io::Error>()
+                .and_then(std::io::Error::raw_os_error),
             Some(32),
             "expected the observed ERROR_SHARING_VIOLATION: {error:#}"
         );
-        assert!(!target.exists(), "failed rename must not publish the target");
-        assert_eq!(std::fs::read_dir(&stage_path).unwrap().count(), 0,
-            "failed rename must remove its private temporary file");
+        assert!(
+            !target.exists(),
+            "failed rename must not publish the target"
+        );
+        assert_eq!(
+            std::fs::read_dir(&stage_path).unwrap().count(),
+            0,
+            "failed rename must remove its private temporary file"
+        );
     }
 
     #[cfg(windows)]
