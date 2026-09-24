@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T03:54:54.1267566Z",
-  "validationStatus": "W634 Windows46 admitted42PASS4FAIL; W635 narrow rename-root handle pending hosted regression",
+  "capturedUtc": "2026-09-24T04:00:19.4227355Z",
+  "validationStatus": "W637 exact hosted Windows rename-root formatting; Windows46 behavior running",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3858,8 +3858,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/store.rs",
-      "bytes": 258413,
-      "sha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65"
+      "bytes": 258443,
+      "sha256": "695360301A03D384807AD243D656FA3F5BCB40E29F8CB6AF3EDE8EA112FAD8A6"
     },
     {
       "path": "SRC/neothd/src/slash/schema.rs",

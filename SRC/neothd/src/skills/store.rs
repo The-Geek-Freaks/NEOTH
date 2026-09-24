@@ -1290,12 +1290,14 @@ fn open_windows_rename_root_directory(parent: &Dir, display_path: &Path) -> Resu
         .access_mode(FILE_TRAVERSE | FILE_READ_ATTRIBUTES)
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
-    parent.open_with(OsStr::new("."), &options).with_context(|| {
-        format!(
-            "open capability-bound private atomic rename root for {}",
-            display_path.display()
-        )
-    })
+    parent
+        .open_with(OsStr::new("."), &options)
+        .with_context(|| {
+            format!(
+                "open capability-bound private atomic rename root for {}",
+                display_path.display()
+            )
+        })
 }
 
 /// Read a direct real-directory child's stable identity without requesting
@@ -3935,8 +3937,8 @@ mod windows_private_atomic_stage {
                 // required by Windows' relative target open.
                 let rename_root = super::open_windows_rename_root_directory(parent, display_path)
                     .inspect_err(|error| {
-                        super::record_private_atomic_io_diagnostic_for_test("rename", error);
-                    })?;
+                    super::record_private_atomic_io_diagnostic_for_test("rename", error);
+                })?;
                 if let Err(error) = super::windows_rename_open_handle(
                     &self.stage.file,
                     &rename_root,

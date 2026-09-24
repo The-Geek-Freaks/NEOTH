@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W634 Windows46 admitted42PASS4FAIL; W635 narrow rename-root handle pending hosted regression",
+  "status": "W637 exact hosted Windows rename-root formatting; Windows46 behavior running",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 147579,
-    "sha256": "5B0A31E6994A34BE302272A16DB59E628358D401221EC5881368BB26C411C521"
+    "bytes": 147563,
+    "sha256": "F9EE4FF7701518B3CB61AF601CCAE5349672F5D268A798CB5A2E7AB1BBA48079"
   },
   "sourceInputs": 837,
   "requiredNativeTests": [
@@ -5718,7 +5718,7 @@
     {
       "test": "skills::store::tests::bound_rename_refuses_same_byte_source_replacement_before_namespace_effect",
       "sourcePath": "SRC/neothd/src/skills/store.rs",
-      "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
+      "sourceSha256": "695360301A03D384807AD243D656FA3F5BCB40E29F8CB6AF3EDE8EA112FAD8A6",
       "junitClass": "neoth"
     },
     {
@@ -9267,31 +9267,31 @@
       {
         "test": "skills::store::tests::windows_verbatim_local_disk_root_remains_capability_walkable",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
+        "sourceSha256": "695360301A03D384807AD243D656FA3F5BCB40E29F8CB6AF3EDE8EA112FAD8A6",
         "junitClass": "neoth"
       },
       {
         "test": "skills::store::tests::windows_unc_and_device_prefixes_remain_outside_local_capability_walks",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
+        "sourceSha256": "695360301A03D384807AD243D656FA3F5BCB40E29F8CB6AF3EDE8EA112FAD8A6",
         "junitClass": "neoth"
       },
       {
         "test": "skills::store::reported_commit_tests::private_stage_replaces_a_delete_sharing_bound_target_without_closing_it",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
+        "sourceSha256": "695360301A03D384807AD243D656FA3F5BCB40E29F8CB6AF3EDE8EA112FAD8A6",
         "junitClass": "neoth"
       },
       {
         "test": "skills::store::reported_commit_tests::live_bound_parent_native_rename_is_denied",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
+        "sourceSha256": "695360301A03D384807AD243D656FA3F5BCB40E29F8CB6AF3EDE8EA112FAD8A6",
         "junitClass": "neoth"
       },
       {
         "test": "skills::store::reported_commit_tests::private_stage_publishes_through_bound_parent_despite_mismatched_display_path",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
+        "sourceSha256": "695360301A03D384807AD243D656FA3F5BCB40E29F8CB6AF3EDE8EA112FAD8A6",
         "junitClass": "neoth"
       },
       {
@@ -9327,7 +9327,7 @@
       {
         "test": "skills::store::reported_commit_tests::private_stage_create_new_composes_with_retained_delete_bound_parent",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
+        "sourceSha256": "695360301A03D384807AD243D656FA3F5BCB40E29F8CB6AF3EDE8EA112FAD8A6",
         "junitClass": "neoth"
       }
     ],
@@ -9377,7 +9377,7 @@
       {
         "test": "skills::store::tests::existing_nonprivate_child_is_rejected_without_permission_mutation",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
+        "sourceSha256": "695360301A03D384807AD243D656FA3F5BCB40E29F8CB6AF3EDE8EA112FAD8A6",
         "junitClass": "neoth"
       },
       {
@@ -9515,7 +9515,7 @@
       {
         "test": "skills::store::tests::bound_rename_unix_race_restores_foreign_replacement_and_keeps_original",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
+        "sourceSha256": "695360301A03D384807AD243D656FA3F5BCB40E29F8CB6AF3EDE8EA112FAD8A6",
         "junitClass": "neoth"
       },
       {
@@ -9625,7 +9625,7 @@
       {
         "test": "skills::store::tests::existing_nonprivate_child_is_rejected_without_permission_mutation",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
+        "sourceSha256": "695360301A03D384807AD243D656FA3F5BCB40E29F8CB6AF3EDE8EA112FAD8A6",
         "junitClass": "neoth"
       },
       {
@@ -9763,7 +9763,7 @@
       {
         "test": "skills::store::tests::bound_rename_unix_race_restores_foreign_replacement_and_keeps_original",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
+        "sourceSha256": "695360301A03D384807AD243D656FA3F5BCB40E29F8CB6AF3EDE8EA112FAD8A6",
         "junitClass": "neoth"
       },
       {
@@ -27720,6 +27720,20 @@
       }
     ],
     "note": "W634 ZIP/source/input/terminal verified independently. Private create-new handle mask corrected; unchanged Windows regression; static reviewed; no local execution",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave637HostedFormat": {
+    "base": "83dd6ae19b40f5da1bf9cb81bb7213b0d31c74c2",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/skills/store.rs",
+        "bytes": 258443,
+        "sha256": "695360301A03D384807AD243D656FA3F5BCB40E29F8CB6AF3EDE8EA112FAD8A6",
+        "blob": "c98e000263601223342c48eeef02b9968ee07475"
+      }
+    ],
+    "note": "Preflight35953571801@83dd6ae1 artifact10789592523 ZIP647? verified actualZIP7eb5a768 and patch64797080; old/new Gitblob exact; no local formatter",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
