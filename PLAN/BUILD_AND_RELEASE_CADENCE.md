@@ -3,6 +3,25 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W903 B7 accepted; W905 hosted formatting (2026-09-24):** Root verified
+Windows142 atca4bf9e8:140PASS/2FAIL/0missing,31 historical source/input bindings,
+142 individual log hashes and the API ZIP digest. Both failures are the canary
+cases repaired in4aae1d0f. The new held-lock Windows watcher regression passes.
+ADOPT31-B7 closes against40 exact Group1383 and38 exact Windows142 passing
+terminals (30 in the document block plus8 earlier memory cases). All B7 feature
+blobs remain identical to the admitted source; W894 found no consumer gap.
+The real CLI produces a pending immutable proposal and explicit approval applies
+Skill/Memory/Wiki effects with replay/ownership protection and metadata-only WAL.
+B8's GUI remains separate and OPEN. C1a awaits behavior on the repaired source.
+Root admitted the one-file hosted rustfmt patch from Preflight36049588541 using
+source, API ZIP, inner hashes and old/new Git blobs. No local formatter ran.
+W891's completed CLI cache is saved by36047680927;4aae Core36049730518 uses the
+new checkpoint and passed all four core gates. Artifact/timing admission follows.
+Road1324:1074done/248open/2partial; raw250/pre-tag249; ADOPT31 31done/36open;
+dashboard184open. n8n/JobService WIP remains unpublished; W906 static review passed.
+Evidence: docs/verification/gold-wave903-b7-acceptance.json,
+gold-wave903-windows142.json and gold-wave905-hosted-format.json.
+
 **W900/W901 canary integration repairs and W899 evidence (2026-09-24):**
 Root admitted Group1383 run36047068548 atca4bf9e8:1378PASS/5FAIL/0missing,
 248 source/input bindings and all three API ZIP digests verified. Four channel

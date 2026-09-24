@@ -1,0 +1,17 @@
+{
+  "schema": "neoth-hosted-rustfmt-admission/v1",
+  "runId": 36049588541,
+  "sourceHead": "4aae1d0f72c9e0b56859879e02b148d01a80829f",
+  "artifactId": 10829618957,
+  "artifactSha256": "f524f36474925ca6e9142527b84ae129c3da4056d0aaa60f6ce3654e23b90d5b",
+  "patchSha256": "f2c9398debe84102b44d981a443685bb26aa2767c5e281ffd8667cf5f4103e5a",
+  "files": [
+    {
+      "old": "fd842db6dcbec517225ed6621b28a2ce167fd2ef",
+      "path": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "new": "bca6412e5f89b20dfc5217703b8f2f40d756e787"
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "acceptance": "Exact hosted formatting only; preserves W902-approved canary preflight change."
+}
