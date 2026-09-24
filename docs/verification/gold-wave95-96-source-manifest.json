@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T03:43:24.1122598Z",
-  "validationStatus": "W631 exact hosted CLI reference admitted; behavioral Group977 pending",
+  "capturedUtc": "2026-09-24T03:54:54.1267566Z",
+  "validationStatus": "W634 Windows46 admitted42PASS4FAIL; W635 narrow rename-root handle pending hosted regression",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1382,6 +1382,11 @@
       "sha256": "5DC2DACF76BCCBB1B9275C3624DDBB827E56F13A8C2E94F9E23C5681C406CC05"
     },
     {
+      "path": "docs/verification/gold-wave634-windows46-terminals.json",
+      "bytes": 16808,
+      "sha256": "5E4057F74DC5494F472393D8BD6ED0DB678553FDE818A7245BFCAF275D219089"
+    },
+    {
       "path": "docs/verification/managed-browser-cft154.json",
       "bytes": 2497,
       "sha256": "80443D2F6E6A6E226F1617F7F5463017071D9D21130D1FCD116470F147455337"
@@ -1523,18 +1528,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 223817,
-      "sha256": "8FB8921190D3D895021AD3A97E6FE81CE303B4064B88E9B4C54361ECB3C1BDCF"
+      "bytes": 224581,
+      "sha256": "D9407593EB6209FE55DC178CF71511CF1234C81B5B7B0040564D6DF79D125A3C"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1235145,
-      "sha256": "53C4665CF0F69E81EC18951A49D19AEB0894C8155924FD845662771F5A31E317"
+      "bytes": 1235909,
+      "sha256": "F3B9CCE9C42491E160F4EC6E953324FFFB16FD261C55F666C12A0A2BB2F9B915"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1834427,
-      "sha256": "2BA7DC14FE5092616104878B91EDB4D5162D81C69C6A7612B7BA8081264D1269"
+      "bytes": 1835191,
+      "sha256": "BE3E98E9231C197F038BA4F68B1C50965DC7D7789DBAD78407F0A5D07721C57B"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -3853,8 +3858,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/store.rs",
-      "bytes": 256386,
-      "sha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B"
+      "bytes": 258413,
+      "sha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65"
     },
     {
       "path": "SRC/neothd/src/slash/schema.rs",

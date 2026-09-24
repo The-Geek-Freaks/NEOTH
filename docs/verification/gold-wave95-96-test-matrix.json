@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W631 exact hosted CLI reference admitted; behavioral Group977 pending",
+  "status": "W634 Windows46 admitted42PASS4FAIL; W635 narrow rename-root handle pending hosted regression",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 147365,
-    "sha256": "30266C8B6319E3F28F3BCBDA2C5B9DB6DAB468ECB87831F303884D345E8942A9"
+    "bytes": 147579,
+    "sha256": "5B0A31E6994A34BE302272A16DB59E628358D401221EC5881368BB26C411C521"
   },
-  "sourceInputs": 836,
+  "sourceInputs": 837,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -5718,7 +5718,7 @@
     {
       "test": "skills::store::tests::bound_rename_refuses_same_byte_source_replacement_before_namespace_effect",
       "sourcePath": "SRC/neothd/src/skills/store.rs",
-      "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
+      "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
       "junitClass": "neoth"
     },
     {
@@ -9267,31 +9267,31 @@
       {
         "test": "skills::store::tests::windows_verbatim_local_disk_root_remains_capability_walkable",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
+        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
         "junitClass": "neoth"
       },
       {
         "test": "skills::store::tests::windows_unc_and_device_prefixes_remain_outside_local_capability_walks",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
+        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
         "junitClass": "neoth"
       },
       {
         "test": "skills::store::reported_commit_tests::private_stage_replaces_a_delete_sharing_bound_target_without_closing_it",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
+        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
         "junitClass": "neoth"
       },
       {
         "test": "skills::store::reported_commit_tests::live_bound_parent_native_rename_is_denied",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
+        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
         "junitClass": "neoth"
       },
       {
         "test": "skills::store::reported_commit_tests::private_stage_publishes_through_bound_parent_despite_mismatched_display_path",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
+        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
         "junitClass": "neoth"
       },
       {
@@ -9327,7 +9327,7 @@
       {
         "test": "skills::store::reported_commit_tests::private_stage_create_new_composes_with_retained_delete_bound_parent",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
+        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
         "junitClass": "neoth"
       }
     ],
@@ -9377,7 +9377,7 @@
       {
         "test": "skills::store::tests::existing_nonprivate_child_is_rejected_without_permission_mutation",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
+        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
         "junitClass": "neoth"
       },
       {
@@ -9515,7 +9515,7 @@
       {
         "test": "skills::store::tests::bound_rename_unix_race_restores_foreign_replacement_and_keeps_original",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
+        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
         "junitClass": "neoth"
       },
       {
@@ -9625,7 +9625,7 @@
       {
         "test": "skills::store::tests::existing_nonprivate_child_is_rejected_without_permission_mutation",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
+        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
         "junitClass": "neoth"
       },
       {
@@ -9763,7 +9763,7 @@
       {
         "test": "skills::store::tests::bound_rename_unix_race_restores_foreign_replacement_and_keeps_original",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
+        "sourceSha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
         "junitClass": "neoth"
       },
       {
@@ -27682,6 +27682,44 @@
       }
     ],
     "note": "Run35951389963@1a92014b exact generated reference imported; Clippy/typecheck/build/export PASS; no local execution",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave635RenameRoot": {
+    "base": "258c0653f8af85e6f29e44e266cf785d181cbf91",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave634-windows46-terminals.json",
+        "bytes": 16808,
+        "sha256": "5E4057F74DC5494F472393D8BD6ED0DB678553FDE818A7245BFCAF275D219089",
+        "blob": "facd8ba71933307edd3491f15317320b88dc690b"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 224581,
+        "sha256": "D9407593EB6209FE55DC178CF71511CF1234C81B5B7B0040564D6DF79D125A3C",
+        "blob": "52ddc702a9fe3693911683615f4c7e2e144c6bec"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1235909,
+        "sha256": "F3B9CCE9C42491E160F4EC6E953324FFFB16FD261C55F666C12A0A2BB2F9B915",
+        "blob": "3715042c659fa3225d3fd2fbf61f43e857c66e4a"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1835191,
+        "sha256": "BE3E98E9231C197F038BA4F68B1C50965DC7D7789DBAD78407F0A5D07721C57B",
+        "blob": "ea9f4c7e936ae362694786bb0194a11778f53141"
+      },
+      {
+        "path": "SRC/neothd/src/skills/store.rs",
+        "bytes": 258413,
+        "sha256": "7E8530A9028C08514E5FCDD237BB17ADF98380C170A34325AE0E80FB35C1DA65",
+        "blob": "9fcd517576d3888ce6e1568dc0f003feff3babb3"
+      }
+    ],
+    "note": "W634 ZIP/source/input/terminal verified independently. Private create-new handle mask corrected; unchanged Windows regression; static reviewed; no local execution",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W634/W635 Windows rename-root access correction (2026-09-24):**
+Windows46 run35952002227 at701d5ebf is independently admitted42PASS/4FAIL/
+0missing:54 internal hashes,10 fixture sources,2 build inputs and46 actual
+terminals. All four Obsidian update cases pass. Paperless38-40 and the isolated
+retained-DELETE-parent regression46 still fail at rename with sharing violation
+0xc0000043/0x20; W628 is therefore not a successful fix. W635 opens a separate
+capability-relative rename root with FILE_TRAVERSE|FILE_READ_ATTRIBUTES and
+passes it to private create-new rename. Private replacement and other paths
+retain their behavior. Independent static review passes; the same46 hosted
+regressions must establish runtime behavior. No Road closure or local execution.
+
 **W631 exact CLI reference admitted (2026-09-24):**
 Core run35951389963 at1a92014b passes slim Clippy, core test-target checking,
 CLI build and export. ZIP digest, exact source receipt and generated reference

@@ -1269,6 +1269,35 @@ fn open_windows_shared_real_child_dir(
     Ok((child, child_identity_token(&metadata)?))
 }
 
+/// Open the exact capability-relative rename root with the narrow access mask
+/// required by `FILE_RENAME_INFORMATION`'s `RootDirectory` contract.
+///
+/// Windows opens the relative rename target separately with write-data access.
+/// Keeping this root at traverse plus read-attributes lets that kernel open
+/// compose with a caller-retained DELETE binding on the same directory.
+#[cfg(windows)]
+fn open_windows_rename_root_directory(parent: &Dir, display_path: &Path) -> Result<File> {
+    use cap_std::fs::OpenOptionsExt as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE,
+    };
+
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .follow(FollowSymlinks::No)
+        .access_mode(FILE_TRAVERSE | FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+    parent.open_with(OsStr::new("."), &options).with_context(|| {
+        format!(
+            "open capability-bound private atomic rename root for {}",
+            display_path.display()
+        )
+    })
+}
+
 /// Read a direct real-directory child's stable identity without requesting
 /// directory `DELETE` access.
 ///
@@ -3898,14 +3927,29 @@ mod windows_private_atomic_stage {
                     super::record_private_atomic_io_diagnostic_for_test("rename", &error);
                     return Err(error);
                 }
-            } else {
+            } else if self.stage.private_dacl {
                 // A create-new private stage has no authorized destination to
                 // replace. Its Windows parent can itself retain a DELETE
-                // binding, and the ordinary no-replace information class
-                // composes with that live directory handle where the extended
-                // POSIX rename class is rejected with sharing violation. The
-                // non-private replacement path retains its existing ordinary
-                // information-class behavior here.
+                // binding. The hosted retained-parent regression rejects a
+                // general-read root handle, so this root uses the narrow mask
+                // required by Windows' relative target open.
+                let rename_root = super::open_windows_rename_root_directory(parent, display_path)
+                    .inspect_err(|error| {
+                        super::record_private_atomic_io_diagnostic_for_test("rename", error);
+                    })?;
+                if let Err(error) = super::windows_rename_open_handle(
+                    &self.stage.file,
+                    &rename_root,
+                    target_name,
+                    replace_existing,
+                    display_path,
+                ) {
+                    super::record_private_atomic_io_diagnostic_for_test("rename", &error);
+                    return Err(error);
+                }
+            } else {
+                // Non-private replacement retains the original ordinary
+                // information-class behavior.
                 if let Err(error) = super::windows_rename_open_handle(
                     &self.stage.file,
                     parent,
@@ -4233,7 +4277,7 @@ unsafe extern "system" {
 #[cfg(windows)]
 fn windows_rename_open_handle(
     source: &File,
-    target_parent: &Dir,
+    target_parent: &impl std::os::windows::io::AsRawHandle,
     target_name: &OsStr,
     replace_existing: bool,
     display_path: &Path,
