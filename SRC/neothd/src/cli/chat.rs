@@ -28188,7 +28188,6 @@ mod attach_tests {
             args,
             FreedomConfig::default(),
             &D7CountingProvider(std::sync::Arc::clone(&calls)),
-
             &mut output,
         )
         .await

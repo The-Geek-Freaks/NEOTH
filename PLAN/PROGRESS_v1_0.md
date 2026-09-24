@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W819 explicit document distillation and scored review (2026-09-24):**
+An opt-in --distill-doc command requires a0..100 minimum score, emits/flushed
+preflight before provider resolution, then uses existing consent/cost authority
+for one candidate call and one scored review. Unknown prices remain null;
+provider errors/refusals/truncation and malformed/low scores cannot stage.
+No skill/memory/wiki installation or proposal is performed. B1/B3 previews stay
+provider-free. Eleven tests cover ordering, bounds, prices and refusal. Source
+is implemented and Root-inspected; independent review and hosted gates remain
+pending. B6 GUI/proactive consumers remain open. Group1285/native1521 planned.
+W823 imports two exact hosted formatting edits for replay/D7; source/digests
+verified. Core676 production Clippy and test-target typecheck pass; CLI building.
+Counts1068checked254open2partial unchanged. No local executable validation.
+See docs/gold-wave819-document-reflexion.md.
+
 **W817/W822 video acceptance and replay routing repair (2026-09-24):**
 Root admitted Group1251 at2b38:1250PASS/1FAIL with236source/twoinput bindings.
 F4's22 cases all pass; its pinned installer, wizard call, caption-first consent

@@ -230,6 +230,24 @@ fn skill_create_receipt(report: &crate::skills::creator::CreateReport) -> SkillC
         .multiple(false)
 ))]
 pub struct SkillsArgs {
+    /// Distill an admitted document with one provider call and one scored
+    /// self-review. Prints a token/cost preflight first; never stages a skill.
+    #[arg(
+        long = "distill-doc",
+        value_name = "PATH",
+        requires = "min_reflexion_score",
+        conflicts_with_all = [
+            "from_doc", "from_doc_chapter", "list_doc_chapters", "list", "check_routing",
+            "test", "run_tests", "install", "inspect_install", "inspect_target", "uninstall",
+            "create", "enable", "disable", "revoke", "force"
+        ]
+    )]
+    pub distill_doc: Option<PathBuf>,
+
+    /// Required acceptance threshold for the document's single scored review.
+    #[arg(long, requires = "distill_doc", value_parser = clap::value_parser!(u8).range(0..=100))]
+    pub min_reflexion_score: Option<u8>,
+
     /// Extract one PDF, office document, or EPUB into a sanitized operator
     /// review draft. This is read-only: it never writes, installs, activates,
     /// routes, or provider-dispatches a skill.
@@ -808,6 +826,10 @@ pub(crate) async fn set_skill_authority_at_config_with_expectation(
 }
 
 pub async fn run_skills(args: SkillsArgs) -> Result<()> {
+    if let Some(source) = &args.distill_doc {
+        let minimum = args.min_reflexion_score.context("--min-reflexion-score is required")?;
+        return run_document_distillation(source, minimum, args.output).await;
+    }
     // ADOPT31-B1 is deliberately before skill-mutation reconciliation: a
     // document-review request must not write, install, activate, or recover a
     // skill as an incidental side effect.
@@ -1482,11 +1504,8 @@ async fn extract_document_for_review(
     extract_document_for_review_with_backends(&backends, asset).await
 }
 
-/// The shared CLI/chat handler for `/skill-from-doc <path>` and the secondary
-/// `neoth skills --from-doc <path>` surface. It reads one bounded file and
-/// prints a review draft; it has no skill filesystem, config, WAL, router, or
-/// provider dependency.
-pub async fn run_document_review(path: &Path, output: OutputFormat) -> Result<()> {
+/// Shared bounded admission and extraction, without provider or Skill effects.
+async fn prepare_document_review(path: &Path) -> Result<crate::skills::doc_distill::DistilledDoc> {
     let source = path.to_path_buf();
     let admitted = tokio::task::spawn_blocking(move || {
         crate::skills::doc_distill::admit_operator_document(&source)
@@ -1496,12 +1515,17 @@ pub async fn run_document_review(path: &Path, output: OutputFormat) -> Result<()
     let extraction = extract_document_for_review(admitted.asset())
         .await
         .map_err(|_| anyhow::anyhow!("document extraction failed; no review draft was produced"))?;
-    let document = crate::skills::doc_distill::distill_doc(
+    Ok(crate::skills::doc_distill::distill_doc(
         extraction,
         admitted.source_kind(),
         admitted.source_bytes(),
         admitted.source_bytes_sha256().to_owned(),
-    )?;
+    )?)
+}
+
+/// Provider-free `/skill-from-doc` and `skills --from-doc` review surface.
+pub async fn run_document_review(path: &Path, output: OutputFormat) -> Result<()> {
+    let document = prepare_document_review(path).await?;
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
@@ -1519,8 +1543,125 @@ pub async fn run_document_review(path: &Path, output: OutputFormat) -> Result<()
     Ok(())
 }
 
-/// Read-only chapter discovery. It retains the source capability for the full
-/// scan and reports offsets only; no source text crosses this CLI boundary.
+/// Delay even constructing the run future until the preflight is delivered.
+async fn emit_document_preflight_then_run<T, E, R, F>(
+    preflight: &crate::skills::doc_distill::DocumentDistillationPreflight,
+    emit: E,
+    run: R,
+) -> Result<T>
+where
+    E: FnOnce(&crate::skills::doc_distill::DocumentDistillationPreflight) -> Result<()>,
+    R: FnOnce() -> F,
+    F: std::future::Future<Output = Result<T>>,
+{
+    emit(preflight)?;
+    run().await
+}
+
+fn print_document_preflight(
+    preflight: &crate::skills::doc_distill::DocumentDistillationPreflight,
+    minimum_score: u8,
+    output: OutputFormat,
+) -> Result<()> {
+    use std::io::Write as _;
+    let receipt = serde_json::json!({
+        "event": "document_distillation_preflight",
+        "minimum_reflexion_score": minimum_score,
+        "estimate": preflight,
+        "provider_dispatched": false,
+        "is_price_quote": false,
+    });
+    match output {
+        OutputFormat::Json => {
+            eprintln!("{}", serde_json::to_string(&receipt)?);
+            std::io::stderr().flush()?;
+        }
+        OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string(&receipt)?);
+            std::io::stdout().flush()?;
+        }
+        OutputFormat::Table => {
+            println!(
+                "Document distillation: at most {} tokens across one candidate and one review call; minimum score {}.",
+                preflight.total_tokens_upper_bound, minimum_score
+            );
+            match &preflight.price {
+                crate::skills::doc_distill::DocumentDistillationPrice::Unknown { .. } => {
+                    println!("Price unknown for this provider/model. This estimate is not a spending authorization.");
+                }
+                crate::skills::doc_distill::DocumentDistillationPrice::Known { total_eur, .. }
+                | crate::skills::doc_distill::DocumentDistillationPrice::Free { total_eur, .. } => {
+                    println!("Estimated upper cost: EUR {total_eur:.6} using the reviewed price table. Actual authorization follows.");
+                }
+            }
+            std::io::stdout().flush()?;
+        }
+    }
+    Ok(())
+}
+
+async fn run_document_distillation(path: &Path, minimum_score: u8, output: OutputFormat) -> Result<()> {
+    use crate::skills::doc_distill::{distill_with_reflexion, preflight_estimate};
+    let document = prepare_document_review(path).await?;
+    let config_path = FreedomConfig::default_path();
+    let home = config_path.parent().context("document config has no home")?.to_path_buf();
+    let config = FreedomConfig::load_from_path_or_default(&config_path)?;
+    let provider_kind = config.inference.utility_provider
+        .map(|kind| kind.to_provider_kind())
+        .or(config.provider_kind)
+        .context("configure a provider before document distillation")?;
+    let model = crate::providers::utility_model_for_config(&config)
+        .filter(|model| !model.trim().is_empty())
+        .context("document cost preflight requires an explicit main or utility model")?;
+    let preflight = preflight_estimate(&document, provider_kind.as_provider_id(), &model);
+    let outcome = emit_document_preflight_then_run(
+        &preflight,
+        |receipt| print_document_preflight(receipt, minimum_score, output),
+        || async {
+            let ephemeral = crate::cli::consent::ensure_all_granted_or_prompt_at(
+                &home, &config, crate::cli::consent::ConsentMutationSource::Tty,
+            ).await?;
+            let provider = crate::providers::from_config_for_utility_at(&config, &home).await?;
+            let wal_dir = home.join("wal");
+            std::fs::create_dir_all(&wal_dir)?;
+            let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "document-distillation");
+            let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(segment, home.clone())?;
+            let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                config.autonomy_policy(), Some(writer.clone()), config.tokens.max_per_request,
+            ).with_usage_home(home.clone()).with_ephemeral_consent(ephemeral);
+            let wrapped = crate::providers::cost_authorization::CostAuthorizingProvider::new(
+                provider.as_ref(), authorizer, Some(model.clone()), "document_distillation",
+            );
+            let result = distill_with_reflexion(&document, &wrapped, &model, minimum_score).await;
+            drop(wrapped);
+            drop(writer);
+            let drained = completion.wait().await.context("drain document-distillation audit");
+            drained?;
+            result
+        },
+    ).await?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string(&serde_json::json!({
+            "event": "document_distillation_result",
+            "source_bytes_sha256": document.provenance.source_bytes_sha256,
+            "result": outcome,
+            "skill_written": false,
+            "skill_activated": false,
+            "staged": false,
+        }))?),
+        OutputFormat::Table => {
+            println!("{}", outcome.candidate);
+            println!("Self-review score: {} / 100; eligible for later staging: {}.",
+                outcome.reflexion.score, outcome.reflexion.eligible_for_b7_staging);
+            for reason in &outcome.reflexion.reasons {
+                println!("- {reason}");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Read-only chapter discovery retains the source capability through the scan.
 pub async fn run_large_text_chapter_discovery(path: &Path, output: OutputFormat) -> Result<()> {
     let source = path.to_path_buf();
     let (source_bytes, source_bytes_sha256, chapters) = tokio::task::spawn_blocking(move || {
@@ -1815,6 +1956,57 @@ mod tests {
     use super::*;
     use crate::config::SkillsConfig;
     use clap::Parser as _;
+
+    #[test]
+    fn document_distillation_cli_requires_threshold_and_excludes_mutators() {
+        let cli = crate::cli::Cli::try_parse_from([
+            "neoth", "skills", "--distill-doc", "guide.md", "--min-reflexion-score", "80",
+        ]).unwrap();
+        let crate::cli::Commands::Skills(args) = cli.command else { panic!("skills command") };
+        assert_eq!(args.distill_doc, Some(PathBuf::from("guide.md")));
+        assert_eq!(args.min_reflexion_score, Some(80));
+        for argv in [
+            vec!["neoth", "skills", "--distill-doc", "guide.md"],
+            vec!["neoth", "skills", "--min-reflexion-score", "80"],
+            vec!["neoth", "skills", "--distill-doc", "guide.md", "--min-reflexion-score", "101"],
+            vec!["neoth", "skills", "--distill-doc", "guide.md", "--min-reflexion-score", "80", "--install", "package"],
+            vec!["neoth", "skills", "--distill-doc", "guide.md", "--min-reflexion-score", "80", "--from-doc", "other.md"],
+            vec!["neoth", "skills", "--distill-doc", "guide.md", "--min-reflexion-score", "80", "--list-doc-chapters", "other.md"],
+        ] { assert!(crate::cli::Cli::try_parse_from(argv).is_err()); }
+    }
+
+    fn document_preflight_fixture() -> crate::skills::doc_distill::DocumentDistillationPreflight {
+        let doc = crate::skills::doc_distill::distill_doc(
+            crate::media::Extraction { text: "An admitted source.".to_owned(), metadata: serde_json::Value::Null },
+            crate::skills::doc_distill::DocumentSourceKind::PlainText, 19, "a".repeat(64),
+        ).unwrap();
+        crate::skills::doc_distill::preflight_estimate(&doc, "local_ollama", "fixture-model")
+    }
+
+    #[tokio::test]
+    async fn document_preflight_is_delivered_before_provider_resolution() {
+        let events = std::sync::Mutex::new(Vec::new());
+        let estimate = document_preflight_fixture();
+        let value = emit_document_preflight_then_run(
+            &estimate,
+            |receipt| { assert!(receipt.total_tokens_upper_bound > 0); events.lock().unwrap().push("preflight"); Ok(()) },
+            || { events.lock().unwrap().push("resolve"); async { Ok(42) } },
+        ).await.unwrap();
+        assert_eq!(value, 42);
+        assert_eq!(*events.lock().unwrap(), vec!["preflight", "resolve"]);
+    }
+
+    #[tokio::test]
+    async fn document_preflight_output_failure_prevents_provider_resolution() {
+        let resolved = std::sync::atomic::AtomicBool::new(false);
+        let result: Result<()> = emit_document_preflight_then_run(
+            &document_preflight_fixture(),
+            |_| anyhow::bail!("output unavailable"),
+            || { resolved.store(true, std::sync::atomic::Ordering::SeqCst); async { Ok(()) } },
+        ).await;
+        assert!(result.is_err());
+        assert!(!resolved.load(std::sync::atomic::Ordering::SeqCst));
+    }
 
     #[derive(Clone, Copy)]
     enum InjectedReviewFailure {

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T14:06:58.1656805Z",
-  "validationStatus": "W822 replay registry path and D7 test-scope repair;W817 F4 accepted",
+  "capturedUtc": "2026-09-24T14:21:22.7252485Z",
+  "validationStatus": "W819 B5/B6 CLI implemented;11 tests selected;hosted and independent review pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -108,8 +108,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 23118,
-      "sha256": "4576FF389F3D904349B55DF66D7D9D71ED6CA5057ACCCCBC3EDA5BAA3917263D"
+      "bytes": 23174,
+      "sha256": "DA69217DA50612B6B21F810C88F4A2DD07BDBD52275ABA4B748C1A7438AF29F2"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -2778,8 +2778,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1172854,
-      "sha256": "1A4863FB6CCFB89794534007B3880CCB4358430DDCB3512D08D9527A2A293FBE"
+      "bytes": 1172853,
+      "sha256": "49724756FD9BC25D3F7009D9D7166AFA6C1C416BB451C08F99FAD7611CC0AAA4"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -3103,8 +3103,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/skills.rs",
-      "bytes": 146829,
-      "sha256": "9739A89593876C6D9961C714F391541E003D1FFF95A7F550D04C1F92AD07DE2C"
+      "bytes": 156179,
+      "sha256": "A0B03136BD8311EBE2CCB7EACA5D7F087BD24CCA58CDF5A95F7E3851C549B2E2"
     },
     {
       "path": "SRC/neothd/src/cli/status.rs",
@@ -3128,8 +3128,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/workflow_replay.rs",
-      "bytes": 34352,
-      "sha256": "0D83E63A41AB1179343BF117000245D3E7D12F1FF572457C08DC52293A27FEBB"
+      "bytes": 34345,
+      "sha256": "9659FAD20BF3A24B104AF303218872E36D86C7617D292BC3A9C15721622346F5"
     },
     {
       "path": "SRC/neothd/src/cluster/budget_raft/carrier.rs",
@@ -4513,8 +4513,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/doc_distill.rs",
-      "bytes": 48887,
-      "sha256": "C6B513406841DFB62642C080D88A8BE38189A482B1C9EFBCAB5EA792F9C1F9B6"
+      "bytes": 69028,
+      "sha256": "43A5D425B4AAC2394860D0452FACFAF470E2B46F9B43E9F91E65750FC29A6077"
     },
     {
       "path": "SRC/neothd/src/skills/generated_scan.rs",
@@ -4895,6 +4895,11 @@
       "path": "THIRD_PARTY_LICENSES",
       "bytes": 2306292,
       "sha256": "1D54C796ACD37411D54FEC4C997ABBAAB53323E251A56228CC75329B41D1E1D3"
+    },
+    {
+      "path": "docs/gold-wave819-document-reflexion.md",
+      "bytes": 2679,
+      "sha256": "703936936CD46B7C21A966E94054FECB14BA72A3951D16DC5EAA7EF4AC915D3A"
     }
   ]
 }

@@ -914,12 +914,10 @@ mod tests {
         )
         .expect("write replay config");
 
-        let registry = crate::skills::SkillRegistry::load_from_config_path(
-            &actual_skills,
-            &actual_config,
-        )
-        .await
-        .expect("load authority-bound actual skill registry");
+        let registry =
+            crate::skills::SkillRegistry::load_from_config_path(&actual_skills, &actual_config)
+                .await
+                .expect("load authority-bound actual skill registry");
         let expected_registry = registry.snapshot_owned();
         let expected_skill = expected_registry
             .iter()
