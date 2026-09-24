@@ -2,6 +2,12 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W855 hosted parser repair (2026-09-24):** W853 is published at8844dc72.
+Preflight36032184376 found one test-only raw-string delimiter collision with
+Markdown heading text in skills/document_staging.rs. The delimiter is corrected
+without changing fixture bytes or production calls. Group/Core at8844 cannot
+validate that source; fresh hosted checks are required. B3/B7 remain OPEN.
+
 **W848-W853 document staging batch; W852 results (2026-09-24):**
 Explicit --stage-route/--stage-target now connects exact staged preflight,
 authorized candidate plus scored review, Pending Document proposal/notification,

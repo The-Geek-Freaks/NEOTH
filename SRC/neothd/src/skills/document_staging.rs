@@ -451,7 +451,7 @@ mod tests {
     #[test]
     fn wiki_candidate_cannot_supply_the_operator_target() {
         let request = DocumentStagingRequest::Wiki { vault_root: "C:/operator-vault".to_owned(), subdir: "documents".to_owned() };
-        let envelope = r#"{"schema_version":1,"route":"wiki","candidate":"# Note"}"#;
+        let envelope = r##"{"schema_version":1,"route":"wiki","candidate":"# Note"}"##;
         assert_eq!(
             decode_provider_candidate(envelope, &request).unwrap(),
             DocumentStagingRoute::Wiki {
