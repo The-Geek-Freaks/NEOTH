@@ -1,0 +1,258 @@
+{
+  "schema": "neoth-hosted-criterion-evidence/v1",
+  "run": 35935802912,
+  "source": "5a5b13ea957bb442bbfb5b7e1f840a66f1ada87e",
+  "grouped": {
+    "executed": 934,
+    "passed": 930,
+    "failed": 4,
+    "missingTerminal": 0,
+    "verifiedSourceBindings": 184
+  },
+  "artifacts": [
+    {
+      "kind": "source",
+      "id": 10783640083,
+      "sha256": "f10452ca7d65532f20732dff07b41b68a7ad364a047fb05b5066c9bb70049fad"
+    },
+    {
+      "kind": "log",
+      "id": 10783395733,
+      "sha256": "ab7187fb91be2f6cbd501a9a15377b1cebfb9cbccf0f19494686935126e522e9"
+    },
+    {
+      "kind": "receipt",
+      "id": 10782439324,
+      "sha256": "8582578cde334abe9832a5407617ea286159fd9f6eaa4a9e3a5bc06bf874f35f"
+    }
+  ],
+  "logSha256": "A1FC3733E4671A77CE46C33122D98D0608D0049B28F222D57A75079582A02569",
+  "selectedScope": "29 Paperless and 13 wizard IPC support cases, all passed; does not close P2-20 or P1-18",
+  "sourceBindings": [
+    {
+      "path": "docs/verification/gold-wave95-96-test-matrix.json",
+      "blob": "5e7b5f2638b450b32a6824667d1563f61ea1f783",
+      "sha256": "C26013A079775B0A97B4AB7B02483EE0B29D9C76706709B829667637129A9787"
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "blob": "a49b0e51cbc8d33d1f351352e856fc89961f02e1",
+      "sha256": "722EE0446DBAC05B3E7D4EB9D44C7174E98E6E6FFF5B633B5A30993EDBCB61F0"
+    },
+    {
+      "path": "SRC/neothd/src/cli/paperless.rs",
+      "blob": "cebb9f408289fa85e3157b71da5c324716f16a97",
+      "sha256": "CDC2606D0700D136BA67FB410ACE2F45A6AA5B94C319F070428108BCADA7BC26"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
+      "blob": "541d3cc708ce1f0da6cdd733ca9eae92b89bc530",
+      "sha256": "043EB3FD3141FC71B659BE51F25351404DCAFB7C4DD92BC8DDDE19D2AC34B116"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_readiness_tests.rs",
+      "blob": "0259b6e374e8b39f928b3654ec2d59fe924e4496",
+      "sha256": "3F2CE600453C6E47808C5ECFFCDC9159BDFF0ADC40CBC8F33632CB7EB239FC5C"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_staging.rs",
+      "blob": "dfcb870519b4d2a5c440c4d4c83a782458c1a368",
+      "sha256": "24CEC865AB89FF5C6137DB2DF40FF0FEF17B5D21C6B8D578FDB4CDBAEB239D3E"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless.rs",
+      "blob": "9f7f02bfb9744c579be8a07f798cace3988d7d57",
+      "sha256": "807E6FA72B96595A364F5FB2A94065960F4D4276FB728AA653F33D38C4BE77F3"
+    }
+  ],
+  "terminals": [
+    {
+      "test": "daemon::wizard_ipc::tests::prepared_hash_requires_exact_lowercase_sha256",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::terminal_response_write_failure_still_stops_admission",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::stalled_owner_bounds_command_admission_and_reply_waits",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::wrong_bearer_is_rejected_before_owner_mutation",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::fresh_home_open_or_resume_creates_only_pending_transaction",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::reopen_preserves_sequence_and_rejects_stale_identity_or_status_injection",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::cancellation_returns_terminal_snapshot_and_drains_listener",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::prepared_config_hash_commits_marker_then_returns_completed_and_drains",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::restart_resumes_pending_transaction_but_rejects_old_boot",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::second_bootstrap_bind_is_refused_while_the_first_owner_holds_the_pid_lease",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::idle_long_poll_returns_before_the_client_deadline",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::long_poll_receives_the_next_accepted_mutation",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::wizard_ipc::tests::read_only_waiters_do_not_wake_each_other",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_readiness::tests::configured_probe_requires_unauthenticated_rejection_then_returns_stable_version",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_readiness::tests::unauthenticated_generic_200_is_not_readiness_evidence",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_readiness::tests::authenticated_profile_401_and_403_are_unauthorized",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_readiness::tests::redirect_is_not_followed_and_does_not_send_token_to_the_redirect_target",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_readiness::tests::malformed_profile_and_non_json_profile_are_invalid_response",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_readiness::tests::authenticated_status_forbidden_reports_ready_without_version",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_readiness::tests::chunked_profile_over_body_cap_is_rejected",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_readiness::tests::absolute_timeout_bounds_an_authenticated_profile_request",
+      "status": "passed"
+    },
+    {
+      "test": "cli::paperless::tests::paperless_status_cli_rejects_token_arguments",
+      "status": "passed"
+    },
+    {
+      "test": "cli::paperless::tests::paperless_status_missing_credentials_never_claims_readiness",
+      "status": "passed"
+    },
+    {
+      "test": "cli::paperless::tests::paperless_status_credential_parse_errors_are_redacted",
+      "status": "passed"
+    },
+    {
+      "test": "cli::paperless::tests::paperless_status_uses_stored_token_for_authenticated_profile_denial_without_leaking",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless::tests::scan_struct_does_not_treat_open_port_as_running",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_staging::tests::renderer_is_pinned_loopback_and_secret_free",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_staging::tests::prepare_is_deterministic_and_preserves_operator_env_and_state",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_staging::tests::foreign_entry_after_prepare_is_rejected_without_touching_operator_env",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_staging::tests::changed_owned_file_is_rejected_without_touching_operator_env",
+      "status": "passed"
+    },
+    {
+      "test": "cli::paperless::tests::paperless_prepare_cli_preserves_explicit_directory",
+      "status": "passed"
+    },
+    {
+      "test": "cli::paperless::tests::preparation_output_is_secret_free_and_never_claims_artifact_proof",
+      "status": "passed"
+    },
+    {
+      "test": "cli::paperless::tests::prepare_helper_then_status_reports_instance_scoped_staging",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless::tests::recommend_uses_legacy_when_modern_absent",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless::tests::install_commands_modern_only_renders_compose_config",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless::tests::install_commands_legacy_only_renders_compose_config",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless::tests::install_commands_embed_work_dir_in_compose_path",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_staging::tests::symlink_root_is_rejected_without_following_target",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_staging::tests::competing_root_before_publication_is_preserved",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_staging::tests::stage_source_swap_before_bound_publish_is_refused",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_staging::tests::ancestor_swap_does_not_publish_into_replacement",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_staging::tests::inspection_parent_swap_reports_mismatch",
+      "status": "passed"
+    }
+  ],
+  "groupedFailures": [
+    {
+      "test": "cli::parity_drift::operation_inventory_binds_gui_callbacks_handlers_and_evidence",
+      "status": "failed"
+    },
+    {
+      "test": "daemon::gui_chat_runtime::lifecycle_tests::w458_real_producer_post_hook_is_visible_to_main_and_buddy_only_after_acceptance",
+      "status": "failed"
+    },
+    {
+      "test": "daemon::proactive_dispatcher::tests::connection_bound_delivery_uses_only_the_exact_live_channel_ref",
+      "status": "failed"
+    },
+    {
+      "test": "daemon::proactive_dispatcher::tests::failed_connection_bound_adapter_never_records_delivered",
+      "status": "failed"
+    }
+  ],
+  "fullAdmission": "work/gold-20260906/wave565-group9345a5/ADMISSION.json",
+  "localExecutableValidationRan": false
+}

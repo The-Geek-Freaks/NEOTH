@@ -8,6 +8,26 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W567 GChat hosted confirmation (2026-09-24):**
+Run35936050813 at3bd923a0 is admitted4/4PASS with3ZIPdigests,8sourcebindings,
+discovery hashes and all actual terminals verified by Root. This confirms the
+same-live-instance delivery fix for both aliases and preserves missing/revoked
+no-send behavior. No external Google Chat service qualification is claimed.
+Evidence:docs/verification/gold-wave567-gchat-terminals.json.
+
+**W559/W565/W566 Obsidian lifecycle and hosted follow-up (2026-09-24):**
+The actual pinned Obsidian bundle now has native status/install/repair/uninstall
+commands with exclusive capability-bound publication, settings/extension
+preservation and resumable uninstall. Fifteen new module/CLI/race cases join
+Group949; native1226 plus Windows25/Linux40/macOS39. Independent review passed;
+new hosted compile/behavior is pending. Pairing/sync and P2-21 remain open.
+Group934 at5a5b13ea is admitted:930PASS/4FAIL/0missing,184bindings; all29Paperless
+and13WizardIPC cases pass. The four failures have scoped fixes: publishedW561
+account binding, corrected production Finish inventory anchor, and W566's
+authenticated replay cursor. Strict provider/secret/terminal checks remain.
+Road1044checked/278open/2partial and WS-LF37done/81open unchanged.
+Details:docs/gold-wave559-566-obsidian-lifecycle.md.
+
 **W561 live delivery default-account repair (2026-09-24):**
 GChat35934263615 executed all4feature cases; the positive same-instance case
 failed because the queued item retained account_id=None while its v6 permit

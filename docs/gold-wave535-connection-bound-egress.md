@@ -40,3 +40,14 @@ instance reconstruction or alternative send path was introduced.
 Independent review approved; the four GChat-feature cases require a fresh hosted
 run. Retained prior source/log/receipt ZIP hashes live under
 work/gold-20260906/wave561-gchatce7394. No new Road acceptance or local execution.
+
+## W567 hosted confirmation
+
+Run 35936050813 at `3bd923a0318737b3a1188ceec5c815c9dfd72cce` is admitted:
+4 executed, 4 passed, none missing. Root checked three ZIP digests, eight exact
+Git source/input bindings, discovery hashes and each actual terminal. Both
+aliases use the published live instance; missing/revoked permits remain no-send.
+The source-gate integration target uses Cargo's documented leaf-name terminal.
+This proves the focused feature-on regression, not a real Google Chat account
+or external-service qualification. Evidence:
+`docs/verification/gold-wave567-gchat-terminals.json`.

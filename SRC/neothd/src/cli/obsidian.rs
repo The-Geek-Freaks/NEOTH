@@ -43,6 +43,12 @@ pub struct ObsidianArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum ObsidianAction {
+    /// Manage the disabled NEOTH Archive Bridge plugin artifact. Pairing and
+    /// sync remain unavailable until their dedicated lifecycle owner ships.
+    Bridge {
+        #[command(subcommand)]
+        action: BridgeAction,
+    },
     /// Report the Obsidian integration config from `freedom.yaml`. Pure read,
     /// no side effects. Shows whether a vault is configured and the key
     /// automation settings (auto-sync, wiki-rebuild, vault-reader).
@@ -156,6 +162,30 @@ pub enum ObsidianAction {
     },
 }
 
+#[derive(Subcommand, Debug, Clone)]
+pub enum BridgeAction {
+    /// Inspect the bridge artifact without modifying the vault.
+    Status {
+        #[arg(long, value_name = "PATH")]
+        vault: PathBuf,
+    },
+    /// Atomically install the disabled, read-only inspector.
+    Install {
+        #[arg(long, value_name = "PATH")]
+        vault: PathBuf,
+    },
+    /// Restore only known bridge payload files after ownership validation.
+    Repair {
+        #[arg(long, value_name = "PATH")]
+        vault: PathBuf,
+    },
+    /// Remove known owned files while preserving plugin settings and additions.
+    Uninstall {
+        #[arg(long, value_name = "PATH")]
+        vault: PathBuf,
+    },
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SyncStats {
     pub considered: usize,
@@ -194,6 +224,30 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
         .clone()
         .unwrap_or_else(archive::default_archive_root);
     match args.action {
+        ObsidianAction::Bridge { action } => {
+            let view = match action {
+                BridgeAction::Status { vault } => {
+                    crate::installers::obsidian_archive_bridge::status(&vault)
+                }
+                BridgeAction::Install { vault } => {
+                    crate::installers::obsidian_archive_bridge::install(&vault)
+                }
+                BridgeAction::Repair { vault } => {
+                    crate::installers::obsidian_archive_bridge::repair(&vault)
+                }
+                BridgeAction::Uninstall { vault } => {
+                    crate::installers::obsidian_archive_bridge::uninstall(&vault)
+                }
+            }.map_err(anyhow::Error::msg)?;
+            match args.output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::to_string(&view)?);
+                }
+                OutputFormat::Table => {
+                    println!("Archive bridge: {:?}\npairing live: false\n", view.status);
+                }
+            }
+        }
         ObsidianAction::Status => {
             // Fail loudly on config load failure — silent defaults would mislead.
             let cfg = crate::config::FreedomConfig::load_from_path(
@@ -2715,6 +2769,8 @@ fn write_template_file(root: &Path, rel: &str, body: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
+    use crate::cli::{Cli, Commands};
     use tempfile::tempdir;
 
     async fn fake_archive(dir: &Path) -> PathBuf {
@@ -2731,6 +2787,85 @@ mod tests {
             .unwrap();
         }
         root
+    }
+
+    #[test]
+    fn bridge_clap_parses_each_action_with_a_trailing_vault_option() {
+        let vault = PathBuf::from("C:/NEOTH test/vault");
+        for action in ["status", "install", "repair", "uninstall"] {
+            let parsed = Cli::try_parse_from([
+                "neoth",
+                "obsidian",
+                "bridge",
+                action,
+                "--vault",
+                "C:/NEOTH test/vault",
+            ])
+            .expect("bridge action with trailing --vault must parse");
+            let Commands::Obsidian(ObsidianArgs {
+                action: ObsidianAction::Bridge { action: bridge_action },
+                ..
+            }) = parsed.command
+            else {
+                panic!("expected `neoth obsidian bridge {action} --vault PATH`");
+            };
+            match bridge_action {
+                BridgeAction::Status { vault: actual } if action == "status" => {
+                    assert_eq!(actual, vault);
+                }
+                BridgeAction::Install { vault: actual } if action == "install" => {
+                    assert_eq!(actual, vault);
+                }
+                BridgeAction::Repair { vault: actual } if action == "repair" => {
+                    assert_eq!(actual, vault);
+                }
+                BridgeAction::Uninstall { vault: actual } if action == "uninstall" => {
+                    assert_eq!(actual, vault);
+                }
+                _ => panic!("bridge action `{action}` parsed to the wrong variant"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_run_obsidian_lifecycle_preserves_vault_notes_and_settings() {
+        let temp = tempdir().unwrap();
+        let archive_root = temp.path().join("explicit-archive-root");
+        let vault = temp.path().join("vault");
+        let note = vault.join("NEOTH-Sessions/operator-note.md");
+        std::fs::create_dir_all(note.parent().unwrap()).unwrap();
+        std::fs::write(&note, b"operator note").unwrap();
+
+        let run = |action| ObsidianArgs {
+            action: ObsidianAction::Bridge { action },
+            archive_root: Some(archive_root.clone()),
+            output: OutputFormat::Json,
+        };
+        run_obsidian(run(BridgeAction::Install { vault: vault.clone() }))
+            .await
+            .unwrap();
+        let settings = vault
+            .join(".obsidian/plugins/neoth-archive-bridge/data.json");
+        std::fs::write(&settings, b"{\"operator\":true}").unwrap();
+
+        run_obsidian(run(BridgeAction::Status { vault: vault.clone() }))
+            .await
+            .unwrap();
+        run_obsidian(run(BridgeAction::Repair { vault: vault.clone() }))
+            .await
+            .unwrap();
+        run_obsidian(run(BridgeAction::Uninstall { vault: vault.clone() }))
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read(&note).unwrap(), b"operator note");
+        assert_eq!(std::fs::read(&settings).unwrap(), b"{\"operator\":true}");
+        assert!(
+            !vault
+                .join(".obsidian/plugins/neoth-archive-bridge/main.js")
+                .exists(),
+            "uninstall removes the owned inspector payload while retaining settings"
+        );
     }
 
     #[tokio::test]

@@ -2633,7 +2633,12 @@ pub(crate) mod w458_test_support {
             surface: response.surface,
             subscription_generation: response.subscription_generation,
             attach_capability: response.attach_capability.clone(),
-            after_sequence: 0,
+            // The exchange cursor is the exact accepted replay head. This
+            // fixture observes only frames produced after both Main and Buddy
+            // held their authenticated attach grants; replaying the historic
+            // lifecycle prefix can exceed the bounded terminal capture before
+            // the post-provider decision is reached.
+            after_sequence: response.initial_sequence,
         };
         let (main_server, mut main_client) = tokio::io::duplex(128 * 1024);
         let main_runtime = runtime.clone();
@@ -2740,11 +2745,11 @@ pub(crate) mod w458_test_support {
             buddy_generation: buddy.subscription_generation,
             main_initial_sequence: main.initial_sequence,
             buddy_initial_sequence: buddy.initial_sequence,
-            // The fixture deliberately replays the full attachment history.
-            // `initial_sequence` is retained above as the real exchange upper
-            // bound, while reducer adoption must begin at this request cursor.
-            main_replay_cursor: 0,
-            buddy_replay_cursor: 0,
+            // Both attachments begin immediately after their individually
+            // authenticated exchange upper bound; the test never mistakes an
+            // historic lifecycle prefix for post-provider output.
+            main_replay_cursor: main.initial_sequence,
+            buddy_replay_cursor: buddy.initial_sequence,
             main_frames,
             buddy_frames,
             provider_invocations: STREAM_OPENS.load(Ordering::SeqCst),

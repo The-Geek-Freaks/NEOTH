@@ -44,6 +44,7 @@ pub mod node;
 pub mod oauth_pkce;
 pub mod obs;
 pub mod obsidian;
+pub mod obsidian_archive_bridge;
 pub mod obsidian_vault;
 pub mod obsidian_vault_w02;
 pub mod ocr;

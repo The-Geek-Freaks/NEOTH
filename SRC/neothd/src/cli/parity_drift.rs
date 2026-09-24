@@ -1234,7 +1234,7 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         gui_nav: "privacy",
         gui_surface: "First-run > OMI credentials > Finish",
         ui_callback: Some("finish-clicked"),
-        rust_handler: Some("window.on_finish_clicked"),
+        rust_handler: Some("register_wizard_finish_callback(&window, move |w|"),
         dispatch_token: Some("finish(&state)"),
         receipt: Evidence::Untyped("fn finish_in_home(", "persist_omi_credentials_via_cli"),
         readback: Evidence::Missing,

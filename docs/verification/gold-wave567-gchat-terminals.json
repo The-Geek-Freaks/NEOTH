@@ -1,0 +1,138 @@
+{
+  "schema": "neoth-hosted-admission/v1",
+  "run": 35936050813,
+  "source": "3bd923a0318737b3a1188ceec5c815c9dfd72cce",
+  "status": "SOURCE_ADMITTED_PASS",
+  "executed": 4,
+  "passed": 4,
+  "failed": 0,
+  "missingTerminal": 0,
+  "artifacts": [
+    {
+      "id": 10783600780,
+      "publishedDigest": "3ec55d3679156b94be7a0d76abbdfd1172063d527152e462b5a8defc1541307f",
+      "localZipSha256": "3EC55D3679156B94BE7A0D76ABBDFD1172063D527152E462B5A8DEFC1541307F"
+    },
+    {
+      "id": 10782798285,
+      "publishedDigest": "5ef2e63c57d07cc940c9641e0f2e731a025a5b1c470007d1f3fa8ba8a7785a46",
+      "localZipSha256": "5EF2E63C57D07CC940C9641E0F2E731A025A5B1C470007D1F3FA8BA8A7785A46"
+    },
+    {
+      "id": 10782459765,
+      "publishedDigest": "4c54930cfb213509069b664e9e92d06db52ff73ce6680b54f0065de935257175",
+      "localZipSha256": "4C54930CFB213509069B664E9E92D06DB52FF73CE6680B54F0065DE935257175"
+    }
+  ],
+  "sourceBindings": [
+    {
+      "path": "SRC/neothd/src/cli/serve_tasks.rs",
+      "artifactSha256": "8712c58e7452c0accd20f21509d954f55687d6390901ab45fd07b05305c966e0",
+      "gitBlobSha256": "8712c58e7452c0accd20f21509d954f55687d6390901ab45fd07b05305c966e0",
+      "matches": true,
+      "gitBlob": "80972eb0bb3a04cc7e05e3f8e4345a9073475357"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/channel_live_registry.rs",
+      "artifactSha256": "27f381ddb9ebd7f0a49dc5f986e312931019ae239c7bfd960387cb1f96cc6e49",
+      "gitBlobSha256": "27f381ddb9ebd7f0a49dc5f986e312931019ae239c7bfd960387cb1f96cc6e49",
+      "matches": true,
+      "gitBlob": "ce19ffd9433db828b7a3310b6d6688dcbf32f496"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "artifactSha256": "e4619a04aca3a5eefa3c7e77bbdc7ce1cce23310e1813224a317675e03af8b93",
+      "gitBlobSha256": "e4619a04aca3a5eefa3c7e77bbdc7ce1cce23310e1813224a317675e03af8b93",
+      "matches": true,
+      "gitBlob": "0d7c5f8ef8a100d318985d7fb9e208a7cc945c44"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/proactive_egress.rs",
+      "artifactSha256": "27437da486067ca0a041edd5d92d32dccc150090ee44da56d362ad5369cc31ce",
+      "gitBlobSha256": "27437da486067ca0a041edd5d92d32dccc150090ee44da56d362ad5369cc31ce",
+      "matches": true,
+      "gitBlob": "c27f2040091d7f92412d070b6c1429111e365a39"
+    },
+    {
+      "path": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
+      "artifactSha256": "4cb8b3ccd7a205d558bd3494d2f675590c0084df22f7acd156046f0fa615cf6a",
+      "gitBlobSha256": "4cb8b3ccd7a205d558bd3494d2f675590c0084df22f7acd156046f0fa615cf6a",
+      "matches": true,
+      "gitBlob": "219e564be5201c75c9ee3b7ee805003c9a118591"
+    },
+    {
+      "path": "SRC/neothd/Cargo.toml",
+      "artifactSha256": "1ff2970c3edca354098ad82d19511909baa2f52c22866f82e1095f3e3dfb32e3",
+      "gitBlobSha256": "1ff2970c3edca354098ad82d19511909baa2f52c22866f82e1095f3e3dfb32e3",
+      "matches": true,
+      "gitBlob": "afad1152a93e6ebf361932d31d75caeff8d723fd"
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "artifactSha256": "722ee0446dbac05b3e7d4eb9d44c7174e98e6e6fff5b633b5a30993edbcb61f0",
+      "gitBlobSha256": "722ee0446dbac05b3e7d4eb9d44c7174e98e6e6fff5b633b5a30993edbcb61f0",
+      "matches": true,
+      "gitBlob": "a49b0e51cbc8d33d1f351352e856fc89961f02e1"
+    },
+    {
+      "path": ".github/workflows/gchat-live-regressions.yml",
+      "artifactSha256": "49acd27013f62d330b7f92334f874206fde1ec55cd9ce0af321359822c467d30",
+      "gitBlobSha256": "49acd27013f62d330b7f92334f874206fde1ec55cd9ce0af321359822c467d30",
+      "matches": true,
+      "gitBlob": "372143d7fc1af1bd61378fa3d63d5105108a10e3"
+    }
+  ],
+  "terminals": [
+    {
+      "sequence": 1,
+      "name": "daemon::proactive_dispatcher::tests::gchat_connection_bound_delivery_uses_the_published_instance_for_both_aliases",
+      "terminal": "ok",
+      "matchesDiscovery": true,
+      "matchesReceipt": true,
+      "actualLog": "01-actual-lib-daemon--proactive-dispatcher--tests--gchat-connection-bound-delivery-uses-the-published-instance-for-both-aliases.log",
+      "actualLogSha256": "7A668D9AAC8C8580E519E4DD297850F00D54D6BE17163D2202E71647354C431C",
+      "discoveryLog": "01-discovery-lib-daemon--proactive-dispatcher--tests--gchat-connection-bound-delivery-uses-the-published-instance-for-both-aliases.log",
+      "discoveryLogSha256": "E05ECDF8CD27FB22EB4B4CF445B2A04F8958A923A1C1B741BDF3FD5FBDAE0F95"
+    },
+    {
+      "sequence": 2,
+      "name": "daemon::proactive_dispatcher::tests::gchat_missing_or_revoked_live_instance_is_sidecar_only_without_send",
+      "terminal": "ok",
+      "matchesDiscovery": true,
+      "matchesReceipt": true,
+      "actualLog": "02-actual-lib-daemon--proactive-dispatcher--tests--gchat-missing-or-revoked-live-instance-is-sidecar-only-without-send.log",
+      "actualLogSha256": "69A3C60C77CFFEB04FFBF8B7EB611F243F6B31E9E72AA4FD129258C2BDE1FEFC",
+      "discoveryLog": "02-discovery-lib-daemon--proactive-dispatcher--tests--gchat-missing-or-revoked-live-instance-is-sidecar-only-without-send.log",
+      "discoveryLogSha256": "6488820544E6931411EC27EC31E092BBB4B9565986FCAAE9AA8A535640DC3EFE"
+    },
+    {
+      "sequence": 3,
+      "name": "daemon::proactive_dispatcher::tests::plan_delivery_gchat_feature_on_requires_complete_canonical_config",
+      "terminal": "ok",
+      "matchesDiscovery": true,
+      "matchesReceipt": true,
+      "actualLog": "03-actual-lib-daemon--proactive-dispatcher--tests--plan-delivery-gchat-feature-on-requires-complete-canonical-config.log",
+      "actualLogSha256": "84D8E30403769C29CF06C1510122EF88A26817CEF56F934B0FA98E552705D064",
+      "discoveryLog": "03-discovery-lib-daemon--proactive-dispatcher--tests--plan-delivery-gchat-feature-on-requires-complete-canonical-config.log",
+      "discoveryLogSha256": "0161E20155CBCC2DEE4F07656D1633800B7195BF1136405C1E25BAC0B7969DF5"
+    },
+    {
+      "sequence": 4,
+      "name": "google_chat_proactivity_uses_only_the_published_live_instance",
+      "terminal": "ok",
+      "matchesDiscovery": true,
+      "matchesReceipt": false,
+      "actualLog": "04-actual-integration-proactive-egress-contract-source-gate--google-chat-proactivity-uses-only-the-published-live-instance.log",
+      "actualLogSha256": "0264F1419935591BDB8DBDBA0DC16F3DD087C4377BA74ED0E6AF49A684403E2D",
+      "discoveryLog": "04-discovery-integration-proactive-egress-contract-source-gate--google-chat-proactivity-uses-only-the-published-live-instance.log",
+      "discoveryLogSha256": "6794B69EA78BF014EC3BA3E175E24E94C3AF56D0ECA591A60D438FEB8DF6AEB5"
+    }
+  ],
+  "integrationNameNormalization": {
+    "receiptName": "proactive_egress_contract_source_gate::google_chat_proactivity_uses_only_the_published_live_instance",
+    "discoveryAndActualName": "google_chat_proactivity_uses_only_the_published_live_instance",
+    "reason": "cargo integration-test terminal prints test leaf name"
+  },
+  "scope": "Feature-on same-live-instance GChat delivery, both aliases and missing/revoked no-send regression; no external Google Chat service acceptance",
+  "localExecutableValidationRan": false
+}
