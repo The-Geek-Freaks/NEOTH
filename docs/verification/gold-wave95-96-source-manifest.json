@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T02:17:57.8255450Z",
-  "validationStatus": "W593 source implementation reviewed; hosted package runtime pending; W595 terminal evidence admitted",
+  "capturedUtc": "2026-09-24T02:20:51.2287730Z",
+  "validationStatus": "W597 exact hosted formatting imported; package runtime pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1458,18 +1458,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 213942,
-      "sha256": "627D5794CC380E9086712B7CC90F35ACE25833C6DC2A738B0C9645512AE6D946"
+      "bytes": 214452,
+      "sha256": "FCF096979FB2831A3CDB2D1E9F7E871D865BD06FE2C9B465F6D188577AF1ADE4"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1225270,
-      "sha256": "787C745BA0E7D7C0763D4090A8621AA2E73D0548767D31778881AFEE13C439DB"
+      "bytes": 1225780,
+      "sha256": "CECEF6E4318EAF0012B205FD323870813237B716E3AFD4C65F0AEF279250F6C6"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1824552,
-      "sha256": "5F15D55F5E9CBA2FA77D3B71B2543DA0F93E4B1A3A299E2351FA2C06F65B5942"
+      "bytes": 1825062,
+      "sha256": "0B61BBB54938F01447927642372829D565261F7F7BF633D3ADD522E5B6C3B6D3"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -1683,8 +1683,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/gui_chat_bridge_controller.rs",
-      "bytes": 80226,
-      "sha256": "EE377EA58308E87227EB25EB7DB0E45AE91E99AC4441DF6A80B8E87B0195BEE1"
+      "bytes": 80252,
+      "sha256": "E08C051F62909BADE99DDBFC86D839875DFFC718445C7C583B6696396E85856C"
     },
     {
       "path": "SRC/neothd-gui/src/gui_stream.rs",
@@ -1694,7 +1694,7 @@
     {
       "path": "SRC/neothd-gui/src/main.rs",
       "bytes": 2213628,
-      "sha256": "9FDF49207A76928FA066B59D78EA2BB2C827F2A2A8ED6792467F340F6C15B96A"
+      "sha256": "48C86B8D61F86E78578522E878B176C7C887456D1DC61F48CB8B332218842DE4"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -1703,8 +1703,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/packaged_chat_probe.rs",
-      "bytes": 26821,
-      "sha256": "A61B61263761E25441CA4FBB956874AC49F6FE3A010CA4ED6B0FBB1D6D05F006"
+      "bytes": 31938,
+      "sha256": "E4347C7396C8767452B486D76A9BCA05F4E84BF1AD6A0EDE8EF5318A3D21652D"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",

@@ -87,7 +87,9 @@ pub(crate) async fn packaged_probe_snapshot(
     installed: &Arc<std::sync::Mutex<InstalledGuiChat>>,
 ) -> GuiChatBridgeResult<Option<PackagedChatProbeSnapshot>> {
     let (bridge, turn, operation) = {
-        let locked = installed.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let locked = installed
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let Some(active) = locked.active.as_ref() else {
             return Ok(None);
         };

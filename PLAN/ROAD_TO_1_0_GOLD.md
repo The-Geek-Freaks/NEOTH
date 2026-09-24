@@ -8,6 +8,13 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W597 hosted package-probe formatting (2026-09-24):**
+Preflight35946845117 generated an exact three-file rustfmt patch for W593
+sourceda5635c6. ZIP digest, receipt hashes and every old/new Gitblob were checked
+before import. No local formatter ran. Both macOS package targets are next;
+P2-26b remains open pending their real runtime receipts. Group966 atce8caa19
+has finished with a failure; its individual terminals are being admitted before
+diagnosis. Windows41 and GUI148 remain independently in progress.
 **W593 packaged macOS chat acceptance implementation (2026-09-24):**
 The opt-in packaged-chat acceptance mode now drives the production Main/Buddy
 callbacks against the sibling packaged daemon in a fresh temporary NEOTH_HOME.

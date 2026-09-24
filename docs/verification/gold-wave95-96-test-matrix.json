@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W593 source implementation reviewed; hosted package runtime pending; W595 terminal evidence admitted",
+  "status": "W597 exact hosted formatting imported; package runtime pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 143837,
-    "sha256": "EB0A866D24D253542B47627CDB9FF1C604E63990C3EE5AAD8ECEB31AAC31EC77"
+    "bytes": 143799,
+    "sha256": "C47DBAA1BBF41BA56E4A1F7973038B2654A108342065A373F62D6AEA83805498"
   },
   "sourceInputs": 817,
   "requiredNativeTests": [
@@ -8068,13 +8068,13 @@
     },
     {
       "path": "SRC/neothd-gui/src/gui_chat_bridge_controller.rs",
-      "bytes": 80226,
-      "sha256": "EE377EA58308E87227EB25EB7DB0E45AE91E99AC4441DF6A80B8E87B0195BEE1"
+      "bytes": 80252,
+      "sha256": "E08C051F62909BADE99DDBFC86D839875DFFC718445C7C583B6696396E85856C"
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
       "bytes": 2213628,
-      "sha256": "9FDF49207A76928FA066B59D78EA2BB2C827F2A2A8ED6792467F340F6C15B96A"
+      "sha256": "48C86B8D61F86E78578522E878B176C7C887456D1DC61F48CB8B332218842DE4"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -8153,8 +8153,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/packaged_chat_probe.rs",
-      "bytes": 26821,
-      "sha256": "A61B61263761E25441CA4FBB956874AC49F6FE3A010CA4ED6B0FBB1D6D05F006"
+      "bytes": 31938,
+      "sha256": "E4347C7396C8767452B486D76A9BCA05F4E84BF1AD6A0EDE8EF5318A3D21652D"
     }
   ],
   "remoteFormatCorrection": {
@@ -26865,6 +26865,50 @@
       }
     ],
     "note": "Opt-in actual packaged sibling daemon, real Main/Buddy callbacks, streamed reattach/dedup/provider-failure/cancellation/exit-zero+cleanup; ad-hoc ARM64/x86_64 app lane, not signed release qualification; no local execution",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave597HostedPackageFormatting": {
+    "base": "da5635c69d1a0ec23bbfaa8257cc2e1d1299b27d",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 214452,
+        "sha256": "FCF096979FB2831A3CDB2D1E9F7E871D865BD06FE2C9B465F6D188577AF1ADE4",
+        "blob": "ad31a9d5f71d72fb5dea60e9c3fd9e8a9568c522"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1225780,
+        "sha256": "CECEF6E4318EAF0012B205FD323870813237B716E3AFD4C65F0AEF279250F6C6",
+        "blob": "e1163f7b11343f72ed0d017fc4e869dffbd7e73a"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1825062,
+        "sha256": "0B61BBB54938F01447927642372829D565261F7F7BF633D3ADD522E5B6C3B6D3",
+        "blob": "86af09f790289ffbee3fad9ca77667f2b6159269"
+      },
+      {
+        "path": "SRC/neothd-gui/src/gui_chat_bridge_controller.rs",
+        "bytes": 80252,
+        "sha256": "E08C051F62909BADE99DDBFC86D839875DFFC718445C7C583B6696396E85856C",
+        "blob": "0cca65bfb6bd929e20050f28d5092a23170498a5"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2213628,
+        "sha256": "48C86B8D61F86E78578522E878B176C7C887456D1DC61F48CB8B332218842DE4",
+        "blob": "329aee230e0873b3198e4ed0f714c053843e5c69"
+      },
+      {
+        "path": "SRC/neothd-gui/src/packaged_chat_probe.rs",
+        "bytes": 31938,
+        "sha256": "E4347C7396C8767452B486D76A9BCA05F4E84BF1AD6A0EDE8EF5318A3D21652D",
+        "blob": "84d06fe5ba557b471ac004127543552c46a1fc75"
+      }
+    ],
+    "note": "Preflight35946845117 artifact10786798822 exact3files old/new blob verified; no local formatter",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
