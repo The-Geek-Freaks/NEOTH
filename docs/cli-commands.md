@@ -2904,6 +2904,16 @@ Atomically install the disabled, read-only inspector
 
 - `--vault <PATH>`
 
+#### `neoth obsidian bridge pair`
+
+Issue a fresh explicit local pairing payload for the installed bridge
+
+- `--vault <PATH>`
+
+#### `neoth obsidian bridge pairing-status`
+
+Read the daemon-owned pairing state through authenticated Connector-Control
+
 #### `neoth obsidian bridge repair`
 
 Restore only known bridge payload files after ownership validation
@@ -2919,6 +2929,12 @@ Inspect the bridge artifact without modifying the vault
 #### `neoth obsidian bridge uninstall`
 
 Remove known owned files while preserving plugin settings and additions
+
+- `--vault <PATH>`
+
+#### `neoth obsidian bridge unpair`
+
+Revoke the paired plugin generation; queued plugin work becomes inert
 
 - `--vault <PATH>`
 

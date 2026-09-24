@@ -6465,7 +6465,7 @@ mod reported_commit_tests {
 
     #[cfg(windows)]
     #[test]
-    fn private_stage_create_new_composes_with_retained_delete_bound_parent() {
+    fn private_stage_create_new_reports_sharing_violation_with_retained_delete_parent() {
         let _scope = windows_private_atomic_stage::qualified_local_ntfs_for_test();
         let temp = tempdir().unwrap();
         let stage_path = temp.path().join("stage");
@@ -6483,15 +6483,24 @@ mod reported_commit_tests {
         .expect("DELETE-sharing stage reader must retain the bound parent");
         let target = stage_path.join("state.json");
 
-        atomic_write_private_child_create_new(
+        // The hosted Windows retained/released-handle pair establishes this
+        // platform boundary: nested rename requires releasing the parent's
+        // DELETE requester while retaining its separate read capability.
+        let error = atomic_write_private_child_create_new(
             &stage,
             OsStr::new("state.json"),
             &target,
             b"private state",
         )
-        .expect("private create-new rename must compose with retained stage DELETE binding");
-
-        assert_eq!(std::fs::read(&target).unwrap(), b"private state");
+        .expect_err("retained parent DELETE access must report the Windows sharing conflict");
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().and_then(std::io::Error::raw_os_error),
+            Some(32),
+            "expected the observed ERROR_SHARING_VIOLATION: {error:#}"
+        );
+        assert!(!target.exists(), "failed rename must not publish the target");
+        assert_eq!(std::fs::read_dir(&stage_path).unwrap().count(), 0,
+            "failed rename must remove its private temporary file");
     }
 
     #[cfg(windows)]

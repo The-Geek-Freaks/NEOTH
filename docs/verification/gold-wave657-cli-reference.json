@@ -1,0 +1,13 @@
+{
+  "schema": "neoth-w657-cli-reference/v1",
+  "run": 35956844607,
+  "source": "afbb5ebbb0743164462611237d5bd5e59619afcb",
+  "artifact": 10791087382,
+  "zipSha256": "E1F069CDF4AE4DBCFCC3103E3348CC991327328C75D41E8E43A5E9F1B5716730",
+  "sha256": "8d97c9a7ddd81e8284bdcf724e324084e12a9c3d7aa127056c71f715833ce09f",
+  "importedPath": "docs/cli-commands.md",
+  "slimClippy": "passed",
+  "coreTestTypecheck": "passed",
+  "cliBuild": "passed",
+  "localExecutablesRan": false
+}

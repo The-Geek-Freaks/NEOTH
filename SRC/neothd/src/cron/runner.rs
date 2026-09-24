@@ -22,7 +22,7 @@ use anyhow::{Context, Result};
 use serde_json::json;
 use tracing::{debug, info, warn};
 
-use crate::channels::routing::{CHANNEL_ROUTING_FILE, ChannelRouting};
+use crate::channels::routing::{CHANNEL_ROUTING_FILE, ChannelRouting, RouteTarget};
 use crate::cron::briefing_prompt::render_briefing_system_prompt;
 use crate::cron::schema::{CronRole, DeliveryMode, Job, classify_role};
 use crate::cron::state::{DeliveryStatus, RuntimeState, target_hash};
@@ -1438,12 +1438,15 @@ fn resolve_cron_delivery_route(
         .context("load channel routing for Cron delivery")?;
     let source = format!("cron:{job_id}");
     match routing.resolve_route(&source, false) {
-        Some(route) if route.account_id.is_some() => {
+        Some(RouteTarget::LegacyUnbound { .. }) | None => {
+            Ok((configured_channel.trim().to_ascii_lowercase(), None, None))
+        }
+        Some(RouteTarget::Bound { channel_ref }) => {
             anyhow::ensure!(
-                route.channel == "telegram",
-                "named Cron delivery route is not Telegram"
+                channel_ref.channel_id == crate::channels::registry::ChannelId::Telegram,
+                "account-bound Cron delivery route for `{}` is unsupported; only Telegram account routes can be queued",
+                channel_ref.channel_id.as_str(),
             );
-            let account_id = route.account_id.expect("route guard retained account id");
             let runtime =
                 crate::config::load_runtime_config_pair_from_path(&home.join("freedom.yaml"))
                     .context("load coherent runtime pair for account-bound Cron delivery")?;
@@ -1452,15 +1455,17 @@ fn resolve_cron_delivery_route(
                 .into_iter()
                 .find_map(|account| {
                     let binding = account.account_binding()?;
-                    (binding.channel_ref().account_id == account_id).then_some(binding)
+                    (binding.channel_ref() == &channel_ref).then_some(binding)
                 })
                 .context(
-                    "named Cron delivery account is not authenticated in the coherent runtime pair",
+                    "account-bound Cron delivery route is not authenticated with its sealed binding in the coherent runtime pair",
                 )?;
-            Ok(("telegram".to_string(), Some(account_id), Some(binding)))
+            Ok((
+                "telegram".to_string(),
+                Some(channel_ref.account_id),
+                Some(binding),
+            ))
         }
-        None => Ok((configured_channel.trim().to_ascii_lowercase(), None, None)),
-        Some(_) => Ok((configured_channel.trim().to_ascii_lowercase(), None, None)),
     }
 }
 
@@ -2905,8 +2910,12 @@ channel_accounts:
         let dir = tempdir().unwrap();
         let account = crate::channels::registry::ChannelAccountId::new("ops_a").unwrap();
         let mut routing = ChannelRouting::default();
-        routing.default_channel = Some("telegram".to_string());
-        routing.telegram_default_account_id = Some(account.clone());
+        routing.default = Some(RouteTarget::Bound {
+            channel_ref: crate::channels::registry::ChannelRef::new(
+                crate::channels::registry::ChannelId::Telegram,
+                account.clone(),
+            ),
+        });
         routing
             .save_to(&dir.path().join(CHANNEL_ROUTING_FILE))
             .unwrap();
@@ -2962,12 +2971,79 @@ channel_accounts:
     }
 
     #[tokio::test]
+    async fn production_bound_non_telegram_cron_route_rejects_before_queue_admission() {
+        let home = tempdir().unwrap();
+        let mut routing = ChannelRouting::default();
+        routing.by_source.insert(
+            "cron:delivery-job".to_string(),
+            RouteTarget::Bound {
+                channel_ref: crate::channels::registry::ChannelRef::new(
+                    crate::channels::registry::ChannelId::Slack,
+                    crate::channels::registry::ChannelAccountId::new("ops_a").unwrap(),
+                ),
+            },
+        );
+        routing
+            .save_to(&home.path().join(CHANNEL_ROUTING_FILE))
+            .unwrap();
+
+        let queue_path = home.path().join("proactive_queue.json");
+        let segment = home.path().join("unsupported-bound-route.wal");
+        let (writer, join) = wal_spawn(segment).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = authorized(CountingProvider {
+            calls: Arc::clone(&calls),
+        });
+        let once_guard = crate::hooks::SessionOnceGuard::new();
+        let outcome = run_job_with_paths(
+            home.path(),
+            &delivery_job("telegram"),
+            &provider,
+            &writer,
+            &queue_path,
+            &home.path().join("hooks"),
+            |stage, body, hooks| {
+                crate::hooks::run_stage_with_once_guard(
+                    stage,
+                    body,
+                    hooks,
+                    None,
+                    false,
+                    &once_guard,
+                )
+                .map(|result| result.outcome)
+            },
+            &crate::config::FreedomConfig::default(),
+        )
+        .await
+        .expect("unsupported route must be represented in the Cron outcome");
+        drop(writer);
+        let _ = join.await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(!outcome.success);
+        assert!(!outcome.delivery_queued);
+        assert_eq!(outcome.delivery_status, Some(DeliveryStatus::Failed));
+        assert!(outcome.error.as_deref().is_some_and(|error| {
+            error.contains("unsupported") && error.contains("account-bound Cron delivery route")
+        }));
+        assert!(
+            !queue_path.exists(),
+            "an unsupported account-bound route must fail before queue admission"
+        );
+    }
+
+    #[tokio::test]
     async fn production_named_route_seals_binding_before_queue_claim_and_mock_factory() {
         let home = tempdir().unwrap();
         let account = crate::channels::registry::ChannelAccountId::new("ops_a").unwrap();
         let mut routing = ChannelRouting::default();
-        routing.default_channel = Some("telegram".to_string());
-        routing.telegram_default_account_id = Some(account.clone());
+        routing.default = Some(RouteTarget::Bound {
+            channel_ref: crate::channels::registry::ChannelRef::new(
+                crate::channels::registry::ChannelId::Telegram,
+                account.clone(),
+            ),
+        });
         routing
             .save_to(&home.path().join(CHANNEL_ROUTING_FILE))
             .unwrap();

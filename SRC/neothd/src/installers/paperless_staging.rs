@@ -32,6 +32,8 @@ const OWNED_FILE_MAX_BYTES: usize = 16 * 1024;
 thread_local! {
     static BEFORE_PUBLICATION_FOR_TEST: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
+    static BEFORE_STAGE_MUTATION_REBIND_FOR_TEST: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
     static BEFORE_INSPECTION_REBIND_FOR_TEST: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
     static LAST_PREPARE_IO_DIAGNOSTIC_FOR_TEST: std::cell::RefCell<Option<String>> =
@@ -46,6 +48,20 @@ fn set_before_publication_for_test(hook: impl FnOnce() + 'static) {
 #[cfg(test)]
 fn run_before_publication_for_test() {
     BEFORE_PUBLICATION_FOR_TEST.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(test)]
+fn set_before_stage_mutation_rebind_for_test(hook: impl FnOnce() + 'static) {
+    BEFORE_STAGE_MUTATION_REBIND_FOR_TEST.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+#[cfg(test)]
+fn run_before_stage_mutation_rebind_for_test() {
+    BEFORE_STAGE_MUTATION_REBIND_FOR_TEST.with(|slot| {
         if let Some(hook) = slot.borrow_mut().take() {
             hook();
         }
@@ -167,16 +183,24 @@ pub fn prepare_at(root: &Path) -> Result<PaperlessStagingView, PaperlessStagingE
         .dir
         .create_dir(&stage_name)
         .map_err(|error| prepare_io("create_stage", error.into()))?;
-    let stage_binding =
+    let stage_mutation_binding =
         crate::skills::store::bind_child_object(&parent.dir, &stage_name, &stage_display)
             .map_err(|error| prepare_io("bind_stage", error))?;
-    let stage_dir = crate::skills::store::open_bound_real_child_dir_for_read(
+    let stage_shared_dir = crate::skills::store::open_bound_real_child_dir_for_read(
         &parent.dir,
-        &stage_binding,
+        &stage_mutation_binding,
         &stage_name,
         &stage_display,
     )
     .map_err(|error| prepare_io("open_stage", error))?;
+    let (stage_dir, stage_read_binding) = crate::skills::store::bind_retained_real_child_dir(
+        &parent.dir,
+        &stage_name,
+        &stage_display,
+        stage_shared_dir,
+    )
+    .map_err(|error| prepare_io("bind_stage_read", error))?;
+    drop(stage_mutation_binding);
     for (name, bytes) in expected_files() {
         let file_display = stage_display.join(name);
         if let Err(error) = crate::skills::store::atomic_write_private_child_create_new(
@@ -185,14 +209,27 @@ pub fn prepare_at(root: &Path) -> Result<PaperlessStagingView, PaperlessStagingE
             &file_display,
             bytes,
         ) {
+            drop(stage_dir);
             let _ = crate::skills::store::remove_bound_real_directory_tree(
                 &parent.dir,
                 &stage_name,
                 &stage_display,
-                stage_binding.identity_token(),
+                stage_read_binding.identity_token(),
             );
             return Err(prepare_io("write_owned_file", error));
         }
+    }
+    #[cfg(test)]
+    run_before_stage_mutation_rebind_for_test();
+    let stage_binding =
+        crate::skills::store::bind_child_object(&parent.dir, &stage_name, &stage_display)
+            .map_err(|error| prepare_io("rebind_stage", error))?;
+    if stage_binding.identity_token() != stage_read_binding.identity_token()
+        || !stage_read_binding
+            .matches_directory_child(&parent.dir, &stage_name, &stage_display)
+            .map_err(|error| prepare_io("revalidate_stage", error))?
+    {
+        return Err(PaperlessStagingError::UnownedOrMismatch);
     }
     #[cfg(test)]
     run_before_publication_for_test();
@@ -678,6 +715,33 @@ mod tests {
         assert!(!root.exists());
         assert_eq!(fs::read(stage.join("attacker")).unwrap(), b"preserve");
         assert!(displaced.is_dir());
+    }
+
+    #[test]
+    fn stage_source_swap_before_late_mutation_rebind_is_refused() {
+        let parent = tempfile::tempdir().unwrap();
+        let parent_root = canonical_temp_root(&parent);
+        let root = parent_root.join("paperless");
+        let stage = parent_root.join(staging_child_name(OsStr::new("paperless")));
+        let displaced = parent_root.join("displaced-stage-before-rebind");
+        let swapped_stage = stage.clone();
+        let displaced_by_swap = displaced.clone();
+        set_before_stage_mutation_rebind_for_test(move || {
+            fs::rename(&swapped_stage, &displaced_by_swap).unwrap();
+            fs::create_dir(&swapped_stage).unwrap();
+            fs::write(swapped_stage.join("attacker"), b"preserve").unwrap();
+        });
+
+        assert!(matches!(
+            prepare_at(&root),
+            Err(PaperlessStagingError::UnownedOrMismatch)
+        ));
+        assert!(!root.exists());
+        assert_eq!(fs::read(stage.join("attacker")).unwrap(), b"preserve");
+        assert!(displaced.is_dir());
+        for (name, expected) in expected_files() {
+            assert_eq!(fs::read(displaced.join(name)).unwrap(), expected);
+        }
     }
 
     #[cfg(unix)]

@@ -23,8 +23,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
-use crate::channels::registry::ChannelAccountId;
-use crate::channels::routing::{CHANNEL_ROUTING_FILE, ChannelRouting};
+use crate::channels::registry::{ChannelAccountId, ChannelId, ChannelRef};
+use crate::channels::routing::{CHANNEL_ROUTING_FILE, ChannelRouting, RouteTarget};
 use crate::proactive::action_staging::{
     ProposalKind, ProposalStatus, ProposedAction, list_proposals, load_proposal,
     set_proposal_status, sync_proposals_to_obsidian,
@@ -338,18 +338,8 @@ fn run_route(
         if !crate::channels::routing::is_known_channel(ch) {
             anyhow::bail!("unknown channel '{ch}'; use a canonical name from `neoth channel list`");
         }
-        let account = validated_telegram_route_account(home, ch, account)?;
-        routing.by_source.insert(src.clone(), ch.clone());
-        match account {
-            Some(account) => {
-                routing
-                    .telegram_account_by_source
-                    .insert(src.clone(), account);
-            }
-            None => {
-                routing.telegram_account_by_source.remove(src);
-            }
-        }
+        let target = validated_telegram_route_target(home, ch, account)?;
+        routing.by_source.insert(src.clone(), target);
         println!("route: source '{src}' -> {ch}");
         changed = true;
     } else if default {
@@ -357,9 +347,7 @@ fn run_route(
         if !crate::channels::routing::is_known_channel(ch) {
             anyhow::bail!("unknown channel '{ch}'; use a canonical name from `neoth channel list`");
         }
-        let account = validated_telegram_route_account(home, ch, account)?;
-        routing.default_channel = Some(ch.clone());
-        routing.telegram_default_account_id = account;
+        routing.default = Some(validated_telegram_route_target(home, ch, account)?);
         println!("default proactive channel -> {ch}");
         changed = true;
     } else if failure {
@@ -367,9 +355,7 @@ fn run_route(
         if !crate::channels::routing::is_known_channel(ch) {
             anyhow::bail!("unknown channel '{ch}'; use a canonical name from `neoth channel list`");
         }
-        let account = validated_telegram_route_account(home, ch, account)?;
-        routing.failure_channel = Some(ch.clone());
-        routing.telegram_failure_account_id = account;
+        routing.failure = Some(validated_telegram_route_target(home, ch, account)?);
         println!("failure-alert channel -> {ch}");
         changed = true;
     }
@@ -393,17 +379,21 @@ fn run_route(
 /// A map-active route without an account is rejected instead of guessing a
 /// default or first account. Legacy scalar Telegram routes remain explicitly
 /// unbound so their historical queue semantics remain intact.
-fn validated_telegram_route_account(
+fn validated_telegram_route_target(
     home: &std::path::Path,
     channel: &str,
     account: Option<ChannelAccountId>,
-) -> Result<Option<ChannelAccountId>> {
+) -> Result<RouteTarget> {
+    let channel_id = crate::channels::registry::resolve_channel_id(channel)
+        .context("resolve canonical channel route")?;
     if channel != "telegram" {
         anyhow::ensure!(
             account.is_none(),
             "--account is supported only with --channel telegram"
         );
-        return Ok(None);
+        return Ok(RouteTarget::LegacyUnbound {
+            channel: channel_id,
+        });
     }
 
     let pair =
@@ -424,14 +414,18 @@ fn validated_telegram_route_account(
                 }),
                 "Telegram route account `{account}` is not an exactly authenticated configured account"
             );
-            Ok(Some(account))
+            Ok(RouteTarget::Bound {
+                channel_ref: ChannelRef::new(ChannelId::Telegram, account),
+            })
         }
         None => {
             anyhow::ensure!(
                 !map_active,
                 "--account is required for new Telegram routing while channel_accounts.telegram is active"
             );
-            Ok(None)
+            Ok(RouteTarget::LegacyUnbound {
+                channel: ChannelId::Telegram,
+            })
         }
     }
 }
@@ -985,10 +979,12 @@ mod tests {
         )
         .unwrap();
         let routing = ChannelRouting::load_from(&home.path().join(CHANNEL_ROUTING_FILE)).unwrap();
-        assert_eq!(
-            routing.telegram_account_by_source.get("cron:daily"),
-            Some(&account)
-        );
+        assert!(matches!(
+            routing.by_source.get("cron:daily"),
+            Some(RouteTarget::Bound { channel_ref })
+                if channel_ref.channel_id == ChannelId::Telegram
+                    && channel_ref.account_id == account
+        ));
 
         run_route(
             home.path(),
@@ -1001,11 +997,10 @@ mod tests {
         )
         .unwrap();
         let routing = ChannelRouting::load_from(&home.path().join(CHANNEL_ROUTING_FILE)).unwrap();
-        assert!(
-            !routing
-                .telegram_account_by_source
-                .contains_key("cron:daily")
-        );
+        assert!(matches!(
+            routing.by_source.get("cron:daily"),
+            Some(RouteTarget::LegacyUnbound { channel: ChannelId::Slack })
+        ));
     }
 
     #[test]

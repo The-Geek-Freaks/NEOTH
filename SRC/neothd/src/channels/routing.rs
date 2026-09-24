@@ -18,26 +18,40 @@
 //! (`REVIEWS/_gold_audit/research/channels_routing_synthesis_2026-06-13.md`):
 //! - **Hermes** `HomeChannel` (per-channel destination) → [`ChannelDestinations`].
 //! - **OpenClaw** `failureDestination` (route failure alerts to a dedicated
-//!   channel) → [`ChannelRouting::failure_channel`].
+//!   channel) → [`ChannelRouting::failure`].
 //! - **OpenHuman** fallback chain (routed → default → sidecar) →
-//!   [`ChannelRouting::resolve_channel`] returning `None` so the caller keeps
+//!   [`ChannelRouting::resolve_route`] returning `None` so the caller keeps
 //!   the existing sidecar behaviour.
 //! - The per-`source` map is RICHER than any of the three (none does
 //!   per-purpose routing at config) — it is the "welche channel für was"
 //!   the operator asked for.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
+use std::marker::PhantomData;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
-use crate::channels::registry::ChannelAccountId;
+use crate::channels::registry::{ChannelAccountId, ChannelId, ChannelRef, resolve_channel_id};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ResolvedChannelRoute {
-    pub channel: String,
-    pub account_id: Option<ChannelAccountId>,
+/// A route either deliberately retains the historic unbound channel behavior,
+/// or names one exact configured channel account.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RouteTarget {
+    LegacyUnbound { channel: ChannelId },
+    Bound { channel_ref: ChannelRef },
+}
+
+impl RouteTarget {
+    pub fn channel_id(&self) -> ChannelId {
+        match self {
+            Self::LegacyUnbound { channel } => *channel,
+            Self::Bound { channel_ref } => channel_ref.channel_id,
+        }
+    }
 }
 
 /// Per-channel outbound destination — the "home channel", i.e. WHERE on a
@@ -45,6 +59,7 @@ pub struct ResolvedChannelRoute {
 /// so a partially-filled routing file is valid. Telegram additionally falls
 /// back to `config.telegram_user_id` at the resolution site when unset here.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ChannelDestinations {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telegram_chat_id: Option<String>,
@@ -195,27 +210,15 @@ pub fn is_valid_matrix_room_id(value: &str) -> bool {
 }
 
 /// GOLD-FEAT-13 routing config. Persisted to `~/.neoth/channel_routing.json`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ChannelRouting {
-    /// Default proactive channel (canonical name) when no per-source match.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_channel: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub telegram_default_account_id: Option<ChannelAccountId>,
-    /// Per-`source` overrides, e.g. `{"coding_session":"discord"}`. The
-    /// `ProactiveItem.source` tag is the routing key.
-    #[serde(default)]
-    pub by_source: HashMap<String, String>,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub telegram_account_by_source: HashMap<String, ChannelAccountId>,
-    /// Channel for failure/error alerts (e.g. a `coding_session` that ended
-    /// with blocked tasks). Falls back to `default_channel`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failure_channel: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub telegram_failure_account_id: Option<ChannelAccountId>,
+    /// Default proactive route when no per-source match.
+    pub default: Option<RouteTarget>,
+    /// Per-`source` overrides. The `ProactiveItem.source` tag is the routing key.
+    pub by_source: BTreeMap<String, RouteTarget>,
+    /// Channel for failure/error alerts. Falls back to `default`.
+    pub failure: Option<RouteTarget>,
     /// Per-channel outbound destinations.
-    #[serde(default)]
     pub destinations: ChannelDestinations,
 }
 
@@ -223,51 +226,27 @@ pub struct ChannelRouting {
 pub const CHANNEL_ROUTING_FILE: &str = "channel_routing.json";
 
 impl ChannelRouting {
-    /// Resolve channel and account from the same selected branch. A missing
-    /// source-specific account deliberately never falls back to default.
-    pub fn resolve_route(&self, source: &str, is_failure: bool) -> Option<ResolvedChannelRoute> {
-        if let Some(channel) = self.by_source.get(source) {
-            return Some(ResolvedChannelRoute {
-                channel: channel.clone(),
-                account_id: if channel == "telegram" {
-                    self.telegram_account_by_source.get(source).cloned()
-                } else {
-                    None
-                },
-            });
-        }
-        if is_failure && let Some(channel) = &self.failure_channel {
-            return Some(ResolvedChannelRoute {
-                channel: channel.clone(),
-                account_id: if channel == "telegram" {
-                    self.telegram_failure_account_id.clone()
-                } else {
-                    None
-                },
-            });
-        }
-        self.default_channel
-            .as_ref()
-            .map(|channel| ResolvedChannelRoute {
-                channel: channel.clone(),
-                account_id: if channel == "telegram" {
-                    self.telegram_default_account_id.clone()
-                } else {
-                    None
-                },
-            })
+    /// Resolve source, failure, then default in that order. A selected route is
+    /// cloned whole so a source binding can never inherit another branch's
+    /// account identity.
+    pub fn resolve_route(&self, source: &str, is_failure: bool) -> Option<RouteTarget> {
+        self.by_source
+            .get(source)
+            .cloned()
+            .or_else(|| is_failure.then(|| self.failure.clone()).flatten())
+            .or_else(|| self.default.clone())
     }
 
     /// Resolve the channel a proactive item should target. Priority:
-    /// (1) per-`source` override, (2) `failure_channel` when `is_failure`,
-    /// (3) `default_channel`. `None` ⇒ no routing rule applies → the caller
-    /// keeps the item's own channel / sidecar-only behaviour (the fallback
-    /// chain's terminal). Returns the canonical channel NAME, not a
-    /// destination — destination resolution is a separate step so the
-    /// autonomy gate + recipient-own-id invariant stay at the send site.
-    pub fn resolve_channel(&self, source: &str, is_failure: bool) -> Option<String> {
+    /// Test-only compatibility projection. It intentionally returns no value
+    /// for an account-bound route so callers cannot discard account identity.
+    #[cfg(test)]
+    pub fn resolve_channel(&self, source: &str, is_failure: bool) -> Option<ChannelId> {
         self.resolve_route(source, is_failure)
-            .map(|route| route.channel)
+            .and_then(|route| match route {
+                RouteTarget::LegacyUnbound { channel } => Some(channel),
+                RouteTarget::Bound { .. } => None,
+            })
     }
 
     /// Load from `path`. A missing or empty file is a fresh default config
@@ -298,20 +277,314 @@ impl ChannelRouting {
     }
 }
 
+const CHANNEL_ROUTING_SCHEMA_VERSION: u32 = 2;
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct RoutingV2Ref<'a> {
+    schema_version: u32,
+    default: &'a Option<RouteTarget>,
+    by_source: &'a BTreeMap<String, RouteTarget>,
+    failure: &'a Option<RouteTarget>,
+    destinations: &'a ChannelDestinations,
+}
+
+impl Serialize for ChannelRouting {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        RoutingV2Ref {
+            schema_version: CHANNEL_ROUTING_SCHEMA_VERSION,
+            default: &self.default,
+            by_source: &self.by_source,
+            failure: &self.failure,
+            destinations: &self.destinations,
+        }
+        .serialize(serializer)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum RouteTargetWire {
+    LegacyUnbound { channel: ChannelId },
+    Bound { channel_ref: StrictChannelRef },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StrictChannelRef {
+    channel_id: ChannelId,
+    account_id: ChannelAccountId,
+}
+
+impl From<RouteTargetWire> for RouteTarget {
+    fn from(value: RouteTargetWire) -> Self {
+        match value {
+            RouteTargetWire::LegacyUnbound { channel } => Self::LegacyUnbound { channel },
+            RouteTargetWire::Bound { channel_ref } => Self::Bound {
+                channel_ref: ChannelRef::new(channel_ref.channel_id, channel_ref.account_id),
+            },
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for RouteTarget {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        RouteTargetWire::deserialize(deserializer).map(Into::into)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoutingV2 {
+    schema_version: u32,
+    default: Option<RouteTargetWire>,
+    by_source: UniqueBTreeMap<RouteTargetWire>,
+    failure: Option<RouteTargetWire>,
+    destinations: ChannelDestinations,
+}
+
+/// A typed JSON object decoder which rejects a repeated key instead of letting
+/// the JSON parser's normal map behavior silently select the last value.
+#[derive(Default)]
+struct UniqueBTreeMap<V>(BTreeMap<String, V>);
+
+impl<'de, V> Deserialize<'de> for UniqueBTreeMap<V>
+where
+    V: Deserialize<'de>,
+{
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        struct UniqueBTreeMapVisitor<V>(PhantomData<fn() -> V>);
+
+        impl<'de, V> Visitor<'de> for UniqueBTreeMapVisitor<V>
+        where
+            V: Deserialize<'de>,
+        {
+            type Value = UniqueBTreeMap<V>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("an object with unique string keys")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut entries = BTreeMap::new();
+                while let Some((key, value)) = map.next_entry::<String, V>()? {
+                    if entries.insert(key.clone(), value).is_some() {
+                        return Err(serde::de::Error::custom(format!(
+                            "duplicate routing map entry `{key}`"
+                        )));
+                    }
+                }
+                Ok(UniqueBTreeMap(entries))
+            }
+        }
+
+        deserializer.deserialize_map(UniqueBTreeMapVisitor(PhantomData))
+    }
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyChannelDestinations {
+    #[serde(default)]
+    telegram_chat_id: Option<String>,
+    #[serde(default)]
+    slack_channel_id: Option<String>,
+    #[serde(default)]
+    discord_channel_id: Option<String>,
+    #[serde(default)]
+    whatsapp_recipient: Option<String>,
+    #[serde(default)]
+    whatsapp_baileys_recipient: Option<String>,
+    #[serde(default)]
+    signal_recipient: Option<String>,
+    #[serde(default)]
+    line_recipient: Option<String>,
+    #[serde(default)]
+    mattermost_channel_id: Option<String>,
+    #[serde(default)]
+    imessage_chat_guid: Option<String>,
+    #[serde(default)]
+    matrix_room_id: Option<String>,
+    #[serde(default)]
+    irc_channel: Option<String>,
+    #[serde(default)]
+    nostr_recipient: Option<String>,
+    #[serde(default)]
+    twitch_channel: Option<String>,
+    #[serde(default)]
+    gchat_space: Option<String>,
+    /// Retired capability-secret field accepted only while decoding legacy
+    /// documents. It is deliberately discarded and never serialized again.
+    #[serde(default)]
+    keet_topic: Option<String>,
+}
+
+impl From<LegacyChannelDestinations> for ChannelDestinations {
+    fn from(value: LegacyChannelDestinations) -> Self {
+        let _ = value.keet_topic;
+        Self {
+            telegram_chat_id: value.telegram_chat_id,
+            slack_channel_id: value.slack_channel_id,
+            discord_channel_id: value.discord_channel_id,
+            whatsapp_recipient: value.whatsapp_recipient,
+            whatsapp_baileys_recipient: value.whatsapp_baileys_recipient,
+            signal_recipient: value.signal_recipient,
+            line_recipient: value.line_recipient,
+            mattermost_channel_id: value.mattermost_channel_id,
+            imessage_chat_guid: value.imessage_chat_guid,
+            matrix_room_id: value.matrix_room_id,
+            irc_channel: value.irc_channel,
+            nostr_recipient: value.nostr_recipient,
+            twitch_channel: value.twitch_channel,
+            gchat_space: value.gchat_space,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyRouting {
+    #[serde(default)]
+    default_channel: Option<String>,
+    #[serde(default)]
+    telegram_default_account_id: Option<ChannelAccountId>,
+    #[serde(default)]
+    by_source: UniqueBTreeMap<String>,
+    #[serde(default)]
+    telegram_account_by_source: UniqueBTreeMap<ChannelAccountId>,
+    #[serde(default)]
+    failure_channel: Option<String>,
+    #[serde(default)]
+    telegram_failure_account_id: Option<ChannelAccountId>,
+    #[serde(default)]
+    destinations: LegacyChannelDestinations,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RoutingInput {
+    V2(RoutingV2),
+    Legacy(LegacyRouting),
+}
+
+impl<'de> Deserialize<'de> for ChannelRouting {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let input = RoutingInput::deserialize(deserializer)?;
+        match input {
+            RoutingInput::V2(v2) => {
+                if v2.schema_version != CHANNEL_ROUTING_SCHEMA_VERSION {
+                    return Err(serde::de::Error::custom(format!(
+                        "unsupported channel routing schema_version {}",
+                        v2.schema_version
+                    )));
+                }
+                Ok(Self {
+                    default: v2.default.map(Into::into),
+                    by_source: v2
+                        .by_source
+                        .0
+                        .into_iter()
+                        .map(|(source, target)| (source, target.into()))
+                        .collect(),
+                    failure: v2.failure.map(Into::into),
+                    destinations: v2.destinations,
+                })
+            }
+            RoutingInput::Legacy(legacy) => Self::from_legacy(legacy).map_err(serde::de::Error::custom),
+        }
+    }
+}
+
+impl ChannelRouting {
+    fn from_legacy(legacy: LegacyRouting) -> Result<Self> {
+        let default = legacy_target(
+            "default_channel",
+            legacy.default_channel,
+            legacy.telegram_default_account_id,
+        )?;
+        let failure = legacy_target(
+            "failure_channel",
+            legacy.failure_channel,
+            legacy.telegram_failure_account_id,
+        )?;
+        let mut by_source = BTreeMap::new();
+        for (source, raw_channel) in legacy.by_source.0 {
+            let account = legacy.telegram_account_by_source.0.get(&source).cloned();
+            let target = legacy_target(&format!("by_source.{source}"), Some(raw_channel), account)?
+                .context("present legacy source route must resolve to a target")?;
+            by_source.insert(
+                source.clone(),
+                target,
+            );
+        }
+        for source in legacy.telegram_account_by_source.0.keys() {
+            if !by_source.contains_key(source) {
+                anyhow::bail!("legacy telegram account binding has no matching source route: {source}");
+            }
+        }
+        Ok(Self {
+            default,
+            by_source,
+            failure,
+            destinations: legacy.destinations.into(),
+        })
+    }
+}
+
+fn legacy_target(
+    field: &str,
+    raw_channel: Option<String>,
+    account: Option<ChannelAccountId>,
+) -> Result<Option<RouteTarget>> {
+    let Some(raw_channel) = raw_channel else {
+        if account.is_some() {
+            anyhow::bail!("legacy {field} account binding has no channel");
+        }
+        return Ok(None);
+    };
+    let channel = resolve_channel_id(&raw_channel)
+        .ok_or_else(|| anyhow::anyhow!("legacy {field} has unknown channel `{raw_channel}`"))?;
+    match account {
+        None => Ok(Some(RouteTarget::LegacyUnbound { channel })),
+        Some(account_id) if channel == ChannelId::Telegram => Ok(Some(RouteTarget::Bound {
+            channel_ref: ChannelRef::new(ChannelId::Telegram, account_id),
+        })),
+        Some(_) => anyhow::bail!("legacy {field} account binding requires channel telegram"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn routing() -> ChannelRouting {
-        let mut by_source = HashMap::new();
-        by_source.insert("coding_session".to_string(), "discord".to_string());
+        let mut by_source = BTreeMap::new();
+        by_source.insert(
+            "coding_session".to_string(),
+            RouteTarget::LegacyUnbound {
+                channel: ChannelId::Discord,
+            },
+        );
         ChannelRouting {
-            default_channel: Some("telegram".to_string()),
-            telegram_default_account_id: None,
+            default: Some(RouteTarget::LegacyUnbound {
+                channel: ChannelId::Telegram,
+            }),
             by_source,
-            telegram_account_by_source: HashMap::new(),
-            failure_channel: Some("slack".to_string()),
-            telegram_failure_account_id: None,
+            failure: Some(RouteTarget::LegacyUnbound {
+                channel: ChannelId::Slack,
+            }),
             destinations: ChannelDestinations {
                 discord_channel_id: Some("987654321".to_string()),
                 slack_channel_id: Some("C0B0QV5434G".to_string()),
@@ -324,8 +597,8 @@ mod tests {
     fn resolve_prefers_per_source_over_default() {
         let r = routing();
         assert_eq!(
-            r.resolve_channel("coding_session", false).as_deref(),
-            Some("discord"),
+            r.resolve_channel("coding_session", false),
+            Some(ChannelId::Discord),
             "per-source override wins"
         );
     }
@@ -334,8 +607,8 @@ mod tests {
     fn resolve_falls_back_to_default_for_unmapped_source() {
         let r = routing();
         assert_eq!(
-            r.resolve_channel("g_01_mini", false).as_deref(),
-            Some("telegram"),
+            r.resolve_channel("g_01_mini", false),
+            Some(ChannelId::Telegram),
             "unmapped source → default"
         );
     }
@@ -345,8 +618,8 @@ mod tests {
         let r = routing();
         // a source with no by_source entry, flagged failure → failure_channel
         assert_eq!(
-            r.resolve_channel("reflection", true).as_deref(),
-            Some("slack"),
+            r.resolve_channel("reflection", true),
+            Some(ChannelId::Slack),
             "failure routes to failure_channel"
         );
     }
@@ -356,8 +629,8 @@ mod tests {
         let r = routing();
         // coding_session HAS a by_source entry → it wins even on failure
         assert_eq!(
-            r.resolve_channel("coding_session", true).as_deref(),
-            Some("discord"),
+            r.resolve_channel("coding_session", true),
+            Some(ChannelId::Discord),
             "explicit per-source mapping beats the failure channel"
         );
     }
@@ -376,41 +649,59 @@ mod tests {
     #[test]
     fn source_branch_never_inherits_a_default_telegram_account() {
         let mut routing = ChannelRouting::default();
-        routing.default_channel = Some("telegram".into());
-        routing.telegram_default_account_id = Some(ChannelAccountId::new("default").unwrap());
-        routing
-            .by_source
-            .insert("cron:daily".into(), "telegram".into());
+        routing.default = Some(RouteTarget::Bound {
+            channel_ref: ChannelRef::new(
+                ChannelId::Telegram,
+                ChannelAccountId::new("default").unwrap(),
+            ),
+        });
+        routing.by_source.insert(
+            "cron:daily".into(),
+            RouteTarget::LegacyUnbound {
+                channel: ChannelId::Telegram,
+            },
+        );
         let route = routing.resolve_route("cron:daily", false).unwrap();
-        assert_eq!(route.channel, "telegram");
-        assert_eq!(
-            route.account_id, None,
-            "source route must not fall back to default account"
+        assert!(matches!(
+            route,
+            RouteTarget::LegacyUnbound {
+                channel: ChannelId::Telegram
+            }
+        ), "source route must not fall back to default account"
         );
     }
 
     #[test]
     fn route_returns_the_account_from_the_selected_default_or_failure_branch() {
         let mut routing = ChannelRouting::default();
-        routing.default_channel = Some("telegram".into());
-        routing.telegram_default_account_id = Some(ChannelAccountId::new("default-a").unwrap());
-        routing.failure_channel = Some("telegram".into());
-        routing.telegram_failure_account_id = Some(ChannelAccountId::new("failure-b").unwrap());
+        routing.default = Some(RouteTarget::Bound {
+            channel_ref: ChannelRef::new(
+                ChannelId::Telegram,
+                ChannelAccountId::new("default-a").unwrap(),
+            ),
+        });
+        routing.failure = Some(RouteTarget::Bound {
+            channel_ref: ChannelRef::new(
+                ChannelId::Telegram,
+                ChannelAccountId::new("failure-b").unwrap(),
+            ),
+        });
 
         assert_eq!(
-            routing.resolve_route("ordinary", false).unwrap().account_id,
-            Some(ChannelAccountId::new("default-a").unwrap())
+            routing.resolve_route("ordinary", false),
+            routing.default
         );
         assert_eq!(
-            routing.resolve_route("ordinary", true).unwrap().account_id,
-            Some(ChannelAccountId::new("failure-b").unwrap())
+            routing.resolve_route("ordinary", true),
+            routing.failure
         );
     }
 
     #[test]
-    fn empty_account_map_is_omitted_from_legacy_routing_json() {
+    fn writes_schema_v2_with_explicit_route_identity() {
         let encoded = serde_json::to_string(&ChannelRouting::default()).unwrap();
-        assert!(!encoded.contains("telegram_account_by_source"));
+        assert!(encoded.contains("\"schema_version\":2"));
+        assert!(encoded.contains("\"by_source\":{}"));
     }
 
     #[test]
@@ -572,5 +863,92 @@ mod tests {
                 "invalid Matrix room id accepted: {invalid:?}"
             );
         }
+    }
+
+    #[test]
+    fn legacy_bare_telegram_is_unbound_but_named_account_is_bound() {
+        let bare: ChannelRouting = serde_json::from_str(
+            r#"{"default_channel":"telegram","by_source":{},"destinations":{}}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            bare.default,
+            Some(RouteTarget::LegacyUnbound {
+                channel: ChannelId::Telegram
+            })
+        ));
+
+        let named: ChannelRouting = serde_json::from_str(
+            r#"{"default_channel":"telegram","telegram_default_account_id":"ops_a","by_source":{},"destinations":{}}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            named.default,
+            Some(RouteTarget::Bound { ref channel_ref })
+                if channel_ref.channel_id == ChannelId::Telegram
+                    && channel_ref.account_id == ChannelAccountId::new("ops_a").unwrap()
+        ));
+    }
+
+    #[test]
+    fn load_is_read_only_and_save_is_canonical_and_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(CHANNEL_ROUTING_FILE);
+        let legacy = br#"{"default_channel":"telegram","by_source":{},"destinations":{}}"#;
+        std::fs::write(&path, legacy).unwrap();
+        let loaded = ChannelRouting::load_from(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), legacy, "load must not rewrite legacy bytes");
+        loaded.save_to(&path).unwrap();
+        let first = std::fs::read(&path).unwrap();
+        assert!(std::str::from_utf8(&first).unwrap().contains("\"schema_version\": 2"));
+        ChannelRouting::load_from(&path).unwrap().save_to(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), first, "canonical v2 save is idempotent");
+    }
+
+    #[test]
+    fn strict_input_rejects_mixed_unknown_and_duplicate_fields() {
+        for raw in [
+            r#"{"schema_version":3,"default":null,"by_source":{},"failure":null,"destinations":{}}"#,
+            r#"{"schema_version":2,"default":{"kind":"bound","channel_ref":{"channel_id":"telegram","account_id":"../invalid"}},"by_source":{},"failure":null,"destinations":{}}"#,
+            r#"{"default_channel":"slack","telegram_default_account_id":"ops_a"}"#,
+            r#"{"telegram_default_account_id":"ops_a"}"#,
+            r#"{"telegram_account_by_source":{"cron:daily":"ops_a"}}"#,
+            r#"{"default_channel":"unknown-channel"}"#,
+            r#"{"schema_version":2,"default":null,"by_source":{},"failure":null,"destinations":{},"default_channel":"telegram"}"#,
+            r#"{"schema_version":2,"schema_version":2,"default":null,"by_source":{},"failure":null,"destinations":{}}"#,
+            r#"{"schema_version":2,"default":null,"by_source":{},"failure":null,"destinations":{},"extra":true}"#,
+            r#"{"schema_version":2,"default":null,"by_source":{},"failure":null,"destinations":{"keet_topic":"nk1_retired"}}"#,
+        ] {
+            assert!(serde_json::from_str::<ChannelRouting>(raw).is_err(), "must reject {raw}");
+        }
+    }
+
+    #[test]
+    fn duplicate_route_maps_are_rejected_before_a_value_can_be_lost() {
+        for raw in [
+            r#"{"schema_version":2,"default":null,"by_source":{"cron:daily":{"kind":"legacy_unbound","channel":"telegram"},"cron:daily":{"kind":"legacy_unbound","channel":"slack"}},"failure":null,"destinations":{}}"#,
+            r#"{"by_source":{"cron:daily":"telegram","cron:daily":"slack"},"telegram_account_by_source":{},"destinations":{}}"#,
+            r#"{"by_source":{"cron:daily":"telegram"},"telegram_account_by_source":{"cron:daily":"ops_a","cron:daily":"ops_b"},"destinations":{}}"#,
+        ] {
+            assert!(serde_json::from_str::<ChannelRouting>(raw).is_err(), "must reject {raw}");
+        }
+    }
+
+    #[test]
+    fn two_bound_accounts_remain_isolated() {
+        let mut routing = ChannelRouting::default();
+        for (source, account) in [("cron:ops", "ops_a"), ("cron:alerts", "ops_b")] {
+            routing.by_source.insert(
+                source.into(),
+                RouteTarget::Bound {
+                    channel_ref: ChannelRef::new(
+                        ChannelId::Telegram,
+                        ChannelAccountId::new(account).unwrap(),
+                    ),
+                },
+            );
+        }
+        assert!(matches!(routing.resolve_route("cron:ops", false), Some(RouteTarget::Bound { ref channel_ref }) if channel_ref.account_id.as_str() == "ops_a"));
+        assert!(matches!(routing.resolve_route("cron:alerts", false), Some(RouteTarget::Bound { ref channel_ref }) if channel_ref.account_id.as_str() == "ops_b"));
     }
 }

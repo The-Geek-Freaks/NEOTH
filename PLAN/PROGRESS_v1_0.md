@@ -2,6 +2,24 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W654/W655/W657/W659 account routing and Windows stage repair (2026-09-24):**
+Routing saves schema2 with explicit legacy-unbound or exact ChannelRef targets;
+load remains read-only, duplicate/mixed inputs reject, retired legacy Keet input
+is discarded. Cron seals authenticated Telegram accounts before admission;
+unbound queue items cannot acquire accounts through later route edits.
+35 focused native identities cover parsing, compatibility, actual caller rejection,
+queue preservation/recovery and stage replacement. Portable native1295;
+Group1025, Windows48. Independent static review; new hosted behavior pending.
+Windows47run35956846675 atafbb5ebb is Root-admitted43PASS4FAIL0missing with
+55hashes10sources2inputs. Released-DELETE twin47PASS identifies the retained
+DELETE-parent sharing boundary. Paperless now keeps a read capability through
+nested writes and late identity-checked mutation rebind. Diagnostic46 explicitly
+becomes a sharing-error/no-publish/cleanup contract; production acceptance stays open.
+Core35956844607 passes slimClippy, testtypecheck and CLIbuild/export; verified
+CLI reference8d97c9a7 is imported before the next grouped run.
+See docs/gold-wave659-routing-paperless.md and W657 verification receipts.
+No Road closure; no local executable validation.
+
 **W651/W653 admitted delivery component and reproducible Obsidian0.2 (2026-09-24):**
 Plugin replay35956842325 atafbb5ebb passes all7 stages and12/12 bundle tests.
 Root verified three ZIPs, exact source bindings and byte equality of all three

@@ -439,16 +439,34 @@ pub(crate) fn plan_delivery(
     }
 }
 
-fn routing_channel_for_item(
+enum RoutingTargetForItem {
+    /// A durable item already carries the selected account. Its persisted
+    /// channel remains authoritative despite later mutable routing edits.
+    PersistedAccount,
+    /// A historical unbound route retains the old channel-only behavior.
+    Legacy(Option<String>),
+    /// An unbound queue item cannot acquire an account from a later routing
+    /// edit. The caller settles it through the durable configuration-error
+    /// path before planning or transport admission.
+    RejectedBound(crate::channels::registry::ChannelRef),
+}
+
+fn routing_target_for_item(
     routing: &crate::channels::routing::ChannelRouting,
     item: &crate::proactive::ProactiveItem,
-) -> Option<String> {
+) -> RoutingTargetForItem {
     if item.account_id.is_some() {
-        None
+        RoutingTargetForItem::PersistedAccount
     } else {
-        routing
-            .resolve_route(&item.source, item.is_failure)
-            .map(|route| route.channel)
+        match routing.resolve_route(&item.source, item.is_failure) {
+            None => RoutingTargetForItem::Legacy(None),
+            Some(crate::channels::routing::RouteTarget::LegacyUnbound { channel }) => {
+                RoutingTargetForItem::Legacy(Some(channel.as_str().to_string()))
+            }
+            Some(crate::channels::routing::RouteTarget::Bound { channel_ref }) => {
+                RoutingTargetForItem::RejectedBound(channel_ref)
+            }
+        }
     }
 }
 
@@ -1079,7 +1097,31 @@ pub(crate) async fn run_proactive_delivery_tick_with_accepted(
         // routing edit must never replace account A with whatever account B
         // happens to be selected now. Account-unbound historical items retain
         // the existing dynamic channel-routing behaviour.
-        let selected_channel = routing_channel_for_item(&routing, &item);
+        let selected_channel = match routing_target_for_item(&routing, &item) {
+            RoutingTargetForItem::PersistedAccount => None,
+            RoutingTargetForItem::Legacy(channel) => channel,
+            RoutingTargetForItem::RejectedBound(channel_ref) => {
+                let target_channel = channel_ref.channel_id.as_str();
+                warn!(
+                    channel = target_channel,
+                    account = %channel_ref.account_id.as_str(),
+                    dedup_key = %item.dedup_key,
+                    "unbound proactive item selected an account-bound route; settling without account acquisition"
+                );
+                let status =
+                    crate::daemon::proactive_egress::record_adapter_configuration_error_once(
+                        &egress,
+                        item,
+                        &queue_generation,
+                        target_channel,
+                    )
+                    .await?;
+                if let Some(status) = status {
+                    delivered += usize::from(status.is_delivered());
+                }
+                continue;
+            }
+        };
         let target_channel = match if item.account_id.is_some() {
             // A sealed mapped Telegram binding fixes the physical channel as
             // well as the account generation. Mutable routing must not turn
@@ -1515,6 +1557,113 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn oversized_legacy_route_rejects_before_queue_mutation() {
+        let tmp = TempDir::new().unwrap();
+        let queue_path = tmp.path().join("proactive_queue.json");
+        let mut queue = ProactiveQueue::new();
+        let mut preserved = item("oversized-route-must-remain", 50, 0);
+        preserved.channel.clear();
+        queue.enqueue(preserved).unwrap();
+        queue.save_to(&queue_path).unwrap();
+        let queue_before = std::fs::read(&queue_path).unwrap();
+
+        let oversized = "x".repeat(MAX_PROACTIVE_CHANNEL_BYTES + 1);
+        std::fs::write(
+            tmp.path()
+                .join(crate::channels::routing::CHANNEL_ROUTING_FILE),
+            serde_json::to_vec(&serde_json::json!({
+                "by_source": { "oversized-route-source": oversized }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let segment = tmp.path().join("oversized-routing-error.wal");
+        let (writer, join) = crate::wal::spawn(segment.clone()).unwrap();
+        let mut config = FreedomConfig::default();
+        config.proactive.enabled = true;
+        let error = run_proactive_delivery_tick(
+            tmp.path(),
+            &segment,
+            &config,
+            &Credentials::default(),
+            &writer,
+            1_700_000_000,
+            empty_live_channels(),
+        )
+        .await
+        .unwrap_err();
+        drop(writer);
+        join.await.unwrap();
+
+        assert!(
+            error.contains("channel routing load failed"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(std::fs::read(&queue_path).unwrap(), queue_before);
+        assert!(!tmp.path().join(PROACTIVE_DELIVERED_SIDECAR).exists());
+        assert!(!tmp.path().join(PROACTIVE_INFLIGHT_DIR).exists());
+
+        // Correct the rejected legacy routing document and use the actual
+        // dispatcher again. The untouched queued item keeps its blank channel,
+        // which resolves to the durable local inbox exactly once.
+        crate::channels::routing::ChannelRouting::default()
+            .save_to(
+                &tmp.path()
+                    .join(crate::channels::routing::CHANNEL_ROUTING_FILE),
+            )
+            .unwrap();
+        let corrected_segment = tmp.path().join("oversized-routing-corrected.wal");
+        let (corrected_writer, corrected_join) = crate::wal::spawn(corrected_segment.clone()).unwrap();
+        assert_eq!(
+            run_proactive_delivery_tick(
+                tmp.path(),
+                &corrected_segment,
+                &config,
+                &Credentials::default(),
+                &corrected_writer,
+                1_700_000_000,
+                empty_live_channels(),
+            )
+            .await
+            .unwrap(),
+            0,
+            "the corrected local route has no live delivery"
+        );
+        assert!(ProactiveQueue::load_from(&queue_path).unwrap().is_empty());
+        let history = crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
+        assert_eq!(history.len(), 1, "the preserved item must settle once");
+        assert_eq!(history[0].item().dedup_key, "oversized-route-must-remain");
+        assert_eq!(
+            history[0].outcome(),
+            crate::daemon::proactive_egress::ProactiveEgressOutcome::SidecarOnly
+        );
+        assert_eq!(
+            run_proactive_delivery_tick(
+                tmp.path(),
+                &corrected_segment,
+                &config,
+                &Credentials::default(),
+                &corrected_writer,
+                1_700_000_000,
+                empty_live_channels(),
+            )
+            .await
+            .unwrap(),
+            0,
+            "a second tick must not duplicate the recovered local delivery"
+        );
+        assert_eq!(
+            crate::daemon::proactive_egress::read_delivery_history(tmp.path())
+                .unwrap()
+                .len(),
+            1
+        );
+        drop(corrected_writer);
+        corrected_join.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn disabled_delivery_tick_ignores_invalid_routing_and_preserves_queue() {
         let tmp = TempDir::new().unwrap();
         let queue_path = tmp.path().join("proactive_queue.json");
@@ -1626,11 +1775,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oversized_persisted_route_is_settled_without_starving_valid_successor() {
+    async fn unbound_item_with_bound_route_settles_before_planning_or_transport() {
         let tmp = TempDir::new().unwrap();
         let queue_path = tmp.path().join("proactive_queue.json");
-        let mut invalid_route = item("invalid-route", 100, 0);
-        invalid_route.source = "oversized-route-source".to_string();
+        let mut invalid_route = item("bound-route-unbound-item", 100, 0);
+        invalid_route.source = "bound-route-source".to_string();
         let mut later = item("later-local-inbox", 50, 0);
         later.source = "g_01_mini".to_string();
         let mut queue = ProactiveQueue::new();
@@ -1640,8 +1789,13 @@ mod tests {
 
         let mut routing = crate::channels::routing::ChannelRouting::default();
         routing.by_source.insert(
-            "oversized-route-source".to_string(),
-            "x".repeat(MAX_PROACTIVE_CHANNEL_BYTES + 1),
+            "bound-route-source".to_string(),
+            crate::channels::routing::RouteTarget::Bound {
+                channel_ref: crate::channels::registry::ChannelRef::new(
+                    crate::channels::registry::ChannelId::Telegram,
+                    crate::channels::registry::ChannelAccountId::new("ops_a").unwrap(),
+                ),
+            },
         );
         routing
             .save_to(
@@ -1680,7 +1834,7 @@ mod tests {
         assert_eq!(
             history
                 .iter()
-                .find(|record| record.item().dedup_key == "invalid-route")
+                .find(|record| record.item().dedup_key == "bound-route-unbound-item")
                 .unwrap()
                 .outcome(),
             crate::daemon::proactive_egress::ProactiveEgressOutcome::AdapterConfigurationError
@@ -2475,21 +2629,20 @@ channel_accounts:
         let account_a = crate::channels::registry::ChannelAccountId::new("ops_a").unwrap();
         let account_b = crate::channels::registry::ChannelAccountId::new("ops_b").unwrap();
         let mut routing = default_rt();
-        routing.default_channel = Some("telegram".to_string());
-        routing.telegram_default_account_id = Some(account_b);
+        routing.default = Some(crate::channels::routing::RouteTarget::Bound {
+            channel_ref: crate::channels::registry::ChannelRef::new(
+                crate::channels::registry::ChannelId::Telegram,
+                account_b,
+            ),
+        });
         let mut queued = item("bound", 50, 0);
         queued.channel = "telegram".to_string();
         queued.account_id = Some(account_a);
-        assert_eq!(
-            routing_channel_for_item(&routing, &queued),
-            None,
-            "the dispatcher must use the durable item channel, never a later account route"
-        );
-        assert_eq!(
-            canonical_target_channel(routing_channel_for_item(&routing, &queued), &queued.channel)
-                .unwrap(),
-            "telegram"
-        );
+        assert!(matches!(
+            routing_target_for_item(&routing, &queued),
+            RoutingTargetForItem::PersistedAccount
+        ));
+        assert_eq!(canonical_target_channel(None, &queued.channel).unwrap(), "telegram");
     }
 
     #[test]
