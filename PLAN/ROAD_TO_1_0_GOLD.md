@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W791/W792 hosted results and queue fixture (2026-09-24):**
+Root verified six ZIP digests and every individual terminal. GUI159 at
+272105e8 passed159/159 with29source/input bindings, including W153's unchanged
+visible-reply assertion. Group1217 at efad6d9b passed1216/1217 with231fixture
+source plus2input bindings. Its sole failure was the D6 invalid-assessment
+fixture expecting no queue file; the intended reconciliation persists that
+file. W792 instead proves no D6 item and preservation of an independent G02
+item. D6 stays open until its corrected test runs on GitHub. Preflight efad
+35995374333 passed, and Corea01's four selected gates/export were admitted
+with unchanged CLI reference; workspace Clippy was skipped. D5 replay and
+F4 video URL remain in implementation. No local executable validation.
+Road1324/1066checked/256open/2partial;258raw/257pre-tag;WS-LF38done80open.
+Receipts: gold-wave791-hosted-results.json and gold-wave789-core-advisor.json.
+
 **W788 Preflight allowlist alignment (2026-09-24):** the GUI lint step itself
 passed, but the offline cadence contract correctly rejected its unlisted
 command block. The exact four-line noncompiling block is now explicitly

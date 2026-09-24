@@ -1,0 +1,40 @@
+{
+  "schema": "neoth-wave789-core-advisor-cli-evidence/v1",
+  "run": {
+    "runId": 35994502749,
+    "jobId": 107616137497,
+    "sourceHead": "a01c9608e26370c3d1e681b0645751e027214dd2",
+    "conclusion": "success"
+  },
+  "artifact": {
+    "id": 10805996989,
+    "apiZipDigest": "sha256:9800d088eb9e1057e55da2a0b916457e2bcb0ae6f1ddae7286ed295db9d662ac",
+    "zipVerified": true,
+    "exportSha256": "b2a5284138e5eb8996aa8514832ac430bd6151e7ec6ac77c6d12a162f076bbae",
+    "internalSha256SumsLine": "b2a5284138e5eb8996aa8514832ac430bd6151e7ec6ac77c6d12a162f076bbae  cli-commands.md",
+    "internalChecksumVerified": true,
+    "sourceHeadVerified": true
+  },
+  "hostedGates": {
+    "slimCoreClippy": "passed",
+    "coreTestTargetTypecheck": "passed",
+    "publicCliBuild": "passed",
+    "referenceExport": "passed",
+    "workspaceClippy": "skipped"
+  },
+  "cliComparison": {
+    "currentDocsSha256": "b2a5284138e5eb8996aa8514832ac430bd6151e7ec6ac77c6d12a162f076bbae",
+    "exportedCliSha256": "b2a5284138e5eb8996aa8514832ac430bd6151e7ec6ac77c6d12a162f076bbae",
+    "matches": true,
+    "trackedFilesChanged": false
+  },
+  "gui159Snapshot": {
+    "runId": 35992827527,
+    "sourceHead": "272105e8db7317147ca5b03a214285b12d39229d",
+    "status": "in_progress",
+    "conclusion": null,
+    "note": "single requested snapshot after artifact preparation"
+  },
+  "localExecutableValidationRan": false,
+  "rootStatus": "ROOT_VERIFIED_NO_IMPORT_NEEDED"
+}

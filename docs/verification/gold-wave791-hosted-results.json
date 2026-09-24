@@ -1,0 +1,861 @@
+{
+  "schema": "neoth-wave791-hosted-admission/v1",
+  "status": "ROOT_VERIFIED",
+  "gui": {
+    "schema": "neoth-gui-hosted-admission/v1",
+    "status": "ROOT_VERIFIED_SUCCESS",
+    "run": 35992827527,
+    "source": "272105e8db7317147ca5b03a214285b12d39229d",
+    "executed": 159,
+    "passed": 159,
+    "failed": 0,
+    "sourceAndInputBindings": 29,
+    "artifacts": [
+      {
+        "id": 10806526514,
+        "name": "w228-linux-gui-fixtures-source-272105e8db7317147ca5b03a214285b12d39229d",
+        "digest": "sha256:54e7b934a924c42bb272041d9d213fd74250016826035e9549c1b8b8e3c87743"
+      },
+      {
+        "id": 10806441749,
+        "name": "w228-linux-gui-fixtures-receipt-272105e8db7317147ca5b03a214285b12d39229d",
+        "digest": "sha256:f7f911a211a637cde69e3f5dbc4be95661a43260a4ad20afad9da0a2569b4494"
+      },
+      {
+        "id": 10806381882,
+        "name": "w228-linux-gui-fixtures-log-272105e8db7317147ca5b03a214285b12d39229d",
+        "digest": "sha256:e2dc346fe5e9b9d6efd753878894fcd725d27adc388ca9fbe88dc4b54d4486cd"
+      }
+    ],
+    "terminals": [
+      {
+        "test": "coding_controller::tests::gui_reserved_start_reaches_real_provider_worker_with_prepared_code_map_context",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w73_buddy_cancel_joins_real_blocked_provider_without_success_repaint",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::lifecycle_impact_identity_uses_the_redacted_digest_and_rejects_another_root",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::private_channel_builder_preserves_typed_fields_without_cli_flags",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::private_channel_builder_routes_matrix_store_path_without_changing_secret_slots",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "tests::matrix_store_path_request_uses_private_stdin_without_path_or_secret_in_argv",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::private_channel_builder_routes_line_webhook_port_as_typed_private_stdin_state",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "tests::line_port_request_uses_private_stdin_without_port_or_secrets_in_argv",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::private_channel_builder_routes_irc_public_settings_without_weakening_account_requirement",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "tests::irc_public_settings_request_uses_private_stdin_without_settings_or_secret_in_argv",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::named_telegram_account_retirement_command_and_ack_bind_the_exact_account",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::required_sender_form_slots_map_to_private_allowed_sender_and_reject_blank",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::bluebubbles_chat_guid_form_slot_trims_or_clears_without_weakening_sender",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::parse_channel_status_requires_boolean_dm_pairing_for_mapped_accounts",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::named_telegram_account_dm_pairing_command_and_ack_bind_the_exact_policy",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "gui_action::tests::skill_autonomy_receipts_are_strict_and_bind_exact_desired_config",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::parse_buddy_status_happy_path",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::parse_buddy_status_rejects_malformed_or_lossy_payloads",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "gui_action::tests::w142_selfimprove_accept_ack_requires_selected_current_evidence",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::w142_selfimprove_review_projects_only_current_verified_evidence",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::w142_selfimprove_review_rejects_stale_or_mismatched_quality_without_false_success",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::w142_selfimprove_review_rejects_missing_or_unknown_quality_fields",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::w149_buddy_quality_rejects_partial_evidence_and_keeps_unavailable_explicit",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "gui_action::ouro_q8::tests::accepts_verified_q8_even_when_configured_none",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "gui_action::ouro_q8::tests::accepts_typed_nonzero_failure_without_success_identity",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "gui_action::ouro_q8::tests::rejects_crossed_exit_and_verification_claims",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "gui_action::ouro_q8::tests::rejects_missing_nullable_key_and_unknown_fields",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "gui_action::ouro_q8::tests::rejects_duplicate_wire_keys",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "gui_action::ouro_q8::tests::rejects_wrong_loop_mode_and_context_claims",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "gui_action::ouro_q8::tests::rejects_success_data_on_typed_failure_and_normalizes_detail",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "gui_action::ouro_q8::tests::capture_receive_returns_while_the_reader_is_still_held",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_is_grant_bound_and_never_enters_visible_reply_or_preview",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_is_bounded_zeroized_on_terminal_and_uses_an_independent_sequence",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_stream_phase::daemon_chat_presentation_tests::actual_redacted_terminal_zeroizes_and_rejects_later_delta",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_delta_state_and_checkpoint_are_rejected_after_provider_done",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_buffer_rejects_bytes_beyond_sixty_four_kib",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_reasoning::tests::strict_sequence_limit_and_terminal_clear",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_reasoning::tests::duplicate_or_forged_frame_clears_the_exact_projection",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_reasoning::tests::default_off_counts_controls_without_retaining_text",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "gui_chat_bridge_controller::tests::reopen_none_or_error_settles_only_the_current_main_handoff",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "gui_crate_has_non_authorizing_reducer_fixtures_and_explicit_consent_types",
+        "junitClass": "neothd-gui::gui_chat_bridge_public_api",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "gui_action::tests::targeted_gui_mutations_cannot_regress_to_the_unchecked_probe",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "citation_gui::tests::explicit_request_rejects_model_style_or_untrimmed_claims",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "citation_gui::tests::provider_indices_are_closed",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "citation_gui::tests::citation_child_policy_is_bounded_and_cancellation_is_shared",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "citation_gui::tests::gui_preflight_requires_the_current_request_hash_and_nonterminal_cache_state",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "citation_gui::tests::gui_decision_receipts_reject_unknown_or_inconsistent_proofs",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "citation_gui::tests::gui_command_builders_bind_only_request_data_and_validate_ids",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "citation_gui::tests::stale_or_historical_detail_never_survives",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "citation_gui::tests::typed_unavailable_cannot_carry_a_chip",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "citation_gui::tests::current_core_bound_result_opens_only_its_own_in_app_detail",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "citation_gui::tests::forged_display_binding_and_replayed_child_result_are_rejected",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_throughput::tests::visible_event_rate_preserves_its_actual_unit",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_throughput::tests::paused_state_requires_null_rate_but_keeps_the_explicit_basis",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_throughput::tests::invalid_unit_and_final_usage_field_fail_closed",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_throughput::tests::stale_gap_and_provider_done_cannot_repaint_a_request",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_throughput::tests::cancellation_is_terminal_until_the_request_is_replaced",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_recall_chips::tests::accepts_only_reduced_ready_rows_without_any_text_or_identity",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_recall_chips::tests::unknown_fields_and_non_warm_scores_fail_closed",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_recall_chips::tests::wrong_binding_gap_and_over_cap_cannot_publish_rows",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_recall_chips::tests::successful_boundaries_freeze_accepted_rows_but_late_frames_do_not_erase_them",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_recall_chips::tests::final_sentinel_replacement_and_clear_remove_only_the_owned_snapshot",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_recall_chips::tests::no_recall_and_missing_are_explicit_empty_batches",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_response_feedback::tests::target_becomes_actionable_only_after_done_then_exact_authenticated_frame",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_response_feedback::tests::malformed_forged_and_unavailable_frames_never_publish_an_id",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_response_feedback::tests::action_is_singleflight_and_only_exact_fresh_readback_can_repaint_it",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "gui_chat_bridge_controller::tests::daemon_terminal_target_reaches_the_shared_action_map_only_for_the_current_turn",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_recall_chips::tests::typed_daemon_batch_reuses_closed_validation_and_provider_done_freeze",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_stream_phase::daemon_chat_presentation_tests::recall_batch_is_cursor_bound_and_rejected_after_provider_done_or_cancel",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_throughput::tests::typed_daemon_state_preserves_inner_sequence_and_terminal_fence",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_stream_phase::daemon_chat_presentation_tests::throughput_state_is_cursor_bound_and_rejected_after_provider_done_or_cancel",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::w184_vault_mirror_parser_rejects_forged_verified_receipt",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::w184_vault_mirror_parser_keeps_indeterminate_repairable",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "vault_mirror_gui_tests::w184_repair_reducer_requires_fresh_matching_status",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::local_models_ready_requires_the_core_ready_variant",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::local_models_reject_unknown_readiness_schema",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "dream_cron_gui_tests::wizard_completion_is_daemon_acknowledged_and_fails_closed_on_loss",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "dream_cron_gui_tests::daemon_completion_failure_retains_existing_dream_readback_and_revision_order",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "dream_cron_gui_tests::observer_uses_a_separate_read_only_handle_without_holding_mutation_lock",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "dream_cron_gui_tests::finish_navigation_is_owned_by_verified_rust_completion",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "wizard_session_controller::tests::prepared_config_hash_is_stable_and_content_bound",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "wizard_session_controller::tests::binding_uses_exact_next_sequence_and_never_wraps",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_stream_phase::daemon_chat_presentation_tests::timeout_guidance_survives_failed_terminal_and_cannot_cross_generation",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_unknown_fields_and_bad_row_contract",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::embedding_models_contract_tests::only_fresh_exact_ready_bge_snapshot_passes_buddy_gate",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_actions_for_unselected_or_qwen_rows",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::embedding_models_contract_tests::buddy_gate_rejects_cache_source_even_with_ready_bge",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_wrong_pin_and_impossible_observation",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "buddy_wiring_tests::w218_buddy_embedding_callbacks_use_instance_config_and_shared_freshness_fence",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::w219_provider_retry_is_strict_bounded_redacted_and_absence_compatible",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "gui_action::task_delegate_assignment_tests::task_delegate_assignment_rejects_unknown_zero_and_mismatched_receipts",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::task_delegate_projection_tests::task_delegate_null_projects_absence_as_effective_default_deny",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::task_delegate_projection_tests::task_delegate_projection_rejects_mismatched_or_zero_revision_object",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_recall_chips::tests::citations_are_closed_available_source_labels_with_positive_matching_ids",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_child_supervisor::tests::staged_cgroup_final_mount_contract_allows_only_a_read_only_public_top_mount",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "dream_cron_gui_tests::mutation_requires_reload_receipt_then_matching_readback",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "dream_cron_gui_tests::mutation_rejects_acknowledged_but_mismatched_readback",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "dream_cron_gui_tests::settings_dream_control_is_command_only_and_never_flips_verified_state",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "dream_cron_gui_tests::only_verified_readback_publishes_visible_dream_state",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "dream_cron_gui_tests::refresh_mutation_error_and_concurrency_keep_readback_authoritative",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "dream_cron_gui_tests::late_status_refresh_cannot_overwrite_the_onboarding_draft",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::lf_p1_20_preview_redacts_normalizes_and_truncates_graphemes_once",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::lf_p1_20_send_completion_delete_recomputes_to_previous_visible_message",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::lf_p1_20_reload_and_session_switch_keep_a_b_isolated",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::lf_p1_20_session_label_sanitizes_legacy_titles_and_controls",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::lf_p1_20_session_history_propagates_corrupt_database_errors",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_subprocess_tests::lf_p1_20_send_before_channel_probe_hydrates_live_preview",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_subprocess_tests::lf_p1_20_session_load_generation_rejects_a_after_b_and_return_to_live",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_subprocess_tests::lf_p1_20_chat_sidebar_session_selection_is_readonly_and_fully_wired",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "gui_action::tests::cluster_configure_receipt_binds_every_submitted_field_and_path",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "interface_preference_tests::p122_custom_topology_survives_shared_commit_and_gui_rerun",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_subprocess_tests::companion_recents_exclude_prior_incognito_rows_but_keep_normal_rows",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_is_typed_bounded_and_truthful_about_unpriced_cost",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_accepts_backend_optional_other_as_null",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_keeps_legacy_distinct_from_bad_schema_one",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_rejects_overcap_unknown_row_fields_and_invalid_relations",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_rejects_cross_row_unpriced_overflow",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_rejects_top_level_fanout_mismatch_and_numeric_abuse",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_accepts_only_proven_f64_regrouping_drift",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_rejects_unbounded_cost_error_budget",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_rejects_payload_above_one_mib_before_decoding",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_week_truth_keeps_legacy_invalid_and_unpriced_states_visible",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w121_channel_pairing_request_callbacks_require_exact_receipts_before_relisting",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w122_channel_account_dm_pairing_callback_preserves_projection_until_exact_receipt",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w130_channel_legacy_migration_callback_preserves_legacy_projection_until_exact_receipt",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w142_selfimprove_accept_requires_exact_bound_receipt_and_fresh_readback",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w149_buddy_quality_handoff_selects_the_exact_selfimprove_proposal",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w153_legacy_child_callbacks_project_only_transient_reasoning",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w153_reasoning_child_controls_are_transient_and_history_excluded",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w162_throughput_controls_are_transient_and_provider_done_fenced",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w163_recall_chip_controls_freeze_current_response_and_clear_on_turn_change",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w164_response_feedback_callback_requires_post_done_target_and_verified_readback",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w167_daemon_recall_chip_batch_projects_current_surface_and_fences_terminals",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w168_daemon_throughput_state_projects_main_and_buddy_then_fences_boundaries",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w185_local_model_callbacks_require_typed_ack_and_fresh_readback",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "wizard_session_controller::tests::private_server_controller_observer_and_mutation_progress_concurrently",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w233_task_delegate_set_owns_busy_across_edits_and_fences_stale_completion",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w233_invalid_fresh_readback_keeps_committed_receipt_and_fences_mutation",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w233_task_delegate_callback_fixture_covers_conflict_receipt_and_newer_readback",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w233_task_delegate_inspect_null_projects_effective_default_deny",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_child_supervisor::tests::cgroup_namespace_root_mount_plan_stages_without_unmounting_inherited_mount",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_child_supervisor::tests::linux_manager_stop_reaps_setsid_and_double_fork_tree",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_child_supervisor::tests::linux_gui_crash_kills_complete_manager_unit",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "chat_child_supervisor::tests::linux_unit_snapshot_pins_manager_owned_kill_contract",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::w480_real_producer_post_provider_outcomes_replay_through_main_and_buddy",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::p118_gui_callbacks_cancel_real_bootstrap_without_replay",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "w58_gui_callback_runtime_tests::p118_projection_freezes_after_hosted_bootstrap_loss_without_replay",
+        "junitClass": "neothd-gui::bin/neothd-gui",
+        "terminalStatus": "passed"
+      }
+    ],
+    "localExecutableValidationRan": false
+  },
+  "group": {
+    "run": 35995724763,
+    "source": "efad6d9be89b441795c8aa3ea3164a729e3d25fb",
+    "executed": 1217,
+    "passed": 1216,
+    "failed": 1,
+    "fixtureSourceBindings": 231,
+    "inputBindings": 2,
+    "artifacts": [
+      {
+        "id": 10806671187,
+        "name": "w190-research-lifecycle-log-efad6d9be89b441795c8aa3ea3164a729e3d25fb",
+        "digest": "sha256:bd2c8be1df7e2b8ecf46ecf420f2b7d9b94ee27530ab99dc4facd2285d70758a"
+      },
+      {
+        "id": 10806556526,
+        "name": "w190-research-lifecycle-source-efad6d9be89b441795c8aa3ea3164a729e3d25fb",
+        "digest": "sha256:77c3bcf14e3b2877a57aadd6f1ac2c075e1e632a5afbf3fdffe27758c1a86729"
+      },
+      {
+        "id": 10806008136,
+        "name": "w190-research-lifecycle-receipt-efad6d9be89b441795c8aa3ea3164a729e3d25fb",
+        "digest": "sha256:4d7f3bbe1b5aaa8026c58e838ba3ddc10cfcec2c3898d5e8ea91145b1b933129"
+      }
+    ],
+    "failures": [
+      "daemon::g02_surfacing_cron::tests::invalid_specialist_assessment_suppresses_only_d6_output"
+    ],
+    "d6": "12 of 13 selected tests passed; invalid-assessment fixture expected no queue file despite intended reconciliation; W792 corrects content invariant; criterion remains open pending rerun"
+  },
+  "closedCriteria": [],
+  "localExecutableValidationRan": false
+}

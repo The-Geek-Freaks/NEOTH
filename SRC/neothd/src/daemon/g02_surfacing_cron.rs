@@ -297,11 +297,34 @@ mod tests {
     #[test]
     fn invalid_specialist_assessment_suppresses_only_d6_output() {
         let home = TempDir::new().unwrap();
+        let queue_path = home.path().join("proactive_queue.json");
+        crate::proactive::ProactiveQueue::enqueue_at(
+            &queue_path,
+            crate::proactive::ProactiveItem {
+                priority: 60,
+                dedup_key: "g02_surfacing:independent-fixture".to_string(),
+                channel: "cli".to_string(),
+                account_id: None,
+                account_binding: None,
+                source: "g02_surfacing".to_string(),
+                body: "independent profile-surfacing fixture".to_string(),
+                scheduled_for_unix: 0,
+                is_failure: false,
+                expires_unix: 0,
+            },
+        )
+        .unwrap();
         std::fs::write(home.path().join("specialist_assessments.json"), "not json").unwrap();
         assert_eq!(
             run_g02_surfacing_tick(home.path(), 1_700_000_000).unwrap(),
             0
         );
-        assert!(!home.path().join("proactive_queue.json").exists());
+        let queue = crate::proactive::ProactiveQueue::load_from(&queue_path).unwrap();
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue.peek()[0].source, "g02_surfacing");
+        assert!(!queue
+            .peek()
+            .iter()
+            .any(|item| item.source == "specialist_advisor"));
     }
 }
