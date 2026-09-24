@@ -58,6 +58,7 @@ fn required_scope_for(method: &str, path: &str) -> Option<&'static str> {
         ("GET", "/api/health") => Some(api_tokens::SCOPE_API_HEALTH),
         ("POST", "/api/recall") => Some(api_tokens::SCOPE_RECALL_READ),
         ("GET", "/api/stats") => Some(api_tokens::SCOPE_STATS_READ),
+        ("POST", "/api/memory/drift") => Some(api_tokens::SCOPE_RECALL_READ),
         ("POST", "/api/memory/save") => Some(api_tokens::SCOPE_MEMORY_WRITE),
         ("POST", "/api/provider/call") => Some(api_tokens::SCOPE_PROVIDER_CALL),
         ("POST", "/api/channel/send") => Some(api_tokens::SCOPE_CHANNEL_SEND),
@@ -639,6 +640,7 @@ mod tests {
             ("GET", "/api/health"),
             ("POST", "/api/recall"),
             ("GET", "/api/stats"),
+            ("POST", "/api/memory/drift"),
             ("POST", "/api/memory/save"),
             ("POST", "/api/provider/call"),
             ("POST", "/api/channel/send"),
@@ -661,6 +663,18 @@ mod tests {
         assert_eq!(required_scope_for("POST", "/api/unknown"), None);
         assert_eq!(required_scope_for("DELETE", "/api/health"), None);
         assert_eq!(required_scope_for("GET", "/"), None);
+    }
+
+    #[test]
+    fn memory_drift_requires_recall_read_not_stats_read() {
+        assert_eq!(
+            required_scope_for("POST", "/api/memory/drift"),
+            Some(api_tokens::SCOPE_RECALL_READ),
+        );
+        assert_ne!(
+            required_scope_for("POST", "/api/memory/drift"),
+            Some(api_tokens::SCOPE_STATS_READ),
+        );
     }
 
     // ── NEOTH-AUDIT-HTTP-BODY-LIMITS-01: Limited body cap ───────────────────────

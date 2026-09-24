@@ -10,9 +10,9 @@
 //! - [`server`] — hyper 1.x task that binds to `127.0.0.1:<port>`,
 //!   pipes requests through the auth middleware + loopback guard +
 //!   into [`handlers`].
-//! - [`handlers`] — the six v1 endpoint handlers
+//! - [`handlers`] — the seven v1 endpoint handlers
 //!   (/api/health, /api/recall, /api/provider/call,
-//!   /api/channel/send, /api/stats, /api/memory/save).
+//!   /api/channel/send, /api/stats, /api/memory/drift, /api/memory/save).
 //!
 //! Spawned from `cli::serve::run_serve` when
 //! `freedom.yaml::n8n_api.enabled = true`. Bind is loopback-only

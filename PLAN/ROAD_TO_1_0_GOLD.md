@@ -8,6 +8,29 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1031 memory-drift and compiled-product bootstrap batch (2026-09-25):**
+POST /api/memory/drift now calls the existing drift report through a read-only
+views.db connection. It requires recall:read, defaults to 20 rows, caps at 100,
+and returns a structured error without creating a missing database. Exactly
+one generated starter uses this implemented route; nine adapters remain open.
+Seven new source tests cover request, query, handler, route and scope behavior.
+Independent source/delta review approved them. Native1721 / Group1496 /
+Windows279 are registered; executable validation remains pending on GitHub.
+The separately reviewed main-only product canary builds the actual CLI, checks
+owner bootstrap, authenticated readiness and repeated-install idempotence,
+then verifies exact Docker, Secret Service and isolated-home cleanup. Nine
+helper tests and the first real product run are pending. No local executable
+validation or roadmap checkbox closure occurred.
+
+**W1028 historical grouped evidence (2026-09-25):** Root independently
+verified all three API ZIP digests, inner evidence, 257 fixture source bindings
+and five inputs for Group36071564337 at5132bdc0. Exactly1488/1489 passed,
+including all12 starter contracts; the sole failure is the stale generated CLI
+reference, subsequently imported in18096dcd. The old run remains failed.
+Preflight36072029450 at18096dcd passed. Windows272 and the older macOS package
+run were still running at the last read. Claude TASK028 requests the next
+read-only proposal-adapter contract while implementation continues.
+
 **W1022/W1023 Core and formatter evidence (2026-09-25):** Core36070402090
 at04f648ec passed production Clippy, test-target typechecking, the public CLI
 build and reference export. Root checked its API ZIP, inner hash and source

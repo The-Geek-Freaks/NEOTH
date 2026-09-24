@@ -62,9 +62,22 @@ Enforcement layers (all active by default):
 | `/api/health` | GET | — | `{version, uptime_secs, status}` |
 | `/api/recall` | POST | `{query, limit?}` | `{hits: [...], total}` (routes through `memory::ctx::search`) |
 | `/api/stats` | GET | — | `{events_total, provider_requests, channel_inbound, channel_outbound}` |
+| `/api/memory/drift` | POST | `{limit?}` | `{drifting: [...], imminent_count, at_risk_count, stable_count}` |
 | `/api/memory/save` | POST | `{kind, body, tags?}` | `{stored, bytes}` (writes a RAW_TEXT WAL frame) |
 | `/api/provider/call` | POST | `{prompt, system?, model?, incognito?}` | `{completion, model}` (authenticated operator communication profile + authorized provider leaf) |
 | `/api/channel/send` | POST | `{channel, recipient, text}` | `{queued}` (writes a CHANNEL_EGRESS WAL frame; adapter dispatch via the broker) |
+
+`/api/memory/drift` reads the existing `views.db` projection with a read-only
+SQLite connection. `limit` defaults to 20 and is capped at 100; zero returns
+only aggregate counts. Wrong JSON types are `BadRequest`. Rows include memory
+text, so a scoped token needs `recall:read`; `stats:read` alone is insufficient.
+The handler does not create or migrate a database. A missing projection returns
+`StoreUnavailable` (503). The usual HTTP request audit still applies.
+
+The inactive `memory_decay_report` starter uses this route. The other nine
+generated starters still disclose their unavailable adapters; their presence
+in the thirteen-workflow catalog does not prove those routes work. Use an n8n
+HTTP Header Auth credential containing the appropriate bearer token.
 
 ---
 

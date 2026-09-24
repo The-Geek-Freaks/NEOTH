@@ -1,0 +1,120 @@
+{
+  "schema": "neoth-hosted-group-admission/v1",
+  "sourceHead": "5132bdc04d2deaf31334c8cb83536c43e5e111df",
+  "run": 36071564337,
+  "runConclusion": "failure",
+  "expected": 1489,
+  "passed": 1488,
+  "failed": 1,
+  "missing": 0,
+  "failedTests": [
+    "cli::docgen::tests::cli_commands_md_is_up_to_date"
+  ],
+  "starterTests": [
+    {
+      "ordinal": 1478,
+      "test": "installers::n8n_starter_workflows::tests::each_starter_description_fits_picker_width",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1479,
+      "test": "installers::n8n_starter_workflows::tests::each_starter_body_is_valid_json_and_inactive",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1480,
+      "test": "installers::n8n_starter_workflows::tests::each_starter_body_contains_its_own_name",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1481,
+      "test": "installers::n8n_starter_workflows::tests::each_starter_body_embeds_its_cron_in_a_schedule_node",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1482,
+      "test": "installers::n8n_starter_workflows::tests::each_starter_body_embeds_its_endpoint_in_an_http_node",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1483,
+      "test": "installers::n8n_starter_workflows::tests::each_starter_body_connects_schedule_configuration_and_http",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1484,
+      "test": "installers::n8n_starter_workflows::tests::each_starter_body_uses_generic_header_auth_and_visible_origin",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1485,
+      "test": "installers::n8n_starter_workflows::tests::starter_bodies_are_distinct_across_workflows",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1486,
+      "test": "installers::n8n_starter_workflows::tests::all_known_workflows_concatenates_bootstrap_then_starter",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1487,
+      "test": "installers::n8n_starter_workflows::tests::all_known_workflows_no_slug_collisions_across_bootstrap_starter",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1488,
+      "test": "installers::n8n_starter_workflows::tests::starter_slugs_match_picker_documentation_intent",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1489,
+      "test": "installers::n8n_starter_workflows::tests::build_workflow_skeleton_embeds_name_cron_endpoint",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "artifactDigests": [
+    {
+      "id": 10838743608,
+      "name": "w190-research-lifecycle-log-5132bdc04d2deaf31334c8cb83536c43e5e111df",
+      "digest": "sha256:c9136fd82d2ddf02cb9654e5362df437a31d172dd91387458f6bd7427005d4ac"
+    },
+    {
+      "id": 10838713735,
+      "name": "w190-research-lifecycle-source-5132bdc04d2deaf31334c8cb83536c43e5e111df",
+      "digest": "sha256:227f1f7d77cbf698243a5ff8051158e6c4c4f4ebd23f2f6cf42cfc465735c766"
+    },
+    {
+      "id": 10838683877,
+      "name": "w190-research-lifecycle-receipt-5132bdc04d2deaf31334c8cb83536c43e5e111df",
+      "digest": "sha256:7ab551c888f3ca5249e02ac238314586df6d5bbe4a2f175728a778cca2ca9ba5"
+    }
+  ],
+  "sourceBindings": 257,
+  "inputBindings": 5,
+  "rootVerification": "Fresh API ZIP comparison and independent Verify-W715 terminal, source and inner receipt verification",
+  "boundary": "Historical starter contract source at5132. Later drift route and product bootstrap not accepted by this run."
+}

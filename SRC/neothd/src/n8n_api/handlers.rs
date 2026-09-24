@@ -1,4 +1,4 @@
-//! Six v1 endpoint handlers for the localhost API.
+//! Seven v1 endpoint handlers for the localhost API.
 //!
 //! Every handler:
 //! 1. Receives the parsed [`ApiRequestCtx`] from [`super::server::serve`]
@@ -46,6 +46,14 @@ pub struct RecallRequest {
 pub struct RecallResponse {
     pub hits: Vec<JsonValue>,
     pub total: usize,
+}
+
+/// API memory-drift request body. limit caps returned rows; omitted defaults to
+/// 20 and the API never accepts more than 100.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MemoryDriftRequest {
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 /// `/api/stats` payload — high-level counts the n8n weekly_stats
@@ -255,6 +263,63 @@ fn read_stat_counts(conn: &rusqlite::Connection) -> Result<StatsResponse, rusqli
         channel_inbound: count("SELECT COUNT(*) FROM idx_events WHERE event_type = 50")?,
         channel_outbound: count("SELECT COUNT(*) FROM idx_events WHERE event_type = 51")?,
     })
+}
+
+// ── /api/memory/drift ───────────────────────────────────────────
+
+/// Read a drift report from an existing views database without creating,
+/// migrating, or modifying it. Drift output includes memory text, so callers
+/// must hold the same recall-read capability as recall.
+fn read_memory_drift(
+    views_path: &std::path::Path,
+    limit: usize,
+) -> Result<crate::memory::drift::DriftReport, HandlerOutcome> {
+    if !views_path.is_file() {
+        return Err(HandlerOutcome::error(
+            ApiErrorCode::StoreUnavailable,
+            format!("memory drift store is unavailable: {}", views_path.display()),
+            "run neoth serve once to materialise views.db; this read-only endpoint will not create it",
+        ));
+    }
+    let flags =
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let conn = rusqlite::Connection::open_with_flags(views_path, flags).map_err(|error| {
+        HandlerOutcome::error(
+            ApiErrorCode::StoreUnavailable,
+            format!("memory drift store open failed: {error}"),
+            "check views.db availability and permissions; this endpoint never creates or migrates it",
+        )
+    })?;
+    crate::memory::drift::drift_report(&conn, limit).map_err(|error| {
+        HandlerOutcome::error(
+            ApiErrorCode::UpstreamError,
+            format!("memory drift query failed: {error}"),
+            "check views.db integrity and the idx_episode projection",
+        )
+    })
+}
+
+/// Return operator-triageable drift rows and exact bucket counts from the
+/// existing memory projection. No WAL append, database creation, migration,
+/// provider call, or egress occurs.
+pub fn memory_drift(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcome {
+    let req: MemoryDriftRequest = match parse_body(&ctx.body) {
+        Ok(request) => request,
+        Err(outcome) => return outcome,
+    };
+    let limit = req.limit.unwrap_or(20).min(100);
+    let report = match read_memory_drift(&state.home.join("views.db"), limit) {
+        Ok(report) => report,
+        Err(outcome) => return outcome,
+    };
+    match serde_json::to_value(report) {
+        Ok(report) => HandlerOutcome::ok_json(report),
+        Err(error) => HandlerOutcome::error(
+            ApiErrorCode::UpstreamError,
+            format!("memory drift response serialisation failed: {error}"),
+            "retry after checking the stored drift rows",
+        ),
+    }
 }
 
 // ── /api/memory/save ────────────────────────────────────────────
@@ -734,6 +799,7 @@ pub async fn route(ctx: ApiRequestCtx, state: Arc<ApiState>) -> HandlerOutcome {
         ("GET", "/api/health") => health(&ctx, &state),
         ("POST", "/api/recall") => recall(&ctx, &state),
         ("GET", "/api/stats") => stats(&ctx, &state),
+        ("POST", "/api/memory/drift") => memory_drift(&ctx, &state),
         ("POST", "/api/memory/save") => memory_save(&ctx, &state).await,
         ("POST", "/api/provider/call") => provider_call(&ctx, &state).await,
         ("POST", "/api/channel/send") => channel_send(&ctx, &state).await,
@@ -829,6 +895,179 @@ mod tests {
     fn recall_request_defaults_limit_to_none() {
         let r: RecallRequest = serde_json::from_str(r#"{"query": "x"}"#).unwrap();
         assert_eq!(r.limit, None);
+    }
+
+    #[test]
+    fn memory_drift_request_defaults_limit_to_none_and_rejects_wrong_type() {
+        let request: MemoryDriftRequest = serde_json::from_str("{}").unwrap();
+        assert_eq!(request.limit, None);
+        assert!(parse_body::<MemoryDriftRequest>(br#"{"limit":"20"}"#).is_err());
+    }
+
+    #[test]
+    fn memory_drift_reads_seeded_rows_with_limit_and_exact_counts() {
+        let home = tempfile::tempdir().unwrap();
+        let views_path = home.path().join("views.db");
+        let conn = crate::memory::store::open(&views_path).unwrap();
+        for (event_id, importance) in [(1_i64, 0.12_f64), (2, 0.18), (3, 0.25), (4, 0.60)] {
+            conn.execute(
+                "INSERT INTO idx_episode \
+                 (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+                 VALUES (?1, 1, ?2, ?3, ?4, ?5, ?2)",
+                rusqlite::params![
+                    event_id,
+                    event_id,
+                    format!("drift-{event_id}"),
+                    format!("hash-{event_id}"),
+                    importance
+                ],
+            )
+            .unwrap();
+        }
+        drop(conn);
+
+        let report = read_memory_drift(&views_path, 2).unwrap();
+        assert_eq!(report.drifting.len(), 2);
+        assert_eq!(report.imminent_count, 2);
+        assert_eq!(report.at_risk_count, 1);
+        assert_eq!(report.stable_count, 1);
+        assert_eq!(report.drifting[0].event_id, 1);
+        assert_eq!(report.drifting[1].event_id, 2);
+    }
+
+    #[test]
+    fn memory_drift_missing_store_is_structured_and_does_not_create_database() {
+        let home = tempfile::tempdir().unwrap();
+        let views_path = home.path().join("views.db");
+        let outcome = read_memory_drift(&views_path, 20).unwrap_err();
+        assert_eq!(outcome.error_code(), Some(ApiErrorCode::StoreUnavailable));
+        assert!(!views_path.exists());
+    }
+
+    fn memory_drift_test_state(
+        home: &std::path::Path,
+        writer: crate::wal::writer::WalWriterHandle,
+    ) -> ApiState {
+        let config = crate::config::FreedomConfig::default();
+        ApiState {
+            writer,
+            config: Arc::new(config.clone()),
+            reload_controller: Arc::new(crate::config::reload::ReloadController::new(
+                config,
+                home.join("freedom.yaml"),
+            )),
+            home: home.to_path_buf(),
+            token: "test-token".to_owned(),
+            cooldown: Arc::new(crate::n8n_api::auth::AuthCooldown::new()),
+            boot_instant: std::time::Instant::now(),
+        }
+    }
+
+    fn memory_drift_ctx(body: &[u8]) -> ApiRequestCtx {
+        ApiRequestCtx {
+            method: "POST".to_owned(),
+            path: "/api/memory/drift".to_owned(),
+            request_id: "memory-drift-test".to_owned(),
+            source_ip: "127.0.0.1".to_owned(),
+            body: body.to_vec(),
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_drift_handler_default_cap_and_zero_keep_exact_counts() {
+        let home = tempfile::tempdir().unwrap();
+        let views_path = home.path().join("views.db");
+        let conn = crate::memory::store::open(&views_path).unwrap();
+        for event_id in 1_i64..=101 {
+            conn.execute(
+                "INSERT INTO idx_episode \
+                 (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+                 VALUES (?1, 1, ?2, ?3, ?4, 0.15, ?2)",
+                rusqlite::params![
+                    event_id,
+                    event_id,
+                    format!("drift-{event_id}"),
+                    format!("hash-{event_id}")
+                ],
+            )
+            .unwrap();
+        }
+        drop(conn);
+        let (writer, writer_join) =
+            crate::wal::writer::spawn(home.path().join("memory-drift-test.wal")).unwrap();
+        let state = memory_drift_test_state(home.path(), writer.clone());
+
+        let default = memory_drift(&memory_drift_ctx(b"{}"), &state);
+        let capped = memory_drift(&memory_drift_ctx(br#"{"limit":999}"#), &state);
+        let zero = memory_drift(&memory_drift_ctx(br#"{"limit":0}"#), &state);
+        for (outcome, expected_rows) in [(default, 20_usize), (capped, 100), (zero, 0)] {
+            match outcome {
+                HandlerOutcome::Ok { body } => {
+                    assert_eq!(body["drifting"].as_array().unwrap().len(), expected_rows);
+                    assert_eq!(body["imminent_count"], 101);
+                    assert_eq!(body["at_risk_count"], 0);
+                    assert_eq!(body["stable_count"], 0);
+                }
+                HandlerOutcome::Err { message, .. } => panic!("unexpected drift error: {message}"),
+            }
+        }
+
+        drop(state);
+        drop(writer);
+        writer_join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_drift_route_success_envelopes_report_and_rejects_wrong_limit_type() {
+        let home = tempfile::tempdir().unwrap();
+        let views_path = home.path().join("views.db");
+        let conn = crate::memory::store::open(&views_path).unwrap();
+        conn.execute(
+            "INSERT INTO idx_episode \
+             (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (1, 1, 1, 'triage', 'hash-1', 0.15, 1)",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        let (writer, writer_join) =
+            crate::wal::writer::spawn(home.path().join("memory-drift-route.wal")).unwrap();
+        let state = Arc::new(memory_drift_test_state(home.path(), writer.clone()));
+
+        let outcome = route(memory_drift_ctx(br#"{"limit":1}"#), Arc::clone(&state)).await;
+        match outcome {
+            HandlerOutcome::Ok { body } => {
+                let envelope = crate::n8n_api::ApiOkResponse::new(body, "route-request");
+                let value = serde_json::to_value(envelope).unwrap();
+                assert_eq!(value["ok"], true);
+                assert_eq!(value["data"]["drifting"].as_array().unwrap().len(), 1);
+                assert_eq!(value["data"]["imminent_count"], 1);
+            }
+            HandlerOutcome::Err { message, .. } => panic!("route failed: {message}"),
+        }
+        let invalid = memory_drift(&memory_drift_ctx(br#"{"limit":"1"}"#), &state);
+        assert_eq!(invalid.error_code(), Some(ApiErrorCode::BadRequest));
+
+        drop(state);
+        drop(writer);
+        writer_join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_drift_handler_missing_store_is_structured_without_creation() {
+        let home = tempfile::tempdir().unwrap();
+        let views_path = home.path().join("views.db");
+        let (writer, writer_join) =
+            crate::wal::writer::spawn(home.path().join("memory-drift-missing.wal")).unwrap();
+        let state = memory_drift_test_state(home.path(), writer.clone());
+
+        let outcome = memory_drift(&memory_drift_ctx(b"{}"), &state);
+        assert_eq!(outcome.error_code(), Some(ApiErrorCode::StoreUnavailable));
+        assert!(!views_path.exists());
+
+        drop(state);
+        drop(writer);
+        writer_join.await.unwrap();
     }
 
     #[test]

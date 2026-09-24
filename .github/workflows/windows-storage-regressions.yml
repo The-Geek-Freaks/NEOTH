@@ -342,6 +342,13 @@ jobs:
           installers::n8n_starter_workflows::tests::all_known_workflows_no_slug_collisions_across_bootstrap_starter	neothd/src/installers/n8n_starter_workflows.rs
           installers::n8n_starter_workflows::tests::starter_slugs_match_picker_documentation_intent	neothd/src/installers/n8n_starter_workflows.rs
           installers::n8n_starter_workflows::tests::build_workflow_skeleton_embeds_name_cron_endpoint	neothd/src/installers/n8n_starter_workflows.rs
+          n8n_api::handlers::tests::memory_drift_request_defaults_limit_to_none_and_rejects_wrong_type	neothd/src/n8n_api/handlers.rs
+          n8n_api::handlers::tests::memory_drift_reads_seeded_rows_with_limit_and_exact_counts	neothd/src/n8n_api/handlers.rs
+          n8n_api::handlers::tests::memory_drift_missing_store_is_structured_and_does_not_create_database	neothd/src/n8n_api/handlers.rs
+          n8n_api::handlers::tests::memory_drift_handler_default_cap_and_zero_keep_exact_counts	neothd/src/n8n_api/handlers.rs
+          n8n_api::handlers::tests::memory_drift_route_success_envelopes_report_and_rejects_wrong_limit_type	neothd/src/n8n_api/handlers.rs
+          n8n_api::handlers::tests::memory_drift_handler_missing_store_is_structured_without_creation	neothd/src/n8n_api/handlers.rs
+          n8n_api::server::tests::memory_drift_requires_recall_read_not_stats_read	neothd/src/n8n_api/server.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -358,17 +365,17 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 272 ]]; then
+          if [[ "$expected" -ne 279 ]]; then
             selection_valid=0
           fi
-          sha256sum Cargo.lock neothd/Cargo.toml neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
+          sha256sum Cargo.lock neothd/Cargo.toml neothd/src/memory/drift.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
 
           compile_status=0
           if [[ "$selection_valid" -eq 1 ]]; then
             cargo test -p neoth --lib --locked --no-run > "$evidence/compile.log" 2>&1 || compile_status=$?
           else
             compile_status=64
-            printf 'selection is not the required 272 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 279 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

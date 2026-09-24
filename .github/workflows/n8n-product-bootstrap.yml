@@ -1,0 +1,95 @@
+name: W1018 compiled product n8n bootstrap canary
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: w1018-product-n8n-bootstrap-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_BUILD_JOBS: '1'
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+
+jobs:
+  product-bootstrap:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+      - name: Install Secret Service and receipt tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gnome-keyring libsecret-tools sqlite3
+      - name: Verify product-canary helper boundaries
+        run: python3 -m unittest discover -s packaging/tests -p test_n8n_product_bootstrap_canary.py
+      - name: Restore CLI-reference Cargo checkpoint
+        id: cli-reference-cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-cli-reference-rust-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cli-reference-rust-1.91-cargo-
+      - name: Build current public CLI
+        working-directory: SRC
+        run: cargo build -p neoth --bin neoth --locked
+      - name: Save completed CLI-reference Cargo checkpoint
+        if: ${{ success() && steps.cli-reference-cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ steps.cli-reference-cargo-cache.outputs.cache-primary-key }}
+      - name: Run isolated compiled product bootstrap
+        shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          set -euo pipefail
+          canary_root="$RUNNER_TEMP/w1018-n8n-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          export NEOTH_HOME="$canary_root/neoth-home" NO_COLOR=1 RUST_BACKTRACE=0 W1018_ROOT="$canary_root"
+          export XDG_CONFIG_HOME="$canary_root/xdg-config" XDG_DATA_HOME="$canary_root/xdg-data" XDG_RUNTIME_DIR="$canary_root/xdg-runtime"
+          mkdir -m 700 -p "$NEOTH_HOME" "$canary_root/receipt" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR"
+          # Preserve a redacted diagnosis even if the session fails before Python.
+          session_failure() {
+            if [ ! -s "$W1018_ROOT/receipt/receipt.json" ]; then
+              printf '{"schema":1,"source_sha":"%s","outcome":"failed","failure_stage":"secret_service_session_failed","cleanup_proven":false}\n' "$GITHUB_SHA" > "$W1018_ROOT/receipt/receipt.json"
+            fi
+          }
+          trap session_failure ERR
+          timeout 900s dbus-run-session -- bash -euo pipefail -c '
+            keyring_env=$(printf "\n" | timeout 20s gnome-keyring-daemon --unlock --components=secrets 2>/dev/null)
+            eval "$keyring_env"
+            keyring_env=$(timeout 20s gnome-keyring-daemon --start --components=secrets 2>/dev/null)
+            eval "$keyring_env"
+            dummy=$(timeout 10s openssl rand -hex 24)
+            printf %s "$dummy" | timeout 15s secret-tool store --label="w1018 preflight" service neoth-w1018 key preflight 2>/dev/null
+            test "$(timeout 15s secret-tool lookup service neoth-w1018 key preflight 2>/dev/null)" = "$dummy"
+            timeout 15s secret-tool clear service neoth-w1018 key preflight 2>/dev/null
+            unset dummy keyring_env
+            exec python3 packaging/n8n_product_bootstrap_canary.py --binary SRC/target/debug/neoth --home "$NEOTH_HOME" --port 5681 --receipt "$W1018_ROOT/receipt/receipt.json"
+          '
+      - name: Upload redacted product receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w1018-product-n8n-bootstrap-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/w1018-n8n-${{ github.run_id }}-${{ github.run_attempt }}/receipt/receipt.json
+          if-no-files-found: warn
+          retention-days: 7

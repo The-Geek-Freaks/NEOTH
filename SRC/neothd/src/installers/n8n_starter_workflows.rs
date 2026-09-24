@@ -88,8 +88,35 @@ fn build_workflow_skeleton(
     let http_id = format!("{slug}_http");
     let url = format!("={{{{ $json.neothBaseUrl + '{endpoint}' }}}}");
     let unavailable_note = format!(
-        "Unavailable starter intent: {endpoint} is not one of the six current NEOTH n8n API routes. Keep this workflow inactive until an explicit adapter and its request-payload contract are implemented; no payload adapter is shipped here."
+        "Unavailable starter intent: {endpoint} is not one of the seven current NEOTH n8n API routes. Keep this workflow inactive until an explicit adapter and its request-payload contract are implemented; no payload adapter is shipped here."
     );
+    let (http_parameters, http_note) = if slug == "memory_decay_report" {
+        (
+            serde_json::json!({
+                "url": url,
+                "method": method,
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpHeaderAuth",
+                "sendBody": true,
+                "contentType": "json",
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify({ limit: 20 }) }}",
+                "options": {}
+            }),
+            "Implemented POST /api/memory/drift reads the existing views.db projection with recall:read scope. It returns bounded drift rows and exact counts without creating, migrating, or modifying the database.",
+        )
+    } else {
+        (
+            serde_json::json!({
+                "url": url,
+                "method": method,
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpHeaderAuth",
+                "options": {}
+            }),
+            unavailable_note.as_str(),
+        )
+    };
 
     // Build via serde_json so escape rules + valid JSON come for
     // free. The shape matches n8n's import format (workflow → nodes
@@ -138,20 +165,14 @@ fn build_workflow_skeleton(
                 "notes": "Set neothBaseUrl to an address reachable from the n8n runtime. The NEOTH n8n API is loopback-only; 127.0.0.1 works only when n8n shares its host network. Bind an HTTP Header Auth credential with Authorization: Bearer <NEOTH n8n API token> on the request node before activation."
             },
             {
-                "parameters": {
-                    "url": url,
-                    "method": method,
-                    "authentication": "genericCredentialType",
-                    "genericAuthType": "httpHeaderAuth",
-                    "options": {}
-                },
+                "parameters": http_parameters,
                 "id": http_id,
                 "name": "NEOTH HTTP",
                 "type": "n8n-nodes-base.httpRequest",
                 "typeVersion": 4,
                 "position": [460, 200],
                 "notesInFlow": true,
-                "notes": unavailable_note
+                "notes": http_note
             }
         ],
         "connections": {
@@ -269,10 +290,10 @@ const STARTER_SPECS: &[StarterSpec] = &[
     StarterSpec {
         slug: "memory_decay_report",
         name: "Memory decay early warning",
-        description: "Unavailable adapter: intended KF-07 memory-decay early-warning report.",
+        description: "Daily KF-07 memory-drift report from NEOTH's read-only views projection.",
         cron: "0 16 * * *",
-        endpoint: "/memory/drift/report",
-        method: "GET",
+        endpoint: "/api/memory/drift",
+        method: "POST",
     },
     StarterSpec {
         slug: "paperless_threat_alert",
@@ -521,13 +542,30 @@ mod tests {
                 "{:?} leaks env expression",
                 w.slug
             );
-            assert!(
-                http["notes"]
-                    .as_str()
-                    .is_some_and(|notes| notes.contains("Unavailable starter intent")),
-                "{:?} must disclose unavailable adapter status",
-                w.slug,
-            );
+            if w.slug == "memory_decay_report" {
+                assert_eq!(http["parameters"]["method"], "POST");
+                assert_eq!(http["parameters"]["sendBody"], true);
+                assert_eq!(http["parameters"]["contentType"], "json");
+                assert_eq!(http["parameters"]["specifyBody"], "json");
+                assert_eq!(
+                    http["parameters"]["jsonBody"],
+                    "={{ JSON.stringify({ limit: 20 }) }}",
+                );
+                assert!(
+                    http["notes"]
+                        .as_str()
+                        .is_some_and(|notes| notes.contains("Implemented POST /api/memory/drift")),
+                    "implemented drift starter must identify its supported route",
+                );
+            } else {
+                assert!(
+                    http["notes"]
+                        .as_str()
+                        .is_some_and(|notes| notes.contains("Unavailable starter intent")),
+                    "{:?} must disclose unavailable adapter status",
+                    w.slug,
+                );
+            }
         }
     }
 
