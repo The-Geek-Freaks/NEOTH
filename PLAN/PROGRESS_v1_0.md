@@ -2,6 +2,26 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W900/W901 canary integration repairs and W899 evidence (2026-09-24):**
+Root admitted Group1383 run36047068548 atca4bf9e8:1378PASS/5FAIL/0missing,
+248 source/input bindings and all three API ZIP digests verified. Four channel
+failures share an unchanged strict preflight guard: Required-A canary insertion
+changed typed items without refreshing the separate system text. W900 re-renders
+that exact bundle, rejects a changed user prompt and updates the paired system;
+the shared equality and final budget checks remain intact. W901 supplies the
+teacher fixture's missing final model and asserts one actual authorized provider
+invocation before quarantine. Production teacher behavior is unchanged.
+W902 independently approved both frozen diffs. Hosted repair acceptance follows.
+Core36045259775 passed all four gates; its generated CLI reference matches the
+committed snapshot, with exact source/ZIP/inner hashes verified (W893).
+Windows142 run36047072833 completed; its artifact admission is in progress.
+W895 adds a durable recovery Hold and W897/Root continue the one-job n8n runtime
+transaction; all n8n/JobService WIP is excluded from this publication. Claude
+RESULT015 corrects export:workflow --output=- to a literal filename and confirms
+that import can overwrite operator edits; bootstrap/import remain separate work.
+Evidence: docs/verification/gold-wave899-group1383.json and gold-wave893-core-cli.json.
+C1a/B7/B8 and Road1324:1073done/249open/2partial remain unchanged pending admission.
+
 **W891 hosted validation and compile cache (2026-09-24):** Core36045259775
 atca4bf9e8 passed strict slim production Clippy and default-feature core-test
 typecheck; public CLI build/export remains in progress. Group1383 run36047068548

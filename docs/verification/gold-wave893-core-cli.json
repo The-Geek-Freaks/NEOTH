@@ -1,0 +1,34 @@
+{
+  "schema": "neoth-hosted-core-cli-admission/v1",
+  "sourceHead": "ca4bf9e8405cceacafb2c514e401050ea9e12674",
+  "runId": 36045259775,
+  "artifactId": 10828552678,
+  "artifactSha256": "7369b1eb31e776555217d7819cb54d1cf7700cf8194dfd2633be9444e0e751fe",
+  "cliSha256": "330311454996805216fe541380fb5d15064c67064dec26b549831f67b8bc329d",
+  "committedReferenceIdentical": true,
+  "rootVerified": true,
+  "steps": [
+    {
+      "name": "Check exact-source slim-core production Clippy",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Type-check core test targets before native validation",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Build current public CLI",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Export generated reference",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "acceptance": "Strict slim production Clippy, core-test typecheck, public CLI build/export PASS at ca4bf9e8. Generated reference matches committed snapshot. Behavioral tests pending; no Road closure."
+}

@@ -4413,6 +4413,58 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     .await;
                 }
             };
+            // The canary is a required A-block attachment. Refresh the exact
+            // typed preflight pair before the direct route reaches the shared
+            // provider boundary; MCP routes render again below after their
+            // catalogue insertion. Keeping this system in sync preserves the
+            // strict typed-vs-preflight equality check without bypassing it.
+            let (typed_prompt, typed_system) = match crate::tokens::budget::render_request(
+                &channel_budget_items,
+            ) {
+                Ok(rendered) => rendered,
+                Err(error) => {
+                    warn!(
+                        error,
+                        "channel canary preflight render failed; provider dispatch blocked"
+                    );
+                    return release_local_channel_notice_in(
+                        &writer,
+                        &neoth_home,
+                        &hooks,
+                        &autonomy_policy,
+                        &inbound,
+                        &inbound_binding,
+                        channel_str,
+                        &sender_hash,
+                        "[NEOTH] Request blocked before sending: session integrity setup failed.",
+                        "channel-canary-preflight-error",
+                        channel_asker.as_ref().map(Arc::clone),
+                        &session_fired_once,
+                        channel_wal_session,
+                    )
+                    .await;
+                }
+            };
+            if typed_prompt != final_prompt {
+                warn!("channel canary insertion changed the user message; provider dispatch blocked");
+                return release_local_channel_notice_in(
+                    &writer,
+                    &neoth_home,
+                    &hooks,
+                    &autonomy_policy,
+                    &inbound,
+                    &inbound_binding,
+                    channel_str,
+                    &sender_hash,
+                    "[NEOTH] Request blocked before sending: session integrity setup failed.",
+                    "channel-canary-preflight-error",
+                    channel_asker.as_ref().map(Arc::clone),
+                    &session_fired_once,
+                    channel_wal_session,
+                )
+                .await;
+            }
+            system_override = typed_system;
             // The exact leaf is fixed above. Council/MIF/direct and skill-only
             // refinement therefore never start catalogue discovery processes.
             let channel_mcp_catalogue: Option<crate::mcp::catalogue::McpPromptCatalogue> =

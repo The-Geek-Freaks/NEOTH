@@ -536,6 +536,7 @@ mod tests {
 
     struct LeakingTeacherProvider {
         reply: String,
+        requests: std::sync::Mutex<Vec<crate::providers::Request>>,
     }
 
     #[async_trait::async_trait]
@@ -544,10 +545,21 @@ mod tests {
             "teacher_fixture"
         }
 
+        fn default_model(&self) -> Option<&str> {
+            // The production authorization boundary requires the final wire
+            // model before it admits a leaf. Keep this fixture on that same
+            // path so the canary guard is exercised after a real invocation.
+            Some("teacher-fixture-model")
+        }
+
         async fn complete(
             &self,
-            _request: crate::providers::Request,
+            request: crate::providers::Request,
         ) -> anyhow::Result<crate::providers::Completion> {
+            self.requests
+                .lock()
+                .expect("record authorized teacher request")
+                .push(request);
             Ok(crate::providers::Completion {
                 text: self.reply.clone(),
                 ..Default::default()
@@ -562,6 +574,7 @@ mod tests {
         let leaked = format!("{}\n{}", &literal[..10], &literal[10..]);
         let teacher = LeakingTeacherProvider {
             reply: leaked.clone(),
+            requests: std::sync::Mutex::new(Vec::new()),
         };
         let initial = crate::providers::Completion {
             text: "I am not sure.".to_owned(),
@@ -599,6 +612,20 @@ mod tests {
         assert!(surfaced.contains("content quarantined"));
         assert!(!surfaced.contains(literal));
         assert!(!surfaced.contains(&leaked));
+        let requests = teacher
+            .requests
+            .lock()
+            .expect("read authorized teacher request");
+        assert_eq!(
+            requests.len(),
+            1,
+            "the test must invoke the authorized provider leaf before its response is quarantined"
+        );
+        assert_eq!(
+            requests[0].model.as_deref(),
+            Some("teacher-fixture-model"),
+            "the invocation must cross the normal final-model binding before quarantine"
+        );
         assert!(
             !skill_home.path().join("skills").exists(),
             "the guarded teacher leaf returns before the caller can write a correction skill"
