@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W585/W590 evidence and W592 Clippy follow-up (2026-09-24):**
+Group951 run35943593327 at1a304f03 is source-admitted951PASS/0FAIL/0missing
+with186 Gitblob bindings; the actual W458 Block/Replace producer terminal passes.
+The earlier GUI148 run35941273881 at0e97dcca is independently admitted
+145PASS/3FAIL with28 bindings: two Wizard text contracts and W480 ending before
+Terminal. W581/W583 postdate that run; GUI148 at1a304f03 remains the fresh check.
+P2-26a stays open until its own Main/Buddy consumer terminal also passes.
+W589 imported seven exact hosted formatting transformations; Preflight
+35944393728 at83c3e29d passes. Core35944216594 at the pre-format f1ca source
+reported three formatting lints and two narrow Clippy lints. W592 removes a
+redundant parser closure and splits the unit/non-unit launch guard by platform,
+preserving the Windows guard lifetime. Hosted recheck/CLI export remain pending;
+Windows41 continues independently. No local executable validation; no Road
+checkbox changes. Paperless installation on real Docker is not yet accepted.
 **W574 Windows-managed Paperless install (2026-09-24):**
 The async `paperless install` command now pulls the three admitted OCI pins,
 selects a fixed local Linux-engine endpoint/platform, verifies image config IDs,

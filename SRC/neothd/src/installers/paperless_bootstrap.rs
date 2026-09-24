@@ -241,7 +241,7 @@ pub(crate) fn persist_bootstrap_at(
         &credentials_path,
         |source, credentials| {
             let backend = source
-                .map(|body| serde_yaml::from_str::<FreedomConfig>(body))
+                .map(serde_yaml::from_str::<FreedomConfig>)
                 .transpose()
                 .map_err(|_| anyhow::anyhow!("paperless_bootstrap_config_invalid"))?
                 .map(|config| config.secrets_backend)

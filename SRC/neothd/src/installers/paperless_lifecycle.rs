@@ -321,7 +321,10 @@ async fn install_at_with_readiness<E: ComposeExecutor, R: ReadinessVerifier>(
         .map_err(|_| LifecycleError::UnownedOrMismatch)?;
     let binding = read_binding(&owned)?;
     validate_credentials_origin(credentials, &binding.origin)?;
+    #[cfg(windows)]
     let _launch = acquire_launch_guard(&owned, &binding)?;
+    #[cfg(not(windows))]
+    acquire_launch_guard(&owned, &binding)?;
     let bootstrap_backend = valid_token(credentials.paperless_token.as_ref())
         .is_none()
         .then(|| configured_backend(home))
