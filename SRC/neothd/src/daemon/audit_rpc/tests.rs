@@ -144,6 +144,7 @@ async fn durable_trust_rpc_reconciles_once_and_rejects_generic_bypass() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
@@ -228,6 +229,7 @@ async fn durable_trust_rpc_is_authenticated_and_available_when_optional_audit_is
         audit_routes_enabled: false,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let descriptor = durable_trust_descriptor(&"4".repeat(64), &"5".repeat(64)).await;
@@ -312,6 +314,7 @@ async fn durable_trust_rpc_reuses_receipt_after_response_is_not_consumed() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let descriptor = durable_trust_descriptor(&"6".repeat(64), &"7".repeat(64)).await;
@@ -693,6 +696,7 @@ async fn aborting_listener_aborts_idle_connection_before_wal_drain() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -738,6 +742,7 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -800,6 +805,7 @@ async fn w61_live_audit_rpc_accepts_only_durable_code_map_result_receipt() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
@@ -921,6 +927,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
         audit_routes_enabled: false,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -1475,6 +1482,7 @@ async fn outbound_task_delegate_rpc_requires_auth_reports_unavailable_and_queues
         audit_routes_enabled: false,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -1538,6 +1546,7 @@ async fn outbound_task_delegate_rpc_requires_auth_reports_unavailable_and_queues
         audit_routes_enabled: false,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let unavailable_nonce = test_endpoint_nonce();
     let (unavailable_endpoint, unavailable_listener) =
@@ -1584,6 +1593,7 @@ async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -1655,6 +1665,7 @@ async fn internal_skill_mutation_route_stays_live_when_public_audit_routes_are_d
         audit_routes_enabled: false,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -1726,6 +1737,7 @@ async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -1824,6 +1836,7 @@ async fn unauthenticated_authority_ingress_cannot_poison_unrelated_skill_scans()
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (address, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -2242,6 +2255,7 @@ async fn wrong_token_is_401_and_writes_no_frame() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -2286,6 +2300,7 @@ async fn valid_bearer_bypasses_and_resets_shared_ipc_cooldown() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -2323,6 +2338,7 @@ async fn blocked_event_type_is_422_and_emits_reject() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -2363,6 +2379,7 @@ async fn client_round_trips_against_a_live_listener() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -2413,6 +2430,7 @@ async fn jobs_run_token_client_is_request_bound_and_single_use() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -2475,6 +2493,7 @@ async fn jobs_run_token_mint_fails_when_its_mandatory_audit_writer_is_down() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -2511,6 +2530,7 @@ async fn subtype_client_round_trips_against_a_live_listener() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -2586,6 +2606,7 @@ async fn listener_serves_more_than_one_connection() {
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -2632,6 +2653,7 @@ async fn daemon_plain_chat_keeps_preauth_at_five_seconds_and_hands_off_only_afte
         audit_routes_enabled: true,
         chat_runtime: None,
         gui_chat_runtime: None,
+        webchat: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);

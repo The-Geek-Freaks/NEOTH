@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W691-W696 authenticated WebChat and fixture repairs (2026-09-24):**
+A one-use same-user RPC handoff opens the existing loopback listener's WebChat.
+Server-owned session/request IDs and capabilities bind consent, idempotent start,
+replay and cancel to the existing runtime; native GUI authority remains separate.
+Bounded saved transcript, reconnect and safe text rendering have nine new native
+and seven separate Chromium fixtures. Static review passed; Root also repaired
+replay mutability and an in-flight reconnect race. Hosted verification pending.
+Group1060 run35966268023 atdb1d9758 is Root-admitted1054PASS6FAIL0missing with
+201source/inputbindings. Six fixture repairs preserve all original assertions.
+Portable native1339/Group1069; regenerate the CLI reference before grouped tests.
+Claude RESULT-001 is integrated; TASK-002 pending and new EXTRA research triaged.
+Road stays1324/1046checked/276open/2partial;WS-LF38done80open. No local executables.
+See docs/gold-wave691-webchat-and-group-repair.md and W689/W692 receipts.
+
 **W684-W686 routing repair and hosted acceptance (2026-09-24):**
 Persisted account-only Slack items retain their physical channel and settle as
 configuration errors before Telegram authority; active public or credential

@@ -583,6 +583,15 @@ where
         .map_err(|_| GuiChatClientError::Indeterminate("malformed sealed GUI response".into()))
 }
 
+/// Mint a WebChat browser handoff only through the same-user daemon endpoint.
+/// The returned URL keeps the opaque handoff in its fragment, so normal HTTP
+/// requests and server logs never receive it as a query parameter.
+pub(crate) async fn webchat_handoff_mint(
+    home: &Path,
+) -> Result<crate::daemon::webchat::WebChatHandoffResponse, GuiChatClientError> {
+    gui_chat_post(home, "/webchat/handoff/mint", &serde_json::json!({})).await
+}
+
 #[allow(dead_code)]
 async fn gui_chat_post_raw<T: serde::Serialize>(
     home: &Path,

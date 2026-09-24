@@ -574,6 +574,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // itself and never a value recovered from disk.
     let gui_chat_boot_id =
         crate::daemon::audit_rpc::instance_commitment_for_nonce(&audit_endpoint_nonce);
+    let webchat_boot_id = gui_chat_boot_id.0.clone();
     let gui_chat_runtime: Arc<dyn crate::daemon::gui_chat_protocol::GuiChatRuntime> =
         Arc::new(crate::daemon::gui_chat_runtime::DaemonGuiChatRuntime::new(
             Arc::clone(&chat_runtime),
@@ -581,6 +582,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             config_path.clone(),
             gui_chat_boot_id.0,
         ));
+    let webchat_state = Arc::new(crate::daemon::webchat::WebChatState::new(
+        config.companion.port,
+        neoth_home.clone(),
+        webchat_boot_id,
+        Arc::clone(&gui_chat_runtime),
+    ));
     #[cfg(feature = "cluster")]
     let (audit_rpc_task, mut audit_rpc_guard) =
         crate::cli::serve_tasks::spawn_audit_rpc(crate::cli::serve_tasks::AuditRpcInputs {
@@ -589,6 +596,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             writer: &writer,
             chat_runtime: Arc::clone(&chat_runtime),
             gui_chat_runtime: Arc::clone(&gui_chat_runtime),
+            webchat: config.companion.enabled.then(|| Arc::clone(&webchat_state)),
             pid_guard: daemon_pid_guard,
             endpoint_nonce: &audit_endpoint_nonce,
             membership: std::sync::Arc::clone(&membership_controller),
@@ -604,6 +612,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             writer: &writer,
             chat_runtime: Arc::clone(&chat_runtime),
             gui_chat_runtime: Arc::clone(&gui_chat_runtime),
+            webchat: config.companion.enabled.then(|| Arc::clone(&webchat_state)),
             pid_guard: daemon_pid_guard,
             endpoint_nonce: &audit_endpoint_nonce,
         })
@@ -2354,6 +2363,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         &config,
         &neoth_home,
         std::sync::Arc::clone(&companion_state),
+        Some(Arc::clone(&webchat_state)),
         std::sync::Arc::clone(&companion_shutdown),
     );
 

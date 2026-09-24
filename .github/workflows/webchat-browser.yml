@@ -1,0 +1,46 @@
+name: WebChat browser contracts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout exact main source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Require main and bind shipped page and tests
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          mkdir -p "$RUNNER_TEMP/webchat-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/webchat-evidence/SOURCE_HEAD"
+          sha256sum SRC/neothd/assets/webchat/index.html SRC/neothd/assets/webchat/browser.test.cjs .github/workflows/webchat-browser.yml > "$RUNNER_TEMP/webchat-evidence/SOURCE_SHA256SUMS"
+      - name: Install pinned browser test tooling on the hosted runner
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/webchat-browser" --no-audit --no-fund --ignore-scripts playwright@1.55.0
+          "$RUNNER_TEMP/webchat-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Exercise the actual page in Chromium
+        run: |
+          set -euo pipefail
+          export NODE_PATH="$RUNNER_TEMP/webchat-browser/node_modules"
+          node --test --test-reporter=tap SRC/neothd/assets/webchat/browser.test.cjs 2>&1 | tee "$RUNNER_TEMP/webchat-evidence/browser.tap"
+      - name: Bind retained browser results
+        if: always()
+        run: |
+          cd "$RUNNER_TEMP/webchat-evidence"
+          sha256sum SOURCE_HEAD SOURCE_SHA256SUMS browser.tap > SHA256SUMS
+      - name: Upload exact page and browser test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: webchat-browser-${{ github.sha }}
+          path: ${{ runner.temp }}/webchat-evidence/
+          if-no-files-found: error

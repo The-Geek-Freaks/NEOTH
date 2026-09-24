@@ -916,12 +916,13 @@ impl GuiChatBridge for CoreGuiChatBridge {
         if response.expected_boot_id != self.boot_id {
             return Err(bridge_error("daemon boot changed during start"));
         }
+        let origin_surface = input_surface(request.origin_surface)?;
         let grant = response.same_session_attach_grant.grant.clone();
         self.active
             .lock()
             .map_err(|_| bridge_error("GUI bridge state poisoned"))?
             .replace(ActiveGrant {
-                origin_surface: input_surface(request.origin_surface),
+                origin_surface,
                 session_id: sealed.request.session_id,
                 grant,
                 start: response.clone(),
@@ -930,7 +931,7 @@ impl GuiChatBridge for CoreGuiChatBridge {
             GuiChatTurnMetadata {
                 boot_id: self.boot_id.clone(),
                 turn_id: GuiChatTurnId(response.turn_id.0),
-                origin_surface: input_surface(request.origin_surface),
+                origin_surface,
                 phase: GuiChatPhase::Waiting,
                 latest_sequence: response.initial_sequence,
             },
@@ -1152,10 +1153,15 @@ fn map_surface(surface: GuiChatSurface) -> crate::daemon::gui_chat_protocol::Gui
         GuiChatSurface::Buddy => crate::daemon::gui_chat_protocol::GuiChatSurface::Buddy,
     }
 }
-fn input_surface(surface: crate::daemon::gui_chat_protocol::GuiChatSurface) -> GuiChatSurface {
+fn input_surface(
+    surface: crate::daemon::gui_chat_protocol::GuiChatSurface,
+) -> GuiChatBridgeResult<GuiChatSurface> {
     match surface {
-        crate::daemon::gui_chat_protocol::GuiChatSurface::Main => GuiChatSurface::Main,
-        crate::daemon::gui_chat_protocol::GuiChatSurface::Buddy => GuiChatSurface::Buddy,
+        crate::daemon::gui_chat_protocol::GuiChatSurface::Main => Ok(GuiChatSurface::Main),
+        crate::daemon::gui_chat_protocol::GuiChatSurface::Buddy => Ok(GuiChatSurface::Buddy),
+        crate::daemon::gui_chat_protocol::GuiChatSurface::WebChat => {
+            Err(bridge_error("webchat surface is unavailable to the native GUI bridge"))
+        }
     }
 }
 fn map_phase(phase: crate::daemon::gui_chat_protocol::GuiChatPhase) -> GuiChatPhase {

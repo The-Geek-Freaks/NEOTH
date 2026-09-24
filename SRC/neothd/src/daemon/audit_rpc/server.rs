@@ -645,6 +645,8 @@ pub struct AuditRpcState {
     /// W41 v1 route runtime. It owns staged attachment/ticket/grant state and
     /// shares the existing daemon provider admission; this listener owns no provider.
     pub(crate) gui_chat_runtime: Option<Arc<dyn gui::GuiChatRuntime>>,
+    /// W682 browser authority; minted only over the same-user audit-RPC route.
+    pub(crate) webchat: Option<Arc<crate::daemon::webchat::WebChatState>>,
 }
 
 /// Bind the OS-authenticated same-user endpoint for one daemon incarnation.
@@ -942,8 +944,9 @@ async fn handle_one_pre_admission(
     );
     let internal_route = matches!(
         req_path.as_str(),
-        "/health" | "/skill-mutation-audit" | "/trust-decision-once"
+        "/health" | "/skill-mutation-audit" | "/trust-decision-once" | "/webchat/handoff/mint"
     );
+    let webchat_mint_route = req.path == "/webchat/handoff/mint";
     if req.method != "POST"
         || !(membership_route
             || internal_route
@@ -986,6 +989,9 @@ async fn handle_one_pre_admission(
 
     if gui_chat_route {
         return handle_gui_chat_route(stream, state, req.path.as_str(), &req.body).await;
+    }
+    if webchat_mint_route {
+        return handle_webchat_handoff_mint(stream, state).await;
     }
 
     if chat_route {
@@ -1706,6 +1712,34 @@ async fn handle_gui_chat_route(
         }
     }
 }
+async fn handle_webchat_handoff_mint(
+    mut stream: super::transport::AuditStream,
+    state: &AuditRpcState,
+) -> Result<ConnectionOutcome> {
+    let Some(webchat) = state.webchat.as_ref().cloned() else {
+        let _ = stream
+            .write_all(http_response(503, "webchat unavailable").as_bytes())
+            .await;
+        let _ = stream.shutdown().await;
+        return Ok(ConnectionOutcome::Complete);
+    };
+    match webchat.mint_handoff().await {
+        Ok(reply) => {
+            let body = serde_json::to_string(&reply).context("encode webchat handoff")?;
+            let _ = stream
+                .write_all(http_response_json(200, &body).as_bytes())
+                .await;
+        }
+        Err(_) => {
+            let _ = stream
+                .write_all(http_response(503, "webchat handoff unavailable").as_bytes())
+                .await;
+        }
+    }
+    let _ = stream.shutdown().await;
+    Ok(ConnectionOutcome::Complete)
+}
+
 async fn emit_reject(state: &AuditRpcState, reason: &str) {
     let payload = serde_json::to_vec(&serde_json::json!({ "reason": reason }))
         .expect("audit-RPC reject payload contains only infallible JSON values");

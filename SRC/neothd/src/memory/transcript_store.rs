@@ -590,6 +590,50 @@ pub fn read_session_turns_at(
     stmt.query_map([session_id], row_mapper)?.collect()
 }
 
+/// Bounded browser projection. A missing database or an older database without
+/// raw turns has no saved transcript; malformed existing storage remains an
+/// error. SQL bounds rows and each value before Rust allocates source text.
+pub(crate) fn read_session_turns_bounded_at(
+    db_path: &std::path::Path,
+    session_id: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<TranscriptRow>> {
+    anyhow::ensure!(limit <= 201, "browser transcript row limit exceeded");
+    match std::fs::symlink_metadata(db_path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+        Ok(_) => {}
+    }
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    let has_raw_turns = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'raw_turns')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !has_raw_turns {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT id, session_id, role, ts_unix, \
+         CASE WHEN length(CAST(text AS BLOB)) <= 65536 THEN text ELSE NULL END \
+         FROM raw_turns WHERE session_id = ?1 ORDER BY id DESC LIMIT ?2",
+    )?;
+    let mut rows = Vec::new();
+    let mut bytes = 0usize;
+    for row in stmt.query_map(params![session_id, limit as i64], row_mapper)? {
+        let row = row?;
+        bytes = bytes.checked_add(row.text.len())
+            .ok_or_else(|| anyhow::anyhow!("browser transcript byte limit exceeded"))?;
+        anyhow::ensure!(bytes <= 1024 * 1024, "browser transcript byte limit exceeded");
+        rows.push(row);
+    }
+    rows.reverse();
+    Ok(rows)
+}
+
 /// Read the latest canonical visible turn for each requested session in one
 /// read-only database connection. Missing sessions are intentionally absent:
 /// legacy hindsight cards predate `raw_turns` and must render an empty preview,

@@ -2225,12 +2225,14 @@ pub(crate) fn spawn_companion_server(
     config: &FreedomConfig,
     home_dir: &std::path::Path,
     companion_state: std::sync::Arc<crate::daemon::companion::CompanionState>,
+    webchat: Option<std::sync::Arc<crate::daemon::webchat::WebChatState>>,
     shutdown: std::sync::Arc<tokio::sync::Notify>,
 ) -> Option<tokio::task::JoinHandle<()>> {
     let handle = crate::daemon::companion::spawn_companion_server_loop(
         config.companion.clone(),
         home_dir.to_path_buf(),
         companion_state,
+        webchat,
         shutdown,
     );
     if handle.is_some() {
@@ -4245,6 +4247,7 @@ pub(crate) struct AuditRpcInputs<'a> {
     pub(crate) chat_runtime: std::sync::Arc<crate::daemon::chat_runtime::DaemonChatRuntime>,
     pub(crate) gui_chat_runtime:
         std::sync::Arc<dyn crate::daemon::gui_chat_protocol::GuiChatRuntime>,
+    pub(crate) webchat: Option<std::sync::Arc<crate::daemon::webchat::WebChatState>>,
     pub(crate) pid_guard: &'a mut crate::daemon::pidfile::PidGuard,
     pub(crate) endpoint_nonce: &'a str,
     #[cfg(feature = "cluster")]
@@ -4274,6 +4277,7 @@ pub(crate) async fn spawn_audit_rpc(
         writer,
         chat_runtime,
         gui_chat_runtime,
+        webchat,
         pid_guard,
         endpoint_nonce,
         #[cfg(feature = "cluster")]
@@ -4294,6 +4298,7 @@ pub(crate) async fn spawn_audit_rpc(
         writer: writer.clone(),
         chat_runtime: Some(chat_runtime),
         gui_chat_runtime: Some(gui_chat_runtime),
+        webchat,
         cooldown: std::sync::Arc::new(crate::n8n_api::auth::AuthCooldown::new()),
         // GR-RESID-D34 — FULL-AUTO single-use token store for the GUI bypass.
         fullauto: std::sync::Arc::new(crate::daemon::audit_rpc::FullAutoTokenStore::new()),

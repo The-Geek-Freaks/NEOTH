@@ -5,8 +5,10 @@ contains an account ID. Previously that shape unconditionally selected Telegram,
 even when the stored channel was Slack. Unsupported account-only Slack entries
 now settle as Slack configuration errors before Telegram authority or transport.
 Mutable default routing cannot reinterpret that stored channel. A real dispatcher
-tick regression checks the drained queue and durable Slack/error history; Standard
-autonomy keeps both the old and corrected path free of provider sends.
+tick regression checks the drained queue and durable Slack/error history. W693
+corrects its fixture to Full autonomy with no Telegram configuration: both the
+old and corrected paths remain free of provider sends, while the fixture reaches
+the configuration error instead of Standard-mode trust-ledger suppression.
 
 Legacy Slack planning also refuses delivery when either the public or credential
 account map is active. The regression supplies damaged legacy credentials and a

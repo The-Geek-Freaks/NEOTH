@@ -580,7 +580,13 @@ fn csrf_check_passes(req: &Request<Incoming>, port: u16) -> bool {
 async fn handle_request(
     req: Request<Incoming>,
     state: Arc<CompanionState>,
+    webchat: Option<Arc<crate::daemon::webchat::WebChatState>>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
+    if let Some(webchat) = webchat
+        && (req.uri().path() == "/webchat" || req.uri().path().starts_with("/api/v1/webchat/"))
+    {
+        return crate::daemon::webchat::handle(req, webchat).await;
+    }
     // POST-only enforcement — anything else is 405.
     if req.method() != Method::POST {
         return Ok(plain_response(
@@ -688,14 +694,37 @@ async fn handle_pair(req: Request<Incoming>, state: Arc<CompanionState>) -> Resp
 ///
 /// Extracted for testability: callers pass a pre-bound `TcpListener` so the
 /// integration test can bind on port 0 and learn the actual port.
-pub async fn run_companion_server(
+pub(crate) async fn run_companion_server(
     listener: TcpListener,
     state: Arc<CompanionState>,
+    webchat: Option<Arc<crate::daemon::webchat::WebChatState>>,
     shutdown: Arc<Notify>,
 ) {
     let local_addr = listener
         .local_addr()
         .unwrap_or(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), state.port));
+    let ready_webchat = webchat
+        .as_ref()
+        .filter(|_| local_addr.port() == state.port)
+        .cloned();
+    if ready_webchat.is_none() && webchat.is_some() {
+        warn!(configured_port = state.port, bound_port = local_addr.port(), "companion: WebChat disabled because the bound port does not match its authority");
+    }
+    if let Some(webchat) = ready_webchat.as_ref() {
+        webchat.set_listener_ready(true);
+    }
+    // The guard runs when this future returns normally and when its task is
+    // aborted. A stale browser authority can therefore never outlive the
+    // listener that proved ownership of the configured loopback port.
+    struct WebChatReadyGuard(Option<Arc<crate::daemon::webchat::WebChatState>>);
+    impl Drop for WebChatReadyGuard {
+        fn drop(&mut self) {
+            if let Some(webchat) = self.0.as_ref() {
+                webchat.set_listener_ready(false);
+            }
+        }
+    }
+    let _webchat_ready_guard = WebChatReadyGuard(ready_webchat);
     info!(addr = %local_addr, "companion server listening (GOLD-ADAPT-ODY-24)");
     let mut connections = tokio::task::JoinSet::new();
 
@@ -731,11 +760,13 @@ pub async fn run_companion_server(
         }
 
         let state_for_conn = Arc::clone(&state);
+        let webchat_for_conn = webchat.clone();
         connections.spawn(async move {
             let io = TokioIo::new(stream);
             let svc = service_fn(move |req| {
                 let s = Arc::clone(&state_for_conn);
-                async move { handle_request(req, s).await }
+                let w = webchat_for_conn.clone();
+                async move { handle_request(req, s, w).await }
             });
             if let Err(e) = http1::Builder::new().serve_connection(io, svc).await {
                 debug!(error = %e, "companion: connection closed");
@@ -755,13 +786,18 @@ pub async fn run_companion_server(
 ///
 /// On bind failure logs a warning and returns `None` rather than panicking —
 /// a port collision must not crash the daemon.
-pub fn spawn_companion_server_loop(
+pub(crate) fn spawn_companion_server_loop(
     config: CompanionConfig,
     _home: PathBuf,
     state: Arc<CompanionState>,
+    webchat: Option<Arc<crate::daemon::webchat::WebChatState>>,
     shutdown: Arc<Notify>,
 ) -> Option<JoinHandle<()>> {
     if !config.enabled {
+        return None;
+    }
+    if config.port == 0 {
+        warn!("companion: port 0 is unsupported because WebChat handoff URLs require a stable loopback port");
         return None;
     }
 
@@ -783,13 +819,14 @@ pub fn spawn_companion_server_loop(
         // NOTE: The server binds 127.0.0.1 (loopback only) — the URL must reflect
         // that. Phone pairing uses the separate authenticated P2P coordinator;
         // advertising a LAN HTTP address here would be misleading and unsafe.
-        let pairing_url = format!("http://127.0.0.1:{}/api/v1/companion/pair", config.port);
+        let bound_port = listener.local_addr().map(|address| address.port()).unwrap_or(config.port);
+        let pairing_url = format!("http://127.0.0.1:{bound_port}/api/v1/companion/pair");
         info!(
             url = %pairing_url,
             "companion: local pairing URL (localhost browser app; phones use the P2P pairing path)"
         );
 
-        run_companion_server(listener, state, shutdown).await;
+        run_companion_server(listener, state, webchat, shutdown).await;
     }))
 }
 
@@ -1510,6 +1547,22 @@ mod tests {
     use std::io::{self, Write};
     use std::sync::Mutex;
 
+    struct WebChatFixtureRuntime;
+
+    #[async_trait::async_trait]
+    impl crate::daemon::gui_chat_protocol::GuiChatRuntime for WebChatFixtureRuntime {
+        async fn preflight(&self, _: crate::daemon::gui_chat_protocol::GuiChatPreflightRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<crate::daemon::gui_chat_protocol::GuiChatPreflightResponse> { panic!("listener readiness test never invokes runtime") }
+        async fn decide(&self, _: crate::daemon::gui_chat_protocol::GuiChatConsentDecisionRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<crate::daemon::gui_chat_protocol::GuiChatConsentDecisionResponse> { panic!("listener readiness test never invokes runtime") }
+        async fn start(&self, _: crate::daemon::gui_chat_protocol::GuiChatStartRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<crate::daemon::gui_chat_protocol::GuiChatStartResponse> { panic!("listener readiness test never invokes runtime") }
+        async fn exchange_attach(&self, _: crate::daemon::gui_chat_protocol::GuiChatAttachExchangeRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<crate::daemon::gui_chat_protocol::GuiChatAttachExchangeResponse> { panic!("listener readiness test never invokes runtime") }
+        async fn attach(&self, _: crate::daemon::audit_rpc::AuditStream, _: crate::daemon::gui_chat_protocol::GuiChatAttachRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<()> { panic!("listener readiness test never invokes runtime") }
+        async fn replay(&self, _: crate::daemon::gui_chat_protocol::GuiChatAttachRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<Vec<crate::daemon::gui_chat_protocol::GuiChatStreamFrame>> { panic!("listener readiness test never invokes runtime") }
+        async fn cancel(&self, _: crate::daemon::gui_chat_protocol::GuiChatCancelRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<crate::daemon::gui_chat_protocol::GuiChatCancelResponse> { panic!("listener readiness test never invokes runtime") }
+        async fn status(&self, _: crate::daemon::gui_chat_protocol::GuiChatStatusRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<crate::daemon::gui_chat_protocol::GuiChatStatusResponse> { panic!("listener readiness test never invokes runtime") }
+        async fn active(&self, _: crate::daemon::gui_chat_protocol::GuiChatActiveRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<crate::daemon::gui_chat_protocol::GuiChatActiveResponse> { panic!("listener readiness test never invokes runtime") }
+        async fn close_and_drain(&self) {}
+    }
+
     #[derive(Clone)]
     struct CapturedLogWriter(Arc<Mutex<Vec<u8>>>);
 
@@ -1566,6 +1619,7 @@ mod tests {
         let server = tokio::spawn(run_companion_server(
             listener,
             Arc::clone(&state),
+            None,
             Arc::clone(&shutdown),
         ));
 
@@ -1599,6 +1653,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn webchat_handoff_is_available_only_while_real_listener_is_bound() {
+        let shutdown = Arc::new(Notify::new());
+        let (writer, wal_join, home) = temp_writer();
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
+        let port = listener.local_addr().expect("bound address").port();
+        let state = Arc::new(CompanionState::new(writer.clone(), port));
+        let webchat = Arc::new(crate::daemon::webchat::WebChatState::new(
+            port,
+            home.path().to_path_buf(),
+            "fixture-boot".into(),
+            Arc::new(WebChatFixtureRuntime),
+        ));
+        assert!(webchat.mint_handoff().await.is_err(), "unbound listener must fail closed");
+        let server = tokio::spawn(run_companion_server(
+            listener,
+            state,
+            Some(Arc::clone(&webchat)),
+            Arc::clone(&shutdown),
+        ));
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if webchat.mint_handoff().await.is_ok() { break; }
+                tokio::task::yield_now().await;
+            }
+        }).await.expect("bound listener never enabled WebChat handoff");
+        shutdown.notify_one();
+        server.await.expect("listener task panicked");
+        assert!(webchat.mint_handoff().await.is_err(), "shutdown listener must revoke WebChat handoff authority");
+        drop(webchat);
+        drop(writer);
+        tokio::time::timeout(std::time::Duration::from_secs(3), wal_join).await.expect("writer drain timed out").expect("writer task panicked");
+    }
+
+    #[tokio::test]
     async fn companion_server_mints_token_on_post_and_rejects_get() {
         let shutdown = Arc::new(Notify::new());
         let (writer, _wal_join, _wal_dir) = temp_writer();
@@ -1613,7 +1701,7 @@ mod tests {
         let srv_shutdown = Arc::clone(&shutdown);
         let srv_state = Arc::clone(&state);
         tokio::spawn(async move {
-            run_companion_server(listener, srv_state, srv_shutdown).await;
+            run_companion_server(listener, srv_state, None, srv_shutdown).await;
         });
 
         // Give the task a moment to start.
@@ -2260,7 +2348,7 @@ mod tests {
         let srv_shutdown = Arc::clone(&shutdown);
         let srv_state = Arc::clone(&state);
         tokio::spawn(async move {
-            run_companion_server(listener, srv_state, srv_shutdown).await;
+            run_companion_server(listener, srv_state, None, srv_shutdown).await;
         });
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 

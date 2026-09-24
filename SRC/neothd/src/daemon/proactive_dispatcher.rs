@@ -1570,6 +1570,7 @@ mod tests {
         let mut queue = ProactiveQueue::new();
         let mut preserved = item("oversized-route-must-remain", 50, 0);
         preserved.channel.clear();
+        preserved.source = "oversized-route-source".to_string();
         queue.enqueue(preserved).unwrap();
         queue.save_to(&queue_path).unwrap();
         let queue_before = std::fs::read(&queue_path).unwrap();
@@ -1621,8 +1622,13 @@ mod tests {
             )
             .unwrap();
         let corrected_segment = tmp.path().join("oversized-routing-corrected.wal");
-        let (corrected_writer, corrected_join) =
-            crate::wal::spawn(corrected_segment.clone()).unwrap();
+        let (corrected_writer, corrected_join, corrected_ready) =
+            crate::wal::writer::spawn_for_home_ready(
+                corrected_segment.clone(),
+                tmp.path().to_path_buf(),
+            )
+            .unwrap();
+        corrected_ready.wait().await.unwrap();
         assert_eq!(
             run_proactive_delivery_tick(
                 tmp.path(),
@@ -1881,7 +1887,7 @@ mod tests {
                 .unwrap();
         ready.wait().await.unwrap();
         let mut config = FreedomConfig::default();
-        config.autonomy = AutonomyLevel::Standard;
+        config.autonomy = AutonomyLevel::Full;
         config.proactive.enabled = true;
 
         assert_eq!(
@@ -3229,13 +3235,25 @@ channel_accounts:
         );
         let legacy_config = cfg_with_telegram(AutonomyLevel::Full);
         assert_eq!(
-            plan_delivery("slack", AutonomyLevel::Full, &legacy_config, &routing, &secret_map),
+            plan_delivery(
+                "slack",
+                AutonomyLevel::Full,
+                &legacy_config,
+                &routing,
+                &secret_map
+            ),
             DeliveryRoute::SidecarOnly,
             "a secret Slack map must block damaged legacy scalar egress"
         );
 
         assert_eq!(
-            plan_delivery("slack", AutonomyLevel::Full, &public_map, &routing, &secret_map),
+            plan_delivery(
+                "slack",
+                AutonomyLevel::Full,
+                &public_map,
+                &routing,
+                &secret_map
+            ),
             DeliveryRoute::SidecarOnly,
             "a complete Slack map must not select a legacy proactive route"
         );

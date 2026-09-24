@@ -1,8 +1,8 @@
-//! W41 proposal-only sealed v1 GUI chat protocol contract, revision 03.
+//! W41 sealed v1 GUI chat protocol contract, revision 03.
 //!
-//! This file is deliberately not declared from daemon/mod.rs yet.  It freezes
-//! the DTO, digest and handoff boundary that later runtime, RPC and GUI owners
-//! will adopt together.  It does not create a listener, scheduler or provider.
+//! It defines the DTO, digest and handoff boundary shared by the daemon GUI
+//! runtime, audit-RPC and loopback WebChat. It does not create a listener,
+//! scheduler or provider.
 
 use std::fmt;
 
@@ -80,6 +80,7 @@ pub(crate) struct GuiChatTurnId(pub(crate) Uuid);
 pub(crate) enum GuiChatSurface {
     Main,
     Buddy,
+    WebChat,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -744,6 +745,13 @@ pub(crate) trait GuiChatRuntime: Send + Sync {
 
     async fn attach(&self, stream: AuditStream, request: GuiChatAttachRequest)
     -> GuiChatResult<()>;
+
+    /// Bounded, non-blocking replay for the loopback browser facade. Unlike
+    /// `attach`, this never leases live reasoning delivery or owns a socket.
+    async fn replay(
+        &self,
+        request: GuiChatAttachRequest,
+    ) -> GuiChatResult<Vec<GuiChatStreamFrame>>;
 
     async fn cancel(&self, request: GuiChatCancelRequest) -> GuiChatResult<GuiChatCancelResponse>;
 
@@ -1486,6 +1494,7 @@ fn surface_discriminant(surface: GuiChatSurface) -> &'static [u8] {
     match surface {
         GuiChatSurface::Main => b"main",
         GuiChatSurface::Buddy => b"buddy",
+        GuiChatSurface::WebChat => b"webchat",
     }
 }
 #[cfg(test)]

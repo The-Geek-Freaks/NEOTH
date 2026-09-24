@@ -1216,7 +1216,7 @@ mod tests {
     async fn mapped_slack_mock_transport_writes_account_and_incarnation_bound_lifecycle() {
         let bundle = mapped_slack_bundle_from_runtime(
             "ops_slack",
-            "U-OPS",
+            "U123OPS",
             "550e8400-e29b-41d4-a716-446655440003",
         );
         let channel = Arc::new(MockChannel::new(false));
@@ -1603,7 +1603,7 @@ mod tests {
         let channel = Arc::new(MockChannel::new(false));
         let bundle = mapped_slack_bundle_from_runtime(
             "ops_slack",
-            "U-OPS",
+            "U123OPS",
             "550e8400-e29b-41d4-a716-446655440004",
         );
         assert!(

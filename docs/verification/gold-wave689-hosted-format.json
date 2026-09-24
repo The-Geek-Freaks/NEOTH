@@ -1,0 +1,31 @@
+{
+  "schema": "neoth-w689-hosted-rustfmt-receipt/v1",
+  "preparedOnly": false,
+  "run": 35966249311,
+  "source": "db1d9758b0d6bd485b78dc3b699ad7e3131e0b8b",
+  "workflow": "Preflight",
+  "conclusion": "failure",
+  "artifact": 10793629912,
+  "artifactZip": "artifact-10793629912.zip",
+  "artifactZipSha256": "7A15870FDB57F25C92F393B27221545BEB70D74D8501A22D08FC9DE79786048A",
+  "receiptEntries": [
+    "SHA256SUMS",
+    "rustfmt.patch",
+    "source-head.txt"
+  ],
+  "receiptSourceHead": "db1d9758b0d6bd485b78dc3b699ad7e3131e0b8b",
+  "rustfmtPatchSha256": "508F7CA88F1861F2162254D966C611D8D884CDD0B006FA761891F1B782975947",
+  "patchApply": "git apply --check then git apply in isolated work/gold-20260906/wave689-hosted-format/scratch repository",
+  "files": [
+    {
+      "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "oldBlob": "de9607adc2048dd9c3668fbcc1895fedcd495a58",
+      "oldSha256": "3AE82F4F697C00FBBD2890AA9A516D78A15404BA9289DE561ACE139B9FBE57D7",
+      "newBlob": "95d1a55b1c8eac4a8fd2bae4ea9fc10cba2a2ae2",
+      "newSha256": "3E27D470BC0B7E2ACAD8EFEADD96FC3B579381057C3787C70EBC8F75660C72E2"
+    }
+  ],
+  "sharedProductWorktreeChanged": true,
+  "localExecutablesRan": false,
+  "rootAdmission": "ZIP/source/inner digests and old/new blobs independently verified; exact hosted formatter patch imported"
+}

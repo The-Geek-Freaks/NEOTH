@@ -106,6 +106,9 @@ struct Turn {
     request_id: GuiChatRequestId,
     intent: GuiChatDigest,
     session: String,
+    /// The surface that created this turn is part of its attach authority.
+    /// WebChat deliberately never shares a turn with native GUI surfaces.
+    origin_surface: GuiChatSurface,
     message: String,
     model: Option<String>,
     skill: Option<String>,
@@ -172,6 +175,15 @@ struct LedgerRow {
 }
 
 impl DaemonGuiChatRuntime {
+    fn allowed_surfaces(origin: GuiChatSurface) -> Vec<GuiChatSurface> {
+        match origin {
+            GuiChatSurface::WebChat => vec![GuiChatSurface::WebChat],
+            GuiChatSurface::Main | GuiChatSurface::Buddy => {
+                vec![GuiChatSurface::Main, GuiChatSurface::Buddy]
+            }
+        }
+    }
+
     pub(crate) fn new(
         core: Arc<DaemonChatRuntime>,
         home: PathBuf,
@@ -1723,7 +1735,7 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
                             grant: GuiChatOpaqueCapability(existing.grant.clone()),
                             turn_id: GuiChatTurnId(*existing_id),
                             session_id: existing.session.clone(),
-                            allowed_surfaces: vec![GuiChatSurface::Main, GuiChatSurface::Buddy],
+                            allowed_surfaces: Self::allowed_surfaces(existing.origin_surface),
                         },
                         initial_sequence: existing.next_sequence.saturating_sub(1),
                     });
@@ -1793,6 +1805,7 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
                 request_id: request.request_id,
                 intent: request.turn_intent_digest.clone(),
                 session: request.session_id.clone(),
+                origin_surface: preflight.request.origin_surface,
                 message: preflight.request.message.clone(),
                 model: preflight.request.model.clone(),
                 skill: preflight.request.skill_id.clone(),
@@ -1838,7 +1851,7 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
                         grant: GuiChatOpaqueCapability(grant),
                         turn_id: GuiChatTurnId(id),
                         session_id: turn.session.clone(),
-                        allowed_surfaces: vec![GuiChatSurface::Main, GuiChatSurface::Buddy],
+                        allowed_surfaces: Self::allowed_surfaces(turn.origin_surface),
                     },
                     initial_sequence: turn.next_sequence.saturating_sub(1),
                 }
@@ -1864,8 +1877,11 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
         }
         if !matches!(
             request.desired_surface,
-            GuiChatSurface::Main | GuiChatSurface::Buddy
+            GuiChatSurface::Main | GuiChatSurface::Buddy | GuiChatSurface::WebChat
         ) {
+            return Err(Self::reject(GuiChatErrorCode::Forbidden, "attach_surface"));
+        }
+        if !Self::allowed_surfaces(t.origin_surface).contains(&request.desired_surface) {
             return Err(Self::reject(GuiChatErrorCode::Forbidden, "attach_surface"));
         }
         if !t.subscriptions.contains_key(&request.desired_surface) {
@@ -2038,6 +2054,62 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
             self.release_live_subscription(&request).await;
         }
         result
+    }
+    async fn replay(
+        &self,
+        request: GuiChatAttachRequest,
+    ) -> GuiChatResult<Vec<GuiChatStreamFrame>> {
+        self.require_boot(&request.expected_boot_id)?;
+        let mut state = self.state.lock().await;
+        let turn = state
+            .turns
+            .get_mut(&request.turn_id.0)
+            .ok_or_else(|| Self::reject(GuiChatErrorCode::Unavailable, "unknown_turn"))?;
+        let subscription = turn
+            .subscriptions
+            .get(&request.surface)
+            .ok_or_else(|| Self::reject(GuiChatErrorCode::Forbidden, "subscription"))?;
+        validate_attach_request(&request, turn.next_sequence.saturating_sub(1))?;
+        if turn.session != request.session_id
+            || subscription.capability != request.attach_capability.0
+            || subscription.generation != request.subscription_generation
+        {
+            return Err(Self::reject(GuiChatErrorCode::Forbidden, "attach_capability"));
+        }
+        let earliest = turn
+            .replay
+            .front()
+            .map(|frame| frame.sequence.saturating_sub(1))
+            .unwrap_or(0);
+        if request.after_sequence < earliest {
+            return Err(Self::reject(GuiChatErrorCode::ReplayGap, "replay_gap"));
+        }
+        let frames = turn
+            .replay
+            .iter()
+            .filter(|frame| frame.sequence > request.after_sequence)
+            .map(|frame| GuiChatStreamFrame {
+                schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+                boot_id: self.boot_id.to_string(),
+                turn_id: request.turn_id.clone(),
+                subscription: GuiChatSubscription {
+                    session_id: request.session_id.clone(),
+                    surface: request.surface,
+                    generation: request.subscription_generation,
+                },
+                sequence: frame.sequence,
+                payload: frame.payload.clone(),
+            })
+            .collect::<Vec<_>>();
+        for frame in &frames {
+            validate_stream_frame(frame)?;
+        }
+        if let Some(last) = frames.last()
+            && let Some(subscription) = turn.subscriptions.get_mut(&request.surface)
+        {
+            subscription.cursor_upper_bound = subscription.cursor_upper_bound.max(last.sequence);
+        }
+        Ok(frames)
     }
     async fn cancel(&self, request: GuiChatCancelRequest) -> GuiChatResult<GuiChatCancelResponse> {
         validate_cancel_request(&request)?;
@@ -2996,6 +3068,7 @@ mod lifecycle_tests {
                 request_id,
                 intent: GuiChatDigest("0".repeat(64)),
                 session: "fixture".into(),
+                origin_surface: GuiChatSurface::Main,
                 message: "fixture message".into(),
                 model: None,
                 skill: None,
@@ -4245,5 +4318,40 @@ mod lifecycle_tests {
             .wait_bounded(Duration::from_secs(1))
             .await
             .expect("real writer closes after the joined worker and W39 drain");
+    }
+
+    #[tokio::test]
+    async fn webchat_turn_grant_cannot_attach_native_gui_surfaces() {
+        let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;
+        runtime.state.lock().await.turns.get_mut(&turn_id).expect("fixture turn").origin_surface = GuiChatSurface::WebChat;
+        let request = |surface| GuiChatAttachExchangeRequest { schema_version: GUI_CHAT_V1_SCHEMA_VERSION, expected_boot_id: "fixture-boot".into(), turn_id: GuiChatTurnId(turn_id), session_id: "fixture".into(), desired_surface: surface, grant: GuiChatOpaqueCapability("grant".into()) };
+        assert!(runtime.exchange_attach(request(GuiChatSurface::Main)).await.is_err());
+        assert!(runtime.exchange_attach(request(GuiChatSurface::Buddy)).await.is_err());
+        assert!(runtime.exchange_attach(request(GuiChatSurface::WebChat)).await.is_ok());
+        runtime.close_and_drain().await;
+        drop(runtime);
+        completion.wait_bounded(Duration::from_secs(1)).await.expect("writer drains");
+    }
+
+    #[tokio::test]
+    async fn webchat_replay_orders_missing_frames_and_advances_cursor() {
+        let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;
+        runtime.state.lock().await.turns.get_mut(&turn_id).expect("fixture turn").origin_surface = GuiChatSurface::WebChat;
+        let exchange = runtime.exchange_attach(GuiChatAttachExchangeRequest { schema_version: GUI_CHAT_V1_SCHEMA_VERSION, expected_boot_id: "fixture-boot".into(), turn_id: GuiChatTurnId(turn_id), session_id: "fixture".into(), desired_surface: GuiChatSurface::WebChat, grant: GuiChatOpaqueCapability("grant".into()) }).await.expect("webchat exchange");
+        {
+            let mut state = runtime.state.lock().await;
+            let turn = state.turns.get_mut(&turn_id).expect("fixture turn");
+            DaemonGuiChatRuntime::emit(turn, GuiChatFramePayload::Accepted);
+            DaemonGuiChatRuntime::emit(turn, GuiChatFramePayload::Accepted);
+        }
+        let request = |after_sequence| GuiChatAttachRequest { schema_version: GUI_CHAT_V1_SCHEMA_VERSION, expected_boot_id: "fixture-boot".into(), turn_id: GuiChatTurnId(turn_id), session_id: "fixture".into(), surface: GuiChatSurface::WebChat, subscription_generation: exchange.subscription_generation, attach_capability: exchange.attach_capability.clone(), after_sequence };
+        let first = runtime.replay(request(0)).await.expect("ordered replay");
+        assert_eq!(first.iter().map(|frame| frame.sequence).collect::<Vec<_>>(), vec![1, 2]);
+        let second = runtime.replay(request(1)).await.expect("missing replay");
+        assert_eq!(second.iter().map(|frame| frame.sequence).collect::<Vec<_>>(), vec![2]);
+        assert_eq!(runtime.state.lock().await.turns.get(&turn_id).unwrap().subscriptions.get(&GuiChatSurface::WebChat).unwrap().cursor_upper_bound, 2);
+        runtime.close_and_drain().await;
+        drop(runtime);
+        completion.wait_bounded(Duration::from_secs(1)).await.expect("writer drains");
     }
 }

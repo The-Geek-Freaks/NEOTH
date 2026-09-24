@@ -2995,9 +2995,11 @@ channel_accounts:
             calls: Arc::clone(&calls),
         });
         let once_guard = crate::hooks::SessionOnceGuard::new();
+        let mut job = delivery_job("telegram");
+        job.delivery.as_mut().unwrap().best_effort = false;
         let outcome = run_job_with_paths(
             home.path(),
-            &delivery_job("telegram"),
+            &job,
             &provider,
             &writer,
             &queue_path,

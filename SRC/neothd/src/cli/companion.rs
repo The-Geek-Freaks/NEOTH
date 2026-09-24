@@ -41,6 +41,8 @@ pub struct CompanionArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum CompanionCommand {
+    /// Open a fresh, one-time loopback WebChat handoff from a running daemon.
+    Webchat,
     /// Preview a one-time v2 pairing QR/URL; NEOTH ships no phone client yet.
     /// The server-side HyperDHT / authenticated Noise-IK transport accepts only
     /// the topic-and-PSK-HKDF-derived client static key before allocation, then
@@ -65,10 +67,23 @@ pub enum CompanionCommand {
 
 pub async fn run_companion(args: CompanionArgs, output: OutputFormat) -> Result<()> {
     match args.command {
+        CompanionCommand::Webchat => run_webchat(output).await,
         CompanionCommand::PairPhone {
             write_invite_for_serve,
         } => run_pair_phone(write_invite_for_serve, output).await,
     }
+}
+
+async fn run_webchat(output: OutputFormat) -> Result<()> {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let handoff = crate::daemon::audit_rpc::webchat_handoff_mint(&home)
+        .await
+        .map_err(|error| anyhow::anyhow!("mint WebChat handoff from running daemon: {error:?}"))?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::json!({"url": handoff.url})),
+        OutputFormat::Table => println!("{}", handoff.url),
+    }
+    Ok(())
 }
 
 async fn run_pair_phone(write_invite_for_serve: bool, output: OutputFormat) -> Result<()> {

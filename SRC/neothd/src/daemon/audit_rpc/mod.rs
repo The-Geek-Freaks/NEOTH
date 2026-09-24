@@ -84,6 +84,7 @@ pub(crate) use client::{
 };
 pub(crate) use client::{
     GuiChatClientError, attested_gui_chat_boot_id, gui_chat_attach, gui_chat_post,
+    webchat_handoff_mint,
 };
 #[cfg(feature = "cluster")]
 pub use client::{

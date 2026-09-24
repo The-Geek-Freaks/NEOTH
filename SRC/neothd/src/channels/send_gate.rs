@@ -893,12 +893,12 @@ mod intent_tests {
             .expect("initialize mapped Slack evidence WAL writer");
         let alpha = mapped_slack_bundle_from_runtime(
             "alpha",
-            "U-ALPHA",
+            "U123ALPHA",
             "550e8400-e29b-41d4-a716-446655440001",
         );
         let bravo = mapped_slack_bundle_from_runtime(
             "bravo",
-            "U-BRAVO",
+            "U123BRAVO",
             "550e8400-e29b-41d4-a716-446655440002",
         );
         let provenance_alpha = alpha

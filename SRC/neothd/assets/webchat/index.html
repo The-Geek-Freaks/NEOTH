@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>NEOTH · Local chat</title>
+  <style>
+    :root { color-scheme: dark; font: 16px/1.6 system-ui, sans-serif; color: #e5e8f1; background: #11131b; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { width: min(850px, 100%); margin: auto; padding: 32px 24px; }
+    header { display: flex; justify-content: space-between; gap: 24px; align-items: center; padding-bottom: 24px; border-bottom: 1px solid #353847; }
+    h1 { margin: 0; font-size: 1.55rem; letter-spacing: .06em; }
+    h2 { font-size: 1.2rem; margin: 0 0 12px; }
+    .muted { color: #a6adbf; font-size: .9rem; }
+    .connection { text-align: right; }
+    #status { margin: 0 0 6px; }
+    button { font: inherit; border-radius: 8px; border: 1px solid #535a72; padding: 8px 18px; background: #272b3a; color: inherit; cursor: pointer; }
+    button.primary { background: #c4b5fd; color: #211438; border-color: #c4b5fd; font-weight: 650; }
+    button:disabled { opacity: .45; cursor: default; }
+    button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px solid #a998f2; outline-offset: 3px; }
+    #error { background: #39222b; color: #ffd6e1; border-radius: 8px; padding: 12px 16px; white-space: pre-wrap; }
+    #empty { margin: 72px 0; text-align: center; }
+    #conversation { display: grid; gap: 20px; padding: 28px 0; }
+    .turn { border-left: 2px solid #535a72; padding-left: 16px; min-width: 0; }
+    .turn.agent { border-color: #c4b5fd; }
+    .speaker { font-size: .8rem; color: #abb4ca; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; }
+    .content { white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 0; }
+    #composer { padding-top: 20px; border-top: 1px solid #353847; }
+    label { display: block; }
+    textarea { display: block; resize: vertical; width: 100%; min-height: 112px; margin: 8px 0 12px; padding: 14px; font: inherit; color: inherit; border: 1px solid #535a72; border-radius: 10px; background: #191c27; }
+    .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .actions label { color: #b6bed0; font-size: .9rem; }
+    .buttons { display: flex; gap: 8px; }
+    dialog { color: inherit; background: #202431; border: 1px solid #666e89; border-radius: 16px; max-width: 520px; padding: 28px; }
+    dialog::backdrop { background: #050710bb; }
+    #consent-routes { padding-left: 24px; overflow-wrap: anywhere; }
+    footer { margin-top: 22px; }
+    [hidden] { display: none !important; }
+    @media (max-width: 520px) { main { padding: 20px 16px; } header { gap: 12px; } button { padding: 8px 12px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div><h1>NEOTH</h1><div class="muted">Local chat</div></div>
+    <div class="connection"><p id="status" role="status">Connecting…</p><button id="reconnect" type="button">Reconnect</button></div>
+  </header>
+  <p id="error" role="alert" hidden></p>
+  <section id="empty"><h2>A conversation with your NEOTH</h2><p class="muted">Your instance handles the response and asks before using a provider that needs consent.</p></section>
+  <section id="conversation" aria-label="Conversation" aria-live="polite" aria-relevant="additions text"></section>
+  <form id="composer">
+    <label for="message">Message</label>
+    <textarea id="message" placeholder="What would you like to work on?" required disabled></textarea>
+    <div class="actions">
+      <label><input id="incognito" type="checkbox"> Incognito — don't save new turns</label>
+      <div class="buttons"><button id="cancel" type="button" disabled>Stop</button><button id="send" class="primary" type="submit" disabled>Send</button></div>
+    </div>
+  </form>
+  <footer class="muted">This browser session expires after one hour. To open a new one, run <code>neoth companion webchat</code>.</footer>
+</main>
+<dialog id="consent-dialog" aria-labelledby="consent-title">
+  <h2 id="consent-title">Allow this request?</h2>
+  <p>NEOTH needs your permission to send this request to:</p>
+  <ul id="consent-routes"></ul>
+  <div class="buttons"><button id="deny" type="button">Don't allow</button><button id="allow" class="primary" type="button">Allow once</button></div>
+</dialog>
+<script>
+'use strict';
+(() => {
+  const el = Object.fromEntries(['status', 'reconnect', 'error', 'empty', 'conversation', 'composer', 'message', 'incognito', 'cancel', 'send', 'consent-dialog', 'consent-routes', 'allow', 'deny'].map(id => [id, document.getElementById(id)]));
+  const prefix = '/api/v1/webchat/';
+  let authenticated = false;
+  let busy = false;
+  let active = null;
+  let pendingDecision = null;
+  let generation = 0;
+
+  class RequestError extends Error {
+    constructor(message, code, status) { super(message); this.code = code; this.status = status; }
+  }
+  async function api(path, body) {
+    const response = await fetch(prefix + path, {
+      method: body === undefined ? 'GET' : 'POST',
+      credentials: 'same-origin', cache: 'no-store',
+      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
+    const value = await response.json().catch(() => ({}));
+    if (!response.ok) throw new RequestError(value.message || 'The request could not be completed.', value.code, response.status);
+    return value;
+  }
+  function controls() {
+    el.message.disabled = !authenticated || busy;
+    el.send.disabled = !authenticated || busy;
+    el.incognito.disabled = busy;
+    el.cancel.disabled = !active;
+  }
+  function showError(error) {
+    el.error.textContent = error instanceof Error ? error.message : String(error);
+    el.error.hidden = false;
+    if (error.status === 401) {
+      authenticated = false;
+      el.status.textContent = 'Session expired';
+      el.error.textContent = 'Open a new session with neoth companion webchat.';
+    }
+    controls();
+  }
+  function clearError() { el.error.hidden = true; el.error.textContent = ''; }
+  function turn(role, text) {
+    el.empty.hidden = true;
+    const article = document.createElement('article');
+    article.className = 'turn ' + (role === 'agent' ? 'agent' : 'operator');
+    const label = document.createElement('div');
+    label.className = 'speaker'; label.textContent = role === 'agent' ? 'NEOTH' : 'You';
+    const content = document.createElement('p'); content.className = 'content'; content.textContent = text;
+    article.append(label, content); el.conversation.append(article);
+    return content;
+  }
+  async function transcript() {
+    const result = await api('transcript');
+    el.conversation.replaceChildren(); el.empty.hidden = false;
+    for (const row of result.turns) turn(row.role, row.text);
+    if (result.truncated) turn('agent', 'Showing the most recent saved turns.');
+  }
+  function finish(terminal) {
+    const state = terminal?.state;
+    el.status.textContent = state === 'complete' ? 'Ready' : state === 'cancelled' ? 'Stopped' : 'Turn ended';
+    if (state && !['complete', 'cancelled'].includes(state)) showError('The turn ended without a confirmed completion.');
+    active = null; busy = false; controls();
+  }
+  async function poll(epoch) {
+    while (active && epoch === generation) {
+      const current = active;
+      try {
+        const result = await api('attach', { request_id: current.requestId, after_sequence: current.cursor });
+        if (epoch !== generation || active !== current) return;
+        for (const frame of result.frames) {
+          if (!Number.isSafeInteger(frame.sequence) || frame.sequence <= current.cursor) continue;
+          const payload = frame.payload;
+          if (payload.type === 'delta') current.node.textContent += payload.text;
+          if (payload.type === 'phase_changed') el.status.textContent = payload.phase === 'finalizing' ? 'Finishing…' : 'Receiving…';
+          if (payload.type === 'notice') el.status.textContent = payload.code;
+          current.cursor = frame.sequence;
+          if (payload.type === 'terminal') { finish(payload.terminal); return; }
+        }
+      } catch (error) {
+        if (epoch !== generation) return;
+        el.status.textContent = error.code === 'replay_gap' ? 'Response history unavailable' : 'Connection interrupted';
+        showError(error.code === 'replay_gap' ? 'Part of this response is no longer available for replay. Reconnect to view saved turns.' : error);
+        return;
+      }
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+  }
+  async function connect() {
+    const epoch = ++generation;
+    active = null; busy = true; authenticated = false; controls(); clearError();
+    el.status.textContent = 'Connecting…';
+    try {
+      const params = new URLSearchParams(location.hash.slice(1));
+      const handoff = params.get('handoff');
+      if (location.hash) history.replaceState(null, '', location.pathname);
+      if (handoff) await api('bootstrap', { handoff });
+      const session = await api('session');
+      if (epoch !== generation) return;
+      authenticated = session.authenticated === true;
+      if (!authenticated) throw new RequestError('Open this page with neoth companion webchat.', 'unauthorized', 401);
+      await transcript();
+      if (epoch !== generation) return;
+      if (session.active_request_id) {
+        active = { requestId: session.active_request_id, cursor: 0, node: turn('agent', '') };
+        el.status.textContent = 'Reconnecting to your turn…'; controls(); void poll(epoch);
+      } else { busy = false; el.status.textContent = 'Ready'; controls(); }
+    } catch (error) { if (epoch === generation) { busy = false; showError(error); } }
+  }
+  function confirmConsent(consent) {
+    if (consent.state === 'ready') return Promise.resolve('allow_once');
+    if (consent.state !== 'confirmation_required') return Promise.reject(new Error('Unknown consent state.'));
+    el['consent-routes'].replaceChildren();
+    for (const route of consent.prompt.routes) {
+      const row = document.createElement('li'); row.textContent = route.provider + (route.endpoint_origin ? ' · ' + route.endpoint_origin : '');
+      el['consent-routes'].append(row);
+    }
+    return new Promise(resolve => { pendingDecision = resolve; el['consent-dialog'].showModal(); });
+  }
+  function decide(choice) {
+    el['consent-dialog'].close(); const resolve = pendingDecision; pendingDecision = null; if (resolve) resolve(choice);
+  }
+  el.allow.addEventListener('click', () => decide('allow_once'));
+  el.deny.addEventListener('click', () => decide('deny'));
+  el['consent-dialog'].addEventListener('cancel', event => { event.preventDefault(); decide('deny'); });
+  el.composer.addEventListener('submit', async event => {
+    event.preventDefault(); if (!authenticated || busy) return;
+    const message = el.message.value.trim(); if (!message) return;
+    if (new TextEncoder().encode(message).length > 3072) { showError('Keep this message within 3,072 bytes.'); return; }
+    busy = true; controls(); clearError(); const epoch = ++generation;
+    let startAttempted = false;
+    try {
+      el.status.textContent = 'Preparing…';
+      const preflight = await api('preflight', { message, model: null, skill_id: null, incognito: el.incognito.checked, reasoning_display: false });
+      if (epoch !== generation) return;
+      const decision = await confirmConsent(preflight.consent);
+      if (epoch !== generation) return;
+      const result = await api('decide', { request_id: preflight.request_id, decision });
+      if (epoch !== generation) return;
+      if (result.outcome === 'denied') { busy = false; el.status.textContent = 'Request not sent'; controls(); return; }
+      if (result.outcome !== 'approved') throw new Error('The request was not approved.');
+      startAttempted = true;
+      await api('start', { request_id: preflight.request_id });
+      if (epoch !== generation) return;
+      turn('operator', message); el.message.value = '';
+      active = { requestId: preflight.request_id, cursor: 0, node: turn('agent', '') };
+      el.status.textContent = 'Receiving…'; controls(); void poll(epoch);
+    } catch (error) {
+      if (epoch !== generation) return;
+      busy = startAttempted;
+      el.status.textContent = startAttempted ? 'Reconnect to check your turn' : 'Request not sent';
+      showError(error);
+    }
+  });
+  el.cancel.addEventListener('click', async () => {
+    if (!active) return;
+    const requestId = active.requestId, epoch = generation;
+    el.cancel.disabled = true;
+    try {
+      await api('cancel', { request_id: requestId });
+      if (epoch === generation && active?.requestId === requestId) el.status.textContent = 'Stopping…';
+    } catch (error) { if (epoch === generation && active?.requestId === requestId) showError(error); }
+  });
+  el.reconnect.addEventListener('click', () => { if (pendingDecision) decide('deny'); void connect(); });
+  window.addEventListener('pagehide', () => { generation++; active = null; });
+  void connect();
+})();
+</script>
+</body>
+</html>
