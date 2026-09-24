@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W747 admitted1120/1149PASS;H1 accepted;W748documentprompt and1171selection hostedpending",
+  "status": "W755 correct second1171catalog guard; c6ef preflight/qualityPASS",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 162471,
-    "sha256": "FF721EBE08E246CAF5BF76E47B0DEB8B658A578717391EC6D9D6B0A585C7BA11"
+    "bytes": 162447,
+    "sha256": "2A7BF267B471A12589E207B848429F71AE966FF7EE503D7C426059461C106056"
   },
   "sourceInputs": 919,
   "requiredNativeTests": [
@@ -31709,6 +31709,38 @@
       }
     ],
     "note": "Fix inherited catalog stdin; substantive B2 rendered prompt; existing B1/B4 exact selection incl Windows55; no local executable validation",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave755CountGuard": {
+    "base": "c6ef7c3ebaed6c84906dd8a9bb8ae7294de9f168",
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 22640,
+        "sha256": "5ECA5DB7802F236A865F3D535462F02D4EB2665337420F6181DA5F3A750AEAD5",
+        "blob": "0144f5da30181f0704ba3a51d44adfce0397edbc"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 249452,
+        "sha256": "BE8C80BE8B984DDA10F50B04B602CC91A2845A4A1982BCC0CD37D78C429A5B29",
+        "blob": "ef7bb3ec3ad4421700ddf1415d690f8ce44d5e87"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1260780,
+        "sha256": "195CBE5A7FA3DDF72532814A1C813461E3BF83A48737F735B95087C570D52DE7",
+        "blob": "47cb4915de448146aa8370bb07dcc1dbbc85830b"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1860892,
+        "sha256": "F659E1C583E6E38D3C145F1B70A4148F92D838978781D93AE391B55EF744C3AB",
+        "blob": "4fcb2f9ee8921ca69045afef29268b9cc3fe4222"
+      }
+    ],
+    "note": "Group c6ef no tests ran; actual selected catalog1171 correct; second shell count stale1149 now1171",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

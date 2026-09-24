@@ -3,6 +3,13 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W755 grouped selection guard repair (2026-09-24):**
+The c6ef Group dispatch stopped before compilation because a second shell
+count guard still expected1149 while the bound catalogue correctly held1171.
+The guard now also requires1171; no test outcome or product failure is inferred.
+c6ef Preflight and Code Quality passed; Core and Windows55 continue.
+Road counts stay1047done275open2partial. Group-only rerun follows this repair.
+
 **W747-W750 catalogue acceptance and document review batch (2026-09-24):**
 Root verified Group35986277953 at5e9:1120 actual PASS, zero FAIL,29 unrun,
 with217 fixture-source and two input bindings. The next selector lost its first

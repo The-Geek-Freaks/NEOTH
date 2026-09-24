@@ -291,7 +291,7 @@ jobs:
           : > "$log"
           : > "$evidence_root/receipt/failed-fixtures.txt"
           expected_count="$(wc -l < "$evidence_root/source/fixture-names.txt" | tr -d '[:space:]')"
-          [[ "$expected_count" == "1149" ]] || {
+          [[ "$expected_count" == "1171" ]] || {
             echo "Grouped fixture catalog must contain exactly 1171 identities (got $expected_count)" >&2
             exit 1
           }

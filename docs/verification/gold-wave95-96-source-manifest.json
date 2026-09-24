@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T10:38:36.3957925Z",
-  "validationStatus": "W747 admitted1120/1149PASS;H1 accepted;W748documentprompt and1171selection hostedpending",
+  "capturedUtc": "2026-09-24T10:41:39.2720139Z",
+  "validationStatus": "W755 correct second1171catalog guard; c6ef preflight/qualityPASS",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -109,7 +109,7 @@
     {
       "path": ".github/workflows/research-lifecycle.yml",
       "bytes": 22640,
-      "sha256": "9ADE403B9D700F3C3C5664893254049998024B1283BBD572A77500C61E2A5689"
+      "sha256": "5ECA5DB7802F236A865F3D535462F02D4EB2665337420F6181DA5F3A750AEAD5"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -1798,18 +1798,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 249017,
-      "sha256": "923593AED35F6B74B834E1D695CDA7A39D5D1E72593B9C397FEBC697C269FA7F"
+      "bytes": 249452,
+      "sha256": "BE8C80BE8B984DDA10F50B04B602CC91A2845A4A1982BCC0CD37D78C429A5B29"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1260345,
-      "sha256": "22AC2C110455D0BC2B21C839AA0A9DB1690FA942D27B81436F76C639EC30A5A9"
+      "bytes": 1260780,
+      "sha256": "195CBE5A7FA3DDF72532814A1C813461E3BF83A48737F735B95087C570D52DE7"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1860457,
-      "sha256": "25C5D10C25DF9AF2C3C0445391E960F521EEC62685E1260E9822A7E1F504EF79"
+      "bytes": 1860892,
+      "sha256": "F659E1C583E6E38D3C145F1B70A4148F92D838978781D93AE391B55EF744C3AB"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
