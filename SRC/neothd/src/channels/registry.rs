@@ -40,8 +40,8 @@ pub enum ChannelTransport {
 }
 
 /// Account support exposed by the current runtime. This is deliberately
-/// honest: the new identity types exist, but the legacy credential store is
-/// not relabelled multi-account until its transactional migration lands.
+/// honest: multi-account requires an authenticated mapped runtime and an
+/// account-selecting transactional lifecycle, including legacy migration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelAccountMode {
@@ -307,7 +307,7 @@ pub static CHANNEL_REGISTRY: &[ChannelDescriptor] = &[
         aliases: &[],
         migration_aliases: &[],
         transport: ChannelTransport::BotApi,
-        account_mode: ChannelAccountMode::LegacyDefaultOnly,
+        account_mode: ChannelAccountMode::MultiAccount,
         setup_fields: TELEGRAM_SETUP,
         capabilities: ChannelCapabilities::current(
             true,
@@ -327,7 +327,7 @@ pub static CHANNEL_REGISTRY: &[ChannelDescriptor] = &[
         aliases: &[],
         migration_aliases: &[],
         transport: ChannelTransport::SocketMode,
-        account_mode: ChannelAccountMode::LegacyDefaultOnly,
+        account_mode: ChannelAccountMode::MultiAccount,
         setup_fields: SLACK_SETUP,
         capabilities: ChannelCapabilities::current(
             true,

@@ -1348,17 +1348,17 @@ pub enum ChannelAction {
     SetCredentials,
     /// List configured channels
     List,
-    /// Run a read-only live probe; Telegram account maps require --account.
+    /// Run a read-only live probe; Telegram and Slack account maps require --account.
     Test {
         channel: String,
-        /// Exact configured Telegram account to probe. Never inferred from a map.
+        /// Exact configured Telegram or Slack account to probe. Never inferred from a map.
         #[arg(long)]
         account: Option<crate::channels::registry::ChannelAccountId>,
     },
-    /// Move the admitted legacy Telegram singleton into one named inbound account.
+    /// Move the admitted legacy Telegram or Slack singleton into one named account.
     /// This does not enable account-aware outbound routing.
     MigrateLegacy {
-        /// Must be the canonical channel id `telegram`.
+        /// Must be the canonical channel id `telegram` or `slack`.
         channel: String,
         /// Validated account id that receives the legacy inbound binding.
         #[arg(long)]
@@ -1380,7 +1380,18 @@ pub enum ChannelAccountAction {
         #[arg(long)]
         token: RedactedCliSecret,
     },
-    /// Read the named Telegram account token and policy from a strict private stdin envelope.
+    /// Add or replace one named Slack account after `auth.test` validates its
+    /// exact bot token. Stdin must be `{"schema_version":1,"channel":"slack","account":"…","bot_token":"…","app_token":"…"}`;
+    /// token values are never accepted on argv.
+    AddSlack {
+        #[arg(long)]
+        account: crate::channels::registry::ChannelAccountId,
+        #[arg(long)]
+        allowed_user_id: String,
+    },
+    /// Rotate credentials for one named Telegram or Slack account from its
+    /// strict private stdin envelope. Slack preserves its policy inside the
+    /// locked storage candidate; tokens are never accepted on argv.
     #[command(hide = true)]
     SetCredentials {
         channel: String,
@@ -1395,7 +1406,7 @@ pub enum ChannelAccountAction {
         #[arg(long)]
         enabled: bool,
     },
-    /// Retire exactly one configured Telegram account.  `--account` is
+    /// Retire exactly one configured Telegram or Slack account.  `--account` is
     /// mandatory; even a literal configured `default` is never inferred.
     Remove {
         channel: String,
@@ -2200,6 +2211,12 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 )
                 .await?;
             }
+            ChannelAction::Account(ChannelAccountAction::AddSlack {
+                account,
+                allowed_user_id,
+            }) => {
+                channel::run_account_add_slack(account, allowed_user_id, &global_output).await?;
+            }
             ChannelAction::Account(ChannelAccountAction::SetCredentials {
                 channel: ch,
                 account,
@@ -2715,6 +2732,24 @@ mod default_invocation_tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn channel_account_add_slack_requires_explicit_account_and_policy() {
+        let parsed = Cli::try_parse_from([
+            "neoth", "channel", "account", "add-slack", "--account", "work",
+            "--allowed-user-id", "U123PRIVATE",
+        ]).unwrap();
+        assert!(matches!(parsed.command,
+            Commands::Channel { action: ChannelAction::Account(ChannelAccountAction::AddSlack { account, allowed_user_id }) }
+                if account.as_str() == "work" && allowed_user_id == "U123PRIVATE"
+        ));
+        assert!(Cli::try_parse_from([
+            "neoth", "channel", "account", "add-slack", "--account", "work",
+        ]).is_err());
+        assert!(Cli::try_parse_from([
+            "neoth", "channel", "account", "add-slack", "--allowed-user-id", "U123PRIVATE",
+        ]).is_err());
     }
 
     #[test]

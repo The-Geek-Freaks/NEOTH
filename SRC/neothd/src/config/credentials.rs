@@ -895,6 +895,33 @@ pub(crate) struct PreparedTelegramAccountRemoval {
     dynamic_before: BTreeMap<String, Option<SecretString>>,
 }
 
+/// Opaque, file-backed candidate for one named Slack account. Slack account
+/// keychain custody is deliberately unsupported until both bot and app tokens
+/// have a complete dynamic-key lifecycle; preparation rejects that backend
+/// before producing any candidate or writing either file.
+pub(crate) struct PreparedSlackAccountUpsert {
+    freedom_path: PathBuf,
+    credentials_path: PathBuf,
+    account_id: crate::channels::registry::ChannelAccountId,
+    candidate: crate::config::RuntimeConfigPair,
+    freedom_before: FileSnapshot,
+    credentials_before: FileSnapshot,
+    freedom_after: FileSnapshot,
+    credentials_after: FileSnapshot,
+}
+
+/// Opaque exact-account Slack retirement candidate. It retains both raw file
+/// preimages so commit can reject any drift after the caller's review.
+pub(crate) struct PreparedSlackAccountRemoval {
+    freedom_path: PathBuf,
+    credentials_path: PathBuf,
+    account_id: crate::channels::registry::ChannelAccountId,
+    freedom_before: FileSnapshot,
+    credentials_before: FileSnapshot,
+    freedom_after: FileSnapshot,
+    credentials_after: FileSnapshot,
+}
+
 impl PreparedTelegramAccountRemoval {
     pub(crate) fn account_id(&self) -> &crate::channels::registry::ChannelAccountId {
         &self.account_id
@@ -909,6 +936,24 @@ impl PreparedTelegramAccountUpsert {
     }
 
     /// The only named account which this candidate may create or replace.
+    pub(crate) fn account_id(&self) -> &crate::channels::registry::ChannelAccountId {
+        &self.account_id
+    }
+}
+
+impl PreparedSlackAccountUpsert {
+    /// The exact coherent file-backed generation that a read-only Slack
+    /// `auth.test` probe may inspect before publication.
+    pub(crate) fn candidate_pair(&self) -> &crate::config::RuntimeConfigPair {
+        &self.candidate
+    }
+
+    pub(crate) fn account_id(&self) -> &crate::channels::registry::ChannelAccountId {
+        &self.account_id
+    }
+}
+
+impl PreparedSlackAccountRemoval {
     pub(crate) fn account_id(&self) -> &crate::channels::registry::ChannelAccountId {
         &self.account_id
     }
@@ -2542,6 +2587,260 @@ impl Credentials {
             })
         })
     }
+    /// Stage one explicit file-backed Slack account upsert. The returned
+    /// candidate owns the exact source snapshots that commit must compare after
+    /// an external read-only `auth.test` probe.
+    pub(crate) fn prepare_slack_account_upsert_at(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        account_id: crate::channels::registry::ChannelAccountId,
+        allowed_user_id: String,
+        bot_token: SecretString,
+        app_token: SecretString,
+    ) -> Result<PreparedSlackAccountUpsert> {
+        Self::prepare_slack_account_write_at(freedom_path, credentials_path, account_id, Some(allowed_user_id), bot_token, app_token)
+    }
+
+    /// Rotate credentials while selecting the existing policy under the same
+    /// transaction lock and snapshots as the prepared candidate.
+    pub(crate) fn prepare_slack_account_rotation_at(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        account_id: crate::channels::registry::ChannelAccountId,
+        bot_token: SecretString,
+        app_token: SecretString,
+    ) -> Result<PreparedSlackAccountUpsert> {
+        Self::prepare_slack_account_write_at(freedom_path, credentials_path, account_id, None, bot_token, app_token)
+    }
+
+    fn prepare_slack_account_write_at(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        account_id: crate::channels::registry::ChannelAccountId,
+        allowed_user_id: Option<String>,
+        bot_token: SecretString,
+        app_token: SecretString,
+    ) -> Result<PreparedSlackAccountUpsert> {
+        let allowed_user_id = allowed_user_id
+            .map(|id| crate::channels::slack::normalize_allowed_user_id(&id))
+            .transpose().context("Slack account allowed_user_id is invalid")?;
+        anyhow::ensure!(
+            !bot_token.expose().trim().is_empty(),
+            "Slack account bot token must be non-blank"
+        );
+        anyhow::ensure!(
+            !app_token.expose().trim().is_empty(),
+            "Slack account app token must be non-blank"
+        );
+        let freedom_dir = transaction_directory(freedom_path);
+        anyhow::ensure!(
+            freedom_dir == transaction_directory(credentials_path),
+            "freedom.yaml and credentials.yaml must be sibling files for a durable transaction"
+        );
+        with_dual_file_transaction_lock(freedom_path, || {
+            with_config_writer_guard(freedom_path, || {
+                with_legacy_pair_locks(freedom_path, credentials_path, || {
+                    let freedom_before = FileSnapshot::capture(freedom_path)?;
+                    let credentials_before = FileSnapshot::capture(credentials_path)?;
+                    let mut config = crate::config::FreedomConfig::load_public_from_path_unlocked(
+                        freedom_path,
+                    )
+                    .with_context(|| format!("load {} for Slack account upsert preparation", freedom_path.display()))?;
+                    anyhow::ensure!(
+                        config.secrets_backend != crate::config::SecretsBackend::Keychain,
+                        "mapped Slack accounts require the file secrets backend until complete bot/app keychain custody exists"
+                    );
+                    let mut credentials = Self::load_or_default_unlocked(credentials_path)
+                        .with_context(|| format!("load {} for Slack account upsert preparation", credentials_path.display()))?;
+                    anyhow::ensure!(
+                        credentials.slack_bot_token.is_none()
+                            && credentials.slack_app_token.is_none()
+                            && credentials.slack_allowed_user_id.is_none(),
+                        "legacy Slack scalar fields cannot coexist with a Slack account upsert"
+                    );
+                    anyhow::ensure!(
+                        config.channel_accounts.slack.keys().eq(credentials.channel_accounts.slack.keys()),
+                        "Slack account policy and raw credential keys must match exactly before upsert"
+                    );
+                    for (mapped_account, policy) in &config.channel_accounts.slack {
+                        crate::channels::slack::normalize_allowed_user_id(&policy.allowed_user_id)
+                            .with_context(|| format!("slack account `{mapped_account}` has an invalid allowed_user_id"))?;
+                        let secrets = credentials.channel_accounts.slack.get(mapped_account)
+                            .expect("matched Slack account key");
+                        anyhow::ensure!(
+                            secrets.bot_token.as_ref().is_some_and(|token| !token.expose().trim().is_empty())
+                                && secrets.app_token.as_ref().is_some_and(|token| !token.expose().trim().is_empty()),
+                            "slack account `{mapped_account}` has incomplete file credentials"
+                        );
+                    }
+                    let allowed_user_id = match allowed_user_id {
+                        Some(id) => id,
+                        None => config.channel_accounts.slack.get(&account_id)
+                            .context("credential rotation requires an existing named Slack account")?
+                            .allowed_user_id.clone(),
+                    };
+                    let existing_incarnation = config.channel_accounts.slack.get(&account_id)
+                        .and_then(|existing| existing.incarnation.clone());
+                    config.channel_accounts.slack.insert(account_id.clone(), crate::config::SlackAccountConfig {
+                        allowed_user_id,
+                        incarnation: Some(existing_incarnation.unwrap_or_else(crate::config::AccountIncarnation::new_random)),
+                    });
+                    credentials.channel_accounts.slack.insert(account_id.clone(), SlackAccountCredentials {
+                        bot_token: Some(bot_token),
+                        app_token: Some(app_token),
+                    });
+                    let candidate = crate::config::RuntimeConfigPair {
+                        config: config.clone(),
+                        raw_credentials: credentials.clone(),
+                        credentials: credentials.clone(),
+                    };
+                    let accounts = candidate.authenticated_slack_accounts()?;
+                    anyhow::ensure!(
+                        accounts.iter().any(|account| account.channel_ref().account_id == account_id),
+                        "prepared Slack account is not authenticated"
+                    );
+                    let freedom_after = FileSnapshot::Present(zeroize::Zeroizing::new(
+                        render_freedom_preserving_unknown_yaml(&config, &freedom_before, InlineTelegramTokenPolicy::Preserve)?
+                            .as_bytes().to_vec(),
+                    ));
+                    let credentials_after = credentials.rendered_file_snapshot_preserving_unknown(
+                        credentials_path, &credentials_before,
+                    )?;
+                    Ok(PreparedSlackAccountUpsert {
+                        freedom_path: freedom_path.to_path_buf(),
+                        credentials_path: credentials_path.to_path_buf(),
+                        account_id,
+                        candidate,
+                        freedom_before,
+                        credentials_before,
+                        freedom_after,
+                        credentials_after,
+                    })
+                })
+            })
+        })
+    }
+
+    /// Publish the exact reviewed Slack candidate, only while both original
+    /// raw file snapshots still match.
+    pub(crate) fn commit_prepared_slack_account_upsert_at(
+        prepared: PreparedSlackAccountUpsert,
+    ) -> Result<()> {
+        let freedom_dir = transaction_directory(&prepared.freedom_path);
+        anyhow::ensure!(
+            freedom_dir == transaction_directory(&prepared.credentials_path),
+            "prepared Slack account paths are not sibling files"
+        );
+        with_dual_file_transaction_lock(&prepared.freedom_path, || {
+            with_config_writer_guard(&prepared.freedom_path, || {
+                with_legacy_pair_locks(&prepared.freedom_path, &prepared.credentials_path, || {
+                    anyhow::ensure!(
+                        FileSnapshot::capture(&prepared.freedom_path)?.same_as(&prepared.freedom_before)
+                            && FileSnapshot::capture(&prepared.credentials_path)?.same_as(&prepared.credentials_before),
+                        "Slack account configuration changed after its reviewed candidate; retry the command"
+                    );
+                    publish_prepared_file_pair(
+                        &prepared.freedom_path, &prepared.credentials_path, &freedom_dir,
+                        &prepared.freedom_before, &prepared.freedom_after,
+                        &prepared.credentials_before, &prepared.credentials_after,
+                        (),
+                        Some(|path: &Path, body: &[u8]| {
+                            crate::util::atomic_write::atomic_write_private(path, body)
+                                .with_context(|| format!("atomically write {}", path.display()))
+                        }),
+                        |_| Ok(()),
+                    )
+                })
+            })
+        })
+    }
+
+    /// Prepare retirement of one exact, complete file-backed Slack account.
+    pub(crate) fn prepare_slack_account_removal_at(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        account_id: crate::channels::registry::ChannelAccountId,
+    ) -> Result<PreparedSlackAccountRemoval> {
+        let freedom_dir = transaction_directory(freedom_path);
+        anyhow::ensure!(freedom_dir == transaction_directory(credentials_path), "freedom.yaml and credentials.yaml must be sibling files for a durable transaction");
+        with_dual_file_transaction_lock(freedom_path, || {
+            with_config_writer_guard(freedom_path, || {
+                with_legacy_pair_locks(freedom_path, credentials_path, || {
+                    let freedom_before = FileSnapshot::capture(freedom_path)?;
+                    let credentials_before = FileSnapshot::capture(credentials_path)?;
+                    let mut config = crate::config::FreedomConfig::load_public_from_path_unlocked(freedom_path)
+                        .with_context(|| format!("load {} for Slack account retirement", freedom_path.display()))?;
+                    anyhow::ensure!(config.secrets_backend != crate::config::SecretsBackend::Keychain, "mapped Slack accounts require the file secrets backend until complete bot/app keychain custody exists");
+                    let mut credentials = Self::load_or_default_unlocked(credentials_path)
+                        .with_context(|| format!("load {} for Slack account retirement", credentials_path.display()))?;
+                    anyhow::ensure!(credentials.slack_bot_token.is_none() && credentials.slack_app_token.is_none() && credentials.slack_allowed_user_id.is_none(), "legacy Slack scalar fields cannot coexist with named account retirement");
+                    anyhow::ensure!(config.channel_accounts.slack.keys().eq(credentials.channel_accounts.slack.keys()), "Slack account policy and raw credential keys must match exactly before retirement");
+                    let policy = config.channel_accounts.slack.get(&account_id).context("selected Slack account is not configured")?;
+                    crate::channels::slack::normalize_allowed_user_id(&policy.allowed_user_id).context("selected Slack account has an invalid allowed_user_id")?;
+                    let selected = credentials.channel_accounts.slack.get(&account_id).context("selected Slack account has no file credentials")?;
+                    anyhow::ensure!(selected.bot_token.as_ref().is_some_and(|token| !token.expose().trim().is_empty()) && selected.app_token.as_ref().is_some_and(|token| !token.expose().trim().is_empty()), "selected Slack account has incomplete file credentials");
+                    config.channel_accounts.slack.remove(&account_id);
+                    credentials.channel_accounts.slack.remove(&account_id);
+                    let freedom_after = FileSnapshot::Present(zeroize::Zeroizing::new(render_freedom_preserving_unknown_yaml(&config, &freedom_before, InlineTelegramTokenPolicy::Preserve)?.as_bytes().to_vec()));
+                    let credentials_after = credentials.rendered_file_snapshot_preserving_unknown(credentials_path, &credentials_before)?;
+                    Ok(PreparedSlackAccountRemoval { freedom_path: freedom_path.to_path_buf(), credentials_path: credentials_path.to_path_buf(), account_id, freedom_before, credentials_before, freedom_after, credentials_after })
+                })
+            })
+        })
+    }
+
+    pub(crate) fn commit_prepared_slack_account_removal_at(prepared: PreparedSlackAccountRemoval) -> Result<()> {
+        let freedom_dir = transaction_directory(&prepared.freedom_path);
+        with_dual_file_transaction_lock(&prepared.freedom_path, || {
+            with_config_writer_guard(&prepared.freedom_path, || {
+                with_legacy_pair_locks(&prepared.freedom_path, &prepared.credentials_path, || {
+                    anyhow::ensure!(
+                        FileSnapshot::capture(&prepared.freedom_path)?.same_as(&prepared.freedom_before)
+                            && FileSnapshot::capture(&prepared.credentials_path)?.same_as(&prepared.credentials_before),
+                        "Slack account configuration changed after reviewed retirement; retry the command"
+                    );
+                    publish_prepared_file_pair(&prepared.freedom_path, &prepared.credentials_path, &freedom_dir, &prepared.freedom_before, &prepared.freedom_after, &prepared.credentials_before, &prepared.credentials_after, (), Some(|path: &Path, body: &[u8]| crate::util::atomic_write::atomic_write_private(path, body).with_context(|| format!("atomically write {}", path.display()))), |_| Ok(()))
+                })
+            })
+        })
+    }
+
+    /// Atomically move the complete legacy Slack scalar triple into one named,
+    /// file-backed account. Partial, mixed, invalid, or keychain-backed state
+    /// is rejected while both source files remain untouched.
+    pub(crate) fn migrate_legacy_slack_to_account_at(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        account_id: crate::channels::registry::ChannelAccountId,
+    ) -> Result<()> {
+        let freedom_dir = transaction_directory(freedom_path);
+        anyhow::ensure!(freedom_dir == transaction_directory(credentials_path), "freedom.yaml and credentials.yaml must be sibling files for a durable transaction");
+        with_dual_file_transaction_lock(freedom_path, || {
+            with_config_writer_guard(freedom_path, || {
+                with_legacy_pair_locks(freedom_path, credentials_path, || {
+                    let freedom_before = FileSnapshot::capture(freedom_path)?;
+                    let credentials_before = FileSnapshot::capture(credentials_path)?;
+                    let mut config = crate::config::FreedomConfig::load_public_from_path_unlocked(freedom_path)
+                        .with_context(|| format!("load {} for legacy Slack account migration", freedom_path.display()))?;
+                    anyhow::ensure!(config.secrets_backend != crate::config::SecretsBackend::Keychain, "mapped Slack accounts require the file secrets backend until complete bot/app keychain custody exists");
+                    let mut credentials = Self::load_or_default_unlocked(credentials_path)
+                        .with_context(|| format!("load {} for legacy Slack account migration", credentials_path.display()))?;
+                    anyhow::ensure!(config.channel_accounts.slack.is_empty() && credentials.channel_accounts.slack.is_empty(), "Slack account map or account credentials already configured");
+                    let bot_token = credentials.slack_bot_token.take().context("legacy Slack bot token is missing")?;
+                    let app_token = credentials.slack_app_token.take().context("legacy Slack app token is missing")?;
+                    anyhow::ensure!(!bot_token.expose().trim().is_empty() && !app_token.expose().trim().is_empty(), "legacy Slack tokens must be non-blank");
+                    let allowed_user_id = credentials.slack_allowed_user_id.take().context("legacy Slack allowed_user_id is missing")?;
+                    let allowed_user_id = crate::channels::slack::normalize_allowed_user_id(&allowed_user_id).context("legacy Slack allowed_user_id is invalid")?;
+                    config.channel_accounts.slack.insert(account_id.clone(), crate::config::SlackAccountConfig { allowed_user_id, incarnation: Some(crate::config::AccountIncarnation::new_random()) });
+                    credentials.channel_accounts.slack.insert(account_id, SlackAccountCredentials { bot_token: Some(bot_token), app_token: Some(app_token) });
+                    let freedom_after = FileSnapshot::Present(zeroize::Zeroizing::new(render_freedom_preserving_unknown_yaml(&config, &freedom_before, InlineTelegramTokenPolicy::Preserve)?.as_bytes().to_vec()));
+                    let credentials_after = credentials.rendered_file_snapshot_preserving_unknown(credentials_path, &credentials_before)?;
+                    publish_prepared_file_pair(freedom_path, credentials_path, &freedom_dir, &freedom_before, &freedom_after, &credentials_before, &credentials_after, (), Some(|path: &Path, body: &[u8]| crate::util::atomic_write::atomic_write_private(path, body).with_context(|| format!("atomically write {}", path.display()))), |_| Ok(()))
+                })
+            })
+        })
+    }
+
     /// Secure default for existing credentials files that predate the field.
     pub fn matrix_requires_encryption(&self) -> bool {
         self.matrix_require_encryption.unwrap_or(true)
@@ -2719,7 +3018,8 @@ impl Credentials {
 
         let known = serde_yaml::to_value(self)
             .context("serialize known credentials for lossless update")?;
-        remove_retired_telegram_account_yaml(&mut merged.0, &self.channel_accounts.telegram);
+        remove_retired_channel_account_yaml(&mut merged.0, "telegram", &self.channel_accounts.telegram);
+        remove_retired_channel_account_yaml(&mut merged.0, "slack", &self.channel_accounts.slack);
         overlay_known_yaml(&mut merged.0, known);
         let body = zeroize::Zeroizing::new(
             serde_yaml::to_string(&merged.0)
@@ -4361,13 +4661,14 @@ fn overlay_known_yaml(target: &mut serde_yaml::Value, source: serde_yaml::Value)
     }
 }
 
-/// `overlay_known_yaml` intentionally preserves extension fields, but Telegram
+/// `overlay_known_yaml` intentionally preserves extension fields, but named
 /// account IDs are a typed, security-bearing map: an absent typed key means a
 /// completed retirement, never an unknown extension. Remove only those stale
 /// direct account entries before the generic recursive overlay so unrelated
 /// siblings and unknown fields beneath surviving accounts remain intact.
-fn remove_retired_telegram_account_yaml(
+fn remove_retired_channel_account_yaml(
     root: &mut serde_yaml::Value,
+    channel: &str,
     live: &std::collections::BTreeMap<crate::channels::registry::ChannelAccountId, impl Sized>,
 ) {
     let serde_yaml::Value::Mapping(root) = root else {
@@ -4377,10 +4678,10 @@ fn remove_retired_telegram_account_yaml(
     let Some(serde_yaml::Value::Mapping(accounts)) = root.get_mut(key("channel_accounts")) else {
         return;
     };
-    let Some(serde_yaml::Value::Mapping(telegram)) = accounts.get_mut(key("telegram")) else {
+    let Some(serde_yaml::Value::Mapping(channel_accounts)) = accounts.get_mut(key(channel)) else {
         return;
     };
-    telegram.retain(|entry, _| match entry.as_str() {
+    channel_accounts.retain(|entry, _| match entry.as_str() {
         Some(id) => crate::channels::registry::ChannelAccountId::new(id.to_owned())
             .map(|account| live.contains_key(&account))
             // Unknown/malformed YAML is retained so the subsequent typed
@@ -4436,7 +4737,8 @@ fn render_freedom_preserving_unknown_yaml(
     persisted.inference.default_slot.key = legacy.inference.default_slot.key;
     let known = serde_yaml::to_value(&persisted)
         .context("serialize known freedom.yaml fields for dual-file update")?;
-    remove_retired_telegram_account_yaml(&mut merged.0, &persisted.channel_accounts.telegram);
+    remove_retired_channel_account_yaml(&mut merged.0, "telegram", &persisted.channel_accounts.telegram);
+    remove_retired_channel_account_yaml(&mut merged.0, "slack", &persisted.channel_accounts.slack);
     overlay_known_yaml(&mut merged.0, known);
     let body = zeroize::Zeroizing::new(
         serde_yaml::to_string(&merged.0)
@@ -8328,5 +8630,156 @@ mod tests {
                     && raw.channel_accounts.telegram.contains_key(&b)
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod slack_account_transaction_tests {
+    use super::*;
+    use crate::channels::registry::ChannelAccountId;
+
+    fn account(name: &str) -> ChannelAccountId {
+        ChannelAccountId::new(name).unwrap()
+    }
+
+    fn seed() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let public = dir.path().join("freedom.yaml");
+        let private = dir.path().join("credentials.yaml");
+        std::fs::write(&public, "secrets_backend: file\nfuture_public:\n  keep: exactly\n").unwrap();
+        std::fs::write(&private, "future_private:\n  keep: exactly\n").unwrap();
+        (dir, public, private)
+    }
+
+    fn prepare(public: &Path, private: &Path, name: &str, bot: &str) -> PreparedSlackAccountUpsert {
+        Credentials::prepare_slack_account_upsert_at(public, private, account(name), "U123ABC".into(), SecretString::from(bot), SecretString::from("xapp-fixture")).unwrap()
+    }
+
+    fn snapshots(public: &Path, private: &Path) -> (Vec<u8>, Vec<u8>) {
+        (std::fs::read(public).unwrap(), std::fs::read(private).unwrap())
+    }
+
+    #[test]
+    fn slack_upsert_persists_two_accounts_and_rotation_preserves_incarnation_and_extensions() {
+        let (_dir, public, private) = seed();
+        Credentials::commit_prepared_slack_account_upsert_at(prepare(&public, &private, "work", "xoxb-work")).unwrap();
+        let before = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
+        let incarnation = before.config.channel_accounts.slack[&account("work")].incarnation.clone().unwrap();
+        let candidate = prepare(&public, &private, "personal", "xoxb-personal");
+        assert_eq!(candidate.account_id(), &account("personal"));
+        assert_eq!(candidate.candidate_pair().authenticated_slack_accounts().unwrap().len(), 2);
+        assert_eq!(before.credentials.channel_accounts.slack.len(), 1);
+        Credentials::commit_prepared_slack_account_upsert_at(candidate).unwrap();
+        Credentials::commit_prepared_slack_account_upsert_at(prepare(&public, &private, "work", "xoxb-rotated")).unwrap();
+        let after = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
+        assert_eq!(after.authenticated_slack_accounts().unwrap().len(), 2);
+        assert_eq!(after.config.channel_accounts.slack[&account("work")].incarnation.as_ref(), Some(&incarnation));
+        assert_eq!(after.credentials.channel_accounts.slack[&account("personal")].bot_token.as_ref().unwrap().expose(), "xoxb-personal");
+        assert_eq!(after.credentials.channel_accounts.slack[&account("work")].bot_token.as_ref().unwrap().expose(), "xoxb-rotated");
+        let public_text = std::fs::read_to_string(&public).unwrap();
+        assert!(public_text.contains("future_public:") && public_text.contains("keep: exactly"));
+        assert!(!public_text.contains("xoxb-") && !public_text.contains("xapp-"));
+        assert!(std::fs::read_to_string(&private).unwrap().contains("future_private:"));
+    }
+
+    #[test]
+    fn slack_upsert_cas_rejects_either_raw_file_drift_without_overwrite() {
+        for change_public in [true, false] {
+            let (_dir, public, private) = seed();
+            let candidate = prepare(&public, &private, "work", "xoxb-candidate");
+            let changed = if change_public { &public } else { &private };
+            let mut text = std::fs::read_to_string(changed).unwrap();
+            text.push_str("concurrent_extension: keep\n");
+            std::fs::write(changed, text).unwrap();
+            let before = snapshots(&public, &private);
+            assert!(Credentials::commit_prepared_slack_account_upsert_at(candidate).is_err());
+            assert_eq!(snapshots(&public, &private), before);
+        }
+    }
+
+    #[test]
+    fn slack_retirement_removes_persisted_keys_and_readd_mints_a_new_generation() {
+        let (_dir, public, private) = seed();
+        for name in ["work", "personal"] {
+            Credentials::commit_prepared_slack_account_upsert_at(prepare(&public, &private, name, name)).unwrap();
+        }
+        let before = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
+        let retired = before.config.channel_accounts.slack[&account("work")].incarnation.clone().unwrap();
+        let survivor = before.config.channel_accounts.slack[&account("personal")].clone();
+        let mut raw: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(&public).unwrap()).unwrap();
+        raw["channel_accounts"]["slack"]["personal"]["future_policy"] = serde_yaml::Value::String("retain".into());
+        std::fs::write(&public, serde_yaml::to_string(&raw).unwrap()).unwrap();
+        let candidate = Credentials::prepare_slack_account_removal_at(&public, &private, account("work")).unwrap();
+        assert_eq!(candidate.account_id(), &account("work"));
+        Credentials::commit_prepared_slack_account_removal_at(candidate).unwrap();
+        let after = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
+        assert_eq!(after.authenticated_slack_accounts().unwrap().len(), 1);
+        assert!(!after.config.channel_accounts.slack.contains_key(&account("work")));
+        assert!(!after.raw_credentials.channel_accounts.slack.contains_key(&account("work")));
+        assert_eq!(after.config.channel_accounts.slack[&account("personal")].incarnation, survivor.incarnation);
+        assert_eq!(after.credentials.channel_accounts.slack[&account("personal")].bot_token.as_ref().unwrap().expose(), "personal");
+        assert!(std::fs::read_to_string(&public).unwrap().contains("future_policy: retain"));
+        Credentials::commit_prepared_slack_account_upsert_at(prepare(&public, &private, "work", "new-token")).unwrap();
+        let readded = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
+        assert_ne!(readded.config.channel_accounts.slack[&account("work")].incarnation.as_ref(), Some(&retired));
+    }
+
+    #[test]
+    fn slack_retirement_rejects_unknown_account_and_stale_prepared_pair() {
+        let (_dir, public, private) = seed();
+        Credentials::commit_prepared_slack_account_upsert_at(prepare(&public, &private, "work", "work")).unwrap();
+        let before = snapshots(&public, &private);
+        assert!(Credentials::prepare_slack_account_removal_at(&public, &private, account("missing")).is_err());
+        assert_eq!(snapshots(&public, &private), before);
+        let candidate = Credentials::prepare_slack_account_removal_at(&public, &private, account("work")).unwrap();
+        Credentials::commit_prepared_slack_account_upsert_at(prepare(&public, &private, "personal", "personal")).unwrap();
+        let updated = snapshots(&public, &private);
+        assert!(Credentials::commit_prepared_slack_account_removal_at(candidate).is_err());
+        assert_eq!(snapshots(&public, &private), updated);
+        assert_eq!(crate::config::load_runtime_config_pair_from_path(&public).unwrap().authenticated_slack_accounts().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn slack_legacy_migration_moves_only_complete_triple_and_keeps_private_extensions() {
+        for complete in [false, true] {
+            let (_dir, public, private) = seed();
+            let legacy = if complete { "slack_bot_token: bot\nslack_app_token: app\nslack_allowed_user_id: U123ABC\nfuture_private: retained\n" } else { "slack_bot_token: bot\nslack_allowed_user_id: U123ABC\nfuture_private: retained\n" };
+            std::fs::write(&private, legacy).unwrap();
+            let before = snapshots(&public, &private);
+            let result = Credentials::migrate_legacy_slack_to_account_at(&public, &private, account("explicit"));
+            if !complete {
+                assert!(result.is_err());
+                assert_eq!(snapshots(&public, &private), before);
+                continue;
+            }
+            result.unwrap();
+            let pair = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
+            let accounts = pair.authenticated_slack_accounts().unwrap();
+            assert_eq!(accounts.len(), 1);
+            assert_eq!(accounts[0].channel_ref().account_id, account("explicit"));
+            assert_eq!(accounts[0].bot_token().expose(), "bot");
+            assert_eq!(accounts[0].app_token().expose(), "app");
+            assert_eq!(accounts[0].allowed_user_id(), "U123ABC");
+            assert!(pair.raw_credentials.slack_bot_token.is_none());
+            assert!(pair.raw_credentials.slack_app_token.is_none());
+            assert!(pair.raw_credentials.slack_allowed_user_id.is_none());
+            assert!(std::fs::read_to_string(&private).unwrap().contains("future_private: retained"));
+            let migrated = snapshots(&public, &private);
+            assert!(Credentials::migrate_legacy_slack_to_account_at(&public, &private, account("other")).is_err());
+            assert_eq!(snapshots(&public, &private), migrated);
+        }
+    }
+
+    #[test]
+    fn slack_file_lifecycle_rejects_keychain_without_touching_either_file() {
+        let (_dir, public, private) = seed();
+        std::fs::write(&public, "secrets_backend: keychain\nfuture_public: retained\n").unwrap();
+        std::fs::write(&private, "slack_bot_token: bot\nslack_app_token: app\nslack_allowed_user_id: U123ABC\n").unwrap();
+        let before = snapshots(&public, &private);
+        let result = Credentials::prepare_slack_account_upsert_at(&public, &private, account("work"), "U123ABC".into(), SecretString::from("new-bot"), SecretString::from("new-app"));
+        assert!(result.is_err());
+        assert!(Credentials::prepare_slack_account_removal_at(&public, &private, account("work")).is_err());
+        assert!(Credentials::migrate_legacy_slack_to_account_at(&public, &private, account("work")).is_err());
+        assert_eq!(snapshots(&public, &private), before);
     }
 }

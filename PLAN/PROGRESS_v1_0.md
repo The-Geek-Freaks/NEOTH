@@ -2,6 +2,24 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W675/W676/W679-W680 named Slack account lifecycle (2026-09-24):**
+File-backed Slack add/rotate/remove/migrate/test now uses explicit account IDs,
+strict private stdin tokens and the existing prepared-pair transaction. The
+exact candidate is auth.test-probed then CAS-committed; rotation selects policy
+inside the lock. Failed probes/drift preserve files. Retirement removes typed
+Slack IDs from both lossless overlays while preserving sibling/unknown fields;
+re-add mints a new incarnation. Keychain writes reject before mutation.
+CLI map tests require explicit account selection; flat mutations reject maps.
+Registry now exposes named-account support for Telegram and Slack. Proactive
+Slack routing, keychain custody and surface parity remain separate P1-16 work.
+Fourteen new regressions plus two existing contracts extend native1328/Group1058.
+Hosted Core35963133128 found an unused superseded default-account helper;
+Group35963135066 and Windows5035963137255 compiled0fixtures because an opaque
+BindingTag assertion required Debug. Exact dead-code removal and boolean
+inequality preserve behavior; new hosted verification is pending.
+Independent static review passed. Road stays1324/1046done/276open/2partial;
+WS-LF38done80open. No local executable validation. See W680 lifecycle document.
+
 **W678 hosted reload tuple correction (2026-09-24):** Core35962545321 reports
 three E0308 errors: Slack added an eighth reload-candidate tuple element while
 three borrowed destructures still expected seven. All three now retain the

@@ -219,35 +219,59 @@ fn run_migrate_legacy_at(
     account: &str,
     output: &OutputFormat,
 ) -> Result<()> {
-    if channel.trim() != ChannelId::Telegram.as_str() {
-        anyhow::bail!(
-            "legacy migration supports only canonical `telegram`; `{}` is unsupported",
+    let channel_id = match channel.trim() {
+        "telegram" => ChannelId::Telegram,
+        "slack" => ChannelId::Slack,
+        _ => anyhow::bail!(
+            "legacy migration supports only canonical `telegram` or `slack`; `{}` is unsupported",
             channel.trim()
+        ),
+    };
+    if channel_id == ChannelId::Telegram {
+        let account_id =
+            ChannelAccountId::new(account.trim().to_owned()).context("invalid Telegram account id")?;
+        let freedom_path = home.join("freedom.yaml");
+        let credentials_path = home.join("credentials.yaml");
+        Credentials::migrate_legacy_telegram_to_account_at(
+            &freedom_path,
+            &credentials_path,
+            account_id.clone(),
+        )
+        .with_context(|| "migrate the admitted legacy Telegram singleton atomically")?;
+
+        let pair = crate::config::load_runtime_config_pair_from_path(&freedom_path)
+            .context("validate the migrated Telegram account pair")?;
+        let accounts = pair.authenticated_telegram_accounts()?;
+        anyhow::ensure!(
+            accounts.len() == 1 && accounts[0].channel_ref().account_id == account_id,
+            "migrated Telegram account was not the sole authenticated inbound account"
         );
+        print_migrated_legacy(output, "telegram", &account_id);
+        return Ok(());
     }
     let account_id =
-        ChannelAccountId::new(account.trim().to_owned()).context("invalid Telegram account id")?;
+        ChannelAccountId::new(account.trim().to_owned()).context("invalid Slack account id")?;
     let freedom_path = home.join("freedom.yaml");
     let credentials_path = home.join("credentials.yaml");
-    Credentials::migrate_legacy_telegram_to_account_at(
-        &freedom_path,
-        &credentials_path,
-        account_id.clone(),
-    )
-    .with_context(|| "migrate the admitted legacy Telegram singleton atomically")?;
-
+    Credentials::migrate_legacy_slack_to_account_at(&freedom_path, &credentials_path, account_id.clone())
+        .with_context(|| "migrate the admitted legacy Slack singleton atomically")?;
     let pair = crate::config::load_runtime_config_pair_from_path(&freedom_path)
-        .context("validate the migrated Telegram account pair")?;
-    let accounts = pair.authenticated_telegram_accounts()?;
+        .context("validate the migrated Slack account pair")?;
+    let accounts = pair.authenticated_slack_accounts()?;
     anyhow::ensure!(
         accounts.len() == 1 && accounts[0].channel_ref().account_id == account_id,
-        "migrated Telegram account was not the sole authenticated inbound account"
+        "migrated Slack account was not the sole authenticated inbound account"
     );
+    print_migrated_legacy(output, "slack", &account_id);
+    Ok(())
+}
+
+fn print_migrated_legacy(output: &OutputFormat, channel: &str, account_id: &ChannelAccountId) {
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
             "{}",
             serde_json::json!({
-                "channel": "telegram",
+                "channel": channel,
                 "account": account_id.as_str(),
                 "inbound": "configured_account",
                 "account_probe": "available",
@@ -255,11 +279,10 @@ fn run_migrate_legacy_at(
             })
         ),
         OutputFormat::Table => println!(
-            "Migrated legacy Telegram singleton to configured account `{}`. Static account listing and explicit read-only probing are available.",
+            "Migrated legacy {channel} singleton to configured account `{}`. Static account listing and explicit read-only probing are available.",
             account_id.as_str()
         ),
     }
-    Ok(())
 }
 
 /// Count of configured channels — small helper the renderers share.
@@ -680,6 +703,19 @@ pub(crate) async fn test_channel_at_with_account(
             config_path.display()
         )
     })?;
+    if channel_id == ChannelId::Slack {
+        if let Some(account) = requested_account.as_ref() {
+            return test_slack_account_at_with_probe(&pair, account.clone(), |token| async move {
+                crate::channels::slack_api::auth_test(&token).await
+            }).await;
+        }
+        anyhow::ensure!(
+            pair.config.channel_accounts.slack.is_empty()
+                && !pair.credentials.slack_account_map_active()
+                && !pair.raw_credentials.slack_account_map_active(),
+            "Slack account map is active; pass `neoth channel test slack --account <id>`"
+        );
+    }
     if let Some(result) = test_account_probe_with(
         channel_id,
         &pair,
@@ -731,6 +767,65 @@ struct TelegramProbeBinding {
     channel_ref: ChannelRef,
     token: SecretString,
     allowed_user_id: u64,
+}
+
+struct SlackProbeBinding {
+    channel_ref: ChannelRef,
+    bot_token: SecretString,
+}
+
+fn resolve_slack_probe_binding(
+    pair: &crate::config::RuntimeConfigPair,
+    requested_account: &ChannelAccountId,
+) -> Result<SlackProbeBinding> {
+    let accounts = pair.authenticated_slack_accounts().map_err(|_| anyhow::anyhow!(
+        "Slack account map is invalid; repair matching policy and credential entries before probing"
+    ))?;
+    let account = accounts.into_iter().find(|account| {
+        !account.is_legacy_singleton()
+            && account.channel_ref()
+                == &ChannelRef::new(ChannelId::Slack, requested_account.clone())
+    }).ok_or_else(|| anyhow::anyhow!("Slack account `{requested_account}` is not configured"))?;
+    Ok(SlackProbeBinding {
+        channel_ref: account.channel_ref().clone(),
+        bot_token: account.bot_token().clone(),
+    })
+}
+
+async fn probe_slack_account_binding_with<F, Fut>(
+    binding: SlackProbeBinding,
+    validate: F,
+) -> Result<ChannelTestResult>
+where
+    F: FnOnce(SecretString) -> Fut,
+    Fut: std::future::Future<Output = Result<crate::channels::slack_api::AuthTestResult>>,
+{
+    let account_id = binding.channel_ref.account_id.clone();
+    let result = match validate(binding.bot_token).await {
+        Ok(response) if response.ok => account_result(ok(
+            "slack".to_owned(),
+            format!("auth.test succeeded as {}", response.user.as_deref().unwrap_or("?")),
+        ), account_id),
+        Ok(response) => account_result(fail(
+            "slack".to_owned(),
+            response.error.unwrap_or_else(|| "auth.test returned ok=false".into()),
+        ), account_id),
+        Err(error) => account_result(fail("slack".to_owned(), error.to_string()), account_id),
+    };
+    Ok(result)
+}
+
+async fn test_slack_account_at_with_probe<F, Fut>(
+    pair: &crate::config::RuntimeConfigPair,
+    requested_account: ChannelAccountId,
+    validate: F,
+) -> Result<ChannelTestResult>
+where
+    F: FnOnce(SecretString) -> Fut,
+    Fut: std::future::Future<Output = Result<crate::channels::slack_api::AuthTestResult>>,
+{
+    let binding = resolve_slack_probe_binding(pair, &requested_account)?;
+    probe_slack_account_binding_with(binding, validate).await
 }
 
 fn telegram_account_map_active(pair: &crate::config::RuntimeConfigPair) -> bool {
@@ -1335,6 +1430,27 @@ struct TelegramAccountCredentialEnvelope {
     token: SecretString,
 }
 
+/// Strict private stdin envelope for one named Slack account. Both bearer
+/// tokens remain secret from decode through the prepared candidate and probe.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SlackAccountCredentialEnvelope {
+    schema_version: u32,
+    channel: String,
+    account: ChannelAccountId,
+    bot_token: SecretString,
+    app_token: SecretString,
+}
+
+struct SlackAccountAddFields {
+    account_id: ChannelAccountId,
+    /// `Some` is public-policy onboarding; `None` delegates policy selection
+    /// to the locked rotation prepare path, preventing a stale policy read.
+    allowed_user_id: Option<String>,
+    bot_token: SecretString,
+    app_token: SecretString,
+}
+
 /// Private machine-facing credential envelope used by the desktop GUI. Secret
 /// values arrive only over the child process' stdin and therefore never enter
 /// argv, shell history, or process-list command lines.
@@ -1628,6 +1744,45 @@ fn read_telegram_account_credential_request_from(
         account_id: request.account,
         allowed_user_id: request.telegram_user_id,
         token: request.token,
+    })
+}
+
+fn read_slack_account_credential_request_from(
+    reader: impl Read,
+    expected_account: &ChannelAccountId,
+) -> Result<SlackAccountAddFields> {
+    let mut body = Zeroizing::new(Vec::new());
+    reader
+        .take(MAX_CHANNEL_CREDENTIAL_STDIN_BYTES + 1)
+        .read_to_end(&mut body)?;
+    anyhow::ensure!(
+        body.len() as u64 <= MAX_CHANNEL_CREDENTIAL_STDIN_BYTES,
+        "channel credential request exceeds {} bytes",
+        MAX_CHANNEL_CREDENTIAL_STDIN_BYTES
+    );
+    let request: SlackAccountCredentialEnvelope = serde_json::from_slice(&body)
+        .map_err(|_| anyhow::anyhow!("private Slack account credential request is malformed"))?;
+    anyhow::ensure!(
+        request.schema_version == CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+        "unsupported channel credential schema version"
+    );
+    anyhow::ensure!(
+        request.channel == "slack",
+        "Slack account credentials require canonical `slack`"
+    );
+    anyhow::ensure!(
+        &request.account == expected_account,
+        "private Slack account credential request account does not match --account"
+    );
+    anyhow::ensure!(
+        !request.bot_token.expose().trim().is_empty() && !request.app_token.expose().trim().is_empty(),
+        "Slack account tokens must not be blank"
+    );
+    Ok(SlackAccountAddFields {
+        account_id: request.account,
+        allowed_user_id: None,
+        bot_token: request.bot_token,
+        app_token: request.app_token,
     })
 }
 
@@ -2444,11 +2599,28 @@ pub async fn run_account_add(
     .await
 }
 
+/// Add one named Slack account from the strict private stdin envelope. The
+/// public argv carries only account identity and its allowed Slack member ID.
+pub async fn run_account_add_slack(
+    account_id: ChannelAccountId,
+    allowed_user_id: String,
+    output: &OutputFormat,
+) -> Result<()> {
+    let mut fields = read_slack_account_credential_request_from(std::io::stdin().lock(), &account_id)?;
+    fields.allowed_user_id = Some(allowed_user_id);
+    run_slack_account_add_at(&FreedomConfig::default_neoth_home(), fields, output).await
+}
+
 pub async fn run_account_set_credentials(
     channel: &str,
     account_id: ChannelAccountId,
     output: &OutputFormat,
 ) -> Result<()> {
+    if channel == "slack" {
+        let fields = read_slack_account_credential_request_from(std::io::stdin().lock(), &account_id)?;
+        let home = FreedomConfig::default_neoth_home();
+        return run_slack_account_add_at(&home, fields, output).await;
+    }
     let fields = read_telegram_account_credential_request_from(
         std::io::stdin().lock(),
         channel,
@@ -2591,12 +2763,38 @@ pub fn run_account_remove(
     account: ChannelAccountId,
     output: &OutputFormat,
 ) -> Result<()> {
-    run_telegram_account_remove_at(
+    match channel {
+        "telegram" => run_telegram_account_remove_at(
         &FreedomConfig::default_neoth_home(),
         channel,
         account,
         output,
-    )
+        ),
+        "slack" => run_slack_account_remove_at(&FreedomConfig::default_neoth_home(), account, output),
+        _ => anyhow::bail!("named account retirement supports only canonical `telegram` or `slack`"),
+    }
+}
+
+fn run_slack_account_remove_at(
+    home: &std::path::Path,
+    account: ChannelAccountId,
+    output: &OutputFormat,
+) -> Result<()> {
+    let prepared = Credentials::prepare_slack_account_removal_at(
+        &home.join("freedom.yaml"), &home.join("credentials.yaml"), account,
+    )?;
+    let retired = prepared.account_id().clone();
+    Credentials::commit_prepared_slack_account_removal_at(prepared)?;
+    crate::cli::reload::request_reload_at(home).context(
+        "Slack account retirement committed, but the live-reload request failed; run `neoth reload`",
+    )?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}", serde_json::json!({"channel":"slack","account":retired.as_str(),"removed":true})
+        ),
+        OutputFormat::Table => println!("slack account `{}` retired and reload requested", retired.as_str()),
+    }
+    Ok(())
 }
 
 fn run_telegram_account_remove_at(
@@ -2836,6 +3034,69 @@ async fn run_telegram_account_add_at(
         .await
     })
     .await
+}
+
+async fn run_slack_account_add_at(
+    home: &std::path::Path,
+    fields: SlackAccountAddFields,
+    output: &OutputFormat,
+) -> Result<()> {
+    run_slack_account_add_at_with_probe(home, fields, output, |binding| async move {
+        probe_slack_account_binding_with(binding, |token| async move {
+            crate::channels::slack_api::auth_test(&token).await
+        }).await
+    }).await
+}
+
+async fn run_slack_account_add_at_with_probe<F, Fut>(
+    home: &std::path::Path,
+    fields: SlackAccountAddFields,
+    output: &OutputFormat,
+    probe: F,
+) -> Result<()>
+where
+    F: FnOnce(SlackProbeBinding) -> Fut,
+    Fut: std::future::Future<Output = Result<ChannelTestResult>>,
+{
+    let freedom_path = home.join("freedom.yaml");
+    let credentials_path = home.join("credentials.yaml");
+    let prepared = match fields.allowed_user_id {
+        Some(allowed_user_id) => {
+            anyhow::ensure!(
+                !allowed_user_id.trim().is_empty(),
+                "Slack allowed user ID must not be blank"
+            );
+            Credentials::prepare_slack_account_upsert_at(
+                &freedom_path, &credentials_path, fields.account_id, allowed_user_id,
+                fields.bot_token, fields.app_token,
+            )?
+        }
+        None => Credentials::prepare_slack_account_rotation_at(
+            &freedom_path, &credentials_path, fields.account_id,
+            fields.bot_token, fields.app_token,
+        )?,
+    };
+    let account_id = prepared.account_id().clone();
+    let binding = resolve_slack_probe_binding(prepared.candidate_pair(), &account_id)?;
+    let result = probe(binding).await?;
+    anyhow::ensure!(
+        result.status == "ok",
+        "candidate Slack account auth.test failed; no account state was saved"
+    );
+    Credentials::commit_prepared_slack_account_upsert_at(prepared)?;
+    crate::cli::reload::request_reload_at(home).context(
+        "Slack account storage committed, but the live-reload request failed; run `neoth reload`",
+    )?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}", serde_json::json!({"channel":"slack","account":account_id.as_str(),"saved":true,"auth_test":true})
+        ),
+        OutputFormat::Table => println!(
+            "slack account `{}` saved after auth.test; Socket Mode startup is validated separately by daemon runtime status",
+            account_id.as_str()
+        ),
+    }
+    Ok(())
 }
 
 async fn run_telegram_account_add_at_with_probe<F, Fut>(
@@ -3611,11 +3872,15 @@ fn reject_flat_telegram_mutation_when_account_map_active(
     config: &FreedomConfig,
     credentials: &Credentials,
 ) -> Result<()> {
-    if channel_id == ChannelId::Telegram
-        && (config.telegram_account_map_active() || credentials.telegram_account_map_active())
-    {
+    let map_active = match channel_id {
+        ChannelId::Telegram => config.telegram_account_map_active() || credentials.telegram_account_map_active(),
+        ChannelId::Slack => !config.channel_accounts.slack.is_empty() || credentials.slack_account_map_active(),
+        _ => false,
+    };
+    if map_active {
         anyhow::bail!(
-            "flat `channel add/remove telegram` and `channel set-credentials` cannot modify a configured Telegram account map; use an account-selecting command"
+            "flat `channel add/remove {}` and `channel set-credentials` cannot modify a configured account map; use an account-selecting command",
+            channel_id.as_str()
         );
     }
     Ok(())
@@ -5772,9 +6037,9 @@ mod tests {
     }
 
     #[test]
-    fn migrate_legacy_refuses_alias_or_non_telegram_channel_before_file_access() {
+    fn migrate_legacy_refuses_alias_or_unsupported_channel_before_file_access() {
         let home = tempfile::tempdir().unwrap();
-        for channel in ["Telegram", "slack"] {
+        for channel in ["Telegram", "Slack", "discord"] {
             let error =
                 run_migrate_legacy_at(home.path(), channel, "family_chat", &OutputFormat::Json)
                     .unwrap_err()
@@ -5884,6 +6149,153 @@ mod tests {
             assert!(row.accounts.is_empty());
             assert!(current_account_runtime_tags(&pair).is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn slack_account_probe_requires_exact_selected_account_and_rejects_missing_or_unknown() {
+        let pair = slack_status_pair();
+        let work = ChannelAccountId::new("work").unwrap();
+        assert_eq!(resolve_slack_probe_binding(&pair, &work).unwrap().bot_token.expose(), "bot-secret-work");
+        assert!(resolve_slack_probe_binding(&pair, &ChannelAccountId::new("missing").unwrap()).is_err());
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join("freedom.yaml"), pair.config.public_yaml().unwrap()).unwrap();
+        pair.raw_credentials.write(&home.path().join("credentials.yaml")).unwrap();
+        let error = test_channel_at_with_account(home.path(), "slack", None).await.unwrap_err();
+        assert!(error.to_string().contains("--account"));
+        assert!(test_channel_at_with_account(home.path(), "slack", Some(ChannelAccountId::new("missing").unwrap())).await.is_err());
+        let mut partial = pair;
+        partial.credentials.channel_accounts.slack.clear();
+        assert!(resolve_slack_probe_binding(&partial, &work).is_err());
+    }
+
+    #[test]
+    fn flat_slack_mutation_refuses_active_map_before_persistence() {
+        let pair = slack_status_pair();
+        assert!(reject_flat_telegram_mutation_when_account_map_active(
+            ChannelId::Slack, &pair.config, &pair.credentials,
+        ).is_err());
+    }
+
+    #[test]
+    fn slack_account_private_envelope_is_strict_and_bound_to_selected_account() {
+        let account = ChannelAccountId::new("work").unwrap();
+        let valid = serde_json::json!({
+            "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+            "channel": "slack",
+            "account": "work",
+            "bot_token": "xoxb-private",
+            "app_token": "xapp-private",
+        });
+        let parsed = read_slack_account_credential_request_from(
+            std::io::Cursor::new(serde_json::to_vec(&valid).unwrap()), &account,
+        ).unwrap();
+        assert_eq!(parsed.account_id, account);
+        assert_eq!(parsed.bot_token.expose(), "xoxb-private");
+        for invalid in [
+            serde_json::json!({"schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION, "channel":"slack", "account":"other", "bot_token":"xoxb", "app_token":"xapp"}),
+            serde_json::json!({"schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION, "channel":"Slack", "account":"work", "bot_token":"xoxb", "app_token":"xapp"}),
+            serde_json::json!({"schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION, "channel":"slack", "account":"work", "bot_token":"xoxb", "app_token":"xapp", "unexpected":"secret"}),
+        ] {
+            assert!(read_slack_account_credential_request_from(
+                std::io::Cursor::new(serde_json::to_vec(&invalid).unwrap()), &account,
+            ).is_err());
+        }
+        let malformed = br#"{"schema_version":1,"channel":"slack","account":"work","bot_token":{"private":"SLACK_PARSE_SECRET"},"app_token":"xapp"}"#;
+        let error = read_slack_account_credential_request_from(
+            std::io::Cursor::new(malformed), &account,
+        ).err().unwrap().to_string();
+        assert_eq!(error, "private Slack account credential request is malformed");
+        assert!(!error.contains("SLACK_PARSE_SECRET"));
+    }
+
+    #[tokio::test]
+    async fn slack_account_candidate_probe_selects_exact_account_before_commit() {
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let fields = SlackAccountAddFields {
+            account_id: ChannelAccountId::new("work").unwrap(),
+            allowed_user_id: Some("U123PRIVATE".into()),
+            bot_token: SecretString::from("xoxb-work"),
+            app_token: SecretString::from("xapp-work"),
+        };
+        run_slack_account_add_at_with_probe(home.path(), fields, &OutputFormat::Json, |binding| async move {
+            assert_eq!(binding.channel_ref.account_id.as_str(), "work");
+            assert_eq!(binding.bot_token.expose(), "xoxb-work");
+            Ok(ChannelTestResult { channel: "slack".into(), account: Some(ChannelAccountId::new("work").unwrap()), status: "ok", detail: "accepted".into() })
+        }).await.unwrap();
+        let pair = crate::config::load_runtime_config_pair_from_path(&home.path().join("freedom.yaml")).unwrap();
+        assert_eq!(pair.authenticated_slack_accounts().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn slack_account_failed_probe_and_stale_commit_preserve_existing_files() {
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let freedom = home.path().join("freedom.yaml");
+        let credentials = home.path().join("credentials.yaml");
+        std::fs::write(&credentials, "preserve: exact\n").unwrap();
+        let before_freedom = std::fs::read(&freedom).unwrap();
+        let before_credentials = std::fs::read(&credentials).unwrap();
+        let failed = SlackAccountAddFields { account_id: ChannelAccountId::new("work").unwrap(), allowed_user_id: Some("U123PRIVATE".into()), bot_token: SecretString::from("xoxb-work"), app_token: SecretString::from("xapp-work") };
+        assert!(run_slack_account_add_at_with_probe(home.path(), failed, &OutputFormat::Json, |_binding| async move {
+            Ok(ChannelTestResult { channel: "slack".into(), account: None, status: "fail", detail: "rejected".into() })
+        }).await.is_err());
+        assert_eq!(std::fs::read(&freedom).unwrap(), before_freedom);
+        assert_eq!(std::fs::read(&credentials).unwrap(), before_credentials);
+        let stale = SlackAccountAddFields { account_id: ChannelAccountId::new("work").unwrap(), allowed_user_id: Some("U123PRIVATE".into()), bot_token: SecretString::from("xoxb-work"), app_token: SecretString::from("xapp-work") };
+        assert!(run_slack_account_add_at_with_probe(home.path(), stale, &OutputFormat::Json, move |_binding| async move {
+            std::fs::write(&freedom, "raced: true\n").unwrap();
+            Ok(ChannelTestResult { channel: "slack".into(), account: None, status: "ok", detail: "accepted".into() })
+        }).await.is_err());
+        assert_eq!(std::fs::read_to_string(home.path().join("freedom.yaml")).unwrap(), "raced: true\n");
+    }
+
+    #[tokio::test]
+    async fn slack_account_rotation_preserves_policy_selected_inside_prepared_candidate() {
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let original = SlackAccountAddFields {
+            account_id: ChannelAccountId::new("work").unwrap(),
+            allowed_user_id: Some("U123PRIVATE".into()),
+            bot_token: SecretString::from("xoxb-before"),
+            app_token: SecretString::from("xapp-before"),
+        };
+        run_slack_account_add_at_with_probe(home.path(), original, &OutputFormat::Json, |_binding| async move {
+            Ok(ChannelTestResult { channel: "slack".into(), account: None, status: "ok", detail: "accepted".into() })
+        }).await.unwrap();
+        let rotation = SlackAccountAddFields {
+            account_id: ChannelAccountId::new("work").unwrap(),
+            allowed_user_id: None,
+            bot_token: SecretString::from("xoxb-rotated"),
+            app_token: SecretString::from("xapp-rotated"),
+        };
+        run_slack_account_add_at_with_probe(home.path(), rotation, &OutputFormat::Json, |binding| async move {
+            assert_eq!(binding.bot_token.expose(), "xoxb-rotated");
+            Ok(ChannelTestResult { channel: "slack".into(), account: None, status: "ok", detail: "accepted".into() })
+        }).await.unwrap();
+        let pair = crate::config::load_runtime_config_pair_from_path(&home.path().join("freedom.yaml")).unwrap();
+        assert_eq!(pair.config.channel_accounts.slack[&ChannelAccountId::new("work").unwrap()].allowed_user_id, "U123PRIVATE");
+    }
+
+    #[test]
+    fn slack_account_remove_retires_only_selected_account_and_requests_reload() {
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let freedom = home.path().join("freedom.yaml");
+        let credentials = home.path().join("credentials.yaml");
+        for account in ["work", "personal"] {
+            let prepared = Credentials::prepare_slack_account_upsert_at(
+                &freedom, &credentials, ChannelAccountId::new(account).unwrap(), "U123PRIVATE".into(),
+                SecretString::from(format!("xoxb-{account}")), SecretString::from(format!("xapp-{account}")),
+            ).unwrap();
+            Credentials::commit_prepared_slack_account_upsert_at(prepared).unwrap();
+        }
+        run_slack_account_remove_at(home.path(), ChannelAccountId::new("work").unwrap(), &OutputFormat::Json).unwrap();
+        let pair = crate::config::load_runtime_config_pair_from_path(&freedom).unwrap();
+        let accounts = pair.authenticated_slack_accounts().unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].channel_ref().account_id.as_str(), "personal");
+        assert!(home.path().join(crate::config::reload::RELOAD_SENTINEL_NAME).exists());
     }
 
     #[test]

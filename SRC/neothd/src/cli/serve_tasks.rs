@@ -5814,28 +5814,8 @@ pub(crate) fn spawn_channel_run<C: Channel + 'static>(
         .push(task);
 }
 
-/// Shared-ownership twin used by edit-capable adapters. The receive loop and
-/// the pipeline's `LiveDelivery` must address the exact same adapter instance,
-/// so Telegram/Slack keep it in an `Arc` while all final-only adapters retain
-/// the simpler owned helper above.
-pub(crate) fn spawn_shared_channel_run<C: Channel + 'static>(
-    channel: Arc<C>,
-    handler: PipelineHandler,
-    kind: ChannelKind,
-    label: &'static str,
-    channel_tasks: &mut ChannelFleet,
-) {
-    let task = tokio::spawn(async move {
-        if let Err(error) = channel.run(handler).await {
-            tracing::error!(error = %error, "{label} channel task exited with error");
-        }
-    });
-    channel_tasks
-        .entry(ChannelRef::default_account(kind))
-        .or_default()
-        .push(task);
-}
-
+/// Keep receive and live-reply ownership on the same adapter instance while
+/// retaining the authenticated account identity in its fleet bucket.
 fn spawn_shared_channel_run_for_ref<C: Channel + 'static>(
     channel: Arc<C>,
     handler: PipelineHandler,
@@ -11760,7 +11740,7 @@ mod channel_reconcile_tests {
             runtime_health_binding_tags(&[], &left.authenticated_slack_accounts().unwrap());
         let right_tags =
             runtime_health_binding_tags(&[], &right.authenticated_slack_accounts().unwrap());
-        assert_ne!(left_tags[&account], right_tags[&account]);
+        assert!(left_tags[&account] != right_tags[&account]);
     }
 
     #[tokio::test]

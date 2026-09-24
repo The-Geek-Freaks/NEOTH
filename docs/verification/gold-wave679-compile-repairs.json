@@ -1,0 +1,30 @@
+{
+  "schema": "neoth-w679-compile-repairs/v1",
+  "source": "0c4da3b31f0aab8b547d9adf3a684e46a86799d6",
+  "core": {
+    "diagnostic": "dead_code spawn_shared_channel_run; all callers use explicit ChannelRef helper",
+    "run": 35963133128,
+    "logSha256": "61E5EF0B0A763CF84F8DB0F4C24F4669B335DC4E62CDCCA556D662E5E850A0C6"
+  },
+  "group": {
+    "diagnostic": "E0277 BindingTag lacks Debug at assert_ne",
+    "run": 35963135066,
+    "executed": 0,
+    "logSha256": "FB13EB0084BFBAFA016B7EAEB4D1569958256EB655BA738AAFCF34FEB0809362"
+  },
+  "windows": {
+    "executed": 0,
+    "artifact": 10793645028,
+    "run": 35963137255,
+    "preparedEvidence": "work/gold-20260906/wave679-windows-compile/REPORT.json",
+    "selected": 50,
+    "diagnostic": "Same BindingTag E0277",
+    "zipSha256": "f04e1ac88582933ecdb236386a2eae304e98be5c5385f8af60d4d58d4885ddce"
+  },
+  "repairs": [
+    "remove uncalled default account helper",
+    "compare same opaque tag inequality with assert boolean"
+  ],
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "localExecutableValidationRan": false
+}
