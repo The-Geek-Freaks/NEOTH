@@ -3,6 +3,21 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W700-W706 WebChat custody/readiness and CUA compatibility (2026-09-24):**
+The sealed browser session now reaches chat preparation before hindsight, WAL,
+recall and actual transcript writes. Real-producer regression covers separate
+A/B persisted pairs and global Incognito absence. Reconnect exchanges the stored
+grant before status, clears completed ordinary turns and retains Incognito replay.
+Status uses authenticated read-only RPC with real listener/child-client coverage.
+Claude R04's exact upstream contract29 is independently verified: seven equivalent
+CUA verbs join legacy11; default19other verbs stay denied. Explicit enable migrates
+only the recognized old default; Doctor uses actual configured policy and aliases.
+Independent source review passes;12new selected cases yield native1351/Group1081.
+PriorCore35969533176 at18ff87aa passes Clippy/typecheck/CLIbuild/export; exactCLI
+4445f7b2 imported249367bytes. New source execution remains pending on GitHub.
+Road1324/1046checked/276open/2partial;WS-LF38done80open. No local executables.
+See docs/gold-wave706-webchat-custody-and-cua.md and W702/W704 receipts.
+
 **W691-W696 authenticated WebChat and fixture repairs (2026-09-24):**
 A one-use same-user RPC handoff opens the existing loopback listener's WebChat.
 Server-owned session/request IDs and capabilities bind consent, idempotent start,

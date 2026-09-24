@@ -1,7 +1,7 @@
 //! `neoth status` — daemon-state snapshot. Phase 33c BS-1.
 //!
-//! Reads the same on-disk surfaces the future `/healthz` HTTP endpoint
-//! will read. Pure CLI — no daemon connection required, no IPC. Useful
+//! Reads the on-disk diagnostic surfaces and, when WebChat is configured,
+//! performs one authenticated read-only daemon RPC. Useful
 //! when the operator wants to check tier counts, WAL growth, or active
 //! channels without tailing logs.
 
@@ -106,6 +106,7 @@ pub async fn run_status(args: StatusArgs) -> Result<()> {
     // Headline operating mode (gated | full-auto | advanced) — derived from the
     // (autonomy, skills.enable_all_bundled) pair. `None` when no config loaded.
     let operating_mode = cfg.as_ref().map(crate::cli::autonomy::operating_mode_label);
+    let webchat = webchat_status(&home, cfg.as_ref()).await;
 
     match args.output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -114,6 +115,7 @@ pub async fn run_status(args: StatusArgs) -> Result<()> {
             let mut v = serde_json::to_value(&snap)?;
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("channels".into(), serde_json::to_value(&channel_health)?);
+                obj.insert("webchat".into(), serde_json::to_value(&webchat)?);
                 obj.insert(
                     "operating_mode".into(),
                     serde_json::to_value(operating_mode)?,
@@ -155,6 +157,7 @@ pub async fn run_status(args: StatusArgs) -> Result<()> {
                 println!("operating mode: {mode}{hint}");
             }
             print!("{}", render_channel_health_table(&channel_health));
+            print!("{}", render_webchat_status_table(&webchat));
         }
     }
     // Suppress unused-variable warning when cred_status drives only the match above.
@@ -162,6 +165,43 @@ pub async fn run_status(args: StatusArgs) -> Result<()> {
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+struct WebChatStatus {
+    state: &'static str,
+    endpoint: Option<String>,
+}
+
+async fn webchat_status(
+    home: &std::path::Path,
+    config: Option<&FreedomConfig>,
+) -> WebChatStatus {
+    let Some(config) = config else {
+        return WebChatStatus { state: "configuration_unknown", endpoint: None };
+    };
+    if !config.companion.enabled {
+        return WebChatStatus { state: "disabled", endpoint: None };
+    }
+    match crate::daemon::audit_rpc::webchat_runtime_status(home).await {
+        Ok(status) => match status.state {
+            crate::daemon::webchat::WebChatRuntimeReadiness::Ready => WebChatStatus {
+                state: "ready",
+                endpoint: status.endpoint,
+            },
+            crate::daemon::webchat::WebChatRuntimeReadiness::ListenerNotReady => WebChatStatus {
+                state: "listener_not_ready",
+                endpoint: None,
+            },
+        },
+        Err(_) => WebChatStatus { state: "daemon_unreachable", endpoint: None },
+    }
+}
+
+fn render_webchat_status_table(status: &WebChatStatus) -> String {
+    match status.endpoint.as_deref() {
+        Some(endpoint) => format!("\nWebChat: {} ({endpoint})\n", status.state),
+        None => format!("\nWebChat: {}\n", status.state),
+    }
+}
 /// Render the GOLD-ADOPT-27 channel health probe as an operator table.
 fn render_channel_health_table(health: &[crate::channels::probe::ChannelHealth]) -> String {
     let mut out = String::from("\nChannels:\n");
@@ -183,6 +223,30 @@ mod tests {
     use crate::channels::probe::{ChannelCredsView, probe_all};
     use crate::config::credentials::{CredentialStoreStatus, Credentials};
 
+    #[tokio::test]
+    async fn webchat_status_marks_missing_configuration_unknown() {
+        let home = tempfile::tempdir().unwrap();
+        let status = webchat_status(home.path(), None).await;
+        assert_eq!(status.state, "configuration_unknown");
+        assert_eq!(status.endpoint, None);
+    }
+    #[tokio::test]
+    async fn webchat_status_is_disabled_without_configured_companion() {
+        let home = tempfile::tempdir().unwrap();
+        let status = webchat_status(home.path(), Some(&FreedomConfig::default())).await;
+        assert_eq!(status.state, "disabled");
+        assert_eq!(status.endpoint, None);
+    }
+
+    #[tokio::test]
+    async fn webchat_status_projects_enabled_without_daemon_as_unreachable() {
+        let home = tempfile::tempdir().unwrap();
+        let mut config = FreedomConfig::default();
+        config.companion.enabled = true;
+        let status = webchat_status(home.path(), Some(&config)).await;
+        assert_eq!(status.state, "daemon_unreachable");
+        assert_eq!(status.endpoint, None);
+    }
     #[test]
     fn channel_table_lists_every_channel_with_status() {
         // A slack-bot-only view → slack shows `error`, others their states.

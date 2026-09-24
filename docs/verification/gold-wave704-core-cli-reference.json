@@ -1,0 +1,18 @@
+{
+  "schema": "neoth-wave704-core-cli-reference/v1",
+  "run": 35969533176,
+  "source": "18ff87aa0baa86a0ff917bd47ba8675a646c1792",
+  "artifact": 10796326876,
+  "artifactZipSha256": "0BE1C11F780EC25EF6C9A5ED99F84D5F77B3CAF6EABA72030E8F2FAF16FA0EC1",
+  "referenceSha256": "4445f7b2fa74fb54eb62d8841085ee757e12d6f33ab46aa30c4c4c9b1b0b18c8",
+  "referenceBytes": 249367,
+  "importedPath": "docs/cli-commands.md",
+  "stages": [
+    "slim-core production Clippy passed",
+    "core test-target type-check passed",
+    "public CLI build passed",
+    "generated exact-source reference exported"
+  ],
+  "status": "ROOT_ADMITTED_CORE_SUCCESS_CLI_IMPORTED",
+  "localExecutableValidationRan": false
+}

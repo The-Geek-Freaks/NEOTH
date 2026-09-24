@@ -9303,6 +9303,7 @@ pub(crate) async fn prepare_daemon_gui_chat_turn(
     message: String,
     model: Option<String>,
     skill: Option<String>,
+    admitted_session_id: Option<String>,
     incognito: bool,
     reasoning_display: bool,
     staged_attachments: Vec<PathBuf>,
@@ -9345,7 +9346,7 @@ pub(crate) async fn prepare_daemon_gui_chat_turn(
         chat_neoth_home(args.config.as_deref()) == selected_home,
         "daemon selected home does not match its selected configuration"
     );
-    let input = prepare_chat_turn_input(
+    let mut input = prepare_chat_turn_input(
         args,
         selected_config,
         provider,
@@ -9357,6 +9358,18 @@ pub(crate) async fn prepare_daemon_gui_chat_turn(
         output,
     )
     .await?;
+    // The daemon runtime passes this only from the session sealed into its
+    // admitted GUI turn. Bind it before banner and WAL/transcript preparation;
+    // incognito retains its generated private identity and no history join.
+    if !incognito
+        && let Some(session_id) = admitted_session_id
+    {
+        anyhow::ensure!(
+            !session_id.is_empty(),
+            "admitted GUI chat session identity is empty"
+        );
+        input.admitted_session_id = Some(session_id);
+    }
     emit_local_coding_intent_offer(&input, output)?;
     finish_chat_turn_preparation(input, output).await
 }
@@ -9373,6 +9386,7 @@ struct ChatTurnPreparationInput {
     first_tour_home: PathBuf,
     selected_config_path: PathBuf,
     prompt: String,
+    admitted_session_id: Option<String>,
     has_attachments: bool,
     mcp_servers: crate::mcp::McpServers,
     scoped_mcp_servers: Vec<String>,
@@ -9691,6 +9705,7 @@ async fn prepare_chat_turn_input(
         first_tour_home,
         selected_config_path,
         prompt,
+        admitted_session_id: None,
         has_attachments,
         mcp_servers,
         scoped_mcp_servers,
@@ -9836,6 +9851,7 @@ async fn finish_chat_turn_preparation(
         first_tour_home,
         selected_config_path,
         prompt,
+        admitted_session_id,
         has_attachments: _,
         mcp_servers,
         scoped_mcp_servers,
@@ -9860,6 +9876,8 @@ async fn finish_chat_turn_preparation(
     // hindsight session.
     let current_session_id = if args.incognito {
         format!("incognito-{}", uuid::Uuid::new_v4())
+    } else if let Some(admitted_session_id) = admitted_session_id {
+        admitted_session_id
     } else {
         crate::memory::hindsight::session_id_for(chat_ts_unix, &prompt)
     };

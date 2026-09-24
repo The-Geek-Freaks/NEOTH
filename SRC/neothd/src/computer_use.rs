@@ -25,7 +25,7 @@ pub const CUA_DRIVER_SERVER_ID: &str = "cua-driver";
 /// allowlist. Secure-by-default: `trust_all_tools` stays `false`, so ONLY these
 /// can be invoked even if the driver advertises more. Re-pin via
 /// `neoth mcp list-tools --server cua-driver` if the installed version differs.
-pub const COMPUTER_USE_TOOLS: &[&str] = &[
+pub const LEGACY_COMPUTER_USE_TOOLS: &[&str] = &[
     "screenshot",
     "click",
     "double_click",
@@ -37,6 +37,48 @@ pub const COMPUTER_USE_TOOLS: &[&str] = &[
     "key",
     "get_windows",
     "wait",
+];
+
+pub const COMPUTER_USE_TOOLS: &[&str] = &[
+    // Historical cua-driver spellings retained for already-installed drivers.
+    "screenshot",
+    "click",
+    "double_click",
+    "right_click",
+    "move",
+    "drag",
+    "scroll",
+    "type",
+    "key",
+    "get_windows",
+    "wait",
+    // Observed cua-driver 0.8.0 equivalents for the intended desktop-control
+    // surface. This remains a bounded compatibility union, not trust of the
+    // driver's whole catalogue.
+    "get_desktop_state",
+    "get_window_state",
+    "move_cursor",
+    "type_text",
+    "press_key",
+    "hotkey",
+    "list_windows",
+];
+
+/// One intended desktop capability per group. Driver versions may expose a
+/// different member of the group, but an effective allowlist must include an
+/// advertised member before that capability is usable.
+pub const COMPUTER_USE_CAPABILITY_GROUPS: &[(&str, &[&str])] = &[
+    (
+        "screen",
+        &["screenshot", "get_desktop_state", "get_window_state"],
+    ),
+    ("move", &["move", "move_cursor"]),
+    ("type", &["type", "type_text"]),
+    ("key", &["key", "press_key", "hotkey"]),
+    ("windows", &["get_windows", "list_windows"]),
+    ("click", &["click"]),
+    ("drag", &["drag"]),
+    ("scroll", &["scroll"]),
 ];
 
 /// The canonical cua-driver MCP server config — `cua-driver mcp` over stdio,
@@ -56,6 +98,26 @@ pub fn cua_driver_server() -> McpServerConfig {
         smart_approve: false,
         autonomy_gate: None,
     }
+}
+
+/// True only for the old generated CUA default. Explicit enable may migrate
+/// this exact compatibility pin; all operator customizations remain intact.
+pub fn is_legacy_cua_driver_default(server: &McpServerConfig) -> bool {
+    let current = cua_driver_server();
+    server.id == CUA_DRIVER_SERVER_ID
+        && server.description == current.description
+        && server.command == current.command
+        && server.args == current.args
+        && server.env.is_empty()
+        && server.allow_tools.as_ref().is_some_and(|tools| {
+            tools
+                .iter()
+                .map(String::as_str)
+                .eq(LEGACY_COMPUTER_USE_TOOLS.iter().copied())
+        })
+        && !server.trust_all_tools
+        && !server.smart_approve
+        && server.autonomy_gate.is_none()
 }
 
 /// Platform install one-liner for cua-driver (operator runs it in a shell —
@@ -116,7 +178,45 @@ mod tests {
         assert!(allow.contains(&"screenshot".to_string()));
         assert!(allow.contains(&"click".to_string()));
         assert!(allow.contains(&"type".to_string()));
-        assert_eq!(allow.len(), COMPUTER_USE_TOOLS.len());
+        for observed in [
+            "get_desktop_state",
+            "get_window_state",
+            "move_cursor",
+            "type_text",
+            "press_key",
+            "hotkey",
+            "list_windows",
+        ] {
+            assert!(allow.contains(&observed.to_string()), "missing {observed}");
+        }
+        for denied in [
+            "clipboard_read",
+            "clipboard_write",
+            "start_session",
+            "end_session",
+            "escalate_session",
+            "arbitrary_driver_verb",
+        ] {
+            assert!(
+                !allow.contains(&denied.to_string()),
+                "unreviewed driver capability must remain denied: {denied}"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_default_detection_excludes_operator_customizations() {
+        let mut legacy = cua_driver_server();
+        legacy.allow_tools = Some(
+            LEGACY_COMPUTER_USE_TOOLS
+                .iter()
+                .map(|tool| tool.to_string())
+                .collect(),
+        );
+        assert!(is_legacy_cua_driver_default(&legacy));
+
+        legacy.command = "operator-cua-driver".to_string();
+        assert!(!is_legacy_cua_driver_default(&legacy));
     }
 
     #[test]

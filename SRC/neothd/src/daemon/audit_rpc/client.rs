@@ -592,6 +592,13 @@ pub(crate) async fn webchat_handoff_mint(
     gui_chat_post(home, "/webchat/handoff/mint", &serde_json::json!({})).await
 }
 
+/// Read WebChat listener readiness over the same-user daemon endpoint.
+/// This request is read-only and never mints a browser handoff.
+pub(crate) async fn webchat_runtime_status(
+    home: &Path,
+) -> Result<crate::daemon::webchat::WebChatRuntimeStatus, GuiChatClientError> {
+    gui_chat_post(home, "/webchat/runtime-status", &serde_json::json!({})).await
+}
 #[allow(dead_code)]
 async fn gui_chat_post_raw<T: serde::Serialize>(
     home: &Path,

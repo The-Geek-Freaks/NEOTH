@@ -637,6 +637,7 @@ impl DaemonGuiChatRuntime {
                     message,
                     model,
                     skill,
+                    session,
                     incognito,
                     reasoning_display,
                     staged,
@@ -653,6 +654,7 @@ impl DaemonGuiChatRuntime {
                         turn.message.clone(),
                         turn.model.clone(),
                         turn.skill.clone(),
+                        turn.session.clone(),
                         turn.incognito,
                         turn.reasoning_display,
                         turn.staged.clone(),
@@ -699,6 +701,7 @@ impl DaemonGuiChatRuntime {
                         message,
                         model,
                         skill,
+                        Some(session),
                         incognito,
                         reasoning_display,
                         staged,
@@ -4368,6 +4371,37 @@ mod lifecycle_tests {
             .expect("writer drains");
     }
 
+    #[tokio::test]
+    async fn webchat_exchange_capability_authorizes_real_runtime_status() {
+        let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;
+        runtime.state.lock().await.turns.get_mut(&turn_id).expect("fixture turn").origin_surface = GuiChatSurface::WebChat;
+        assert!(runtime.status(GuiChatStatusRequest {
+            schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+            expected_boot_id: "fixture-boot".into(),
+            turn_id: GuiChatTurnId(turn_id),
+            session_id: "fixture".into(),
+            attach_capability: GuiChatOpaqueCapability(String::new()),
+        }).await.is_err(), "the empty start-response field cannot authorize status");
+        let exchange = runtime.exchange_attach(GuiChatAttachExchangeRequest {
+            schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+            expected_boot_id: "fixture-boot".into(),
+            turn_id: GuiChatTurnId(turn_id),
+            session_id: "fixture".into(),
+            desired_surface: GuiChatSurface::WebChat,
+            grant: GuiChatOpaqueCapability("grant".into()),
+        }).await.expect("server-side WebChat exchange");
+        let status = runtime.status(GuiChatStatusRequest {
+            schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+            expected_boot_id: "fixture-boot".into(),
+            turn_id: GuiChatTurnId(turn_id),
+            session_id: "fixture".into(),
+            attach_capability: exchange.attach_capability,
+        }).await.expect("exchanged capability authorizes real status");
+        assert_eq!(status.turn_id, GuiChatTurnId(turn_id));
+        runtime.close_and_drain().await;
+        drop(runtime);
+        completion.wait_bounded(Duration::from_secs(1)).await.expect("writer drains");
+    }
     #[tokio::test]
     async fn webchat_replay_orders_missing_frames_and_advances_cursor() {
         let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;

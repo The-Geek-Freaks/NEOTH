@@ -12,6 +12,8 @@ use tokio::sync::Notify;
 #[derive(Default)]
 struct RecordingRuntime {
     calls: StdMutex<Vec<String>>,
+    status_terminal: StdMutex<Option<gui::GuiChatTerminalState>>,
+    expected_status_capability: StdMutex<Option<String>>,
 }
 
 impl RecordingRuntime {
@@ -27,6 +29,13 @@ impl RecordingRuntime {
             .lock()
             .expect("recording runtime mutex poisoned")
             .push(value.into());
+    }
+
+    fn set_status_terminal(&self, terminal: Option<gui::GuiChatTerminalState>) {
+        *self
+            .status_terminal
+            .lock()
+            .expect("recording runtime status mutex poisoned") = terminal;
     }
 
     fn preflight_response() -> gui::GuiChatPreflightResponse {
@@ -88,7 +97,7 @@ impl gui::GuiChatRuntime for RecordingRuntime {
             expected_boot_id: "w690-boot".into(),
             turn_id: turn_id.clone(),
             turn_intent_digest: request.turn_intent_digest,
-            origin_attach_capability: gui::GuiChatOpaqueCapability("origin-attach".into()),
+            origin_attach_capability: gui::GuiChatOpaqueCapability(String::new()),
             cancel_capability: gui::GuiChatOpaqueCapability("cancel-capability".into()),
             same_session_attach_grant: gui::GuiChatSameSessionAttachGrant {
                 grant: gui::GuiChatOpaqueCapability("same-session-grant".into()),
@@ -105,6 +114,8 @@ impl gui::GuiChatRuntime for RecordingRuntime {
         request: gui::GuiChatAttachExchangeRequest,
     ) -> gui::GuiChatResult<gui::GuiChatAttachExchangeResponse> {
         self.record(format!("exchange_attach:{}", request.session_id));
+        assert_eq!(request.grant.0, "same-session-grant", "WebChat must derive status authority from the stored same-session grant");
+        *self.expected_status_capability.lock().expect("recording runtime capability mutex poisoned") = Some("attach-capability".into());
         Ok(gui::GuiChatAttachExchangeResponse {
             schema_version: gui::GUI_CHAT_V1_SCHEMA_VERSION,
             expected_boot_id: "w690-boot".into(),
@@ -149,9 +160,44 @@ impl gui::GuiChatRuntime for RecordingRuntime {
 
     async fn status(
         &self,
-        _: gui::GuiChatStatusRequest,
+        request: gui::GuiChatStatusRequest,
     ) -> gui::GuiChatResult<gui::GuiChatStatusResponse> {
-        panic!("unused by WebChat")
+        self.record(format!("status:{}", request.session_id));
+        assert_eq!(
+            self.expected_status_capability.lock().expect("recording runtime capability mutex poisoned").as_deref(),
+            Some(request.attach_capability.0.as_str()),
+            "status must receive only the capability minted by exchange_attach"
+        );
+        let terminal = self
+            .status_terminal
+            .lock()
+            .expect("recording runtime status mutex poisoned")
+            .map(|state| gui::GuiChatTerminal {
+                state,
+                response_digest: gui::GuiChatDigest("c".repeat(64)),
+                provider: "fixture-provider".into(),
+                model: "fixture-model".into(),
+                usage: gui::GuiChatUsage {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                    elapsed_ms: 1,
+                },
+                lifecycle_receipt_id: gui::GuiChatDigest("d".repeat(64)),
+                response_feedback_target: None,
+                response_feedback_unavailable: false,
+            });
+        Ok(gui::GuiChatStatusResponse {
+            schema_version: gui::GUI_CHAT_V1_SCHEMA_VERSION,
+            expected_boot_id: "w690-boot".into(),
+            turn_id: request.turn_id,
+            phase: if terminal.is_some() {
+                gui::GuiChatPhase::Finalizing
+            } else {
+                gui::GuiChatPhase::Receiving
+            },
+            latest_sequence: 7,
+            terminal,
+        })
     }
     async fn active(
         &self,
@@ -298,12 +344,21 @@ fn prepare_ready_consent_home(home: &std::path::Path) {
 }
 
 async fn start_owned_request(client: &reqwest::Client, base: &str, cookie: &str) -> uuid::Uuid {
+    start_owned_request_with_incognito(client, base, cookie, false).await
+}
+
+async fn start_owned_request_with_incognito(
+    client: &reqwest::Client,
+    base: &str,
+    cookie: &str,
+    incognito: bool,
+) -> uuid::Uuid {
     let preflight = post(
         client,
         base,
         cookie,
         "/api/v1/webchat/preflight",
-        serde_json::json!({"message":"W690 test", "incognito":false, "reasoning_display":false}),
+        serde_json::json!({"message":"W701 test", "incognito":incognito, "reasoning_display":false}),
     )
     .await;
     assert_eq!(preflight.status(), reqwest::StatusCode::OK);
@@ -615,6 +670,110 @@ async fn same_session_maps_preflight_decision_start_and_idempotent_start_to_runt
         1,
         "retry must replay stored start, not re-run runtime start"
     );
+    stop(shutdown, server).await;
+}
+
+#[tokio::test]
+async fn session_reentry_checks_runtime_terminal_state_and_keeps_incognito_replay_transient() {
+    let runtime = Arc::new(RecordingRuntime::default());
+    let (base, state, shutdown, server, home) = spawn_webchat(Arc::clone(&runtime)).await;
+    prepare_ready_consent_home(home.path());
+    let client = reqwest::Client::new();
+    let owner = bootstrap(&client, &base, &state).await;
+    let other = bootstrap(&client, &base, &state).await;
+    let _persisted_request = start_owned_request(&client, &base, &owner).await;
+    runtime.set_status_terminal(Some(gui::GuiChatTerminalState::Complete));
+    let completed = client
+        .get(format!("{base}/api/v1/webchat/session"))
+        .header("Cookie", &owner)
+        .send()
+        .await
+        .expect("completed session re-entry");
+    assert_eq!(completed.status(), reqwest::StatusCode::OK);
+    assert!(completed.json::<serde_json::Value>().await.expect("completed session json")["active_request_id"].is_null());
+    let hidden = client
+        .get(format!("{base}/api/v1/webchat/session"))
+        .header("Cookie", &other)
+        .send()
+        .await
+        .expect("foreign session re-entry");
+    assert_eq!(hidden.status(), reqwest::StatusCode::OK);
+    assert!(hidden.json::<serde_json::Value>().await.expect("foreign session json")["active_request_id"].is_null());
+
+    runtime.set_status_terminal(None);
+    let running_request = start_owned_request(&client, &base, &owner).await;
+    let running = client
+        .get(format!("{base}/api/v1/webchat/session"))
+        .header("Cookie", &owner)
+        .send()
+        .await
+        .expect("running session re-entry");
+    assert_eq!(running.status(), reqwest::StatusCode::OK);
+    let running = running
+        .json::<serde_json::Value>()
+        .await
+        .expect("running session json");
+    assert_eq!(
+        running["active_request_id"].as_str().expect("running active request"),
+        running_request.to_string()
+    );
+    assert!(
+        !running.to_string().contains("capability"),
+        "the session projection never exposes attach authority"
+    );
+    assert!(
+        runtime.calls().iter().any(|call| call.starts_with("exchange_attach:"))
+            && runtime.calls().iter().any(|call| call.starts_with("status:")),
+        "re-entry must exchange the server-held grant before status"
+    );
+    let incognito_request = start_owned_request_with_incognito(&client, &base, &owner, true).await;
+    runtime.set_status_terminal(Some(gui::GuiChatTerminalState::Complete));
+    let incognito_reentry = client
+        .get(format!("{base}/api/v1/webchat/session"))
+        .header("Cookie", &owner)
+        .send()
+        .await
+        .expect("incognito session re-entry");
+    assert_eq!(incognito_reentry.status(), reqwest::StatusCode::OK);
+    let incognito_reentry = incognito_reentry
+        .json::<serde_json::Value>()
+        .await
+        .expect("incognito session json");
+    assert_eq!(
+        incognito_reentry["active_request_id"]
+            .as_str()
+            .expect("incognito active request"),
+        incognito_request.to_string(),
+        "terminal incognito turns remain reconnectable through transient replay"
+    );
+    let transcript = client
+        .get(format!("{base}/api/v1/webchat/transcript"))
+        .header("Cookie", &owner)
+        .send()
+        .await
+        .expect("incognito transcript projection");
+    assert_eq!(transcript.status(), reqwest::StatusCode::OK);
+    assert!(transcript.json::<serde_json::Value>().await.expect("incognito transcript json")["turns"].as_array().expect("turn array").is_empty());
+    let attach = post(
+        &client,
+        &base,
+        &owner,
+        "/api/v1/webchat/attach",
+        serde_json::json!({"request_id":incognito_request,"after_sequence":0}),
+    )
+    .await;
+    assert_eq!(attach.status(), reqwest::StatusCode::OK);
+    assert!(runtime.calls().iter().any(|call| call.starts_with("replay:")), "incognito reconnect must use runtime replay");
+    let foreign_attach = post(
+        &client,
+        &base,
+        &other,
+        "/api/v1/webchat/attach",
+        serde_json::json!({"request_id":incognito_request,"after_sequence":0}),
+    )
+    .await;
+    assert_eq!(foreign_attach.status(), reqwest::StatusCode::FORBIDDEN);
+    assert_eq!(error_code(&foreign_attach.json().await.expect("foreign incognito attach error json")), "forbidden");
     stop(shutdown, server).await;
 }
 

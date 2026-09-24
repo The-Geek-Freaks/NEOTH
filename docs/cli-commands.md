@@ -1121,6 +1121,10 @@ Preview a one-time v2 pairing QR/URL; NEOTH ships no phone client yet. The serve
 
 - `--write-invite-for-serve` — Hand the invite to a RUNNING `neoth serve` daemon instead of driving the pairing in this short-lived CLI process. Writes the invite atomically to `~/.neoth/companion_pending_invite.json`, which the daemon's serve-side P2P coordinator (`companion.p2p_enabled: true`) polls every ~2s, consumes single-use, and completes the handshake — minting the token into the daemon-lifetime in-memory store so it is also valid on the loopback HTTP path while that daemon runs. Neither the token nor the pairing persists or recovers across a daemon restart. Create a new invite and pair again. Without this flag the CLI drives a transient in-process listener whose token dies when the command exits
 
+### `neoth companion webchat`
+
+Open a fresh, one-time loopback WebChat handoff from a running daemon
+
 ## `neoth completions`
 
 Emit a shell-completion script. `neoth completions zsh > _neoth`, `neoth completions bash > /etc/bash_completion.d/neoth`, etc

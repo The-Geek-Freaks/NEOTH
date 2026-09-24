@@ -13,6 +13,95 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::n8n_api::auth::AuthCooldown;
 
 const HEALTH_PROBE_CHILD_HOME_ENV: &str = "NEOTH_AUDIT_RPC_HEALTH_PROBE_CHILD_HOME";
+const WEBCHAT_STATUS_PROBE_CHILD_HOME_ENV: &str = "NEOTH_AUDIT_RPC_WEBCHAT_STATUS_PROBE_CHILD_HOME";
+const WEBCHAT_STATUS_PROBE_EXPECTED_ENV: &str = "NEOTH_AUDIT_RPC_WEBCHAT_STATUS_PROBE_EXPECTED";
+
+struct WebChatStatusFixtureRuntime;
+
+#[async_trait::async_trait]
+impl crate::daemon::gui_chat_protocol::GuiChatRuntime for WebChatStatusFixtureRuntime {
+    async fn preflight(
+        &self,
+        _: crate::daemon::gui_chat_protocol::GuiChatPreflightRequest,
+    ) -> crate::daemon::gui_chat_protocol::GuiChatResult<
+        crate::daemon::gui_chat_protocol::GuiChatPreflightResponse,
+    > {
+        unreachable!("WebChat runtime-status never invokes the chat runtime")
+    }
+
+    async fn decide(
+        &self,
+        _: crate::daemon::gui_chat_protocol::GuiChatConsentDecisionRequest,
+    ) -> crate::daemon::gui_chat_protocol::GuiChatResult<
+        crate::daemon::gui_chat_protocol::GuiChatConsentDecisionResponse,
+    > {
+        unreachable!("WebChat runtime-status never invokes the chat runtime")
+    }
+
+    async fn start(
+        &self,
+        _: crate::daemon::gui_chat_protocol::GuiChatStartRequest,
+    ) -> crate::daemon::gui_chat_protocol::GuiChatResult<
+        crate::daemon::gui_chat_protocol::GuiChatStartResponse,
+    > {
+        unreachable!("WebChat runtime-status never invokes the chat runtime")
+    }
+
+    async fn exchange_attach(
+        &self,
+        _: crate::daemon::gui_chat_protocol::GuiChatAttachExchangeRequest,
+    ) -> crate::daemon::gui_chat_protocol::GuiChatResult<
+        crate::daemon::gui_chat_protocol::GuiChatAttachExchangeResponse,
+    > {
+        unreachable!("WebChat runtime-status never invokes the chat runtime")
+    }
+
+    async fn attach(
+        &self,
+        _: crate::daemon::audit_rpc::AuditStream,
+        _: crate::daemon::gui_chat_protocol::GuiChatAttachRequest,
+    ) -> crate::daemon::gui_chat_protocol::GuiChatResult<()> {
+        unreachable!("WebChat runtime-status never invokes the chat runtime")
+    }
+
+    async fn replay(
+        &self,
+        _: crate::daemon::gui_chat_protocol::GuiChatAttachRequest,
+    ) -> crate::daemon::gui_chat_protocol::GuiChatResult<
+        Vec<crate::daemon::gui_chat_protocol::GuiChatStreamFrame>,
+    > {
+        unreachable!("WebChat runtime-status never invokes the chat runtime")
+    }
+
+    async fn cancel(
+        &self,
+        _: crate::daemon::gui_chat_protocol::GuiChatCancelRequest,
+    ) -> crate::daemon::gui_chat_protocol::GuiChatResult<
+        crate::daemon::gui_chat_protocol::GuiChatCancelResponse,
+    > {
+        unreachable!("WebChat runtime-status never invokes the chat runtime")
+    }
+
+    async fn status(
+        &self,
+        _: crate::daemon::gui_chat_protocol::GuiChatStatusRequest,
+    ) -> crate::daemon::gui_chat_protocol::GuiChatResult<
+        crate::daemon::gui_chat_protocol::GuiChatStatusResponse,
+    > {
+        unreachable!("WebChat runtime-status never invokes the chat runtime")
+    }
+
+    async fn active(
+        &self,
+        _: crate::daemon::gui_chat_protocol::GuiChatActiveRequest,
+    ) -> crate::daemon::gui_chat_protocol::GuiChatResult<
+        crate::daemon::gui_chat_protocol::GuiChatActiveResponse,
+    > {
+        unreachable!("WebChat runtime-status never invokes the chat runtime")
+    }
+
+    async fn close_and_drain(&self) {}
+}
 
 fn test_endpoint_nonce() -> String {
     let mut nonce = [0u8; 16];
@@ -70,6 +159,137 @@ fn probe_health_from_oneshot_child(home: &std::path::Path) {
         status.success(),
         "one-shot health probe must succeed against the live same-user listener"
     );
+}
+
+/// Run only when the parent listener test launches this binary as a same-user
+/// client. This avoids the Darwin PID-lock caveat while exercising the public
+/// authenticated WebChat status client end to end.
+#[test]
+#[ignore = "helper invoked by webchat_runtime_status_round_trips_live_listener_states"]
+fn webchat_status_probe_child_process_checks_live_listener() {
+    let Some(home) = std::env::var_os(WEBCHAT_STATUS_PROBE_CHILD_HOME_ENV) else {
+        return;
+    };
+    let expected = std::env::var(WEBCHAT_STATUS_PROBE_EXPECTED_ENV)
+        .expect("parent supplies expected WebChat status");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create WebChat status child runtime");
+    let observed = runtime.block_on(super::webchat_runtime_status(std::path::Path::new(&home)));
+    match expected.as_str() {
+        "ready" => {
+            let status = observed.expect("ready listener must answer authenticated status RPC");
+            assert_eq!(
+                status.state,
+                crate::daemon::webchat::WebChatRuntimeReadiness::Ready
+            );
+            assert_eq!(status.endpoint.as_deref(), Some("http://127.0.0.1:9745/webchat"));
+        }
+        "listener_not_ready" => {
+            let status = observed.expect("unready listener must answer authenticated status RPC");
+            assert_eq!(
+                status.state,
+                crate::daemon::webchat::WebChatRuntimeReadiness::ListenerNotReady
+            );
+            assert_eq!(status.endpoint, None);
+        }
+        "absent" => assert!(observed.is_err(), "absent WebChat state must return RPC failure"),
+        other => panic!("unexpected WebChat status probe expectation: {other}"),
+    }
+}
+
+fn probe_webchat_status_from_oneshot_child(home: &std::path::Path, expected: &str) {
+    let output = std::process::Command::new(
+        std::env::current_exe().expect("locate the audit-RPC test binary"),
+    )
+    .arg("--ignored")
+    .arg("--exact")
+    .arg("daemon::audit_rpc::tests::webchat_status_probe_child_process_checks_live_listener")
+    .env(WEBCHAT_STATUS_PROBE_CHILD_HOME_ENV, home)
+    .env(WEBCHAT_STATUS_PROBE_EXPECTED_ENV, expected)
+    .output()
+    .expect("launch one-shot WebChat status-probe child");
+    assert!(
+        output.status.success(),
+        "one-shot WebChat status probe must observe the expected authenticated listener state; stdout: {}; stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn webchat_runtime_status_round_trips_live_listener_states() {
+    let home = tempdir().unwrap();
+    let segment = canonical_test_wal(home.path(), "webchat-runtime-status");
+    let (writer, wal_join) =
+        crate::wal::spawn_for_home(segment, home.path().to_path_buf()).unwrap();
+    let token = init_rpc_token(home.path()).unwrap();
+    let nonce = test_endpoint_nonce();
+    let webchat = Arc::new(crate::daemon::webchat::WebChatState::new(
+        9745,
+        home.path().to_path_buf(),
+        "webchat-status-fixture-boot".to_owned(),
+        Arc::new(WebChatStatusFixtureRuntime),
+    ));
+    let state = AuditRpcState {
+        token,
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
+        audit_routes_enabled: false,
+        chat_runtime: None,
+        gui_chat_runtime: None,
+        webchat: Some(Arc::clone(&webchat)),
+    };
+    let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
+    let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
+
+    probe_webchat_status_from_oneshot_child(home.path(), "listener_not_ready");
+    webchat.set_listener_ready(true);
+    probe_webchat_status_from_oneshot_child(home.path(), "ready");
+
+    listener.abort();
+    let _ = listener.await;
+    drop(writer);
+    wal_join.await.unwrap().unwrap();
+
+    let absent_home = tempdir().unwrap();
+    let absent_segment = canonical_test_wal(absent_home.path(), "webchat-runtime-absent");
+    let (absent_writer, absent_wal_join) =
+        crate::wal::spawn_for_home(absent_segment, absent_home.path().to_path_buf()).unwrap();
+    let absent_token = init_rpc_token(absent_home.path()).unwrap();
+    let absent_nonce = test_endpoint_nonce();
+    let absent_state = AuditRpcState {
+        token: absent_token,
+        writer: absent_writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        #[cfg(feature = "cluster")]
+        outbound_task_delegate: None,
+        audit_routes_enabled: false,
+        chat_runtime: None,
+        gui_chat_runtime: None,
+        webchat: None,
+    };
+    let (absent_endpoint, absent_listener) =
+        bind_and_serve(absent_home.path(), &absent_nonce, absent_state)
+            .await
+            .unwrap();
+    let _absent_owner =
+        publish_test_endpoint(absent_home.path(), &absent_endpoint, &absent_nonce);
+    probe_webchat_status_from_oneshot_child(absent_home.path(), "absent");
+
+    absent_listener.abort();
+    let _ = absent_listener.await;
+    drop(absent_writer);
+    absent_wal_join.await.unwrap().unwrap();
 }
 
 async fn raw_post(addr: &AuditEndpointV2, token: Option<&str>, body: &str) -> u16 {

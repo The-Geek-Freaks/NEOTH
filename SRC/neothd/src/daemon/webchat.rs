@@ -55,6 +55,20 @@ struct BrowserRequest {
     )>,
     started: Option<gui::GuiChatStartResponse>,
     terminal: bool,
+    incognito: bool,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WebChatRuntimeReadiness {
+    ListenerNotReady,
+    Ready,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WebChatRuntimeStatus {
+    pub(crate) state: WebChatRuntimeReadiness,
+    pub(crate) endpoint: Option<String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -198,6 +212,15 @@ impl WebChatState {
     }
     pub(crate) fn set_listener_ready(&self, ready: bool) {
         self.listener_ready.store(ready, Ordering::Release);
+    }
+
+    /// Secret-free snapshot of actual listener authority; never mints a handoff.
+    pub(crate) fn runtime_status(&self) -> WebChatRuntimeStatus {
+        if self.listener_ready.load(Ordering::Acquire) {
+            WebChatRuntimeStatus { state: WebChatRuntimeReadiness::Ready, endpoint: Some(format!("http://127.0.0.1:{}/webchat", self.port)) }
+        } else {
+            WebChatRuntimeStatus { state: WebChatRuntimeReadiness::ListenerNotReady, endpoint: None }
+        }
     }
     pub(crate) async fn mint_handoff(&self) -> Result<WebChatHandoffResponse, &'static str> {
         if !self.listener_ready.load(Ordering::Acquire) {
@@ -343,13 +366,35 @@ async fn route(
                     .collect();
                 let mut active = None;
                 for (id, entry) in requests {
-                    let entry = entry.lock().await;
-                    if entry.started.is_some()
-                        && !entry.terminal
-                        && active.is_none_or(|current| id > current)
-                    {
-                        active = Some(id);
+                    let (started, stored_terminal, incognito) = {
+                        let stored = entry.lock().await;
+                        (stored.started.clone(), stored.terminal, stored.incognito)
+                    };
+                    let Some(started) = started else { continue };
+                    if stored_terminal { continue; }
+                    // `start` deliberately withholds a usable origin capability.
+                    // Derive a fresh server-side attach capability from the stored
+                    // same-session grant; it is never exposed by this status route.
+                    let exchange = state.runtime.exchange_attach(gui::GuiChatAttachExchangeRequest {
+                        schema_version: gui::GUI_CHAT_V1_SCHEMA_VERSION,
+                        expected_boot_id: state.boot_id.to_string(),
+                        turn_id: started.turn_id.clone(),
+                        session_id: session.session_id.clone(),
+                        desired_surface: gui::GuiChatSurface::WebChat,
+                        grant: started.same_session_attach_grant.grant,
+                    }).await?;
+                    let runtime_status = state.runtime.status(gui::GuiChatStatusRequest {
+                        schema_version: gui::GUI_CHAT_V1_SCHEMA_VERSION,
+                        expected_boot_id: state.boot_id.to_string(),
+                        turn_id: started.turn_id.clone(),
+                        session_id: session.session_id.clone(),
+                        attach_capability: exchange.attach_capability,
+                    }).await?;
+                    if runtime_status.terminal.is_some() && !incognito {
+                        entry.lock().await.terminal = true;
+                        continue;
                     }
+                    if active.is_none_or(|current| id > current) { active = Some(id); }
                 }
                 Ok(json(
                     StatusCode::OK,
@@ -457,6 +502,7 @@ async fn route(
                     decision: None,
                     started: None,
                     terminal: false,
+                    incognito: input.incognito,
                 })),
             );
             Ok(json(

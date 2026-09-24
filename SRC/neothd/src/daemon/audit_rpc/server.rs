@@ -944,9 +944,10 @@ async fn handle_one_pre_admission(
     );
     let internal_route = matches!(
         req_path.as_str(),
-        "/health" | "/skill-mutation-audit" | "/trust-decision-once" | "/webchat/handoff/mint"
+        "/health" | "/skill-mutation-audit" | "/trust-decision-once" | "/webchat/handoff/mint" | "/webchat/runtime-status"
     );
     let webchat_mint_route = req.path == "/webchat/handoff/mint";
+    let webchat_status_route = req.path == "/webchat/runtime-status";
     if req.method != "POST"
         || !(membership_route
             || internal_route
@@ -992,6 +993,9 @@ async fn handle_one_pre_admission(
     }
     if webchat_mint_route {
         return handle_webchat_handoff_mint(stream, state).await;
+    }
+    if webchat_status_route {
+        return handle_webchat_runtime_status(stream, state).await;
     }
 
     if chat_route {
@@ -1711,6 +1715,20 @@ async fn handle_gui_chat_route(
             Ok(ConnectionOutcome::Complete)
         }
     }
+}
+async fn handle_webchat_runtime_status(
+    mut stream: super::transport::AuditStream,
+    state: &AuditRpcState,
+) -> Result<ConnectionOutcome> {
+    let Some(webchat) = state.webchat.as_ref() else {
+        let _ = stream.write_all(http_response(503, "webchat unavailable").as_bytes()).await;
+        let _ = stream.shutdown().await;
+        return Ok(ConnectionOutcome::Complete);
+    };
+    let body = serde_json::to_string(&webchat.runtime_status()).context("encode webchat runtime status")?;
+    let _ = stream.write_all(http_response_json(200, &body).as_bytes()).await;
+    let _ = stream.shutdown().await;
+    Ok(ConnectionOutcome::Complete)
 }
 async fn handle_webchat_handoff_mint(
     mut stream: super::transport::AuditStream,

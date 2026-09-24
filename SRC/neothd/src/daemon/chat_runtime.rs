@@ -209,6 +209,7 @@ impl DaemonChatRuntime {
         message: String,
         model: Option<String>,
         skill: Option<String>,
+        admitted_session_id: Option<String>,
         incognito: bool,
         reasoning_display: bool,
         staged_attachments: Vec<PathBuf>,
@@ -244,6 +245,7 @@ impl DaemonChatRuntime {
             message,
             model,
             skill,
+            admitted_session_id,
             incognito,
             reasoning_display,
             staged_attachments,
@@ -913,12 +915,22 @@ mod tests {
         message: String,
         incognito: bool,
     ) -> Result<ChatTurnTerminal> {
+        execute_gui_turn_with_admitted_session(runtime, message, None, incognito).await
+    }
+
+    async fn execute_gui_turn_with_admitted_session(
+        runtime: &DaemonChatRuntime,
+        message: String,
+        admitted_session_id: Option<String>,
+        incognito: bool,
+    ) -> Result<ChatTurnTerminal> {
         let mut sink = DiscardingGuiSink;
         runtime
             .execute_gui_stream_turn(
                 message,
                 None,
                 None,
+                admitted_session_id,
                 incognito,
                 false,
                 Vec::new(),
@@ -928,6 +940,116 @@ mod tests {
                 None,
             )
             .await
+    }
+
+    #[tokio::test]
+    async fn w703_admitted_gui_session_scopes_real_transcript_and_isolates_incognito() {
+        let (runtime, provider, home, writer, writer_join) =
+            test_runtime_with_reply(true, 0, "W703 assistant reply".into()).await;
+        let session_a = "w703-browser-session-a";
+        let session_b = "w703-browser-session-b";
+        let incognito_session = "w703-browser-incognito";
+
+        execute_gui_turn_with_admitted_session(
+            &runtime,
+            "W703 operator prompt A".into(),
+            Some(session_a.into()),
+            false,
+        )
+        .await
+        .expect("persist real GUI turn in admitted browser session A");
+        execute_gui_turn_with_admitted_session(
+            &runtime,
+            "W703 operator prompt B".into(),
+            Some(session_b.into()),
+            false,
+        )
+        .await
+        .expect("persist real GUI turn in admitted browser session B");
+        execute_gui_turn_with_admitted_session(
+            &runtime,
+            "W703 incognito operator prompt".into(),
+            Some(incognito_session.into()),
+            true,
+        )
+        .await
+        .expect("complete incognito GUI turn without transcript persistence");
+
+        let transcript_path = home.path().join("views.db");
+        let session_a_rows = crate::memory::transcript_store::read_session_turns_at(
+            &transcript_path,
+            session_a,
+        )
+        .expect("read actual transcript for admitted browser session A");
+        assert_eq!(
+            session_a_rows
+                .iter()
+                .map(|row| (row.role.as_str(), row.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("operator", "W703 operator prompt A"),
+                ("agent", "W703 assistant reply"),
+            ],
+            "the real producer writes both transcript rows under session A"
+        );
+        let session_b_rows = crate::memory::transcript_store::read_session_turns_at(
+            &transcript_path,
+            session_b,
+        )
+        .expect("read actual transcript for admitted browser session B");
+        assert_eq!(
+            session_b_rows
+                .iter()
+                .map(|row| (row.role.as_str(), row.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("operator", "W703 operator prompt B"),
+                ("agent", "W703 assistant reply"),
+            ],
+            "separate admitted browser sessions never share transcript rows"
+        );
+        assert!(
+            crate::memory::transcript_store::read_session_turns_at(
+                &transcript_path,
+                incognito_session,
+            )
+            .expect("read incognito browser session")
+            .is_empty(),
+            "incognito must neither persist nor join the browser session transcript"
+        );
+        let transcript_db = rusqlite::Connection::open_with_flags(
+            &transcript_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .expect("open actual transcript database read-only");
+        let raw_turn_count: i64 = transcript_db
+            .query_row("SELECT COUNT(*) FROM raw_turns", [], |row| row.get(0))
+            .expect("count actual transcript rows");
+        assert_eq!(
+            raw_turn_count, 4,
+            "only the two non-incognito real GUI turns persist transcript rows"
+        );
+        let incognito_rows: i64 = transcript_db
+            .query_row(
+                "SELECT COUNT(*) FROM raw_turns WHERE text = ?1",
+                ["W703 incognito operator prompt"],
+                |row| row.get(0),
+            )
+            .expect("query actual transcript for incognito prompt");
+        assert_eq!(
+            incognito_rows, 0,
+            "incognito prompt never persists under a generated private identity"
+        );
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
+
+        runtime.close_and_drain().await;
+        drop(runtime);
+        drop(writer);
+        writer_join
+            .await
+            .expect("join W703 daemon writer")
+            .expect("W703 daemon writer succeeds");
     }
 
     #[tokio::test]
