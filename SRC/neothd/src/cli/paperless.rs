@@ -181,10 +181,7 @@ fn render_paperless_staging(
         }
         OutputFormat::Table => Ok(format!(
             "Paperless preparation: {:?}\nprepared: {}\nprovenance contract: {}\nprovenance coverage: {}\nartifact verified: false\nDocker was not executed.\n",
-            staging.status,
-            staging.prepared,
-            staging.contract_id,
-            staging.provenance_coverage,
+            staging.status, staging.prepared, staging.contract_id, staging.provenance_coverage,
         )),
     }
 }

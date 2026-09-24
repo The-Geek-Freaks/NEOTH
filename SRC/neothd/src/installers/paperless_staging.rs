@@ -438,10 +438,15 @@ mod tests {
             prepare_at(&root),
             Err(PaperlessStagingError::UnownedOrMismatch)
         ));
-        assert!(fs::read_to_string(root.join(MARKER))
-            .unwrap()
-            .contains("stale"));
-        assert_eq!(fs::read(root.join("paperless.env")).unwrap(), b"operator-secret");
+        assert!(
+            fs::read_to_string(root.join(MARKER))
+                .unwrap()
+                .contains("stale")
+        );
+        assert_eq!(
+            fs::read(root.join("paperless.env")).unwrap(),
+            b"operator-secret"
+        );
         assert_eq!(fs::read(&retained).unwrap(), b"retained-state");
     }
     #[cfg(unix)]
