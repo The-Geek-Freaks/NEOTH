@@ -1,0 +1,115 @@
+{
+  "schema": "neoth-grouped-hosted-admission/v1",
+  "run": 35988891507,
+  "source": "ddb5cd16e275cc11d03d223f09b2e8b1d9cc1ed0",
+  "status": "ROOT_VERIFIED_SUCCESS",
+  "executed": 1171,
+  "passed": 1171,
+  "failed": 0,
+  "missing": 0,
+  "fixtureSourceBindings": 221,
+  "inputBindings": 2,
+  "artifacts": [
+    {
+      "id": 10803407338,
+      "name": "w190-research-lifecycle-log-ddb5cd16e275cc11d03d223f09b2e8b1d9cc1ed0",
+      "digest": "sha256:9b50e3f5bdecc092b8541059178f149dc75facd5847be708900fd93485298b2b"
+    },
+    {
+      "id": 10803138091,
+      "name": "w190-research-lifecycle-receipt-ddb5cd16e275cc11d03d223f09b2e8b1d9cc1ed0",
+      "digest": "sha256:e9ffa6fccb452e74572e272d859ee800e7f9be7376c33161dc05629dc5eca030"
+    },
+    {
+      "id": 10802968708,
+      "name": "w190-research-lifecycle-source-ddb5cd16e275cc11d03d223f09b2e8b1d9cc1ed0",
+      "digest": "sha256:500693d38a3813575413d75d8acdc9c8c28c5ebbaf20846808d139eb32aea48d"
+    }
+  ],
+  "criterionSelections": [
+    {
+      "selection": "wave739MediaSamplingAcceptance",
+      "passed": 6,
+      "tests": [
+        "media::video_probe::tests::hosted_silent_video_runs_probe_scene_decode_and_mock_synthesis",
+        "media::video_dispatch::tests::dedup_frames_honours_the_exact_mean_absolute_difference_boundary",
+        "media::video_dispatch::tests::dispatch_dedups_preprocessed_frames_before_the_multimodal_request",
+        "media::video_frames::tests::observed_visual_plan_uniformly_fills_sparse_keyframes_with_small_caps",
+        "media::video_frames::tests::observed_visual_uniform_fallback_never_seeks_at_end_of_stream",
+        "media::video_frames::tests::scene_change_strategy_records_the_f1_contract"
+      ]
+    },
+    {
+      "selection": "wave741UsageMetricsAcceptance",
+      "passed": 24,
+      "tests": [
+        "tokens::budget::tests::prompt_tax_uses_only_explicit_retained_sources",
+        "tokens::budget::tests::prompt_tax_excludes_tagged_items_dropped_by_budget_enforcement",
+        "daemon::usage_log::tests::terminal_cost_includes_reported_prompt_cache_usage",
+        "daemon::usage_log::tests::terminal_projection_and_repair_payload_have_identical_workflow_rollups",
+        "domain_events::tests::usage_meter_absorbs_provider_tokens_and_counts_all_events",
+        "domain_events::tests::usage_meter_keeps_absent_prompt_tax_distinct_from_observed_tax",
+        "domain_events::tests::usage_snapshot_serde_roundtrips_for_the_poll_surface",
+        "domain_events::tests::legacy_usage_snapshot_leaves_prompt_tax_unavailable",
+        "cli::usage::tests::prompt_tax_section_distinguishes_unavailable_from_an_observed_zero",
+        "cli::meter::tests::run_human_renders_snapshot_when_file_exists",
+        "cli::serve_tasks::tests::write_usage_snapshot_roundtrips_json",
+        "providers::cost_authorization::tests::prompt_tax_binding_retains_exact_local_leaf",
+        "providers::cost_authorization::tests::prompt_tax_binding_clears_changed_local_prompt",
+        "providers::cost_authorization::tests::prompt_tax_binding_clears_changed_local_system",
+        "providers::cost_authorization::tests::prompt_tax_binding_retains_local_model_only_change",
+        "providers::cost_authorization::tests::prompt_tax_binding_distinguishes_missing_and_empty_local_system",
+        "providers::cost_authorization::tests::prompt_tax_binding_also_clears_changed_paid_leaf",
+        "cli::chat::tests::agent_dispatch_system_is_unattributed_prompt_tax",
+        "cli::chat::tests::final_budget_boundary_keeps_only_retained_memory_in_prompt_tax",
+        "cli::chat::tests::prompt_tax_bundle_reaches_terminal_usage_and_clears_on_changed_leaf_bytes",
+        "daemon::usage_log::tests::workflow_key_requires_the_complete_exact_audited_triple",
+        "daemon::usage_log::tests::workflow_rollup_preserves_known_free_and_unpriced_costs",
+        "daemon::usage_log::tests::workflow_rows_cap_after_complete_aggregation_and_reserve_unclassified",
+        "cli::usage::tests::workflow_rows_are_deterministic_and_keep_unpriced_distinct_from_free"
+      ]
+    },
+    {
+      "selection": "wave749DocumentReviewAcceptance",
+      "passed": 22,
+      "tests": [
+        "skills::doc_distill::tests::distillation_defangs_clean_extractor_text_without_provider_work",
+        "skills::doc_distill::tests::injected_extractor_text_is_rejected_without_returning_raw_content",
+        "skills::doc_distill::tests::unsupported_extensions_fail_closed",
+        "skills::doc_distill::tests::terminal_controls_are_rendered_as_visible_safe_glyphs",
+        "skills::doc_distill::tests::c1_terminal_controls_are_quarantined_as_visible_codepoints",
+        "skills::doc_distill::tests::regular_supported_source_is_admitted_as_owned_bytes",
+        "skills::doc_distill::tests::final_symlink_is_rejected_by_capability_bound_snapshot_open",
+        "skills::doc_distill::tests::intermediate_symlink_is_rejected_by_capability_bound_directory_walk",
+        "cli::skills::tests::from_doc_is_a_typed_read_only_cli_mode_and_rejects_mutator_combinations",
+        "cli::skills::tests::document_review_backends_keep_disabled_docling_before_native_fallbacks",
+        "cli::skills::tests::document_review_rtf_falls_back_from_disabled_docling_to_native_metadata",
+        "cli::skills::tests::document_review_fatal_errors_stop_before_native_fallbacks",
+        "skills::generated_scan::tests::accepts_a_benign_generated_manifest",
+        "skills::generated_scan::tests::flags_every_documented_injection_class",
+        "skills::generated_scan::tests::flags_format_controls_and_exfiltration_without_echoing_content",
+        "skills::generated_scan::tests::scans_decoded_yaml_scalars_not_their_reescaped_serialization",
+        "skills::creator::tests::audited_writer_rejects_generated_injection_before_creating_a_skill_store",
+        "skills::creator::tests::audited_writer_decodes_yaml_escapes_before_scanning",
+        "skills::creator::tests::audited_writer_rejects_decoded_control_characters_before_mutation",
+        "skills::creator::tests::writer_rejects_linked_skill_directory_without_touching_target",
+        "skills::creator::tests::writer_rejects_linked_manifest_without_touching_target",
+        "skills::doc_distill::tests::chapter_review_worksheet_renders_ordered_source_grounded_b2_guidance"
+      ]
+    }
+  ],
+  "acceptedCriteria": [
+    "ADOPT31-F1",
+    "ADOPT31-F2",
+    "ADOPT31-F3",
+    "ADOPT31-D3",
+    "ADOPT31-B2"
+  ],
+  "pendingCriteria": {
+    "D2": "nativePASS; selected GUI cost-panel results pending",
+    "B1": "LinuxPASS; Windows selected path-admission results pending",
+    "B4": "LinuxPASS; Windows selected creator-reparse results pending"
+  },
+  "independentRootVerifier": "Verify-W715.ps1 ExpectedCount1171; succeeded",
+  "localExecutableValidationRan": false
+}

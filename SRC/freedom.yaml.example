@@ -524,6 +524,15 @@ profile:
 #  locality_tie_epsilon: 0.05
 #  local_score_bonus: 0.0
 
+# ADOPT31-D4 offline asymmetric rubric. Used only by `neoth eval` suites that
+# supply explicit expected/observed binary labels plus
+# `--rubric-config <this freedom.yaml>`; it never changes live council ranking.
+# Neutral defaults preserve ordinary eval suites. The article's 1/7 example is
+# shown explicitly here and remains an operator choice.
+#  offline_rubric:
+#    false_alarm_multiplier: 1.0
+#    missed_violation_multiplier: 7.0
+
 # ── 17. OMI conversation + native media ingest (off by default) ─────────────
 #
 # Modes:

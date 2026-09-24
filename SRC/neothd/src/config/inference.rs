@@ -28,6 +28,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
 
 use crate::secret::SecretString;
 
@@ -771,6 +772,48 @@ fn default_locality_tie_epsilon() -> f64 {
     0.05
 }
 
+/// The highest D4 offline-rubric error multiplier accepted from operator
+/// configuration.  This keeps a malformed config from overflowing aggregate
+/// cost while leaving ample room above the roadmap's illustrative 7x policy.
+pub const MAX_OFFLINE_RUBRIC_MULTIPLIER: f64 = 1_000.0;
+
+fn deserialize_offline_rubric_multiplier<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    if !value.is_finite() || !(0.0..=MAX_OFFLINE_RUBRIC_MULTIPLIER).contains(&value) {
+        return Err(D::Error::custom(format!(
+            "offline rubric multiplier must be finite and within 0.0..={MAX_OFFLINE_RUBRIC_MULTIPLIER}"
+        )));
+    }
+    Ok(value)
+}
+
+/// ADOPT31-D4 — operator-owned costs for explicitly labelled offline eval
+/// findings.  These weights never affect live council winner selection.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OfflineRubricConfig {
+    #[serde(default = "default_offline_rubric_multiplier", deserialize_with = "deserialize_offline_rubric_multiplier")]
+    pub false_alarm_multiplier: f64,
+    #[serde(default = "default_offline_rubric_multiplier", deserialize_with = "deserialize_offline_rubric_multiplier")]
+    pub missed_violation_multiplier: f64,
+}
+
+fn default_offline_rubric_multiplier() -> f64 {
+    1.0
+}
+
+impl Default for OfflineRubricConfig {
+    fn default() -> Self {
+        Self {
+            false_alarm_multiplier: default_offline_rubric_multiplier(),
+            missed_violation_multiplier: default_offline_rubric_multiplier(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CouncilConfig {
     /// Winner-selection strategy. See [`SelectionMode`].
@@ -986,6 +1029,11 @@ pub struct CouncilConfig {
     /// The raw `QualityScore` stored in WAL frames is never mutated.
     #[serde(default)]
     pub local_score_bonus: f64,
+
+    /// ADOPT31-D4 — optional offline evaluator rubric.  Neutral defaults
+    /// preserve legacy eval behaviour unless a suite supplies explicit labels.
+    #[serde(default)]
+    pub offline_rubric: OfflineRubricConfig,
 }
 
 /// SPEC-03b operator override surface for the council smart-trigger gates.
@@ -2259,5 +2307,25 @@ trigger:
         assert_eq!(decision.role, HemisphereRole::Left);
         assert_eq!(decision.provider, InferenceProvider::OpenAi);
         assert_eq!(decision.model, "gpt-5.6");
+    }
+
+    #[test]
+    fn offline_rubric_config_defaults_neutral_and_rejects_invalid_multipliers() {
+        let default: CouncilConfig = serde_yaml::from_str("{}").unwrap();
+        assert_eq!(default.offline_rubric.false_alarm_multiplier, 1.0);
+        assert_eq!(default.offline_rubric.missed_violation_multiplier, 1.0);
+
+        let configured: CouncilConfig = serde_yaml::from_str(
+            "offline_rubric:\n  false_alarm_multiplier: 1.0\n  missed_violation_multiplier: 7.0\n",
+        )
+        .unwrap();
+        assert_eq!(configured.offline_rubric.missed_violation_multiplier, 7.0);
+
+        for invalid in ["-1.0", ".nan", "1000.1"] {
+            let yaml = format!(
+                "offline_rubric:\n  false_alarm_multiplier: {invalid}\n  missed_violation_multiplier: 1.0\n"
+            );
+            assert!(serde_yaml::from_str::<CouncilConfig>(&yaml).is_err(), "{invalid} must fail");
+        }
     }
 }

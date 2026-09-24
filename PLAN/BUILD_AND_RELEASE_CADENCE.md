@@ -3,6 +3,22 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W757-W767 offline rubric and focused acceptance (2026-09-24):**
+The real offline evaluator consumes explicit expected/observed labels and
+operator-configured false-alarm/missed-violation multipliers. Final verdicts
+follow label agreement; even zero-weight mistakes fail. Ambiguous/missing
+configuration, verifier errors and step-cap skips remain unclassified errors.
+Reports carry effective weights and dimensionless error units. Independent
+review passes; new hosted compile/CLI/behavior evidence is pending.
+Root independently admitted ddb Group1171:1171PASS0FAIL,221sources+2inputs.
+F1/F2/F3,D3,B2 close on their own passing criteria. C9's comment-only crosswalk
+closes from pinned authoritative upstream section4.1, correcting a stale source
+citation without renaming WAL fields. B1/B4 Windows and D2 GUI remain pending.
+Next selection:Group1204/native1440+Win38/Linux52/macOS52, including existing
+C10 WorkerContract,B9 Fabric and D1 training-export consumers plus D4 regression.
+Road1324/1053checked/269open/2partial;271raw/270pre-tag;WS-LF38done80open.
+See docs/gold-wave767-offline-rubric-and-acceptance.md and the W764 receipt.
+
 **W755 grouped selection guard repair (2026-09-24):**
 The c6ef Group dispatch stopped before compilation because a second shell
 count guard still expected1149 while the bound catalogue correctly held1171.

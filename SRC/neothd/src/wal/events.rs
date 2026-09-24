@@ -2221,6 +2221,17 @@ pub const EVENT_TYPE_MEMORY_PIPELINE_SCORECARD_TICK: u8 = 0x9F;
 /// written from this comment rather than from `gate.rs`. Keep it in sync with
 /// the emitter — `permissions::audit::AuditEntry` is the reader and parses
 /// these exact names.
+///
+/// ADOPT31-C9: Agent Governance Toolkit `AUDIT-COMPLIANCE-1.0` section 4.1
+/// describes an export schema, not this persisted WAL format. `action`,
+/// `decision`, and optional `reason` share its names; native decision tags
+/// still need an explicit export mapping. `ts_ns` and numeric `event_type`
+/// require conversion to UTC ISO-8601 `timestamp` and a string category.
+/// Neither `node_id` nor `subject` is an alias for `agent_id`; `latency_ms`
+/// is not recorded here. Additional native fields are not an existing
+/// `metadata` dictionary. Agent Mesh section 4.3 chain hashes are a separate
+/// schema: `payload_hash` is neither `previous_hash` nor `entry_hash`.
+/// Revision and complete field crosswalk: `docs/specs/audit-compliance-alignment.md`.
 pub const EVENT_TYPE_PERMISSION_GRANTED: u8 = 0xA0;
 /// Permission decision returned `Deny` — also emitted for `Confirm`, which is
 /// a refusal until the operator answers. Same payload shape as

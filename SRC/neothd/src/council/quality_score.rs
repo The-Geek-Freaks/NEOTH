@@ -30,6 +30,53 @@ use serde::{Deserialize, Serialize};
 
 use super::types::{HemisphereOutcome, HemisphereResponse};
 
+/// ADOPT31-D4 — binary ground-truth label supplied by an offline eval suite.
+/// This is deliberately not inferred from a model response.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RubricLabel {
+    Clear,
+    Violation,
+}
+
+/// A pair of explicit ground-truth and verifier labels for one offline case.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RubricLabels {
+    pub expected: RubricLabel,
+    pub observed: RubricLabel,
+}
+
+/// ADOPT31-D4's two asymmetric error classes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RubricErrorClass {
+    FalseAlarm,
+    MissedViolation,
+}
+
+/// Derive an error class only from explicit binary labels. Matching labels are
+/// correct classifications and therefore have no error cost.
+pub fn classify_rubric_labels(labels: RubricLabels) -> Option<RubricErrorClass> {
+    match (labels.expected, labels.observed) {
+        (RubricLabel::Clear, RubricLabel::Violation) => Some(RubricErrorClass::FalseAlarm),
+        (RubricLabel::Violation, RubricLabel::Clear) => Some(RubricErrorClass::MissedViolation),
+        _ => None,
+    }
+}
+
+/// Return the operator-configured cost for one explicitly classified error.
+/// Configuration validation guarantees finite, nonnegative bounded values.
+pub fn rubric_error_cost(
+    class: RubricErrorClass,
+    config: &crate::config::inference::OfflineRubricConfig,
+) -> f64 {
+    match class {
+        RubricErrorClass::FalseAlarm => config.false_alarm_multiplier,
+        RubricErrorClass::MissedViolation => config.missed_violation_multiplier,
+    }
+}
+
 /// Pinned static tier table — provider id (matching
 /// `InferenceProvider::as_str`) → tier value in `[0.0, 1.0]`.
 ///
@@ -956,6 +1003,36 @@ Steps to reproduce:
         assert!(
             (right - 0.90).abs() < 1e-5,
             "local score should be 0.90: {right}"
+        );
+    }
+
+    #[test]
+    fn offline_rubric_classifies_explicit_labels_and_preserves_asymmetry() {
+        let config = crate::config::inference::OfflineRubricConfig {
+            false_alarm_multiplier: 1.0,
+            missed_violation_multiplier: 7.0,
+        };
+        assert_eq!(
+            classify_rubric_labels(RubricLabels {
+                expected: RubricLabel::Clear,
+                observed: RubricLabel::Violation,
+            }),
+            Some(RubricErrorClass::FalseAlarm)
+        );
+        let missed = classify_rubric_labels(RubricLabels {
+            expected: RubricLabel::Violation,
+            observed: RubricLabel::Clear,
+        })
+        .expect("mismatched labels classify deterministically");
+        assert_eq!(missed, RubricErrorClass::MissedViolation);
+        assert_eq!(rubric_error_cost(missed, &config), 7.0);
+        assert!(rubric_error_cost(missed, &config) > rubric_error_cost(RubricErrorClass::FalseAlarm, &config));
+        assert_eq!(
+            classify_rubric_labels(RubricLabels {
+                expected: RubricLabel::Clear,
+                observed: RubricLabel::Clear,
+            }),
+            None
         );
     }
 }

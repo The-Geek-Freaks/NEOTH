@@ -124,6 +124,15 @@ ACS §11 defines a stateless label flow model: `input.snapshot.ifc.source_labels
 | 7 | Canary token `CanaryLeak` — 3-line extension to steal #1 scope | `prompt_injection.rs:InjectionType::CanaryLeak` | `security/injection_tracker.rs` (same file as #1, canary config field) | `ingress_sanitizer.rs` — check model output path too | S (bundled with #1) |
 | 8 | ACS `AUDIT-COMPLIANCE-1.0` canonical `AuditEntry` schema fields (`seq`, `timestamp`, `agent_id`, `action`, `decision`, `previous_hash`, `hash`) for WAL serialization alignment | `docs/specs/AUDIT-COMPLIANCE-1.0.md` §4.1 | `SRC/neothd/src/wal/events.rs` — align audit WAL event schema (comment-level alignment, not code change) | Downstream audit tooling, interoperability | S |
 
+**2026-09-24 C9 source correction:** the row above is historical. Verified
+upstream commit `98a777328af9ad4dc76bc76803071cf5a615811b` section4.1 defines
+`timestamp`, `event_type`, `agent_id`, `action`, `decision`, optional `reason`,
+`latency_ms`, and `metadata`. Its Agent Mesh section4.3 has separate chain
+fields; neither `seq` nor the row's generic `hash` is a section4.1 field.
+The completed comment-only crosswalk is in
+`docs/specs/audit-compliance-alignment.md` and `wal/events.rs`; no stored
+field was renamed and no wire-format interoperability is claimed.
+
 ### 4. What NEOTH already does as well or better (no gap)
 
 - **Permission taxonomy**: NEOTH's 27 `ActionKind` variants + 7 `ApprovalTier` tiers + `AutonomyLevel × Tier → Decision` matrix is *more granular* than AGT's general allow/deny. No steal needed.
