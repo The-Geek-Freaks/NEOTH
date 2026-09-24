@@ -3,6 +3,14 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W611-W612 full grouped pass and locked plugin replay (2026-09-24):**
+Group967 run35947835430 atd6d76425 is independently admitted967PASS/0FAIL/
+0missing with188 source bindings; both supplied-keychain cases pass. Obsidian
+0.1.1 replay35948528551 at33e8a9a3 passes all seven stages and3/3 Node contract
+tests with six source bindings and exact equality of all three committed bundle
+files. Four new native update regressions await Group971 after the new CLI
+reference export. Windows preparation, GUI W480 and both macOS package runs
+retain their separate pending acceptance. No Road closure or local execution.
 **W608-W609 generated Obsidian0.1.1 artifact imported (2026-09-24):**
 Hosted run35948230490 ataeab1fe0 passes immutable npm install, typecheck and
 bundle build. Three ZIPs, six source Gitblobs, three bundle hashes and unchanged

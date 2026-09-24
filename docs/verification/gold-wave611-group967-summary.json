@@ -1,0 +1,52 @@
+{
+  "schema": "neoth-group967-summary/v1",
+  "run": 35947835430,
+  "source": {
+    "head": "d6d764258224ae943db7c3a6a48fe2a7871fd095",
+    "ref": "refs/heads/main",
+    "receiptHeadVerified": true,
+    "receiptRefVerified": true
+  },
+  "group967": {
+    "required": 967,
+    "selected": 967,
+    "executed": 967,
+    "passed": 967,
+    "failed": 0,
+    "missingTerminal": 0,
+    "status": "SOURCE_ADMITTED_PASS",
+    "sourceBindingCount": 188
+  },
+  "artifacts": [
+    {
+      "id": 10787945546,
+      "name": "w190-research-lifecycle-log-d6d764258224ae943db7c3a6a48fe2a7871fd095",
+      "apiDigest": "sha256:90e18fce3c458f00f3c5c5784e45964c45ff6bb518e61055f807ae47d3824c10",
+      "localZipSha256": "90e18fce3c458f00f3c5c5784e45964c45ff6bb518e61055f807ae47d3824c10",
+      "verified": true
+    },
+    {
+      "id": 10787098552,
+      "name": "w190-research-lifecycle-receipt-d6d764258224ae943db7c3a6a48fe2a7871fd095",
+      "apiDigest": "sha256:b562084ac7b2bdbb2ce7e18d5e1b08e796ad75ee7dd0b2245a53c4b0140da7f9",
+      "localZipSha256": "b562084ac7b2bdbb2ce7e18d5e1b08e796ad75ee7dd0b2245a53c4b0140da7f9",
+      "verified": true
+    },
+    {
+      "id": 10786969272,
+      "name": "w190-research-lifecycle-source-d6d764258224ae943db7c3a6a48fe2a7871fd095",
+      "apiDigest": "sha256:fa98b85f955d7c96e0c5b051656c267acea23ff9767bf0d96bb0110d32070ee8",
+      "localZipSha256": "fa98b85f955d7c96e0c5b051656c267acea23ff9767bf0d96bb0110d32070ee8",
+      "verified": true
+    }
+  ],
+  "validation": {
+    "artifactDigestEquality": true,
+    "fixtureIdentityOrder": true,
+    "terminalMarkersAndExactOneTestResult": true,
+    "receiptFailureInventory": true,
+    "sourceCommitBlobSha256": true,
+    "localExecutableValidationRan": false
+  },
+  "rootAdmission": "Root reran exact967 terminal/source verifier and rehashed3ZIPs;967PASS0FAIL0missing188bindings"
+}
