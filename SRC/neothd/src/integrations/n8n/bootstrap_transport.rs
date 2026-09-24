@@ -94,7 +94,11 @@ impl LocalBootstrapDockerRunner {
         }
     }
 
-    fn command(&self, args: &[String], has_stdin: bool) -> Result<Command, BootstrapCommandFailure> {
+    fn command(
+        &self,
+        args: &[String],
+        has_stdin: bool,
+    ) -> Result<Command, BootstrapCommandFailure> {
         let args = match args.first().map(String::as_str) {
             Some("docker") => &args[1..],
             _ => args,
@@ -115,7 +119,11 @@ impl LocalBootstrapDockerRunner {
             .env_remove("DOCKER_HOST")
             .env_remove("DOCKER_CONTEXT")
             .kill_on_drop(true)
-            .stdin(if has_stdin { Stdio::piped() } else { Stdio::null() })
+            .stdin(if has_stdin {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         Ok(command)
@@ -134,7 +142,12 @@ impl LocalBootstrapDockerRunner {
     }
 
     #[cfg(test)]
-    fn fixture_runner_with_env(program: OsString, timeout: Duration, key: OsString, value: OsString) -> Self {
+    fn fixture_runner_with_env(
+        program: OsString,
+        timeout: Duration,
+        key: OsString,
+        value: OsString,
+    ) -> Self {
         Self {
             program,
             timeout,
@@ -153,7 +166,9 @@ impl BootstrapDockerRunner for LocalBootstrapDockerRunner {
         cancel: &mut oneshot::Receiver<()>,
     ) -> Result<BootstrapCommandOutput, BootstrapCommandFailure> {
         let mut command = self.command(args, stdin.is_some())?;
-        let mut child = command.spawn().map_err(|_| BootstrapCommandFailure::Spawn)?;
+        let mut child = command
+            .spawn()
+            .map_err(|_| BootstrapCommandFailure::Spawn)?;
         let stdout = match child.stdout.take() {
             Some(stdout) => stdout,
             None => {
@@ -181,7 +196,7 @@ impl BootstrapDockerRunner for LocalBootstrapDockerRunner {
                 } else {
                     result
                 }
-            })
+            }) as std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send>>
         });
         let deadline = tokio::time::sleep(self.timeout);
         tokio::pin!(deadline);
@@ -313,7 +328,9 @@ struct Capture {
     overflow: bool,
 }
 
-async fn read_bounded<R: AsyncRead + Unpin>(mut reader: R) -> Result<Capture, BootstrapCommandFailure> {
+async fn read_bounded<R: AsyncRead + Unpin>(
+    mut reader: R,
+) -> Result<Capture, BootstrapCommandFailure> {
     let mut bytes = Zeroizing::new(Vec::with_capacity(OUTPUT_LIMIT));
     let mut buffer = Zeroizing::new([0_u8; 4096]);
     let mut overflow = false;
@@ -359,7 +376,10 @@ mod tests {
         )
     }
 
-    fn fixture_runner_with_tick(timeout: Duration, tick_path: &std::path::Path) -> LocalBootstrapDockerRunner {
+    fn fixture_runner_with_tick(
+        timeout: Duration,
+        tick_path: &std::path::Path,
+    ) -> LocalBootstrapDockerRunner {
         LocalBootstrapDockerRunner::fixture_runner_with_env(
             std::env::current_exe()
                 .expect("current test executable")
@@ -429,7 +449,10 @@ mod tests {
 
     #[tokio::test]
     async fn timeout_stops_the_child_pid_heartbeat_before_returning() {
-        let tick_path = std::env::temp_dir().join(format!("neoth-bootstrap-timeout-{}.tick", uuid::Uuid::now_v7()));
+        let tick_path = std::env::temp_dir().join(format!(
+            "neoth-bootstrap-timeout-{}.tick",
+            uuid::Uuid::now_v7()
+        ));
         let (_cancel_tx, mut cancel) = oneshot::channel();
         let result = fixture_runner_with_tick(Duration::from_secs(5), &tick_path)
             .run(
@@ -441,13 +464,19 @@ mod tests {
         assert!(matches!(result, Err(BootstrapCommandFailure::TimedOut)));
         let before = std::fs::read(&tick_path).expect("parked child ticked");
         tokio::time::sleep(Duration::from_millis(80)).await;
-        assert_eq!(std::fs::read(&tick_path).expect("tick remains readable"), before);
+        assert_eq!(
+            std::fs::read(&tick_path).expect("tick remains readable"),
+            before
+        );
         let _ = std::fs::remove_file(tick_path);
     }
 
     #[tokio::test]
     async fn cancellation_stops_the_child_pid_heartbeat_before_returning() {
-        let tick_path = std::env::temp_dir().join(format!("neoth-bootstrap-cancel-{}.tick", uuid::Uuid::now_v7()));
+        let tick_path = std::env::temp_dir().join(format!(
+            "neoth-bootstrap-cancel-{}.tick",
+            uuid::Uuid::now_v7()
+        ));
         let task_tick_path = tick_path.clone();
         let (send, mut cancel) = oneshot::channel();
         let task = tokio::spawn(async move {
@@ -461,7 +490,10 @@ mod tests {
         });
         let tick_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         while !tick_path.exists() {
-            assert!(tokio::time::Instant::now() < tick_deadline, "parked child never reported its PID");
+            assert!(
+                tokio::time::Instant::now() < tick_deadline,
+                "parked child never reported its PID"
+            );
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         let _ = send.send(());
@@ -469,7 +501,10 @@ mod tests {
         assert!(matches!(result, Err(BootstrapCommandFailure::Cancelled)));
         let before = std::fs::read(&tick_path).expect("parked child ticked");
         tokio::time::sleep(Duration::from_millis(80)).await;
-        assert_eq!(std::fs::read(&tick_path).expect("tick remains readable"), before);
+        assert_eq!(
+            std::fs::read(&tick_path).expect("tick remains readable"),
+            before
+        );
         let _ = std::fs::remove_file(tick_path);
     }
 
@@ -507,7 +542,9 @@ mod tests {
         };
         let debug = format!("{output:?}");
         assert!(!debug.contains("bootstrap-response-secret"));
-        assert!(!format!("{:?}", BootstrapCommandFailure::Spawn).contains("bootstrap-response-secret"));
+        assert!(
+            !format!("{:?}", BootstrapCommandFailure::Spawn).contains("bootstrap-response-secret")
+        );
     }
 
     #[test]

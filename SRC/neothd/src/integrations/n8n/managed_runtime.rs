@@ -55,7 +55,12 @@ impl ManagedN8nRequest {
         if port == 0 || image != N8N_OCI_REFERENCE || !image.contains("@sha256:") {
             Err("managed n8n requires reviewed immutable OCI and nonzero loopback port")
         } else {
-            Ok(Self { port, image, volume: DEFAULT_VOLUME.into(), prepared_job: None })
+            Ok(Self {
+                port,
+                image,
+                volume: DEFAULT_VOLUME.into(),
+                prepared_job: None,
+            })
         }
     }
     /// Bootstrap owns a fresh, job-namespaced volume.  Ordinary stdin-key
@@ -72,7 +77,9 @@ impl ManagedN8nRequest {
         request.volume = volume;
         Ok(request)
     }
-    pub(crate) fn volume(&self) -> &str { &self.volume }
+    pub(crate) fn volume(&self) -> &str {
+        &self.volume
+    }
     /// Only the bootstrap coordinator may supply a job it created before its
     /// first Docker mutation.  The runtime consumes it exactly once.
     pub(crate) fn with_prepared_job(mut self, job: IntegrationJob) -> Self {
@@ -432,7 +439,9 @@ pub(crate) fn valid_container_id(id: &str) -> bool {
 pub(crate) fn valid_volume_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 128
-        && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
 }
 
 fn absent_digest(binding: &RuntimeBinding) -> super::Sha256Digest {
@@ -553,7 +562,7 @@ pub(in crate::integrations) async fn install_managed_at_with<
     P: N8nApiProbe + ?Sized,
 >(
     home: &Path,
-    mut request: ManagedN8nRequest,
+    request: ManagedN8nRequest,
     api_key: SecretString,
     runner: &mut R,
     readiness: &H,
@@ -561,7 +570,10 @@ pub(in crate::integrations) async fn install_managed_at_with<
     cancel: &mut tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<IntegrationJob> {
     let service = super::open_n8n_job_service(home)?;
-    install_managed_in_service_with(&service, home, request, api_key, runner, readiness, probe, cancel).await
+    install_managed_in_service_with(
+        &service, home, request, api_key, runner, readiness, probe, cancel,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1166,7 +1178,10 @@ fn parse_observed_json(data: &[u8]) -> Result<ObservedContainer, &'static str> {
         .parse()
         .map_err(|_| "n8n_container_inspect_invalid")?;
     let mount = &row.mounts[0];
-    let volume = mount.name.as_deref().ok_or("n8n_container_inspect_invalid")?;
+    let volume = mount
+        .name
+        .as_deref()
+        .ok_or("n8n_container_inspect_invalid")?;
     if mount.kind != "volume"
         || !valid_volume_name(volume)
         || mount.destination != "/home/node/.n8n"

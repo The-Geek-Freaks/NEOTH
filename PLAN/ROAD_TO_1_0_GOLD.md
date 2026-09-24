@@ -8,6 +8,22 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W996/W997 hosted format and bootstrap compile repair (2026-09-25):** The
+five-file rustfmt patch from Preflight36067967778 at56045de0 was admitted with
+API ZIP digest, inner hashes, source-head and each old/new Git blob verified.
+Core36068013915 then exposed six concrete errors: the ResumeEvidence import,
+three unresolved sha256_parts calls, one unnecessary mutable request and the
+boxed stdin-future coercion. Their narrow source repairs retain the same job,
+recovery and bounded transport behavior. Hosted recompilation remains required;
+no local compiler, formatter, parser or test runtime was invoked.
+**W994 IFC criterion accepted (2026-09-25):** ADOPT31-C7 is closed after Root
+reconciled all33 criterion tests against admitted Linux and Windows terminals
+and nine unchanged source/dependency blobs. This covers the plain-Rust label
+lattice, every ActionKind clearance, no-write-down, MCP provenance and sealed
+external-HTTP consumers including Hacker News. The current roadmap counts are
+1324 total /1076 done /246 open /2 partial;248 raw and247 pre-tag blockers.
+ADOPT31 rollups are38 done /27 unchecked /2 partial; dashboard OPEN is177.
+This feature admission does not close the remaining release or n8n install gates.
 **W990-W993 owner bootstrap and hosted import (2026-09-25):** Root admitted
 Windows232 at d67d5a57: all232 actual terminals passed, with50 source/input
 bindings including the three workflow assets. The corrected pinned-image
@@ -6070,7 +6086,7 @@ already-gated release workflow itself.
 | WS-R4 Zero-friction install, GUI parity and public launch (2026-07-14) | 15 | **14** | **1** |
 | WS-LF Confirmed lost-feature recovery (2026-07-18) | 118 materialized (52 recovered source rows + 65 plan leaves + 1 inventory-integrity gate) | **80** | **38** |
 | WS-NCT Cognitive Transport + selective Buzz/Prime coordination (2026-07-27; Prime decision 2026-08-10) | 30 (`GOLD-NCT-00..27` + `GOLD-ADOPT-BUZZ-01` + `GOLD-ADOPT-PRIME-01`) | **28** | **2** |
-| WS-ADOPT31 18-source forensic adoption wave + Wayfinder/ADW/Evidence-Gated pipeline (2026-07-31) | 67 (`ADOPT31-*`; lanes A7/B12/C10/D7/E2/F4/G7/H2/**W2+I7+V5**/X2) | **30** | **37** |
+| WS-ADOPT31 18-source forensic adoption wave + Wayfinder/ADW/Evidence-Gated pipeline (2026-07-31) | 67 (`ADOPT31-*`; lanes A7/B12/C10/D7/E2/F4/G7/H2/**W2+I7+V5**/X2) | **29** | **38** |
 | WS-CC Context Connectors & People Intelligence (2026-08-13) | 13 (`GOLD-CC-00..12`) | **12** | **1** |
 | WS-ADOPT30 8-source bounded external-adoption review (2026-08-30) | 8 (`GOLD-ADAPT-ARCHIFY-01`, `GOLD-ADAPT-GN-01`, `GOLD-ADAPT-S2C-VISUAL-REVIEW-01`, `GOLD-ADAPT-TAILCAT-01`, `GOLD-ADOPT-FREELLMAPI-01`, `GOLD-ADAPT-WIKISKILL-01`, `GOLD-ADAPT-AIMEM-01`, `GOLD-ADOPT-MODULAR-01`) | **7** | **1** |
 
@@ -6078,23 +6094,23 @@ already-gated release workflow itself.
 inside their already-open parent rollups and therefore are not added a second
 time to the WS-R4 top-level total.
 
-**Current count semantics (reconciled 2026-09-24 after W922 canary acceptance and ADOPT31 rollup recount):**
-the dashboard tracks broad/workstream rollups; its OPEN column sums to **178**
-(`1 + 6 + 14 + 80 + 28 + 30 + 12 + 7`). The release workflow uses a different
+**Current count semantics (reconciled 2026-09-25 after W994 IFC acceptance):**
+the dashboard tracks broad/workstream rollups; its OPEN column sums to **177**
+(`1 + 6 + 14 + 80 + 28 + 29 + 12 + 7`). The release workflow uses a different
 and stricter contract: `packaging/roadmap_release_gate.py` counts every Markdown
 task outside fenced code, including mandatory child contracts. The whole-file
-result is **1,324 total / 1,075 done / 247 open / 2 partial = 249 raw blockers**.
-A release tag has **248 pre-tag blockers**, because only the single
+result is **1,324 total / 1,076 done / 246 open / 2 partial = 248 raw blockers**.
+A release tag has **247 pre-tag blockers**, because only the single
 `GOLD-RELEASE-ARTIFACTS` task may remain open while that workflow creates its
-evidence. The values 178, 249 and 248 answer different questions and must not be
+evidence. The values 177, 248 and 247 answer different questions and must not be
 substituted for one another in release-readiness claims. The two partials still
 block release (C5 and C6). A6 remains open: its tested VAD primitive has no live
 Playback-Cancel consumer until A2/A7 exist. `ADOPT31-C3` retains the canonical open state.
-ADOPT31 has67 numbered rollups:37 checked,28 unchecked and2 partial; OPEN includes
+ADOPT31 has67 numbered rollups:38 checked,27 unchecked and2 partial; OPEN includes
 the partials. C1a is a required child of already-checked C1 and does not add a rollup.
 The earlier31/36 dashboard split was stale accounting; this recount adds no feature claims.
 
-<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1324 complete=1075 open=247 partial=2 raw_blockers=249 release_tag_blockers=248 release_generated_items=1 -->
+<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1324 complete=1076 open=246 partial=2 raw_blockers=248 release_tag_blockers=247 release_generated_items=1 -->
 
 _¹ Counts mechanically recomputed 2026-06-19 from the plan's checkboxes (unique bold GOLD-ids per workstream). WS-V's 44 residual findings are tracked in the gitignored `REVIEWS/_gold_audit/` triage file, not as in-plan checkboxes. WS-I figures differ from earlier hand-curated totals due to dedup of repeated deep-read batch listings + the bold-id method, not lost work. **WS-I recomputed 2026-06-21** (dedup by unique `GOLD-ADAPT-` id, an id is DONE if any entry is `[x]`): **304 total / 130 open / 174 done** — reflects the parallel-loop ships + this session's wirings (LOWKEY-04/07, SPEAKR-01, OH-09, AWE-AIDER-01) since the 2026-06-19 recompute. **Re-recomputed 2026-06-21 (partials loop): 304/122/182** — + ODY-27/ODY-19/ODY-13 wired + parallel ships. **Re-recomputed 2026-06-22 (followups loop): 299/118/181** — KB-02 re-UPGRADED [~]→[x] (wired into self-improve execute stop gate); total drift 304→299 = parallel-instance dedup of repeated batch listings, not lost work. **Re-recomputed 2026-06-22 (followups loop B): 299/112/187** — CBM-02 re-UPGRADED [~]→[x] (verify-then-register), + ~5 parallel-instance WS-I closures since the last recompute. Non-WS-I ships this loop: ODY-23b (`neoth fetch --goal`), ODY-07b parts 1+2, FEAT-07b 0xDF audit, HERMES-03b channel clarification, FEAT-08b jailbreak retry. **Re-recomputed 2026-06-22 (SPEAKR-02b/c + NN-MEM-05 followup): 298/106/192** — mechanical re-count (`uv run` script over all `**GOLD-ADAPT-<id>**` checkboxes, an id DONE if any entry `[x]`): SPEAKR-02 confirmed DONE (matcher SPEAKR-02 + stt_dispatch wire SPEAKR-02b both shipped; stale duplicate `[ ]` at the WS-I-tail flipped to `[x]`), NN-MEM-05 confirmed DONE; total 299→298 = one more dedup of a repeated batch listing, done 187→192 = +5 parallel-instance WS-I closures + this loop, open 112→106. Non-WS-I ship this followup: forget-cascade-txn (atomic erasure). In progress: SPEAKR-02c (candle speaker-embedding encoder filling the `utterance_embeddings()` seam). **Re-recomputed 2026-07-03 (B3 session)**: section-checkbox count for WS-A..H (WS-E 24/1/23 — the open box is the GOLD-ARCH-07 rest line; WS-F 26/5/21 — the 6 GOLD-LOOP ids live physically in the WS-I batch-2 listing and count there; WS-G incl. Batch C 28/1/27 — open = GOLD-ADOPT-25; WS-H 19/3/16 — open = PROG-06 + operator-parked PROG-13/15), WS-DELTA row added (16/16 complete 2026-07-02), WS-I unique-`GOLD-ADAPT-` id dedup **299 total / 37 open / 262 done**. Raw file truth at recompute: 70 open boxes / 0 partial / 743 done (the 70 includes repeated batch listings + the 11 Definition-of-GOLD roll-up boxes in §5). **Re-recomputed 2026-07-03b (post B3/B4/B5 + error-hunt #1):** raw 58 open; WS-E COMPLETE (ARCH-07b), WS-H 19/2/17 (PROG-06 shipped; rest = operator-parked PROG-13/15), WS-I unique-id 299/32/267 (GRILL-02/04, ODY-26, PRO-08, HR-06, G-02+QUEUE-01, SPEAKR-01-dup, LOOP-02/04/05/06/07 flipped; +G02-COUNCIL-01/G02-CLUSTER-01 new). **Re-recomputed 2026-07-10 (ChatGPT-R3 gold-tag-blocker session, `8892255f`), mechanical raw checkbox scan over the whole file: 901 `[x]` / 3 `[ ]` / 1 `[~]` = 905 total.** The 3 open `[ ]` are all operator/v1.1, NOT code-blockers: GOLD-HR-00 (operator-machine headroom install), signed-release-artifacts (operator runs the signed release build — no longer blocked on PROG-13 provisioning, which is done), OMI-MULTIMODAL-01 (v1.1 multi-week). The 1 `[~]` is DES-13 (mesh-failover, weitgehend geschlossen; only the foreign→recall auto-merge-restore is honestly deferred). This session flipped `[~]`→`[x]`: SELF-IMPROVE-SAFETY-01 (both residuals closed) + FEAT-06 (real swarm resource values), and `[ ]`→`[x]`: the stale DES-11 GUI duplicate. No `[~]` remain except DES-13; the earlier "no partials" header claim is now nearly true (1 honest partial). **Re-recomputed 2026-07-11 (B17-B25 audit wave + ChatGPT-review follow-up), mechanical raw whole-file scan: `910 [x] / 3 [ ] / 1 [~]` = 914 total.** The header-row "226/8/218" at line 75 is the WS-A..H+DELTA section subtotal (per footnote ¹), NOT the whole-file raw count — do not read it as the global total. Deltas since the 901/3/1 recount: +9 raw `[x]` (B17-B25 audit residuals all shipped across W0 `116d8921` / W1 `44d61cb1` / W2 `17135237` / W3 `25c6702c`, +B19 cross-process follow-up `c7d32de4`; **B07 CHANNEL-CREDENTIAL-ATOMICITY-01 flipped `[~]`→`[x]`** — its startup-fail-open residual was batched into B17 and is verified closed: `serve.rs:666-676` is now fail-closed `load_or_default(…).with_context(…)?`). The lone remaining `[~]` is DES-13 (mesh-failover foreign→recall auto-merge, honestly deferred). **Forensic adoption-completeness re-audit 2026-07-11** (workflow `wf_4f848c23-f2b`, 9 find→classify pipelines over the REAL Hermes/OpenClaw/OpenHuman sources vs the old deep-reads → adversarial verify; full data `REVIEWS/_gold_audit/forensic_adoption_completeness_2026-07-11.md`): **VERDICT — adoptions are COMPLETE, nothing high-value missed.** The workflow's ~90 raw `confirmed_gap` items are ~90% false-positive (its verify layer couldn't tell "absent under this exact name" from "genuinely missing"); every high-plausibility hit was hand-verified as already-built (15/15 channels shipped; Signal rate-limiter `signal.rs:114-124` + `channels/rate_limit.rs`; Discord gateway heartbeat/identify/resume; Nostr/Matrix dedup+E2EE), an intentional FEAT-10 SKIP (msteams/feishu/google-meet/tlon/twilio/simplex/ntfy), or a **documented** low-marginal Matrix/Signal follow-up already superseded by a NEOTH equivalent (sender-allowlist ≥ `MATRIX_IGNORE_USER_PATTERNS`; always-on-E2EE ≥ `E2EE_MODE`). Building the raw list would be bloat, not completeness — no adoption build is required for v1.0. The 3 `[ ]` are unchanged and all genuinely not-agent-performable: HR-00 (reroutes operator's live `ANTHROPIC_BASE_URL`), signed-release (CI complete — only the operator `v*` tag push materializes the public artifacts), OMI-MULTIMODAL-01 (v1.1 multi-week, heavy live-capture dep + new consent-boundary system — half-building it would be a degrade). **Re-recomputed 2026-07-12 (ChatGPT-9.89-review follow-up session), mechanical raw whole-file scan: `911 [x] / 3 [ ] / 0 [~]` — ZERO partials.** The stale DES-13 `[~]` was resolved (its deferred remainder shipped 2026-07-10 as DES-13-AUTO-RESTORE-01, whose own entry states „DES-13 damit KOMPLETT"), so the §0 „No `[~]`" governance rule is mechanically true again. Per-section mechanical recount same date: WS-A..H, WS-DELTA, WS-DES, WS-ZF, WS-V all **0 open**; **WS-I unique-`GOLD-ADAPT-` id dedup 308 total / 0 open / 308 done — WS-I COMPLETE** (370 raw section entries incl. repeated batch listings, every one `[x]`). Dashboard rows above updated to these mechanical values; the only 3 open boxes in the entire file are the operator/v1.1 trio (WS-HR line ~1345, §5 line ~1446, §6 line ~1578)._
 
@@ -10235,10 +10251,15 @@ None of these require the toolkit's `cedar-policy` / `regorus` dependencies.
   Lookup-Fehlschlag kein fremdes Secret zurückspiegelt. 4 Tests, `mcp::config` 60/60. **S** 🔒
   *NEOTH:* `security/credential_vault.rs` (new). *Consumer:* channel tool-call injectors,
   `permissions/lease.rs` MCP scope. **L** 🔒
-- [ ] **ADOPT31-C7** Information-flow-control label lattice — `source_labels[]` + `clearance`
+- [x] **ADOPT31-C7** Information-flow-control label lattice — `source_labels[]` + `clearance`
   on `ActionKind`, no-write-down check. Port as a plain Rust enum, **not** the Cedar dep.
   *NEOTH:* `permissions/ifc.rs` (new). *Consumer:* `permissions/gate.rs` MCP + external-HTTP
   provenance gate. **L** 🔒
+  **Accepted 2026-09-25 (W994):** Root verified all33 exact C7 cases on Linux
+  Group1446 at e6f3d474 and Windows232 at d67d5a57: eight IFC kernel, six MCP,
+  twelve HTTP lifecycle/provenance and seven Hacker News tests. The nine scoped
+  source/dependency files match both historical runs and current main exactly.
+  Core/CLI at e6f passed. Receipt: docs/verification/gold-wave994-c7-acceptance.json.
 - [x] **ADOPT31-C8** (**GEBAUT** 2026-08-01: `security/dangerous_command.rs` um
   `secure_erase` + `sql_destructive` als Critical-Regeln erweitert, je mit Positiv- **und**
   Negativtest. `DELETE` ohne `WHERE` bewusst ausgelassen — per Regex nicht von einem

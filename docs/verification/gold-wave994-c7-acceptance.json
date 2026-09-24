@@ -1,0 +1,119 @@
+{
+  "schema": "neoth-c7-closure-selection/v1",
+  "criterion": "ADOPT31-C7",
+  "roadmap": "PLAN/ROAD_TO_1_0_GOLD.md#ADOPT31-C7",
+  "evidence": {
+    "group1446": {
+      "source": "e6f3d47433f493c6c83e0d7d0d5b6c44567b8571",
+      "run": 36064384885,
+      "executed": 1446,
+      "passed": 1446,
+      "failed": 0,
+      "missing": 0
+    },
+    "windows232": {
+      "source": "d67d5a5770835d7602d8cdc0c307163a617e04c1",
+      "run": 36064956250,
+      "executed": 232,
+      "passed": 232,
+      "failed": 0,
+      "missing": 0
+    }
+  },
+  "historicalAndCurrentSourceScopeEqual": true,
+  "tests": {
+    "ifcKernel": [
+      "permissions::ifc::tests::equal_or_lower_destination_clearance_allows_flow",
+      "permissions::ifc::tests::high_to_low_flow_is_denied_with_structured_labels",
+      "permissions::ifc::tests::highest_of_multiple_sources_controls_the_decision",
+      "permissions::ifc::tests::source_labels_normalize_sort_and_deduplicate",
+      "permissions::ifc::tests::empty_and_unknown_labels_fail_closed",
+      "permissions::ifc::tests::operator_research_public_release_is_topic_bound_and_legacy_is_not_public",
+      "permissions::ifc::tests::egress_provenance_debug_redacts_released_topic_and_digest",
+      "permissions::ifc::tests::every_action_kind_has_an_explicit_clearance"
+    ],
+    "mcp": [
+      "mcp::dispatch_loop::tests::trusted_nonpublic_source_refuses_before_spawn_or_smartapprove_list",
+      "mcp::gate::tests::trusted_nonpublic_provenance_stops_before_actual_tools_call",
+      "mcp::gate::tests::trusted_authorization_cannot_replay_through_compatibility_decoded_entrypoint",
+      "config::slack_account_tests::slack_ifc_labels_require_an_existing_account_and_reach_its_binding",
+      "mcp::gate::tests::trusted_public_provenance_reaches_tools_call_only_in_its_bound_turn",
+      "mcp::dispatch_loop::tests::trusted_nonpublic_source_refuses_before_spawn_through_budget_wrapper"
+    ],
+    "externalHttp": [
+      "tools::external_http::tests::sealed_transport_body_drift_is_rejected_before_authorization_or_send",
+      "tools::external_http::tests::execute_transport_response_processing_failure_writes_failure_terminal",
+      "tools::external_http::tests::denied_or_intent_failed_transport_never_runs_pre_send_or_sends",
+      "tools::external_http::tests::released_execute_transport_failure_is_coarse_and_provider_neutral",
+      "tools::external_http::tests::gui_ready_rechecks_current_policy_and_keeps_normal_http_lifecycle",
+      "tools::external_http::tests::required_http_decision_failure_blocks_intent_and_transport",
+      "tools::external_http::tests::intent_failure_prevents_network",
+      "tools::external_http::tests::success_and_failure_close_the_same_request_binding",
+      "tools::external_http::tests::permit_is_bound_to_exact_url_and_body",
+      "tools::external_http::tests::permit_rejects_a_provenance_binding_mismatch",
+      "tools::external_http::tests::terminal_result_audit_failure_is_returned_after_transport",
+      "tools::external_http::tests::request_drift_cannot_reach_transport"
+    ],
+    "hackerNews": [
+      "sources::hackernews::tests::fetches_top_list_and_each_concrete_item_through_authorizer",
+      "sources::hackernews::tests::item_transport_failure_aborts_the_refresh_instead_of_returning_partial_data",
+      "sources::hackernews::tests::fail_closed_deny_never_reaches_hn_transport",
+      "sources::hackernews::tests::live_policy_reload_to_custom_deny_prevents_transport",
+      "sources::hackernews::tests::redirects_are_not_followed",
+      "sources::hackernews::tests::a_redirect_with_a_valid_json_body_is_still_refused",
+      "sources::hackernews::tests::top_story_response_is_hard_bounded"
+    ]
+  },
+  "sourceScope": [
+    "SRC/neothd/src/permissions/ifc.rs",
+    "SRC/neothd/src/mcp/dispatch_loop.rs",
+    "SRC/neothd/src/mcp/gate.rs",
+    "SRC/neothd/src/config/mod.rs",
+    "SRC/neothd/src/cli/serve_pipeline.rs",
+    "SRC/neothd/src/tools/external_http.rs",
+    "SRC/neothd/src/sources/hackernews.rs",
+    "SRC/neothd/Cargo.toml",
+    "SRC/Cargo.lock"
+  ],
+  "criterionStatus": "accepted_original_criterion",
+  "localExecutableValidationRan": false,
+  "rootVerified": true,
+  "rootVerifiedBindings": [
+    {
+      "blob": "9d4fe9604822628c5de923d696baa77fee7022f5",
+      "path": "SRC/neothd/src/permissions/ifc.rs"
+    },
+    {
+      "blob": "99b3f6a246909ea4314c824815ebd3e4b53cba66",
+      "path": "SRC/neothd/src/mcp/dispatch_loop.rs"
+    },
+    {
+      "blob": "412c22c08c222e1df7839a63022f8f2dc7da8c1f",
+      "path": "SRC/neothd/src/mcp/gate.rs"
+    },
+    {
+      "blob": "e8c281a0ed2d6a51c9da602b8cd38d7e7049d607",
+      "path": "SRC/neothd/src/config/mod.rs"
+    },
+    {
+      "blob": "8e21e6bc44f422dc9bc37dcb92d1ca0d3692c8a6",
+      "path": "SRC/neothd/src/cli/serve_pipeline.rs"
+    },
+    {
+      "blob": "68042e5239fd5a47fe06f63beb5cbcc7af8097c6",
+      "path": "SRC/neothd/src/tools/external_http.rs"
+    },
+    {
+      "blob": "c72d11e1808435b013068f2a544d54531ec2c572",
+      "path": "SRC/neothd/src/sources/hackernews.rs"
+    },
+    {
+      "blob": "b8f5d5e3e675d73954c209ae6f6dc7299d4939c6",
+      "path": "SRC/neothd/Cargo.toml"
+    },
+    {
+      "blob": "f89a0cdee009703aeb423562fefea56dcf467ee6",
+      "path": "SRC/Cargo.lock"
+    }
+  ]
+}

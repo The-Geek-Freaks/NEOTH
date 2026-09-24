@@ -31,9 +31,9 @@ use super::state::{
 };
 use super::{EnqueueResult, IntegrationJobService, JobServiceError, RestartValidator};
 
-pub(crate) mod managed_runtime;
-pub(crate) mod managed_bootstrap;
 pub(crate) mod bootstrap_transport;
+pub(crate) mod managed_bootstrap;
+pub(crate) mod managed_runtime;
 
 pub const N8N_CAPABILITY_ID: &str = "n8n-instance";
 const ADAPTER_REVISION: &str = "n8n-adoption-v1";

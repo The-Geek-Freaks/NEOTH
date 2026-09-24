@@ -2,6 +2,22 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W996/W997 hosted format and bootstrap compile repair (2026-09-25):** The
+five-file rustfmt patch from Preflight36067967778 at56045de0 was admitted with
+API ZIP digest, inner hashes, source-head and each old/new Git blob verified.
+Core36068013915 then exposed six concrete errors: the ResumeEvidence import,
+three unresolved sha256_parts calls, one unnecessary mutable request and the
+boxed stdin-future coercion. Their narrow source repairs retain the same job,
+recovery and bounded transport behavior. Hosted recompilation remains required;
+no local compiler, formatter, parser or test runtime was invoked.
+**W994 IFC criterion accepted (2026-09-25):** ADOPT31-C7 is closed after Root
+reconciled all33 criterion tests against admitted Linux and Windows terminals
+and nine unchanged source/dependency blobs. This covers the plain-Rust label
+lattice, every ActionKind clearance, no-write-down, MCP provenance and sealed
+external-HTTP consumers including Hacker News. The current roadmap counts are
+1324 total /1076 done /246 open /2 partial;248 raw and247 pre-tag blockers.
+ADOPT31 rollups are38 done /27 unchecked /2 partial; dashboard OPEN is177.
+This feature admission does not close the remaining release or n8n install gates.
 **W990-W993 owner bootstrap and hosted import (2026-09-25):** Root admitted
 Windows232 at d67d5a57: all232 actual terminals passed, with50 source/input
 bindings including the three workflow assets. The corrected pinned-image

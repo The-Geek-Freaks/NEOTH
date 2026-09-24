@@ -70,7 +70,12 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
     }
 }
 
-async fn run_install(port: u16, api_key_stdin: bool, bootstrap_owner: bool, output: OutputFormat) -> Result<()> {
+async fn run_install(
+    port: u16,
+    api_key_stdin: bool,
+    bootstrap_owner: bool,
+    output: OutputFormat,
+) -> Result<()> {
     if !api_key_stdin && !bootstrap_owner {
         return Err(anyhow!(
             "n8n install requires exactly one of --api-key-stdin or --bootstrap-owner"
@@ -79,11 +84,16 @@ async fn run_install(port: u16, api_key_stdin: bool, bootstrap_owner: bool, outp
     if bootstrap_owner {
         let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
         let cancellation_task = tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() { let _ = cancel_tx.send(()); }
+            if tokio::signal::ctrl_c().await.is_ok() {
+                let _ = cancel_tx.send(());
+            }
         });
         let result = crate::integrations::n8n::managed_bootstrap::install_bootstrap_at(
-            &crate::config::FreedomConfig::default_neoth_home(), port, &mut cancel_rx,
-        ).await;
+            &crate::config::FreedomConfig::default_neoth_home(),
+            port,
+            &mut cancel_rx,
+        )
+        .await;
         cancellation_task.abort();
         return render_managed_install_job(&result?, output);
     }
@@ -379,7 +389,12 @@ mod tests {
             .is_err()
         );
         let bootstrap = crate::cli::Cli::try_parse_from([
-            "neoth", "n8n", "install", "--bootstrap-owner", "--port", "5679",
+            "neoth",
+            "n8n",
+            "install",
+            "--bootstrap-owner",
+            "--port",
+            "5679",
         ])
         .unwrap();
         assert!(matches!(
@@ -392,9 +407,15 @@ mod tests {
                 }
             })
         ));
-        assert!(crate::cli::Cli::try_parse_from([
-            "neoth", "n8n", "install", "--bootstrap-owner", "--api-key-stdin",
-        ])
-        .is_err());
+        assert!(
+            crate::cli::Cli::try_parse_from([
+                "neoth",
+                "n8n",
+                "install",
+                "--bootstrap-owner",
+                "--api-key-stdin",
+            ])
+            .is_err()
+        );
     }
 }
