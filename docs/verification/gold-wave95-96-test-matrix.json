@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Core235PASS exactCLIimported;Group1204ready;GUIdiagnosticpending",
+  "status": "W775 source-reviewed connected advisor;13tests pending;G1/G3/G4accepted;G2/G5hostedlintpending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 166989,
-    "sha256": "943BAACF2FE4D2F0CE122F1B2E60D7480C8150E8CC3BB249BB2C136D61E22A0C"
+    "bytes": 169203,
+    "sha256": "F5377CF6BAE0BEF6F09A96F7A339F58EACD8563C457818F283D16F21098A6FFD"
   },
-  "sourceInputs": 944,
+  "sourceInputs": 957,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -8358,7 +8358,7 @@
     {
       "test": "proactive::tests::slack_incarnation_binding_cannot_cross_to_telegram_before_dispatch",
       "sourcePath": "SRC/neothd/src/proactive/mod.rs",
-      "sourceSha256": "1936124B1FACA2325913352DB6726F2ED64AF118BFFEE3A862A8E51E85691419",
+      "sourceSha256": "852D03336E7E2B084C65CCBC1FCA986AF72AE980A9E09C27C064F7F1B1336E17",
       "junitClass": "neoth"
     },
     {
@@ -8647,6 +8647,84 @@
       "test": "cli::eval::tests::case_passes_with_no_verifier_smoke_test",
       "sourcePath": "SRC/neothd/src/cli/eval.rs",
       "sourceSha256": "648D19F378480C49033AAE7BC4FFBFF228451E02C2B8D3FA1D4685354622B5CA",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "analytics::specialist_advisor::tests::unknown_checklist_evidence_never_yields_a_specialist_candidate",
+      "sourcePath": "SRC/neothd/src/analytics/specialist_advisor.rs",
+      "sourceSha256": "BF1B05A306CC6D457A928726E9D8F99EBD9B7A4F4A42D700D023939E712361D2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "analytics::specialist_advisor::tests::all_explicit_checklist_evidence_and_observed_volume_yield_candidate",
+      "sourcePath": "SRC/neothd/src/analytics/specialist_advisor.rs",
+      "sourceSha256": "BF1B05A306CC6D457A928726E9D8F99EBD9B7A4F4A42D700D023939E712361D2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "analytics::specialist_advisor::tests::provider_success_is_not_inferred_as_model_quality",
+      "sourcePath": "SRC/neothd/src/analytics/specialist_advisor.rs",
+      "sourceSha256": "BF1B05A306CC6D457A928726E9D8F99EBD9B7A4F4A42D700D023939E712361D2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "analytics::specialist_advisor::tests::unknown_cost_stays_unknown_in_advice",
+      "sourcePath": "SRC/neothd/src/analytics/specialist_advisor.rs",
+      "sourceSha256": "BF1B05A306CC6D457A928726E9D8F99EBD9B7A4F4A42D700D023939E712361D2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "analytics::specialist_advisor::tests::duplicate_assessments_are_not_candidate_evidence",
+      "sourcePath": "SRC/neothd/src/analytics/specialist_advisor.rs",
+      "sourceSha256": "BF1B05A306CC6D457A928726E9D8F99EBD9B7A4F4A42D700D023939E712361D2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "analytics::specialist_advisor::tests::operator_assessment_file_accepts_only_closed_unique_schema_v1_rows",
+      "sourcePath": "SRC/neothd/src/analytics/specialist_advisor.rs",
+      "sourceSha256": "BF1B05A306CC6D457A928726E9D8F99EBD9B7A4F4A42D700D023939E712361D2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "analytics::specialist_advisor::tests::proactive_items_surface_a_confirmed_candidate",
+      "sourcePath": "SRC/neothd/src/analytics/specialist_advisor.rs",
+      "sourceSha256": "BF1B05A306CC6D457A928726E9D8F99EBD9B7A4F4A42D700D023939E712361D2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "analytics::specialist_advisor::tests::unclassified_usage_never_becomes_a_candidate",
+      "sourcePath": "SRC/neothd/src/analytics/specialist_advisor.rs",
+      "sourceSha256": "BF1B05A306CC6D457A928726E9D8F99EBD9B7A4F4A42D700D023939E712361D2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::g02_surfacing_cron::tests::g02_tick_no_views_db_returns_zero",
+      "sourcePath": "SRC/neothd/src/daemon/g02_surfacing_cron.rs",
+      "sourceSha256": "AC2B5C307B022098899CB2BB1E24DE3503390D82E24EFD6DBB5800E2D7DFA0CC",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::g02_surfacing_cron::tests::g02_tick_empty_profile_returns_zero",
+      "sourcePath": "SRC/neothd/src/daemon/g02_surfacing_cron.rs",
+      "sourceSha256": "AC2B5C307B022098899CB2BB1E24DE3503390D82E24EFD6DBB5800E2D7DFA0CC",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::g02_surfacing_cron::tests::g02_constants_canonical",
+      "sourcePath": "SRC/neothd/src/daemon/g02_surfacing_cron.rs",
+      "sourceSha256": "AC2B5C307B022098899CB2BB1E24DE3503390D82E24EFD6DBB5800E2D7DFA0CC",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::g02_surfacing_cron::tests::g02_tick_surfaces_a_fully_attested_specialist_candidate_from_local_usage",
+      "sourcePath": "SRC/neothd/src/daemon/g02_surfacing_cron.rs",
+      "sourceSha256": "AC2B5C307B022098899CB2BB1E24DE3503390D82E24EFD6DBB5800E2D7DFA0CC",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::g02_surfacing_cron::tests::invalid_specialist_assessment_suppresses_only_d6_output",
+      "sourcePath": "SRC/neothd/src/daemon/g02_surfacing_cron.rs",
+      "sourceSha256": "AC2B5C307B022098899CB2BB1E24DE3503390D82E24EFD6DBB5800E2D7DFA0CC",
       "junitClass": "neoth"
     }
   ],
@@ -32287,6 +32365,159 @@
       }
     ],
     "note": "Root verified235 artifact10805320688; no local executable validation. WorkspaceClippy was skipped; active slim/typecheck/build/export passed.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave775SpecialistAdvisorAcceptance": {
+    "status": "Connected local operator assessment and durable proactive advice; source reviewed; hosted pending",
+    "requiredTests": [
+      "analytics::specialist_advisor::tests::unknown_checklist_evidence_never_yields_a_specialist_candidate",
+      "analytics::specialist_advisor::tests::all_explicit_checklist_evidence_and_observed_volume_yield_candidate",
+      "analytics::specialist_advisor::tests::provider_success_is_not_inferred_as_model_quality",
+      "analytics::specialist_advisor::tests::unknown_cost_stays_unknown_in_advice",
+      "analytics::specialist_advisor::tests::duplicate_assessments_are_not_candidate_evidence",
+      "analytics::specialist_advisor::tests::operator_assessment_file_accepts_only_closed_unique_schema_v1_rows",
+      "analytics::specialist_advisor::tests::proactive_items_surface_a_confirmed_candidate",
+      "analytics::specialist_advisor::tests::unclassified_usage_never_becomes_a_candidate",
+      "daemon::g02_surfacing_cron::tests::g02_tick_no_views_db_returns_zero",
+      "daemon::g02_surfacing_cron::tests::g02_tick_empty_profile_returns_zero",
+      "daemon::g02_surfacing_cron::tests::g02_constants_canonical",
+      "daemon::g02_surfacing_cron::tests::g02_tick_surfaces_a_fully_attested_specialist_candidate_from_local_usage",
+      "daemon::g02_surfacing_cron::tests::invalid_specialist_assessment_suppresses_only_d6_output"
+    ],
+    "scope": "30day volume and known/unpriced costs; explicit8facts; unknown/unclassified rejected; filecap; realG02queue with cooldown/restart and invalid-input isolation"
+  },
+  "wave784SpecialistAndDesignBatch": {
+    "base": "4ed780a6d575e04cb0e44106a4aa78fa37ac2fd8",
+    "sources": [
+      {
+        "path": ".github/workflows/preflight.yml",
+        "bytes": 5319,
+        "sha256": "9BEF9863729297C0ED7CCF4CA8C1CAE002697E0D26B0D4DC15DF6C922FE155EF",
+        "blob": "166f32e5e229cc98acf98b6436cf4be5cbd4a811"
+      },
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 22905,
+        "sha256": "6C44C4C93444EBE3FBB09414E9641A31824AE3E38A50E53EA0324A341FD239F6",
+        "blob": "d26d4f11a95ed64fb32a84b4292f078e72a1871d"
+      },
+      {
+        "path": "design-system/AUDIT_CHECKLIST.md",
+        "bytes": 6305,
+        "sha256": "AFC2C90FB0CE5664AC23067A3E9D354E5C323451D5E0ECAECA96CF6FC487B81A",
+        "blob": "28031e8ad6dc1a130a7b6c136d67760d514af645"
+      },
+      {
+        "path": "design-system/DESIGN.md",
+        "bytes": 5140,
+        "sha256": "E723A025723EDCFF590EE74F926C53903FDE1359E13400A364D3C66B8D52711D",
+        "blob": "12211484bc4c120098ccaec3afda9785e94efa99"
+      },
+      {
+        "path": "design-system/lint_rules.md",
+        "bytes": 12162,
+        "sha256": "28B1771351DAEFCF1200BD8E1CF72968937DA366F4D0ED3544C77E67F84B4D46",
+        "blob": "f5593d3593f337b70c23de3a93ea7fc0dfff9b66"
+      },
+      {
+        "path": "design-system/PRODUCT.md",
+        "bytes": 4543,
+        "sha256": "F35E8ECAE8B360C4E4F8928E9C77D1FCFA8934659B4163ABFECCFEEB4AD32938",
+        "blob": "72ad85532a500b1fd0bf50f947a90e41c58b9d78"
+      },
+      {
+        "path": "docs/gold-wave775-specialist-advisor.md",
+        "bytes": 2154,
+        "sha256": "A1157789FAF187C6ABB4B1F3655D3494C2798C96C36A837C0CA187E0546E5D0E",
+        "blob": "936929e0bef2bd9c82561a37d11f2084af450de7"
+      },
+      {
+        "path": "docs/verification/gold-wave782-design-contracts.json",
+        "bytes": 1560,
+        "sha256": "938B0620491C4BC4DA327C59E11FE28AE1A60E39815439F5D19D881E295E3095",
+        "blob": "c3d8a7cae485aa5a69176ba0ad1f17f5fcf34218"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 252856,
+        "sha256": "72F4BB4CD2C866D50AEB2C388E4C6D94A2A36B4DDA1715C65C8A745D5E5CA2D9",
+        "blob": "305e6f7376d95e594b0bd085cbe6a0cdc4e21979"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1264184,
+        "sha256": "CC7E3E9D216B982FCD59FED4659C59EBF3509C9DD59EA70AA1B33C9540C53F35",
+        "blob": "28d181d46c17b14b627bcb570b7a02c0f0635932"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1868139,
+        "sha256": "BDD628DDF6AA66BDC432AC891C1C4267E0F6A4CC7558034F1DBDB394A4FBBD1F",
+        "blob": "07d83683890d3bc5aa4442a9181422a928afd3c5"
+      },
+      {
+        "path": "SRC/_gate_gui_check.bat",
+        "bytes": 604,
+        "sha256": "8650879F08619767E284F28B1FB5203182D6C1093188FFB544D722514BFFC162",
+        "blob": "21906ffaf88ae88a1bdc4ecc67f45420e0b8453c"
+      },
+      {
+        "path": "SRC/_gui_lint.bat",
+        "bytes": 965,
+        "sha256": "4CCF002521BE9005EA07496968F60D9350CB7A301D0072A4BDBDC4283B8C068A",
+        "blob": "a8374fc4eff4950b7375142f8b6126af96781987"
+      },
+      {
+        "path": "SRC/_gui_lint.ps1",
+        "bytes": 30539,
+        "sha256": "8259EBB59BAD3E43B0DA1482283DB6ADF47B0115A1374089C60C358ADDD754D9",
+        "blob": "40e562ecb25577d23dbb048a386c14b11473c998"
+      },
+      {
+        "path": "SRC/neothd-gui/AGENTS.md",
+        "bytes": 807,
+        "sha256": "46AAED9D0B1FA1CEA66421A336B5564F8BA269C1B55FC35FBA40A1CD65B96BBA",
+        "blob": "72eb6752c01cea6bd97b6b10f79e554847fbd399"
+      },
+      {
+        "path": "SRC/neothd/assets/skills/gui_copy_lint/skill.yaml",
+        "bytes": 3342,
+        "sha256": "6CE13E987AB29ADEE78A90C1299B98BC917D94A3AEA895A5C2ADA395A0A44468",
+        "blob": "fe3e95767f7af77d95d034bafae5fd7793f58be3"
+      },
+      {
+        "path": "SRC/neothd/src/analytics/mod.rs",
+        "bytes": 124,
+        "sha256": "E26F922978965039279D0BE0CBC0192DDC9D8DFDD51844720FA76ED80F76325C",
+        "blob": "d3f122d086b5bd747d04225d58a0d1d8aa62768a"
+      },
+      {
+        "path": "SRC/neothd/src/analytics/specialist_advisor.rs",
+        "bytes": 21007,
+        "sha256": "BF1B05A306CC6D457A928726E9D8F99EBD9B7A4F4A42D700D023939E712361D2",
+        "blob": "9b9a6748b295c69b3cfbee7ec0c6f90951acab01"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/g02_surfacing_cron.rs",
+        "bytes": 12428,
+        "sha256": "AC2B5C307B022098899CB2BB1E24DE3503390D82E24EFD6DBB5800E2D7DFA0CC",
+        "blob": "e843503b74e7e2e66c4c0193850cfab66bf75de9"
+      },
+      {
+        "path": "SRC/neothd/src/proactive/mod.rs",
+        "bytes": 64149,
+        "sha256": "852D03336E7E2B084C65CCBC1FCA986AF72AE980A9E09C27C064F7F1B1336E17",
+        "blob": "5037e3c09b0c93a9f5baff0a206be2c089289696"
+      },
+      {
+        "path": "THIRD_PARTY_LICENSES",
+        "bytes": 2306292,
+        "sha256": "1D54C796ACD37411D54FEC4C997ABBAAB53323E251A56228CC75329B41D1E1D3",
+        "blob": "900538f354371db822d74d151f723bed2f06df69"
+      }
+    ],
+    "note": "No local executable validation. Root bounded file read and stale positive test fixed. Group1204priorSourceSUCCESS, artifact admission pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

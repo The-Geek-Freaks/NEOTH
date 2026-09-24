@@ -4,10 +4,11 @@ Use this scorecard for a GUI PR, focused GUI repair, or release-candidate
 review. It adapts five audit dimensions to Slint's native GUI model. It is
 evidence-first: an unchecked or unrun item is **not** a pass.
 
-This is a review artifact, not a closure claim. ADOPT31-G1 and ADOPT31-G4 stay
-Road-open until their separately required exact-head remote gates and evidence
-exist. This checklist cannot close G2, G3, G5-G7, GOLD-R4-09, or any broader GUI
-Road item.
+This artifact fulfills ADOPT31-G4's five-dimension reviewer rubric and is
+required by `SRC/neothd-gui/AGENTS.md`. Completing the rubric itself does not
+establish that a particular GUI change passed: its checked rows still need
+the evidence below. G1's taxonomy and G3's document-loading convention have
+their own document criteria; runtime and release acceptance stay separate.
 
 ## Record the review
 

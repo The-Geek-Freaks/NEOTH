@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W775/W779-W782 specialist advice and design-document batch (2026-09-24):**
+D6 now consumes the real 30-day usage rollup and a strictly bounded local
+schema-v1 operator assessment. Unknown facts, provider completion and the
+unclassified bucket cannot qualify a candidate. G02 queues useful advice;
+queue-owned atomic cooldown survives drain/restart, stale own recommendations
+are reconciled, and bad input leaves independent profile surfacing intact.
+Independent static review completed; 13 selected behavioral/regression tests
+join Group1217/native1453. D6 remains open pending hosted results.
+G1/G3/G4 close on their original document/process criteria. G2's named wrapper
+now calls the existing self-test and source lint; Preflight runs those same
+cheap checks on GitHub. G2/G5 await that run; G6 awaits the selected bundled
+parse/router tests in running Group1204. No Slint files changed.
+Road1324/1059checked/263open/2partial;265raw/264pre-tag;WS-LF38done80open.
+
 **W774 generated CLI reference (2026-09-24):** Core235 run35991244554
 passed slim production Clippy, core test-target typecheck, CLI build and CLI
 export. Optional workspace Clippy was not requested and was skipped. Root

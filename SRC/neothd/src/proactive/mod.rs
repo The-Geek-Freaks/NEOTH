@@ -136,6 +136,7 @@ const MAX_QUEUE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_QUEUE_ITEMS: usize = 10_000;
 const MAX_DRAIN_HISTORY: usize = 100_000;
 const MAX_SETTLED_EGRESS_INTENTS: usize = 4_096;
+const MAX_SPECIALIST_ADVISOR_COOLDOWNS: usize = 64;
 const MAX_QUARANTINED_ITEMS: usize = MAX_QUEUE_ITEMS;
 const QUARANTINED_ITEM_VERSION: u8 = 1;
 
@@ -317,6 +318,11 @@ pub struct ProactiveQueue {
     /// item.
     #[serde(default)]
     item_generations: BTreeMap<String, String>,
+    /// ADOPT31-D6 durable, producer-specific cooldowns. Unlike an item dedup
+    /// key this survives drain, so a delivered monthly recommendation cannot
+    /// be re-enqueued by tomorrow's tick.
+    #[serde(default)]
+    specialist_advisor_cooldowns: BTreeMap<String, i64>,
     /// Bounded forensic ring for parseable-but-invalid persisted items. This
     /// lets one malformed item be removed durably without discarding or
     /// starving the valid remainder of the queue.
@@ -380,6 +386,7 @@ impl ProactiveQueue {
             config,
             settled_egress_intents: BTreeSet::new(),
             item_generations: BTreeMap::new(),
+            specialist_advisor_cooldowns: BTreeMap::new(),
             quarantined_items: Vec::new(),
             normalization_dirty: false,
         }
@@ -401,6 +408,10 @@ impl ProactiveQueue {
         anyhow::ensure!(
             self.quarantined_items.len() <= MAX_QUARANTINED_ITEMS,
             "proactive queue quarantine evidence count exceeds limit"
+        );
+        anyhow::ensure!(
+            self.specialist_advisor_cooldowns.len() <= MAX_SPECIALIST_ADVISOR_COOLDOWNS,
+            "specialist advisor cooldown count exceeds limit"
         );
         for intent_id in &self.settled_egress_intents {
             let parsed = uuid::Uuid::parse_str(intent_id)
@@ -540,6 +551,35 @@ impl ProactiveQueue {
             Ok(inserted) => (inserted, Ok(inserted)),
             Err(error) => (false, Err(error)),
         })?
+    }
+
+    /// Reconcile only D6's pending items and atomically record a cooldown for
+    /// each newly inserted item in this same persisted queue transaction.
+    pub fn reconcile_specialist_advisor(
+        &mut self,
+        now_unix: i64,
+        cooldown_secs: i64,
+        desired: Vec<ProactiveItem>,
+    ) -> Result<usize> {
+        self.specialist_advisor_cooldowns.retain(|_, until| *until > now_unix);
+        let desired_keys = desired.iter().map(|item| item.dedup_key.as_str()).collect::<BTreeSet<_>>();
+        self.items.retain(|item| item.source != "specialist_advisor" || desired_keys.contains(item.dedup_key.as_str()));
+        let active = self.items.iter().map(|item| item.dedup_key.as_str()).collect::<BTreeSet<_>>();
+        self.item_generations.retain(|key, _| active.contains(key.as_str()));
+        let mut inserted = 0;
+        for item in desired {
+            if self.specialist_advisor_cooldowns.contains_key(&item.dedup_key) {
+                continue;
+            }
+            if self.enqueue(item.clone())? {
+                self.specialist_advisor_cooldowns.insert(
+                    item.dedup_key,
+                    now_unix.saturating_add(cooldown_secs),
+                );
+                inserted += 1;
+            }
+        }
+        Ok(inserted)
     }
 
     /// Immutable generation of the currently queued item for `dedup_key`.

@@ -22,8 +22,9 @@ All other rows need the stated reviewer evidence; they are not automated passes.
 
 `SRC/_gui_lint.ps1` and `SRC/_gui_lint.bat` provide the four G2 checks and the
 bounded G5a source checks listed as `gate-now`, including narrow fixture
-self-tests. They do not validate this full taxonomy or close ADOPT31-G1,
-ADOPT31-G4, the remainder of G5-G7, or broader GUI/accessibility Road work.
+self-tests. They execute only the selected source rules, not the full taxonomy.
+G1 is the 59-rule portability document; G4 is the separate reviewer rubric.
+Neither document nor the source gate proves rendered GUI/accessibility work.
 Release readiness still needs manual evidence and the separately required
 remote exact-head gates.
 
@@ -151,5 +152,5 @@ license or NOTICE material. Any future import of upstream code, assets, or
 notice-bearing material must retain the required Apache-2.0 license and NOTICE
 material with that import.
 
-This taxonomy is a review aid, not a release approval, accessibility
-certification, or evidence that a Road item is complete.
+This taxonomy fulfills the G1 documentation criterion. It is a review aid,
+not release approval or an accessibility certification.

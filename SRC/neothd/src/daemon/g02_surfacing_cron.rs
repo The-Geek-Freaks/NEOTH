@@ -48,11 +48,24 @@ pub fn run_g02_surfacing_tick(home: &std::path::Path, now_unix: i64) -> Result<u
         find_novel_high_confidence_claims,
     };
 
+    // ADOPT31-D6: the specialist advisor is advisory-only and shares this
+    // existing daily durable-proactive seam. It consumes the already-defined
+    // usage projection; provider completion is never promoted to correctness.
+    let advisor_enqueued = match run_specialist_advisor_tick(home, now_unix) {
+        Ok(enqueued) => enqueued,
+        Err(error) => {
+            // D6 input must fail closed without suppressing this producer's
+            // independent profile-claim surface.
+            warn!(error = %error, "specialist advisor tick suppressed");
+            0
+        }
+    };
+
     let views_path = home.join("views.db");
     if !views_path.exists() {
         // Fresh install — no profile yet. Quiet no-op so the cron
         // doesn't spam the log during the wizard's first week.
-        return Ok(0);
+        return Ok(advisor_enqueued);
     }
     let conn = crate::memory::store::open(&views_path)
         .map_err(|e| format!("views.db open failed: {e}"))?;
@@ -65,7 +78,7 @@ pub fn run_g02_surfacing_tick(home: &std::path::Path, now_unix: i64) -> Result<u
     )
     .map_err(|e| format!("find_novel_high_confidence_claims failed: {e}"))?;
     if claims.is_empty() {
-        return Ok(0);
+        return Ok(advisor_enqueued);
     }
 
     let items = claims
@@ -89,6 +102,43 @@ pub fn run_g02_surfacing_tick(home: &std::path::Path, now_unix: i64) -> Result<u
     })
     .map_err(|e| format!("queue load/save failed: {e}"))?
     .map_err(|e| format!("G-02 proactive enqueue rejected: {e:#}"))
+    .map(|enqueued| advisor_enqueued + enqueued)
+}
+
+/// ADOPT31-D6's daily consumer: project the last 30 days of local usage into
+/// bounded candidate or assessment request. The explicit operator evidence
+/// file is strict and local; invalid input returns an error to the caller,
+/// which isolates it from the independent G-02 profile-claim work.
+fn run_specialist_advisor_tick(home: &std::path::Path, now_unix: i64) -> Result<usize, String> {
+    use crate::analytics::specialist_advisor::{
+        DEFAULT_MINIMUM_CALL_COUNT, analyze, load_operator_assessments, proactive_items,
+    };
+    use crate::daemon::usage_log::aggregate;
+    use crate::proactive::ProactiveQueue;
+
+    const ADVISOR_WINDOW_SECS: i64 = 30 * 24 * 60 * 60;
+    let since_unix = now_unix.saturating_sub(ADVISOR_WINDOW_SECS);
+    let rollup = aggregate(home, since_unix, now_unix);
+    let assessments = match load_operator_assessments(home) {
+        Ok(assessments) => assessments,
+        Err(error) => {
+            let queue_path = home.join("proactive_queue.json");
+            let _ = ProactiveQueue::modify(&queue_path, |queue| {
+                let result = queue.reconcile_specialist_advisor(now_unix, ADVISOR_WINDOW_SECS, Vec::new());
+                (result.is_ok(), result)
+            });
+            return Err(error);
+        }
+    };
+    let report = analyze(&rollup, DEFAULT_MINIMUM_CALL_COUNT, &assessments);
+    let items = proactive_items(&report, now_unix);
+    let queue_path = home.join("proactive_queue.json");
+    ProactiveQueue::modify(&queue_path, |queue| {
+        let result = queue.reconcile_specialist_advisor(now_unix, ADVISOR_WINDOW_SECS, items);
+        (result.is_ok(), result)
+    })
+    .map_err(|error| format!("specialist-advisor queue load/save failed: {error}"))?
+    .map_err(|error| format!("specialist-advisor proactive enqueue rejected: {error:#}"))
 }
 
 /// Spawn the daemon-side G-02 cron loop. Matches the doctor_cron /
@@ -134,6 +184,7 @@ pub fn spawn_g02_surfacing_cron_loop(home: PathBuf, interval_secs: u64) -> JoinH
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::daemon::usage_log::{UsageEvent, append};
     use tempfile::TempDir;
 
     #[test]
@@ -157,5 +208,93 @@ mod tests {
         assert_eq!(G02_CRON_INTERVAL_SECS, 24 * 3600);
         assert_eq!(G02_PER_TICK_CAP, 5);
         assert_eq!(G02_DEFAULT_CHANNEL, "cli");
+    }
+
+    #[test]
+    fn g02_tick_surfaces_a_fully_attested_specialist_candidate_from_local_usage() {
+        let home = TempDir::new().unwrap();
+        let now = 1_700_000_000;
+        for _ in 0..100 {
+            append(
+                home.path(),
+                &UsageEvent {
+                    ts_unix: now - 1,
+                    provider: "local_qwen".to_string(),
+                    model: "qwen".to_string(),
+                    cost_usd: Some(0.0),
+                    latency_ms: 1,
+                    ok: true,
+                    call_scope: Some("chat_provider_round".to_string()),
+                    source: Some("chat".to_string()),
+                    call_type: Some("chat_provider_round".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            home.path().join("specialist_assessments.json"),
+            r#"{
+                "schema_version": 1,
+                "assessments": [{
+                    "workflow": "chat_turn",
+                    "outcome_checkable": "confirmed",
+                    "expert_agreement": "confirmed",
+                    "model_succeeds_sometimes": "confirmed",
+                    "not_lucky_guess": "confirmed",
+                    "multi_step_committed": "confirmed",
+                    "owns_tools_and_schemas": "confirmed",
+                    "asymmetric_error_costs": "confirmed",
+                    "data_stays_local": "confirmed"
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(run_g02_surfacing_tick(home.path(), now).unwrap(), 1);
+        let queue = crate::proactive::ProactiveQueue::load_from(
+            &home.path().join("proactive_queue.json"),
+        )
+        .unwrap();
+        assert_eq!(queue.len(), 1);
+        let queue_json = std::fs::read_to_string(home.path().join("proactive_queue.json")).unwrap();
+        assert!(queue_json.contains("specialist-advisor:candidate:chat_turn"));
+        let mut queue = crate::proactive::ProactiveQueue::load_from(
+            &home.path().join("proactive_queue.json"),
+        )
+        .unwrap();
+        assert_eq!(queue.drain(now, 1).len(), 1);
+        queue.save_to(&home.path().join("proactive_queue.json")).unwrap();
+        assert_eq!(run_g02_surfacing_tick(home.path(), now + 86_400).unwrap(), 0);
+        for _ in 0..100 {
+            append(
+                home.path(),
+                &UsageEvent {
+                    ts_unix: now + 30 * 24 * 60 * 60 - 1,
+                    provider: "local_qwen".to_string(),
+                    model: "qwen".to_string(),
+                    cost_usd: Some(0.0),
+                    latency_ms: 1,
+                    ok: true,
+                    call_scope: Some("chat_provider_round".to_string()),
+                    source: Some("chat".to_string()),
+                    call_type: Some("chat_provider_round".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            run_g02_surfacing_tick(home.path(), now + 30 * 24 * 60 * 60).unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn invalid_specialist_assessment_suppresses_only_d6_output() {
+        let home = TempDir::new().unwrap();
+        std::fs::write(home.path().join("specialist_assessments.json"), "not json").unwrap();
+        assert_eq!(run_g02_surfacing_tick(home.path(), 1_700_000_000).unwrap(), 0);
+        assert!(!home.path().join("proactive_queue.json").exists());
     }
 }

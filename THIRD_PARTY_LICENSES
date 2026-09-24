@@ -6,6 +6,20 @@ project's license.
 
 ---
 
+## pbakaus/impeccable — modified design taxonomy
+
+Source: https://github.com/pbakaus/impeccable/tree/f88b2837a7d7c3182e46307bbbb091a1ed547571
+Files: design-system/lint_rules.md (59 stable rule identifiers and independently
+written Slint adaptation; no JavaScript/DOM engine or platform-design skills).
+
+Copyright 2025 Paul Bakaus. Licensed under Apache License 2.0; the license text
+is included in LICENSE-APACHE. NEOTH modified the taxonomy into a Slint review
+and portability table. Attribution, pinned registry path and the upstream
+NOTICE.md boundary are recorded in design-system/lint_rules.md. Third-party
+platform-design material described by that upstream notice is not included.
+
+---
+
 ## phuryn/pm-skills
 
 Source: https://github.com/phuryn/pm-skills

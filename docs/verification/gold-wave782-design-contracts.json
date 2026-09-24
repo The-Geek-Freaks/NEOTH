@@ -1,0 +1,47 @@
+{
+  "schema": "neoth-design-document-acceptance/v1",
+  "sourceBase": "4ed780a6d575e04cb0e44106a4aa78fa37ac2fd8",
+  "closedCriteria": [
+    "ADOPT31-G1",
+    "ADOPT31-G3",
+    "ADOPT31-G4"
+  ],
+  "taxonomy": {
+    "explicitPortabilityClasses": true,
+    "rules": 59,
+    "uniqueIds": 59
+  },
+  "consumer": "SRC/neothd-gui/AGENTS.md requires PRODUCT/DESIGN/COMPONENT_API plus applicable lint rules and five-dimension checklist",
+  "scope": "Documentation and review process only; no rendered/a11y/runtime acceptance",
+  "bindings": [
+    {
+      "path": "design-system/lint_rules.md",
+      "sha256": "28B1771351DAEFCF1200BD8E1CF72968937DA366F4D0ED3544C77E67F84B4D46"
+    },
+    {
+      "path": "design-system/PRODUCT.md",
+      "sha256": "F35E8ECAE8B360C4E4F8928E9C77D1FCFA8934659B4163ABFECCFEEB4AD32938"
+    },
+    {
+      "path": "design-system/DESIGN.md",
+      "sha256": "E723A025723EDCFF590EE74F926C53903FDE1359E13400A364D3C66B8D52711D"
+    },
+    {
+      "path": "design-system/AUDIT_CHECKLIST.md",
+      "sha256": "AFC2C90FB0CE5664AC23067A3E9D354E5C323451D5E0ECAECA96CF6FC487B81A"
+    },
+    {
+      "path": "SRC/neothd-gui/AGENTS.md",
+      "sha256": "46AAED9D0B1FA1CEA66421A336B5564F8BA269C1B55FC35FBA40A1CD65B96BBA"
+    },
+    {
+      "path": "THIRD_PARTY_LICENSES",
+      "sha256": "1D54C796ACD37411D54FEC4C997ABBAAB53323E251A56228CC75329B41D1E1D3"
+    }
+  ],
+  "pending": [
+    "G2 and G5 existing self-tests/source lint now run in Preflight",
+    "G6 bundled asset parse/router selected in Group1204"
+  ],
+  "localExecutableValidationRan": false
+}
