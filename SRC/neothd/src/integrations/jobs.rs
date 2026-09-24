@@ -171,6 +171,9 @@ pub trait RestartValidator: Send + Sync {
     /// Validate the exact release/staging contract and certify disposition of
     /// the pre-crash process tree. Every decision must prove that resuming or
     /// releasing the durable capability lock cannot race an orphaned worker.
+    /// Validators may run idempotent external compensation before a later job
+    /// returns `Hold`; preserve retry custody for that work. `Hold` guarantees
+    /// only that this service leaves every durable active row untouched.
     fn validate(&self, job: &IntegrationJob) -> RestartDecision;
 }
 
@@ -824,6 +827,8 @@ pub enum JobServiceError {
     RecoveryValidationUnavailable,
     #[error("restart recovery decision is incompatible with durable cancellation intent")]
     RecoveryDecisionInvalid,
+    #[error("restart recovery is held pending proven adapter cleanup")]
+    RecoveryHold { failure: JobFailure },
     #[error("restart process and staging disposition does not match the durable job revision")]
     RecoveryDispositionMismatch,
     #[error("progress evidence does not match the durable job and checkpoint")]
@@ -921,6 +926,14 @@ impl JobStore {
         for original in active {
             let decision = validator.validate(&original);
             let (intent, disposition) = match decision {
+                RestartDecision::Hold { failure } => {
+                    failure.validate()?;
+                    // Do not begin the recovery transaction. A Hold means the
+                    // adapter cannot prove its previous side effects are gone,
+                    // so terminalizing this row or releasing its active
+                    // capability lease could race an owned worker.
+                    return Err(JobServiceError::RecoveryHold { failure });
+                }
                 RestartDecision::Resume {
                     evidence,
                     disposition,
@@ -2011,6 +2024,16 @@ mod tests {
         }
     }
 
+    fn hold_decision(_job: &IntegrationJob) -> RestartDecision {
+        RestartDecision::Hold {
+            failure: JobFailure::new(
+                "managed_runtime_cleanup_unproven",
+                "Managed runtime cleanup could not be proven after restart.",
+            )
+            .unwrap(),
+        }
+    }
+
     fn persisted_job(home: &Path, job_id: &JobId) -> IntegrationJob {
         let connection = open_connection(&home.join(DB_FILE_NAME), false).unwrap();
         fetch_job(&connection, job_id).unwrap().unwrap()
@@ -2897,6 +2920,148 @@ mod tests {
         assert_eq!(cancelled.state, JobState::Cancelled);
         assert!(cancelled.cancel_requested);
         assert!(cancelled.failure.is_none());
+    }
+
+    #[test]
+    fn restart_hold_preserves_active_cancel_intent_until_a_proven_reject() {
+        let root = tempfile::tempdir().unwrap();
+        let pending_cancel = {
+            let service = service(&root);
+            let job = service.enqueue(request("qwen-model")).unwrap().job;
+            let running = service
+                .start(&job.job_id, job.state_revision, "download")
+                .unwrap();
+            service
+                .request_cancel(&job.job_id, running.state_revision)
+                .unwrap()
+        };
+
+        let error = match IntegrationJobService::open(&home(&root), catalog(), &hold_decision) {
+            Ok(_) => panic!("uncertain managed cleanup must hold recovery"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            JobServiceError::RecoveryHold { failure }
+                if failure.code == "managed_runtime_cleanup_unproven"
+        ));
+        // Hold does not write a terminal state, clear cancellation intent, or
+        // release the unique active-capability row.
+        assert_eq!(
+            persisted_job(&home(&root), &pending_cancel.job_id),
+            pending_cancel
+        );
+        assert!(matches!(
+            IntegrationJobService::open_fail_closed(&home(&root), catalog()),
+            Err(JobServiceError::RecoveryValidationUnavailable)
+        ));
+
+        let reject = |job: &IntegrationJob| reject_decision(job, "cleanup_proven_after_hold");
+        let reopened = IntegrationJobService::open(&home(&root), catalog(), &reject).unwrap();
+        let cancelled = reopened.get(&pending_cancel.job_id).unwrap().unwrap();
+        assert_eq!(cancelled.state, JobState::Cancelled);
+        assert!(cancelled.cancel_requested);
+        assert_eq!(cancelled.state_revision, pending_cancel.state_revision + 1);
+        drop(reopened);
+
+        let untouched = IntegrationJobService::open(&home(&root), catalog(), &hold_decision).unwrap();
+        assert!(untouched.startup_recovery().is_empty());
+        assert_eq!(
+            untouched.get(&pending_cancel.job_id).unwrap(),
+            Some(cancelled)
+        );
+    }
+
+    #[test]
+    fn later_restart_hold_rolls_back_recovery_for_two_active_capability_leases() {
+        let root = tempfile::tempdir().unwrap();
+        let (first_active, pending_cancel) = {
+            let service = service(&root);
+            let first = service.enqueue(request("qwen-model")).unwrap().job;
+            let second = service.enqueue(request("managed-node")).unwrap().job;
+            let first_active = service
+                .start(&first.job_id, first.state_revision, "download")
+                .unwrap();
+            let second_active = service
+                .start(&second.job_id, second.state_revision, "install")
+                .unwrap();
+            let pending_cancel = service
+                .request_cancel(&second_active.job_id, second_active.state_revision)
+                .unwrap();
+            (first_active, pending_cancel)
+        };
+        let compensation_log = Arc::new(Mutex::new(BTreeSet::new()));
+        let recorded_compensation = Arc::clone(&compensation_log);
+        let first_job_id = first_active.job_id.clone();
+        let held_validator = move |job: &IntegrationJob| {
+            if job.job_id == first_job_id {
+                // This represents idempotent adapter compensation which can
+                // happen before a later job's custody check requires Hold.
+                recorded_compensation
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .insert(job.job_id.clone());
+                reject_decision(job, "first_cleanup_proven")
+            } else {
+                hold_decision(job)
+            }
+        };
+        let error = match IntegrationJobService::open(&home(&root), catalog(), &held_validator) {
+            Ok(_) => panic!("later uncertain cleanup must hold the whole recovery batch"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, JobServiceError::RecoveryHold { .. }));
+        assert_eq!(
+            *compensation_log
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+            BTreeSet::from([first_active.job_id.clone()])
+        );
+        // The first validator's idempotent external effect is recorded, but
+        // Hold prevents all recovery writes: both active leases and B's cancel
+        // request remain exactly as persisted before recovery.
+        assert_eq!(
+            persisted_job(&home(&root), &first_active.job_id),
+            first_active
+        );
+        assert_eq!(
+            persisted_job(&home(&root), &pending_cancel.job_id),
+            pending_cancel
+        );
+        let store = JobStore::open(home(&root).join(DB_FILE_NAME)).unwrap();
+        let active_ids = store
+            .list(true)
+            .unwrap()
+            .into_iter()
+            .map(|job| job.job_id)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            active_ids,
+            BTreeSet::from([first_active.job_id.clone(), pending_cancel.job_id.clone()])
+        );
+
+        let proven_reject = |job: &IntegrationJob| reject_decision(job, "cleanup_proven_after_hold");
+        let reopened = IntegrationJobService::open(&home(&root), catalog(), &proven_reject).unwrap();
+        let first_terminal = reopened.get(&first_active.job_id).unwrap().unwrap();
+        let second_terminal = reopened.get(&pending_cancel.job_id).unwrap().unwrap();
+        assert_eq!(first_terminal.state, JobState::Failed);
+        assert_eq!(second_terminal.state, JobState::Cancelled);
+        assert!(second_terminal.cancel_requested);
+        assert_eq!(first_terminal.state_revision, first_active.state_revision + 1);
+        assert_eq!(second_terminal.state_revision, pending_cancel.state_revision + 1);
+        assert_eq!(reopened.startup_recovery().len(), 2);
+        drop(reopened);
+
+        let no_recovery = |_: &IntegrationJob| -> RestartDecision {
+            panic!("terminal jobs must not be validated on the next open")
+        };
+        let reopened = IntegrationJobService::open(&home(&root), catalog(), &no_recovery).unwrap();
+        assert!(reopened.startup_recovery().is_empty());
+        assert_eq!(reopened.get(&first_active.job_id).unwrap(), Some(first_terminal));
+        assert_eq!(
+            reopened.get(&pending_cancel.job_id).unwrap(),
+            Some(second_terminal)
+        );
     }
 
     #[test]

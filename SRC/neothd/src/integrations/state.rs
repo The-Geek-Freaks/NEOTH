@@ -766,6 +766,13 @@ pub enum RestartDecision {
         failure: JobFailure,
         disposition: RecoveryDispositionEvidence,
     },
+    /// Adapter recovery could not prove that its pre-crash side effects are
+    /// absent. Keep the durable active job and its capability lease intact.
+    /// A prior validator may already have performed idempotent compensation;
+    /// Hold only guarantees that recovery makes no durable job-store mutation.
+    Hold {
+        failure: JobFailure,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

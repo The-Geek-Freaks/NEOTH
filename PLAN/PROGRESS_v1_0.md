@@ -2,6 +2,27 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W908/W910 managed n8n publication (2026-09-24):** Core36049730518 at4aae1d0f
+passed strict slim Clippy, default-core test-target typecheck, CLI build and
+reference export; Root verified the API ZIP digest, inner hashes and exact
+source. The reference is unchanged. The completed owned CLI cache is a proven
+exact hit; the 10m40s run is shorter than the previous 20m12s cache-fill run,
+without attributing all timing variation to caching.
+Managed n8n now has one durable job, a shared config/key publisher, private
+CreateIntent/Bound/Ready custody, exact-ID compensation and absence tombstones
+retained until credential rollback and durable terminal state. Uncertain
+cleanup holds active jobs and capability leases; queued ambiguous intent writes
+remain recoverable. Docker uses the local endpoint and durable HostConfig port
+bindings. Only Ready yields a successful CLI result. W906/W910 independent
+static reviews approved. Registered25 new cases plus23 existing adoption/custody
+regressions on Windows; native1641, Group1408 and Windows190 await hosted runs.
+Owner/API-key bootstrap,13 workflow imports and Paperless remain open; this is
+not completion of GOLD-LF-002-09. No local executable validation ran.
+B7 remains accepted. Repaired canary Group1383 run36051891177 and Windows142
+run36051895109 at0448daf4 are running; C1a remains open pending exact terminals.
+Claude TASK016 covers pinned owner/login/API-key middleware. C7 MCP producer-to-
+effect work is separate WIP and excluded from this publication. Counts remain
+Road1324/1074done/248open/2partial; raw250/pre-tag249; dashboard184open.
 **W903 B7 accepted; W905 hosted formatting (2026-09-24):** Root verified
 Windows142 atca4bf9e8:140PASS/2FAIL/0missing,31 historical source/input bindings,
 142 individual log hashes and the API ZIP digest. Both failures are the canary

@@ -212,6 +212,54 @@ jobs:
           cli::bg_session::tests::detached_canary_is_not_persisted_but_is_bound_before_dispatch	neothd/src/cli/bg_session.rs
           cli::bg_session::tests::post_mint_background_failures_never_surface_provider_or_canary_content	neothd/src/cli/bg_session.rs
           daemon::doc_ingest_cron::tests::locked_state_commit_revalidates_held_lock_with_readonly_identity_probe	neothd/src/daemon/doc_ingest_cron.rs
+          integrations::n8n::managed_runtime::tests::managed_runtime_rejects_non_loopback_and_unpinned_requests_before_docker	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::managed_success_is_one_ready_job_with_bound_runtime_and_persisted_adoption	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::precommit_failure_removes_exact_container_and_restores_config_before_terminal_failure	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::postcommit_failure_removes_exact_container_and_restores_published_config	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::cancellation_after_bound_hanging_authenticated_probe_is_durable_only_after_exact_removal	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::ambiguous_create_reconciles_exact_effect_and_foreign_named_container_is_never_removed	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::runtime_sidecar_denies_unknown_fields	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::precreate_cancellation_performs_zero_docker_calls_and_finalizes_only_after_cancelled_job	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::failed_removal_after_cancellation_retains_active_cancel_intent_and_bound_custody	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::unknown_exact_inspection_after_cancellation_retains_active_bound_custody_without_remove	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::foreign_ready_binding_is_unchanged_and_blocks_a_second_queued_job	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::restart_recovery_removes_only_exact_bound_container_then_retains_absence_tombstone	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::restart_recovery_with_unknown_exact_inspection_retains_bound_custody_and_active_job	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::create_intent_restart_discovers_exact_owned_container_then_removes_it	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::create_intent_restart_unknown_named_inspection_retains_custody_without_removal	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::active_bound_custody_refuses_finalization	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::postwrite_create_intent_error_keeps_queued_job_recoverable_without_docker	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::queued_foreign_create_intent_stays_fail_closed_without_docker_inspection	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::docker_adapter_tests::stopped_container_uses_host_config_port_binding_for_exact_identity	neothd/src/integrations/n8n/managed_runtime.rs
+          integrations::n8n::managed_runtime::docker_adapter_tests::running_network_binding_must_match_durable_host_config	neothd/src/integrations/n8n/managed_runtime.rs
+          integrations::n8n::managed_runtime::docker_adapter_tests::extra_host_port_is_rejected_before_ownership_is_granted	neothd/src/integrations/n8n/managed_runtime.rs
+          integrations::n8n::managed_runtime::docker_adapter_tests::extra_mount_is_rejected_before_ownership_is_granted	neothd/src/integrations/n8n/managed_runtime.rs
+          integrations::jobs::tests::restart_hold_preserves_active_cancel_intent_until_a_proven_reject	neothd/src/integrations/jobs.rs
+          integrations::jobs::tests::later_restart_hold_rolls_back_recovery_for_two_active_capability_leases	neothd/src/integrations/jobs.rs
+          cli::n8n::tests::install_cli_requires_secret_stdin_and_keeps_port_typed	neothd/src/cli/n8n.rs
+          integrations::n8n::tests::parses_documented_workflows_shape_without_invented_identity_fields	neothd/src/integrations/n8n_tests.rs
+          integrations::n8n::tests::rejects_non_documented_or_unbounded_workflows_shapes	neothd/src/integrations/n8n_tests.rs
+          integrations::n8n::tests::descriptor_and_step_plan_are_stable_and_local_only	neothd/src/integrations/n8n_tests.rs
+          integrations::n8n::tests::generic_200_workflows_envelope_without_key_rejection_is_not_adoption_evidence	neothd/src/integrations/n8n_tests.rs
+          integrations::n8n::tests::adoption_requires_unauthenticated_rejection_then_persists_and_reports_ready_without_key	neothd/src/integrations/n8n_tests.rs
+          integrations::n8n::tests::precommit_unauthorized_fails_durably_without_config_or_credential_write	neothd/src/integrations/n8n_tests.rs
+          integrations::n8n::tests::postcommit_failure_restores_exact_preimage_and_never_reaches_ready	neothd/src/integrations/n8n_tests.rs
+          integrations::n8n::tests::injected_cancellation_is_durable_and_never_publishes_a_binding	neothd/src/integrations/n8n_tests.rs
+          integrations::n8n::tests::active_hanging_precommit_probe_is_cancelled_without_publishing	neothd/src/integrations/n8n_tests.rs
+          integrations::n8n::tests::active_hanging_negative_control_is_cancelled_without_publishing	neothd/src/integrations/n8n_tests.rs
+          cli::n8n::tests::stdin_key_line_accepts_exact_limit_with_lf_and_crlf	neothd/src/cli/n8n.rs
+          cli::n8n::tests::stdin_key_line_rejects_oversize_invalid_utf8_and_controls	neothd/src/cli/n8n.rs
+          integrations::n8n::tests::missing_input_is_a_terminal_required_input_job_without_config_mutation	neothd/src/integrations/n8n_tests.rs
+          integrations::n8n::tests::restart_of_unowned_active_job_is_terminal_and_releases_the_capability_lock	neothd/src/integrations/n8n_tests.rs
+          integrations::n8n::tests::read_only_status_of_absent_state_creates_no_config_or_job_database	neothd/src/integrations/n8n_tests.rs
+          config::automation::n8n_instance_config_tests::endpoint_accepts_only_literal_loopback_origins_with_explicit_port	neothd/src/config/automation.rs
+          config::keychain::tests::omi_secrets_are_managed_by_every_keychain_path	neothd/src/config/keychain.rs
+          config::credentials::n8n_adoption_transaction_tests::file_adoption_publishes_and_rolls_back_only_its_exact_generation	neothd/src/config/credentials.rs
+          config::credentials::n8n_adoption_transaction_tests::keychain_custody_serialization_has_only_references_not_key_material	neothd/src/config/credentials.rs
+          config::credentials::n8n_adoption_transaction_tests::stale_source_cas_refuses_publication_and_preserves_the_later_bytes	neothd/src/config/credentials.rs
+          config::credentials::n8n_adoption_transaction_tests::adoption_round_trip_retains_unknown_public_yaml	neothd/src/config/credentials.rs
+          config::credentials::n8n_adoption_transaction_tests::durable_phase_classifier_distinguishes_pair_pending_and_repairable_rollback	neothd/src/config/credentials.rs
+          config::credentials::n8n_adoption_transaction_tests::injected_keychain_cleanup_can_retry_after_a_partial_delete	neothd/src/config/credentials.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -228,7 +276,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 142 ]]; then
+          if [[ "$expected" -ne 190 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -238,7 +286,7 @@ jobs:
             cargo test -p neoth --lib --locked --no-run > "$evidence/compile.log" 2>&1 || compile_status=$?
           else
             compile_status=64
-            printf 'selection is not the required 142 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 190 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

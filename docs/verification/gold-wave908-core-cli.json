@@ -1,0 +1,34 @@
+{
+  "schema": "neoth-hosted-core-cli-admission/v1",
+  "sourceHead": "4aae1d0f72c9e0b56859879e02b148d01a80829f",
+  "runId": 36049730518,
+  "artifactId": 10831076136,
+  "artifactSha256": "f5381769d472a15ccd163f38cae366e9ef1541c4fe6eb2889f349861cf386bf1",
+  "cliSha256": "330311454996805216fe541380fb5d15064c67064dec26b549831f67b8bc329d",
+  "committedReferenceIdentical": true,
+  "rootVerified": true,
+  "steps": [
+    {
+      "name": "Check exact-source slim-core production Clippy",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Type-check core test targets before native validation",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Build current public CLI",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Export generated reference",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "acceptance": "Four core gates PASS on4aae1d0f; exact source/API ZIP/inner hashes verified; CLI snapshot unchanged. W891 owned cache exact hit. New n8n WIP is not covered."
+}

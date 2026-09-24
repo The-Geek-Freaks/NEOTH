@@ -1,4 +1,4 @@
-//! `neoth n8n {adopt,status,workflows}`.
+//! `neoth n8n {install,adopt,status,workflows}`.
 //!
 //! Adoption binds an operator-supplied, already-running literal-loopback n8n
 //! instance. It never installs, starts, discovers, or owns an n8n process.
@@ -25,6 +25,15 @@ pub struct N8nArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum N8nAction {
+    /// Start the pinned, NEOTH-owned Docker n8n runtime and prove its API key.
+    Install {
+        /// Literal loopback host port; the container is always bound to 127.0.0.1.
+        #[arg(long, default_value_t = crate::installers::n8n::DEFAULT_N8N_PORT)]
+        port: u16,
+        /// Read an already-issued n8n API key from piped standard input.
+        #[arg(long)]
+        api_key_stdin: bool,
+    },
     /// Adopt an already-running n8n API at an exact literal-loopback origin.
     Adopt {
         #[arg(long)]
@@ -43,6 +52,7 @@ pub enum N8nAction {
 
 pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
     match args.action {
+        N8nAction::Install { port, api_key_stdin } => run_install(port, api_key_stdin, output).await,
         N8nAction::Adopt {
             endpoint,
             api_key_stdin,
@@ -50,6 +60,74 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
         N8nAction::Status { job } => run_status(job.as_deref(), output),
         N8nAction::Workflows => run_workflows(output),
     }
+}
+
+async fn run_install(port: u16, api_key_stdin: bool, output: OutputFormat) -> Result<()> {
+    if !api_key_stdin {
+        return Err(anyhow!(
+            "n8n install requires --api-key-stdin; n8n has no documented headless API-key bootstrap"
+        ));
+    }
+    if std::io::stdin().is_terminal() {
+        return Err(anyhow!("--api-key-stdin requires piped standard input"));
+    }
+    let request = crate::integrations::n8n::managed_runtime::ManagedN8nRequest::new(
+        port,
+        crate::installers::n8n::N8N_OCI_REFERENCE,
+    )
+    .map_err(anyhow::Error::msg)?;
+    let api_key = read_api_key_from_stdin().await?;
+    let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
+    let cancellation_task = tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            let _ = cancel_tx.send(());
+        }
+    });
+    let result = crate::integrations::n8n::managed_runtime::install_managed_at(
+        &crate::config::FreedomConfig::default_neoth_home(),
+        request,
+        api_key,
+        &mut cancel_rx,
+    )
+    .await;
+    cancellation_task.abort();
+    render_managed_install_job(&result?, output)
+}
+
+fn render_managed_install_job(
+    job: &crate::integrations::IntegrationJob,
+    output: OutputFormat,
+) -> Result<()> {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "job_id": job.job_id,
+                "state": job.state,
+                "probe_binding": "authenticated_n8n_workflows",
+                "failure_code": job.failure.as_ref().map(|failure| &failure.code),
+            })
+        ),
+        OutputFormat::Table => {
+            println!("n8n managed install job: {}", job.job_id);
+            println!("state: {}", job.state);
+            println!("probe binding: authenticated n8n workflows API");
+            if let Some(failure) = &job.failure {
+                println!("failure: {} — {}", failure.code, failure.redacted_message);
+            }
+        }
+    }
+    if let Some(failure) = &job.failure {
+        return Err(anyhow!("n8n managed install job {} failed: {}", job.job_id, failure.code));
+    }
+    if job.state != crate::integrations::JobState::Ready {
+        return Err(anyhow!(
+            "n8n managed install job {} did not reach Ready (state: {})",
+            job.job_id,
+            job.state
+        ));
+    }
+    Ok(())
 }
 
 async fn run_adopt(endpoint: &str, api_key_stdin: bool, output: OutputFormat) -> Result<()> {
@@ -244,4 +322,21 @@ mod tests {
         assert!(read_api_key_line(std::io::Cursor::new(vec![0xff, b'\n'])).is_err());
         assert!(read_api_key_line(std::io::Cursor::new(vec![b'a', 0, b'\n'])).is_err());
     }
+
+    #[test]
+    fn install_cli_requires_secret_stdin_and_keeps_port_typed() {
+        use clap::Parser;
+        let cli = crate::cli::Cli::try_parse_from([
+            "neoth", "n8n", "install", "--port", "5679", "--api-key-stdin",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            crate::cli::Commands::N8n(N8nArgs {
+                action: N8nAction::Install { port: 5679, api_key_stdin: true }
+            })
+        ));
+        assert!(crate::cli::Cli::try_parse_from(["neoth", "n8n", "install", "--api-key", "no-secret-argv"]).is_err());
+    }
+
 }

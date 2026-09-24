@@ -1,6 +1,7 @@
-//! Durable adoption primitives for an operator-owned, loopback n8n instance.
+//! Durable adoption and managed-runtime transactions for a loopback n8n instance.
 //!
-//! This adapter neither installs nor starts n8n.  Its only network operation is
+//! Ordinary adoption leaves process ownership with the operator. Managed install
+//! separately owns an exact pinned Docker container. API verification uses
 //! an authenticated, bounded request to the exact literal-loopback origin the
 //! operator supplied.  The API key is borrowed for that request only and is
 //! never included in a receipt, error, job, or status view.
@@ -28,6 +29,8 @@ use super::state::{
     RecoveryDispositionEvidence, RestartDecision, Sha256Digest,
 };
 use super::{EnqueueResult, IntegrationJobService, JobServiceError, RestartValidator};
+
+pub(crate) mod managed_runtime;
 
 pub const N8N_CAPABILITY_ID: &str = "n8n-instance";
 const ADAPTER_REVISION: &str = "n8n-adoption-v1";
@@ -437,6 +440,34 @@ impl RestartValidator for N8nRestartValidator {
                 ),
             };
         };
+        if managed_runtime::is_managed_job(job) {
+            let hold = || RestartDecision::Hold {
+                failure: JobFailure::new(
+                    "n8n_managed_cleanup_required",
+                    "The managed n8n runtime retains custody; cleanup must be proven before this job can finish.",
+                ).expect("static failure is valid"),
+            };
+            let Some(home) = self.freedom_path.parent() else { return hold(); };
+            let Ok(process_disposition) = managed_runtime::recover_interrupted(home, job) else {
+                return hold();
+            };
+            if crate::config::credentials::Credentials::rollback_n8n_adoption_at(
+                &self.freedom_path, &self.credentials_path, job.job_id.as_str(),
+            ).is_err() {
+                return hold();
+            }
+            return RestartDecision::Reject {
+                failure: JobFailure::new(
+                    "n8n_managed_interrupted_recovered",
+                    "The interrupted managed n8n runtime was removed and its binding rolled back.",
+                ).expect("static failure is valid"),
+                disposition: RecoveryDispositionEvidence::verified(
+                    job.job_id.clone(), job.manifest_sha256.clone(),
+                    contract.step_plan_sha256().clone(), job.state_revision,
+                    process_disposition, sha256_parts(&["n8n-custody-rolled-back"]),
+                ),
+            };
+        }
         let disposition = |custody| {
             RecoveryDispositionEvidence::verified(
                 job.job_id.clone(),
@@ -485,8 +516,20 @@ pub(crate) fn open_n8n_job_service(home: &Path) -> Result<IntegrationJobService,
     // that removal on the next owned adapter open. Failure intentionally leaves
     // Ready untouched and retains the custody record as the repair boundary.
     for job in service.snapshot()?.into_iter().filter(|job| {
-        job.capability_id.as_str() == N8N_CAPABILITY_ID && job.state == JobState::Ready
+        job.capability_id.as_str() == N8N_CAPABILITY_ID
     }) {
+        if managed_runtime::is_managed_job(&job) {
+            // Keep runtime custody until the matching durable terminal exists.
+            // A failed reconciliation retains the sidecar for a later retry.
+            if job.state == JobState::Ready {
+                let _ = managed_runtime::reconcile_ready_custody(home, &job);
+            } else if matches!(job.state, JobState::Failed | JobState::Cancelled) {
+                let _ = managed_runtime::finalize_terminal_custody(home, &job);
+            }
+        }
+        if job.state != JobState::Ready {
+            continue;
+        }
         // Ready evidence is already durable. A failed custody-file cleanup is
         // retained for status/open repair; it must not turn a completed
         // adoption into an unredacted open error or touch another capability.
@@ -523,216 +566,147 @@ pub(crate) async fn adopt_at_with_cancel(
     api_key: SecretString,
     cancel_rx: &mut tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<IntegrationJob> {
-    let probe = HttpN8nApiProbe;
     let service = open_n8n_job_service(home)?;
-    // The job exists before either request. This makes Ctrl-C and failures
-    // durable even while the remote peer holds a bounded request open.
     let queued = enqueue_adoption(&service, &endpoint, JobRequester::Cli)?.job;
     if cancel_rx.try_recv().is_ok() {
         return Ok(service.request_cancel(&queued.job_id, queued.state_revision)?);
     }
     let running = service.start(&queued.job_id, queued.state_revision, N8N_ADOPTION_STEPS[0])?;
-    let running = checkpoint(
-        &service,
-        &running,
-        1,
-        N8N_ADOPTION_STEPS[0],
-        "n8n-endpoint-validated",
-    )?;
-    let validating = service.begin_validation(
-        &running.job_id,
-        running.state_revision,
-        N8N_ADOPTION_STEPS[1],
-    )?;
-    let negative = tokio::select! {
-        biased;
-        _ = &mut *cancel_rx => return cancel_without_binding(&service, &validating),
-        result = probe.negative_control(&endpoint) => result,
-    };
-    if let Err(error) = negative {
-        return Ok(service.fail(
-            &validating.job_id,
-            validating.state_revision,
-            JobFailure::new(error.code(), error.redacted_message())
-                .expect("fixed n8n terminal failure is valid"),
-        )?);
-    }
-    let precommit = tokio::select! {
-        biased;
-        _ = &mut *cancel_rx => return cancel_without_binding(&service, &validating),
-        result = probe.authenticated_probe(&endpoint, &api_key) => result,
-    };
-    let precommit = match precommit {
-        Ok(receipt) => receipt,
+    match publish_adoption_in_job_with_cancel(
+        &service, &running, home, endpoint, api_key, &HttpN8nApiProbe, cancel_rx,
+    ).await {
+        Ok(ready) => {
+            // Ready is durable; failed private-sidecar cleanup is retried at open.
+            let _ = crate::config::credentials::Credentials::finish_n8n_adoption_at(
+                &home.join("freedom.yaml"), &home.join("credentials.yaml"), ready.job_id.as_str(),
+            );
+            Ok(ready)
+        }
         Err(error) => {
-            return Ok(service.fail(
-                &validating.job_id,
-                validating.state_revision,
-                JobFailure::new(error.code(), error.redacted_message())
-                    .expect("fixed n8n terminal failure is valid"),
-            )?);
-        }
-    };
-    let validating = checkpoint(
-        &service,
-        &validating,
-        2,
-        N8N_ADOPTION_STEPS[1],
-        "n8n-precommit-probed",
-    )?;
-    let prepared = match crate::config::credentials::Credentials::prepare_n8n_adoption_at(
-        &home.join("freedom.yaml"),
-        &home.join("credentials.yaml"),
-        validating.job_id.as_str(),
-        crate::config::N8nInstanceConfig {
-            endpoint: endpoint.clone(),
-            api_version: None,
-        },
-        api_key,
-    ) {
-        Ok(prepared) => prepared,
-        Err(_) => {
-            return Ok(service.fail(
-                &validating.job_id,
-                validating.state_revision,
-                JobFailure::new(
-                    "adoption_prepare_failed",
-                    "The n8n endpoint and credential binding could not be prepared.",
-                )
-                .expect("static failure is valid"),
-            )?);
-        }
-    };
-    let configuring = match service.begin_configuration(
-        &validating.job_id,
-        validating.state_revision,
-        N8N_ADOPTION_STEPS[2],
-    ) {
-        Ok(job) => job,
-        Err(_) => {
-            return rollback_and_fail(&service, &validating, home, "adoption_prepare_failed").await;
-        }
-    };
-    if let Some(cancelled) = cancel_if_requested(&service, &configuring, home)? {
-        return Ok(cancelled);
-    }
-    if crate::config::credentials::Credentials::commit_prepared_n8n_adoption_at(prepared).is_err() {
-        return rollback_and_fail(&service, &configuring, home, "adoption_publish_failed").await;
-    }
-    let configuring = match checkpoint(
-        &service,
-        &configuring,
-        3,
-        N8N_ADOPTION_STEPS[2],
-        "n8n-binding-published",
-    ) {
-        Ok(job) => job,
-        Err(_) => {
-            return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed")
-                .await;
-        }
-    };
-    if let Some(cancelled) = cancel_if_requested(&service, &configuring, home)? {
-        return Ok(cancelled);
-    }
-    let (stored_instance, stored_key) =
-        match crate::config::credentials::Credentials::read_n8n_adoption_binding_at(
-            &home.join("freedom.yaml"),
-            &home.join("credentials.yaml"),
-        ) {
-            Ok(binding) => binding,
-            Err(_) => {
-                return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed")
-                    .await;
+            let current = service.get(&running.job_id)?
+                .ok_or_else(|| anyhow::anyhow!("n8n adoption job disappeared"))?;
+            if error.cancelled || current.cancel_requested {
+                let requested = if current.cancel_requested { current } else {
+                    service.request_cancel(&current.job_id, current.state_revision)?
+                };
+                cancel_if_requested(&service, &requested, home)?
+                    .ok_or_else(|| anyhow::anyhow!("n8n cancellation acknowledgement was not produced"))
+            } else {
+                rollback_and_fail(&service, &current, home, error.code).await
             }
-        };
-    let stored_endpoint = stored_instance.endpoint;
-    let postcommit = tokio::select! {
-        biased;
-        _ = &mut *cancel_rx => {
-            let requested = service.request_cancel(&configuring.job_id, configuring.state_revision)?;
-            return cancel_if_requested(&service, &requested, home)?.ok_or_else(|| anyhow::anyhow!("n8n cancellation acknowledgement was not produced"));
         }
-        probe_result = probe.authenticated_probe(&stored_endpoint, &stored_key) => probe_result,
-    };
-    let postcommit = match postcommit {
-        Ok(receipt)
-            if receipt.authenticated_probe_sha256() == precommit.authenticated_probe_sha256() =>
-        {
-            receipt
-        }
-        _ => {
-            return rollback_and_fail(&service, &configuring, home, "n8n_postcommit_probe_failed")
-                .await;
-        }
-    };
-    let configuring = match checkpoint(
-        &service,
-        &configuring,
-        4,
-        N8N_ADOPTION_STEPS[3],
-        "n8n-postcommit-probed",
-    ) {
-        Ok(job) => job,
-        Err(_) => {
-            return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed")
-                .await;
-        }
-    };
-    if let Some(cancelled) = cancel_if_requested(&service, &configuring, home)? {
-        return Ok(cancelled);
     }
-    let contract = configuring
-        .evidence_contract
-        .as_ref()
-        .expect("enqueued n8n job has evidence contract");
-    let ready = ReadyEvidence::verified(
-        configuring.job_id.clone(),
-        configuring.manifest_sha256.clone(),
-        contract.artifact_binding_sha256().clone(),
-        contract.config_binding_sha256().clone(),
-        postcommit.authenticated_probe_sha256(),
-        contract.step_plan_sha256().clone(),
-    );
-    let ready_job = match service.mark_ready(&configuring.job_id, configuring.state_revision, ready)
-    {
-        Ok(job) => job,
-        Err(_) => {
-            return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed")
-                .await;
-        }
-    };
-    // Ready is the durable user-visible completion boundary. Cleanup failure
-    // only retains the private custody record for the next adapter open.
-    let _ = crate::config::credentials::Credentials::finish_n8n_adoption_at(
-        &home.join("freedom.yaml"),
-        &home.join("credentials.yaml"),
-        ready_job.job_id.as_str(),
-    );
-    Ok(ready_job)
 }
 
-fn cancel_without_binding(
+/// Redacted failure of the shared publisher. The caller still owns every
+/// process/config effect and must compensate before terminalizing this job.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct AdoptionPublishError {
+    pub(super) code: &'static str,
+    pub(super) cancelled: bool,
+}
+
+impl AdoptionPublishError {
+    fn failed(code: &'static str) -> Self { Self { code, cancelled: false } }
+    fn cancelled() -> Self { Self { code: "n8n_adoption_cancelled", cancelled: true } }
+}
+
+fn check_publish_cancel(
+    service: &IntegrationJobService,
+    job: &IntegrationJob,
+    cancel_rx: &mut tokio::sync::oneshot::Receiver<()>,
+) -> Result<(), AdoptionPublishError> {
+    let current = service.get(&job.job_id)
+        .map_err(|_| AdoptionPublishError::failed("adoption_job_read_failed"))?
+        .ok_or_else(|| AdoptionPublishError::failed("adoption_job_missing"))?;
+    let cancelled = current.cancel_requested || !matches!(
+        cancel_rx.try_recv(), Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+    );
+    if cancelled {
+        if !current.cancel_requested {
+            service.request_cancel(&current.job_id, current.state_revision)
+                .map_err(|_| AdoptionPublishError::failed("adoption_cancel_request_failed"))?;
+        }
+        return Err(AdoptionPublishError::cancelled());
+    }
+    Ok(())
+}
+
+/// The sole config/key publisher for ordinary adoption and managed install.
+/// It never enqueues a second job and never compensates a caller-owned runtime.
+/// On failure the caller reloads the current job revision before compensation.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn publish_adoption_in_job_with_cancel<P: N8nApiProbe + ?Sized>(
     service: &IntegrationJobService,
     active: &IntegrationJob,
-) -> anyhow::Result<IntegrationJob> {
-    let requested = service.request_cancel(&active.job_id, active.state_revision)?;
-    if requested.state == JobState::Cancelled {
-        return Ok(requested);
+    home: &Path,
+    endpoint: LoopbackHttpEndpoint,
+    api_key: SecretString,
+    probe: &P,
+    cancel_rx: &mut tokio::sync::oneshot::Receiver<()>,
+) -> Result<IntegrationJob, AdoptionPublishError> {
+    check_publish_cancel(service, active, cancel_rx)?;
+    let running = checkpoint(service, active, 1, N8N_ADOPTION_STEPS[0], "n8n-endpoint-validated")
+        .map_err(|_| AdoptionPublishError::failed("adoption_progress_failed"))?;
+    let validating = service.begin_validation(&running.job_id, running.state_revision, N8N_ADOPTION_STEPS[1])
+        .map_err(|_| AdoptionPublishError::failed("adoption_validation_failed"))?;
+    let negative = tokio::select! {
+        biased;
+        _ = &mut *cancel_rx => return Err(AdoptionPublishError::cancelled()),
+        result = probe.negative_control(&endpoint) => result,
+    };
+    negative.map_err(|error| AdoptionPublishError::failed(error.code()))?;
+    check_publish_cancel(service, &validating, cancel_rx)?;
+    let precommit = tokio::select! {
+        biased;
+        _ = &mut *cancel_rx => return Err(AdoptionPublishError::cancelled()),
+        result = probe.authenticated_probe(&endpoint, &api_key) => result,
+    }.map_err(|error| AdoptionPublishError::failed(error.code()))?;
+    check_publish_cancel(service, &validating, cancel_rx)?;
+    let validating = checkpoint(service, &validating, 2, N8N_ADOPTION_STEPS[1], "n8n-precommit-probed")
+        .map_err(|_| AdoptionPublishError::failed("adoption_progress_failed"))?;
+    let expected_key_digest = Sha256::digest(api_key.expose().as_bytes());
+    let prepared = crate::config::credentials::Credentials::prepare_n8n_adoption_at(
+        &home.join("freedom.yaml"), &home.join("credentials.yaml"), validating.job_id.as_str(),
+        crate::config::N8nInstanceConfig { endpoint: endpoint.clone(), api_version: None }, api_key,
+    ).map_err(|_| AdoptionPublishError::failed("adoption_prepare_failed"))?;
+    let configuring = service.begin_configuration(&validating.job_id, validating.state_revision, N8N_ADOPTION_STEPS[2])
+        .map_err(|_| AdoptionPublishError::failed("adoption_prepare_failed"))?;
+    check_publish_cancel(service, &configuring, cancel_rx)?;
+    crate::config::credentials::Credentials::commit_prepared_n8n_adoption_at(prepared)
+        .map_err(|_| AdoptionPublishError::failed("adoption_publish_failed"))?;
+    let configuring = checkpoint(service, &configuring, 3, N8N_ADOPTION_STEPS[2], "n8n-binding-published")
+        .map_err(|_| AdoptionPublishError::failed("adoption_cleanup_failed"))?;
+    check_publish_cancel(service, &configuring, cancel_rx)?;
+    let (stored, stored_key) = crate::config::credentials::Credentials::read_n8n_adoption_binding_at(
+        &home.join("freedom.yaml"), &home.join("credentials.yaml"),
+    ).map_err(|_| AdoptionPublishError::failed("adoption_cleanup_failed"))?;
+    // The probe receipt binds the origin. Compare the persisted secret too:
+    // changing a key must not be hidden behind an otherwise healthy endpoint.
+    if stored.endpoint != endpoint || Sha256::digest(stored_key.expose().as_bytes()) != expected_key_digest {
+        return Err(AdoptionPublishError::failed("n8n_postcommit_probe_failed"));
     }
-    let contract = requested
-        .evidence_contract
-        .as_ref()
-        .expect("active n8n job has immutable evidence contract");
-    let evidence = CancellationEvidence::verified(
-        requested.job_id.clone(),
-        requested.manifest_sha256.clone(),
-        contract.step_plan_sha256().clone(),
-        requested.state_revision,
-        sha256_parts(&["n8n-no-owned-process"]),
-        sha256_parts(&["n8n-no-binding-published"]),
+    let postcommit = tokio::select! {
+        biased;
+        _ = &mut *cancel_rx => return Err(AdoptionPublishError::cancelled()),
+        result = probe.authenticated_probe(&stored.endpoint, &stored_key) => result,
+    }.map_err(|_| AdoptionPublishError::failed("n8n_postcommit_probe_failed"))?;
+    if postcommit.authenticated_probe_sha256() != precommit.authenticated_probe_sha256() {
+        return Err(AdoptionPublishError::failed("n8n_postcommit_probe_failed"));
+    }
+    check_publish_cancel(service, &configuring, cancel_rx)?;
+    let configuring = checkpoint(service, &configuring, 4, N8N_ADOPTION_STEPS[3], "n8n-postcommit-probed")
+        .map_err(|_| AdoptionPublishError::failed("adoption_cleanup_failed"))?;
+    check_publish_cancel(service, &configuring, cancel_rx)?;
+    let contract = configuring.evidence_contract.as_ref()
+        .ok_or_else(|| AdoptionPublishError::failed("adoption_contract_missing"))?;
+    let ready = ReadyEvidence::verified(
+        configuring.job_id.clone(), configuring.manifest_sha256.clone(),
+        contract.artifact_binding_sha256().clone(), contract.config_binding_sha256().clone(),
+        postcommit.authenticated_probe_sha256(), contract.step_plan_sha256().clone(),
     );
-    Ok(service.acknowledge_cancel(&requested.job_id, requested.state_revision, evidence)?)
+    service.mark_ready(&configuring.job_id, configuring.state_revision, ready)
+        .map_err(|_| AdoptionPublishError::failed("adoption_cleanup_failed"))
 }
 
 pub(crate) fn status_at(
