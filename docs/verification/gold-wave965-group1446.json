@@ -1,0 +1,73 @@
+{
+  "schema": "neoth-hosted-group-admission/v1",
+  "wave": 965,
+  "rootVerified": true,
+  "run": 36062226477,
+  "source": "0c7c9dea919ebe8b5722c8732b5476ebb02c42bf",
+  "executed": 1446,
+  "passed": 1440,
+  "failed": 6,
+  "missing": 0,
+  "sourceBindingCount": 255,
+  "logSha256": "02D5B2CFECA63EA8C78E860CF0CBADF9BA5CFAFEB8D0DD6E091480AF1E12A571",
+  "artifacts": [
+    {
+      "id": 10834737665,
+      "name": "grouped-cargo-log",
+      "zipSha256": "ab10aa951be196af63cecf952a47f04cecc301657d430d8a68210e75eb4d14bf"
+    },
+    {
+      "id": 10835167116,
+      "name": "grouped-lifecycle-receipt",
+      "zipSha256": "27266581229a4b3dd7371707cb9d0cf725d5745b24dc580d0d6f65416abbe78b"
+    },
+    {
+      "id": 10835601570,
+      "name": "grouped-source-identities",
+      "zipSha256": "85e8f17a5f0b1812fba842c166a99b3a5534169670072fcd4263f1c59a99ed6c"
+    }
+  ],
+  "failures": [
+    {
+      "test": "tools::citation_http::tests::authorized_send_failure_is_provider_unavailable_while_gate_denial_is_permission_denied",
+      "actual": "Unavailable Crossref InvalidQuery",
+      "expected": "Unavailable Crossref ProviderUnavailable"
+    },
+    {
+      "test": "tools::citation_http::tests::response_status_decode_and_size_failures_write_failure_terminals",
+      "actual": "Unavailable Crossref InvalidQuery",
+      "expected": "Unavailable Crossref ProviderUnavailable"
+    },
+    {
+      "test": "tools::citation_http::tests::truncated_stream_writes_failure_terminal_and_valid_record_writes_success_terminal",
+      "actual": "Unavailable Crossref InvalidQuery",
+      "expected": "Unavailable Crossref ProviderUnavailable"
+    },
+    {
+      "test": "tools::citation_http::tests::header_timeout_preserves_timeout_state_and_writes_failure_terminal",
+      "actual": "Unavailable Crossref InvalidQuery",
+      "expected": "Unavailable Crossref Timeout"
+    },
+    {
+      "test": "tools::citation_http::tests::rate_limit_is_failure_terminal_before_cooldown_and_not_found_is_success_terminal",
+      "actual": "Unavailable Crossref InvalidQuery",
+      "expected": "Unavailable Crossref RateLimited retry_after_secs Some(30)"
+    },
+    {
+      "test": "mcp::dispatch_loop::tests::trusted_nonpublic_source_refuses_before_spawn_through_budget_wrapper",
+      "actual": "0",
+      "expected": "1"
+    }
+  ],
+  "checks": [
+    "API ZIP digest for all three artifacts",
+    "255 historical Git source/input bindings",
+    "1446 ordered discovery/run/exact test terminals and one-test summaries"
+  ],
+  "limits": [
+    "Historical0c7 source only",
+    "Six failures remain pending repaired hosted rerun",
+    "Dirty bootstrap WIP excluded"
+  ],
+  "localExecutableValidationRan": false
+}

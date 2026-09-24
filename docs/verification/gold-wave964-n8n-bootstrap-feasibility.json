@@ -1,0 +1,50 @@
+{
+  "schema": "neoth-n8n-bootstrap-feasibility-admission/v1",
+  "run": 36062653422,
+  "source": "e8443cec70a4e9f7f54d528b48d6dfb1f822634d",
+  "artifact": 10834454867,
+  "apiZipSha256": "14e6df737f6886382816b94383dd91936619ee60a6a54bc4e6b94c6fd2f18526",
+  "receipt": {
+    "encryption_key_sha256": "c821b83b22dd7be0559b71d91195bf78e5c2016599c0189a29d00e0d2d85a098",
+    "github_sha": "e8443cec70a4e9f7f54d528b48d6dfb1f822634d",
+    "image_digest": "sha256:9f693fd5565539efd5e75ad168526c8041a6af516d9e50bc4d9cb1c9c5031523",
+    "image_id": "sha256:2a8ec1d5dcf19532c0214b391777a756dfa94dd4bc74d75c0bc204a0b6a59cb3",
+    "mint_status": 200,
+    "negative_status": 401,
+    "node_version": "v26.7.0",
+    "outcome": "passed",
+    "positive_status": 200,
+    "raw_key_sha256": "5ccffc37fc9395f1f6e06fb57d28f25a0af751d18fd72d237c21b6b724a8e6fd",
+    "schema": 2,
+    "script_sha256": "a955c267431ad30f3aaba017f408dfcc59a62886a78b1126f132391a87513594",
+    "stages": [
+      "image_pulled",
+      "volume_bound",
+      "isolated_bootstrap_bound",
+      "owner_and_key_captured",
+      "bootstrap_stopped_and_absent",
+      "replacement_runtime_bound",
+      "negative_and_authenticated_probe_passed"
+    ],
+    "upstream_commit": "a331d3858797b161e4acba288396be3835425d8e",
+    "workflow_sha256": "154eb175c706a81a45a3ae9a20ceed42e3ee565b692498835551f1051f56323c"
+  },
+  "admission": "ROOT_ADMITTED_PINNED_IMAGE_FEASIBILITY",
+  "checks": [
+    "Exact API ZIP digest",
+    "Historical script/workflow blob and SHA256",
+    "Run concluded success",
+    "Seven exact helper tests passed",
+    "All seven ordered stage receipts",
+    "Unauthenticated denial and keyed200/data",
+    "Same encryption key digest across volume handoff",
+    "Exact owned cleanup proved by script success"
+  ],
+  "limits": [
+    "Disposable GitHub runner and pinned image only",
+    "Does not invoke NEOTH CLI/product bootstrap",
+    "Product cancellation/restart/custody acceptance still pending",
+    "13 imports and Paperless still open"
+  ],
+  "localExecutableValidationRan": false
+}

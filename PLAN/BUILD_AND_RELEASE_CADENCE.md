@@ -3,6 +3,33 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W965/W968/W969 focused fixture diagnosis (2026-09-24):** Root admitted
+Group1446 at0c7c9dea:1440PASS/6FAIL/0missing,255 historical source/input
+bindings and all1446 ordered terminals, with all three API ZIP digests verified.
+All36 n8n integration fixtures passed on Linux, including the repaired cleanup
+and cancellation paths. Five new Citation fixtures failed before network:
+reqwest canonicalizes a bare origin with a trailing slash, while the sealed
+transport requires exact descriptor/request URL equality. The fixtures now
+use canonical origins without weakening that production boundary. One MCP
+wrapper fixture used max_iterations=1, so the loop stopped before dispatch;
+it now allows2 and also demands an actual failed call record with no cap hit.
+Fresh hosted behavioral verification remains required. C7 remains open.
+**W963/W964 hosted evidence accepted (2026-09-24):** Core36061158412 at
+d26ed44e passed strict slim production Clippy, core-test typechecking, public
+CLI build and reference export. Root verified the artifact API ZIP digest,
+inner SHA, source-head and exact historical CLI blob; the reference is unchanged.
+Workspace Clippy was skipped. Receipt: docs/verification/gold-wave963-core-cli.json.
+The pinned n8n image canary36062653422 at e8443cec passed seven helper tests and
+all seven lifecycle stages: networkless owner/key bootstrap, stopped/absent old
+container, same-volume replacement, readiness, unauthenticated401 and keyed200.
+Root admitted ZIP, historical script/workflow bindings and actual terminals in
+docs/verification/gold-wave964-n8n-bootstrap-feasibility.json. This proves image
+feasibility only; the NEOTH CLI bootstrap/restart/import acceptance remains open.
+Group1446run36062226477 at0c7c9dea failed and is being diagnosed; Windows229 is
+still running. C7 and GOLD-LF-002-09 remain open. Product bootstrap recovery is
+being completed with actual Docker identity evidence before durable resume.
+Claude RESULT020 exposed nine missing starter routes and false node-ID dedup
+assumptions; TASK021 requests exact payload/auth/reachability source evidence.
 **W961 exact n8n API scope (2026-09-24):** Third image canary36062042412
 at0c7c9dea passes seven helper regressions, volume handoff, explicit readiness
 and unauthenticated denial; authenticated collection GET returns403. Root read

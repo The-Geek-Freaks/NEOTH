@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "wave": "W963",
+  "scope": "Hosted Core CLI evidence only; no generated documentation import or tracked-file mutation.",
+  "run": {
+    "id": 36061158412,
+    "conclusion": "success",
+    "sourceHead": "d26ed44e775f4b3161382d32f950be1b1ffb6a3d",
+    "headBranch": "main",
+    "sourceRef": "refs/heads/main"
+  },
+  "artifact": {
+    "id": 10834856676,
+    "name": "generated-cli-reference",
+    "apiDigestSha256": "sha256:ac5cb91916275f019a6cade598019f23a282ef1f6db5d013b9e9545035307fb0",
+    "localZipPath": "10834856676.zip",
+    "localZipSha256": "ac5cb91916275f019a6cade598019f23a282ef1f6db5d013b9e9545035307fb0",
+    "zipMatchesApiDigest": true,
+    "extractPath": "C:\\Users\\Shadow-PC\\CascadeProjects\\AGENTER\\work\\gold-20260906\\wave963-core-d26\\generated-cli-reference"
+  },
+  "export": {
+    "candidatePath": "generated-cli-reference\\cli-commands.md",
+    "candidateSha256": "c01214f78e0bb769d131710dafad42e48eded8a1c2c829579dab699c3cb3f262",
+    "internalSha256Sums": "c01214f78e0bb769d131710dafad42e48eded8a1c2c829579dab699c3cb3f262  cli-commands.md",
+    "internalShaMatchesCandidate": true,
+    "sourceHeadFile": "generated-cli-reference\\source-head.txt",
+    "sourceHead": "d26ed44e775f4b3161382d32f950be1b1ffb6a3d",
+    "sourceHeadMatchesRun": true,
+    "sourceRefFilePresent": false,
+    "sourceRefEvidence": "GitHub workflow run head_branch",
+    "sourceRef": "refs/heads/main"
+  },
+  "historicalSourceBinding": {
+    "commit": "d26ed44e775f4b3161382d32f950be1b1ffb6a3d",
+    "path": "docs/cli-commands.md",
+    "gitBlob": "67ba5ce6ed8bbca8f71881436e234ce2e6f7520b",
+    "sha256": "c01214f78e0bb769d131710dafad42e48eded8a1c2c829579dab699c3cb3f262",
+    "candidateMatchesHistoricalSourceDoc": true
+  },
+  "requiredGates": {
+    "slimCoreProductionClippy": "success",
+    "coreTestTargetTypecheck": "success",
+    "publicCliBuild": "success",
+    "generatedReferenceExport": "success"
+  },
+  "otherHostedSteps": {
+    "workspaceClippy": "skipped",
+    "artifactUpload": "success"
+  },
+  "admissionEligible": true,
+  "localExecutableValidationRan": false,
+  "currentDirtyWipValidated": false,
+  "excludedWork": "Product n8n WIP is excluded from this evidence.",
+  "rootVerified": true,
+  "rootVerifiedUtc": "2026-09-24T21:46:25.5177468Z"
+}

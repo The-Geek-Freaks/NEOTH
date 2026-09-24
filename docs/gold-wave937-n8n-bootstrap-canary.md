@@ -58,3 +58,9 @@ The script independently refuses to run unless GitHub Actions provides the
 exact `refs/heads/main` ref, a 40-hex commit SHA, and positive numeric run ID
 and attempt values.  This check occurs before it creates a receipt, a volume,
 or any Docker resource; direct local invocation has no fallback mode.
+
+W964 acceptance: run36062653422 at e8443cec passed all seven helper tests
+and all seven ordered lifecycle stages. Root verified the source and artifact
+bindings in [the feasibility receipt](verification/gold-wave964-n8n-bootstrap-feasibility.json).
+The product CLI bootstrap, restart/cancellation recovery and workflow imports
+remain separate open gates.

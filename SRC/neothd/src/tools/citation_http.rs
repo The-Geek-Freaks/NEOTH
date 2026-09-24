@@ -1193,7 +1193,7 @@ mod tests {
                 &query(CitationProvider::Crossref),
                 "claim",
                 &terminal_authorizer(sink.clone()),
-                server.uri(),
+                format!("{}/", server.uri()),
             )
             .await;
             assert_eq!(
@@ -1212,7 +1212,7 @@ mod tests {
         let _serial = serial_test_guard().await;
         clear_cooldowns_for_test();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let endpoint = format!("http://{}/", listener.local_addr().unwrap());
         tokio::spawn(async move {
             use tokio::io::AsyncWriteExt;
             let (mut stream, _) = listener.accept().await.unwrap();
@@ -1252,7 +1252,7 @@ mod tests {
             &query(CitationProvider::Crossref),
             "claim",
             &terminal_authorizer(success_sink.clone()),
-            server.uri(),
+            format!("{}/", server.uri()),
         )
         .await;
         assert!(matches!(valid, CitationLookupResult::Found { .. }));
@@ -1276,7 +1276,7 @@ mod tests {
             &query(CitationProvider::Crossref),
             "claim",
             &ExternalHttpAuthorizer::test_allow(),
-            server.uri(),
+            format!("{}/", server.uri()),
             Duration::from_millis(1),
         )
         .await;
@@ -1307,7 +1307,7 @@ mod tests {
             &query(CitationProvider::Crossref),
             "claim",
             &terminal_authorizer(sink.clone()),
-            server.uri(),
+            format!("{}/", server.uri()),
             Duration::from_millis(1),
         )
         .await;
@@ -1411,7 +1411,7 @@ mod tests {
             &query(CitationProvider::Crossref),
             "claim",
             &limited_auth,
-            limited_server.uri(),
+            format!("{}/", limited_server.uri()),
         )
         .await;
         assert_eq!(
@@ -1428,7 +1428,7 @@ mod tests {
             &query(CitationProvider::Crossref),
             "claim",
             &limited_auth,
-            limited_server.uri(),
+            format!("{}/", limited_server.uri()),
         )
         .await;
         assert!(matches!(
@@ -1453,7 +1453,7 @@ mod tests {
             &query(CitationProvider::Crossref),
             "claim",
             &terminal_authorizer(missing_sink.clone()),
-            missing_server.uri(),
+            format!("{}/", missing_server.uri()),
         )
         .await;
         assert_eq!(
@@ -1567,7 +1567,7 @@ mod tests {
         // a bounded localhost send/response failure through execute_transport,
         // without relying on a public address or a timing-sensitive closed port.
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let endpoint = format!("http://{}/", listener.local_addr().unwrap());
         tokio::spawn(async move {
             let _ = listener.accept().await;
         });
@@ -1597,7 +1597,7 @@ mod tests {
             &query(CitationProvider::Crossref),
             "claim",
             &denied,
-            server.uri(),
+            format!("{}/", server.uri()),
         )
         .await;
         assert_eq!(

@@ -3133,7 +3133,8 @@ mod tests {
             None,
             None,
             &McpToolScope::default(),
-            1,
+            // The final iteration is reserved for the model reply; allow dispatch first.
+            2,
             &crate::config::SecurityPolicy::default(),
             None,
             provenance,
@@ -3166,6 +3167,15 @@ mod tests {
 
         assert_eq!(outcome.successful_calls, 0);
         assert_eq!(outcome.failed_calls, 1);
+        assert_eq!(outcome.iterations, 1);
+        assert!(
+            !outcome.hit_cap,
+            "refusal must come from dispatch, not the iteration cap"
+        );
+        assert_eq!(outcome.tool_call_records.len(), 1);
+        assert_eq!(outcome.tool_call_records[0].server, server_id);
+        assert_eq!(outcome.tool_call_records[0].tool, "read");
+        assert!(!outcome.tool_call_records[0].success);
         assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 0);
     }
 
