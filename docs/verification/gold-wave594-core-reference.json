@@ -1,0 +1,16 @@
+{
+  "schema": "neoth-hosted-core-cli-admission/v1",
+  "run": 35944853152,
+  "source": "a881e642f8b93ce615793fd066af78f114e5aae1",
+  "artifact": 10786119710,
+  "zipSha256": "ad0680c645ca15e1434491a6977236a537b585884d7e9f74bd62995cc9522af5",
+  "cliReferenceSha256": "5e7c52fe7fbe2bd065a8c2b03775dd37397bf2594769d1ec2adc8e68a6c3c860",
+  "status": "SOURCE_ADMITTED_PASS",
+  "steps": [
+    "slim production Clippy",
+    "core test-target typecheck",
+    "public CLI build",
+    "CLI reference export"
+  ],
+  "localExecutableValidationRan": false
+}

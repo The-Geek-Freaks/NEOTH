@@ -4,10 +4,10 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 142865,
-    "sha256": "87A9E49F1E8DE8B5A7C76E459DC29024B2DAEAA926559E1B61D6B6BA9C917E7A"
+    "bytes": 143049,
+    "sha256": "39A5ACE4A6754C61BAF732253D36B874D7FA14FA5256535C4C795AB672F5FFB6"
   },
-  "sourceInputs": 812,
+  "sourceInputs": 813,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -26722,6 +26722,44 @@
       }
     ],
     "note": "Root admitted Group9511a304 allPASS and historical GUI1480e97 145PASS3FAIL; W592 two narrow Clippy fixes preserve Windows fences. Hosted core reference and Windows gates pending; no local executable checks or roadmap closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave594CoreEvidence": {
+    "base": "a881e642f8b93ce615793fd066af78f114e5aae1",
+    "sources": [
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 247413,
+        "sha256": "5E7C52FE7FBE2BD065A8C2B03775DD37397BF2594769D1EC2ADC8E68A6C3C860",
+        "blob": "1ba97c4bb4388bf82330269c44f840f10d638ccd"
+      },
+      {
+        "path": "docs/verification/gold-wave594-core-reference.json",
+        "bytes": 543,
+        "sha256": "2E7A4B0D23F7AE1A56717640ADF5560CAD2715BDA7D380A39FAFC7ECA1926BF4",
+        "blob": "0e193aea93fe75a55aaf5a81d1b2e819720fcd8a"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 211890,
+        "sha256": "5F724AE33B6D47FCCFCB108A5DBC2CBF87FCB55E24C8C15F3B95F125DF1B6F2F",
+        "blob": "a805640af7edf4715438660e1450c8a9ce62079a"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1223218,
+        "sha256": "1A2E7CFFA5053B95D33617DE3896A0D39BEA6200B52C5E8424B7F9E783494466",
+        "blob": "283c45e6c5c0ae4ebe7742eb1af2d32d785870c8"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1822500,
+        "sha256": "9348E695E779CF75D90EFF9245DF6413FA0BBB4488886C03CE88157AC55E8AE0",
+        "blob": "6ee36e04b609b72214955035e54dfe30df2c2325"
+      }
+    ],
+    "note": "W594 core35944853152 ata881e642 all4requiredstepsPASS; exact source/ZIP/CLIhash validated; generated paperless install reference imported. Group966 next; independent Windows41/GUI148 pending. No local executable validation or Road closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

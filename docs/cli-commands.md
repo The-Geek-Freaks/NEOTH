@@ -3113,6 +3113,10 @@ Ingest one OCR document through the SC-16 sanitizer + write the Obsidian note un
 - `--text-file <PATH>` — Path to a file containing the OCR text
 - `--source <SOURCE>` — Source enum: `paperless_ngx` / `tesseract_direct` / `paperless_ai` / `manual_upload`. Default `paperless_ngx`
 
+### `neoth paperless install`
+
+Pull and start the exact prepared Paperless contract, then bind API readiness to its Compose containers
+
 ### `neoth paperless prepare`
 
 Prepare a pinned, local Compose directory. This does not pull or start Docker
