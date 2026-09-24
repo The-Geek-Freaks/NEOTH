@@ -1,0 +1,42 @@
+{
+  "schema": "neoth-hosted-rustfmt-admission/v1",
+  "runId": 36052478380,
+  "sourceHead": "f3e9f2643609e5302618ce1f27908b11ed4bc8ce",
+  "artifactId": 10831143192,
+  "artifactSha256": "141e52d3905260fb28f4178b2e66454caeb95551cea8a6795080ff5afb8bf675",
+  "patchSha256": "a1863dafd8ff0ff5c9dd5515d16a5520f6df29518a319af428b47ff38f493839",
+  "files": [
+    {
+      "path": "SRC/neothd/src/cli/n8n.rs",
+      "old": "90ab548f3eadf76d9adbd22d6906b5d435285217",
+      "new": "7cf74b0d421ed7f7ae89117bfa68fa3c47459e90"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/jobs.rs",
+      "old": "738a6d473f8a9dfb93c62071fdb874f9114b814b",
+      "new": "144ee943201c5620951295896e062e380d7f0c3a"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n.rs",
+      "old": "2223ea31b0f8dc10a3efb5f67f96fb0788e89e62",
+      "new": "c819df4cf29edb35f7a47c68d7e37130362f4fcb"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "old": "b2e11b9a4d8780bab94f58347cb610ebf7d73e08",
+      "new": "9cb8a13452d717b57bd1e4e7f5c6ef5d2fa66a47"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime_tests.rs",
+      "old": "08eb10fce22751c0fbc223cf406cfe9bdfff14a6",
+      "new": "65ab1bf51a145d3d0bd9e5b9d109a729ac3ca142"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/state.rs",
+      "old": "0c501fb2d89d397de0a3afe0f9d7a4a95edc1a3a",
+      "new": "9d193f72be0c4bc5f187a14343b0b1c0f8e872a1"
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "acceptance": "Exact six-file hosted formatting; Root verified API ZIP and inner hashes plus old/new Git blobs. No behavior claim."
+}

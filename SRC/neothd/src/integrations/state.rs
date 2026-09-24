@@ -770,9 +770,7 @@ pub enum RestartDecision {
     /// absent. Keep the durable active job and its capability lease intact.
     /// A prior validator may already have performed idempotent compensation;
     /// Hold only guarantees that recovery makes no durable job-store mutation.
-    Hold {
-        failure: JobFailure,
-    },
+    Hold { failure: JobFailure },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

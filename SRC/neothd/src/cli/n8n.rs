@@ -52,7 +52,10 @@ pub enum N8nAction {
 
 pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
     match args.action {
-        N8nAction::Install { port, api_key_stdin } => run_install(port, api_key_stdin, output).await,
+        N8nAction::Install {
+            port,
+            api_key_stdin,
+        } => run_install(port, api_key_stdin, output).await,
         N8nAction::Adopt {
             endpoint,
             api_key_stdin,
@@ -118,7 +121,11 @@ fn render_managed_install_job(
         }
     }
     if let Some(failure) = &job.failure {
-        return Err(anyhow!("n8n managed install job {} failed: {}", job.job_id, failure.code));
+        return Err(anyhow!(
+            "n8n managed install job {} failed: {}",
+            job.job_id,
+            failure.code
+        ));
     }
     if job.state != crate::integrations::JobState::Ready {
         return Err(anyhow!(
@@ -327,16 +334,32 @@ mod tests {
     fn install_cli_requires_secret_stdin_and_keeps_port_typed() {
         use clap::Parser;
         let cli = crate::cli::Cli::try_parse_from([
-            "neoth", "n8n", "install", "--port", "5679", "--api-key-stdin",
+            "neoth",
+            "n8n",
+            "install",
+            "--port",
+            "5679",
+            "--api-key-stdin",
         ])
         .unwrap();
         assert!(matches!(
             cli.command,
             crate::cli::Commands::N8n(N8nArgs {
-                action: N8nAction::Install { port: 5679, api_key_stdin: true }
+                action: N8nAction::Install {
+                    port: 5679,
+                    api_key_stdin: true
+                }
             })
         ));
-        assert!(crate::cli::Cli::try_parse_from(["neoth", "n8n", "install", "--api-key", "no-secret-argv"]).is_err());
+        assert!(
+            crate::cli::Cli::try_parse_from([
+                "neoth",
+                "n8n",
+                "install",
+                "--api-key",
+                "no-secret-argv"
+            ])
+            .is_err()
+        );
     }
-
 }

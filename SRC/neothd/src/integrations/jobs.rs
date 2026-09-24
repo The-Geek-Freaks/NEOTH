@@ -2964,7 +2964,8 @@ mod tests {
         assert_eq!(cancelled.state_revision, pending_cancel.state_revision + 1);
         drop(reopened);
 
-        let untouched = IntegrationJobService::open(&home(&root), catalog(), &hold_decision).unwrap();
+        let untouched =
+            IntegrationJobService::open(&home(&root), catalog(), &hold_decision).unwrap();
         assert!(untouched.startup_recovery().is_empty());
         assert_eq!(
             untouched.get(&pending_cancel.job_id).unwrap(),
@@ -3040,15 +3041,23 @@ mod tests {
             BTreeSet::from([first_active.job_id.clone(), pending_cancel.job_id.clone()])
         );
 
-        let proven_reject = |job: &IntegrationJob| reject_decision(job, "cleanup_proven_after_hold");
-        let reopened = IntegrationJobService::open(&home(&root), catalog(), &proven_reject).unwrap();
+        let proven_reject =
+            |job: &IntegrationJob| reject_decision(job, "cleanup_proven_after_hold");
+        let reopened =
+            IntegrationJobService::open(&home(&root), catalog(), &proven_reject).unwrap();
         let first_terminal = reopened.get(&first_active.job_id).unwrap().unwrap();
         let second_terminal = reopened.get(&pending_cancel.job_id).unwrap().unwrap();
         assert_eq!(first_terminal.state, JobState::Failed);
         assert_eq!(second_terminal.state, JobState::Cancelled);
         assert!(second_terminal.cancel_requested);
-        assert_eq!(first_terminal.state_revision, first_active.state_revision + 1);
-        assert_eq!(second_terminal.state_revision, pending_cancel.state_revision + 1);
+        assert_eq!(
+            first_terminal.state_revision,
+            first_active.state_revision + 1
+        );
+        assert_eq!(
+            second_terminal.state_revision,
+            pending_cancel.state_revision + 1
+        );
         assert_eq!(reopened.startup_recovery().len(), 2);
         drop(reopened);
 
@@ -3057,7 +3066,10 @@ mod tests {
         };
         let reopened = IntegrationJobService::open(&home(&root), catalog(), &no_recovery).unwrap();
         assert!(reopened.startup_recovery().is_empty());
-        assert_eq!(reopened.get(&first_active.job_id).unwrap(), Some(first_terminal));
+        assert_eq!(
+            reopened.get(&first_active.job_id).unwrap(),
+            Some(first_terminal)
+        );
         assert_eq!(
             reopened.get(&pending_cancel.job_id).unwrap(),
             Some(second_terminal)
