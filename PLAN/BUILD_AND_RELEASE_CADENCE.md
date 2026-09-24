@@ -3,6 +3,12 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W681 hosted lifecycle formatting (2026-09-24):** Imported the exact three-file
+formatter patch from Preflight35964352196 at796d34ed. ZIP, patch checksum, source
+receipt and all old/new Gitblobs match. Core and Windows50 continue their original
+source-bound runs; Group1058 waits for the regenerated CLI reference because the
+command surface changed. No local formatter or new Road closure.
+
 **W675/W676/W679-W680 named Slack account lifecycle (2026-09-24):**
 File-backed Slack add/rotate/remove/migrate/test now uses explicit account IDs,
 strict private stdin tokens and the existing prepared-pair transaction. The

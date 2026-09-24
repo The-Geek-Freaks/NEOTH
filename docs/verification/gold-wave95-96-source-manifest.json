@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T06:21:54.4269797Z",
-  "validationStatus": "Named Slack file-backed CLI lifecycle source-reviewed; Core and focused hosted execution pending",
+  "capturedUtc": "2026-09-24T06:25:26.0466873Z",
+  "validationStatus": "Three-file hosted lifecycle formatting imported; Core/CLI export and Windows behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1497,6 +1497,11 @@
       "sha256": "2D24E5A04AA946AD7E1917F16B4E2F604A00569D9836E97620B1128099332A27"
     },
     {
+      "path": "docs/verification/gold-wave681-hosted-format.json",
+      "bytes": 888,
+      "sha256": "19EAE3EE294875CC007EDBF5A8E7BC22DA3860AB67556851F1E343E20F07B245"
+    },
+    {
       "path": "docs/verification/managed-browser-cft154.json",
       "bytes": 2497,
       "sha256": "80443D2F6E6A6E226F1617F7F5463017071D9D21130D1FCD116470F147455337"
@@ -1638,18 +1643,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 237009,
-      "sha256": "739F94FEDFDFD96179ECFDA2E8A4C29CAB0A6007E3B4A4A0DB229565B558F895"
+      "bytes": 237402,
+      "sha256": "FB5137B25FCAC5A54F81EB72875755C4EF5B06E7CD1C53489C8D138F826594B2"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1248337,
-      "sha256": "2EB084342D8A1A9093159A54712993AA0CFF4047A369E02F691A09EB1A283548"
+      "bytes": 1248730,
+      "sha256": "021E2E5EBCDBA1EDF05820570807A344559BEB4DC4BF6B8242D709454F95E44B"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1848144,
-      "sha256": "1D386055E90BF857B85CAA2AF5A91ACADF4CEF7983BFA38A6C7005AA38427F17"
+      "bytes": 1848537,
+      "sha256": "E87547EF450F8026C0918EF1E7EA145B739301178691CAFE55E7B299D4CB1882"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -2328,8 +2333,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/channel.rs",
-      "bytes": 327716,
-      "sha256": "AAA4BC83DABF1D94A6BC5B131E88CC94003F3B0CE519F8F0989414BA3302733A"
+      "bytes": 330410,
+      "sha256": "C5E69E8548635912B747AA86209E199AE45BAB9062692C16CAB8124B91F00148"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
@@ -2543,8 +2548,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
-      "bytes": 116679,
-      "sha256": "9AD720FE79E2570A165A99DD7AE5916835FF8DC612E78DC923770BCA685E84EB"
+      "bytes": 117006,
+      "sha256": "D9CFA6DB1CB2EC1910859657914CA5DAF6B9F8FAC3637AFE3C9B7BDCCBD7E038"
     },
     {
       "path": "SRC/neothd/src/cli/models.rs",
@@ -2928,8 +2933,8 @@
     },
     {
       "path": "SRC/neothd/src/config/credentials.rs",
-      "bytes": 385689,
-      "sha256": "D8FA2023E43DC5DF32A155822E5A57672563CD91F27F6B1F842F76C78D033CF7"
+      "bytes": 393806,
+      "sha256": "772950365D67A08C69264AE63FF97E746159C8C29E1ACB45B0E7E967581BBE5B"
     },
     {
       "path": "SRC/neothd/src/config/embedding.rs",

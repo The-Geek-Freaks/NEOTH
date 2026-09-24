@@ -2737,19 +2737,42 @@ mod default_invocation_tests {
     #[test]
     fn channel_account_add_slack_requires_explicit_account_and_policy() {
         let parsed = Cli::try_parse_from([
-            "neoth", "channel", "account", "add-slack", "--account", "work",
-            "--allowed-user-id", "U123PRIVATE",
-        ]).unwrap();
+            "neoth",
+            "channel",
+            "account",
+            "add-slack",
+            "--account",
+            "work",
+            "--allowed-user-id",
+            "U123PRIVATE",
+        ])
+        .unwrap();
         assert!(matches!(parsed.command,
             Commands::Channel { action: ChannelAction::Account(ChannelAccountAction::AddSlack { account, allowed_user_id }) }
                 if account.as_str() == "work" && allowed_user_id == "U123PRIVATE"
         ));
-        assert!(Cli::try_parse_from([
-            "neoth", "channel", "account", "add-slack", "--account", "work",
-        ]).is_err());
-        assert!(Cli::try_parse_from([
-            "neoth", "channel", "account", "add-slack", "--allowed-user-id", "U123PRIVATE",
-        ]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "neoth",
+                "channel",
+                "account",
+                "add-slack",
+                "--account",
+                "work",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "neoth",
+                "channel",
+                "account",
+                "add-slack",
+                "--allowed-user-id",
+                "U123PRIVATE",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

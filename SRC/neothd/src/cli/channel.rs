@@ -228,8 +228,8 @@ fn run_migrate_legacy_at(
         ),
     };
     if channel_id == ChannelId::Telegram {
-        let account_id =
-            ChannelAccountId::new(account.trim().to_owned()).context("invalid Telegram account id")?;
+        let account_id = ChannelAccountId::new(account.trim().to_owned())
+            .context("invalid Telegram account id")?;
         let freedom_path = home.join("freedom.yaml");
         let credentials_path = home.join("credentials.yaml");
         Credentials::migrate_legacy_telegram_to_account_at(
@@ -253,8 +253,12 @@ fn run_migrate_legacy_at(
         ChannelAccountId::new(account.trim().to_owned()).context("invalid Slack account id")?;
     let freedom_path = home.join("freedom.yaml");
     let credentials_path = home.join("credentials.yaml");
-    Credentials::migrate_legacy_slack_to_account_at(&freedom_path, &credentials_path, account_id.clone())
-        .with_context(|| "migrate the admitted legacy Slack singleton atomically")?;
+    Credentials::migrate_legacy_slack_to_account_at(
+        &freedom_path,
+        &credentials_path,
+        account_id.clone(),
+    )
+    .with_context(|| "migrate the admitted legacy Slack singleton atomically")?;
     let pair = crate::config::load_runtime_config_pair_from_path(&freedom_path)
         .context("validate the migrated Slack account pair")?;
     let accounts = pair.authenticated_slack_accounts()?;
@@ -707,7 +711,8 @@ pub(crate) async fn test_channel_at_with_account(
         if let Some(account) = requested_account.as_ref() {
             return test_slack_account_at_with_probe(&pair, account.clone(), |token| async move {
                 crate::channels::slack_api::auth_test(&token).await
-            }).await;
+            })
+            .await;
         }
         anyhow::ensure!(
             pair.config.channel_accounts.slack.is_empty()
@@ -781,11 +786,14 @@ fn resolve_slack_probe_binding(
     let accounts = pair.authenticated_slack_accounts().map_err(|_| anyhow::anyhow!(
         "Slack account map is invalid; repair matching policy and credential entries before probing"
     ))?;
-    let account = accounts.into_iter().find(|account| {
-        !account.is_legacy_singleton()
-            && account.channel_ref()
-                == &ChannelRef::new(ChannelId::Slack, requested_account.clone())
-    }).ok_or_else(|| anyhow::anyhow!("Slack account `{requested_account}` is not configured"))?;
+    let account = accounts
+        .into_iter()
+        .find(|account| {
+            !account.is_legacy_singleton()
+                && account.channel_ref()
+                    == &ChannelRef::new(ChannelId::Slack, requested_account.clone())
+        })
+        .ok_or_else(|| anyhow::anyhow!("Slack account `{requested_account}` is not configured"))?;
     Ok(SlackProbeBinding {
         channel_ref: account.channel_ref().clone(),
         bot_token: account.bot_token().clone(),
@@ -802,14 +810,25 @@ where
 {
     let account_id = binding.channel_ref.account_id.clone();
     let result = match validate(binding.bot_token).await {
-        Ok(response) if response.ok => account_result(ok(
-            "slack".to_owned(),
-            format!("auth.test succeeded as {}", response.user.as_deref().unwrap_or("?")),
-        ), account_id),
-        Ok(response) => account_result(fail(
-            "slack".to_owned(),
-            response.error.unwrap_or_else(|| "auth.test returned ok=false".into()),
-        ), account_id),
+        Ok(response) if response.ok => account_result(
+            ok(
+                "slack".to_owned(),
+                format!(
+                    "auth.test succeeded as {}",
+                    response.user.as_deref().unwrap_or("?")
+                ),
+            ),
+            account_id,
+        ),
+        Ok(response) => account_result(
+            fail(
+                "slack".to_owned(),
+                response
+                    .error
+                    .unwrap_or_else(|| "auth.test returned ok=false".into()),
+            ),
+            account_id,
+        ),
         Err(error) => account_result(fail("slack".to_owned(), error.to_string()), account_id),
     };
     Ok(result)
@@ -1775,7 +1794,8 @@ fn read_slack_account_credential_request_from(
         "private Slack account credential request account does not match --account"
     );
     anyhow::ensure!(
-        !request.bot_token.expose().trim().is_empty() && !request.app_token.expose().trim().is_empty(),
+        !request.bot_token.expose().trim().is_empty()
+            && !request.app_token.expose().trim().is_empty(),
         "Slack account tokens must not be blank"
     );
     Ok(SlackAccountAddFields {
@@ -2606,7 +2626,8 @@ pub async fn run_account_add_slack(
     allowed_user_id: String,
     output: &OutputFormat,
 ) -> Result<()> {
-    let mut fields = read_slack_account_credential_request_from(std::io::stdin().lock(), &account_id)?;
+    let mut fields =
+        read_slack_account_credential_request_from(std::io::stdin().lock(), &account_id)?;
     fields.allowed_user_id = Some(allowed_user_id);
     run_slack_account_add_at(&FreedomConfig::default_neoth_home(), fields, output).await
 }
@@ -2617,7 +2638,8 @@ pub async fn run_account_set_credentials(
     output: &OutputFormat,
 ) -> Result<()> {
     if channel == "slack" {
-        let fields = read_slack_account_credential_request_from(std::io::stdin().lock(), &account_id)?;
+        let fields =
+            read_slack_account_credential_request_from(std::io::stdin().lock(), &account_id)?;
         let home = FreedomConfig::default_neoth_home();
         return run_slack_account_add_at(&home, fields, output).await;
     }
@@ -2765,13 +2787,17 @@ pub fn run_account_remove(
 ) -> Result<()> {
     match channel {
         "telegram" => run_telegram_account_remove_at(
-        &FreedomConfig::default_neoth_home(),
-        channel,
-        account,
-        output,
+            &FreedomConfig::default_neoth_home(),
+            channel,
+            account,
+            output,
         ),
-        "slack" => run_slack_account_remove_at(&FreedomConfig::default_neoth_home(), account, output),
-        _ => anyhow::bail!("named account retirement supports only canonical `telegram` or `slack`"),
+        "slack" => {
+            run_slack_account_remove_at(&FreedomConfig::default_neoth_home(), account, output)
+        }
+        _ => {
+            anyhow::bail!("named account retirement supports only canonical `telegram` or `slack`")
+        }
     }
 }
 
@@ -2781,7 +2807,9 @@ fn run_slack_account_remove_at(
     output: &OutputFormat,
 ) -> Result<()> {
     let prepared = Credentials::prepare_slack_account_removal_at(
-        &home.join("freedom.yaml"), &home.join("credentials.yaml"), account,
+        &home.join("freedom.yaml"),
+        &home.join("credentials.yaml"),
+        account,
     )?;
     let retired = prepared.account_id().clone();
     Credentials::commit_prepared_slack_account_removal_at(prepared)?;
@@ -2790,9 +2818,13 @@ fn run_slack_account_remove_at(
     )?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
-            "{}", serde_json::json!({"channel":"slack","account":retired.as_str(),"removed":true})
+            "{}",
+            serde_json::json!({"channel":"slack","account":retired.as_str(),"removed":true})
         ),
-        OutputFormat::Table => println!("slack account `{}` retired and reload requested", retired.as_str()),
+        OutputFormat::Table => println!(
+            "slack account `{}` retired and reload requested",
+            retired.as_str()
+        ),
     }
     Ok(())
 }
@@ -3044,8 +3076,10 @@ async fn run_slack_account_add_at(
     run_slack_account_add_at_with_probe(home, fields, output, |binding| async move {
         probe_slack_account_binding_with(binding, |token| async move {
             crate::channels::slack_api::auth_test(&token).await
-        }).await
-    }).await
+        })
+        .await
+    })
+    .await
 }
 
 async fn run_slack_account_add_at_with_probe<F, Fut>(
@@ -3067,13 +3101,20 @@ where
                 "Slack allowed user ID must not be blank"
             );
             Credentials::prepare_slack_account_upsert_at(
-                &freedom_path, &credentials_path, fields.account_id, allowed_user_id,
-                fields.bot_token, fields.app_token,
+                &freedom_path,
+                &credentials_path,
+                fields.account_id,
+                allowed_user_id,
+                fields.bot_token,
+                fields.app_token,
             )?
         }
         None => Credentials::prepare_slack_account_rotation_at(
-            &freedom_path, &credentials_path, fields.account_id,
-            fields.bot_token, fields.app_token,
+            &freedom_path,
+            &credentials_path,
+            fields.account_id,
+            fields.bot_token,
+            fields.app_token,
         )?,
     };
     let account_id = prepared.account_id().clone();
@@ -3089,7 +3130,8 @@ where
     )?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
-            "{}", serde_json::json!({"channel":"slack","account":account_id.as_str(),"saved":true,"auth_test":true})
+            "{}",
+            serde_json::json!({"channel":"slack","account":account_id.as_str(),"saved":true,"auth_test":true})
         ),
         OutputFormat::Table => println!(
             "slack account `{}` saved after auth.test; Socket Mode startup is validated separately by daemon runtime status",
@@ -3873,8 +3915,12 @@ fn reject_flat_telegram_mutation_when_account_map_active(
     credentials: &Credentials,
 ) -> Result<()> {
     let map_active = match channel_id {
-        ChannelId::Telegram => config.telegram_account_map_active() || credentials.telegram_account_map_active(),
-        ChannelId::Slack => !config.channel_accounts.slack.is_empty() || credentials.slack_account_map_active(),
+        ChannelId::Telegram => {
+            config.telegram_account_map_active() || credentials.telegram_account_map_active()
+        }
+        ChannelId::Slack => {
+            !config.channel_accounts.slack.is_empty() || credentials.slack_account_map_active()
+        }
         _ => false,
     };
     if map_active {
@@ -6155,14 +6201,38 @@ mod tests {
     async fn slack_account_probe_requires_exact_selected_account_and_rejects_missing_or_unknown() {
         let pair = slack_status_pair();
         let work = ChannelAccountId::new("work").unwrap();
-        assert_eq!(resolve_slack_probe_binding(&pair, &work).unwrap().bot_token.expose(), "bot-secret-work");
-        assert!(resolve_slack_probe_binding(&pair, &ChannelAccountId::new("missing").unwrap()).is_err());
+        assert_eq!(
+            resolve_slack_probe_binding(&pair, &work)
+                .unwrap()
+                .bot_token
+                .expose(),
+            "bot-secret-work"
+        );
+        assert!(
+            resolve_slack_probe_binding(&pair, &ChannelAccountId::new("missing").unwrap()).is_err()
+        );
         let home = tempfile::tempdir().unwrap();
-        std::fs::write(home.path().join("freedom.yaml"), pair.config.public_yaml().unwrap()).unwrap();
-        pair.raw_credentials.write(&home.path().join("credentials.yaml")).unwrap();
-        let error = test_channel_at_with_account(home.path(), "slack", None).await.unwrap_err();
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            pair.config.public_yaml().unwrap(),
+        )
+        .unwrap();
+        pair.raw_credentials
+            .write(&home.path().join("credentials.yaml"))
+            .unwrap();
+        let error = test_channel_at_with_account(home.path(), "slack", None)
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("--account"));
-        assert!(test_channel_at_with_account(home.path(), "slack", Some(ChannelAccountId::new("missing").unwrap())).await.is_err());
+        assert!(
+            test_channel_at_with_account(
+                home.path(),
+                "slack",
+                Some(ChannelAccountId::new("missing").unwrap())
+            )
+            .await
+            .is_err()
+        );
         let mut partial = pair;
         partial.credentials.channel_accounts.slack.clear();
         assert!(resolve_slack_probe_binding(&partial, &work).is_err());
@@ -6171,9 +6241,14 @@ mod tests {
     #[test]
     fn flat_slack_mutation_refuses_active_map_before_persistence() {
         let pair = slack_status_pair();
-        assert!(reject_flat_telegram_mutation_when_account_map_active(
-            ChannelId::Slack, &pair.config, &pair.credentials,
-        ).is_err());
+        assert!(
+            reject_flat_telegram_mutation_when_account_map_active(
+                ChannelId::Slack,
+                &pair.config,
+                &pair.credentials,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -6187,8 +6262,10 @@ mod tests {
             "app_token": "xapp-private",
         });
         let parsed = read_slack_account_credential_request_from(
-            std::io::Cursor::new(serde_json::to_vec(&valid).unwrap()), &account,
-        ).unwrap();
+            std::io::Cursor::new(serde_json::to_vec(&valid).unwrap()),
+            &account,
+        )
+        .unwrap();
         assert_eq!(parsed.account_id, account);
         assert_eq!(parsed.bot_token.expose(), "xoxb-private");
         for invalid in [
@@ -6196,15 +6273,24 @@ mod tests {
             serde_json::json!({"schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION, "channel":"Slack", "account":"work", "bot_token":"xoxb", "app_token":"xapp"}),
             serde_json::json!({"schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION, "channel":"slack", "account":"work", "bot_token":"xoxb", "app_token":"xapp", "unexpected":"secret"}),
         ] {
-            assert!(read_slack_account_credential_request_from(
-                std::io::Cursor::new(serde_json::to_vec(&invalid).unwrap()), &account,
-            ).is_err());
+            assert!(
+                read_slack_account_credential_request_from(
+                    std::io::Cursor::new(serde_json::to_vec(&invalid).unwrap()),
+                    &account,
+                )
+                .is_err()
+            );
         }
         let malformed = br#"{"schema_version":1,"channel":"slack","account":"work","bot_token":{"private":"SLACK_PARSE_SECRET"},"app_token":"xapp"}"#;
-        let error = read_slack_account_credential_request_from(
-            std::io::Cursor::new(malformed), &account,
-        ).err().unwrap().to_string();
-        assert_eq!(error, "private Slack account credential request is malformed");
+        let error =
+            read_slack_account_credential_request_from(std::io::Cursor::new(malformed), &account)
+                .err()
+                .unwrap()
+                .to_string();
+        assert_eq!(
+            error,
+            "private Slack account credential request is malformed"
+        );
         assert!(!error.contains("SLACK_PARSE_SECRET"));
     }
 
@@ -6218,12 +6304,26 @@ mod tests {
             bot_token: SecretString::from("xoxb-work"),
             app_token: SecretString::from("xapp-work"),
         };
-        run_slack_account_add_at_with_probe(home.path(), fields, &OutputFormat::Json, |binding| async move {
-            assert_eq!(binding.channel_ref.account_id.as_str(), "work");
-            assert_eq!(binding.bot_token.expose(), "xoxb-work");
-            Ok(ChannelTestResult { channel: "slack".into(), account: Some(ChannelAccountId::new("work").unwrap()), status: "ok", detail: "accepted".into() })
-        }).await.unwrap();
-        let pair = crate::config::load_runtime_config_pair_from_path(&home.path().join("freedom.yaml")).unwrap();
+        run_slack_account_add_at_with_probe(
+            home.path(),
+            fields,
+            &OutputFormat::Json,
+            |binding| async move {
+                assert_eq!(binding.channel_ref.account_id.as_str(), "work");
+                assert_eq!(binding.bot_token.expose(), "xoxb-work");
+                Ok(ChannelTestResult {
+                    channel: "slack".into(),
+                    account: Some(ChannelAccountId::new("work").unwrap()),
+                    status: "ok",
+                    detail: "accepted".into(),
+                })
+            },
+        )
+        .await
+        .unwrap();
+        let pair =
+            crate::config::load_runtime_config_pair_from_path(&home.path().join("freedom.yaml"))
+                .unwrap();
         assert_eq!(pair.authenticated_slack_accounts().unwrap().len(), 1);
     }
 
@@ -6236,18 +6336,59 @@ mod tests {
         std::fs::write(&credentials, "preserve: exact\n").unwrap();
         let before_freedom = std::fs::read(&freedom).unwrap();
         let before_credentials = std::fs::read(&credentials).unwrap();
-        let failed = SlackAccountAddFields { account_id: ChannelAccountId::new("work").unwrap(), allowed_user_id: Some("U123PRIVATE".into()), bot_token: SecretString::from("xoxb-work"), app_token: SecretString::from("xapp-work") };
-        assert!(run_slack_account_add_at_with_probe(home.path(), failed, &OutputFormat::Json, |_binding| async move {
-            Ok(ChannelTestResult { channel: "slack".into(), account: None, status: "fail", detail: "rejected".into() })
-        }).await.is_err());
+        let failed = SlackAccountAddFields {
+            account_id: ChannelAccountId::new("work").unwrap(),
+            allowed_user_id: Some("U123PRIVATE".into()),
+            bot_token: SecretString::from("xoxb-work"),
+            app_token: SecretString::from("xapp-work"),
+        };
+        assert!(
+            run_slack_account_add_at_with_probe(
+                home.path(),
+                failed,
+                &OutputFormat::Json,
+                |_binding| async move {
+                    Ok(ChannelTestResult {
+                        channel: "slack".into(),
+                        account: None,
+                        status: "fail",
+                        detail: "rejected".into(),
+                    })
+                }
+            )
+            .await
+            .is_err()
+        );
         assert_eq!(std::fs::read(&freedom).unwrap(), before_freedom);
         assert_eq!(std::fs::read(&credentials).unwrap(), before_credentials);
-        let stale = SlackAccountAddFields { account_id: ChannelAccountId::new("work").unwrap(), allowed_user_id: Some("U123PRIVATE".into()), bot_token: SecretString::from("xoxb-work"), app_token: SecretString::from("xapp-work") };
-        assert!(run_slack_account_add_at_with_probe(home.path(), stale, &OutputFormat::Json, move |_binding| async move {
-            std::fs::write(&freedom, "raced: true\n").unwrap();
-            Ok(ChannelTestResult { channel: "slack".into(), account: None, status: "ok", detail: "accepted".into() })
-        }).await.is_err());
-        assert_eq!(std::fs::read_to_string(home.path().join("freedom.yaml")).unwrap(), "raced: true\n");
+        let stale = SlackAccountAddFields {
+            account_id: ChannelAccountId::new("work").unwrap(),
+            allowed_user_id: Some("U123PRIVATE".into()),
+            bot_token: SecretString::from("xoxb-work"),
+            app_token: SecretString::from("xapp-work"),
+        };
+        assert!(
+            run_slack_account_add_at_with_probe(
+                home.path(),
+                stale,
+                &OutputFormat::Json,
+                move |_binding| async move {
+                    std::fs::write(&freedom, "raced: true\n").unwrap();
+                    Ok(ChannelTestResult {
+                        channel: "slack".into(),
+                        account: None,
+                        status: "ok",
+                        detail: "accepted".into(),
+                    })
+                }
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(home.path().join("freedom.yaml")).unwrap(),
+            "raced: true\n"
+        );
     }
 
     #[tokio::test]
@@ -6260,21 +6401,51 @@ mod tests {
             bot_token: SecretString::from("xoxb-before"),
             app_token: SecretString::from("xapp-before"),
         };
-        run_slack_account_add_at_with_probe(home.path(), original, &OutputFormat::Json, |_binding| async move {
-            Ok(ChannelTestResult { channel: "slack".into(), account: None, status: "ok", detail: "accepted".into() })
-        }).await.unwrap();
+        run_slack_account_add_at_with_probe(
+            home.path(),
+            original,
+            &OutputFormat::Json,
+            |_binding| async move {
+                Ok(ChannelTestResult {
+                    channel: "slack".into(),
+                    account: None,
+                    status: "ok",
+                    detail: "accepted".into(),
+                })
+            },
+        )
+        .await
+        .unwrap();
         let rotation = SlackAccountAddFields {
             account_id: ChannelAccountId::new("work").unwrap(),
             allowed_user_id: None,
             bot_token: SecretString::from("xoxb-rotated"),
             app_token: SecretString::from("xapp-rotated"),
         };
-        run_slack_account_add_at_with_probe(home.path(), rotation, &OutputFormat::Json, |binding| async move {
-            assert_eq!(binding.bot_token.expose(), "xoxb-rotated");
-            Ok(ChannelTestResult { channel: "slack".into(), account: None, status: "ok", detail: "accepted".into() })
-        }).await.unwrap();
-        let pair = crate::config::load_runtime_config_pair_from_path(&home.path().join("freedom.yaml")).unwrap();
-        assert_eq!(pair.config.channel_accounts.slack[&ChannelAccountId::new("work").unwrap()].allowed_user_id, "U123PRIVATE");
+        run_slack_account_add_at_with_probe(
+            home.path(),
+            rotation,
+            &OutputFormat::Json,
+            |binding| async move {
+                assert_eq!(binding.bot_token.expose(), "xoxb-rotated");
+                Ok(ChannelTestResult {
+                    channel: "slack".into(),
+                    account: None,
+                    status: "ok",
+                    detail: "accepted".into(),
+                })
+            },
+        )
+        .await
+        .unwrap();
+        let pair =
+            crate::config::load_runtime_config_pair_from_path(&home.path().join("freedom.yaml"))
+                .unwrap();
+        assert_eq!(
+            pair.config.channel_accounts.slack[&ChannelAccountId::new("work").unwrap()]
+                .allowed_user_id,
+            "U123PRIVATE"
+        );
     }
 
     #[test]
@@ -6285,17 +6456,31 @@ mod tests {
         let credentials = home.path().join("credentials.yaml");
         for account in ["work", "personal"] {
             let prepared = Credentials::prepare_slack_account_upsert_at(
-                &freedom, &credentials, ChannelAccountId::new(account).unwrap(), "U123PRIVATE".into(),
-                SecretString::from(format!("xoxb-{account}")), SecretString::from(format!("xapp-{account}")),
-            ).unwrap();
+                &freedom,
+                &credentials,
+                ChannelAccountId::new(account).unwrap(),
+                "U123PRIVATE".into(),
+                SecretString::from(format!("xoxb-{account}")),
+                SecretString::from(format!("xapp-{account}")),
+            )
+            .unwrap();
             Credentials::commit_prepared_slack_account_upsert_at(prepared).unwrap();
         }
-        run_slack_account_remove_at(home.path(), ChannelAccountId::new("work").unwrap(), &OutputFormat::Json).unwrap();
+        run_slack_account_remove_at(
+            home.path(),
+            ChannelAccountId::new("work").unwrap(),
+            &OutputFormat::Json,
+        )
+        .unwrap();
         let pair = crate::config::load_runtime_config_pair_from_path(&freedom).unwrap();
         let accounts = pair.authenticated_slack_accounts().unwrap();
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0].channel_ref().account_id.as_str(), "personal");
-        assert!(home.path().join(crate::config::reload::RELOAD_SENTINEL_NAME).exists());
+        assert!(
+            home.path()
+                .join(crate::config::reload::RELOAD_SENTINEL_NAME)
+                .exists()
+        );
     }
 
     #[test]

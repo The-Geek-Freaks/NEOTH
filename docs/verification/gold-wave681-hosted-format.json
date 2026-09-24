@@ -1,0 +1,26 @@
+{
+  "schema": "neoth-w681-hosted-format/v1",
+  "run": 35964352196,
+  "source": "796d34ed21efd44fd9230a7bc598bf9a82d5fbaa",
+  "artifact": 10793298929,
+  "zipSha256": "D43061BCE868EDF7EDE0BB59D7F82F9E510FD49A73A50C763AB71DCDE8CB2752",
+  "patchSha256": "86D6C8C47A64A4D12843821900ED02AE3D6F4EDEF921FDFFAB088161252C8E9D",
+  "blobs": [
+    {
+      "path": "SRC/neothd/src/cli/channel.rs",
+      "old": "379d0e680e948f92e003f9a2735b7df0bb222676",
+      "new": "106c5d024ad0245d08d7e72d180ca44f7d17f9cb"
+    },
+    {
+      "path": "SRC/neothd/src/cli/mod.rs",
+      "old": "821fda2c44ed3c6ddf06bc7538afe30012ed009f",
+      "new": "7d0de1e6fe4efaf35f97562129b3a53e2a76ed75"
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials.rs",
+      "old": "ba0621ac12178abc6bbeae61388ddda1272ae660",
+      "new": "9c5ea204a345d165eec7af86d701a1f594371c56"
+    }
+  ],
+  "localFormatterRan": false
+}
