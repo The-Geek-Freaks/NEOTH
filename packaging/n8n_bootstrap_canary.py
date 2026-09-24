@@ -18,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time
+from urllib.parse import quote
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -28,6 +29,8 @@ UPSTREAM_COMMIT = "a331d3858797b161e4acba288396be3835425d8e"
 MAX_OUTPUT = 16 * 1024
 COMMAND_TIMEOUT = 45
 STARTUP_TIMEOUT = 75
+WORKFLOW_ASSETS = ("morning_brief.json", "daily_summary.json", "weekly_stats.json")
+WORKFLOW_FIELDS = frozenset(("name", "description", "active", "nodes", "connections", "settings", "tags"))
 
 # This program is constant. Its operation and all secret values are read from
 # stdin JSON, never from argv or an environment variable.
@@ -41,9 +44,12 @@ const main = async () => {
   do { r = await fetch(base + '/rest/settings', {headers:{'browser-id':p.browserId}}).catch(() => null); settings = r && await r.json().catch(() => null); if (r?.ok && settings?.data?.userManagement) break; await new Promise(resolve => setTimeout(resolve, 500)); } while (Date.now() < until);
   if (!r || !r.ok || !settings?.data?.userManagement || settings.data.userManagement.showSetupOnFirstLoad !== true) fail('settings', r?.status ?? 0);
   try { r = await fetch(base + '/rest/owner/setup', {method:'POST', headers, body:JSON.stringify({email:p.email,firstName:'NEOTH',lastName:'Canary',password:p.password})}); } catch (_) { fail('owner_setup', 0, true); }
-  const setup = await r.json().catch(() => null); const cookie = r.headers.get('set-cookie');
-  if (!r.ok) fail('owner_setup', r.status); if (!setup?.data || !cookie) fail('owner_setup', r.status, true);
-  try { r = await fetch(base + '/rest/api-keys', {method:'POST', headers:{...headers, cookie}, body:JSON.stringify({label:p.label,scopes:['workflow:list'],expiresAt:null})}); } catch (_) { fail('key_mint', 0, true); }
+  const setup = await r.json().catch(() => null); const setupCookie = r.headers.get('set-cookie');
+  if (!r.ok) fail('owner_setup', r.status); if (!setup?.data || !setupCookie) fail('owner_setup', r.status, true);
+  try { r = await fetch(base + '/rest/login', {method:'POST', headers, body:JSON.stringify({emailOrLdapLoginId:p.email,password:p.password})}); } catch (_) { fail('owner_login', 0, true); }
+  const login = await r.json().catch(() => null); const cookie = r.headers.get('set-cookie');
+  if (!r.ok) fail('owner_login', r.status); if (!login?.data || !cookie) fail('owner_login', r.status, true);
+  try { r = await fetch(base + '/rest/api-keys', {method:'POST', headers:{...headers, cookie}, body:JSON.stringify({label:p.label,scopes:['workflow:list','workflow:create','workflow:read'],expiresAt:null})}); } catch (_) { fail('key_mint', 0, true); }
   const key = await r.json().catch(() => null);
   if (!r.ok) fail('key_mint', r.status); if (typeof key?.data?.rawApiKey !== 'string' || key.data.rawApiKey.length < 8) fail('key_mint', r.status, true);
   process.stdout.write(JSON.stringify({ok:true,rawApiKey:key.data.rawApiKey,keyId:typeof key.data.id==='string'?key.data.id:null,mintStatus:r.status})+'\n');
@@ -296,6 +302,80 @@ def runtime_observation(identifier: str) -> dict[str, object]:
         return {"observation_error": "inspect_unavailable"}
 
 
+def workflow_payload(path: Path) -> dict:
+    value = json.loads(path.read_bytes())
+    if not isinstance(value, dict) or set(value).difference(WORKFLOW_FIELDS):
+        raise CanaryFailure("workflow_payload_invalid")
+    payload = {key: value[key] for key in WORKFLOW_FIELDS if key in value}
+    if payload.get("active") is not False or not isinstance(payload.get("name"), str) or not isinstance(payload.get("nodes"), list) or not payload["nodes"] or not isinstance(payload.get("connections"), dict) or not isinstance(payload.get("settings"), dict):
+        raise CanaryFailure("workflow_payload_invalid")
+    return {key: value for key, value in payload.items() if key not in {"active", "tags"}}
+
+
+def workflow_request(port: int, raw_key: str, method: str, path: str, payload: dict | None = None) -> tuple[int, dict | None]:
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        body = json.dumps(payload, separators=(",", ":")).encode() if payload is not None else None
+        headers = {"Connection": "close", "X-N8N-API-KEY": raw_key}
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+        connection.request(method, path, body=body, headers=headers)
+        status, raw = http_response(connection)
+        try:
+            return status, json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return status, None
+    finally:
+        connection.close()
+
+
+def preserves_submitted_fields(expected: object, observed: object) -> bool:
+    """Permit server-added defaults, but require every submitted graph field."""
+    if isinstance(expected, dict):
+        return isinstance(observed, dict) and all(
+            key in observed and preserves_submitted_fields(value, observed[key])
+            for key, value in expected.items()
+        )
+    if isinstance(expected, list):
+        return isinstance(observed, list) and len(expected) == len(observed) and all(
+            preserves_submitted_fields(left, right) for left, right in zip(expected, observed)
+        )
+    return type(expected) is type(observed) and expected == observed
+
+
+def workflow_matches_payload(payload: dict, observed: dict) -> bool:
+    for field in ("nodes", "connections"):
+        if json.dumps(payload[field], sort_keys=True) != json.dumps(observed.get(field), sort_keys=True):
+            return False
+    return preserves_submitted_fields(payload, observed)
+
+
+def import_workflows(repository: Path, port: int, raw_key: str, receipt: dict) -> None:
+    assets = repository / "SRC" / "neothd" / "assets" / "n8n_workflows"
+    receipt["workflow_asset_sha256"] = {name: sha256_file(assets / name) for name in WORKFLOW_ASSETS}
+    status, listed = workflow_request(port, raw_key, "GET", "/api/v1/workflows?limit=1")
+    if status != 200 or not isinstance(listed, dict) or not isinstance(listed.get("data"), list):
+        raise CanaryFailure("workflow_list_failed")
+    receipt["workflow_import_stages"] = ["workflow_list_passed"]
+    for name in WORKFLOW_ASSETS:
+        payload = workflow_payload(assets / name)
+        try:
+            status, created = workflow_request(port, raw_key, "POST", "/api/v1/workflows", payload)
+        except (OSError, http.client.HTTPException, CanaryFailure) as error:
+            receipt["unknown_effect_stage"] = f"workflow_create_{name}"
+            raise UnknownEffect("workflow_create_unknown") from error
+        created_value = created.get("data", created) if isinstance(created, dict) else None
+        if status not in (200, 201) or not isinstance(created_value, dict) or not isinstance(created_value.get("id"), str) or not created_value["id"]:
+            receipt["unknown_effect_stage"] = f"workflow_create_{name}"
+            raise UnknownEffect("workflow_create_unknown")
+        workflow_id = created_value["id"]
+        status, read = workflow_request(port, raw_key, "GET", f"/api/v1/workflows/{quote(workflow_id, safe='')}")
+        read_value = read.get("data", read) if isinstance(read, dict) else None
+        if status != 200 or not isinstance(read_value, dict) or read_value.get("id") != workflow_id or read_value.get("active") is not False or not workflow_matches_payload(payload, read_value):
+            raise CanaryFailure("workflow_read_verification_failed")
+        receipt["workflow_import_stages"].append(f"workflow_{name}_created_inactive_verified")
+
+
 def in_container_negative_probe(identifier: str) -> dict[str, object]:
     try:
         result = run(("docker", "exec", "-u", "node", identifier, "node", "-e", IN_CONTAINER_NEGATIVE_PROBE_NODE), timeout=COMMAND_TIMEOUT)
@@ -422,7 +502,7 @@ def main() -> int:
             raise CanaryFailure("bootstrap_isolation_mismatch")
         receipt["stages"].append("isolated_bootstrap_bound")
         receipt["node_version"] = docker("exec", "-u", "node", bootstrap_id, "node", "--version").decode("utf-8", "replace").strip()[:64]
-        browser_id = secrets.token_urlsafe(24); password = secrets.token_urlsafe(32); email = f"canary-{suffix}@invalid.test"; label = f"neoth-bootstrap-{suffix}-{secrets.token_hex(8)}"
+        browser_id = secrets.token_urlsafe(24); password = "N9" + secrets.token_urlsafe(30); email = f"canary-{suffix}@invalid.test"; label = f"neoth-bootstrap-{suffix}-{secrets.token_hex(8)}"
         payload = json.dumps({"browserId": browser_id, "password": password, "email": email, "label": label}, separators=(",", ":")).encode()
         node = bootstrap_node_response(bootstrap_id, payload)
         if node.get("ok") is not True or not isinstance(node.get("rawApiKey"), str):
@@ -461,6 +541,7 @@ def main() -> int:
                 receipt["in_container_negative_probe"] = in_container_negative_probe(runtime_id)
             raise
         receipt["negative_status"] = probe.get("negativeStatus"); receipt["positive_status"] = probe.get("positiveStatus"); receipt["stages"].append("negative_and_authenticated_probe_passed")
+        import_workflows(repository, assigned_port, raw_key, receipt)
         receipt["outcome"] = "passed"
         exit_code = 0
     except UnknownEffect as error:

@@ -64,3 +64,12 @@ and all seven ordered lifecycle stages. Root verified the source and artifact
 bindings in [the feasibility receipt](verification/gold-wave964-n8n-bootstrap-feasibility.json).
 The product CLI bootstrap, restart/cancellation recovery and workflow imports
 remain separate open gates.
+
+W975 extends this gate with three inactive workflow creates and exact-ID
+readback. Each asset hash is recorded; the readback must preserve every
+submitted node and connection and all submitted description/settings values.
+Server-added settings defaults are permitted. The key has only workflow:list,
+workflow:create and workflow:read scopes. Neither workflow activation nor
+execution occurs. Unknown create responses are not retried or guessed deleted.
+The disposable owned volume is still removed by the canary cleanup. Product
+import recovery and real NEOTH workflow execution remain open.

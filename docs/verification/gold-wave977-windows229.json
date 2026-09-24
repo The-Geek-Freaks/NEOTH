@@ -1,0 +1,54 @@
+{
+  "schema": "neoth-windows-hosted-admission/v1",
+  "wave": 977,
+  "rootVerified": true,
+  "run": 36062229748,
+  "source": "0c7c9dea919ebe8b5722c8732b5476ebb02c42bf",
+  "artifact": 10836080241,
+  "apiZipSha256": "737e815a99e525353336c081a1a443b08c9662a0a8c0f03eb2f922ab4bf21471",
+  "executed": 229,
+  "passed": 223,
+  "failed": 6,
+  "missing": 0,
+  "sourceBindingCount": 46,
+  "checks": [
+    "Exact historical source and artifact API ZIP digest",
+    "46historical source/input bindings",
+    "229ordered selected test identities and log SHA256",
+    "229actual exact terminals and one-test summaries"
+  ],
+  "failures": [
+    {
+      "test": "tools::citation_http::tests::authorized_send_failure_is_provider_unavailable_while_gate_denial_is_permission_denied",
+      "index": 201,
+      "message": "assertion `left == right` failed"
+    },
+    {
+      "test": "tools::citation_http::tests::response_status_decode_and_size_failures_write_failure_terminals",
+      "index": 202,
+      "message": "assertion `left == right` failed"
+    },
+    {
+      "test": "tools::citation_http::tests::truncated_stream_writes_failure_terminal_and_valid_record_writes_success_terminal",
+      "index": 203,
+      "message": "assertion `left == right` failed"
+    },
+    {
+      "test": "tools::citation_http::tests::header_timeout_preserves_timeout_state_and_writes_failure_terminal",
+      "index": 204,
+      "message": "assertion `left == right` failed"
+    },
+    {
+      "test": "tools::citation_http::tests::rate_limit_is_failure_terminal_before_cooldown_and_not_found_is_success_terminal",
+      "index": 205,
+      "message": "assertion `left == right` failed"
+    },
+    {
+      "test": "mcp::dispatch_loop::tests::trusted_nonpublic_source_refuses_before_spawn_through_budget_wrapper",
+      "index": 206,
+      "message": "assertion `left == right` failed"
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "currentDirtyWipAdmitted": false
+}

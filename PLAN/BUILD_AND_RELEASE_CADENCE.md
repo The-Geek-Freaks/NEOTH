@@ -3,6 +3,22 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W975/W980 inactive workflow image gate (2026-09-25):** The main-only n8n
+image canary now reads and hashes the three checked-in bootstrap assets, maps
+only public write fields and creates each once without activation. Exact-ID
+readback must preserve the submitted graph, connections, description and
+settings; server-added settings defaults are allowed. Ambiguous create results
+are recorded as unknown, without retry or guessed deletion. Helper regressions
+cover these failure boundaries and all three real asset shapes. The canary
+also proves explicit owner login using the pinned emailOrLdapLoginId contract,
+and generates a password satisfying its uppercase/digit/length requirements.
+Hosted execution remains pending. This gate proves inactive import storage,
+not workflow execution, NEOTH reachability or the product importer.
+Root admitted historical Windows229at0c7:223PASS6FAIL/0missing,46source/input
+bindings and229actual exactterminals; same five Citation and one MCP failures
+as Linux, repaired ine6f. Windows232atd67run36064956250 is running. Linux
+Group1446ine6frun36064384885 and Core36064386954 now report success; full
+source-bound artifact admission follows before C7 closure.
 **W971 workflow payload shape (2026-09-24):** The pinned n8n public create DTO
 requires a settings object. Root independently read the upstream write schema;
 all settings keys are optional, so the three bootstrap assets now provide
