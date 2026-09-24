@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W618 reviewed;Group971PASS;GUI147/148;Windows45next;hosted response checks pending",
+  "status": "W618 exact hosted formatter imported; core/native pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 147005,
-    "sha256": "90AA67DFD207D36EDC400A045B7DFF9E11CCAEE0701E046C04E43A9477FC1B04"
+    "bytes": 146980,
+    "sha256": "A94EAAFB73B70C68DF4B965B44ED79A6608D6167EF5FD275EC056ADDF2D8DEAF"
   },
   "sourceInputs": 834,
   "requiredNativeTests": [
@@ -7494,31 +7494,31 @@
     {
       "test": "cli::recall_score::tests::anchor_link_create_cli_requires_explicit_inputs_and_never_overwrites_output",
       "sourcePath": "SRC/neothd/src/cli/recall_score.rs",
-      "sourceSha256": "5401FC5BA8DDEDB37151EC38D6A68267ADD7DA89774F7BE99439436F99A25D53",
+      "sourceSha256": "5423A3F9742088AB1C3975261E9AC8240533CD3C2D3A28D8BB2C7B341F8EEB11",
       "junitClass": "neoth"
     },
     {
       "test": "recall::parity_responses::tests::response_pairs_produce_actual_four_grader_inputs_and_batch_digests",
       "sourcePath": "SRC/neothd/src/recall/parity_responses.rs",
-      "sourceSha256": "C5D1E25A786721BA8212BD91BB51F1102A569C8F1091BEEE63563C61FF066077",
+      "sourceSha256": "C7A4B5D9ED0949C8A2A1A7DDB3E8D89DAFA5B57CA429BF9F4B7FE6132253E35E",
       "junitClass": "neoth"
     },
     {
       "test": "recall::parity_responses::tests::response_pairs_reject_partial_or_mismatched_goldset_matrix",
       "sourcePath": "SRC/neothd/src/recall/parity_responses.rs",
-      "sourceSha256": "C5D1E25A786721BA8212BD91BB51F1102A569C8F1091BEEE63563C61FF066077",
+      "sourceSha256": "C7A4B5D9ED0949C8A2A1A7DDB3E8D89DAFA5B57CA429BF9F4B7FE6132253E35E",
       "junitClass": "neoth"
     },
     {
       "test": "recall::parity_responses::tests::response_pairs_distinguish_empty_observations_from_missing_unknown_and_duplicate_pairs",
       "sourcePath": "SRC/neothd/src/recall/parity_responses.rs",
-      "sourceSha256": "C5D1E25A786721BA8212BD91BB51F1102A569C8F1091BEEE63563C61FF066077",
+      "sourceSha256": "C7A4B5D9ED0949C8A2A1A7DDB3E8D89DAFA5B57CA429BF9F4B7FE6132253E35E",
       "junitClass": "neoth"
     },
     {
       "test": "cli::recall_score::tests::grader_input_bundle_preflight_is_atomic_at_the_digest_marker",
       "sourcePath": "SRC/neothd/src/cli/recall_score.rs",
-      "sourceSha256": "5401FC5BA8DDEDB37151EC38D6A68267ADD7DA89774F7BE99439436F99A25D53",
+      "sourceSha256": "5423A3F9742088AB1C3975261E9AC8240533CD3C2D3A28D8BB2C7B341F8EEB11",
       "junitClass": "neoth"
     }
   ],
@@ -27534,6 +27534,26 @@
       }
     ],
     "note": "Publish complete offline grader inputs and unique CLI flag; retain exact native and GUI outcomes; no Road closure",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave627HostedFormat": {
+    "base": "1a92014b07ec61cad031771f6e2dce5b52e0e2ae",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/recall_score.rs",
+        "bytes": 62709,
+        "sha256": "5423A3F9742088AB1C3975261E9AC8240533CD3C2D3A28D8BB2C7B341F8EEB11",
+        "blob": "a4348fe43a3b9af2efadfd68abefbd4f31d28890"
+      },
+      {
+        "path": "SRC/neothd/src/recall/parity_responses.rs",
+        "bytes": 14750,
+        "sha256": "C7A4B5D9ED0949C8A2A1A7DDB3E8D89DAFA5B57CA429BF9F4B7FE6132253E35E",
+        "blob": "4824aa9e12c3c9990e906b5829998142ec41b9f9"
+      }
+    ],
+    "note": "Two-file exact generated patch; both old/new blobs and ZIP/receipt hashes verified",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

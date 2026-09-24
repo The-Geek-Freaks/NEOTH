@@ -40,7 +40,6 @@ use crate::recall::{
         MAX_CANDIDATE_RECORD_BYTES, load_candidate_evidence_with_context,
         summarize_candidate_evidence,
     },
-    parity_responses::{MAX_RESPONSE_PAIR_BYTES, MAX_RUBRIC_BYTES, PreparedGraderInputs, prepare_grader_inputs},
     parity_harness::{
         build_attested_parity_gate_report_with_context, build_report_with_context,
         ingest_attested_four_grader_batch_results_with_context, ingest_offline_grades_with_context,
@@ -50,6 +49,9 @@ use crate::recall::{
         validate_attested_four_grader_batch_results_with_context,
     },
     parity_import_receipt::{MAX_PARITY_IMPORT_RECEIPT_BYTES, parse_signed_parity_import_receipt},
+    parity_responses::{
+        MAX_RESPONSE_PAIR_BYTES, MAX_RUBRIC_BYTES, PreparedGraderInputs, prepare_grader_inputs,
+    },
 };
 
 #[derive(Args, Debug, Clone)]
@@ -727,11 +729,8 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                 MAX_RESPONSE_PAIR_BYTES as u64,
                 "two-system response pairs",
             )?;
-            let rubric_bytes = read_offline_input(
-                &rubric,
-                MAX_RUBRIC_BYTES as u64,
-                "four-grader rubric",
-            )?;
+            let rubric_bytes =
+                read_offline_input(&rubric, MAX_RUBRIC_BYTES as u64, "four-grader rubric")?;
             let prepared = prepare_grader_inputs(
                 &response_bytes,
                 &rubric_bytes,
@@ -1522,24 +1521,49 @@ mod tests {
             digests: crate::recall::parity_batch_plan::FourGraderInputDigestFile {
                 schema_version: 1,
                 purpose: crate::recall::parity_batch_plan::FOUR_GRADER_BATCH_INPUT_PURPOSE.into(),
-                inputs: input_bytes.iter().map(|(grader_id, bytes)| crate::recall::parity_batch_plan::FourGraderInputDigest {
-                    grader_id: grader_id.clone(),
-                    prompt_sha256: hex::encode(sha2::Sha256::digest(b"rubric")),
-                    input_sha256: hex::encode(sha2::Sha256::digest(bytes)),
-                }).collect(),
+                inputs: input_bytes
+                    .iter()
+                    .map(|(grader_id, bytes)| {
+                        crate::recall::parity_batch_plan::FourGraderInputDigest {
+                            grader_id: grader_id.clone(),
+                            prompt_sha256: hex::encode(sha2::Sha256::digest(b"rubric")),
+                            input_sha256: hex::encode(sha2::Sha256::digest(bytes)),
+                        }
+                    })
+                    .collect(),
             },
         };
         let blocked = tempfile::tempdir().unwrap();
-        std::fs::write(blocked.path().join("four-grader-input-digests.json"), b"occupied").unwrap();
+        std::fs::write(
+            blocked.path().join("four-grader-input-digests.json"),
+            b"occupied",
+        )
+        .unwrap();
         assert!(write_new_grader_inputs(blocked.path(), &prepared).is_err());
-        assert!(prepared.inputs.iter().all(|(grader_id, _)| !blocked.path().join(format!("grader-input-{grader_id}.json")).exists()));
+        assert!(prepared.inputs.iter().all(|(grader_id, _)| {
+            !blocked
+                .path()
+                .join(format!("grader-input-{grader_id}.json"))
+                .exists()
+        }));
         let output = tempfile::tempdir().unwrap();
         write_new_grader_inputs(output.path(), &prepared).unwrap();
-        let digests: crate::recall::parity_batch_plan::FourGraderInputDigestFile = serde_json::from_slice(&std::fs::read(output.path().join("four-grader-input-digests.json")).unwrap()).unwrap();
+        let digests: crate::recall::parity_batch_plan::FourGraderInputDigestFile =
+            serde_json::from_slice(
+                &std::fs::read(output.path().join("four-grader-input-digests.json")).unwrap(),
+            )
+            .unwrap();
         for ((grader_id, bytes), digest) in prepared.inputs.iter().zip(&digests.inputs) {
             assert_eq!(grader_id, &digest.grader_id);
-            assert_eq!(hex::encode(sha2::Sha256::digest(bytes)), digest.input_sha256);
-            assert_eq!(std::fs::read(output.path().join(format!("grader-input-{grader_id}.json"))).unwrap(), *bytes);
+            assert_eq!(
+                hex::encode(sha2::Sha256::digest(bytes)),
+                digest.input_sha256
+            );
+            assert_eq!(
+                std::fs::read(output.path().join(format!("grader-input-{grader_id}.json")))
+                    .unwrap(),
+                *bytes
+            );
         }
     }
 

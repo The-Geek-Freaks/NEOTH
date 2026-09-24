@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T03:23:14.3951787Z",
-  "validationStatus": "W618 reviewed;Group971PASS;GUI147/148;Windows45next;hosted response checks pending",
+  "capturedUtc": "2026-09-24T03:27:20.0485983Z",
+  "validationStatus": "W618 exact hosted formatter imported; core/native pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2443,8 +2443,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/recall_score.rs",
-      "bytes": 62310,
-      "sha256": "5401FC5BA8DDEDB37151EC38D6A68267ADD7DA89774F7BE99439436F99A25D53"
+      "bytes": 62709,
+      "sha256": "5423A3F9742088AB1C3975261E9AC8240533CD3C2D3A28D8BB2C7B341F8EEB11"
     },
     {
       "path": "SRC/neothd/src/cli/recall.rs",
@@ -3708,8 +3708,8 @@
     },
     {
       "path": "SRC/neothd/src/recall/parity_responses.rs",
-      "bytes": 11969,
-      "sha256": "C5D1E25A786721BA8212BD91BB51F1102A569C8F1091BEEE63563C61FF066077"
+      "bytes": 14750,
+      "sha256": "C7A4B5D9ED0949C8A2A1A7DDB3E8D89DAFA5B57CA429BF9F4B7FE6132253E35E"
     },
     {
       "path": "SRC/neothd/src/recall/parity_run.rs",
