@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Group1204allPASS;G2/G5lint21PASS;sevencriteria accepted;D6formatimportedbehaviourpending",
+  "status": "ExplicitGUIlintcommand allowlist alignment;remote rerunpending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 169740,
-    "sha256": "1E0EA12FAEA0782B98C5F9DD3164A523A4E2ADEDF5DA5CAF66AA7FACA88EF537"
+    "bytes": 169714,
+    "sha256": "F514A9E38C58648A9D46F5590AC3558A3FC63A0FCD45CBD27C4DFF7FD11880B1"
   },
   "sourceInputs": 960,
   "requiredNativeTests": [
@@ -32580,6 +32580,38 @@
       }
     ],
     "note": "Root1204named terminals+229sources2inputs3digests;G2/G5source gatePASS;exactD6hostedfmt3paths;no local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave788GuiLintAllowlist": {
+    "base": "dda0025b0301c4411da709f4174a125eb1afa379",
+    "sources": [
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 45009,
+        "sha256": "7C876232F49B817B85A4840E8A1E6B73D35276A4C1A1D97C1AB8FDEAF461D35F",
+        "blob": "579a51dc8ef3df48cf49e1a150656d42988ba1ae"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 254109,
+        "sha256": "78C76B53710648196729669B384D08660091F1CB62B1AAC573B925EF487AE7B3",
+        "blob": "d52687a27fa13f03ec9a536594cb0cf210b2991b"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1265437,
+        "sha256": "F918FBCBC46FABD147B3D787CF58C264485BAC00037DB69974440B681DB5ADD1",
+        "blob": "6fe39dd5789516cf08e54b08253b5f27707f901a"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1871028,
+        "sha256": "DBEC449837AB41344A0753E8EEA30024EE66B6DD11774ADB6F71FB58757D3FD5",
+        "blob": "a16a613099bbbabd5c2022a3895ac08e5c480ae3"
+      }
+    ],
+    "note": "dda source GUIlintPASS;only cadence expected command list failed. Exact approved noncompiling block added;no guard disabled;no localtests.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

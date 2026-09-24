@@ -3,6 +3,12 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W788 Preflight allowlist alignment (2026-09-24):** the GUI lint step itself
+passed, but the offline cadence contract correctly rejected its unlisted
+command block. The exact four-line noncompiling block is now explicitly
+allowlisted; existing strict command equality remains intact. Hosted rerun
+is pending. Road1066done256open2partial is unchanged.
+
 **W783/W784 grouped and GUI-source acceptance (2026-09-24):**
 Root verified all three Group1204 artifact digests,229fixture-source plus two
 input bindings and1204/1204actualPASS at4ed780a6. C10's11, B9's5, D1's8 and

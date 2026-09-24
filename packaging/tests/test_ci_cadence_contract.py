@@ -322,6 +322,14 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertEqual(
             run_commands(PREFLIGHT_TEXT),
             [
+                "\n".join(
+                    [
+                        "./SRC/_gui_lint.ps1 -SelfTest",
+                        "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+                        "./SRC/_gui_lint.ps1",
+                        "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+                    ]
+                ),
                 "python3 packaging/tests/test_arrayref_provenance_gate.py",
                 "python3 packaging/arrayref_provenance_gate.py",
                 "cargo metadata --locked --no-deps --format-version 1 > /dev/null",

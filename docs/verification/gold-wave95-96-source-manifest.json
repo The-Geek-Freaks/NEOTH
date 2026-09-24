@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T11:45:20.4468475Z",
-  "validationStatus": "Group1204allPASS;G2/G5lint21PASS;sevencriteria accepted;D6formatimportedbehaviourpending",
+  "capturedUtc": "2026-09-24T11:48:23.2615624Z",
+  "validationStatus": "ExplicitGUIlintcommand allowlist alignment;remote rerunpending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1833,8 +1833,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 44665,
-      "sha256": "6C0637A1A51DBF4A1804C96E6CA9E3BDD11CB0B7850549CBF0ACA05F9563A654"
+      "bytes": 45009,
+      "sha256": "7C876232F49B817B85A4840E8A1E6B73D35276A4C1A1D97C1AB8FDEAF461D35F"
     },
     {
       "path": "packaging/tests/test_preview_windows_workflow_contract.py",
@@ -1878,18 +1878,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 253756,
-      "sha256": "07814C14E5FC465FCF39DD47FEAB2264F37B663C5CBFCCE42549D36930B9F186"
+      "bytes": 254109,
+      "sha256": "78C76B53710648196729669B384D08660091F1CB62B1AAC573B925EF487AE7B3"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1265084,
-      "sha256": "140CBFFF006F1E3848C6CA5DECE6E121532093F1223355A667163A35EC1E2E68"
+      "bytes": 1265437,
+      "sha256": "F918FBCBC46FABD147B3D787CF58C264485BAC00037DB69974440B681DB5ADD1"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1870675,
-      "sha256": "EA94437C792F7EEE0561C7B7383D4A222424C933F90944208172A9514273EC05"
+      "bytes": 1871028,
+      "sha256": "DBEC449837AB41344A0753E8EEA30024EE66B6DD11774ADB6F71FB58757D3FD5"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
