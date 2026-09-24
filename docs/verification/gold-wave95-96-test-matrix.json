@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W946 production permit binding verifier restored; static review; hosted pending",
+  "status": "W937 isolated pinned n8n image canary published; hosted feasibility pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 181905,
-    "sha256": "6608A645EB29378F66D796ACCDE116949C698C4CEAEE592EA0FB86D63CFF0A24"
+    "bytes": 182422,
+    "sha256": "27294341166C1D5179DDE6619E1ABD88D72C5346841CE1D18D257D6EE6A1019F"
   },
-  "sourceInputs": 1028,
+  "sourceInputs": 1031,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -37027,6 +37027,50 @@
       }
     ],
     "note": "Core36058966367 strict dead_code diagnosed; real sealed transport now checks exact minted request/provenance. Root reviewed; no feature closure. native1671 Group1438 Windows221.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave949N8nBootstrapCanary": {
+    "base": "050ebc6d9cab24ed3b7b99fa433aa5bfdc04e67d",
+    "sources": [
+      {
+        "path": ".github/workflows/n8n-bootstrap-canary.yml",
+        "bytes": 990,
+        "sha256": "1B1D6F5F9266B32F1E5E8E1B0E9A96E43FE71AAD3782BEED8AE4CA3A0134E1FB",
+        "blob": "d444debc8fb71dcd97315b2dad3fe05f399ab890"
+      },
+      {
+        "path": "docs/gold-wave937-n8n-bootstrap-canary.md",
+        "bytes": 3747,
+        "sha256": "275D23207C398DD0D07772AD99487C63AF13793DB1CB2B7BCBB70EA7ADE00C3C",
+        "blob": "1cde9dea15d8f89baee9341ffb8d990d46df8930"
+      },
+      {
+        "path": "packaging/n8n_bootstrap_canary.py",
+        "bytes": 21947,
+        "sha256": "F1C401902A428B1EC0CB71F9647BF3C25E75F4B802B4D1932F74905A8EB518DF",
+        "blob": "044deb0e5777f37fc7e454c0ae00017a269278c2"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 293264,
+        "sha256": "6028EB0D9E69A8C21221538E9C590B78FE3F86274400CDD24E9FE6047F575CC8",
+        "blob": "47ceee450746b0e922c39e4b99ae3bb99252e11e"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1304592,
+        "sha256": "367766BB4258EA0DB831D44D054418ECB5EF52F9BCFC08B0C03B7C5C522D2067",
+        "blob": "8840671d3f925c61cb5439a76abc17544e17b14a"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1914161,
+        "sha256": "42B91894960DD9D73AC69592ADF41FA5E0F57C23E2FC327B98935DC73860AEE6",
+        "blob": "57351b0fe526f62a35a9aac6f4f28401bd384403"
+      }
+    ],
+    "note": "W947 static review plus Root digest/unknown-reply corrections. Main-only script/workflow; no product bootstrap acceptance or local runtime. C7/n8n runtime pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

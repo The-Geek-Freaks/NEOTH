@@ -3,6 +3,16 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W949 isolated n8n image canary (2026-09-24):** W937 is published as a
+manually dispatched main-only GitHub feasibility gate. A fresh labeled volume
+and network-none bootstrap keep owner setup/key mint isolated; secrets enter
+only via exec stdin. The exact bootstrap is stopped/removed before the final
+loopback-published runtime uses the same volume. The canary checks preserved
+encryption-key digest, real unauthenticated/authenticated API responses and
+exact cleanup. W947 reviewed the main delta; Root additionally corrected Docker
+Hub digest normalization and malformed/lost exec replies. This does not close
+the product bootstrap, 13 imports or Paperless. Runtime evidence is pending.
+Core36060005633 at050ebc6d is running; C7 and managed n8n remain open.
 **W948 HTTP permit repair (2026-09-24):** Core36058966367 atf20c3c04 failed
 strict production Clippy because the sealed transport supplied a no-op permit
 verifier, leaving its binding fields unused. W946 now runs the existing exact

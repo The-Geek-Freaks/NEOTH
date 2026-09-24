@@ -1,0 +1,35 @@
+name: W937 isolated n8n bootstrap canary
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: w937-n8n-bootstrap-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  isolated-bootstrap:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Run disposable pinned-image bootstrap canary
+        timeout-minutes: 12
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 packaging/n8n_bootstrap_canary.py
+
+      - name: Upload redacted compact receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w937-n8n-bootstrap-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/n8n-bootstrap-canary/receipt.json
+          if-no-files-found: warn
+          retention-days: 7
