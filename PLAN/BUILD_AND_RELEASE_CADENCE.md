@@ -14,6 +14,9 @@ checks ran. Counts remain1067checked255open2partial;Group1251/native1487.
 Hosted follow-up:Preflight36002408201 at5a870310 passes, including10/10
 replay-witness Python tests. Core83297 found one additional Clippy string-
 replacement style issue; its exact fix preserves Markdown output. Rerun pending.
+Core36002877760 at4a438c95 passes production Clippy. Its testtarget found one
+E0716 in the new replay-skill fixture; the expected snapshot is now retained
+through the unchanged assertion. Only testtargets/CLI are rerun for this fix.
 Evidence: docs/verification/gold-wave801-hosted-format-and-compile-repair.json.
 
 **W799/W800 video URL and real workflow replay (2026-09-24):**

@@ -80,5 +80,14 @@
     "path": "SRC/neothd/src/cli/workflow_replay.rs",
     "repair": "Replace CR/LF together with a character pattern array; markdown output semantics unchanged",
     "validation": "hosted rerun pending"
+  },
+  "testTargetFollowup": {
+    "run": 36002877760,
+    "source": "4a438c9589ff3896d7e5fab77a6c51c5664fc364",
+    "slimProductionClippy": "passed",
+    "testTarget": "E0716 temporary registry snapshot dropped while expected_skill still borrowed",
+    "repair": "retain expected_registry Arc through the unchanged content-hash assertion",
+    "productionBehaviorChanged": false,
+    "validation": "testtarget and CLI build/export rerun; production Clippy not repeated for test-only change"
   }
 }

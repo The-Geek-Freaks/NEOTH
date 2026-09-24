@@ -919,8 +919,8 @@ mod tests {
         )
         .await
         .expect("load authority-bound actual skill registry");
-        let expected_skill = registry
-            .snapshot_owned()
+        let expected_registry = registry.snapshot_owned();
+        let expected_skill = expected_registry
             .iter()
             .find(|candidate| candidate.as_skill().id() == skill_id)
             .expect("actual authority-bound skill is routable");

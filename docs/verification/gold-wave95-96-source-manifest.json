@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T12:59:41.2893656Z",
-  "validationStatus": "Preflight passed incl10replay-gate tests; Clippy style repaired",
+  "capturedUtc": "2026-09-24T13:11:11.7979850Z",
+  "validationStatus": "productionClippy4aPASS; E0716fixture-only repaired; hostedpending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1773,8 +1773,8 @@
     },
     {
       "path": "docs/verification/gold-wave801-hosted-format-and-compile-repair.json",
-      "bytes": 3748,
-      "sha256": "9DA26E72AA888A15223BEBD9B7DCB671D9C2AEE73A8D82DCB21497D784DD78C7"
+      "bytes": 4240,
+      "sha256": "EB7150AE3CA0F2B5CCAB875667F48B03EEF4648C92447978B6A4D8130154E4E5"
     },
     {
       "path": "docs/verification/managed-browser-cft154.json",
@@ -1933,18 +1933,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 258122,
-      "sha256": "3B57D72BA18EFD1681EC589409D7C4197579AA5A405D25C05AD84555AD43E481"
+      "bytes": 258355,
+      "sha256": "2C5D8A99BA7A792FE4EC35D0B4A919CEA23E1B84FC716FD729408CC6EDB09B56"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1269450,
-      "sha256": "1961387F2C3F1594FBC38DB7CA3E82BFAD5AEBC25D1C1A3585807A691951991A"
+      "bytes": 1269683,
+      "sha256": "E3DCD17CA43E31E33348CCEDCA3EB157F9F9666A6FDABD9D499510ED38951325"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1875240,
-      "sha256": "7876D46256455D4F21B73BC0B43B78A1958FD0C21312E31208E2403EA636E595"
+      "bytes": 1875473,
+      "sha256": "495D94693D76B92A3C17B6975341E2FEEB4ED99622A4624FE2D2142C865F06E9"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -3113,8 +3113,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/workflow_replay.rs",
-      "bytes": 34270,
-      "sha256": "2C9438FFA9E230863E704AFC324A4D49D129B83E7D44F5FDE6B7C01A75D6EF7A"
+      "bytes": 34308,
+      "sha256": "70C5BCAE1C57D68320C4E76AF35BEA9A899EE2FDC49C9C90058E8D7CEB239674"
     },
     {
       "path": "SRC/neothd/src/cluster/budget_raft/carrier.rs",
