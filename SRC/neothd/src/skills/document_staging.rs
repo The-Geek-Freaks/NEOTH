@@ -741,13 +741,21 @@ mod tests {
         .await
         .unwrap();
         let draft = decode_document_staging_draft(outcome.draft_json.as_deref().unwrap()).unwrap();
-        assert_eq!(draft.sanitized_input_hash, document.provenance.sanitized_input_hash);
-        assert_eq!(draft.source_bytes_sha256, document.provenance.source_bytes_sha256);
+        assert_eq!(
+            draft.sanitized_input_hash,
+            document.provenance.sanitized_input_hash
+        );
+        assert_eq!(
+            draft.source_bytes_sha256,
+            document.provenance.source_bytes_sha256
+        );
         assert_eq!(draft.sanitized_input_hash.len(), 16);
-        assert!(draft
-            .sanitized_input_hash
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')));
+        assert!(
+            draft
+                .sanitized_input_hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        );
         assert_eq!(draft.source_bytes_sha256.len(), 64);
         assert_eq!(draft.candidate_sha256.len(), 64);
         assert!(

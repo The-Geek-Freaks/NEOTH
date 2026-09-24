@@ -1586,7 +1586,6 @@ use crate::cli::init::{OperatorRole, ProviderKind};
 use crate::secret::SecretString;
 
 pub use crate::analytics::babel::BabelConfig;
-pub use doc_ingest::DocIngestConfig;
 pub use automation::{
     AutoSkillExtractConfig, BgMonitorConfig, CheckinCronConfig, CompanionConfig,
     ConsolidationSweepConfig, DEFAULT_CHECKIN_CRON_INTERVAL_SECS,
@@ -1605,6 +1604,7 @@ pub use automation::{
     SelfWikiConfig, SessionHealthConfig, SkillCuratorConfig, SynthesisCronConfig,
     TokenAnomalyConfig, VaultMirrorConfig, WatchdogConfig,
 };
+pub use doc_ingest::DocIngestConfig;
 pub use features::{
     ArxivIngestConfig, ArxivSkillScanConfig, CalendarConfig, ChannelLearnScope,
     ChannelWeightsConfig, DEFAULT_ECOLOGY_SCHEDULER_INTERVAL_SECS,

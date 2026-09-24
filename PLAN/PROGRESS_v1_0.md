@@ -2,6 +2,12 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W867 verified hosted formatting (2026-09-24):** W865 is published at05392007.
+Preflight36037235185 exported artifact10825133257 after rustfmt-only drift.
+Root verified the API ZIP digest, exact source, inner hashes and seven
+old/new Git blobs before import; B7's two-call production fingerprint is
+unchanged. Core36037238201 continues against05392007. Group1357 and Windows115
+await the core/export result. No local formatter/compiler/runtime ran.
 **W865 document watcher publication and admitted chapter access (2026-09-24):**
 W856/W857/W861 add the default-off document discovery worker, bounded physical
 inventory with persistent fair cursor, private revision notices, daily quota,

@@ -20,9 +20,9 @@ use tokio::task::JoinHandle;
 
 use crate::config::DocIngestConfig;
 use crate::skills::store::{
+    BoundDirectory, PrivateChildCommit, PrivateChildDurabilityUnknown,
     atomic_write_private_child_reported, open_absolute_bound_directory,
-    open_bound_regular_file_snapshot, open_or_create_bound_lockfile,
-    read_regular_file_bounded, BoundDirectory, PrivateChildCommit, PrivateChildDurabilityUnknown,
+    open_bound_regular_file_snapshot, open_or_create_bound_lockfile, read_regular_file_bounded,
 };
 
 pub const POLL_INTERVAL: Duration = Duration::from_secs(60);
@@ -56,7 +56,12 @@ pub struct DocumentNotice {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum NoticeStatus { Pending, Deferred, Superseded, Dismissed }
+enum NoticeStatus {
+    Pending,
+    Deferred,
+    Superseded,
+    Dismissed,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -79,7 +84,12 @@ struct DocIngestState {
 
 impl Default for DocIngestState {
     fn default() -> Self {
-        Self { schema_version: SCHEMA_VERSION, entries: BTreeMap::new(), admitted_notice_timestamps_unix: Vec::new(), scan_after_source_path: None }
+        Self {
+            schema_version: SCHEMA_VERSION,
+            entries: BTreeMap::new(),
+            admitted_notice_timestamps_unix: Vec::new(),
+            scan_after_source_path: None,
+        }
     }
 }
 
@@ -114,7 +124,11 @@ impl ScanControl {
         // A retiring worker may finish an already-started atomic state write.
         // Waiting on this short commit section makes task-join completion the
         // boundary after which its blocking scan cannot publish more notices.
-        drop(self.commit.lock().unwrap_or_else(|poison| poison.into_inner()));
+        drop(
+            self.commit
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner()),
+        );
     }
 }
 
@@ -137,7 +151,11 @@ pub(crate) struct ScanReport {
 
 /// Spawn a local-only poller after the daemon's default-off admission gate.
 /// Blocking filesystem work cooperates with the retiring task's commit fence.
-pub fn spawn(home: PathBuf, config: DocIngestConfig, vault_root: Option<PathBuf>) -> JoinHandle<Result<()>> {
+pub fn spawn(
+    home: PathBuf,
+    config: DocIngestConfig,
+    vault_root: Option<PathBuf>,
+) -> JoinHandle<Result<()>> {
     spawn_controlled(home, config, vault_root, Arc::new(ScanControl::default()))
 }
 
@@ -148,7 +166,9 @@ fn spawn_controlled(
     control: Arc<ScanControl>,
 ) -> JoinHandle<Result<()>> {
     tokio::spawn(async move {
-        if !config.enabled { return Ok(()); }
+        if !config.enabled {
+            return Ok(());
+        }
         let _cancel_on_retirement = CancelScanOnDrop(control.clone());
         let mut ticker = tokio::time::interval(POLL_INTERVAL);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -209,9 +229,13 @@ fn scan_once_controlled(
     now_unix: i64,
     control: &ScanControl,
 ) -> Result<ScanReport> {
-    if !config.enabled { return Ok(ScanReport::default()); }
+    if !config.enabled {
+        return Ok(ScanReport::default());
+    }
     control.check()?;
-    config.validate(vault_root.is_some()).map_err(anyhow::Error::msg)?;
+    config
+        .validate(vault_root.is_some())
+        .map_err(anyhow::Error::msg)?;
     let roots = resolve_roots(config, vault_root.map(Path::to_path_buf))?;
     control.check()?;
     scan_roots(home, config, &roots, now_unix, control)
@@ -223,11 +247,17 @@ pub fn list_pending(home: &Path) -> Result<Vec<DocumentNotice>> {
         return Ok(Vec::new());
     };
     let state = load_state(&home)?;
-    let mut notices = state.entries.values()
+    let mut notices = state
+        .entries
+        .values()
         .filter(|entry| matches!(entry.status, NoticeStatus::Pending))
         .map(|entry| entry.notice.clone())
         .collect::<Vec<_>>();
-    notices.sort_by(|left, right| left.first_seen_unix.cmp(&right.first_seen_unix).then_with(|| left.revision_id.cmp(&right.revision_id)));
+    notices.sort_by(|left, right| {
+        left.first_seen_unix
+            .cmp(&right.first_seen_unix)
+            .then_with(|| left.revision_id.cmp(&right.revision_id))
+    });
     Ok(notices)
 }
 
@@ -237,7 +267,12 @@ pub fn dismiss_pending(home: &Path, revision_id: &str) -> Result<bool> {
     validate_revision_id(revision_id)?;
     with_locked_state(home, &ScanControl::default(), |state, _| {
         let changed = state.entries.get_mut(revision_id).is_some_and(|entry| {
-            if matches!(entry.status, NoticeStatus::Pending) { entry.status = NoticeStatus::Dismissed; true } else { false }
+            if matches!(entry.status, NoticeStatus::Pending) {
+                entry.status = NoticeStatus::Dismissed;
+                true
+            } else {
+                false
+            }
         });
         Ok((changed, changed))
     })
@@ -298,13 +333,23 @@ fn scan_roots(
             let status = if state.admitted_notice_timestamps_unix.len() < config.max_per_day {
                 state.admitted_notice_timestamps_unix.push(now_unix);
                 NoticeStatus::Pending
-            } else { NoticeStatus::Deferred };
-            state.entries.insert(candidate.revision_id.clone(), StateEntry {
-                notice: candidate.notice, root_id: candidate.root_id, relative_path: candidate.relative_path, status,
-            });
+            } else {
+                NoticeStatus::Deferred
+            };
+            state.entries.insert(
+                candidate.revision_id.clone(),
+                StateEntry {
+                    notice: candidate.notice,
+                    root_id: candidate.root_id,
+                    relative_path: candidate.relative_path,
+                    status,
+                },
+            );
             dirty = true;
         }
-        if state.entries.len() > MAX_ENTRIES { anyhow::bail!("document-ingest state entry limit exceeded"); }
+        if state.entries.len() > MAX_ENTRIES {
+            anyhow::bail!("document-ingest state entry limit exceeded");
+        }
         let next_cursor = last_attempted;
         if state.scan_after_source_path != next_cursor {
             state.scan_after_source_path = next_cursor;
@@ -312,14 +357,27 @@ fn scan_roots(
         }
         let report = ScanReport {
             discovered,
-            pending: state.entries.values().filter(|entry| matches!(entry.status, NoticeStatus::Pending)).count(),
-            deferred: state.entries.values().filter(|entry| matches!(entry.status, NoticeStatus::Deferred)).count(),
+            pending: state
+                .entries
+                .values()
+                .filter(|entry| matches!(entry.status, NoticeStatus::Pending))
+                .count(),
+            deferred: state
+                .entries
+                .values()
+                .filter(|entry| matches!(entry.status, NoticeStatus::Deferred))
+                .count(),
         };
         Ok((report, dirty))
     })
 }
 
-struct Candidate { revision_id: String, root_id: String, relative_path: String, notice: DocumentNotice }
+struct Candidate {
+    revision_id: String,
+    root_id: String,
+    relative_path: String,
+    notice: DocumentNotice,
+}
 
 /// A metadata-only inventory item. The stored parent capability and child
 /// identity are used to re-open the exact candidate for the later bounded
@@ -349,19 +407,43 @@ enum HashCandidateResult {
 }
 
 fn resolve_roots(config: &DocIngestConfig, vault_root: Option<PathBuf>) -> Result<Vec<ScanRoot>> {
-    if !config.enabled { return Ok(Vec::new()); }
-    anyhow::ensure!(config.max_per_day > 0, "document ingest max_per_day must be positive");
-    let mut paths = config.watch_paths.iter().map(PathBuf::from).collect::<Vec<_>>();
-    if let Some(vault) = vault_root { paths.push(vault); }
-    anyhow::ensure!(!paths.is_empty(), "enabled document ingest needs at least one operator-selected root");
-    anyhow::ensure!(paths.len() <= MAX_ROOTS, "document ingest root limit exceeded");
-    let mut roots = paths.iter().map(|path| open_scan_root(path)).collect::<Result<Vec<_>>>()?;
+    if !config.enabled {
+        return Ok(Vec::new());
+    }
+    anyhow::ensure!(
+        config.max_per_day > 0,
+        "document ingest max_per_day must be positive"
+    );
+    let mut paths = config
+        .watch_paths
+        .iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    if let Some(vault) = vault_root {
+        paths.push(vault);
+    }
+    anyhow::ensure!(
+        !paths.is_empty(),
+        "enabled document ingest needs at least one operator-selected root"
+    );
+    anyhow::ensure!(
+        paths.len() <= MAX_ROOTS,
+        "document ingest root limit exceeded"
+    );
+    let mut roots = paths
+        .iter()
+        .map(|path| open_scan_root(path))
+        .collect::<Result<Vec<_>>>()?;
     // Descendants are inventoried first. The later global directory/file
     // identities then make an overlapping parent skip the exact same object.
     // Ties use a verified physical representation only for deterministic
     // ownership; aliases are collapsed by the opened directory identity.
     roots.sort_by(|left, right| {
-        right.directory.physical_display_path.components().count()
+        right
+            .directory
+            .physical_display_path
+            .components()
+            .count()
             .cmp(&left.directory.physical_display_path.components().count())
             .then_with(|| left.physical_path.cmp(&right.physical_path))
             .then_with(|| left.directory_identity.cmp(&right.directory_identity))
@@ -372,7 +454,11 @@ fn resolve_roots(config: &DocIngestConfig, vault_root: Option<PathBuf>) -> Resul
 }
 
 fn open_scan_root(path: &Path) -> Result<ScanRoot> {
-    anyhow::ensure!(path.is_absolute(), "document ingest root must be absolute: {}", path.display());
+    anyhow::ensure!(
+        path.is_absolute(),
+        "document ingest root must be absolute: {}",
+        path.display()
+    );
     let directory = open_absolute_bound_directory(path, false, "document ingest root")?
         .context("document ingest root is missing")?;
     let physical_path = directory
@@ -381,11 +467,13 @@ fn open_scan_root(path: &Path) -> Result<ScanRoot> {
         .context("document-ingest physical root path is not valid UTF-8")?
         .to_owned();
     let directory_identity = crate::skills::store::directory_identity_token(&directory.dir)?;
-    let root_id = hash_domain(
-        b"doc-ingest-root-v1",
-        directory_identity.as_bytes(),
-    );
-    Ok(ScanRoot { directory, directory_identity, root_id, physical_path })
+    let root_id = hash_domain(b"doc-ingest-root-v1", directory_identity.as_bytes());
+    Ok(ScanRoot {
+        directory,
+        directory_identity,
+        root_id,
+        physical_path,
+    })
 }
 
 fn inventory_roots(roots: &[ScanRoot], control: &ScanControl) -> Result<Vec<InventoryCandidate>> {
@@ -419,8 +507,15 @@ fn inventory_roots(roots: &[ScanRoot], control: &ScanControl) -> Result<Vec<Inve
     while let Some((work, root)) = queue.pop() {
         control.check()?;
         directories += 1;
-        anyhow::ensure!(directories <= MAX_DIRECTORIES_PER_SCAN, "document-ingest directory inventory limit exceeded");
-        let DirectoryWork { directory, display, relative } = work;
+        anyhow::ensure!(
+            directories <= MAX_DIRECTORIES_PER_SCAN,
+            "document-ingest directory inventory limit exceeded"
+        );
+        let DirectoryWork {
+            directory,
+            display,
+            relative,
+        } = work;
         let mut entries = Vec::new();
         for entry in directory
             .read_dir(".")
@@ -429,19 +524,31 @@ fn inventory_roots(roots: &[ScanRoot], control: &ScanControl) -> Result<Vec<Inve
             control.check()?;
             entries.push(entry?);
         }
-        anyhow::ensure!(entries.len() <= MAX_ENTRIES_PER_DIRECTORY, "document-ingest directory entry limit exceeded: {}", display.display());
+        anyhow::ensure!(
+            entries.len() <= MAX_ENTRIES_PER_DIRECTORY,
+            "document-ingest directory entry limit exceeded: {}",
+            display.display()
+        );
         entries.sort_by(|left, right| left.file_name().cmp(&right.file_name()));
         for entry in entries {
             control.check()?;
             visited_entries += 1;
-            anyhow::ensure!(visited_entries <= MAX_VISITED_ENTRIES_PER_SCAN, "document-ingest visited-entry inventory limit exceeded");
+            anyhow::ensure!(
+                visited_entries <= MAX_VISITED_ENTRIES_PER_SCAN,
+                "document-ingest visited-entry inventory limit exceeded"
+            );
             let name = entry.file_name();
-            if name.is_empty() || name == OsStr::new(".") || name == OsStr::new("..") { continue; }
-            name.to_str().context("document-ingest entry name is not valid UTF-8")?;
+            if name.is_empty() || name == OsStr::new(".") || name == OsStr::new("..") {
+                continue;
+            }
+            name.to_str()
+                .context("document-ingest entry name is not valid UTF-8")?;
             let path = display.join(&name);
             let relative_path = relative.join(&name);
             let file_type = entry.file_type()?;
-            if file_type.is_symlink() { continue; }
+            if file_type.is_symlink() {
+                continue;
+            }
             if file_type.is_dir() {
                 let child = crate::skills::store::open_real_child_dir(&directory, &name, &path)?;
                 let child_identity = crate::skills::store::directory_identity_token(&child)?;
@@ -450,12 +557,23 @@ fn inventory_roots(roots: &[ScanRoot], control: &ScanControl) -> Result<Vec<Inve
                         queued_directory_identities.len() <= MAX_QUEUED_DIRECTORIES_PER_SCAN,
                         "document-ingest queued-directory inventory limit exceeded"
                     );
-                    queue.push((DirectoryWork { directory: child, display: path, relative: relative_path }, root));
+                    queue.push((
+                        DirectoryWork {
+                            directory: child,
+                            display: path,
+                            relative: relative_path,
+                        },
+                        root,
+                    ));
                 }
                 continue;
             }
-            if !file_type.is_file() { continue; }
-            let Some(kind) = document_kind(&name) else { continue; };
+            if !file_type.is_file() {
+                continue;
+            }
+            let Some(kind) = document_kind(&name) else {
+                continue;
+            };
             let source_path = path
                 .to_str()
                 .context("document-ingest source path is not valid UTF-8")?
@@ -467,13 +585,18 @@ fn inventory_roots(roots: &[ScanRoot], control: &ScanControl) -> Result<Vec<Inve
             let (file, binding) = open_bound_regular_file_snapshot(&directory, &name, &path)?;
             let source_bytes = file.metadata()?.len();
             let file_identity = binding.identity_token().to_owned();
-            if !file_identities.insert(file_identity.clone()) { continue; }
+            if !file_identities.insert(file_identity.clone()) {
+                continue;
+            }
             anyhow::ensure!(
                 candidates.len() < MAX_INVENTORY_CANDIDATES_PER_SCAN,
                 "document-ingest candidate inventory limit exceeded"
             );
             candidates.push(InventoryCandidate {
-                selection_key: format!("doc-ingest-path-v1\0{}\0{relative_path}", root.directory_identity),
+                selection_key: format!(
+                    "doc-ingest-path-v1\0{}\0{relative_path}",
+                    root.directory_identity
+                ),
                 file_identity,
                 parent: directory.try_clone()?,
                 name,
@@ -500,7 +623,9 @@ fn hash_inventory_range(
     first_seen_unix: i64,
     control: &ScanControl,
 ) -> Result<(Vec<Candidate>, Option<String>)> {
-    if inventory.is_empty() { return Ok((Vec::new(), None)); }
+    if inventory.is_empty() {
+        return Ok((Vec::new(), None));
+    }
     let start = scan_after.map_or(0, |cursor| {
         inventory.partition_point(|candidate| candidate.selection_key.as_str() <= cursor)
     });
@@ -536,13 +661,18 @@ fn hash_candidate(
     control: &ScanControl,
 ) -> Result<HashCandidateResult> {
     control.check()?;
-    let (mut file, binding) = open_bound_regular_file_snapshot(&candidate.parent, &candidate.name, &candidate.path)?;
-    if binding.identity_token() != candidate.file_identity { return Ok(HashCandidateResult::Rejected); }
+    let (mut file, binding) =
+        open_bound_regular_file_snapshot(&candidate.parent, &candidate.name, &candidate.path)?;
+    if binding.identity_token() != candidate.file_identity {
+        return Ok(HashCandidateResult::Rejected);
+    }
     let before = file.metadata()?;
     if !before.is_file() || before.len() > crate::skills::doc_distill::MAX_DOCUMENT_SOURCE_BYTES {
         return Ok(HashCandidateResult::Rejected);
     }
-    if before.len() > *source_bytes_budget { return Ok(HashCandidateResult::ByteBudgetDeferred); }
+    if before.len() > *source_bytes_budget {
+        return Ok(HashCandidateResult::ByteBudgetDeferred);
+    }
     // Deduct before the first read. A short, changed, or rejected read attempt
     // therefore still consumes its whole reserved portion of this pass's cap.
     *source_bytes_budget -= before.len();
@@ -562,13 +692,42 @@ fn hash_candidate(
         remaining -= count as u64;
     }
     let after = file.metadata()?;
-    if after.len() != before.len() || after.modified().ok() != before.modified().ok()
-        || !binding.matches_regular_file_snapshot(&candidate.parent, &candidate.name, &candidate.path)? { return Ok(HashCandidateResult::Rejected); }
+    if after.len() != before.len()
+        || after.modified().ok() != before.modified().ok()
+        || !binding.matches_regular_file_snapshot(
+            &candidate.parent,
+            &candidate.name,
+            &candidate.path,
+        )?
+    {
+        return Ok(HashCandidateResult::Rejected);
+    }
     let source_sha256 = hex::encode(hasher.finalize());
-    let revision_id = hash_domain(b"doc-ingest-revision-v1", format!("{}\0{}\0{}\0{source_sha256}", candidate.root_id, candidate.relative_path, candidate.kind).as_bytes());
-    Ok(HashCandidateResult::Accepted(Candidate { revision_id: revision_id.clone(), root_id: candidate.root_id.clone(), relative_path: candidate.relative_path.clone(), notice: DocumentNotice {
-        revision_id, source_path: candidate.path.to_str().context("document-ingest source path is not valid UTF-8")?.to_owned(), source_kind: candidate.kind.to_owned(), source_bytes: before.len(), source_sha256, first_seen_unix,
-    }}))
+    let revision_id = hash_domain(
+        b"doc-ingest-revision-v1",
+        format!(
+            "{}\0{}\0{}\0{source_sha256}",
+            candidate.root_id, candidate.relative_path, candidate.kind
+        )
+        .as_bytes(),
+    );
+    Ok(HashCandidateResult::Accepted(Candidate {
+        revision_id: revision_id.clone(),
+        root_id: candidate.root_id.clone(),
+        relative_path: candidate.relative_path.clone(),
+        notice: DocumentNotice {
+            revision_id,
+            source_path: candidate
+                .path
+                .to_str()
+                .context("document-ingest source path is not valid UTF-8")?
+                .to_owned(),
+            source_kind: candidate.kind.to_owned(),
+            source_bytes: before.len(),
+            source_sha256,
+            first_seen_unix,
+        },
+    }))
 }
 
 fn document_kind(name: &OsStr) -> Option<&'static str> {
@@ -581,12 +740,19 @@ fn document_kind(name: &OsStr) -> Option<&'static str> {
     })
 }
 
-fn with_locked_state<T>(home: &Path, control: &ScanControl, operation: impl FnOnce(&mut DocIngestState, &BoundDirectory) -> Result<(T, bool)>) -> Result<T> {
+fn with_locked_state<T>(
+    home: &Path,
+    control: &ScanControl,
+    operation: impl FnOnce(&mut DocIngestState, &BoundDirectory) -> Result<(T, bool)>,
+) -> Result<T> {
     control.check()?;
-    let home = open_absolute_bound_directory(home, true, "document ingest home")?.context("document ingest home missing")?;
+    let home = open_absolute_bound_directory(home, true, "document ingest home")?
+        .context("document ingest home missing")?;
     let lock_path = home.display_path.join(LOCK_FILE);
-    let (lock, lock_binding) = open_or_create_bound_lockfile(&home.dir, OsStr::new(LOCK_FILE), &lock_path)?;
-    lock.try_lock_exclusive().context("document discovery state is busy; retry the command or scan")?;
+    let (lock, lock_binding) =
+        open_or_create_bound_lockfile(&home.dir, OsStr::new(LOCK_FILE), &lock_path)?;
+    lock.try_lock_exclusive()
+        .context("document discovery state is busy; retry the command or scan")?;
     control.check()?;
     let state = load_state(&home)?;
     let mut state = state;
@@ -596,7 +762,9 @@ fn with_locked_state<T>(home: &Path, control: &ScanControl, operation: impl FnOn
         if let Some(hook) = control.before_commit.lock().unwrap().take() {
             hook();
         }
-        let _commit = control.commit.lock()
+        let _commit = control
+            .commit
+            .lock()
             .map_err(|_| anyhow::anyhow!("document discovery commit fence is poisoned"))?;
         control.check()?;
         anyhow::ensure!(
@@ -611,12 +779,25 @@ fn with_locked_state<T>(home: &Path, control: &ScanControl, operation: impl FnOn
 
 fn load_state(home: &BoundDirectory) -> Result<DocIngestState> {
     let path = home.display_path.join(STATE_FILE);
-    let bytes = match read_regular_file_bounded(&home.dir, OsStr::new(STATE_FILE), &path, MAX_STATE_BYTES) {
+    let bytes = match read_regular_file_bounded(
+        &home.dir,
+        OsStr::new(STATE_FILE),
+        &path,
+        MAX_STATE_BYTES,
+    ) {
         Ok(bytes) => bytes,
-        Err(error) if error.root_cause().downcast_ref::<std::io::Error>().is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) => return Ok(DocIngestState::default()),
+        Err(error)
+            if error
+                .root_cause()
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            return Ok(DocIngestState::default());
+        }
         Err(error) => return Err(error).context("read document-ingest state fail closed"),
     };
-    let state: DocIngestState = serde_json::from_slice(&bytes).context("parse document-ingest state fail closed")?;
+    let state: DocIngestState =
+        serde_json::from_slice(&bytes).context("parse document-ingest state fail closed")?;
     validate_state(&state)?;
     Ok(state)
 }
@@ -629,22 +810,36 @@ fn validate_state(state: &DocIngestState) -> Result<()> {
         "invalid document-ingest state bounds"
     );
     anyhow::ensure!(
-        state.scan_after_source_path.as_ref().is_none_or(|cursor| !cursor.is_empty() && cursor.len() <= 8192),
+        state
+            .scan_after_source_path
+            .as_ref()
+            .is_none_or(|cursor| !cursor.is_empty() && cursor.len() <= 8192),
         "invalid document-ingest scan cursor"
     );
     for (revision_id, entry) in &state.entries {
-        anyhow::ensure!(revision_id == &entry.notice.revision_id, "document-ingest state map key disagrees with notice revision id");
+        anyhow::ensure!(
+            revision_id == &entry.notice.revision_id,
+            "document-ingest state map key disagrees with notice revision id"
+        );
         validate_revision_id(revision_id)?;
         validate_revision_id(&entry.root_id)?;
         anyhow::ensure!(
-            !entry.relative_path.is_empty() && entry.relative_path.len() <= 4096
+            !entry.relative_path.is_empty()
+                && entry.relative_path.len() <= 4096
                 && entry.notice.source_path.len() <= 8192
                 && entry.notice.first_seen_unix >= 0
-                && entry.notice.source_bytes <= crate::skills::doc_distill::MAX_DOCUMENT_SOURCE_BYTES,
+                && entry.notice.source_bytes
+                    <= crate::skills::doc_distill::MAX_DOCUMENT_SOURCE_BYTES,
             "invalid document-ingest notice bounds"
         );
         validate_revision_id(&entry.notice.source_sha256)?;
-        anyhow::ensure!(matches!(entry.notice.source_kind.as_str(), "pdf" | "office_or_book" | "plain_text"), "invalid document-ingest source kind");
+        anyhow::ensure!(
+            matches!(
+                entry.notice.source_kind.as_str(),
+                "pdf" | "office_or_book" | "plain_text"
+            ),
+            "invalid document-ingest source kind"
+        );
         let expected_revision = hash_domain(
             b"doc-ingest-revision-v1",
             format!(
@@ -656,26 +851,40 @@ fn validate_state(state: &DocIngestState) -> Result<()> {
             )
             .as_bytes(),
         );
-        anyhow::ensure!(expected_revision == *revision_id, "document-ingest revision digest does not bind its stored metadata");
+        anyhow::ensure!(
+            expected_revision == *revision_id,
+            "document-ingest revision digest does not bind its stored metadata"
+        );
     }
     Ok(())
 }
 
 fn save_state(home: &BoundDirectory, state: &DocIngestState) -> Result<()> {
     let bytes = serde_json::to_vec(state).context("serialize document-ingest state")?;
-    anyhow::ensure!(bytes.len() <= MAX_STATE_BYTES, "document-ingest state exceeds bounded maximum");
+    anyhow::ensure!(
+        bytes.len() <= MAX_STATE_BYTES,
+        "document-ingest state exceeds bounded maximum"
+    );
     let path = home.display_path.join(STATE_FILE);
     match atomic_write_private_child_reported(&home.dir, OsStr::new(STATE_FILE), &path, &bytes)? {
         PrivateChildCommit::PublishedAndSynced => Ok(()),
-        PrivateChildCommit::PublishedDurabilityUnknown(PrivateChildDurabilityUnknown::ParentSyncUnsupported) => {
+        PrivateChildCommit::PublishedDurabilityUnknown(
+            PrivateChildDurabilityUnknown::ParentSyncUnsupported,
+        ) => {
             // Windows cannot confirm a parent-directory fsync. The exact
             // capability-relative bytes are nevertheless live-verified before
             // treating this state transition as committed; callers must not
             // misreport it as power-loss durable.
-            let actual = read_regular_file_bounded(&home.dir, OsStr::new(STATE_FILE), &path, bytes.len())
-                .context("live-verify Windows document-ingest state")?;
-            anyhow::ensure!(actual == bytes, "document-ingest state changed after unsupported durability publication");
-            home.dir.dir_metadata().context("revalidate document-ingest state parent")?;
+            let actual =
+                read_regular_file_bounded(&home.dir, OsStr::new(STATE_FILE), &path, bytes.len())
+                    .context("live-verify Windows document-ingest state")?;
+            anyhow::ensure!(
+                actual == bytes,
+                "document-ingest state changed after unsupported durability publication"
+            );
+            home.dir
+                .dir_metadata()
+                .context("revalidate document-ingest state parent")?;
             Ok(())
         }
         PrivateChildCommit::PublishedDurabilityUnknown(reason) => anyhow::bail!(
@@ -684,14 +893,45 @@ fn save_state(home: &BoundDirectory, state: &DocIngestState) -> Result<()> {
     }
 }
 
-fn prune_quota(state: &mut DocIngestState, now: i64) { state.admitted_notice_timestamps_unix.retain(|stamp| *stamp > now.saturating_sub(86_400)); }
-fn supersede_prior_revision(state: &mut DocIngestState, root_id: &str, relative: &str, current_revision: &str, dirty: &mut bool) {
-    for entry in state.entries.values_mut().filter(|entry| entry.root_id == root_id && entry.relative_path == relative && entry.notice.revision_id != current_revision && matches!(entry.status, NoticeStatus::Pending | NoticeStatus::Deferred)) {
-        entry.status = NoticeStatus::Superseded; *dirty = true;
+fn prune_quota(state: &mut DocIngestState, now: i64) {
+    state
+        .admitted_notice_timestamps_unix
+        .retain(|stamp| *stamp > now.saturating_sub(86_400));
+}
+fn supersede_prior_revision(
+    state: &mut DocIngestState,
+    root_id: &str,
+    relative: &str,
+    current_revision: &str,
+    dirty: &mut bool,
+) {
+    for entry in state.entries.values_mut().filter(|entry| {
+        entry.root_id == root_id
+            && entry.relative_path == relative
+            && entry.notice.revision_id != current_revision
+            && matches!(entry.status, NoticeStatus::Pending | NoticeStatus::Deferred)
+    }) {
+        entry.status = NoticeStatus::Superseded;
+        *dirty = true;
     }
 }
-fn validate_revision_id(value: &str) -> Result<()> { anyhow::ensure!(value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')), "invalid document revision id"); Ok(()) }
-fn hash_domain(domain: &[u8], bytes: &[u8]) -> String { let mut hash = Sha256::new(); hash.update(domain); hash.update(b"\0"); hash.update(bytes); hex::encode(hash.finalize()) }
+fn validate_revision_id(value: &str) -> Result<()> {
+    anyhow::ensure!(
+        value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
+        "invalid document revision id"
+    );
+    Ok(())
+}
+fn hash_domain(domain: &[u8], bytes: &[u8]) -> String {
+    let mut hash = Sha256::new();
+    hash.update(domain);
+    hash.update(b"\0");
+    hash.update(bytes);
+    hex::encode(hash.finalize())
+}
 
 #[cfg(test)]
 mod tests {
@@ -703,14 +943,9 @@ mod tests {
         let home = parent.path().join("not-created");
         let control = ScanControl::default();
         control.cancel_and_fence();
-        assert!(scan_once_controlled(
-            &home,
-            &config(parent.path(), 3),
-            None,
-            100,
-            &control,
-        )
-        .is_err());
+        assert!(
+            scan_once_controlled(&home, &config(parent.path(), 3), None, 100, &control,).is_err()
+        );
         assert!(!home.exists());
     }
 
@@ -795,7 +1030,11 @@ mod tests {
     }
 
     fn config(root: &Path, max_per_day: usize) -> DocIngestConfig {
-        DocIngestConfig { enabled: true, watch_paths: vec![root.to_string_lossy().into_owned()], max_per_day }
+        DocIngestConfig {
+            enabled: true,
+            watch_paths: vec![root.to_string_lossy().into_owned()],
+            max_per_day,
+        }
     }
 
     #[test]
@@ -804,7 +1043,8 @@ mod tests {
         let root = tempfile::tempdir().expect("root");
         std::fs::write(root.path().join("guide.rtf"), b"{\\rtf1 test}").expect("document");
         let first = scan_once(home.path(), &config(root.path(), 3), None, 100).expect("first scan");
-        let second = scan_once(home.path(), &config(root.path(), 3), None, 101).expect("restart scan");
+        let second =
+            scan_once(home.path(), &config(root.path(), 3), None, 101).expect("restart scan");
         assert_eq!(first.pending, 1);
         assert_eq!(second.discovered, 1);
         assert_eq!(list_pending(home.path()).expect("pending").len(), 1);
@@ -815,7 +1055,10 @@ mod tests {
         let parent = tempfile::tempdir().expect("parent");
         let absent = parent.path().join("missing-home");
         assert!(list_pending(&absent).expect("empty list").is_empty());
-        assert!(!absent.exists(), "read-only pending list must not create state or a lock");
+        assert!(
+            !absent.exists(),
+            "read-only pending list must not create state or a lock"
+        );
     }
 
     #[test]
@@ -826,7 +1069,8 @@ mod tests {
         std::fs::write(&path, b"first").expect("first document");
         scan_once(home.path(), &config(root.path(), 1), None, 100).expect("first scan");
         std::fs::write(&path, b"second").expect("changed document");
-        let report = scan_once(home.path(), &config(root.path(), 1), None, 101).expect("changed scan");
+        let report =
+            scan_once(home.path(), &config(root.path(), 1), None, 101).expect("changed scan");
         assert_eq!(report.pending, 0);
         assert_eq!(report.deferred, 1);
         assert!(list_pending(home.path()).expect("pending").is_empty());
@@ -846,7 +1090,13 @@ mod tests {
         scan_once(home.path(), &config(original_root.path(), 1), None, 100).unwrap();
         std::fs::write(&source, "second").unwrap();
         scan_once(home.path(), &config(original_root.path(), 1), None, 101).unwrap();
-        scan_once(home.path(), &config(replacement_root.path(), 1), None, 86_500).unwrap();
+        scan_once(
+            home.path(),
+            &config(replacement_root.path(), 1),
+            None,
+            86_500,
+        )
+        .unwrap();
         assert!(
             list_pending(home.path()).unwrap().is_empty(),
             "quota expiry must not publish a deferred notice from a removed root"
@@ -854,7 +1104,10 @@ mod tests {
         scan_once(home.path(), &config(original_root.path(), 1), None, 86_501).unwrap();
         let pending = list_pending(home.path()).unwrap();
         assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].source_sha256, hex::encode(Sha256::digest(b"second")));
+        assert_eq!(
+            pending[0].source_sha256,
+            hex::encode(Sha256::digest(b"second"))
+        );
     }
 
     #[test]
@@ -862,17 +1115,25 @@ mod tests {
         let home = tempfile::tempdir().expect("home");
         let root = tempfile::tempdir().expect("root");
         for number in 0..65 {
-            std::fs::write(root.path().join(format!("{number:03}.txt")), format!("{number}")).expect("document");
+            std::fs::write(
+                root.path().join(format!("{number:03}.txt")),
+                format!("{number}"),
+            )
+            .expect("document");
         }
-        let first = scan_once(home.path(), &config(root.path(), 100), None, 100).expect("first bounded scan");
+        let first = scan_once(home.path(), &config(root.path(), 100), None, 100)
+            .expect("first bounded scan");
         let original = list_pending(home.path())
             .expect("first pending")
             .into_iter()
             .find(|notice| notice.source_path.ends_with("063.txt"))
             .expect("last first-range document");
-        std::fs::write(root.path().join("063.txt"), "changed after its first hash").expect("changed document");
-        let second = scan_once(home.path(), &config(root.path(), 100), None, 101).expect("reopened cursor scan");
-        let third = scan_once(home.path(), &config(root.path(), 100), None, 102).expect("wrapped cursor scan");
+        std::fs::write(root.path().join("063.txt"), "changed after its first hash")
+            .expect("changed document");
+        let second = scan_once(home.path(), &config(root.path(), 100), None, 101)
+            .expect("reopened cursor scan");
+        let third = scan_once(home.path(), &config(root.path(), 100), None, 102)
+            .expect("wrapped cursor scan");
         assert_eq!(first.discovered, MAX_CANDIDATES_PER_SCAN);
         assert_eq!(second.discovered, MAX_CANDIDATES_PER_SCAN);
         assert_eq!(third.discovered, MAX_CANDIDATES_PER_SCAN);
@@ -898,13 +1159,9 @@ mod tests {
         assert_eq!(inventory.len(), MAX_CANDIDATES_PER_SCAN);
 
         let mut first_budget = 3;
-        let (first, first_cursor) = hash_inventory_range(
-            &inventory,
-            None,
-            &mut first_budget,
-            100,
-            &control,
-        ).expect("first bounded range");
+        let (first, first_cursor) =
+            hash_inventory_range(&inventory, None, &mut first_budget, 100, &control)
+                .expect("first bounded range");
         assert_eq!(first.len(), 1);
         assert_eq!(first_budget, 1);
         let first_cursor = first_cursor.expect("cursor stops before byte-deferred item");
@@ -916,7 +1173,8 @@ mod tests {
             &mut second_budget,
             101,
             &control,
-        ).expect("reopened bounded range");
+        )
+        .expect("reopened bounded range");
         assert_eq!(second.len(), 1);
         assert_eq!(second_budget, 1);
         assert_ne!(second[0].notice.source_path, first[0].notice.source_path);
@@ -932,7 +1190,10 @@ mod tests {
         std::fs::write(child.join("guide.txt"), b"one shared physical file").expect("document");
         let config = DocIngestConfig {
             enabled: true,
-            watch_paths: vec![parent.path().to_string_lossy().into_owned(), child.to_string_lossy().into_owned()],
+            watch_paths: vec![
+                parent.path().to_string_lossy().into_owned(),
+                child.to_string_lossy().into_owned(),
+            ],
             max_per_day: 10,
         };
         let roots = resolve_roots(&config, None).expect("overlapping roots");
@@ -944,7 +1205,10 @@ mod tests {
             .expect("home");
         let state = load_state(&state_home).expect("state");
         assert_eq!(state.entries.len(), 1);
-        assert_eq!(state.entries.values().next().expect("entry").root_id, child_root_id);
+        assert_eq!(
+            state.entries.values().next().expect("entry").root_id,
+            child_root_id
+        );
     }
 
     #[cfg(windows)]
@@ -961,7 +1225,11 @@ mod tests {
             max_per_day: 10,
         };
         let roots = resolve_roots(&config, None).expect("resolve aliases");
-        assert_eq!(roots.len(), 1, "case aliases must collapse by opened directory identity");
+        assert_eq!(
+            roots.len(),
+            1,
+            "case aliases must collapse by opened directory identity"
+        );
         let report = scan_once(home.path(), &config, None, 100).expect("scan aliases");
         assert_eq!(report.discovered, 1);
         assert_eq!(list_pending(home.path()).expect("pending").len(), 1);
@@ -988,7 +1256,10 @@ mod tests {
         let path = home.path().join(STATE_FILE);
         std::fs::write(&path, &state).expect("state");
         assert!(list_pending(home.path()).is_err());
-        assert_eq!(std::fs::read_to_string(&path).expect("state retained"), state);
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("state retained"),
+            state
+        );
     }
 
     #[cfg(unix)]

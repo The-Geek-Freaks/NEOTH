@@ -143,7 +143,10 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
                 crate::daemon::doc_ingest_cron::dismiss_pending(&home, &revision_id)?,
                 "pending document revision {revision_id} was not found"
             );
-            println!("{}", serde_json::json!({"dismissed_revision_id": revision_id}));
+            println!(
+                "{}",
+                serde_json::json!({"dismissed_revision_id": revision_id})
+            );
             Ok(())
         }
         ProactiveAction::List { status, history } => {
@@ -599,8 +602,7 @@ mod tests {
             watch_paths: vec![sources.path().display().to_string()],
             max_per_day: 3,
         };
-        crate::daemon::doc_ingest_cron::scan_once(home.path(), &config, None, 1_000)
-            .unwrap();
+        crate::daemon::doc_ingest_cron::scan_once(home.path(), &config, None, 1_000).unwrap();
         let notices = crate::daemon::doc_ingest_cron::list_pending(home.path()).unwrap();
         assert_eq!(notices.len(), 1);
         let revision_id = notices[0].revision_id.clone();
@@ -619,9 +621,12 @@ mod tests {
             home: Some(home.path().to_path_buf()),
         })
         .unwrap();
-        crate::daemon::doc_ingest_cron::scan_once(home.path(), &config, None, 1_001)
-            .unwrap();
-        assert!(crate::daemon::doc_ingest_cron::list_pending(home.path()).unwrap().is_empty());
+        crate::daemon::doc_ingest_cron::scan_once(home.path(), &config, None, 1_001).unwrap();
+        assert!(
+            crate::daemon::doc_ingest_cron::list_pending(home.path())
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(std::fs::read_to_string(&source).unwrap(), body);
         assert!(!home.path().join("views.db").exists());
         assert!(!home.path().join("wal").exists());
@@ -629,8 +634,7 @@ mod tests {
 
     const DOCUMENT_SOURCE_SHA256: &str =
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    const DOCUMENT_SANITIZED_SHA256: &str =
-        "bbbbbbbbbbbbbbbb";
+    const DOCUMENT_SANITIZED_SHA256: &str = "bbbbbbbbbbbbbbbb";
 
     fn staged_document(title: &str, route: DocumentStagingRoute) -> ProposedAction {
         let candidate_sha256 = hex::encode(Sha256::digest(

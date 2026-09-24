@@ -113,10 +113,12 @@ mod document_ingest_fleet_tests {
 
         let mut active = before.clone();
         active.doc_ingest.enabled = true;
-        active.doc_ingest.watch_paths = vec![std::env::temp_dir()
-            .join("neoth-document-ingest-test")
-            .display()
-            .to_string()];
+        active.doc_ingest.watch_paths = vec![
+            std::env::temp_dir()
+                .join("neoth-document-ingest-test")
+                .display()
+                .to_string(),
+        ];
         let running = desired_cron_keys(&active);
         assert!(running.contains(&CronKey::DocumentIngest));
 
@@ -746,7 +748,10 @@ pub(crate) fn spawn_doc_ingest(
     if !config.doc_ingest.enabled {
         return None;
     }
-    let vault_root = config.obsidian_vault.as_deref().map(std::path::PathBuf::from);
+    let vault_root = config
+        .obsidian_vault
+        .as_deref()
+        .map(std::path::PathBuf::from);
     Some(crate::daemon::doc_ingest_cron::spawn(
         home.to_path_buf(),
         config.doc_ingest.clone(),

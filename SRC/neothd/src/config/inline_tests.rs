@@ -307,7 +307,8 @@ mod doc_ingest_config_tests {
         assert!(defaults.watch_paths.is_empty());
         assert_eq!(defaults.max_per_day, 3);
 
-        let absent: FreedomConfig = serde_yaml::from_str("operator_id: operator").expect("parse legacy config");
+        let absent: FreedomConfig =
+            serde_yaml::from_str("operator_id: operator").expect("parse legacy config");
         assert_eq!(absent.doc_ingest, defaults);
         absent
             .validate_public_sections()
@@ -316,22 +317,38 @@ mod doc_ingest_config_tests {
 
     #[test]
     fn enabled_doc_ingest_requires_absolute_root_or_vault_and_bounded_quota() {
-        let mut cfg = DocIngestConfig { enabled: true, ..DocIngestConfig::default() };
-        assert!(cfg.validate(false).is_err(), "active ingest needs an explicit root");
+        let mut cfg = DocIngestConfig {
+            enabled: true,
+            ..DocIngestConfig::default()
+        };
+        assert!(
+            cfg.validate(false).is_err(),
+            "active ingest needs an explicit root"
+        );
 
         cfg.watch_paths = vec!["relative/documents".to_owned()];
-        assert!(cfg.validate(false).is_err(), "relative roots are rejected before runtime");
+        assert!(
+            cfg.validate(false).is_err(),
+            "relative roots are rejected before runtime"
+        );
 
-        cfg.watch_paths = vec![std::env::temp_dir().join("operator-documents").display().to_string()];
+        cfg.watch_paths = vec![
+            std::env::temp_dir()
+                .join("operator-documents")
+                .display()
+                .to_string(),
+        ];
         cfg.max_per_day = 0;
         assert!(cfg.validate(false).is_err(), "zero quota is rejected");
         cfg.max_per_day = 101;
         assert!(cfg.validate(false).is_err(), "unbounded quota is rejected");
         cfg.max_per_day = 3;
-        cfg.validate(false).expect("absolute configured root is valid syntax");
+        cfg.validate(false)
+            .expect("absolute configured root is valid syntax");
 
         cfg.watch_paths.clear();
-        cfg.validate(true).expect("configured vault is a valid additional root");
+        cfg.validate(true)
+            .expect("configured vault is a valid additional root");
         cfg.watch_paths = vec![std::env::temp_dir().display().to_string(); 32];
         assert!(
             cfg.validate(true).is_err(),

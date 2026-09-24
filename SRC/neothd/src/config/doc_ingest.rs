@@ -52,7 +52,10 @@ impl DocIngestConfig {
                 "doc_ingest.max_per_day must be between {MIN_DOC_INGEST_MAX_PER_DAY} and {MAX_DOC_INGEST_MAX_PER_DAY} when doc_ingest.enabled is true"
             ));
         }
-        if self.watch_paths.len().saturating_add(usize::from(has_configured_vault))
+        if self
+            .watch_paths
+            .len()
+            .saturating_add(usize::from(has_configured_vault))
             > MAX_DOC_INGEST_WATCH_PATHS
         {
             return Err(format!(
