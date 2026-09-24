@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T05:53:49.2922379Z",
-  "validationStatus": "P2-26a accepted; named Slack and targeted Windows/socket repairs source-reviewed, hosted pending",
+  "capturedUtc": "2026-09-24T05:56:15.7296392Z",
+  "validationStatus": "P2-26a accepted; Slack startup delimiter corrected after hosted parser failure, hosted validation pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1623,18 +1623,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 234717,
-      "sha256": "9675A017697323E738595D9E89B0A9DED04CC90C7674B23AC5A5872EA334C473"
+      "bytes": 235015,
+      "sha256": "E62D6DDF11F2749CAE202A5CD21FB48BECF5B199A5D51F0B2293C27CD03E2503"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1246045,
-      "sha256": "C88C25FAA4E199AA9E2191FAF629CE58B6992BA6A26B24F3E28A852D63EBECD4"
+      "bytes": 1246343,
+      "sha256": "5C03BF548CAE38A4EB532270BDC173A9C2213925BCBBDAC35A3BF02CE01121B2"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1845852,
-      "sha256": "34BC88191343AF7274949F3BBD57728224176814C2CD2FBF9F3E6EA60C5E557F"
+      "bytes": 1846150,
+      "sha256": "68F21F85D450CF09284BF389FD8A4BA8CFF8BC02014BFF08553453CC503306EE"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -2608,8 +2608,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
-      "bytes": 545851,
-      "sha256": "050FF2552D4EBA358F4D4BEEBC1041EA2D596FD2AA44554E8B9F38DDDADFCCCA"
+      "bytes": 545841,
+      "sha256": "6CE51723F41E354508510CEABDC0E220DEE762E01D97A415B779BC406D72A5D0"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tests.rs",

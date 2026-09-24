@@ -6461,7 +6461,6 @@ pub(crate) async fn spawn_channel_adapters(
                 ),
             }
         }
-        }
     }
 
     // Discord inbound is fail-closed: the immutable sender snowflake and WAL

@@ -8,6 +8,11 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W674 hosted syntax correction (2026-09-24):** Preflight35962137807 at5e36a39b
+found one extra closing brace in the new Slack startup block. The exact single
+delimiter is removed; hosted format and native behavior are still pending.
+No local executable validation and no additional Road closure.
+
 **W664-W673 Slack accounts, source-bound GUI acceptance and targeted repairs (2026-09-24):**
 Named Slack accounts now have exact policy/secret pairing, duplicate-map rejection,
 separate startup/reload/health identities, secret-free status, isolated ingress,

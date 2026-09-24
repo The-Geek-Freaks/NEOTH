@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "P2-26a accepted; named Slack and targeted Windows/socket repairs source-reviewed, hosted pending",
+  "status": "P2-26a accepted; Slack startup delimiter corrected after hosted parser failure, hosted validation pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 153000,
-    "sha256": "3980ED5FFC4070713E8B2EDFCF171C5DE0278539664841C38BA65980D34525DE"
+    "bytes": 153009,
+    "sha256": "F36C2595C083D530097ADA44C878320FD859B9BF14177658EDC27C79225004E6"
   },
   "sourceInputs": 866,
   "requiredNativeTests": [
@@ -552,7 +552,7 @@
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::paired_reply_binding_releases_a_retired_telegram_adapter",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "050FF2552D4EBA358F4D4BEEBC1041EA2D596FD2AA44554E8B9F38DDDADFCCCA",
+      "sourceSha256": "6CE51723F41E354508510CEABDC0E220DEE762E01D97A415B779BC406D72A5D0",
       "junitClass": "neoth"
     },
     {
@@ -618,7 +618,7 @@
     {
       "test": "cli::serve_tasks::tests::readiness_publisher_revokes_on_false_and_cannot_republish_a_replaced_lease",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "050FF2552D4EBA358F4D4BEEBC1041EA2D596FD2AA44554E8B9F38DDDADFCCCA",
+      "sourceSha256": "6CE51723F41E354508510CEABDC0E220DEE762E01D97A415B779BC406D72A5D0",
       "junitClass": "neoth"
     },
     {
@@ -2532,7 +2532,7 @@
     {
       "test": "cli::serve_tasks::tests::write_usage_snapshot_roundtrips_json",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "050FF2552D4EBA358F4D4BEEBC1041EA2D596FD2AA44554E8B9F38DDDADFCCCA",
+      "sourceSha256": "6CE51723F41E354508510CEABDC0E220DEE762E01D97A415B779BC406D72A5D0",
       "junitClass": "neoth"
     },
     {
@@ -2916,13 +2916,13 @@
     {
       "test": "cli::serve_tasks::vault_mirror_scheduler_tests::vault_mirror_scheduler_requires_both_nightly_gates",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "050FF2552D4EBA358F4D4BEEBC1041EA2D596FD2AA44554E8B9F38DDDADFCCCA",
+      "sourceSha256": "6CE51723F41E354508510CEABDC0E220DEE762E01D97A415B779BC406D72A5D0",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::vault_mirror_scheduler_tests::accepted_reload_revoking_nightly_push_stops_scheduler",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "050FF2552D4EBA358F4D4BEEBC1041EA2D596FD2AA44554E8B9F38DDDADFCCCA",
+      "sourceSha256": "6CE51723F41E354508510CEABDC0E220DEE762E01D97A415B779BC406D72A5D0",
       "junitClass": "neoth"
     },
     {
@@ -3180,7 +3180,7 @@
     {
       "test": "cli::serve_tasks::local_models_lifecycle_tests::local_models_runtime_requires_active_native_ollama_provider",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "050FF2552D4EBA358F4D4BEEBC1041EA2D596FD2AA44554E8B9F38DDDADFCCCA",
+      "sourceSha256": "6CE51723F41E354508510CEABDC0E220DEE762E01D97A415B779BC406D72A5D0",
       "junitClass": "neoth"
     },
     {
@@ -5274,7 +5274,7 @@
     {
       "test": "cli::serve_tasks::tests::admitted_legacy_live_factories_seal_distinct_default_capabilities",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "050FF2552D4EBA358F4D4BEEBC1041EA2D596FD2AA44554E8B9F38DDDADFCCCA",
+      "sourceSha256": "6CE51723F41E354508510CEABDC0E220DEE762E01D97A415B779BC406D72A5D0",
       "junitClass": "neoth"
     },
     {
@@ -6540,13 +6540,13 @@
     {
       "test": "cli::serve_tasks::tests::spawn_cron_scheduler_blocks_strict_and_fail_closed_custom",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "050FF2552D4EBA358F4D4BEEBC1041EA2D596FD2AA44554E8B9F38DDDADFCCCA",
+      "sourceSha256": "6CE51723F41E354508510CEABDC0E220DEE762E01D97A415B779BC406D72A5D0",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::zf06_fleet_tests::desired_dream_cron_uses_explicit_fail_closed_autonomy_rail",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "050FF2552D4EBA358F4D4BEEBC1041EA2D596FD2AA44554E8B9F38DDDADFCCCA",
+      "sourceSha256": "6CE51723F41E354508510CEABDC0E220DEE762E01D97A415B779BC406D72A5D0",
       "junitClass": "neoth"
     },
     {
@@ -7818,13 +7818,13 @@
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::slack_startup_factory_keeps_two_named_accounts_and_reload_is_account_scoped",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "050FF2552D4EBA358F4D4BEEBC1041EA2D596FD2AA44554E8B9F38DDDADFCCCA",
+      "sourceSha256": "6CE51723F41E354508510CEABDC0E220DEE762E01D97A415B779BC406D72A5D0",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::slack_framed_tokens_disambiguate_health_and_reload_fingerprints",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "050FF2552D4EBA358F4D4BEEBC1041EA2D596FD2AA44554E8B9F38DDDADFCCCA",
+      "sourceSha256": "6CE51723F41E354508510CEABDC0E220DEE762E01D97A415B779BC406D72A5D0",
       "junitClass": "neoth"
     },
     {
@@ -29156,6 +29156,38 @@
       }
     ],
     "note": "17 new portable Slack,2 Windows namespace,1 macOS socket fixtures; Group1042/Windows50; corrected3Cron namespaces; admitted W668/W669/W671/W672. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave674SlackSyntax": {
+    "base": "5e36a39bfaa276e6ae55447e59735e97ab87b8ba",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 235015,
+        "sha256": "E62D6DDF11F2749CAE202A5CD21FB48BECF5B199A5D51F0B2293C27CD03E2503",
+        "blob": "4b25089cc4f2128030763d7d3abab215e46d60d4"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1246343,
+        "sha256": "5C03BF548CAE38A4EB532270BDC173A9C2213925BCBBDAC35A3BF02CE01121B2",
+        "blob": "a09e6621c2bd764a4b103fd330cf332a77a94ea4"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1846150,
+        "sha256": "68F21F85D450CF09284BF389FD8A4BA8CFF8BC02014BFF08553453CC503306EE",
+        "blob": "668ff6c4afe19b525e47415401b96c795d113799"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_tasks.rs",
+        "bytes": 545841,
+        "sha256": "6CE51723F41E354508510CEABDC0E220DEE762E01D97A415B779BC406D72A5D0",
+        "blob": "8c33ab13722ef69cb238d06c7cdcef567bde7c91"
+      }
+    ],
+    "note": "Preflight35962137807 caught extra closing delimiter in Slack startup; remove exact extra brace; no assertion changes.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
