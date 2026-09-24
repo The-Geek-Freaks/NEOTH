@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T00:18:55.3475760Z",
+  "capturedUtc": "2026-09-24T00:29:42.3267219Z",
   "validationStatus": "SOURCE_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -1052,6 +1052,11 @@
       "sha256": "F4E947E25FA9806E0BFD3057EF7DC16B055B5B9AF41A27AF829018198903F81C"
     },
     {
+      "path": "docs/gold-wave571-wizard-acceptance.md",
+      "bytes": 1625,
+      "sha256": "98F7C5C70FB6F4405EA2666E04A3313862901605DC6CF9714C230A61A55786A3"
+    },
+    {
       "path": "docs/install.md",
       "bytes": 13637,
       "sha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625"
@@ -1242,6 +1247,21 @@
       "sha256": "469BA875863729F653FFAE04E125BA4EF9CDBA7AF67754EEB1F54CE0B9B2EAF6"
     },
     {
+      "path": "docs/verification/gold-wave569-format.json",
+      "bytes": 642,
+      "sha256": "A49990345A290477E300543E6CA75912AC5140FE7AB8D844BAA0637E1BA5C5F1"
+    },
+    {
+      "path": "docs/verification/gold-wave571-gui148-terminals.json",
+      "bytes": 48709,
+      "sha256": "0242F7C28BFA5D8C73CF75C13DBA87E510301E15D5A52E28BDD4728FEF1C4253"
+    },
+    {
+      "path": "docs/verification/gold-wave571-p118-acceptance.json",
+      "bytes": 5351,
+      "sha256": "22350BFAA9BBF72DFCD36A29F9BE56AC01CEA6B7AFB7CB82A71CE1897F6E7D11"
+    },
+    {
       "path": "docs/verification/managed-browser-cft154.json",
       "bytes": 2497,
       "sha256": "80443D2F6E6A6E226F1617F7F5463017071D9D21130D1FCD116470F147455337"
@@ -1368,18 +1388,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 203359,
-      "sha256": "FDD8B67230AB5963BAAA95569FF644ED57CF9A583F214AEB2451975216D17E6F"
+      "bytes": 204030,
+      "sha256": "EA0B71CF5B98493FAE6D49878EC61D1D146B10C52A3D3FE8B00DD8DF041B9347"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1213683,
-      "sha256": "0B47CBC694EA7159BAF877F81D471A1411DBA44E45502BF6E68270F80B0ACBDE"
+      "bytes": 1215358,
+      "sha256": "AD1E21EA4C1BB3EFC2141CC1258FC8E0ED978197735BB32A74719696A8CF8F3E"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1812316,
-      "sha256": "C6050FADCBAB62373E3D39B3990552B92E97E58C107C18C65A9C2C3D5FD9FC1D"
+      "bytes": 1814640,
+      "sha256": "CF13BC29A31ED329A1B83D1B997C0D37F0979D85C944DAA879E8D0E4ACA61C25"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -2248,8 +2268,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/obsidian.rs",
-      "bytes": 174576,
-      "sha256": "F25EDC48B6D6713C390182312A526FCF78D9EB58123E6B86EBF29EBC218E976B"
+      "bytes": 174693,
+      "sha256": "B2D809DD5D6467C0364ADA984DF743030E6D883011E79290AF4F45D7647FF2E9"
     },
     {
       "path": "SRC/neothd/src/cli/ouro.rs",
@@ -2983,8 +3003,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "bytes": 26141,
-      "sha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7"
+      "bytes": 27073,
+      "sha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1"
     },
     {
       "path": "SRC/neothd/src/installers/ocr.rs",

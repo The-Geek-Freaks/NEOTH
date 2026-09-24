@@ -1,0 +1,1209 @@
+{
+  "schema": "neoth-gui-source-admission/v1",
+  "run": 35935063658,
+  "source": "829c37c370475bde91a46ab94bad38efe099e4b6",
+  "status": "SOURCE_ADMITTED_PARTIAL_FAILURE",
+  "executed": 148,
+  "passed": 147,
+  "failed": 1,
+  "missing": 0,
+  "artifacts": [
+    {
+      "id": 10784325635,
+      "published": "dc92d9116de37fbc3a9e8273448c70d4a49a6ee8a653344b351def458305ecee",
+      "local": "DC92D9116DE37FBC3A9E8273448C70D4A49A6EE8A653344B351DEF458305ECEE"
+    },
+    {
+      "id": 10783787305,
+      "published": "8363b81b6384162264de7f48719871efc628fea2bcd46a9be02f741789719968",
+      "local": "8363B81B6384162264DE7F48719871EFC628FEA2BCD46A9BE02F741789719968"
+    },
+    {
+      "id": 10783707476,
+      "published": "28872d5860f18b10215b609433b79b0488055530b9d6ce09f959dc6bd230dd05",
+      "local": "28872D5860F18B10215B609433B79B0488055530B9D6CE09F959DC6BD230DD05"
+    }
+  ],
+  "sourceBindings": [
+    {
+      "path": "SRC/neothd-gui/src/chat_reasoning.rs",
+      "blob": "5e6666e5e317f29bbb94a58bb9006e176b2a17ce",
+      "sha256": "561D447519555E023FC0FC4A3675B26636989792BD10CD6101B29C970FFAAEA9"
+    },
+    {
+      "path": "SRC/neothd-gui/src/chat_response_feedback.rs",
+      "blob": "c8b45d206e4b30d630d0918ae67e60cee50db3fe",
+      "sha256": "D363B974B807A0F4EEBDACA0296BF8E1E8F5DB95F457599131BCEC95895F2FDA"
+    },
+    {
+      "path": "SRC/neothd-gui/src/chat_stream_phase.rs",
+      "blob": "c768af1745df268c2e45a4599ec7f423122c1bb5",
+      "sha256": "280F37D2500FE57CFA421F978D283ED749B52E9C72250B7119035C83BCEDA8F6"
+    },
+    {
+      "path": "SRC/neothd-gui/src/citation_gui.rs",
+      "blob": "fefbfdcaa522c08234f7bd2f0b7913c7681cd584",
+      "sha256": "DAF70ECCC97106319F68524EE8B173D734C4A9338ABE572E242C0373789826AC"
+    },
+    {
+      "path": "SRC/neothd-gui/src/coding_controller.rs",
+      "blob": "73b659d4f6a153acdfbab2beb414b745d0feaf66",
+      "sha256": "3ED2CD5BE7F325761922C7151E03CC53B6F61D5C32C49450E6C83F8E140A5336"
+    },
+    {
+      "path": "SRC/neothd-gui/src/gui_action/ouro_q8.rs",
+      "blob": "4d34dc10a383f7f5db109441a35208c9eeefebec",
+      "sha256": "8A6164EFB6434B6BA9CAADD92B5E31548BE3867E6C932433F23A97A23F125948"
+    },
+    {
+      "path": "SRC/neothd-gui/src/gui_chat_bridge_controller.rs",
+      "blob": "b132cafd6f1f2c53337c3e7537a9745bf8d61f8c",
+      "sha256": "5FAE51AED73C26FD96143D1F22772543B10CF42130F057ABA4A839CE0E449AB1"
+    },
+    {
+      "path": "SRC/neothd-gui/src/main.rs",
+      "blob": "14c81a2892c16fea12d27e001674764a94d7bc05",
+      "sha256": "B55E3F9F17841D40B55B27353811EB46326C01FE7DEAF55C489501F4CB1B86FA"
+    },
+    {
+      "path": "SRC/neothd-gui/src/ouro_gui.rs",
+      "blob": "f5bf3bbb4580dd309bac7996f7a24ca61cac2f9e",
+      "sha256": "8CCBED4C9249EEEF0E5C008B87FDEF3C2169315191330A9676FB3DC831B8CC3E"
+    },
+    {
+      "path": "SRC/neothd-gui/src/panel_logic.rs",
+      "blob": "6bcd0468e6bcc5cf0014610ef68995d13ef7d495",
+      "sha256": "8482856452414A3EC61E20A069317A2F901D4D95EB57441691BD04194A5BCE1C"
+    },
+    {
+      "path": "SRC/neothd-gui/tests/gui_chat_bridge_public_api.rs",
+      "blob": "4819b614deae9550d2340b9a5e132e11922a0c85",
+      "sha256": "B0B3C160376AD869FCA6BB92937CACE6261B5C5C09F4862761E214D19E923E06"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/chat.slint",
+      "blob": "8fcb49123283f93c16017c075928d4f211bb5759",
+      "sha256": "C96A4B63B1E1B0506E1A21A29CCE1F83616D194F158A1673ECA1B4346810DD2B"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/citation.slint",
+      "blob": "e4093144ac60a950e555298eb2500592a5e0dfbd",
+      "sha256": "D50C1A0B7E87A3C03D1FE89F46CD35AEE08AEE73D00B5ED0C4D5BADADC968668"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/main.slint",
+      "blob": "37622ca1054ae04bb35dd23bc3807f27a4570c86",
+      "sha256": "BF507E76100283D4FB210E1599E4197230974F068538F863A6256251F192C3F1"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/overlay.slint",
+      "blob": "8e7b0647940925bcfb2ea9660c12b1389416270a",
+      "sha256": "CF1101496E4C3DA3D3D8B3A799E96313C20A18AB5E50EFAED2818CABC41A3CAE"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/tabs.slint",
+      "blob": "aa1b83ce8187ec5d7982462b093c2654f651281c",
+      "sha256": "A0AF943FAA3AA9C42B2C3862502FD53781C79AF145445E2F39FA8A227ED98D32"
+    },
+    {
+      "path": "SRC/neothd-gui/src/wizard_session_controller.rs",
+      "blob": "3d5e41261270c1053b505817b6d1b47594066d88",
+      "sha256": "BCB65A6A479AD2CFFA823B77E089857B4AD6FF39CEB360EA10C715558A927FF0"
+    },
+    {
+      "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
+      "blob": "6616090c5a203a4da3f76011f47710f8412b15c5",
+      "sha256": "9614E23D8D8BF435B37BBF7B2E5446AFDACDC7E6AA499E607245C3CD1E9DCB04"
+    },
+    {
+      "path": "SRC/neothd-gui/src/gui_action.rs",
+      "blob": "9ce964c9369eeddb63ec85c4945f0dfbbd2708bc",
+      "sha256": "3B438B538F4EC3E822D31D73F9F27164EB7CCD281B7BF108027A40F394C7AB46"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+      "blob": "08e1197549a0122004c83d0e0f465092c1ce08ed",
+      "sha256": "4511102552FF975893F268557B4872883D27AB20F9154BDF1C84BAFCAE1734EE"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_bridge.rs",
+      "blob": "789db2102c877dd2f1e98695014e60ad5f82e14d",
+      "sha256": "44D4C241AC248249AFC4F510AB1DBBE1928209893EEA604B5D76F04DCFB75597"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/chat_runtime.rs",
+      "blob": "397489b41f6d994d67471e7676922e754d886b26",
+      "sha256": "A4A95415E3B7733EBF0600D683DA7D50D919779495F9FA2FCDBB0FE026346658"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "blob": "66ee2773a83cf4f1ea2a0b0e63cb6e117a34c2a5",
+      "sha256": "EE8874B04744BC1CBC221B2786E95A16038E72A9C8B665B0B7B9EE2D94CD2265"
+    },
+    {
+      "path": "docs/verification/gold-wave95-96-test-matrix.json",
+      "blob": "56858e24ee6c2c7e384458803f2b644751bda0a3",
+      "sha256": "17A1CB9A97E339000CDFEBF0D3849E1701119703B3817A8DB997755096D2EB3A"
+    },
+    {
+      "path": "docs/verification/gold-wave95-96-source-manifest.json",
+      "blob": "559876682884fc38b7693244d2d0bd172e449228",
+      "sha256": "A291791D12B73F4102E6CC91E59F540E65F31D5892B7DB1C58B4C0835A5C3397"
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "blob": "a49b0e51cbc8d33d1f351352e856fc89961f02e1",
+      "sha256": "722EE0446DBAC05B3E7D4EB9D44C7174E98E6E6FFF5B633B5A30993EDBCB61F0"
+    },
+    {
+      "path": "SRC/neothd-gui/Cargo.toml",
+      "blob": "4f00623499277291ee417933c54331f392340f0e",
+      "sha256": "296EF213746C9DD31CD818112BA546F21425B870120181058152B277AEAD6261"
+    },
+    {
+      "path": ".github/workflows/gui-linux-fixtures.yml",
+      "blob": "1e77c27debd2fb87be89352a81d778885464623d",
+      "sha256": "740FA90803CBA6E77ECA89734292EB7E28AE808CD809D59563AC9DF5BE856438"
+    }
+  ],
+  "terminals": [
+    {
+      "sequence": 1,
+      "name": "coding_controller::tests::gui_reserved_start_reaches_real_provider_worker_with_prepared_code_map_context",
+      "terminal": "ok",
+      "log": "test-001.log",
+      "logSha256": "C90B88E5A6C4FB12868F755D0CCCF5036E3E6C7EB10E787F3C8CB0D453206AA7"
+    },
+    {
+      "sequence": 2,
+      "name": "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
+      "terminal": "ok",
+      "log": "test-002.log",
+      "logSha256": "1D1AC3563D8341FECA4BE3603B842E3A83E2082D7B4CF670548C36CD6B82DF10"
+    },
+    {
+      "sequence": 3,
+      "name": "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
+      "terminal": "ok",
+      "log": "test-003.log",
+      "logSha256": "387097E695AE1AF8B8BFEAF8FC64688416F8A12ACA1FC1C610D31092A1227D92"
+    },
+    {
+      "sequence": 4,
+      "name": "w58_gui_callback_runtime_tests::w73_buddy_cancel_joins_real_blocked_provider_without_success_repaint",
+      "terminal": "ok",
+      "log": "test-004.log",
+      "logSha256": "C422C0C252D534EF9F9E9BD44BE89B3143BBD4C9E180E81208FB9B4654380A54"
+    },
+    {
+      "sequence": 5,
+      "name": "w58_gui_callback_runtime_tests::w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it",
+      "terminal": "ok",
+      "log": "test-005.log",
+      "logSha256": "6079E9C5EAA4FBFC1CF0ECE3453FC5ED4B0F62869AD9D9A6B4F75D7FDF1F1376"
+    },
+    {
+      "sequence": 6,
+      "name": "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
+      "terminal": "ok",
+      "log": "test-006.log",
+      "logSha256": "BC5CA52C0CADB8324FAFC2E1B3473524BCA5CB803AEBFB57D9F5364C6B4AD3A9"
+    },
+    {
+      "sequence": 7,
+      "name": "panel_logic::tests::lifecycle_impact_identity_uses_the_redacted_digest_and_rejects_another_root",
+      "terminal": "ok",
+      "log": "test-007.log",
+      "logSha256": "F710779C6BE26825C900DCB559D64ADA2396773506F79E31FEA7AB833DD42EFC"
+    },
+    {
+      "sequence": 8,
+      "name": "panel_logic::tests::private_channel_builder_preserves_typed_fields_without_cli_flags",
+      "terminal": "ok",
+      "log": "test-008.log",
+      "logSha256": "97A1A49D76366254FF8C8BCD987BA6CBF16373D176A337FAE798763283CF1F09"
+    },
+    {
+      "sequence": 9,
+      "name": "panel_logic::tests::private_channel_builder_routes_matrix_store_path_without_changing_secret_slots",
+      "terminal": "ok",
+      "log": "test-009.log",
+      "logSha256": "0E7CCFC001C7F318753FEBCC83CDD6F3394EBDEFADB4924FFA54AB533C356BF2"
+    },
+    {
+      "sequence": 10,
+      "name": "tests::matrix_store_path_request_uses_private_stdin_without_path_or_secret_in_argv",
+      "terminal": "ok",
+      "log": "test-010.log",
+      "logSha256": "20B360252ADF5E74D70860D3225DF6F81C7731C2C2B2360D0D722AC1B06F259F"
+    },
+    {
+      "sequence": 11,
+      "name": "panel_logic::tests::private_channel_builder_routes_line_webhook_port_as_typed_private_stdin_state",
+      "terminal": "ok",
+      "log": "test-011.log",
+      "logSha256": "97A5B856F0D299B17133F3676D72CD966BBCD9E2C3D9C3F5BEFEC0DCF96E6E5D"
+    },
+    {
+      "sequence": 12,
+      "name": "tests::line_port_request_uses_private_stdin_without_port_or_secrets_in_argv",
+      "terminal": "ok",
+      "log": "test-012.log",
+      "logSha256": "5A5AD20AFFBD9A33CB2A6964558EBCFB1F4E788B10F07A19C1868F03AD4296DD"
+    },
+    {
+      "sequence": 13,
+      "name": "panel_logic::tests::private_channel_builder_routes_irc_public_settings_without_weakening_account_requirement",
+      "terminal": "ok",
+      "log": "test-013.log",
+      "logSha256": "68574FAADFE21B841454581B20B0E818C79ADE80432076B475321EF7FF69758C"
+    },
+    {
+      "sequence": 14,
+      "name": "tests::irc_public_settings_request_uses_private_stdin_without_settings_or_secret_in_argv",
+      "terminal": "ok",
+      "log": "test-014.log",
+      "logSha256": "EC65C3641E44DEEF6123FE360FA2A46B644D048E48CA7ACA2F97293F3953A84E"
+    },
+    {
+      "sequence": 15,
+      "name": "panel_logic::tests::named_telegram_account_retirement_command_and_ack_bind_the_exact_account",
+      "terminal": "ok",
+      "log": "test-015.log",
+      "logSha256": "3BA60AC9B77932BE18415353E949C78A53DAF57C1140DA1101099718F1E0E011"
+    },
+    {
+      "sequence": 16,
+      "name": "panel_logic::tests::required_sender_form_slots_map_to_private_allowed_sender_and_reject_blank",
+      "terminal": "ok",
+      "log": "test-016.log",
+      "logSha256": "75586042D463CC4B5D08E05732D8E0026E200C12E65250C09BB275C625F1B964"
+    },
+    {
+      "sequence": 17,
+      "name": "panel_logic::tests::bluebubbles_chat_guid_form_slot_trims_or_clears_without_weakening_sender",
+      "terminal": "ok",
+      "log": "test-017.log",
+      "logSha256": "DB06F7C4E4DF706C3C546635E9E853E301EC16440DEDBC534E0CA760E61D228C"
+    },
+    {
+      "sequence": 18,
+      "name": "panel_logic::tests::parse_channel_status_requires_boolean_dm_pairing_for_mapped_accounts",
+      "terminal": "ok",
+      "log": "test-018.log",
+      "logSha256": "3A272CB15E0A3B0AF7B02E723588B35F6575D5B4CFB027C82FAF50F38564A1E4"
+    },
+    {
+      "sequence": 19,
+      "name": "panel_logic::tests::named_telegram_account_dm_pairing_command_and_ack_bind_the_exact_policy",
+      "terminal": "ok",
+      "log": "test-019.log",
+      "logSha256": "1A391F9BF8C1208E74B080EBFB820B76D7F074E1837B17F2CD2C66223381E5DF"
+    },
+    {
+      "sequence": 20,
+      "name": "gui_action::tests::skill_autonomy_receipts_are_strict_and_bind_exact_desired_config",
+      "terminal": "ok",
+      "log": "test-020.log",
+      "logSha256": "97A805D539B0AADD0348C2616A03C00E5141E2B6D670D8D8A03FC3B499A292A2"
+    },
+    {
+      "sequence": 21,
+      "name": "panel_logic::tests::parse_buddy_status_happy_path",
+      "terminal": "ok",
+      "log": "test-021.log",
+      "logSha256": "850C1B24765504D0E8ABA5617824D89D7FCD2252D9E017D66182E62935D7EB38"
+    },
+    {
+      "sequence": 22,
+      "name": "panel_logic::tests::parse_buddy_status_rejects_malformed_or_lossy_payloads",
+      "terminal": "ok",
+      "log": "test-022.log",
+      "logSha256": "6365F7391630CF0B44010098A9EAF12B5BC189C7940AF6E2EA4A2E92DAF45AEB"
+    },
+    {
+      "sequence": 23,
+      "name": "gui_action::tests::w142_selfimprove_accept_ack_requires_selected_current_evidence",
+      "terminal": "ok",
+      "log": "test-023.log",
+      "logSha256": "98D5CA07537904FD5750B9754B3D35750E3D7BFF5A6D98FE199D030318B75724"
+    },
+    {
+      "sequence": 24,
+      "name": "panel_logic::tests::w142_selfimprove_review_projects_only_current_verified_evidence",
+      "terminal": "ok",
+      "log": "test-024.log",
+      "logSha256": "1E7912156C5FF37A90BED364CAB27F90D7FE07B1C3D3F398DD8BDF738B352035"
+    },
+    {
+      "sequence": 25,
+      "name": "panel_logic::tests::w142_selfimprove_review_rejects_stale_or_mismatched_quality_without_false_success",
+      "terminal": "ok",
+      "log": "test-025.log",
+      "logSha256": "F3A337D60AA02D2131E5A3AF193438DC7C704B45F96864A9DB89E57A0E7E151E"
+    },
+    {
+      "sequence": 26,
+      "name": "panel_logic::tests::w142_selfimprove_review_rejects_missing_or_unknown_quality_fields",
+      "terminal": "ok",
+      "log": "test-026.log",
+      "logSha256": "120EAC97C14735C2F695DC8E1C041825ACC95509BF5E300807485955B13D60FB"
+    },
+    {
+      "sequence": 27,
+      "name": "panel_logic::tests::w149_buddy_quality_rejects_partial_evidence_and_keeps_unavailable_explicit",
+      "terminal": "ok",
+      "log": "test-027.log",
+      "logSha256": "39C4160ADE07AB29DAC74B20D21ACEEF96F7CED8167A1D17F962E7044411617F"
+    },
+    {
+      "sequence": 28,
+      "name": "gui_action::ouro_q8::tests::accepts_verified_q8_even_when_configured_none",
+      "terminal": "ok",
+      "log": "test-028.log",
+      "logSha256": "0E727B8BDD1E2ACACFCE3EABE1B0FF5E018169FE7E9F7DFAE584793681360110"
+    },
+    {
+      "sequence": 29,
+      "name": "gui_action::ouro_q8::tests::accepts_typed_nonzero_failure_without_success_identity",
+      "terminal": "ok",
+      "log": "test-029.log",
+      "logSha256": "E774C9C3D850A151B7B14E175D3EB5D5DBA78C4558BDFEB8ECC79151E5E32AD0"
+    },
+    {
+      "sequence": 30,
+      "name": "gui_action::ouro_q8::tests::rejects_crossed_exit_and_verification_claims",
+      "terminal": "ok",
+      "log": "test-030.log",
+      "logSha256": "F787B13FC931B06F8DBEB16464F1DC3ED223D6DEEBEDF0946EBFC86669691D17"
+    },
+    {
+      "sequence": 31,
+      "name": "gui_action::ouro_q8::tests::rejects_missing_nullable_key_and_unknown_fields",
+      "terminal": "ok",
+      "log": "test-031.log",
+      "logSha256": "648EFBF91523C412051E10DBD2E5EA58B1734CA29FC9E511D5686DFD2066A492"
+    },
+    {
+      "sequence": 32,
+      "name": "gui_action::ouro_q8::tests::rejects_duplicate_wire_keys",
+      "terminal": "ok",
+      "log": "test-032.log",
+      "logSha256": "BEBB35C016C5A795459D4D8ECF1607A81067B37A1137374320D12C5098A97185"
+    },
+    {
+      "sequence": 33,
+      "name": "gui_action::ouro_q8::tests::rejects_wrong_loop_mode_and_context_claims",
+      "terminal": "ok",
+      "log": "test-033.log",
+      "logSha256": "63932C830225BB75FBBADC49DB13BF69BBA7CE27A6BFB657E906D122857F3AA7"
+    },
+    {
+      "sequence": 34,
+      "name": "gui_action::ouro_q8::tests::rejects_success_data_on_typed_failure_and_normalizes_detail",
+      "terminal": "ok",
+      "log": "test-034.log",
+      "logSha256": "CF2365FB6C38B18146AADC2F088DE6367FAE7C6E956A952C3B0851961BC076C9"
+    },
+    {
+      "sequence": 35,
+      "name": "gui_action::ouro_q8::tests::capture_receive_returns_while_the_reader_is_still_held",
+      "terminal": "ok",
+      "log": "test-035.log",
+      "logSha256": "0B8E472AF728AC13F867FDE76E5CBD841CF9BCDBEE044140F854DF258FB67B95"
+    },
+    {
+      "sequence": 36,
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_is_grant_bound_and_never_enters_visible_reply_or_preview",
+      "terminal": "ok",
+      "log": "test-036.log",
+      "logSha256": "B21E85147B8E58A3D73347D38E1D8FA4B3B15982BAA5637719FFD4F1DDA692A6"
+    },
+    {
+      "sequence": 37,
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_is_bounded_zeroized_on_terminal_and_uses_an_independent_sequence",
+      "terminal": "ok",
+      "log": "test-037.log",
+      "logSha256": "3AE94B1290024C430A30041CDC98EDB5BAA06FD5A2E1CF75394CD9E4711979FF"
+    },
+    {
+      "sequence": 38,
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::actual_redacted_terminal_zeroizes_and_rejects_later_delta",
+      "terminal": "ok",
+      "log": "test-038.log",
+      "logSha256": "A5E402C51CFB13963AFF1B5B97D6358ED2148E0A452D5FA53B00154E3FBBFB13"
+    },
+    {
+      "sequence": 39,
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_delta_state_and_checkpoint_are_rejected_after_provider_done",
+      "terminal": "ok",
+      "log": "test-039.log",
+      "logSha256": "8469371EE0E15C6B73063F887C9AF2B774FE7EF940416BFD660C3361F321A7B8"
+    },
+    {
+      "sequence": 40,
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_buffer_rejects_bytes_beyond_sixty_four_kib",
+      "terminal": "ok",
+      "log": "test-040.log",
+      "logSha256": "95F5BB8E81452C1D060D11891362862EB1629E6BA3A7E4CDA95C27AFED42A745"
+    },
+    {
+      "sequence": 41,
+      "name": "chat_reasoning::tests::strict_sequence_limit_and_terminal_clear",
+      "terminal": "ok",
+      "log": "test-041.log",
+      "logSha256": "D15A51DEF4C92E67D37FE80A2974BB3E90326EF166C72DEEBD598A7DE06BB2F0"
+    },
+    {
+      "sequence": 42,
+      "name": "chat_reasoning::tests::duplicate_or_forged_frame_clears_the_exact_projection",
+      "terminal": "ok",
+      "log": "test-042.log",
+      "logSha256": "369515BF61F45BE1C54306EE6706F01BF79D71980876B53D59F07ACEE0CEC206"
+    },
+    {
+      "sequence": 43,
+      "name": "chat_reasoning::tests::default_off_counts_controls_without_retaining_text",
+      "terminal": "ok",
+      "log": "test-043.log",
+      "logSha256": "A0C5FAFBEFE5339954D377167F2D7E4EDFDB395AA2FE0FEA4B78602DF7F01A7D"
+    },
+    {
+      "sequence": 44,
+      "name": "gui_chat_bridge_controller::tests::reopen_none_or_error_settles_only_the_current_main_handoff",
+      "terminal": "ok",
+      "log": "test-044.log",
+      "logSha256": "B2E542D52D1850E8ED784AC5C7E4D6165BEAABBB0E1653090E280D33B2F17964"
+    },
+    {
+      "sequence": 45,
+      "name": "gui_crate_has_non_authorizing_reducer_fixtures_and_explicit_consent_types",
+      "terminal": "ok",
+      "log": "test-045.log",
+      "logSha256": "541B6FF91345D8AC448C46765D1CC8E08C5B68E056C68EAEC4FE494EE9C4A178"
+    },
+    {
+      "sequence": 46,
+      "name": "gui_action::tests::targeted_gui_mutations_cannot_regress_to_the_unchecked_probe",
+      "terminal": "ok",
+      "log": "test-046.log",
+      "logSha256": "847A84C396840AD24EE39E76E52E165EF3B9178EB24A4AAB0A2B7D1A9D0B684F"
+    },
+    {
+      "sequence": 47,
+      "name": "citation_gui::tests::explicit_request_rejects_model_style_or_untrimmed_claims",
+      "terminal": "ok",
+      "log": "test-047.log",
+      "logSha256": "5D2BC5A37B3F84D520F5C68B0E1C542F13A29F9EBD6DA4DBA01D672422ECDA4E"
+    },
+    {
+      "sequence": 48,
+      "name": "citation_gui::tests::provider_indices_are_closed",
+      "terminal": "ok",
+      "log": "test-048.log",
+      "logSha256": "0C3C9ACD6C2C5BCC96920104875583D394FBE6887E0209BCF15963397C0F7CED"
+    },
+    {
+      "sequence": 49,
+      "name": "citation_gui::tests::citation_child_policy_is_bounded_and_cancellation_is_shared",
+      "terminal": "ok",
+      "log": "test-049.log",
+      "logSha256": "8C476E5CF8AFF44902A5A612121C424BEC4EE370C972385A3226F7559630B51E"
+    },
+    {
+      "sequence": 50,
+      "name": "citation_gui::tests::gui_preflight_requires_the_current_request_hash_and_nonterminal_cache_state",
+      "terminal": "ok",
+      "log": "test-050.log",
+      "logSha256": "89C927E50AC65852AC30BF6A094164DF521B2A6D7B48F92A3F2339807B14C49A"
+    },
+    {
+      "sequence": 51,
+      "name": "citation_gui::tests::gui_decision_receipts_reject_unknown_or_inconsistent_proofs",
+      "terminal": "ok",
+      "log": "test-051.log",
+      "logSha256": "9F78DC5FD29EAAAB438D1D5FFB63D2E209628DF3412DD96C6FAE84B1CBB37620"
+    },
+    {
+      "sequence": 52,
+      "name": "citation_gui::tests::gui_command_builders_bind_only_request_data_and_validate_ids",
+      "terminal": "ok",
+      "log": "test-052.log",
+      "logSha256": "9A205A9E5E3E42983AE66CD92313AFA95918084FA93EFEE4BD5ACB2197C903EC"
+    },
+    {
+      "sequence": 53,
+      "name": "citation_gui::tests::stale_or_historical_detail_never_survives",
+      "terminal": "ok",
+      "log": "test-053.log",
+      "logSha256": "F76D92781B47EBE643F46B7D344470E52A4AD985D48A6E820EBE03E87B55DCE9"
+    },
+    {
+      "sequence": 54,
+      "name": "citation_gui::tests::typed_unavailable_cannot_carry_a_chip",
+      "terminal": "ok",
+      "log": "test-054.log",
+      "logSha256": "9DF10CC3227F1B8315D583BACCF51D6252D49783A28741C26BF59340DD19CF30"
+    },
+    {
+      "sequence": 55,
+      "name": "citation_gui::tests::current_core_bound_result_opens_only_its_own_in_app_detail",
+      "terminal": "ok",
+      "log": "test-055.log",
+      "logSha256": "91918A1D9411AA769D4CA5F9E8B8223E67CD7B2474471F205781D5A3F368D10F"
+    },
+    {
+      "sequence": 56,
+      "name": "citation_gui::tests::forged_display_binding_and_replayed_child_result_are_rejected",
+      "terminal": "ok",
+      "log": "test-056.log",
+      "logSha256": "E5F74FCACF5EF3EC92B5F21274A60833E2B74E4338EFD132FB450F48CB8BF8D0"
+    },
+    {
+      "sequence": 57,
+      "name": "chat_throughput::tests::visible_event_rate_preserves_its_actual_unit",
+      "terminal": "ok",
+      "log": "test-057.log",
+      "logSha256": "2102103F049DA321F57C0242DFE2C11BBEF6EE91DD23DBDA0E0D3B9EB23EB7B2"
+    },
+    {
+      "sequence": 58,
+      "name": "chat_throughput::tests::paused_state_requires_null_rate_but_keeps_the_explicit_basis",
+      "terminal": "ok",
+      "log": "test-058.log",
+      "logSha256": "18CE88E103ADEAD55DD7DBE413FCD37F535FEEEC4B3FA81A18B9D4C0247690FB"
+    },
+    {
+      "sequence": 59,
+      "name": "chat_throughput::tests::invalid_unit_and_final_usage_field_fail_closed",
+      "terminal": "ok",
+      "log": "test-059.log",
+      "logSha256": "B9CD7E59C9DED612D1B31E770354A0806AA802FA179DC5AA694109EF6AB70B88"
+    },
+    {
+      "sequence": 60,
+      "name": "chat_throughput::tests::stale_gap_and_provider_done_cannot_repaint_a_request",
+      "terminal": "ok",
+      "log": "test-060.log",
+      "logSha256": "272ED8227DA0D642A7610B4BAC2462A5990F39D57A5BD30A56A6217FE9921663"
+    },
+    {
+      "sequence": 61,
+      "name": "chat_throughput::tests::cancellation_is_terminal_until_the_request_is_replaced",
+      "terminal": "ok",
+      "log": "test-061.log",
+      "logSha256": "1F46732C750CBBD56D2580C266EE55CE65FB0858C147987CD76569E18588ABA2"
+    },
+    {
+      "sequence": 62,
+      "name": "chat_recall_chips::tests::accepts_only_reduced_ready_rows_without_any_text_or_identity",
+      "terminal": "ok",
+      "log": "test-062.log",
+      "logSha256": "3B27118FD5CFCB327081DAB52C61885250299E54FE5F1189695C74EC7B2381CB"
+    },
+    {
+      "sequence": 63,
+      "name": "chat_recall_chips::tests::unknown_fields_and_non_warm_scores_fail_closed",
+      "terminal": "ok",
+      "log": "test-063.log",
+      "logSha256": "5D96BBC259D811F4FFDDB446DD1D080A6BC77BF6683629F5200C0F550D88C0D7"
+    },
+    {
+      "sequence": 64,
+      "name": "chat_recall_chips::tests::wrong_binding_gap_and_over_cap_cannot_publish_rows",
+      "terminal": "ok",
+      "log": "test-064.log",
+      "logSha256": "2D1DCAD52E239E6AA6E9D1330EF1D6C128F1D00225C9BD301E0B4A6D05D7BF12"
+    },
+    {
+      "sequence": 65,
+      "name": "chat_recall_chips::tests::successful_boundaries_freeze_accepted_rows_but_late_frames_do_not_erase_them",
+      "terminal": "ok",
+      "log": "test-065.log",
+      "logSha256": "7884F8E8104A4F01C4CB3E41469F3B3880679426185DCCB8CF45DDE093423472"
+    },
+    {
+      "sequence": 66,
+      "name": "chat_recall_chips::tests::final_sentinel_replacement_and_clear_remove_only_the_owned_snapshot",
+      "terminal": "ok",
+      "log": "test-066.log",
+      "logSha256": "4D071E6A8D37CB776A83C1F11C36B92D0585F2928EC7898D3FFFE6B1CD66FB15"
+    },
+    {
+      "sequence": 67,
+      "name": "chat_recall_chips::tests::no_recall_and_missing_are_explicit_empty_batches",
+      "terminal": "ok",
+      "log": "test-067.log",
+      "logSha256": "E125916946BCC000778AD3DD10DD8421A31EC06978ACE3EC73BCF1C9E54F3D88"
+    },
+    {
+      "sequence": 68,
+      "name": "chat_response_feedback::tests::target_becomes_actionable_only_after_done_then_exact_authenticated_frame",
+      "terminal": "ok",
+      "log": "test-068.log",
+      "logSha256": "9591B209488F33E1ADCCFA5A87CD74F56F219F751E2875D80631CEDE30423D89"
+    },
+    {
+      "sequence": 69,
+      "name": "chat_response_feedback::tests::malformed_forged_and_unavailable_frames_never_publish_an_id",
+      "terminal": "ok",
+      "log": "test-069.log",
+      "logSha256": "4EC098E1B2B17856F5107804508D5E2FAD8EC0EE67F0EF7AA4CDD243BE818E34"
+    },
+    {
+      "sequence": 70,
+      "name": "chat_response_feedback::tests::action_is_singleflight_and_only_exact_fresh_readback_can_repaint_it",
+      "terminal": "ok",
+      "log": "test-070.log",
+      "logSha256": "5B82D22A30B5B85B6376179F3A81C659C7613FC60101A556D5FB17471F02B8F8"
+    },
+    {
+      "sequence": 71,
+      "name": "gui_chat_bridge_controller::tests::daemon_terminal_target_reaches_the_shared_action_map_only_for_the_current_turn",
+      "terminal": "ok",
+      "log": "test-071.log",
+      "logSha256": "B8FFA21B08ECEBFE6C3416C98C5CB5ADF16680EFF2373A035D9A8BABC026E9BB"
+    },
+    {
+      "sequence": 72,
+      "name": "chat_recall_chips::tests::typed_daemon_batch_reuses_closed_validation_and_provider_done_freeze",
+      "terminal": "ok",
+      "log": "test-072.log",
+      "logSha256": "EC933FF2F745E16504835983FE12FF47BC26746ABF1EA1F9FC99FCC957989E50"
+    },
+    {
+      "sequence": 73,
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::recall_batch_is_cursor_bound_and_rejected_after_provider_done_or_cancel",
+      "terminal": "ok",
+      "log": "test-073.log",
+      "logSha256": "DE577FC7278CACC01E747ABB650AAFA1D99B7D679A16AF4DE8EE2F796C5CEE5E"
+    },
+    {
+      "sequence": 74,
+      "name": "chat_throughput::tests::typed_daemon_state_preserves_inner_sequence_and_terminal_fence",
+      "terminal": "ok",
+      "log": "test-074.log",
+      "logSha256": "BB58A2F01CE2AA09E1ECE4106B191DA6A9577691139123E478EB8C12B8BB3DB5"
+    },
+    {
+      "sequence": 75,
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::throughput_state_is_cursor_bound_and_rejected_after_provider_done_or_cancel",
+      "terminal": "ok",
+      "log": "test-075.log",
+      "logSha256": "7FD97C10661138DCE13C086FCC2A5F0C6A2A6BE346CFD5738D2B6FF3D14ECED8"
+    },
+    {
+      "sequence": 76,
+      "name": "panel_logic::tests::w184_vault_mirror_parser_rejects_forged_verified_receipt",
+      "terminal": "ok",
+      "log": "test-076.log",
+      "logSha256": "6EEEC4DF9DB7C0E000EFA765DD6B15DFC33FA341FC5737E2BE3345A1972975C1"
+    },
+    {
+      "sequence": 77,
+      "name": "panel_logic::tests::w184_vault_mirror_parser_keeps_indeterminate_repairable",
+      "terminal": "ok",
+      "log": "test-077.log",
+      "logSha256": "965AE6CEE4D37DFF59E6EF1A4B5E30A6EA2531DC2F92B59FB3CA7EF05A828549"
+    },
+    {
+      "sequence": 78,
+      "name": "vault_mirror_gui_tests::w184_repair_reducer_requires_fresh_matching_status",
+      "terminal": "ok",
+      "log": "test-078.log",
+      "logSha256": "803C441EC91B2ED7731544B66681FDAE5236FC42216730852C62B47C2EB1E393"
+    },
+    {
+      "sequence": 79,
+      "name": "panel_logic::tests::local_models_ready_requires_the_core_ready_variant",
+      "terminal": "ok",
+      "log": "test-079.log",
+      "logSha256": "F4C2040E5BE98B50308E3FF4ACBB97817F1CB469C77AAF2A75EC81CC467F2153"
+    },
+    {
+      "sequence": 80,
+      "name": "panel_logic::tests::local_models_reject_unknown_readiness_schema",
+      "terminal": "ok",
+      "log": "test-080.log",
+      "logSha256": "90A9C4AD2568F6CFBE4A4BA84052C1CE3BE54EB2EC984B94D58B14A16A5BFB4F"
+    },
+    {
+      "sequence": 81,
+      "name": "dream_cron_gui_tests::wizard_completion_is_daemon_acknowledged_and_fails_closed_on_loss",
+      "terminal": "ok",
+      "log": "test-081.log",
+      "logSha256": "209BF9FC3D033FA2603E8140B0019AADFB235FF79B2FE042380139AD0EEB6408"
+    },
+    {
+      "sequence": 82,
+      "name": "dream_cron_gui_tests::daemon_completion_failure_retains_existing_dream_readback_and_revision_order",
+      "terminal": "ok",
+      "log": "test-082.log",
+      "logSha256": "B814C03668F795CDBFE48B958E939250A7707852E9BD207E2F31DFBFAA44216D"
+    },
+    {
+      "sequence": 83,
+      "name": "dream_cron_gui_tests::observer_uses_a_separate_read_only_handle_without_holding_mutation_lock",
+      "terminal": "ok",
+      "log": "test-083.log",
+      "logSha256": "B61D26A1061AFF73C1F1E7EEA4F71A13C6AA27C5192D56980DBD6255F7787B9C"
+    },
+    {
+      "sequence": 84,
+      "name": "dream_cron_gui_tests::finish_navigation_is_owned_by_verified_rust_completion",
+      "terminal": "ok",
+      "log": "test-084.log",
+      "logSha256": "289C9CCAB61BAEE24B7DDC48EAAE6988D761A91DD974E9DEB6069EDD0BE2FEFE"
+    },
+    {
+      "sequence": 85,
+      "name": "wizard_session_controller::tests::prepared_config_hash_is_stable_and_content_bound",
+      "terminal": "ok",
+      "log": "test-085.log",
+      "logSha256": "A7A2D3CE7EBECBE868635F7D6C700EAB5CBFA84F278E5205C717D3EF3801C11F"
+    },
+    {
+      "sequence": 86,
+      "name": "wizard_session_controller::tests::binding_uses_exact_next_sequence_and_never_wraps",
+      "terminal": "ok",
+      "log": "test-086.log",
+      "logSha256": "6E10F3A2E2F2F948726C6D11278ABF42E49AC41F3C9F64B8F2F5AF86BCD08001"
+    },
+    {
+      "sequence": 87,
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::timeout_guidance_survives_failed_terminal_and_cannot_cross_generation",
+      "terminal": "ok",
+      "log": "test-087.log",
+      "logSha256": "0AFA1D9376DFD78111C3D8A792A518E1F178D9192EBB6E55C64B79681F2476B5"
+    },
+    {
+      "sequence": 88,
+      "name": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_unknown_fields_and_bad_row_contract",
+      "terminal": "ok",
+      "log": "test-088.log",
+      "logSha256": "B79F32281ED1D318C3364D701AB88804A42B013ECD825F2356B8517DF990441D"
+    },
+    {
+      "sequence": 89,
+      "name": "panel_logic::embedding_models_contract_tests::only_fresh_exact_ready_bge_snapshot_passes_buddy_gate",
+      "terminal": "ok",
+      "log": "test-089.log",
+      "logSha256": "2D67493C0BE63F62CC5BFFBE7F9BD1DA447F86D2F33690BE25BB9111DFDFD8CE"
+    },
+    {
+      "sequence": 90,
+      "name": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_actions_for_unselected_or_qwen_rows",
+      "terminal": "ok",
+      "log": "test-090.log",
+      "logSha256": "87E312B03AAD0B4BB93EE27EFFD03A74B1F855E0FD1649A94108D8FDB14687CE"
+    },
+    {
+      "sequence": 91,
+      "name": "panel_logic::embedding_models_contract_tests::buddy_gate_rejects_cache_source_even_with_ready_bge",
+      "terminal": "ok",
+      "log": "test-091.log",
+      "logSha256": "11F523819730882E6EFE58DD990F9C178EA871C50354F505D7CE72642977D1B7"
+    },
+    {
+      "sequence": 92,
+      "name": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_wrong_pin_and_impossible_observation",
+      "terminal": "ok",
+      "log": "test-092.log",
+      "logSha256": "B061EB150F4CB2F6FB2F9D70C764318429E5B0E79F0D792C051A4960EAFA4C63"
+    },
+    {
+      "sequence": 93,
+      "name": "buddy_wiring_tests::w218_buddy_embedding_callbacks_use_instance_config_and_shared_freshness_fence",
+      "terminal": "ok",
+      "log": "test-093.log",
+      "logSha256": "90411EFB378EC9679214E44AA1B7F0B5A38F344E077F2FA16C449E5058DDE55C"
+    },
+    {
+      "sequence": 94,
+      "name": "panel_logic::tests::w219_provider_retry_is_strict_bounded_redacted_and_absence_compatible",
+      "terminal": "ok",
+      "log": "test-094.log",
+      "logSha256": "B5DD24D61C2EF53DD42C8D256EE5E2D2221B1367322D574CA4922D99A7E5E521"
+    },
+    {
+      "sequence": 95,
+      "name": "gui_action::task_delegate_assignment_tests::task_delegate_assignment_rejects_unknown_zero_and_mismatched_receipts",
+      "terminal": "ok",
+      "log": "test-095.log",
+      "logSha256": "94752D3EA99B6826CFEAEDC94A99403FC133CB5A33DB7F9F6AE4EFEBAD5F5EFE"
+    },
+    {
+      "sequence": 96,
+      "name": "panel_logic::task_delegate_projection_tests::task_delegate_null_projects_absence_as_effective_default_deny",
+      "terminal": "ok",
+      "log": "test-096.log",
+      "logSha256": "69F49AFCEB54779035BDEE2F4F30259C29BCCCB98189415C0A6A20FA0C0A21BF"
+    },
+    {
+      "sequence": 97,
+      "name": "panel_logic::task_delegate_projection_tests::task_delegate_projection_rejects_mismatched_or_zero_revision_object",
+      "terminal": "ok",
+      "log": "test-097.log",
+      "logSha256": "4BF7F6BA55EAEA2092BC617DC3FD3A9E3BA1509F08E9591AF224F6827CF510D5"
+    },
+    {
+      "sequence": 98,
+      "name": "chat_recall_chips::tests::citations_are_closed_available_source_labels_with_positive_matching_ids",
+      "terminal": "ok",
+      "log": "test-098.log",
+      "logSha256": "522BD1EB6640C651DD8F184DBD7E03CFFB63F5CBC56BF8E8C5E91919638FABD1"
+    },
+    {
+      "sequence": 99,
+      "name": "chat_child_supervisor::tests::staged_cgroup_final_mount_contract_allows_only_a_read_only_public_top_mount",
+      "terminal": "ok",
+      "log": "test-099.log",
+      "logSha256": "55667ECC9A86ED539FE6E32600217971D993A927DF952DAB67D90AEA30A401B1"
+    },
+    {
+      "sequence": 100,
+      "name": "dream_cron_gui_tests::mutation_requires_reload_receipt_then_matching_readback",
+      "terminal": "ok",
+      "log": "test-100.log",
+      "logSha256": "90D14DB253BED2FDFFAB65C9E4085990B98D855313741A5DCA7C27E241312672"
+    },
+    {
+      "sequence": 101,
+      "name": "dream_cron_gui_tests::mutation_rejects_acknowledged_but_mismatched_readback",
+      "terminal": "ok",
+      "log": "test-101.log",
+      "logSha256": "CA325EF3E832A7A9EC66A7BDDA411FF6CAEE074E0F9B2935405EDD9B39133074"
+    },
+    {
+      "sequence": 102,
+      "name": "dream_cron_gui_tests::settings_dream_control_is_command_only_and_never_flips_verified_state",
+      "terminal": "ok",
+      "log": "test-102.log",
+      "logSha256": "A7F0D952D791168FC024BE9BDA5AB8B097F515EED3E1C27298E6CC44C89F579D"
+    },
+    {
+      "sequence": 103,
+      "name": "dream_cron_gui_tests::only_verified_readback_publishes_visible_dream_state",
+      "terminal": "ok",
+      "log": "test-103.log",
+      "logSha256": "E11758F0230B061B80CBC3AF17A2DD13A29949FA4C902CABB85C2571B1DF6575"
+    },
+    {
+      "sequence": 104,
+      "name": "dream_cron_gui_tests::refresh_mutation_error_and_concurrency_keep_readback_authoritative",
+      "terminal": "ok",
+      "log": "test-104.log",
+      "logSha256": "FE1C335A0C7EF419783A0CADB0DE57DE9FD784331BAFABFA41E0F756E19E0EE4"
+    },
+    {
+      "sequence": 105,
+      "name": "dream_cron_gui_tests::late_status_refresh_cannot_overwrite_the_onboarding_draft",
+      "terminal": "ok",
+      "log": "test-105.log",
+      "logSha256": "2BA4874FCE13663DD32C5F69B3DFC5E18B07CB1C2CBA4A3F97ACF4057467D7F4"
+    },
+    {
+      "sequence": 106,
+      "name": "panel_logic::tests::lf_p1_20_preview_redacts_normalizes_and_truncates_graphemes_once",
+      "terminal": "ok",
+      "log": "test-106.log",
+      "logSha256": "11B39533483A584C6C9967199803F04BAC44117B621E710ED1F425EEBA56FF74"
+    },
+    {
+      "sequence": 107,
+      "name": "panel_logic::tests::lf_p1_20_send_completion_delete_recomputes_to_previous_visible_message",
+      "terminal": "ok",
+      "log": "test-107.log",
+      "logSha256": "E23A1C072789AB5611313240A6468964C3163E70AE904BB2A1F605983E9330CC"
+    },
+    {
+      "sequence": 108,
+      "name": "panel_logic::tests::lf_p1_20_reload_and_session_switch_keep_a_b_isolated",
+      "terminal": "ok",
+      "log": "test-108.log",
+      "logSha256": "90F32E1B3F2AC9A3FF09C3B198F76BFC6E5E0BA1D0C813708C70BF33AAC4FF53"
+    },
+    {
+      "sequence": 109,
+      "name": "panel_logic::tests::lf_p1_20_session_label_sanitizes_legacy_titles_and_controls",
+      "terminal": "ok",
+      "log": "test-109.log",
+      "logSha256": "B679B0B23D07BAB3092043E2EC28E7EC3A8C05CC1947ACC25185C6B3D9C69761"
+    },
+    {
+      "sequence": 110,
+      "name": "panel_logic::tests::lf_p1_20_session_history_propagates_corrupt_database_errors",
+      "terminal": "ok",
+      "log": "test-110.log",
+      "logSha256": "83460580D2C42F3C9C58B873AF504515D64B67C814EA0CF956B3DF9D2A8A9FD7"
+    },
+    {
+      "sequence": 111,
+      "name": "chat_subprocess_tests::lf_p1_20_send_before_channel_probe_hydrates_live_preview",
+      "terminal": "ok",
+      "log": "test-111.log",
+      "logSha256": "D0D1F0BABCCFAB92E0B9780C9C55E24E1CE60D7A26E92D4B00141F8E1643BAF9"
+    },
+    {
+      "sequence": 112,
+      "name": "chat_subprocess_tests::lf_p1_20_session_load_generation_rejects_a_after_b_and_return_to_live",
+      "terminal": "ok",
+      "log": "test-112.log",
+      "logSha256": "6E745B711D5A43C8C8F32862DB0EDCDBDCCC0B54D00B8EF108E1A6B35B6C12E5"
+    },
+    {
+      "sequence": 113,
+      "name": "chat_subprocess_tests::lf_p1_20_chat_sidebar_session_selection_is_readonly_and_fully_wired",
+      "terminal": "ok",
+      "log": "test-113.log",
+      "logSha256": "E3AB82BE38573F1CBAC59FCF16E6986BC317D6C0CF23131F4AFD70B4386E32AD"
+    },
+    {
+      "sequence": 114,
+      "name": "gui_action::tests::cluster_configure_receipt_binds_every_submitted_field_and_path",
+      "terminal": "ok",
+      "log": "test-114.log",
+      "logSha256": "5F3B6DC44DD662E51F38B6DE8B2E38388DF198BF980182AFFB1DFFEC3AD474CF"
+    },
+    {
+      "sequence": 115,
+      "name": "interface_preference_tests::p122_custom_topology_survives_shared_commit_and_gui_rerun",
+      "terminal": "ok",
+      "log": "test-115.log",
+      "logSha256": "A53B0BEC2546DFDB4388BE5BB6AEF6DFA68F12F7055114176194B8419FA2DD5F"
+    },
+    {
+      "sequence": 116,
+      "name": "w58_gui_callback_runtime_tests::w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt",
+      "terminal": "ok",
+      "log": "test-116.log",
+      "logSha256": "2C20A506546F75E046ECA029CF078EBC69429A4491430D8A911D11B5DDD4E78B"
+    },
+    {
+      "sequence": 117,
+      "name": "w58_gui_callback_runtime_tests::w121_channel_pairing_request_callbacks_require_exact_receipts_before_relisting",
+      "terminal": "ok",
+      "log": "test-117.log",
+      "logSha256": "76F0B5D0D5AF0097767E5FBA0359BF1E49B29A65D5844400A59A8557D513B14A"
+    },
+    {
+      "sequence": 118,
+      "name": "w58_gui_callback_runtime_tests::w122_channel_account_dm_pairing_callback_preserves_projection_until_exact_receipt",
+      "terminal": "ok",
+      "log": "test-118.log",
+      "logSha256": "367D5BB8E6F7C6748BB3CDA662B1C4164571FB47E00029EE3EF2999398E1E291"
+    },
+    {
+      "sequence": 119,
+      "name": "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt",
+      "terminal": "ok",
+      "log": "test-119.log",
+      "logSha256": "A8170BAFA29A2E44AADED4CE929BC00B92213168B56EB9E581DFE60CB857CD22"
+    },
+    {
+      "sequence": 120,
+      "name": "w58_gui_callback_runtime_tests::w130_channel_legacy_migration_callback_preserves_legacy_projection_until_exact_receipt",
+      "terminal": "ok",
+      "log": "test-120.log",
+      "logSha256": "1F03DD46DDBCFABD81F82596F4D9BF99DD52D311C63699E057EBCEE5F908D74C"
+    },
+    {
+      "sequence": 121,
+      "name": "w58_gui_callback_runtime_tests::w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback",
+      "terminal": "ok",
+      "log": "test-121.log",
+      "logSha256": "155C6FA8701E75BDDE95745128A2C611C011F7017E80B37A2B1EDD0624DDD030"
+    },
+    {
+      "sequence": 122,
+      "name": "w58_gui_callback_runtime_tests::w142_selfimprove_accept_requires_exact_bound_receipt_and_fresh_readback",
+      "terminal": "ok",
+      "log": "test-122.log",
+      "logSha256": "D8AC2936E2878D8AB7384DA7FB9063A381600D3E496DB756B1D84401AE275863"
+    },
+    {
+      "sequence": 123,
+      "name": "w58_gui_callback_runtime_tests::w149_buddy_quality_handoff_selects_the_exact_selfimprove_proposal",
+      "terminal": "ok",
+      "log": "test-123.log",
+      "logSha256": "D4C939066ABF8830B89F60112B47927522276880D1DB9E15C932339B3E82735E"
+    },
+    {
+      "sequence": 124,
+      "name": "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight",
+      "terminal": "ok",
+      "log": "test-124.log",
+      "logSha256": "68EF7F30D55AB13D624CDDFBF09FCDE074E848461B30B76282D2EFB9378707D8"
+    },
+    {
+      "sequence": 125,
+      "name": "w58_gui_callback_runtime_tests::w153_legacy_child_callbacks_project_only_transient_reasoning",
+      "terminal": "ok",
+      "log": "test-125.log",
+      "logSha256": "723FFC068CFFB0C5441111E268D85CF5D88DCDCAB1AD7ABCA28E5D4CE77FFB11"
+    },
+    {
+      "sequence": 126,
+      "name": "w58_gui_callback_runtime_tests::w153_reasoning_child_controls_are_transient_and_history_excluded",
+      "terminal": "ok",
+      "log": "test-126.log",
+      "logSha256": "78FAD6A84E7B00D66CCFE4D46FD758CC1A3A1305CB1944035F5363C12F8A6DAC"
+    },
+    {
+      "sequence": 127,
+      "name": "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts",
+      "terminal": "ok",
+      "log": "test-127.log",
+      "logSha256": "3C88C64FE89B911202EAA68BF8D36EB8A679FECFBD5446F3B91C5722428B8BD3"
+    },
+    {
+      "sequence": 128,
+      "name": "w58_gui_callback_runtime_tests::w162_throughput_controls_are_transient_and_provider_done_fenced",
+      "terminal": "ok",
+      "log": "test-128.log",
+      "logSha256": "825BFFFD232624A7021A59C84F780A064021C6CC474684485965A218755DF559"
+    },
+    {
+      "sequence": 129,
+      "name": "w58_gui_callback_runtime_tests::w163_recall_chip_controls_freeze_current_response_and_clear_on_turn_change",
+      "terminal": "ok",
+      "log": "test-129.log",
+      "logSha256": "2D4815BA8B88C37D6A5215B15B0F77454AF839772FE554F75BD03920BC438100"
+    },
+    {
+      "sequence": 130,
+      "name": "w58_gui_callback_runtime_tests::w164_response_feedback_callback_requires_post_done_target_and_verified_readback",
+      "terminal": "ok",
+      "log": "test-130.log",
+      "logSha256": "7ACCFE37E4344B048A097FAC6E23C2E95C7BBFE2A2513A149B422330CA45DD1B"
+    },
+    {
+      "sequence": 131,
+      "name": "w58_gui_callback_runtime_tests::w167_daemon_recall_chip_batch_projects_current_surface_and_fences_terminals",
+      "terminal": "ok",
+      "log": "test-131.log",
+      "logSha256": "26133368E3A48F82DE3B63700F83696DB6E0E1CFE7B70691F818AF2C26C85F25"
+    },
+    {
+      "sequence": 132,
+      "name": "w58_gui_callback_runtime_tests::w168_daemon_throughput_state_projects_main_and_buddy_then_fences_boundaries",
+      "terminal": "ok",
+      "log": "test-132.log",
+      "logSha256": "80E2E96C29A59AF96F8B0605A6F05AF7E28DFE2FAD15F7E87C4512BB5AF56281"
+    },
+    {
+      "sequence": 133,
+      "name": "w58_gui_callback_runtime_tests::w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback",
+      "terminal": "ok",
+      "log": "test-133.log",
+      "logSha256": "7228336B3F041F4637B29FE0B743A8EBFAB7A2F308481CB172E14A2CA83317FC"
+    },
+    {
+      "sequence": 134,
+      "name": "w58_gui_callback_runtime_tests::w185_local_model_callbacks_require_typed_ack_and_fresh_readback",
+      "terminal": "ok",
+      "log": "test-134.log",
+      "logSha256": "2AB1E0CC5AAB65F67739173BF2156BD205CC8FF0C29BFB31D66EF0AA28A48860"
+    },
+    {
+      "sequence": 135,
+      "name": "wizard_session_controller::tests::private_server_controller_observer_and_mutation_progress_concurrently",
+      "terminal": "ok",
+      "log": "test-135.log",
+      "logSha256": "383B6BB5D89AB841FCDE1767E27B9B8A83B8639AAC8AEB949B5D34AC0CDBBD44"
+    },
+    {
+      "sequence": 136,
+      "name": "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe",
+      "terminal": "ok",
+      "log": "test-136.log",
+      "logSha256": "9F7828004C58CB7B39B1D4AA326ED78FCCF01FABE6B4FAE900DEE649ED3A86EF"
+    },
+    {
+      "sequence": 137,
+      "name": "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good",
+      "terminal": "ok",
+      "log": "test-137.log",
+      "logSha256": "A021EAAA2D2568AADDBE5584262C810A5508B2DD88FB7C0CA028D4EA47C73FE4"
+    },
+    {
+      "sequence": 138,
+      "name": "w58_gui_callback_runtime_tests::w233_task_delegate_set_owns_busy_across_edits_and_fences_stale_completion",
+      "terminal": "ok",
+      "log": "test-138.log",
+      "logSha256": "5CE308BCCF365CC63FA19DDAF8EA2CC9CFE9F58F6F2EBCD0014C73DBB817026D"
+    },
+    {
+      "sequence": 139,
+      "name": "w58_gui_callback_runtime_tests::w233_invalid_fresh_readback_keeps_committed_receipt_and_fences_mutation",
+      "terminal": "ok",
+      "log": "test-139.log",
+      "logSha256": "156F7B2DC7DB2E619C372F91B340D313EE862A2F1A67802002CAF45546D6C799"
+    },
+    {
+      "sequence": 140,
+      "name": "w58_gui_callback_runtime_tests::w233_task_delegate_callback_fixture_covers_conflict_receipt_and_newer_readback",
+      "terminal": "ok",
+      "log": "test-140.log",
+      "logSha256": "82DDD960F08EB813DDA62A10944869D97C9EF2D25F9810E698AED3A675961674"
+    },
+    {
+      "sequence": 141,
+      "name": "w58_gui_callback_runtime_tests::w233_task_delegate_inspect_null_projects_effective_default_deny",
+      "terminal": "ok",
+      "log": "test-141.log",
+      "logSha256": "0155499EA44C97F8618DBAE8FA0819BA0A17C7555C7293FC4725001C2A06BBEE"
+    },
+    {
+      "sequence": 142,
+      "name": "chat_child_supervisor::tests::cgroup_namespace_root_mount_plan_stages_without_unmounting_inherited_mount",
+      "terminal": "ok",
+      "log": "test-142.log",
+      "logSha256": "19B39B4BF231453C475F3E15C5D202F30CE569AEA4C8E841F82184269EF8DC54"
+    },
+    {
+      "sequence": 143,
+      "name": "chat_child_supervisor::tests::linux_manager_stop_reaps_setsid_and_double_fork_tree",
+      "terminal": "ok",
+      "log": "test-143.log",
+      "logSha256": "191F3AD49A2F7B57F54FB2983F733715E01D6C8531A93D1EB2EA525891489EAE"
+    },
+    {
+      "sequence": 144,
+      "name": "chat_child_supervisor::tests::linux_gui_crash_kills_complete_manager_unit",
+      "terminal": "ok",
+      "log": "test-144.log",
+      "logSha256": "334455F60328553063D8243BCDFEC0127F9A7773011821EC0D8B5161279F8C8C"
+    },
+    {
+      "sequence": 145,
+      "name": "chat_child_supervisor::tests::linux_unit_snapshot_pins_manager_owned_kill_contract",
+      "terminal": "ok",
+      "log": "test-145.log",
+      "logSha256": "008B23B37F881BE654E9D4D3D2A470AC1D2CD6EA2844E7CC37E2D625546806A3"
+    },
+    {
+      "sequence": 146,
+      "name": "w58_gui_callback_runtime_tests::w480_real_producer_post_provider_outcomes_replay_through_main_and_buddy",
+      "terminal": "FAILED",
+      "log": "test-146.log",
+      "logSha256": "754999B778D551DF8D8CBE1FDEA13C949805BC01E4026D2ABA872FE12A57D457"
+    },
+    {
+      "sequence": 147,
+      "name": "w58_gui_callback_runtime_tests::p118_gui_callbacks_cancel_real_bootstrap_without_replay",
+      "terminal": "ok",
+      "log": "test-147.log",
+      "logSha256": "C97C61FBA1CBE0EB5EB88446E91097DE18F01D29D80CB9AFA192A3F5E1772588"
+    },
+    {
+      "sequence": 148,
+      "name": "w58_gui_callback_runtime_tests::p118_projection_freezes_after_hosted_bootstrap_loss_without_replay",
+      "terminal": "ok",
+      "log": "test-148.log",
+      "logSha256": "49FC7F8BE67DC88BCDADB5505F3181EE497234A1C9E8A1BE989D94855C79DAE3"
+    }
+  ],
+  "rootVerified": true,
+  "localExecutableValidationRan": false
+}

@@ -1,0 +1,20 @@
+{
+  "status": "ADMITTED",
+  "run": 35938006795,
+  "source": "c21e29b1eb954c96a5456995a7f3b56acc264b8b",
+  "artifact": 10783961650,
+  "zipSha256": "33f01f7b0b6c4707dca8220f4cce69ee321feca525b6663e279723b34aadaa12",
+  "files": [
+    {
+      "path": "SRC/neothd/src/cli/obsidian.rs",
+      "before": "b35a7dd1c79d173d645459edbefffc77915d2b10",
+      "after": "8b9e67fdef3aab2f0eda9297a71267af61aac318"
+    },
+    {
+      "path": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
+      "before": "1768595bae2f12c87fcb5c92a2eca6e85e10ce32",
+      "after": "befdf0244a0adc0214c69ac15d915009b60e1ed0"
+    }
+  ],
+  "localFormatterRan": false
+}

@@ -1,0 +1,147 @@
+{
+  "schema": "neoth-gold-criterion-acceptance/v1",
+  "criterion": "GOLD-LF-P1-18",
+  "status": "ACCEPTED",
+  "date": "2026-09-24",
+  "assessedHead": "6fe578b464e0c0bb896f0808d678df8afdfa46c9",
+  "scope": "Real served wizard GUI-daemon authenticated sessions, ordered progress/reconnect/cancel and fail-closed daemon-loss",
+  "gui": {
+    "run": 35935063658,
+    "source": "829c37c370475bde91a46ab94bad38efe099e4b6",
+    "admission": "docs/verification/gold-wave571-gui148-terminals.json",
+    "terminals": [
+      {
+        "sequence": 147,
+        "name": "w58_gui_callback_runtime_tests::p118_gui_callbacks_cancel_real_bootstrap_without_replay",
+        "terminal": "ok",
+        "log": "test-147.log",
+        "logSha256": "C97C61FBA1CBE0EB5EB88446E91097DE18F01D29D80CB9AFA192A3F5E1772588"
+      },
+      {
+        "sequence": 148,
+        "name": "w58_gui_callback_runtime_tests::p118_projection_freezes_after_hosted_bootstrap_loss_without_replay",
+        "terminal": "ok",
+        "log": "test-148.log",
+        "logSha256": "49FC7F8BE67DC88BCDADB5505F3181EE497234A1C9E8A1BE989D94855C79DAE3"
+      }
+    ]
+  },
+  "native": {
+    "run": 35935802912,
+    "source": "5a5b13ea957bb442bbfb5b7e1f840a66f1ada87e",
+    "admission": "docs/verification/gold-wave565-paperless-wizard-terminals.json",
+    "terminals": [
+      {
+        "test": "daemon::wizard_ipc::tests::prepared_hash_requires_exact_lowercase_sha256",
+        "status": "passed"
+      },
+      {
+        "test": "daemon::wizard_ipc::tests::terminal_response_write_failure_still_stops_admission",
+        "status": "passed"
+      },
+      {
+        "test": "daemon::wizard_ipc::tests::stalled_owner_bounds_command_admission_and_reply_waits",
+        "status": "passed"
+      },
+      {
+        "test": "daemon::wizard_ipc::tests::wrong_bearer_is_rejected_before_owner_mutation",
+        "status": "passed"
+      },
+      {
+        "test": "daemon::wizard_ipc::tests::fresh_home_open_or_resume_creates_only_pending_transaction",
+        "status": "passed"
+      },
+      {
+        "test": "daemon::wizard_ipc::tests::reopen_preserves_sequence_and_rejects_stale_identity_or_status_injection",
+        "status": "passed"
+      },
+      {
+        "test": "daemon::wizard_ipc::tests::cancellation_returns_terminal_snapshot_and_drains_listener",
+        "status": "passed"
+      },
+      {
+        "test": "daemon::wizard_ipc::tests::prepared_config_hash_commits_marker_then_returns_completed_and_drains",
+        "status": "passed"
+      },
+      {
+        "test": "daemon::wizard_ipc::tests::restart_resumes_pending_transaction_but_rejects_old_boot",
+        "status": "passed"
+      },
+      {
+        "test": "daemon::wizard_ipc::tests::second_bootstrap_bind_is_refused_while_the_first_owner_holds_the_pid_lease",
+        "status": "passed"
+      },
+      {
+        "test": "daemon::wizard_ipc::tests::idle_long_poll_returns_before_the_client_deadline",
+        "status": "passed"
+      },
+      {
+        "test": "daemon::wizard_ipc::tests::long_poll_receives_the_next_accepted_mutation",
+        "status": "passed"
+      },
+      {
+        "test": "daemon::wizard_ipc::tests::read_only_waiters_do_not_wake_each_other",
+        "status": "passed"
+      }
+    ]
+  },
+  "scopedSourceCarry": [
+    {
+      "path": "SRC/neothd-gui/src/main.rs",
+      "testedBlob": "14c81a2892c16fea12d27e001674764a94d7bc05",
+      "currentBlob": "3c40dd8109d9a94171136a464fec5b3dd78dd1ab",
+      "carry": "admitted hosted formatting only"
+    },
+    {
+      "path": "SRC/neothd-gui/src/wizard_session_controller.rs",
+      "testedBlob": "3d5e41261270c1053b505817b6d1b47594066d88",
+      "currentBlob": "3d5e41261270c1053b505817b6d1b47594066d88",
+      "carry": "identical"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/wizard_ipc.rs",
+      "testedBlob": "a079b9908f03f46ba464df49a4e3c72a95f0a88c",
+      "currentBlob": "a079b9908f03f46ba464df49a4e3c72a95f0a88c",
+      "carry": "identical"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
+      "testedBlob": "541d3cc708ce1f0da6cdd733ca9eae92b89bc530",
+      "currentBlob": "541d3cc708ce1f0da6cdd733ca9eae92b89bc530",
+      "carry": "identical"
+    },
+    {
+      "path": "SRC/neothd/src/wizard/ipc.rs",
+      "testedBlob": "7b5f0aa1aec563697022c2eac4d8751d0b088eda",
+      "currentBlob": "7b5f0aa1aec563697022c2eac4d8751d0b088eda",
+      "carry": "identical"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_tasks.rs",
+      "testedBlob": "80972eb0bb3a04cc7e05e3f8e4345a9073475357",
+      "currentBlob": "80972eb0bb3a04cc7e05e3f8e4345a9073475357",
+      "carry": "identical"
+    }
+  ],
+  "formatCarry": {
+    "localFormatterRan": false,
+    "source": "829c37c370475bde91a46ab94bad38efe099e4b6",
+    "run": 35935063648,
+    "artifact": 10782528643,
+    "zipSha256": "b5b060d15fe198ec973ea077fdb26939eb485489cbc2339e5c138a7a5aa827af",
+    "status": "ADMITTED",
+    "files": [
+      {
+        "before": "14c81a2892c16fea12d27e001674764a94d7bc05",
+        "path": "SRC/neothd-gui/src/main.rs",
+        "after": "3c40dd8109d9a94171136a464fec5b3dd78dd1ab"
+      }
+    ]
+  },
+  "exclusions": [
+    "P2-26a W480 remains independently open",
+    "No whole-job success or same-HEAD gate required for these scoped accepted terminals",
+    "No Slint mutation or new OS visual qualification"
+  ],
+  "localExecutableValidationRan": false
+}

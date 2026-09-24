@@ -3,6 +3,16 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W571 P1-18 accepted; W569 hosted formatting (2026-09-24):**
+GUI148 run35935063658 at829c37c3 is admitted147PASS/1FAIL/0missing,28bindings.
+Both real P118 GUI callback cases pass; all13native WizardIPC support cases
+already pass in Group934. Exact scoped source carry (only admitted W560format
+for main.rs) closes GOLD-LF-P1-18 independently of the sole W480 failure.
+Road now1045checked/277open/2partial,279raw/278pre-tag; WS-LF38done/80open.
+W569 imports only2Obsidian Rust format files from preflight35938006795 atc21e29b1,
+with ZIP/SHA256/before-after Gitblob verification. No local formatter executed.
+Evidence:docs/verification/gold-wave571-p118-acceptance.json.
+
 **W567 GChat hosted confirmation (2026-09-24):**
 Run35936050813 at3bd923a0 is admitted4/4PASS with3ZIPdigests,8sourcebindings,
 discovery hashes and all actual terminals verified by Root. This confirms the

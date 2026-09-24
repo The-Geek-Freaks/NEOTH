@@ -4,10 +4,10 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 139515,
-    "sha256": "EF0137665EFECF31DFAED6AC7888E5560BE5D25E0E2AD9BE5C836C3CDC0013DA"
+    "bytes": 140238,
+    "sha256": "B68BDB491D6A359A86E0CD624C5AD54E518F2996B047D5D5A0B70CD55C636655"
   },
-  "sourceInputs": 794,
+  "sourceInputs": 798,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -7302,67 +7302,67 @@
     {
       "test": "installers::obsidian_archive_bridge::tests::install_is_atomic_idempotent_and_disabled",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7",
+      "sourceSha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::missing_vault_or_plugins_reports_absent",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7",
+      "sourceSha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::drift_repairs_known_payload_and_preserves_settings",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7",
+      "sourceSha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::foreign_slot_is_never_overwritten",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7",
+      "sourceSha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::uninstall_keeps_data_and_foreign_extensions",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7",
+      "sourceSha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::uninstall_removes_an_empty_authenticated_slot",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7",
+      "sourceSha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::healthy_owned_slot_with_settings_is_idempotent_for_install_and_repair",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7",
+      "sourceSha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::interrupted_uninstall_resumes_after_missing_payload_and_later_empty_slot",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7",
+      "sourceSha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::competing_slot_before_publish_is_preserved",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7",
+      "sourceSha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
       "junitClass": "neoth"
     },
     {
       "test": "cli::obsidian::tests::bridge_clap_parses_each_action_with_a_trailing_vault_option",
       "sourcePath": "SRC/neothd/src/cli/obsidian.rs",
-      "sourceSha256": "F25EDC48B6D6713C390182312A526FCF78D9EB58123E6B86EBF29EBC218E976B",
+      "sourceSha256": "B2D809DD5D6467C0364ADA984DF743030E6D883011E79290AF4F45D7647FF2E9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::obsidian::tests::bridge_run_obsidian_lifecycle_preserves_vault_notes_and_settings",
       "sourcePath": "SRC/neothd/src/cli/obsidian.rs",
-      "sourceSha256": "F25EDC48B6D6713C390182312A526FCF78D9EB58123E6B86EBF29EBC218E976B",
+      "sourceSha256": "B2D809DD5D6467C0364ADA984DF743030E6D883011E79290AF4F45D7647FF2E9",
       "junitClass": "neoth"
     }
   ],
@@ -9360,25 +9360,25 @@
       {
         "test": "installers::obsidian_archive_bridge::tests::requested_vault_parent_swap_before_publish_is_not_reported_as_success",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7",
+        "sourceSha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::replacement_after_payload_read_is_not_removed_by_uninstall",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7",
+        "sourceSha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::symlinked_plugin_slot_is_foreign_without_following_target",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7",
+        "sourceSha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::malformed_obsidian_parent_surfaces_an_unsafe_path_error",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7",
+        "sourceSha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
         "junitClass": "neoth"
       }
     ],
@@ -9596,25 +9596,25 @@
       {
         "test": "installers::obsidian_archive_bridge::tests::requested_vault_parent_swap_before_publish_is_not_reported_as_success",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7",
+        "sourceSha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::replacement_after_payload_read_is_not_removed_by_uninstall",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7",
+        "sourceSha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::symlinked_plugin_slot_is_foreign_without_following_target",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7",
+        "sourceSha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::malformed_obsidian_parent_surfaces_an_unsafe_path_error",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "20F1B376762F20422918C28CCD7ED870AE3060877E8942543C5248E87FBFBBB7",
+        "sourceSha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
         "junitClass": "neoth"
       }
     ]
@@ -25936,6 +25936,68 @@
       }
     ],
     "note": "W559 native pinned Obsidian lifecycle15newcases; W566 authenticated replaycursor and production Finish anchor; static review passed. W565 Group934930PASS4FAIL184bindings,42PaperlessWizardPASS;W567GChat4PASS8bindings admitted. New native behavior pending; no Road closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave569571Evidence": {
+    "base": "6fe578b464e0c0bb896f0808d678df8afdfa46c9",
+    "sources": [
+      {
+        "path": "docs/gold-wave571-wizard-acceptance.md",
+        "bytes": 1625,
+        "sha256": "98F7C5C70FB6F4405EA2666E04A3313862901605DC6CF9714C230A61A55786A3",
+        "blob": "046661d6a347807b4fec32db762aabc1e222f553"
+      },
+      {
+        "path": "docs/verification/gold-wave569-format.json",
+        "bytes": 642,
+        "sha256": "A49990345A290477E300543E6CA75912AC5140FE7AB8D844BAA0637E1BA5C5F1",
+        "blob": "6be15f97d6e93c4c63e325252ff2c7745e54efe6"
+      },
+      {
+        "path": "docs/verification/gold-wave571-gui148-terminals.json",
+        "bytes": 48709,
+        "sha256": "0242F7C28BFA5D8C73CF75C13DBA87E510301E15D5A52E28BDD4728FEF1C4253",
+        "blob": "c2950d8f8adc6eab0e816f68f4400054f01de0db"
+      },
+      {
+        "path": "docs/verification/gold-wave571-p118-acceptance.json",
+        "bytes": 5351,
+        "sha256": "22350BFAA9BBF72DFCD36A29F9BE56AC01CEA6B7AFB7CB82A71CE1897F6E7D11",
+        "blob": "3775d35ff8db15966475f0952ff6b4a48c798658"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 204030,
+        "sha256": "EA0B71CF5B98493FAE6D49878EC61D1D146B10C52A3D3FE8B00DD8DF041B9347",
+        "blob": "8e309ecee248819cf8644103dccbaecbeb4e8115"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1215358,
+        "sha256": "AD1E21EA4C1BB3EFC2141CC1258FC8E0ED978197735BB32A74719696A8CF8F3E",
+        "blob": "8199c303396c5315926dfb78405ac6783dfa3f71"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1814640,
+        "sha256": "CF13BC29A31ED329A1B83D1B997C0D37F0979D85C944DAA879E8D0E4ACA61C25",
+        "blob": "c5e56fb3589864045ad8279c1e083447ae95ef6c"
+      },
+      {
+        "path": "SRC/neothd/src/cli/obsidian.rs",
+        "bytes": 174693,
+        "sha256": "B2D809DD5D6467C0364ADA984DF743030E6D883011E79290AF4F45D7647FF2E9",
+        "blob": "8b9e67fdef3aab2f0eda9297a71267af61aac318"
+      },
+      {
+        "path": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
+        "bytes": 27073,
+        "sha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1",
+        "blob": "befdf0244a0adc0214c69ac15d915009b60e1ed0"
+      }
+    ],
+    "note": "P118criterion ACCEPTED2realGUI+13native sourcebound;GUI148829147PASS1FAIL28bindings. Scoped carry onlyhostedformat. W569exacttwofileformatimport; W559behaviorandW566stillpending. Road1045/277/2.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

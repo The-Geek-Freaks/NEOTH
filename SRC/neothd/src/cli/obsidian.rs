@@ -238,7 +238,8 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
                 BridgeAction::Uninstall { vault } => {
                     crate::installers::obsidian_archive_bridge::uninstall(&vault)
                 }
-            }.map_err(anyhow::Error::msg)?;
+            }
+            .map_err(anyhow::Error::msg)?;
             match args.output {
                 OutputFormat::Json | OutputFormat::Jsonl => {
                     println!("{}", serde_json::to_string(&view)?);
@@ -2769,8 +2770,8 @@ fn write_template_file(root: &Path, rel: &str, body: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
     use crate::cli::{Cli, Commands};
+    use clap::Parser;
     use tempfile::tempdir;
 
     async fn fake_archive(dir: &Path) -> PathBuf {
@@ -2803,7 +2804,10 @@ mod tests {
             ])
             .expect("bridge action with trailing --vault must parse");
             let Commands::Obsidian(ObsidianArgs {
-                action: ObsidianAction::Bridge { action: bridge_action },
+                action:
+                    ObsidianAction::Bridge {
+                        action: bridge_action,
+                    },
                 ..
             }) = parsed.command
             else {
@@ -2841,22 +2845,29 @@ mod tests {
             archive_root: Some(archive_root.clone()),
             output: OutputFormat::Json,
         };
-        run_obsidian(run(BridgeAction::Install { vault: vault.clone() }))
-            .await
-            .unwrap();
-        let settings = vault
-            .join(".obsidian/plugins/neoth-archive-bridge/data.json");
+        run_obsidian(run(BridgeAction::Install {
+            vault: vault.clone(),
+        }))
+        .await
+        .unwrap();
+        let settings = vault.join(".obsidian/plugins/neoth-archive-bridge/data.json");
         std::fs::write(&settings, b"{\"operator\":true}").unwrap();
 
-        run_obsidian(run(BridgeAction::Status { vault: vault.clone() }))
-            .await
-            .unwrap();
-        run_obsidian(run(BridgeAction::Repair { vault: vault.clone() }))
-            .await
-            .unwrap();
-        run_obsidian(run(BridgeAction::Uninstall { vault: vault.clone() }))
-            .await
-            .unwrap();
+        run_obsidian(run(BridgeAction::Status {
+            vault: vault.clone(),
+        }))
+        .await
+        .unwrap();
+        run_obsidian(run(BridgeAction::Repair {
+            vault: vault.clone(),
+        }))
+        .await
+        .unwrap();
+        run_obsidian(run(BridgeAction::Uninstall {
+            vault: vault.clone(),
+        }))
+        .await
+        .unwrap();
 
         assert_eq!(std::fs::read(&note).unwrap(), b"operator note");
         assert_eq!(std::fs::read(&settings).unwrap(), b"{\"operator\":true}");

@@ -103,13 +103,13 @@ pub fn install(vault: &Path) -> Result<BridgeView, BridgeError> {
 
     let stage_name = stage_name();
     let stage_display = parent.display.join(&stage_name);
-    parent.dir.create_dir(&stage_name).map_err(|_| BridgeError::Io)?;
-    let (stage, _) = crate::skills::store::open_bound_real_child_dir(
-        &parent.dir,
-        &stage_name,
-        &stage_display,
-    )
-    .map_err(|_| BridgeError::UnsafePath)?;
+    parent
+        .dir
+        .create_dir(&stage_name)
+        .map_err(|_| BridgeError::Io)?;
+    let (stage, _) =
+        crate::skills::store::open_bound_real_child_dir(&parent.dir, &stage_name, &stage_display)
+            .map_err(|_| BridgeError::UnsafePath)?;
     let binding = crate::skills::store::bind_child_object(&parent.dir, &stage_name, &stage_display)
         .map_err(|_| BridgeError::UnsafePath)?;
 
@@ -206,18 +206,18 @@ pub fn uninstall(vault: &Path) -> Result<BridgeView, BridgeError> {
             return status(vault);
         }
         let target = slot_display.join(name);
-        let (file, read_binding) = match crate::skills::store::open_bound_regular_file(
-            &slot,
-            OsStr::new(name),
-            &target,
-        ) {
-            Ok(bound) => bound,
-            Err(error) if is_not_found(&error) && name != MARKER => continue,
-            Err(_) => return Ok(view(BridgeStatus::Residual)),
-        };
+        let (file, read_binding) =
+            match crate::skills::store::open_bound_regular_file(&slot, OsStr::new(name), &target) {
+                Ok(bound) => bound,
+                Err(error) if is_not_found(&error) && name != MARKER => continue,
+                Err(_) => return Ok(view(BridgeStatus::Residual)),
+            };
         let mut actual = Vec::new();
         let mut bounded = file.take(MAX_FILE_BYTES as u64 + 1);
-        if bounded.read_to_end(&mut actual).is_err() || actual.len() > MAX_FILE_BYTES || actual != expected {
+        if bounded.read_to_end(&mut actual).is_err()
+            || actual.len() > MAX_FILE_BYTES
+            || actual != expected
+        {
             return Ok(view(BridgeStatus::Residual));
         }
         #[cfg(test)]
@@ -262,17 +262,31 @@ fn repair_owned_payloads(vault: &Path) -> Result<BridgeView, BridgeError> {
     if !marker_is_owned(&slot, &slot_display)? {
         return Err(BridgeError::ForeignOrMismatch);
     }
-    for (name, expected) in owned_files().into_iter().filter(|(name, _)| *name != MARKER) {
+    for (name, expected) in owned_files()
+        .into_iter()
+        .filter(|(name, _)| *name != MARKER)
+    {
         let target = slot_display.join(name);
-        match crate::skills::store::read_regular_file_bounded(&slot, OsStr::new(name), &target, MAX_FILE_BYTES) {
+        match crate::skills::store::read_regular_file_bounded(
+            &slot,
+            OsStr::new(name),
+            &target,
+            MAX_FILE_BYTES,
+        ) {
             Ok(actual) if actual == expected => {}
             Ok(_) => crate::skills::store::atomic_write_private_child(
-                &slot, OsStr::new(name), &target, &expected,
+                &slot,
+                OsStr::new(name),
+                &target,
+                &expected,
             )
             .map_err(|_| BridgeError::ForeignOrMismatch)?,
             Err(error) if is_not_found(&error) => {
                 crate::skills::store::atomic_write_private_child_create_new(
-                    &slot, OsStr::new(name), &target, &expected,
+                    &slot,
+                    OsStr::new(name),
+                    &target,
+                    &expected,
                 )
                 .map_err(|_| BridgeError::ForeignOrMismatch)?;
             }
@@ -387,16 +401,36 @@ fn plugin_parent(vault: &Path, create: bool) -> Result<PluginParent, BridgeError
             &obsidian_display,
         )
     } else {
-        crate::skills::store::open_real_child_dir(&vault.dir, OsStr::new(".obsidian"), &obsidian_display)
+        crate::skills::store::open_real_child_dir(
+            &vault.dir,
+            OsStr::new(".obsidian"),
+            &obsidian_display,
+        )
     }
-    .map_err(|error| if is_not_found(&error) { BridgeError::VaultMissing } else { BridgeError::UnsafePath })?;
+    .map_err(|error| {
+        if is_not_found(&error) {
+            BridgeError::VaultMissing
+        } else {
+            BridgeError::UnsafePath
+        }
+    })?;
     let display = obsidian_display.join("plugins");
     let dir = if create {
-        crate::skills::store::open_or_create_private_child_dir(&obsidian, OsStr::new("plugins"), &display)
+        crate::skills::store::open_or_create_private_child_dir(
+            &obsidian,
+            OsStr::new("plugins"),
+            &display,
+        )
     } else {
         crate::skills::store::open_real_child_dir(&obsidian, OsStr::new("plugins"), &display)
     }
-    .map_err(|error| if is_not_found(&error) { BridgeError::VaultMissing } else { BridgeError::UnsafePath })?;
+    .map_err(|error| {
+        if is_not_found(&error) {
+            BridgeError::VaultMissing
+        } else {
+            BridgeError::UnsafePath
+        }
+    })?;
     Ok(PluginParent { dir, display })
 }
 
@@ -446,11 +480,19 @@ fn sha256(bytes: &[u8]) -> String {
 }
 
 fn view(status: BridgeStatus) -> BridgeView {
-    BridgeView { status, pairing_live: false, plugin_id: PLUGIN_ID, version: VERSION }
+    BridgeView {
+        status,
+        pairing_live: false,
+        plugin_id: PLUGIN_ID,
+        version: VERSION,
+    }
 }
 
 fn stage_name() -> OsString {
-    OsString::from(format!(".{PLUGIN_ID}.stage-{}", uuid::Uuid::new_v4().simple()))
+    OsString::from(format!(
+        ".{PLUGIN_ID}.stage-{}",
+        uuid::Uuid::new_v4().simple()
+    ))
 }
 
 fn requested_slot_still_names(vault: &Path, identity: &str) -> bool {
@@ -464,9 +506,10 @@ fn requested_slot_still_names(vault: &Path, identity: &str) -> bool {
 }
 
 fn is_not_found(error: &anyhow::Error) -> bool {
-    error.root_cause().downcast_ref::<io::Error>().is_some_and(|cause| {
-        cause.kind() == io::ErrorKind::NotFound
-    })
+    error
+        .root_cause()
+        .downcast_ref::<io::Error>()
+        .is_some_and(|cause| cause.kind() == io::ErrorKind::NotFound)
 }
 
 #[cfg(test)]
@@ -520,12 +563,21 @@ mod tests {
     #[test]
     fn install_is_atomic_idempotent_and_disabled() {
         let (_temp, vault) = vault();
-        assert_eq!(install(&vault).unwrap().status, BridgeStatus::InstalledDisabled);
-        assert_eq!(install(&vault).unwrap().status, BridgeStatus::InstalledDisabled);
+        assert_eq!(
+            install(&vault).unwrap().status,
+            BridgeStatus::InstalledDisabled
+        );
+        assert_eq!(
+            install(&vault).unwrap().status,
+            BridgeStatus::InstalledDisabled
+        );
         let root = vault.join(".obsidian/plugins").join(PLUGIN_ID);
         assert_eq!(fs::read(root.join(MANIFEST)).unwrap(), MANIFEST_BYTES);
         assert_eq!(fs::read(root.join(MAIN)).unwrap(), MAIN_BYTES);
-        assert_eq!(status(&vault).unwrap().status, BridgeStatus::InstalledDisabled);
+        assert_eq!(
+            status(&vault).unwrap().status,
+            BridgeStatus::InstalledDisabled
+        );
     }
 
     #[test]
@@ -543,9 +595,15 @@ mod tests {
         fs::write(root.join(MAIN), b"changed").unwrap();
         fs::write(root.join("data.json"), b"operator-settings").unwrap();
         assert_eq!(status(&vault).unwrap().status, BridgeStatus::Drifted);
-        assert_eq!(repair(&vault).unwrap().status, BridgeStatus::InstalledDisabled);
+        assert_eq!(
+            repair(&vault).unwrap().status,
+            BridgeStatus::InstalledDisabled
+        );
         assert_eq!(fs::read(root.join(MAIN)).unwrap(), MAIN_BYTES);
-        assert_eq!(fs::read(root.join("data.json")).unwrap(), b"operator-settings");
+        assert_eq!(
+            fs::read(root.join("data.json")).unwrap(),
+            b"operator-settings"
+        );
     }
 
     #[test]
@@ -555,7 +613,10 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("foreign"), b"keep").unwrap();
         assert_eq!(status(&vault).unwrap().status, BridgeStatus::Foreign);
-        assert!(matches!(install(&vault), Err(BridgeError::ForeignOrMismatch)));
+        assert!(matches!(
+            install(&vault),
+            Err(BridgeError::ForeignOrMismatch)
+        ));
         assert_eq!(fs::read(root.join("foreign")).unwrap(), b"keep");
     }
 
@@ -586,9 +647,18 @@ mod tests {
         install(&vault).unwrap();
         let root = vault.join(".obsidian/plugins").join(PLUGIN_ID);
         fs::write(root.join("data.json"), b"settings").unwrap();
-        assert_eq!(status(&vault).unwrap().status, BridgeStatus::InstalledDisabled);
-        assert_eq!(install(&vault).unwrap().status, BridgeStatus::InstalledDisabled);
-        assert_eq!(repair(&vault).unwrap().status, BridgeStatus::InstalledDisabled);
+        assert_eq!(
+            status(&vault).unwrap().status,
+            BridgeStatus::InstalledDisabled
+        );
+        assert_eq!(
+            install(&vault).unwrap().status,
+            BridgeStatus::InstalledDisabled
+        );
+        assert_eq!(
+            repair(&vault).unwrap().status,
+            BridgeStatus::InstalledDisabled
+        );
         assert_eq!(fs::read(root.join("data.json")).unwrap(), b"settings");
     }
 
@@ -600,7 +670,10 @@ mod tests {
         fs::remove_file(root.join(MAIN)).unwrap();
         fs::write(root.join("data.json"), b"settings").unwrap();
         assert_eq!(uninstall(&vault).unwrap().status, BridgeStatus::Residual);
-        assert!(root.join(MARKER).is_file(), "marker retains cleanup ownership");
+        assert!(
+            root.join(MARKER).is_file(),
+            "marker retains cleanup ownership"
+        );
         fs::remove_file(root.join("data.json")).unwrap();
         assert_eq!(uninstall(&vault).unwrap().status, BridgeStatus::Absent);
         assert!(!root.exists());
@@ -618,7 +691,10 @@ mod tests {
             fs::rename(&obsidian, &displaced_by_swap).unwrap();
             fs::create_dir_all(&requested_plugins).unwrap();
         });
-        assert!(matches!(install(&vault), Err(BridgeError::ForeignOrMismatch)));
+        assert!(matches!(
+            install(&vault),
+            Err(BridgeError::ForeignOrMismatch)
+        ));
         assert!(!vault.join(".obsidian/plugins").join(PLUGIN_ID).exists());
         assert!(displaced.join("plugins").join(PLUGIN_ID).is_dir());
     }
@@ -638,7 +714,10 @@ mod tests {
             fs::write(&manifest, b"foreign replacement").unwrap();
         });
         assert_eq!(uninstall(&vault).unwrap().status, BridgeStatus::Residual);
-        assert_eq!(fs::read(root.join(MANIFEST)).unwrap(), b"foreign replacement");
+        assert_eq!(
+            fs::read(root.join(MANIFEST)).unwrap(),
+            b"foreign replacement"
+        );
     }
 
     #[cfg(unix)]
@@ -675,7 +754,10 @@ mod tests {
             fs::create_dir_all(&root).unwrap();
             fs::write(root.join("keep"), b"competitor").unwrap();
         });
-        assert!(matches!(install(&vault), Err(BridgeError::ForeignOrMismatch)));
+        assert!(matches!(
+            install(&vault),
+            Err(BridgeError::ForeignOrMismatch)
+        ));
         assert_eq!(
             fs::read(vault.join(".obsidian/plugins").join(PLUGIN_ID).join("keep")).unwrap(),
             b"competitor"

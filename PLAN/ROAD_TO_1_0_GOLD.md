@@ -8,6 +8,16 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W571 P1-18 accepted; W569 hosted formatting (2026-09-24):**
+GUI148 run35935063658 at829c37c3 is admitted147PASS/1FAIL/0missing,28bindings.
+Both real P118 GUI callback cases pass; all13native WizardIPC support cases
+already pass in Group934. Exact scoped source carry (only admitted W560format
+for main.rs) closes GOLD-LF-P1-18 independently of the sole W480 failure.
+Road now1045checked/277open/2partial,279raw/278pre-tag; WS-LF38done/80open.
+W569 imports only2Obsidian Rust format files from preflight35938006795 atc21e29b1,
+with ZIP/SHA256/before-after Gitblob verification. No local formatter executed.
+Evidence:docs/verification/gold-wave571-p118-acceptance.json.
+
 **W567 GChat hosted confirmation (2026-09-24):**
 Run35936050813 at3bd923a0 is admitted4/4PASS with3ZIPdigests,8sourcebindings,
 discovery hashes and all actual terminals verified by Root. This confirms the
@@ -9606,7 +9616,14 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
 - [ ] **GOLD-LF-P1-15 — First-class WebChat surface:** implement the authenticated HTTP/WebSocket adapter, registry/config/credential/health/message lifecycle, account routing and CLI/GUI/Buddy onboarding; clean-machine and migration fixtures must include it. Source: Plan 001 channel ledger.
 - [ ] **GOLD-LF-P1-16 — ChannelAccountId end to end:** thread the canonical account identity through config, credentials, inbound/outbound messages, sessions, routes, pairing, queues, runtime health, permits, WAL, all surfaces and importer; multi-account isolation and migration tests are required. Source: Plan 001 gap F-01.
 - [x] **GOLD-LF-P1-17 — Channel-aware flapping Doctor check:** add the channel/account dimension to usage/health events and compute flapping per channel rather than provider; prove independent channels do not contaminate each other's diagnosis. Source: REEVALUATION R7 P1. Accepted 2026-09-23: W277, Group484 run35815551129, authenticated transport-health scope; see docs/gold-wave277-channel-doctor-acceptance.md.
-- [ ] **GOLD-LF-P1-18 — Real wizard GUI↔daemon IPC:** replace the documented stub with bounded authenticated MPSC/session wiring opened by serve and consumed by GUI, including reconnect, cancellation, ordered progress and fail-closed daemon-loss behavior. Source: Plan 003 gap SURF-01.
+- [x] **GOLD-LF-P1-18 — Real wizard GUI↔daemon IPC:** replace the documented stub with bounded authenticated MPSC/session wiring opened by serve and consumed by GUI, including reconnect, cancellation, ordered progress and fail-closed daemon-loss behavior. Source: Plan 003 gap SURF-01.
+  **Accepted 2026-09-24 (W571):** both actual P118 GUI callbacks pass on hosted
+  run35935063658 at829c37c3, with28source/input bindings and all148terminals
+  admitted. The13native wizard IPC support cases pass in Group934 at5a5b13ea.
+  Scoped source carry is unchanged except the separately admitted W560
+  formatting of main.rs. Cancellation, ordered session progress, reconnect and
+  daemon-loss freezing are accepted independently of the unrelated W480 failure.
+  Evidence: `docs/verification/gold-wave571-p118-acceptance.json`.
 - [x] **GOLD-LF-P1-19 — Local-LLM resource tab:** add daemon-backed Ollama/local-model polling and an operator GUI/CLI/Buddy view for artifact download, disk/RAM/VRAM use, load/readiness, progress, cancellation, errors, update and prune; displayed Ready must be probe-backed. Source: v1_0_OPERATOR_WISHLIST_2026-05-24 §X. Accepted W495:33unique identities/65platform terminals with15-path carry; docs/verification/gold-wave495-p119-acceptance.json.
 - [x] **GOLD-LF-P1-20 — Sidebar last-message preview:** populate each session preview from the canonical latest visible message, update it on send/stream completion/reload, and test redaction, empty, truncation, Unicode and session-switch behavior. Source: GUI_BEAT_OPENHUMAN.md. Accepted W426:4native Group841+8GUI143 source-bound PASS; `docs/verification/gold-wave426-p120-acceptance.json`.
   - **IMPLEMENTED, AWAITING EXACT-HEAD CI (2026-07-18):** the desktop now reads the canonical `raw_turns` store through read-only, no-migration readers and selects the newest turn that remains visible after the same output sanitizer used by the chat surface. Storage stays byte-exact; operator and agent history is re-sanitized on every GUI egress, normalized for display and truncated at 64 extended grapheme clusters. Missing databases and pre-`raw_turns` databases are honest empty states, while metadata/SQLite corruption remains a visible reload error and cannot replace the last good model. Local CLI preview updates on send, completion, terminal error, delete, startup and explicit reload, but never on partial stream chunks. Session selection loads canonical historical turns read-only, preserves the live model and rejects stale A→B→Live async completions through a generation/session binding. Historical rows expose no send, retry, delete, model-override or link-chip mutation path. Conversation and session rows are keyboard-operable buttons with focus indication and matching accessible labels; current/read-only state is announced without opacity-dimming interactive text. Regressions cover redaction, controls, empty/legacy/corrupt stores, whitespace-only latest rows, Unicode/grapheme truncation, send-before-probe hydration, reload, A/B isolation, stale completion rejection and display contracts. Workspace format/diff/metadata plus direct Slint generation are green locally; full native Rust execution is unavailable on this Windows host because the MSVC compiler tools are absent. Keep this box open until the pushed exact head is green on Linux, macOS and Windows and the new GUI production dependency is proven in the release matrix.
