@@ -27,8 +27,8 @@
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 
-use crate::providers::http_client;
 use crate::proactive::ProactiveItem;
+use crate::providers::http_client;
 use crate::tools::external_http::{
     ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpResponse, ExternalHttpSurface,
     ExternalHttpTransportRequest,
@@ -401,14 +401,11 @@ mod tests {
         server.verify().await;
         let requests = server.received_requests().await.unwrap();
         assert!(requests.iter().all(|request| {
-            request
-                .headers
-                .get("user-agent")
-                .is_some_and(|value| {
-                    value.to_str().is_ok_and(|value| {
-                        value == concat!("neoth/", env!("CARGO_PKG_VERSION"))
-                    })
-                })
+            request.headers.get("user-agent").is_some_and(|value| {
+                value
+                    .to_str()
+                    .is_ok_and(|value| value == concat!("neoth/", env!("CARGO_PKG_VERSION")))
+            })
         }));
     }
 

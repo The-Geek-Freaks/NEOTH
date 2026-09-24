@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T21:01:23.9425994Z",
-  "validationStatus": "W944 HackerNews sealed HTTP migration static reviewed; hosted pending",
+  "capturedUtc": "2026-09-24T21:03:46.1446436Z",
+  "validationStatus": "W945 IFC coverage selected; HN exact hostedformat imported; compile/behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -108,8 +108,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 23698,
-      "sha256": "F7E445B165602D99F7792641643C322178569BB7424F53BE218446F250B691D7"
+      "bytes": 23746,
+      "sha256": "7371053C83C81CCAC465F3C6747184EDB12C4AC3137C52BB73F7CB31792C6CF6"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -128,8 +128,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 37999,
-      "sha256": "8EA0259F40053E67F88CF7C7C2232B6B5C8D6F744A0B3167B3E0074748ECAC76"
+      "bytes": 38925,
+      "sha256": "43092DE536437859F54AA810E9F377AE49549730A9928C91DC3BED7D7D01DE69"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -2133,18 +2133,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 291363,
-      "sha256": "F044C07861F42BC7E787FB55B501FFC583187A4679453A4F637CA429ED5B6953"
+      "bytes": 291889,
+      "sha256": "D68359A31E4C69FD3FB933B498695E3F15FDB3D56C7C7E9B1F8415BB5B656F55"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1302691,
-      "sha256": "734E3AC706DAA722B48167AB7B92784296B2D6F0BC043E349992D88538ED8481"
+      "bytes": 1303217,
+      "sha256": "18755FFD87AA28AE8651A97E5D3A89BD136455F544A84FB9467190AEEC242768"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1912260,
-      "sha256": "492C2780B062AF4CA0109DAE8028082DCC1EEC7A4362B9BE1B22A9DEF380D79E"
+      "bytes": 1912786,
+      "sha256": "4D129665FD5BCB2A97137ACE7F9D0C8D479A22C28C8B5A4945FDE794E704EBCC"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4808,8 +4808,8 @@
     },
     {
       "path": "SRC/neothd/src/sources/hackernews.rs",
-      "bytes": 28363,
-      "sha256": "92BA0C4AEC33FC5CE1E7688FB6B7B9EF9865D6559C66A3AC248FF7CB9A006A69"
+      "bytes": 28298,
+      "sha256": "68772309D9BBAEDAEA7B1D8ECD918D09FD3B29DDECBFF9C143EF5775F4D8D3C3"
     },
     {
       "path": "SRC/neothd/src/sub_agents/parallel.rs",

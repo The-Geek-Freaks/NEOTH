@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W944 HackerNews sealed HTTP migration static reviewed; hosted pending",
+  "status": "W945 IFC coverage selected; HN exact hostedformat imported; compile/behavior pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 181895,
-    "sha256": "DCD04548380771B37525E18F9942EDC3EB5EB95E46D0398DA0FFAD88350E9E4E"
+    "bytes": 181910,
+    "sha256": "DD837BE3478C49D39BCB6F4F8067D78889D416FC927CC8293D0B39555C21652C"
   },
   "sourceInputs": 1028,
   "requiredNativeTests": [
@@ -9954,43 +9954,85 @@
     {
       "test": "sources::hackernews::tests::fetches_top_list_and_each_concrete_item_through_authorizer",
       "sourcePath": "SRC/neothd/src/sources/hackernews.rs",
-      "sourceSha256": "92BA0C4AEC33FC5CE1E7688FB6B7B9EF9865D6559C66A3AC248FF7CB9A006A69",
+      "sourceSha256": "68772309D9BBAEDAEA7B1D8ECD918D09FD3B29DDECBFF9C143EF5775F4D8D3C3",
       "junitClass": "neoth"
     },
     {
       "test": "sources::hackernews::tests::item_transport_failure_aborts_the_refresh_instead_of_returning_partial_data",
       "sourcePath": "SRC/neothd/src/sources/hackernews.rs",
-      "sourceSha256": "92BA0C4AEC33FC5CE1E7688FB6B7B9EF9865D6559C66A3AC248FF7CB9A006A69",
+      "sourceSha256": "68772309D9BBAEDAEA7B1D8ECD918D09FD3B29DDECBFF9C143EF5775F4D8D3C3",
       "junitClass": "neoth"
     },
     {
       "test": "sources::hackernews::tests::fail_closed_deny_never_reaches_hn_transport",
       "sourcePath": "SRC/neothd/src/sources/hackernews.rs",
-      "sourceSha256": "92BA0C4AEC33FC5CE1E7688FB6B7B9EF9865D6559C66A3AC248FF7CB9A006A69",
+      "sourceSha256": "68772309D9BBAEDAEA7B1D8ECD918D09FD3B29DDECBFF9C143EF5775F4D8D3C3",
       "junitClass": "neoth"
     },
     {
       "test": "sources::hackernews::tests::live_policy_reload_to_custom_deny_prevents_transport",
       "sourcePath": "SRC/neothd/src/sources/hackernews.rs",
-      "sourceSha256": "92BA0C4AEC33FC5CE1E7688FB6B7B9EF9865D6559C66A3AC248FF7CB9A006A69",
+      "sourceSha256": "68772309D9BBAEDAEA7B1D8ECD918D09FD3B29DDECBFF9C143EF5775F4D8D3C3",
       "junitClass": "neoth"
     },
     {
       "test": "sources::hackernews::tests::redirects_are_not_followed",
       "sourcePath": "SRC/neothd/src/sources/hackernews.rs",
-      "sourceSha256": "92BA0C4AEC33FC5CE1E7688FB6B7B9EF9865D6559C66A3AC248FF7CB9A006A69",
+      "sourceSha256": "68772309D9BBAEDAEA7B1D8ECD918D09FD3B29DDECBFF9C143EF5775F4D8D3C3",
       "junitClass": "neoth"
     },
     {
       "test": "sources::hackernews::tests::a_redirect_with_a_valid_json_body_is_still_refused",
       "sourcePath": "SRC/neothd/src/sources/hackernews.rs",
-      "sourceSha256": "92BA0C4AEC33FC5CE1E7688FB6B7B9EF9865D6559C66A3AC248FF7CB9A006A69",
+      "sourceSha256": "68772309D9BBAEDAEA7B1D8ECD918D09FD3B29DDECBFF9C143EF5775F4D8D3C3",
       "junitClass": "neoth"
     },
     {
       "test": "sources::hackernews::tests::top_story_response_is_hard_bounded",
       "sourcePath": "SRC/neothd/src/sources/hackernews.rs",
-      "sourceSha256": "92BA0C4AEC33FC5CE1E7688FB6B7B9EF9865D6559C66A3AC248FF7CB9A006A69",
+      "sourceSha256": "68772309D9BBAEDAEA7B1D8ECD918D09FD3B29DDECBFF9C143EF5775F4D8D3C3",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "permissions::ifc::tests::equal_or_lower_destination_clearance_allows_flow",
+      "sourcePath": "SRC/neothd/src/permissions/ifc.rs",
+      "sourceSha256": "6301AF4EEE45C4104DC440C919753A4C740DD6476D1C4E0DEB3AE59C6557F651",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "permissions::ifc::tests::high_to_low_flow_is_denied_with_structured_labels",
+      "sourcePath": "SRC/neothd/src/permissions/ifc.rs",
+      "sourceSha256": "6301AF4EEE45C4104DC440C919753A4C740DD6476D1C4E0DEB3AE59C6557F651",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "permissions::ifc::tests::highest_of_multiple_sources_controls_the_decision",
+      "sourcePath": "SRC/neothd/src/permissions/ifc.rs",
+      "sourceSha256": "6301AF4EEE45C4104DC440C919753A4C740DD6476D1C4E0DEB3AE59C6557F651",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "permissions::ifc::tests::source_labels_normalize_sort_and_deduplicate",
+      "sourcePath": "SRC/neothd/src/permissions/ifc.rs",
+      "sourceSha256": "6301AF4EEE45C4104DC440C919753A4C740DD6476D1C4E0DEB3AE59C6557F651",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "permissions::ifc::tests::empty_and_unknown_labels_fail_closed",
+      "sourcePath": "SRC/neothd/src/permissions/ifc.rs",
+      "sourceSha256": "6301AF4EEE45C4104DC440C919753A4C740DD6476D1C4E0DEB3AE59C6557F651",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "permissions::ifc::tests::operator_research_public_release_is_topic_bound_and_legacy_is_not_public",
+      "sourcePath": "SRC/neothd/src/permissions/ifc.rs",
+      "sourceSha256": "6301AF4EEE45C4104DC440C919753A4C740DD6476D1C4E0DEB3AE59C6557F651",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "permissions::ifc::tests::egress_provenance_debug_redacts_released_topic_and_digest",
+      "sourcePath": "SRC/neothd/src/permissions/ifc.rs",
+      "sourceSha256": "6301AF4EEE45C4104DC440C919753A4C740DD6476D1C4E0DEB3AE59C6557F651",
       "junitClass": "neoth"
     }
   ],
@@ -36896,6 +36938,63 @@
       }
     ],
     "note": "Core36057976232 exactE0599/E0433 repaired. Seven existing HN regressions selected; W942 static APPROVE. Direct bytes dependency only, no version resolution changed. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave945IfcLatticeAcceptance": {
+    "requiredTests": [
+      "permissions::ifc::tests::equal_or_lower_destination_clearance_allows_flow",
+      "permissions::ifc::tests::high_to_low_flow_is_denied_with_structured_labels",
+      "permissions::ifc::tests::highest_of_multiple_sources_controls_the_decision",
+      "permissions::ifc::tests::source_labels_normalize_sort_and_deduplicate",
+      "permissions::ifc::tests::empty_and_unknown_labels_fail_closed",
+      "permissions::ifc::tests::operator_research_public_release_is_topic_bound_and_legacy_is_not_public",
+      "permissions::ifc::tests::egress_provenance_debug_redacts_released_topic_and_digest"
+    ],
+    "status": "HOSTED_PENDING",
+    "scope": "Existing7IFC kernel and release/redaction tests now explicitly selected; actionkindclearance already inGroup"
+  },
+  "wave945IfcSelectionAndHostedFormat": {
+    "base": "f20c3c04374f04fd51ad2934106620e66ed9b739",
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 23746,
+        "sha256": "7371053C83C81CCAC465F3C6747184EDB12C4AC3137C52BB73F7CB31792C6CF6",
+        "blob": "76b46159622a05fb9795b5041fe05bcd8459f29f"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 38925,
+        "sha256": "43092DE536437859F54AA810E9F377AE49549730A9928C91DC3BED7D7D01DE69",
+        "blob": "c2c031889e73a163755dd5b8f717111670d92864"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 291889,
+        "sha256": "D68359A31E4C69FD3FB933B498695E3F15FDB3D56C7C7E9B1F8415BB5B656F55",
+        "blob": "5307f317427d2db4f5cce83d4ca576c0bd6418e1"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1303217,
+        "sha256": "18755FFD87AA28AE8651A97E5D3A89BD136455F544A84FB9467190AEEC242768",
+        "blob": "46a2f73602d8d1d6f4f1c1edc57912adf5eab955"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1912786,
+        "sha256": "4D129665FD5BCB2A97137ACE7F9D0C8D479A22C28C8B5A4945FDE794E704EBCC",
+        "blob": "0f0996addc36bc53c3e8f7e22707227df5af206e"
+      },
+      {
+        "path": "SRC/neothd/src/sources/hackernews.rs",
+        "bytes": 28298,
+        "sha256": "68772309D9BBAEDAEA7B1D8ECD918D09FD3B29DDECBFF9C143EF5775F4D8D3C3",
+        "blob": "c72d11e1808435b013068f2a544d54531ec2c572"
+      }
+    ],
+    "note": "Seven existingIFCtests addedGroup,all8Windows. Hostedartifact10833083981 @f20 exactonefile formatting. Source/admission pending; no localexecutables.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -3,6 +3,13 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W945 C7 acceptance selection (2026-09-24):** Root checked the actual matrix:
+only ActionKind-clearance was selected from the IFC kernel. Seven existing
+lattice/release/redaction regressions are now added to Group; Windows selects
+all eight. Current native1671/Group1438/Windows221. Exact single-file hosted
+HackerNews formatting from Preflight36058966141 (artifact10833083981) is imported
+with API ZIP, inner hashes, source and old/new blobs verified. Coref20 pending;
+no feature closure and no local executable validation.
 **W944 Hacker News consumer repair (2026-09-24):** Core413a found the two
 remaining legacy external-HTTP calls in Hacker News and a missing direct Bytes
 type dependency. W941 seals both requests with explicit15s timeout and the

@@ -283,6 +283,14 @@ jobs:
           sources::hackernews::tests::redirects_are_not_followed	neothd/src/sources/hackernews.rs
           sources::hackernews::tests::a_redirect_with_a_valid_json_body_is_still_refused	neothd/src/sources/hackernews.rs
           sources::hackernews::tests::top_story_response_is_hard_bounded	neothd/src/sources/hackernews.rs
+          permissions::ifc::tests::equal_or_lower_destination_clearance_allows_flow	neothd/src/permissions/ifc.rs
+          permissions::ifc::tests::high_to_low_flow_is_denied_with_structured_labels	neothd/src/permissions/ifc.rs
+          permissions::ifc::tests::highest_of_multiple_sources_controls_the_decision	neothd/src/permissions/ifc.rs
+          permissions::ifc::tests::source_labels_normalize_sort_and_deduplicate	neothd/src/permissions/ifc.rs
+          permissions::ifc::tests::empty_and_unknown_labels_fail_closed	neothd/src/permissions/ifc.rs
+          permissions::ifc::tests::operator_research_public_release_is_topic_bound_and_legacy_is_not_public	neothd/src/permissions/ifc.rs
+          permissions::ifc::tests::egress_provenance_debug_redacts_released_topic_and_digest	neothd/src/permissions/ifc.rs
+          permissions::ifc::tests::every_action_kind_has_an_explicit_clearance	neothd/src/permissions/ifc.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -299,7 +307,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 213 ]]; then
+          if [[ "$expected" -ne 221 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -309,7 +317,7 @@ jobs:
             cargo test -p neoth --lib --locked --no-run > "$evidence/compile.log" 2>&1 || compile_status=$?
           else
             compile_status=64
-            printf 'selection is not the required 213 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 221 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0
