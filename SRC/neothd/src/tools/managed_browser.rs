@@ -562,11 +562,11 @@ async fn download_reviewed_archive_at(
     let url = url.to_owned();
     let expected_sha256 = expected_sha256.to_owned();
     ensure!(
-            !cancelled.load(Ordering::Acquire),
-            "managed-browser install cancelled"
-        );
+        !cancelled.load(Ordering::Acquire),
+        "managed-browser install cancelled"
+    );
     let client = crate::providers::http_client::build_client_no_redirect()
-            .context("build no-redirect managed-browser HTTP client")?;
+        .context("build no-redirect managed-browser HTTP client")?;
     let transport = ExternalHttpTransportRequest::new(&request, client.get(&url))?;
     http.execute_transport(request, transport, move |mut response| async move {
         ensure!(
@@ -619,8 +619,9 @@ async fn download_reviewed_archive_at(
             hex::encode(digest.finalize()) == expected_sha256,
             "managed-browser archive digest does not match reviewed target"
         );
-    Ok(archive)
-    }).await
+        Ok(archive)
+    })
+    .await
 }
 
 fn install_verified_archive(

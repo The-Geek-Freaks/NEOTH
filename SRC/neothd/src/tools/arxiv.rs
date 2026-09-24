@@ -76,7 +76,10 @@ pub(crate) async fn search_against_authorized(
     );
     let request = ExternalHttpRequest::get(&url, ExternalHttpSurface::Arxiv);
     let client = http_client::build_client_no_redirect()?;
-    let transport = ExternalHttpTransportRequest::new(&request, client.get(url).header("User-Agent", "NEOTH-arxiv/0.1"))?;
+    let transport = ExternalHttpTransportRequest::new(
+        &request,
+        client.get(url).header("User-Agent", "NEOTH-arxiv/0.1"),
+    )?;
     http.execute_transport(request, transport, move |mut resp| async move {
         if !resp.status().is_success() {
             anyhow::bail!("arxiv API returned {}", resp.status());
@@ -88,8 +91,9 @@ pub(crate) async fn search_against_authorized(
         }
         let body = std::str::from_utf8(&body)
             .map_err(|_| anyhow::anyhow!("arxiv response is not valid UTF-8"))?;
-    parse_atom(body, max)
-    }).await
+        parse_atom(body, max)
+    })
+    .await
 }
 
 /// A Content-Length preflight avoids reading a declared oversized response, but

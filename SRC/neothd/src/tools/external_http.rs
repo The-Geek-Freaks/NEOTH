@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
-use reqwest::{header::HeaderMap, StatusCode};
+use reqwest::{StatusCode, header::HeaderMap};
 use sha2::{Digest, Sha256};
 
 use crate::permissions::gate::{ChannelAsker, PermissionAuditSink};
@@ -218,29 +218,68 @@ pub(crate) struct ExternalHttpTransportRequest {
 }
 
 impl ExternalHttpTransportRequest {
-    pub(crate) fn new(request: &ExternalHttpRequest, builder: reqwest::RequestBuilder) -> Result<Self> {
-        let built = builder.build().context("build sealed external HTTP request")?;
-        anyhow::ensure!(built.method().as_str() == request.method && built.url().as_str() == request.url,
-            "sealed external HTTP request method or URL mismatch");
-        let body = match built.body() { None => &[][..], Some(body) => body.as_bytes().ok_or_else(|| anyhow::anyhow!("sealed external HTTP request body is not inspectable"))? };
-        anyhow::ensure!(hex::encode(Sha256::digest(body)) == request.body_binding_sha256,
-            "sealed external HTTP request body mismatch");
-        Ok(Self { request: built, pre_send: None })
+    pub(crate) fn new(
+        request: &ExternalHttpRequest,
+        builder: reqwest::RequestBuilder,
+    ) -> Result<Self> {
+        let built = builder
+            .build()
+            .context("build sealed external HTTP request")?;
+        anyhow::ensure!(
+            built.method().as_str() == request.method && built.url().as_str() == request.url,
+            "sealed external HTTP request method or URL mismatch"
+        );
+        let body = match built.body() {
+            None => &[][..],
+            Some(body) => body.as_bytes().ok_or_else(|| {
+                anyhow::anyhow!("sealed external HTTP request body is not inspectable")
+            })?,
+        };
+        anyhow::ensure!(
+            hex::encode(Sha256::digest(body)) == request.body_binding_sha256,
+            "sealed external HTTP request body mismatch"
+        );
+        Ok(Self {
+            request: built,
+            pre_send: None,
+        })
     }
-    pub(crate) fn with_pre_send(mut self, pre_send: impl Future<Output = Result<()>> + Send + 'static) -> Self {
-        self.pre_send = Some(Box::pin(pre_send)); self
+    pub(crate) fn with_pre_send(
+        mut self,
+        pre_send: impl Future<Output = Result<()>> + Send + 'static,
+    ) -> Self {
+        self.pre_send = Some(Box::pin(pre_send));
+        self
     }
 }
 
 /// Response wrapper intentionally exposes parsing and bounded streaming, but
 /// never the client or a send method. The actual network effect stays above.
-pub(crate) struct ExternalHttpResponse { response: reqwest::Response }
+pub(crate) struct ExternalHttpResponse {
+    response: reqwest::Response,
+}
 impl ExternalHttpResponse {
-    pub(crate) fn status(&self) -> StatusCode { self.response.status() }
-    pub(crate) fn headers(&self) -> &HeaderMap { self.response.headers() }
-    pub(crate) fn content_length(&self) -> Option<u64> { self.response.content_length() }
-    pub(crate) async fn chunk(&mut self) -> Result<Option<bytes::Bytes>> { self.response.chunk().await.context("external HTTP response read") }
-    pub(crate) async fn json<T: serde::de::DeserializeOwned>(self) -> Result<T> { self.response.json().await.context("external HTTP response decode") }
+    pub(crate) fn status(&self) -> StatusCode {
+        self.response.status()
+    }
+    pub(crate) fn headers(&self) -> &HeaderMap {
+        self.response.headers()
+    }
+    pub(crate) fn content_length(&self) -> Option<u64> {
+        self.response.content_length()
+    }
+    pub(crate) async fn chunk(&mut self) -> Result<Option<bytes::Bytes>> {
+        self.response
+            .chunk()
+            .await
+            .context("external HTTP response read")
+    }
+    pub(crate) async fn json<T: serde::de::DeserializeOwned>(self) -> Result<T> {
+        self.response
+            .json()
+            .await
+            .context("external HTTP response decode")
+    }
 }
 
 #[async_trait::async_trait]
@@ -751,14 +790,25 @@ impl ExternalHttpAuthorizer {
         Fut: Future<Output = Result<T>>,
     {
         transport_matches(&transport, &request)?;
-        self.execute_with_permit_verifier(request, |_permit, _request| Ok(()), move |_permit| async move {
-            if let Some(pre_send) = transport.pre_send { pre_send.await?; }
-            let client = crate::providers::http_client::build_client_no_redirect()?;
-            let response = client.execute(transport.request).await.map_err(|error| {
-                if error.is_timeout() { ExternalHttpTransportFailure::Timeout } else { ExternalHttpTransportFailure::Unavailable }
-            })?;
-            process(ExternalHttpResponse { response }).await
-        }).await
+        self.execute_with_permit_verifier(
+            request,
+            |_permit, _request| Ok(()),
+            move |_permit| async move {
+                if let Some(pre_send) = transport.pre_send {
+                    pre_send.await?;
+                }
+                let client = crate::providers::http_client::build_client_no_redirect()?;
+                let response = client.execute(transport.request).await.map_err(|error| {
+                    if error.is_timeout() {
+                        ExternalHttpTransportFailure::Timeout
+                    } else {
+                        ExternalHttpTransportFailure::Unavailable
+                    }
+                })?;
+                process(ExternalHttpResponse { response }).await
+            },
+        )
+        .await
     }
 
     /// Test-only lifecycle seam. Production sends use `execute_transport`,
@@ -1050,12 +1100,25 @@ impl ExternalHttpAuthorizer {
     }
 }
 
-fn transport_matches(transport: &ExternalHttpTransportRequest, request: &ExternalHttpRequest) -> Result<()> {
-    anyhow::ensure!(transport.request.method().as_str() == request.method && transport.request.url().as_str() == request.url,
-        "sealed external HTTP request method or URL mismatch");
-    let body = match transport.request.body() { None => &[][..], Some(body) => body.as_bytes().ok_or_else(|| anyhow::anyhow!("sealed external HTTP request body is not inspectable"))? };
-    anyhow::ensure!(hex::encode(Sha256::digest(body)) == request.body_binding_sha256,
-        "sealed external HTTP request body mismatch");
+fn transport_matches(
+    transport: &ExternalHttpTransportRequest,
+    request: &ExternalHttpRequest,
+) -> Result<()> {
+    anyhow::ensure!(
+        transport.request.method().as_str() == request.method
+            && transport.request.url().as_str() == request.url,
+        "sealed external HTTP request method or URL mismatch"
+    );
+    let body = match transport.request.body() {
+        None => &[][..],
+        Some(body) => body.as_bytes().ok_or_else(|| {
+            anyhow::anyhow!("sealed external HTTP request body is not inspectable")
+        })?,
+    };
+    anyhow::ensure!(
+        hex::encode(Sha256::digest(body)) == request.body_binding_sha256,
+        "sealed external HTTP request body mismatch"
+    );
     Ok(())
 }
 
@@ -2710,12 +2773,19 @@ mod tests {
     #[test]
     fn sealed_transport_body_drift_is_rejected_before_authorization_or_send() {
         let request = ExternalHttpRequest::post(
-            "https://example.com/research", ExternalHttpSurface::SearchTavily, b"approved",
+            "https://example.com/research",
+            ExternalHttpSurface::SearchTavily,
+            b"approved",
         );
-        let client = crate::providers::http_client::build_client_no_redirect().expect("test client");
-        assert!(ExternalHttpTransportRequest::new(&request, client
-            .post("https://example.com/research").body("drifted"))
-            .is_err());
+        let client =
+            crate::providers::http_client::build_client_no_redirect().expect("test client");
+        assert!(
+            ExternalHttpTransportRequest::new(
+                &request,
+                client.post("https://example.com/research").body("drifted")
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test]
@@ -2732,11 +2802,16 @@ mod tests {
         let client = crate::providers::http_client::build_client_no_redirect().unwrap();
         let transport = ExternalHttpTransportRequest::new(&request, client.get(&url)).unwrap();
 
-        let result: Result<()> = auth.execute_transport(request, transport, |response| async move {
-            anyhow::ensure!(response.status() == StatusCode::OK, "response status did not satisfy sealed consumer");
-            let _: serde_json::Value = response.json().await?;
-            Ok(())
-        }).await;
+        let result: Result<()> = auth
+            .execute_transport(request, transport, |response| async move {
+                anyhow::ensure!(
+                    response.status() == StatusCode::OK,
+                    "response status did not satisfy sealed consumer"
+                );
+                let _: serde_json::Value = response.json().await?;
+                Ok(())
+            })
+            .await;
         assert!(result.is_err());
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
         let events = sink.events.lock().unwrap();
@@ -2755,15 +2830,24 @@ mod tests {
                 AutonomyPolicySnapshot::test_level(crate::permissions::AutonomyLevel::Strict),
                 ConfirmStrategy::FailClosed,
             ),
-            authorizer(Arc::new(RecordingSink { fail: Some(ExtendedSubtype::ExternalHttpIntent), ..RecordingSink::default() })),
+            authorizer(Arc::new(RecordingSink {
+                fail: Some(ExtendedSubtype::ExternalHttpIntent),
+                ..RecordingSink::default()
+            })),
         ] {
             let pre_send_called = Arc::new(AtomicBool::new(false));
             let pre_send_mark = Arc::clone(&pre_send_called);
             let request = ExternalHttpRequest::get(&url, ExternalHttpSurface::Fetch);
             let client = crate::providers::http_client::build_client_no_redirect().unwrap();
-            let transport = ExternalHttpTransportRequest::new(&request, client.get(&url)).unwrap()
-                .with_pre_send(async move { pre_send_mark.store(true, Ordering::SeqCst); Ok(()) });
-            let result: Result<()> = auth.execute_transport(request, transport, |_response| async move { Ok(()) }).await;
+            let transport = ExternalHttpTransportRequest::new(&request, client.get(&url))
+                .unwrap()
+                .with_pre_send(async move {
+                    pre_send_mark.store(true, Ordering::SeqCst);
+                    Ok(())
+                });
+            let result: Result<()> = auth
+                .execute_transport(request, transport, |_response| async move { Ok(()) })
+                .await;
             assert!(result.is_err());
             assert!(!pre_send_called.load(Ordering::SeqCst));
         }
@@ -2778,29 +2862,44 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
             .mount(&server)
             .await;
-        let url = format!("{}/search?q=released%20transport%20private%20topic", server.uri());
+        let url = format!(
+            "{}/search?q=released%20transport%20private%20topic",
+            server.uri()
+        );
         let sink = Arc::new(RecordingSink::default());
         let auth = ExternalHttpAuthorizer {
-            policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(crate::permissions::AutonomyLevel::Full)),
+            policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
+                crate::permissions::AutonomyLevel::Full,
+            )),
             confirm: ConfirmStrategy::AlwaysAllow,
             channel_asker: None,
             sink: sink.clone(),
-            egress_provenance: ExplicitExternalResearchRelease::test_for_exact_topic(topic).into_egress_provenance(),
+            egress_provenance: ExplicitExternalResearchRelease::test_for_exact_topic(topic)
+                .into_egress_provenance(),
         };
         auth.arm_operator_released_exact_topic(topic).unwrap();
         let request = ExternalHttpRequest::get(&url, ExternalHttpSurface::SearchSearxng);
         let client = crate::providers::http_client::build_client_no_redirect().unwrap();
         let transport = ExternalHttpTransportRequest::new(&request, client.get(&url)).unwrap();
         let private_error = format!("response body/hash failure for {url}");
-        let result: Result<()> = auth.execute_transport(request, transport, move |_response| async move { Err(anyhow::anyhow!(private_error)) }).await;
+        let result: Result<()> = auth
+            .execute_transport(request, transport, move |_response| async move {
+                Err(anyhow::anyhow!(private_error))
+            })
+            .await;
         let error = result.expect_err("released response processing must remain opaque");
-        assert!(matches!(error.downcast_ref::<ReleasedExternalHttpFailure>(), Some(ReleasedExternalHttpFailure::Transport)));
+        assert!(matches!(
+            error.downcast_ref::<ReleasedExternalHttpFailure>(),
+            Some(ReleasedExternalHttpFailure::Transport)
+        ));
         assert_eq!(error.to_string(), "released external HTTP request failed");
         assert!(!format!("{error:#}").contains(topic));
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
         let events = sink.events.lock().unwrap();
         assert_eq!(events.len(), 2);
         assert_eq!(events[1].1["status"], "failure");
-        for (_, payload) in events.iter() { assert_released_payload_is_provider_neutral(payload, &[topic, &url, "search_searxng"]); }
+        for (_, payload) in events.iter() {
+            assert_released_payload_is_provider_neutral(payload, &[topic, &url, "search_searxng"]);
+        }
     }
 }

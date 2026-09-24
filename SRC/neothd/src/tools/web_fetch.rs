@@ -27,7 +27,8 @@ use tokio::net::lookup_host;
 use crate::providers::http_client;
 use crate::providers::{Completion, Provider, Request};
 use crate::tools::external_http::{
-    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface, ExternalHttpResponse, ExternalHttpTransportRequest,
+    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpResponse, ExternalHttpSurface,
+    ExternalHttpTransportRequest,
 };
 use crate::tools::web_doc_cache;
 
@@ -259,43 +260,43 @@ async fn fetch_inner(url: &str, http: &ExternalHttpAuthorizer) -> Result<(String
     // external-HTTP authorization boundary below.
     let canonical_url = parse_http_url(url)?.to_string();
     let request = ExternalHttpRequest::get(&canonical_url, ExternalHttpSurface::Fetch);
-        // SX-01: SSRF guard — strict URL parsing + scheme filtering + DNS
-        // pre-resolution to block private/loopback/link-local/cloud-metadata
-        // targets BEFORE the HTTP client opens a socket.
-        let parsed = parse_http_url(&canonical_url)?;
-        let safe_target = parsed.origin().ascii_serialization();
-        // Use the no-redirect variant so an attacker cannot 302 us into a
-        // private network after `validate_url` cleared the initial host.
-        // Operators who need redirects see the 3xx status + Location header
-        // and call `fetch` again (each call re-validates).
-        let client =
-            http_client::build_client_no_redirect().context("build web_fetch reqwest client")?;
+    // SX-01: SSRF guard — strict URL parsing + scheme filtering + DNS
+    // pre-resolution to block private/loopback/link-local/cloud-metadata
+    // targets BEFORE the HTTP client opens a socket.
+    let parsed = parse_http_url(&canonical_url)?;
+    let safe_target = parsed.origin().ascii_serialization();
+    // Use the no-redirect variant so an attacker cannot 302 us into a
+    // private network after `validate_url` cleared the initial host.
+    // Operators who need redirects see the 3xx status + Location header
+    // and call `fetch` again (each call re-validates).
+    let client =
+        http_client::build_client_no_redirect().context("build web_fetch reqwest client")?;
 
-        // GOLD-ADAPT-SKILL-03 — conditional-GET doc cache: if we hold a prior copy,
-        // revalidate it with the origin (If-None-Match / If-Modified-Since). The
-        // SSRF guard above + the no-redirect client still gate this request; the
-        // cache only adds validator headers and a 304-serve branch, and is inert
-        // until `web_doc_cache::init` has opted the process in.
-        let cache_dir = web_doc_cache::dir();
-        let cached = cache_dir
-            .as_deref()
-            .and_then(|d| web_doc_cache::lookup(d, &canonical_url));
+    // GOLD-ADAPT-SKILL-03 — conditional-GET doc cache: if we hold a prior copy,
+    // revalidate it with the origin (If-None-Match / If-Modified-Since). The
+    // SSRF guard above + the no-redirect client still gate this request; the
+    // cache only adds validator headers and a 304-serve branch, and is inert
+    // until `web_doc_cache::init` has opted the process in.
+    let cache_dir = web_doc_cache::dir();
+    let cached = cache_dir
+        .as_deref()
+        .and_then(|d| web_doc_cache::lookup(d, &canonical_url));
 
-        let mut req = client
-            .get(&canonical_url)
-            .header("User-Agent", "NEOTH-fetch/0.1 (+self-hosted)");
-        if let Some(c) = &cached {
-            if let Some(etag) = &c.etag {
-                req = req.header(reqwest::header::IF_NONE_MATCH, etag.as_str());
-            }
-            if let Some(lm) = &c.last_modified {
-                req = req.header(reqwest::header::IF_MODIFIED_SINCE, lm.as_str());
-            }
+    let mut req = client
+        .get(&canonical_url)
+        .header("User-Agent", "NEOTH-fetch/0.1 (+self-hosted)");
+    if let Some(c) = &cached {
+        if let Some(etag) = &c.etag {
+            req = req.header(reqwest::header::IF_NONE_MATCH, etag.as_str());
         }
-        let dns_target = canonical_url.clone();
-        let transport = ExternalHttpTransportRequest::new(&request, req)?
-            .with_pre_send(async move { validate_url(&dns_target).await.map(|_| ()) });
-        http.execute_transport(request, transport, move |mut resp| async move {
+        if let Some(lm) = &c.last_modified {
+            req = req.header(reqwest::header::IF_MODIFIED_SINCE, lm.as_str());
+        }
+    }
+    let dns_target = canonical_url.clone();
+    let transport = ExternalHttpTransportRequest::new(&request, req)?
+        .with_pre_send(async move { validate_url(&dns_target).await.map(|_| ()) });
+    http.execute_transport(request, transport, move |mut resp| async move {
         let status = resp.status().as_u16();
 
         // 304 Not Modified — the origin confirms our cached copy is current. Serve
@@ -383,7 +384,8 @@ async fn fetch_inner(url: &str, http: &ExternalHttpAuthorizer) -> Result<(String
                 truncated,
             },
         ))
-        }).await
+    })
+    .await
 }
 
 async fn read_response_body_bounded(

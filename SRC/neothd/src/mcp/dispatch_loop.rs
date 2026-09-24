@@ -3136,7 +3136,10 @@ mod tests {
             &crate::config::SecurityPolicy::default(),
             None,
             provenance,
-            crate::mcp::goal_tracker::GoalContext { goal: None, grind: None },
+            crate::mcp::goal_tracker::GoalContext {
+                goal: None,
+                grind: None,
+            },
             false,
             crate::context::compaction::CompactionPolicy::disabled(),
             None,

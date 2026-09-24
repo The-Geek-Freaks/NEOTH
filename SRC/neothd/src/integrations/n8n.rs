@@ -598,15 +598,10 @@ pub(crate) async fn adopt_at_with_cancel(
                 } else {
                     service.request_cancel(&current.job_id, current.state_revision)?
                 };
-                cancel_if_requested(
-                    &service,
-                    &requested,
-                    home,
-                    error.custody_may_exist,
-                )?
-                .ok_or_else(|| {
-                    anyhow::anyhow!("n8n cancellation acknowledgement was not produced")
-                })
+                cancel_if_requested(&service, &requested, home, error.custody_may_exist)?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("n8n cancellation acknowledgement was not produced")
+                    })
             } else {
                 rollback_and_fail(
                     &service,
@@ -883,10 +878,7 @@ pub(super) fn rollback_adoption_if_prepared(
     job_id: &JobId,
     custody_may_exist: bool,
 ) -> anyhow::Result<bool> {
-    let custody = home.join(format!(
-        ".n8n-adoption-{}.custody.yaml",
-        job_id.as_str()
-    ));
+    let custody = home.join(format!(".n8n-adoption-{}.custody.yaml", job_id.as_str()));
     match std::fs::symlink_metadata(&custody) {
         Ok(metadata) if metadata.file_type().is_file() => {
             crate::config::credentials::Credentials::rollback_n8n_adoption_at(
@@ -897,14 +889,11 @@ pub(super) fn rollback_adoption_if_prepared(
             Ok(true)
         }
         Ok(_) => anyhow::bail!("n8n adoption custody path is not a regular file"),
-        Err(error)
-            if error.kind() == std::io::ErrorKind::NotFound && !custody_may_exist =>
-        {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !custody_may_exist => {
             Ok(false)
         }
-        Err(error) => Err(error).with_context(|| {
-            format!("inspect n8n adoption custody {}", custody.display())
-        }),
+        Err(error) => Err(error)
+            .with_context(|| format!("inspect n8n adoption custody {}", custody.display())),
     }
 }
 

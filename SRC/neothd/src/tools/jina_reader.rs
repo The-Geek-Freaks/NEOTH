@@ -76,20 +76,22 @@ async fn fetch_via_jina_at_authorized(
 ) -> Result<String> {
     let jina_url = format!("{base}{url}");
     let request = ExternalHttpRequest::get(&jina_url, ExternalHttpSurface::JinaReader);
-        // GR-065 — no-redirect client (the SX-01 norm web_fetch follows): r.jina.ai
-        // (a third-party proxy) must not be able to 30x-bounce the fetch to an
-        // arbitrary host the SSRF guard never saw.
-        let client =
-            http_client::build_client_no_redirect().context("jina_reader: build reqwest client")?;
-        let transport = ExternalHttpTransportRequest::new(&request, client
+    // GR-065 — no-redirect client (the SX-01 norm web_fetch follows): r.jina.ai
+    // (a third-party proxy) must not be able to 30x-bounce the fetch to an
+    // arbitrary host the SSRF guard never saw.
+    let client =
+        http_client::build_client_no_redirect().context("jina_reader: build reqwest client")?;
+    let transport = ExternalHttpTransportRequest::new(
+        &request,
+        client
             .get(&jina_url)
             .header("User-Agent", JINA_UA)
             .header("Accept", "text/plain")
             // X-Return-Format: markdown is the documented Jina hint that prefers
             // a clean Markdown rendering over the default plain-text strip.
-            .header("X-Return-Format", "markdown"))?;
-        http.execute_transport(request, transport, move |mut resp| async move {
-
+            .header("X-Return-Format", "markdown"),
+    )?;
+    http.execute_transport(request, transport, move |mut resp| async move {
         let status = resp.status();
         if !status.is_success() {
             anyhow::bail!(
@@ -127,7 +129,8 @@ async fn fetch_via_jina_at_authorized(
 
         let text = String::from_utf8_lossy(&body).into_owned();
         Ok(text)
-        }).await
+    })
+    .await
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

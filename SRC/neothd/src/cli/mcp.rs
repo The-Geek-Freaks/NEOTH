@@ -855,9 +855,7 @@ async fn run_call(
         // provenance, but an IFC denial must remain an explicit fail-closed
         // outcome if a future caller threads a trusted source through here.
         Err(GateError::InformationFlowDenied { reason, .. }) => {
-            anyhow::bail!(
-                "MCP `{server_id}::{tool}` blocked by information-flow policy: {reason}"
-            )
+            anyhow::bail!("MCP `{server_id}::{tool}` blocked by information-flow policy: {reason}")
         }
         Err(GateError::Mcp(e)) => return Err(e.into()),
         Err(GateError::Wal(e)) => return Err(e),
