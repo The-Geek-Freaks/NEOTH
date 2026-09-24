@@ -11763,7 +11763,10 @@ mod channel_reconcile_tests {
         );
         let after_health =
             runtime_health_binding_tags(&[], &runtime.authenticated_slack_accounts().unwrap());
-        assert_eq!(changed_channel_accounts(&before, &after), vec![work.clone()]);
+        assert_eq!(
+            changed_channel_accounts(&before, &after),
+            vec![work.clone()]
+        );
         assert!(before_health[&work] != after_health[&work]);
         assert!(before_health[&personal] == after_health[&personal]);
     }

@@ -865,19 +865,18 @@ where
     let binding = resolve_slack_probe_binding(pair, &requested_account)?;
     let expected_team_id = binding.expected_team_id.clone();
     let outcome = probe_slack_account_binding_with(binding, validate).await?;
-    if outcome.report.status == "ok" {
-        if let Some(expected_team_id) = expected_team_id {
-            if outcome.verified_team_id.as_deref() != Some(expected_team_id.as_str()) {
-                return Ok(account_result(
-                    fail(
-                        "slack".to_owned(),
-                        "auth.test team ID does not match the configured Slack account team"
-                            .to_owned(),
-                    ),
-                    requested_account,
-                ));
-            }
-        }
+    if outcome.report.status == "ok"
+        && expected_team_id
+            .as_deref()
+            .is_some_and(|expected| outcome.verified_team_id.as_deref() != Some(expected))
+    {
+        return Ok(account_result(
+            fail(
+                "slack".to_owned(),
+                "auth.test team ID does not match the configured Slack account team".to_owned(),
+            ),
+            requested_account,
+        ));
     }
     Ok(outcome.report)
 }

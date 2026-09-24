@@ -3,6 +3,15 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W722 hosted-format and Slack gate correction (2026-09-24):**
+Main99a0f650 contains W710/W712-W718. Preflight35978618380 supplied three
+exact formatter rewrites; Root verified ZIP, checksums and old/new Git blobs
+before import. Core35978644752 stopped at collapsible_if in the known-team
+probe; the equivalent guard is flattened, preserving every mismatch check.
+The new reload/health regression selector now names its actual
+channel_reconcile_tests module. Native1360/Group1090 counts are unchanged;
+new hosted execution is pending. Quality35978616514 passed. No Road closure
+or local executable validation. See docs/verification/gold-wave722-hosted-format.json.
 **W712-W718 Slack workspace binding and hosted results (2026-09-24):**
 Claude RESULT-002's observed team_id now survives candidate auth.test into the
 paired-file CAS commit. Same known workspace keeps an existing incarnation;

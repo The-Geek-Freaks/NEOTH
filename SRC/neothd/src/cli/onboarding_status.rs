@@ -341,7 +341,10 @@ mod tests {
             &baseline,
             &crate::cli::onboarding_readiness::evaluate(&baseline, &credentials),
         );
-        assert_eq!(snapshot.webchat, WebChatOnboardingState::ConfiguredNeedsServe);
+        assert_eq!(
+            snapshot.webchat,
+            WebChatOnboardingState::ConfiguredNeedsServe
+        );
         assert_eq!(snapshot.ready, unchanged.ready);
         assert_eq!(snapshot.telegram_enabled, unchanged.telegram_enabled);
         assert_eq!(snapshot.whatsapp_enabled, unchanged.whatsapp_enabled);
@@ -364,7 +367,10 @@ mod tests {
             &crate::cli::onboarding_readiness::evaluate(&cfg, &credentials),
         );
         assert_eq!(snapshot.webchat, WebChatOnboardingState::Disabled);
-        assert_eq!(serde_json::to_value(&snapshot).unwrap()["webchat"], "disabled");
+        assert_eq!(
+            serde_json::to_value(&snapshot).unwrap()["webchat"],
+            "disabled"
+        );
         assert!(render_status(&snapshot).contains(
             "disabled; enable companion.enabled then serve and run neoth companion webchat"
         ));

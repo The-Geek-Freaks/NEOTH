@@ -8952,12 +8952,10 @@ mod slack_account_transaction_tests {
     #[test]
     fn slack_upsert_persists_two_accounts_and_rotation_preserves_incarnation_and_extensions() {
         let (_dir, public, private) = seed();
-        Credentials::commit_prepared_slack_account_upsert_at(prepare(
-            &public,
-            &private,
-            "work",
-            "xoxb-work",
-        ), "TTEAM1")
+        Credentials::commit_prepared_slack_account_upsert_at(
+            prepare(&public, &private, "work", "xoxb-work"),
+            "TTEAM1",
+        )
         .unwrap();
         let before = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
         let incarnation = before.config.channel_accounts.slack[&account("work")]
@@ -8976,12 +8974,10 @@ mod slack_account_transaction_tests {
         );
         assert_eq!(before.credentials.channel_accounts.slack.len(), 1);
         Credentials::commit_prepared_slack_account_upsert_at(candidate, "TTEAM1").unwrap();
-        Credentials::commit_prepared_slack_account_upsert_at(prepare(
-            &public,
-            &private,
-            "work",
-            "xoxb-rotated",
-        ), "TTEAM1")
+        Credentials::commit_prepared_slack_account_upsert_at(
+            prepare(&public, &private, "work", "xoxb-rotated"),
+            "TTEAM1",
+        )
         .unwrap();
         let after = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
         assert_eq!(after.authenticated_slack_accounts().unwrap().len(), 2);
@@ -9085,9 +9081,11 @@ mod slack_account_transaction_tests {
         let old = migrated.config.channel_accounts.slack[&account("work")]
             .incarnation
             .clone();
-        assert!(migrated.config.channel_accounts.slack[&account("work")]
-            .team_id
-            .is_none());
+        assert!(
+            migrated.config.channel_accounts.slack[&account("work")]
+                .team_id
+                .is_none()
+        );
         let invalid = Credentials::prepare_slack_account_rotation_at(
             &public,
             &private,
@@ -9097,7 +9095,9 @@ mod slack_account_transaction_tests {
         )
         .unwrap();
         let before = snapshots(&public, &private);
-        assert!(Credentials::commit_prepared_slack_account_upsert_at(invalid, "workspace").is_err());
+        assert!(
+            Credentials::commit_prepared_slack_account_upsert_at(invalid, "workspace").is_err()
+        );
         assert_eq!(snapshots(&public, &private), before);
         Credentials::commit_prepared_slack_account_upsert_at(
             Credentials::prepare_slack_account_rotation_at(
@@ -9143,13 +9143,15 @@ mod slack_account_transaction_tests {
             "TTEAM1",
         )
         .unwrap();
-        assert!(crate::config::load_runtime_config_pair_from_path(&public)
-            .unwrap()
-            .config
-            .channel_accounts
-            .slack[&account("work")]
-            .incarnation
-            .is_some());
+        assert!(
+            crate::config::load_runtime_config_pair_from_path(&public)
+                .unwrap()
+                .config
+                .channel_accounts
+                .slack[&account("work")]
+                .incarnation
+                .is_some()
+        );
     }
 
     #[test]
@@ -9162,7 +9164,9 @@ mod slack_account_transaction_tests {
             text.push_str("concurrent_extension: keep\n");
             std::fs::write(changed, text).unwrap();
             let before = snapshots(&public, &private);
-            assert!(Credentials::commit_prepared_slack_account_upsert_at(candidate, "TTEAM1").is_err());
+            assert!(
+                Credentials::commit_prepared_slack_account_upsert_at(candidate, "TTEAM1").is_err()
+            );
             assert_eq!(snapshots(&public, &private), before);
         }
     }
@@ -9171,9 +9175,10 @@ mod slack_account_transaction_tests {
     fn slack_retirement_removes_persisted_keys_and_readd_mints_a_new_generation() {
         let (_dir, public, private) = seed();
         for name in ["work", "personal"] {
-            Credentials::commit_prepared_slack_account_upsert_at(prepare(
-                &public, &private, name, name,
-            ), "TTEAM1")
+            Credentials::commit_prepared_slack_account_upsert_at(
+                prepare(&public, &private, name, name),
+                "TTEAM1",
+            )
             .unwrap();
         }
         let before = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
@@ -9225,12 +9230,10 @@ mod slack_account_transaction_tests {
                 .unwrap()
                 .contains("future_policy: retain")
         );
-        Credentials::commit_prepared_slack_account_upsert_at(prepare(
-            &public,
-            &private,
-            "work",
-            "new-token",
-        ), "TTEAM1")
+        Credentials::commit_prepared_slack_account_upsert_at(
+            prepare(&public, &private, "work", "new-token"),
+            "TTEAM1",
+        )
         .unwrap();
         let readded = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
         assert_ne!(
@@ -9244,9 +9247,10 @@ mod slack_account_transaction_tests {
     #[test]
     fn slack_retirement_rejects_unknown_account_and_stale_prepared_pair() {
         let (_dir, public, private) = seed();
-        Credentials::commit_prepared_slack_account_upsert_at(prepare(
-            &public, &private, "work", "work",
-        ), "TTEAM1")
+        Credentials::commit_prepared_slack_account_upsert_at(
+            prepare(&public, &private, "work", "work"),
+            "TTEAM1",
+        )
         .unwrap();
         let before = snapshots(&public, &private);
         assert!(
@@ -9257,9 +9261,10 @@ mod slack_account_transaction_tests {
         let candidate =
             Credentials::prepare_slack_account_removal_at(&public, &private, account("work"))
                 .unwrap();
-        Credentials::commit_prepared_slack_account_upsert_at(prepare(
-            &public, &private, "personal", "personal",
-        ), "TTEAM1")
+        Credentials::commit_prepared_slack_account_upsert_at(
+            prepare(&public, &private, "personal", "personal"),
+            "TTEAM1",
+        )
         .unwrap();
         let updated = snapshots(&public, &private);
         assert!(Credentials::commit_prepared_slack_account_removal_at(candidate).is_err());
