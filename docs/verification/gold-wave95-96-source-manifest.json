@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T00:40:19.8817694Z",
+  "capturedUtc": "2026-09-24T00:48:18.9434160Z",
   "validationStatus": "SOURCE_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -1018,8 +1018,8 @@
     },
     {
       "path": "docs/gold-wave531-paperless-provenance.md",
-      "bytes": 5790,
-      "sha256": "22AE06D5A6B193499B74E4F30A7CB8B792E667573C1660D55BBA33777BC6E50C"
+      "bytes": 6723,
+      "sha256": "20208652AFCFB2DB32EA330B4AF2120D2622D94DB45478667B050BC832BDDCCF"
     },
     {
       "path": "docs/gold-wave535-connection-bound-egress.md",
@@ -1053,8 +1053,8 @@
     },
     {
       "path": "docs/gold-wave568-572-paperless-followup.md",
-      "bytes": 2963,
-      "sha256": "F9285097CD26183219B95922BD0CCDF576C88397F2B4AFD5E1DFD64EB8650551"
+      "bytes": 3912,
+      "sha256": "30E058B5A621BFA95FF74CF1268E71FF9AF3959F0FD92B4BC75164C1B7A10634"
     },
     {
       "path": "docs/gold-wave571-wizard-acceptance.md",
@@ -1282,6 +1282,11 @@
       "sha256": "7B61F6BFC73AECFB82DB743DA6D33209D6B913375E46DAF21B628584BF2E4E25"
     },
     {
+      "path": "docs/verification/paperless-oci-v3.2.1/BLOB_ADMISSION.json",
+      "bytes": 2233,
+      "sha256": "515E7BBAB7B35D87B700CA6C64198F3F712DA62A53DF1650415178CFB9D0FA51"
+    },
+    {
       "path": "docs/verification/paperless-oci-v3.2.1/raw-manifests/sha256/0377e72c5289ed2f98cf61b1a9c2db9eb9d300317fe14244492fbc94343b3d04.json",
       "bytes": 3439,
       "sha256": "0377E72C5289ED2F98CF61B1A9C2DB9EB9D300317FE14244492FBC94343B3D04"
@@ -1330,6 +1335,11 @@
       "path": "docs/verification/paperless-oci-v3.2.1/receipt.json",
       "bytes": 24099,
       "sha256": "3C8CABBAAE8B77AE48E707447FE6440C9511711F199FF924BDA1094801309931"
+    },
+    {
+      "path": "docs/verification/paperless-oci-v3.2.1/recursive-blob-receipt.json",
+      "bytes": 47942,
+      "sha256": "DBCB833BD3365BBCE70FBC2AAB2E1BE50C3756E228D2CF57473350761872C8C8"
     },
     {
       "path": "packaging/linux/build-packages.sh",
@@ -1398,18 +1408,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 205523,
-      "sha256": "00E4A34D4BF524AF93417DF67C635B1E0EEDC94D0917157D797CC80C26F9897E"
+      "bytes": 206131,
+      "sha256": "E95C0414D7C17B9E96C5F4C5618DE1E40AD83F185897EB5FB02FF46E25FF08FB"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1216851,
-      "sha256": "6C806758A978EB14F2F9ECFE994568B8B3C925EAAB21AAB373783863E5335506"
+      "bytes": 1217459,
+      "sha256": "D663F15CF777F744223C829616C9F1D90F83A6FAB2D198D16CDF0DF7B68106AA"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1816133,
-      "sha256": "ECB23D9DF6D30A59F4DE3B8D944EC55345A74466E39997507813E96CEFBDFF8A"
+      "bytes": 1816741,
+      "sha256": "2CDE40810FC12E78465B5C7910BEA08BAEA19D48BF55A4CF9157DA83ED9086E7"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

@@ -3,6 +3,15 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W575 recursive Paperless bytes admitted (2026-09-24):**
+Hosted35939610119 at69a59828 passed13contracts and verified75distinct config/
+layer blobs (76references,1duplicate),1,951,126,239bytes over162requests. Root
+verified ZIP+receipt+4Git sources+9raw manifests+all recursive descriptors and
+exact current staging pins. Permanent receipt/BLOB_ADMISSION sit beside the
+unchanged9manifests in docs/verification/paperless-oci-v3.2.1/. No local images,
+containers or executable checks ran. Installation/readiness and P2-20 remain
+open; W574 now implements the consuming native install path. Counts unchanged.
+
 **W573 observed Docker CDN (2026-09-24):**
 Paperless35939400996 atc38fae1c passed13contracts, then rejected the actual
 Docker CDN production.cloudfront.docker.com. That exact hostname is added only

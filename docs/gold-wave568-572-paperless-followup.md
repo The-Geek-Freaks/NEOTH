@@ -42,3 +42,16 @@ cases, then the real Docker registry redirected to
 accepted only for registry-1.docker.io; the regression also rejects it for GHCR.
 Redirect count, digest/size verification and credential stripping are unchanged.
 No recursive acquisition is accepted from the failed run; a fresh run is required.
+
+W575 final recursive admission: run35939610119 at69a59828 passed all13contract
+cases and completed the actual hosted downloads. Root verified the artifact ZIP,
+receipt checksum, all4Git source bindings, all9raw manifest hashes, every exact
+parent/child/config/layer binding, counters and actual test log. The result is
+76descriptor references,75distinct blobs and1duplicate, totaling1,951,126,239
+verified bytes over162requests. All three index pins exactly match the current
+native staging constants. The raw manifests are byte-identical to the earlier
+admitted9files, so only the new receipt and admission are retained alongside them:
+`docs/verification/paperless-oci-v3.2.1/recursive-blob-receipt.json` and
+`BLOB_ADMISSION.json`. No image bytes were downloaded locally or stored in Git.
+This admits the recursive artifact bytes, not extraction, signature verification,
+container startup, managed installation or authenticated runtime readiness.

@@ -4,10 +4,10 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 140601,
-    "sha256": "F4D015EF34B12FDB471851DB9A0AF70B05F5DD192421D2A202D221910E8E36CA"
+    "bytes": 140996,
+    "sha256": "826E59671D9C9545150358AA4879EDA62A4B04324391E0DFE7A738A5CFF08C2D"
   },
-  "sourceInputs": 800,
+  "sourceInputs": 802,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -26154,6 +26154,56 @@
       }
     ],
     "note": "Observed sourcebound Docker registry redirects to production.cloudfront.docker.com; exactDocker-only allowlist+GHCRreject regression. Previous13contractsPASS. No recursiveblobadmissionyet; freshhostedrequired. Preflightc38PASS.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave575Evidence": {
+    "base": "69a598281e7e5da621927c484bccf68d8436d90a",
+    "sources": [
+      {
+        "path": "docs/gold-wave531-paperless-provenance.md",
+        "bytes": 6723,
+        "sha256": "20208652AFCFB2DB32EA330B4AF2120D2622D94DB45478667B050BC832BDDCCF",
+        "blob": "27debb36317b482a9a4d006b492aa135162a24e9"
+      },
+      {
+        "path": "docs/gold-wave568-572-paperless-followup.md",
+        "bytes": 3912,
+        "sha256": "30E058B5A621BFA95FF74CF1268E71FF9AF3959F0FD92B4BC75164C1B7A10634",
+        "blob": "8d0800b16bcbe07e17ef89be795b6b5a44647539"
+      },
+      {
+        "path": "docs/verification/paperless-oci-v3.2.1/BLOB_ADMISSION.json",
+        "bytes": 2233,
+        "sha256": "515E7BBAB7B35D87B700CA6C64198F3F712DA62A53DF1650415178CFB9D0FA51",
+        "blob": "03f7b4ae4f02f4f2198cb928412cdff38d6ee01b"
+      },
+      {
+        "path": "docs/verification/paperless-oci-v3.2.1/recursive-blob-receipt.json",
+        "bytes": 47942,
+        "sha256": "DBCB833BD3365BBCE70FBC2AAB2E1BE50C3756E228D2CF57473350761872C8C8",
+        "blob": "9a5af5a63e77a32f3a941625165c8bd54feea6d9"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 206131,
+        "sha256": "E95C0414D7C17B9E96C5F4C5618DE1E40AD83F185897EB5FB02FF46E25FF08FB",
+        "blob": "3927ed8caf5fad74a11a577dd18ad13e893e7fda"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1217459,
+        "sha256": "D663F15CF777F744223C829616C9F1D90F83A6FAB2D198D16CDF0DF7B68106AA",
+        "blob": "aa877262218da78944ecb4ab2eaeb2eaf6b63636"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1816741,
+        "sha256": "2CDE40810FC12E78465B5C7910BEA08BAEA19D48BF55A4CF9157DA83ED9086E7",
+        "blob": "8c86227a5036dccaa990b86caa4756ad84158342"
+      }
+    ],
+    "note": "W575ADMITTED recursiveOCI75blobs76refs1.951GB162requests;13contractPASS4sources9manifests exactpins. No install/runtimeclaim. Onlysmallreceiptimport noimagefiles.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

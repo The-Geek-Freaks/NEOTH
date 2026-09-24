@@ -1,0 +1,53 @@
+{
+  "schema": "neoth-paperless-recursive-admission/v1",
+  "status": "ADMITTED_OCI_INDEX_MANIFEST_CONFIG_LAYER_BYTES",
+  "run": 35939610119,
+  "source": "69a598281e7e5da621927c484bccf68d8436d90a",
+  "artifact": 10784536714,
+  "artifactSha256": "cbd42cae0039df3ed58543a7c99a9103509ff3121cab113e558221d991485d77",
+  "receiptSha256": "DBCB833BD3365BBCE70FBC2AAB2E1BE50C3756E228D2CF57473350761872C8C8",
+  "sourceBindings": [
+    {
+      "path": "scripts/test_acquire_paperless_provenance.py",
+      "blob": "b91eae6ef4e70bc57e347d75ad68c7a9de51f353",
+      "sha256": "3ACAD7AD93F0B854B491A505CE7B2ECDD48FFE71F8CA3A21BB3BBE01B825C161"
+    },
+    {
+      "path": ".github/workflows/paperless-provenance.yml",
+      "blob": "613661f81c26031076086db2931f4ef4e8868c79",
+      "sha256": "B0FBF0FBB9B4918F150387C3D1D4FFA0F187DBCB80C144166D7CE5F559CC718C"
+    },
+    {
+      "path": "docs/gold-wave531-paperless-provenance.md",
+      "blob": "b5a93a7a0bc358dbfedc47cf511794e128f627c3",
+      "sha256": "22AE06D5A6B193499B74E4F30A7CB8B792E667573C1660D55BBA33777BC6E50C"
+    },
+    {
+      "path": "scripts/acquire_paperless_provenance.py",
+      "blob": "7c63364d6d0ff6e63627fc98301b2a5ada22a8fb",
+      "sha256": "EA94F50A699D7D878140D3F11EE76F955271724E84D7E8706470A42F98AD7667"
+    }
+  ],
+  "rawManifests": 9,
+  "platformManifests": 6,
+  "descriptorReferences": 76,
+  "distinctBlobs": 75,
+  "duplicateReferences": 1,
+  "verifiedBlobBytes": 1951126239,
+  "requestCount": 162,
+  "currentStagingPinsMatch": [
+    "ghcr.io/paperless-ngx/paperless-ngx@sha256:5fa76604a81df6945086e0837b14b56543d137e8ce4f311cc5d9ebe907e74e79",
+    "registry-1.docker.io/valkey/valkey@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11",
+    "registry-1.docker.io/library/postgres@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae"
+  ],
+  "pythonTestsPassed": 13,
+  "runLogSha256": "B3233F0E977DE6CF5E2852DC0C5274B7B45A05485BDB6D1490EAFA60669100F0",
+  "artifactBlobBytesVerified": true,
+  "artifactVerified": false,
+  "exclusions": [
+    "No local image bytes downloaded",
+    "No image extraction/signature/installation/container/API-readiness proof",
+    "P2-20 remains open"
+  ],
+  "localExecutableValidationRan": false
+}

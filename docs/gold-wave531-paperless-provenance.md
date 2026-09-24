@@ -63,10 +63,9 @@ W568 extends this manual, main-only hosted lane from descriptor metadata to
 recursive OCI blob-byte verification. For every selected linux/amd64 and
 linux/arm64 child manifest it streams the exact config blob and each compressed
 layer through SHA-256, requires the descriptor's exact size and digest, and
-immediately discards the bytes without decompression or persistence. The current
-admitted descriptor set has 81 distinct config/layer blobs totaling
-1,951,142,679 bytes. That fits the fixed 2GiB aggregate ceiling with
-196,340,969 bytes headroom; a config is capped at 1MiB, a layer at 512MiB, and
+immediately discards the bytes without decompression or persistence. The final W575
+admission has 75 distinct config/layer blobs totaling1,951,126,239 bytes,
+within the fixed 2GiB aggregate ceiling with196,357,409 bytes headroom; a config is capped at 1MiB, a layer at 512MiB, and
 the run at 96 distinct blobs and 300 total HTTPS requests. The request ceiling
 covers the twelve token/index/child-manifest requests plus an initial request
 and up to two redirects for every distinct blob.
@@ -83,3 +82,16 @@ SHA-256 values. Successful recursive checking may state
 `artifact_blob_bytes_verified: true`; it still makes no signature, extraction,
 installation, container, API-readiness or runtime claim, and leaves
 `artifact_verified` false pending later admission and lifecycle work.
+
+W575 final recursive admission: run35939610119 at69a59828 passed all13contract
+cases and completed the actual hosted downloads. Root verified the artifact ZIP,
+receipt checksum, all4Git source bindings, all9raw manifest hashes, every exact
+parent/child/config/layer binding, counters and actual test log. The result is
+76descriptor references,75distinct blobs and1duplicate, totaling1,951,126,239
+verified bytes over162requests. All three index pins exactly match the current
+native staging constants. The raw manifests are byte-identical to the earlier
+admitted9files, so only the new receipt and admission are retained alongside them:
+`docs/verification/paperless-oci-v3.2.1/recursive-blob-receipt.json` and
+`BLOB_ADMISSION.json`. No image bytes were downloaded locally or stored in Git.
+This admits the recursive artifact bytes, not extraction, signature verification,
+container startup, managed installation or authenticated runtime readiness.
