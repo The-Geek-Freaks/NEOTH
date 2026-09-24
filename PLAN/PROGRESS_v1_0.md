@@ -2,6 +2,15 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W826 document hosted core and CLI reference (2026-09-24):**
+Core36012497363 ate787f32d passes production Clippy, all core test-target
+compilation, CLI build and export. Root verified artifact10814041199 ZIP, source
+and inner CLI digest before importing docs/cli-commands.md. The subsequent
+beb4983f source delta is the already verified hosted formatting only. Group1285
+is next for actual D5/D7/B3/B5 behaviors. W819 independent review remains pending;
+B6 GUI/proactive and B7 staging remain open. Counts1068checked254open2partial.
+Evidence: docs/verification/gold-wave826-document-core-cli.json.
+
 **W825 hosted document formatting (2026-09-24):**
 Root verified and imported artifact10812454433 from Preflight36012495980:
 ZIP, inner digests, source e787f32d and both full-index before/after blobs match.

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T14:30:08.1923417Z",
-  "validationStatus": "W819 productionClippyPASS;testtarget/CLI pending;W825 hostedformat admitted",
+  "capturedUtc": "2026-09-24T14:35:29.9654220Z",
+  "validationStatus": "W826 admitted Coree787Clippy/testtarget/CLI;Group1285 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -168,8 +168,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 250663,
-      "sha256": "6F6FDBC42A974B041A4E8C2CE4B4BE5669E367C2360B6B8E9755B104E9D47094"
+      "bytes": 251572,
+      "sha256": "7A4F8AA846B951B33F5DFC4B3E570CD159B75E004D4A9EEE4BC1F7CD3898D742"
     },
     {
       "path": "docs/code-map-lifecycle.md",

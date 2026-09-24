@@ -669,6 +669,8 @@ Run a read-only live probe; Telegram and Slack account maps require --account
 One-shot LLM round trip. Loads freedom.yaml, sends prompt, prints reply. Both request and response are persisted as WAL events
 
 - `<MESSAGE>` — Message to send. If omitted, NEOTH reads from stdin until EOF
+- `--workflow <WORKFLOW>` — Explicit closed D2/D6 workflow binding for ADOPT31-D7
+- `--changing-facts` — Explicitly route this bound request through the existing `/research` action
 - `--model <MODEL>` — Override the configured model for this single call
 - `--skill <SKILL_ID>` — Explicit authority-validated Skill for this turn. This selection wins over automatic routing and any `/skill-id` embedded in the message
 - `--system <TEXT>` — Inject a one-shot system prompt for this call
@@ -4424,7 +4426,12 @@ List installed skills + probe the router with a test message
 
 _Aliases:_ `neoth skill`
 
+- `--distill-doc <PATH>` — Distill an admitted document with one provider call and one scored self-review. Prints a token/cost preflight first; never stages a skill
+- `--min-reflexion-score <MIN_REFLEXION_SCORE>` — Required acceptance threshold for the document's single scored review
 - `--from-doc <PATH>` — Extract one PDF, office document, or EPUB into a sanitized operator review draft. This is read-only: it never writes, installs, activates, routes, or provider-dispatches a skill
+- `--from-doc-chapter <PATH>` — Review exactly one explicitly selected chapter/segment from a large UTF-8 `.txt` or Markdown source without materializing the whole file
+- `--chapter-index <INDEX>` — Zero-based chapter/segment number emitted by the bounded scanner
+- `--list-doc-chapters <PATH>` — Discover the read-only chapter/segment table for a large UTF-8 text source. Use an emitted zero-based index with --from-doc-chapter
 - `--list` — Print the table of installed skills
 - `--check-routing` — Validate catalogue-wide parent/mode alias ownership and emit every cross-owner collision. Exits non-zero when the hot-reload gate would reject the current catalogue
 - `--test <MESSAGE>` — Run the router against an arbitrary message and report the match

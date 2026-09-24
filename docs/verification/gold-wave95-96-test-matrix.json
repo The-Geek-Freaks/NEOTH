@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W819 productionClippyPASS;testtarget/CLI pending;W825 hostedformat admitted",
+  "status": "W826 admitted Coree787Clippy/testtarget/CLI;Group1285 pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 178018,
-    "sha256": "4288A9946E574F0176289BB3BA0EE5DBA9D14A2BB014FE22BED585B7016E394B"
+    "bytes": 178004,
+    "sha256": "917752F52144FFBB70171AACB1BCA6FED2D3E647D884A8538B52B92334685E89"
   },
   "sourceInputs": 979,
   "requiredNativeTests": [
@@ -33753,7 +33753,7 @@
     "note": "Type alignment preserves same capability handle; five formatting blobs admitted from artifact10810199507"
   },
   "wave819DocumentReflexionAcceptance": {
-    "status": "Implemented; Root static inspection; independent review and hosted tests pending",
+    "status": "Core Clippy/testtarget/CLI passed;11 behavior cases and independent review pending",
     "requiredTests": [
       "skills::doc_distill::tests::preflight_distinguishes_known_free_and_unknown_prices",
       "skills::doc_distill::tests::preflight_bounds_both_actual_provider_requests",

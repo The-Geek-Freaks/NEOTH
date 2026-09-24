@@ -1,0 +1,72 @@
+{
+  "schema": "neoth-gold-core-cli-admission/v1",
+  "runId": 36012497363,
+  "sourceHead": "e787f32de04f5f6cdfab255a95245e041134c851",
+  "conclusion": "success",
+  "artifact": {
+    "id": 10814041199,
+    "zipSha256": "66e3d02e2911569bccc635d0e5de3f0e335a68829b156e3004eb358df8756fcc",
+    "cliSha256": "7a4f8aa846b951b33f5dfc4b3e570cd159b75e004d4a9eee4bc1f7cd3898d742",
+    "zipVerified": true,
+    "innerVerified": true,
+    "sourceVerified": true
+  },
+  "steps": [
+    {
+      "name": "Set up job",
+      "conclusion": "success"
+    },
+    {
+      "name": "Checkout requested source",
+      "conclusion": "success"
+    },
+    {
+      "name": "Setup Rust",
+      "conclusion": "success"
+    },
+    {
+      "name": "Install Linux workspace-Clippy build deps",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Restore Gold smoke compiler cache",
+      "conclusion": "success"
+    },
+    {
+      "name": "Check exact-source slim-core production Clippy",
+      "conclusion": "success"
+    },
+    {
+      "name": "Type-check core test targets before native validation",
+      "conclusion": "success"
+    },
+    {
+      "name": "Check exact Linux-quality workspace Clippy",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Build current public CLI",
+      "conclusion": "success"
+    },
+    {
+      "name": "Export generated reference",
+      "conclusion": "success"
+    },
+    {
+      "name": "Upload generated reference",
+      "conclusion": "success"
+    },
+    {
+      "name": "Post Checkout requested source",
+      "conclusion": "success"
+    },
+    {
+      "name": "Complete job",
+      "conclusion": "success"
+    }
+  ],
+  "scope": "W819 document CLI and prior D7/B3/D5; productionClippy/testtarget/CLI export passed. Latest delta beb4983f is verified hosted format only.",
+  "behavior": "Group1285 pending",
+  "independentReview": "W819 pending Claude TASK006; no approval claimed",
+  "localExecutableValidationRan": false
+}
