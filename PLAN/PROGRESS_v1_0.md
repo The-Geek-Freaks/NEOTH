@@ -2,6 +2,13 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W872 hosted watcher lint repair (2026-09-24):** W870 Core36038306012 at1f37a107
+gets past the four compiler errors and fails only unnecessary_sort_by in the
+bounded directory inventory. Use sort_by_key over the same OsString filename;
+ordering and bounds are unchanged, and strict Clippy remains enabled.
+No later typecheck/build/export ran in that failed workflow. Fresh hosted
+core validation is required; Group1357/Windows115 and B7/B8 remain pending.
+W869 channel canary code and W871 independent review proceed in parallel.
 **W868 hosted watcher compiler repair (2026-09-24):** Core36037238201 at05392007
 reported four compile errors before tests. The watcher now uses the existing
 nonblocking std File::try_lock API, retains the inventory selection key before

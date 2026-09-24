@@ -528,7 +528,7 @@ fn inventory_roots(roots: &[ScanRoot], control: &ScanControl) -> Result<Vec<Inve
             "document-ingest directory entry limit exceeded: {}",
             display.display()
         );
-        entries.sort_by(|left, right| left.file_name().cmp(&right.file_name()));
+        entries.sort_by_key(|entry| entry.file_name());
         for entry in entries {
             control.check()?;
             visited_entries += 1;
