@@ -2304,11 +2304,12 @@ mod tests {
         use sha2::Digest as _;
         let root = tempfile::tempdir().expect("temp root");
         let marker = "RAW_EXTRACTED_MARKER";
-        let body = format!("# One\n{marker}\n{}", "safe\n".repeat(45_000));
+        let body = format!("# One\n{marker}\n{}", "content\n".repeat(40_000));
         let pdf_path = root.path().join("large.pdf");
         let rtf_path = root.path().join("large.rtf");
         std::fs::write(&pdf_path, extracted_pdf_fixture(&body)).expect("write PDF fixture");
-        std::fs::write(&rtf_path, format!("{{\\rtf1\\ansi\n{body}\\par}}"))
+        let rtf_body = body.replace('\n', "\\par ");
+        std::fs::write(&rtf_path, format!("{{\\rtf1\\ansi {rtf_body}\\par}}"))
             .expect("write RTF fixture");
 
         for (path, expected_kind) in [

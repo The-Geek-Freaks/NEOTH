@@ -8,6 +8,16 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W844 chapter fixture threshold correction (2026-09-24):**
+Static tracing found that the real RTF extractor discards raw CR/LF, so the
+initial W840 fixture's repeated safe-lines could fall below the large-document
+threshold after extraction. The fixture now emits actual RTF paragraph controls
+and contains enough non-whitespace text to cross200KiB independently of newline
+normalization. Existing threshold, provenance and raw-text exclusion assertions
+remain unchanged. No production behavior changed. Current5f21 hosted runs were
+still active at diagnosis; no failure or pass is inferred from this correction.
+ROAD1072checked250open2partial;Group1296/native1532 unchanged.
+
 **W842 hosted extracted-chapter formatting (2026-09-24):**
 Preflight36022122667 exported a two-file format patch for5f21bc06. Root verified
 the archive, both inner digests, source HEAD and all old/new full Git blobs
