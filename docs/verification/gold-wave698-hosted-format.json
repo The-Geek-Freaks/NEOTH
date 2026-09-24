@@ -1,0 +1,93 @@
+{
+  "schema": "neoth-w698-hosted-rustfmt/v1",
+  "run": 35969533064,
+  "source": "18ff87aa0baa86a0ff917bd47ba8675a646c1792",
+  "artifact": 10795621662,
+  "artifactZipSha256": "D1C1CCBCFA6FB61B73085126DBA05EFD04FFFCFB3B2DF7C06805D94F7EBDF54F",
+  "patchSha256": "D10FF3C7530F1AF0B45C082DA88A596831C510CB932CD6F34AE7049B5305933C",
+  "status": "ROOT_VERIFIED_EXACT_PATCH_IMPORTED",
+  "files": [
+    {
+      "path": "SRC/neothd/src/cli/companion.rs",
+      "patchRightPath": "SRC/neothd/src/cli/companion.rs",
+      "oldBlob": "57cfa27a0bc90cd7fdae4ff362f31c10bded31f5",
+      "expectedNewBlob": "5a1f97112965a28c8db8081892d6e2a414a5666f",
+      "sourceBlob": "57cfa27a0bc90cd7fdae4ff362f31c10bded31f5",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/companion.rs",
+      "patchRightPath": "SRC/neothd/src/daemon/companion.rs",
+      "oldBlob": "6ac097fbde703174dd932493b660f6c10d568f4f",
+      "expectedNewBlob": "2103c325a7074608dae56c1aee7a79a5d80ac446",
+      "sourceBlob": "6ac097fbde703174dd932493b660f6c10d568f4f",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_bridge.rs",
+      "patchRightPath": "SRC/neothd/src/daemon/gui_chat_bridge.rs",
+      "oldBlob": "779c1fed274ccea0dee603913c20166cf25eb035",
+      "expectedNewBlob": "b1cacc4838b6a7c647e3ced70746270bee210729",
+      "sourceBlob": "779c1fed274ccea0dee603913c20166cf25eb035",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_protocol.rs",
+      "patchRightPath": "SRC/neothd/src/daemon/gui_chat_protocol.rs",
+      "oldBlob": "597336da278699606cb372593f27c515a00f127a",
+      "expectedNewBlob": "1a3060b2173489a5ce43c3ee53ec63fd205a96a4",
+      "sourceBlob": "597336da278699606cb372593f27c515a00f127a",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+      "patchRightPath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+      "oldBlob": "f7d763dd9058ef00ab9efcd79e5b5f406e5dbeb3",
+      "expectedNewBlob": "03ec52e7aaae76efb964b9179ebb1916337c9f3e",
+      "sourceBlob": "f7d763dd9058ef00ab9efcd79e5b5f406e5dbeb3",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/mod.rs",
+      "patchRightPath": "SRC/neothd/src/daemon/mod.rs",
+      "oldBlob": "d0d7bbefd10ee0cc5ab66a5d9cacbbd2e9ba539f",
+      "expectedNewBlob": "6730b0a25fcee3d646930e69852bc61269f09711",
+      "sourceBlob": "d0d7bbefd10ee0cc5ab66a5d9cacbbd2e9ba539f",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/webchat.rs",
+      "patchRightPath": "SRC/neothd/src/daemon/webchat.rs",
+      "oldBlob": "a98590cb31ba26d6df7444f6622575cbf5025615",
+      "expectedNewBlob": "38d8906bad6e7aadd00bedbae72cb33dccebd0a4",
+      "sourceBlob": "a98590cb31ba26d6df7444f6622575cbf5025615",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/webchat/tests.rs",
+      "patchRightPath": "SRC/neothd/src/daemon/webchat/tests.rs",
+      "oldBlob": "9ca913758d816365cbd04fcc14b45fbdc919bc14",
+      "expectedNewBlob": "71d582583d9a2cb26146f83103c1a26a168a0a02",
+      "sourceBlob": "9ca913758d816365cbd04fcc14b45fbdc919bc14",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    },
+    {
+      "path": "SRC/neothd/src/memory/transcript_store.rs",
+      "patchRightPath": "SRC/neothd/src/memory/transcript_store.rs",
+      "oldBlob": "caef66b40caa537d93b8d6892bd419b7b011a246",
+      "expectedNewBlob": "8bf6f4b29ccc4b7b9076dba5b4b8c52e8ab0ad5f",
+      "sourceBlob": "caef66b40caa537d93b8d6892bd419b7b011a246",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    }
+  ],
+  "localExecutableValidationRan": false
+}

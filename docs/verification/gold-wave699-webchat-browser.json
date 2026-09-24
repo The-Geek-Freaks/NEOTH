@@ -1,0 +1,39 @@
+{
+  "schema": "neoth-w699-webchat-browser/v1",
+  "run": 35969536101,
+  "source": "18ff87aa0baa86a0ff917bd47ba8675a646c1792",
+  "artifact": 10795566114,
+  "zipSha256": "782215f55aa7ed0161972d8e4c40d085a31fa3aeb83f5a03b325101176164800",
+  "status": "ROOT_ADMITTED_PASS",
+  "selected": 7,
+  "passed": 7,
+  "failed": 0,
+  "sourceBindings": [
+    {
+      "path": "SRC/neothd/assets/webchat/index.html",
+      "blob": "d33a61045de390ed0c442090c132d965f14bfce8",
+      "sha256": "b38f26d9272bce5cd6b9f49f413978412a3e445406ccd38c7ba4e311758af888"
+    },
+    {
+      "path": "SRC/neothd/assets/webchat/browser.test.cjs",
+      "blob": "d61934f5ad147850033d49d68e8eeb7c30e574b2",
+      "sha256": "fbd4a4ed15fa3d71f8c598aba9626bc9de97cc1ac0d86339b956f40b9332c2cc"
+    },
+    {
+      "path": ".github/workflows/webchat-browser.yml",
+      "blob": "b5b6bdeccfa672cbd3e3ee9229858a649f0a33f4",
+      "sha256": "5952392d3f779dabb9a1d5c639a76bb758586579a8c27fd000cbc3ee523c029a"
+    }
+  ],
+  "terminalNames": [
+    "shipped page authenticates, sends server request ID, renders frames as text and allows another turn",
+    "confirmation displays the real route and only starts after Allow once",
+    "denied consent never starts a turn and preserves the message",
+    "Stop waits for the cancelled terminal and does not claim completion",
+    "reload reuses the authenticated session and replays without another start",
+    "an unpaired page remains unavailable without sending provider work",
+    "reconnect invalidates an in-flight preflight before it can decide or start"
+  ],
+  "scope": "Actual shipped HTML in Chromium against controlled HTTP API fixture; not packaged daemon/live provider acceptance",
+  "localExecutableValidationRan": false
+}

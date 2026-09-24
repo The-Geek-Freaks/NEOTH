@@ -748,10 +748,8 @@ pub(crate) trait GuiChatRuntime: Send + Sync {
 
     /// Bounded, non-blocking replay for the loopback browser facade. Unlike
     /// `attach`, this never leases live reasoning delivery or owns a socket.
-    async fn replay(
-        &self,
-        request: GuiChatAttachRequest,
-    ) -> GuiChatResult<Vec<GuiChatStreamFrame>>;
+    async fn replay(&self, request: GuiChatAttachRequest)
+    -> GuiChatResult<Vec<GuiChatStreamFrame>>;
 
     async fn cancel(&self, request: GuiChatCancelRequest) -> GuiChatResult<GuiChatCancelResponse>;
 

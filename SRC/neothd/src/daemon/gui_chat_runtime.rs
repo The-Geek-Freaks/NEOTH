@@ -2074,7 +2074,10 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
             || subscription.capability != request.attach_capability.0
             || subscription.generation != request.subscription_generation
         {
-            return Err(Self::reject(GuiChatErrorCode::Forbidden, "attach_capability"));
+            return Err(Self::reject(
+                GuiChatErrorCode::Forbidden,
+                "attach_capability",
+            ));
         }
         let earliest = turn
             .replay
@@ -4323,35 +4326,118 @@ mod lifecycle_tests {
     #[tokio::test]
     async fn webchat_turn_grant_cannot_attach_native_gui_surfaces() {
         let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;
-        runtime.state.lock().await.turns.get_mut(&turn_id).expect("fixture turn").origin_surface = GuiChatSurface::WebChat;
-        let request = |surface| GuiChatAttachExchangeRequest { schema_version: GUI_CHAT_V1_SCHEMA_VERSION, expected_boot_id: "fixture-boot".into(), turn_id: GuiChatTurnId(turn_id), session_id: "fixture".into(), desired_surface: surface, grant: GuiChatOpaqueCapability("grant".into()) };
-        assert!(runtime.exchange_attach(request(GuiChatSurface::Main)).await.is_err());
-        assert!(runtime.exchange_attach(request(GuiChatSurface::Buddy)).await.is_err());
-        assert!(runtime.exchange_attach(request(GuiChatSurface::WebChat)).await.is_ok());
+        runtime
+            .state
+            .lock()
+            .await
+            .turns
+            .get_mut(&turn_id)
+            .expect("fixture turn")
+            .origin_surface = GuiChatSurface::WebChat;
+        let request = |surface| GuiChatAttachExchangeRequest {
+            schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+            expected_boot_id: "fixture-boot".into(),
+            turn_id: GuiChatTurnId(turn_id),
+            session_id: "fixture".into(),
+            desired_surface: surface,
+            grant: GuiChatOpaqueCapability("grant".into()),
+        };
+        assert!(
+            runtime
+                .exchange_attach(request(GuiChatSurface::Main))
+                .await
+                .is_err()
+        );
+        assert!(
+            runtime
+                .exchange_attach(request(GuiChatSurface::Buddy))
+                .await
+                .is_err()
+        );
+        assert!(
+            runtime
+                .exchange_attach(request(GuiChatSurface::WebChat))
+                .await
+                .is_ok()
+        );
         runtime.close_and_drain().await;
         drop(runtime);
-        completion.wait_bounded(Duration::from_secs(1)).await.expect("writer drains");
+        completion
+            .wait_bounded(Duration::from_secs(1))
+            .await
+            .expect("writer drains");
     }
 
     #[tokio::test]
     async fn webchat_replay_orders_missing_frames_and_advances_cursor() {
         let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;
-        runtime.state.lock().await.turns.get_mut(&turn_id).expect("fixture turn").origin_surface = GuiChatSurface::WebChat;
-        let exchange = runtime.exchange_attach(GuiChatAttachExchangeRequest { schema_version: GUI_CHAT_V1_SCHEMA_VERSION, expected_boot_id: "fixture-boot".into(), turn_id: GuiChatTurnId(turn_id), session_id: "fixture".into(), desired_surface: GuiChatSurface::WebChat, grant: GuiChatOpaqueCapability("grant".into()) }).await.expect("webchat exchange");
+        runtime
+            .state
+            .lock()
+            .await
+            .turns
+            .get_mut(&turn_id)
+            .expect("fixture turn")
+            .origin_surface = GuiChatSurface::WebChat;
+        let exchange = runtime
+            .exchange_attach(GuiChatAttachExchangeRequest {
+                schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+                expected_boot_id: "fixture-boot".into(),
+                turn_id: GuiChatTurnId(turn_id),
+                session_id: "fixture".into(),
+                desired_surface: GuiChatSurface::WebChat,
+                grant: GuiChatOpaqueCapability("grant".into()),
+            })
+            .await
+            .expect("webchat exchange");
         {
             let mut state = runtime.state.lock().await;
             let turn = state.turns.get_mut(&turn_id).expect("fixture turn");
             DaemonGuiChatRuntime::emit(turn, GuiChatFramePayload::Accepted);
             DaemonGuiChatRuntime::emit(turn, GuiChatFramePayload::Accepted);
         }
-        let request = |after_sequence| GuiChatAttachRequest { schema_version: GUI_CHAT_V1_SCHEMA_VERSION, expected_boot_id: "fixture-boot".into(), turn_id: GuiChatTurnId(turn_id), session_id: "fixture".into(), surface: GuiChatSurface::WebChat, subscription_generation: exchange.subscription_generation, attach_capability: exchange.attach_capability.clone(), after_sequence };
+        let request = |after_sequence| GuiChatAttachRequest {
+            schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+            expected_boot_id: "fixture-boot".into(),
+            turn_id: GuiChatTurnId(turn_id),
+            session_id: "fixture".into(),
+            surface: GuiChatSurface::WebChat,
+            subscription_generation: exchange.subscription_generation,
+            attach_capability: exchange.attach_capability.clone(),
+            after_sequence,
+        };
         let first = runtime.replay(request(0)).await.expect("ordered replay");
-        assert_eq!(first.iter().map(|frame| frame.sequence).collect::<Vec<_>>(), vec![1, 2]);
+        assert_eq!(
+            first.iter().map(|frame| frame.sequence).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
         let second = runtime.replay(request(1)).await.expect("missing replay");
-        assert_eq!(second.iter().map(|frame| frame.sequence).collect::<Vec<_>>(), vec![2]);
-        assert_eq!(runtime.state.lock().await.turns.get(&turn_id).unwrap().subscriptions.get(&GuiChatSurface::WebChat).unwrap().cursor_upper_bound, 2);
+        assert_eq!(
+            second
+                .iter()
+                .map(|frame| frame.sequence)
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+        assert_eq!(
+            runtime
+                .state
+                .lock()
+                .await
+                .turns
+                .get(&turn_id)
+                .unwrap()
+                .subscriptions
+                .get(&GuiChatSurface::WebChat)
+                .unwrap()
+                .cursor_upper_bound,
+            2
+        );
         runtime.close_and_drain().await;
         drop(runtime);
-        completion.wait_bounded(Duration::from_secs(1)).await.expect("writer drains");
+        completion
+            .wait_bounded(Duration::from_secs(1))
+            .await
+            .expect("writer drains");
     }
 }

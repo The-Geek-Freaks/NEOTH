@@ -8,7 +8,9 @@ Server-owned session/request IDs and capabilities bind consent, idempotent start
 replay and cancel to the existing runtime; native GUI authority remains separate.
 Bounded saved transcript, reconnect and safe text rendering have nine new native
 and seven separate Chromium fixtures. Static review passed; Root also repaired
-replay mutability and an in-flight reconnect race. Hosted verification pending.
+replay mutability and an in-flight reconnect race. Browser35969536101 at18ff87aa
+now passes7/7; Root verified3sourcebindings and all terminals. W698 imports the
+exact nine-file hosted formatter patch. Rust Core/CLI verification still runs.
 Group1060 run35966268023 atdb1d9758 is Root-admitted1054PASS6FAIL0missing with
 201source/inputbindings. Six fixture repairs preserve all original assertions.
 Portable native1339/Group1069; regenerate the CLI reference before grouped tests.

@@ -708,7 +708,11 @@ pub(crate) async fn run_companion_server(
         .filter(|_| local_addr.port() == state.port)
         .cloned();
     if ready_webchat.is_none() && webchat.is_some() {
-        warn!(configured_port = state.port, bound_port = local_addr.port(), "companion: WebChat disabled because the bound port does not match its authority");
+        warn!(
+            configured_port = state.port,
+            bound_port = local_addr.port(),
+            "companion: WebChat disabled because the bound port does not match its authority"
+        );
     }
     if let Some(webchat) = ready_webchat.as_ref() {
         webchat.set_listener_ready(true);
@@ -797,7 +801,9 @@ pub(crate) fn spawn_companion_server_loop(
         return None;
     }
     if config.port == 0 {
-        warn!("companion: port 0 is unsupported because WebChat handoff URLs require a stable loopback port");
+        warn!(
+            "companion: port 0 is unsupported because WebChat handoff URLs require a stable loopback port"
+        );
         return None;
     }
 
@@ -819,7 +825,10 @@ pub(crate) fn spawn_companion_server_loop(
         // NOTE: The server binds 127.0.0.1 (loopback only) — the URL must reflect
         // that. Phone pairing uses the separate authenticated P2P coordinator;
         // advertising a LAN HTTP address here would be misleading and unsafe.
-        let bound_port = listener.local_addr().map(|address| address.port()).unwrap_or(config.port);
+        let bound_port = listener
+            .local_addr()
+            .map(|address| address.port())
+            .unwrap_or(config.port);
         let pairing_url = format!("http://127.0.0.1:{bound_port}/api/v1/companion/pair");
         info!(
             url = %pairing_url,
@@ -1551,15 +1560,77 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::daemon::gui_chat_protocol::GuiChatRuntime for WebChatFixtureRuntime {
-        async fn preflight(&self, _: crate::daemon::gui_chat_protocol::GuiChatPreflightRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<crate::daemon::gui_chat_protocol::GuiChatPreflightResponse> { panic!("listener readiness test never invokes runtime") }
-        async fn decide(&self, _: crate::daemon::gui_chat_protocol::GuiChatConsentDecisionRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<crate::daemon::gui_chat_protocol::GuiChatConsentDecisionResponse> { panic!("listener readiness test never invokes runtime") }
-        async fn start(&self, _: crate::daemon::gui_chat_protocol::GuiChatStartRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<crate::daemon::gui_chat_protocol::GuiChatStartResponse> { panic!("listener readiness test never invokes runtime") }
-        async fn exchange_attach(&self, _: crate::daemon::gui_chat_protocol::GuiChatAttachExchangeRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<crate::daemon::gui_chat_protocol::GuiChatAttachExchangeResponse> { panic!("listener readiness test never invokes runtime") }
-        async fn attach(&self, _: crate::daemon::audit_rpc::AuditStream, _: crate::daemon::gui_chat_protocol::GuiChatAttachRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<()> { panic!("listener readiness test never invokes runtime") }
-        async fn replay(&self, _: crate::daemon::gui_chat_protocol::GuiChatAttachRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<Vec<crate::daemon::gui_chat_protocol::GuiChatStreamFrame>> { panic!("listener readiness test never invokes runtime") }
-        async fn cancel(&self, _: crate::daemon::gui_chat_protocol::GuiChatCancelRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<crate::daemon::gui_chat_protocol::GuiChatCancelResponse> { panic!("listener readiness test never invokes runtime") }
-        async fn status(&self, _: crate::daemon::gui_chat_protocol::GuiChatStatusRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<crate::daemon::gui_chat_protocol::GuiChatStatusResponse> { panic!("listener readiness test never invokes runtime") }
-        async fn active(&self, _: crate::daemon::gui_chat_protocol::GuiChatActiveRequest) -> crate::daemon::gui_chat_protocol::GuiChatResult<crate::daemon::gui_chat_protocol::GuiChatActiveResponse> { panic!("listener readiness test never invokes runtime") }
+        async fn preflight(
+            &self,
+            _: crate::daemon::gui_chat_protocol::GuiChatPreflightRequest,
+        ) -> crate::daemon::gui_chat_protocol::GuiChatResult<
+            crate::daemon::gui_chat_protocol::GuiChatPreflightResponse,
+        > {
+            panic!("listener readiness test never invokes runtime")
+        }
+        async fn decide(
+            &self,
+            _: crate::daemon::gui_chat_protocol::GuiChatConsentDecisionRequest,
+        ) -> crate::daemon::gui_chat_protocol::GuiChatResult<
+            crate::daemon::gui_chat_protocol::GuiChatConsentDecisionResponse,
+        > {
+            panic!("listener readiness test never invokes runtime")
+        }
+        async fn start(
+            &self,
+            _: crate::daemon::gui_chat_protocol::GuiChatStartRequest,
+        ) -> crate::daemon::gui_chat_protocol::GuiChatResult<
+            crate::daemon::gui_chat_protocol::GuiChatStartResponse,
+        > {
+            panic!("listener readiness test never invokes runtime")
+        }
+        async fn exchange_attach(
+            &self,
+            _: crate::daemon::gui_chat_protocol::GuiChatAttachExchangeRequest,
+        ) -> crate::daemon::gui_chat_protocol::GuiChatResult<
+            crate::daemon::gui_chat_protocol::GuiChatAttachExchangeResponse,
+        > {
+            panic!("listener readiness test never invokes runtime")
+        }
+        async fn attach(
+            &self,
+            _: crate::daemon::audit_rpc::AuditStream,
+            _: crate::daemon::gui_chat_protocol::GuiChatAttachRequest,
+        ) -> crate::daemon::gui_chat_protocol::GuiChatResult<()> {
+            panic!("listener readiness test never invokes runtime")
+        }
+        async fn replay(
+            &self,
+            _: crate::daemon::gui_chat_protocol::GuiChatAttachRequest,
+        ) -> crate::daemon::gui_chat_protocol::GuiChatResult<
+            Vec<crate::daemon::gui_chat_protocol::GuiChatStreamFrame>,
+        > {
+            panic!("listener readiness test never invokes runtime")
+        }
+        async fn cancel(
+            &self,
+            _: crate::daemon::gui_chat_protocol::GuiChatCancelRequest,
+        ) -> crate::daemon::gui_chat_protocol::GuiChatResult<
+            crate::daemon::gui_chat_protocol::GuiChatCancelResponse,
+        > {
+            panic!("listener readiness test never invokes runtime")
+        }
+        async fn status(
+            &self,
+            _: crate::daemon::gui_chat_protocol::GuiChatStatusRequest,
+        ) -> crate::daemon::gui_chat_protocol::GuiChatResult<
+            crate::daemon::gui_chat_protocol::GuiChatStatusResponse,
+        > {
+            panic!("listener readiness test never invokes runtime")
+        }
+        async fn active(
+            &self,
+            _: crate::daemon::gui_chat_protocol::GuiChatActiveRequest,
+        ) -> crate::daemon::gui_chat_protocol::GuiChatResult<
+            crate::daemon::gui_chat_protocol::GuiChatActiveResponse,
+        > {
+            panic!("listener readiness test never invokes runtime")
+        }
         async fn close_and_drain(&self) {}
     }
 
@@ -1656,7 +1727,9 @@ mod tests {
     async fn webchat_handoff_is_available_only_while_real_listener_is_bound() {
         let shutdown = Arc::new(Notify::new());
         let (writer, wal_join, home) = temp_writer();
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
         let port = listener.local_addr().expect("bound address").port();
         let state = Arc::new(CompanionState::new(writer.clone(), port));
         let webchat = Arc::new(crate::daemon::webchat::WebChatState::new(
@@ -1665,7 +1738,10 @@ mod tests {
             "fixture-boot".into(),
             Arc::new(WebChatFixtureRuntime),
         ));
-        assert!(webchat.mint_handoff().await.is_err(), "unbound listener must fail closed");
+        assert!(
+            webchat.mint_handoff().await.is_err(),
+            "unbound listener must fail closed"
+        );
         let server = tokio::spawn(run_companion_server(
             listener,
             state,
@@ -1674,16 +1750,26 @@ mod tests {
         ));
         tokio::time::timeout(std::time::Duration::from_secs(1), async {
             loop {
-                if webchat.mint_handoff().await.is_ok() { break; }
+                if webchat.mint_handoff().await.is_ok() {
+                    break;
+                }
                 tokio::task::yield_now().await;
             }
-        }).await.expect("bound listener never enabled WebChat handoff");
+        })
+        .await
+        .expect("bound listener never enabled WebChat handoff");
         shutdown.notify_one();
         server.await.expect("listener task panicked");
-        assert!(webchat.mint_handoff().await.is_err(), "shutdown listener must revoke WebChat handoff authority");
+        assert!(
+            webchat.mint_handoff().await.is_err(),
+            "shutdown listener must revoke WebChat handoff authority"
+        );
         drop(webchat);
         drop(writer);
-        tokio::time::timeout(std::time::Duration::from_secs(3), wal_join).await.expect("writer drain timed out").expect("writer task panicked");
+        tokio::time::timeout(std::time::Duration::from_secs(3), wal_join)
+            .await
+            .expect("writer drain timed out")
+            .expect("writer task panicked");
     }
 
     #[tokio::test]

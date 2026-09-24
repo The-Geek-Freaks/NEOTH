@@ -66,9 +66,6 @@ pub mod clock_floor;
 /// via `POST /api/v1/companion/pair` (POST-only, SameSite=Lax CSRF guard,
 /// loopback-only bind, WAL `0x0B`/`0x0C` audit frames).
 pub mod companion;
-/// W682 loopback WebChat facade. It reuses the daemon GUI-chat runtime and a
-/// separate audit-RPC-minted browser authority; it owns no provider or listener.
-pub(crate) mod webchat;
 /// NN-MEM-06 — daily contradiction auto-resolution cron. Processes the
 /// `idx_contradictions` backlog: temporal-supersede (newer fact wins) +
 /// semantic-equiv (Jaccard≥0.90 merge) + human-review queue for genuine
@@ -253,6 +250,9 @@ pub mod vault_mirror;
 /// (crash-loop-guarded by a per-window restart budget), and emits
 /// `0x5F WATCHDOG_RESTART`. Off by default.
 pub mod watchdog_cron;
+/// W682 loopback WebChat facade. It reuses the daemon GUI-chat runtime and a
+/// separate audit-RPC-minted browser authority; it owns no provider or listener.
+pub(crate) mod webchat;
 /// GOLD-FEAT-03b — self-wiki background rebuild cron (capability map +
 /// PLAN corpus → Obsidian vault). Default OFF; tracing-audited (no WAL
 /// byte free).

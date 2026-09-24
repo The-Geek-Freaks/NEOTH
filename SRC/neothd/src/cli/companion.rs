@@ -80,7 +80,9 @@ async fn run_webchat(output: OutputFormat) -> Result<()> {
         .await
         .map_err(|error| anyhow::anyhow!("mint WebChat handoff from running daemon: {error:?}"))?;
     match output {
-        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::json!({"url": handoff.url})),
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::json!({"url": handoff.url}))
+        }
         OutputFormat::Table => println!("{}", handoff.url),
     }
     Ok(())

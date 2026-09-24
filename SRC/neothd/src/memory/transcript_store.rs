@@ -625,9 +625,13 @@ pub(crate) fn read_session_turns_bounded_at(
     let mut bytes = 0usize;
     for row in stmt.query_map(params![session_id, limit as i64], row_mapper)? {
         let row = row?;
-        bytes = bytes.checked_add(row.text.len())
+        bytes = bytes
+            .checked_add(row.text.len())
             .ok_or_else(|| anyhow::anyhow!("browser transcript byte limit exceeded"))?;
-        anyhow::ensure!(bytes <= 1024 * 1024, "browser transcript byte limit exceeded");
+        anyhow::ensure!(
+            bytes <= 1024 * 1024,
+            "browser transcript byte limit exceeded"
+        );
         rows.push(row);
     }
     rows.reverse();

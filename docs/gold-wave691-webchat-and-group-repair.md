@@ -29,8 +29,11 @@ fixture in the separate `WebChat browser contracts` workflow. These browser test
 are not evidence of a live provider turn through the packaged daemon.
 
 Independent static review was clear. Root then corrected a replay mutability
-error and the reconnect race before publication. All executable validation is
-pending on GitHub. The local BSOD hold remains absolute; no local compiler,
+error and the reconnect race before publication. Browser run35969536101 at
+18ff87aa passes all seven tests; Root verified its ZIP, three source bindings
+and seven exact terminals. See verification/gold-wave699-webchat-browser.json.
+The exact nine-file hosted formatter patch is admitted in W698. Rust Core/CLI
+verification remains in progress on GitHub. The local BSOD hold remains absolute; no local compiler,
 formatter, test, browser, model or product runtime was used.
 
 ## Group1060 evidence and W693/W694 repairs

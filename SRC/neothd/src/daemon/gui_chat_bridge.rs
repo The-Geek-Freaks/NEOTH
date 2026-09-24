@@ -1159,9 +1159,9 @@ fn input_surface(
     match surface {
         crate::daemon::gui_chat_protocol::GuiChatSurface::Main => Ok(GuiChatSurface::Main),
         crate::daemon::gui_chat_protocol::GuiChatSurface::Buddy => Ok(GuiChatSurface::Buddy),
-        crate::daemon::gui_chat_protocol::GuiChatSurface::WebChat => {
-            Err(bridge_error("webchat surface is unavailable to the native GUI bridge"))
-        }
+        crate::daemon::gui_chat_protocol::GuiChatSurface::WebChat => Err(bridge_error(
+            "webchat surface is unavailable to the native GUI bridge",
+        )),
     }
 }
 fn map_phase(phase: crate::daemon::gui_chat_protocol::GuiChatPhase) -> GuiChatPhase {
