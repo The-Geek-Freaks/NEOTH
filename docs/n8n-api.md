@@ -206,6 +206,23 @@ and managed host connectivity require their respective runtime checks.
 
 ---
 
+The optional hosted execution check has also run two in-memory Daily/Morning
+copies through the real pinned n8n CLI with dummy credentials and an internal
+mock API. It verifies the six ordered recall/provider/send requests and their
+data flow. That check does not contact a real NEOTH instance or deliver a
+channel message; those deployment checks remain required.
+## Optional starter catalog
+
+The CLI also lists ten generated starter intents, for a total of thirteen
+workflows. Their historical Paperless, email, calendar, proposal, Obsidian,
+audit and memory-report routes are not implemented by this six-route API.
+Their descriptions and request nodes identify the missing adapters. They
+remain inactive even after choosing an origin and HTTP Header Auth credential;
+configuration alone cannot make an unavailable route work. The generated
+request methods describe the intended future adapter and do not authorize or
+implement its effects.
+
+---
 ## When NOT to use the n8n API
 
 | Use this surface instead | When |

@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "wave": "W1017",
+  "scope": "Hosted disposable execute_templates canary only. Excludes real NEOTH product bootstrap, channel delivery, and weekly archive behavior.",
+  "run": {
+    "id": 36070979538,
+    "conclusion": "success",
+    "sourceHead": "e06d555e93305e1893ae03352cc84efebf850cb6",
+    "headBranch": "main"
+  },
+  "artifact": {
+    "id": 10838731122,
+    "name": "w937-n8n-bootstrap-36070979538-1",
+    "apiZipSha256": "sha256:b3fbce1c7b173e3e8c8da94cdab54d7ec4cad9c3d8c875d1c597e93b92b3fe47",
+    "localZipSha256": "b3fbce1c7b173e3e8c8da94cdab54d7ec4cad9c3d8c875d1c597e93b92b3fe47",
+    "zipMatchesApiDigest": true,
+    "receiptPath": "w937-n8n-bootstrap-36070979538-1\\receipt.json"
+  },
+  "historicalBindings": {
+    "bootstrapModule": {
+      "spec": "e06d555e93305e1893ae03352cc84efebf850cb6:packaging/n8n_bootstrap_canary.py",
+      "gitBlob": "1550e751dbc1e674062a5ce86eba846fbc2510ca",
+      "sha256": "23118857e4655bad3fedbb702e4d0840aec9114482386aab5fee783ef688500a",
+      "size": "33214"
+    },
+    "executionModule": {
+      "spec": "e06d555e93305e1893ae03352cc84efebf850cb6:packaging/n8n_template_execution_canary.py",
+      "gitBlob": "8b753092bb493293c8c77cf1129fc99665450fd4",
+      "sha256": "f4daadcf06541f980c713e9d9fb6bea58af318ff8fbea44d616cb3f007f3c3a9",
+      "size": "18813"
+    },
+    "workflow": {
+      "spec": "e06d555e93305e1893ae03352cc84efebf850cb6:.github/workflows/n8n-bootstrap-canary.yml",
+      "gitBlob": "3ebf308033086336a4c54efc85339c29b815f5eb",
+      "sha256": "2224a7c87bdfc263611affcf964c4fd1b69f57125e72038d8e1d9b43b28a322c",
+      "size": "1403"
+    },
+    "helperTest": {
+      "spec": "e06d555e93305e1893ae03352cc84efebf850cb6:packaging/tests/test_n8n_bootstrap_canary.py",
+      "gitBlob": "5e7e131ed0148b33f683db5e934157571329f2e3",
+      "sha256": "424d31fe33cade5d0fb1dc23d3910ea5b0dfe722aed5bb03a4f5fe4b157ed056",
+      "size": "16835"
+    },
+    "assets": {
+      "morning_brief.json": {
+        "receiptSha256": "35c68f9f5a05bb9af17a46e8b0a8d48e4e5a10e2742bec24aa4831400a9b44d0",
+        "historicalSha256": "35c68f9f5a05bb9af17a46e8b0a8d48e4e5a10e2742bec24aa4831400a9b44d0",
+        "matches": true,
+        "gitBlob": "d6742615a8c4f478fa23cb4eb1b4ba179cb056f8"
+      },
+      "daily_summary.json": {
+        "receiptSha256": "1f4087959463bbff751f8d9be6beb5f6dd1b2eb55d85a662f01cd8e2ec0562c7",
+        "historicalSha256": "1f4087959463bbff751f8d9be6beb5f6dd1b2eb55d85a662f01cd8e2ec0562c7",
+        "matches": true,
+        "gitBlob": "114da8333f1733f43692d5e7d49be0dd447f44aa"
+      },
+      "weekly_stats.json": {
+        "receiptSha256": "f16326f0e1ed99946438a1aea69ab0f8e0fcb8e2a6acb7e267418af0c53b6328",
+        "historicalSha256": "f16326f0e1ed99946438a1aea69ab0f8e0fcb8e2a6acb7e267418af0c53b6328",
+        "matches": true,
+        "gitBlob": "f122c72624db63558f07fc550cf02f00ea54b486"
+      }
+    }
+  },
+  "receipt": {
+    "outcome": "passed",
+    "githubSha": "e06d555e93305e1893ae03352cc84efebf850cb6",
+    "githubShaMatchesRun": true,
+    "executeTemplates": true,
+    "bootstrapModuleMatches": true,
+    "executionModuleMatches": true,
+    "workflowMatches": true,
+    "allAssetBindingsMatch": true,
+    "helperTests": {
+      "count": 22,
+      "summary": [
+        "isolated-bootstrap\tVerify exact Docker absence diagnostics\t2026-09-24T23:05:58.4402960Z Ran 22 tests in 0.015s",
+        "isolated-bootstrap\tVerify exact Docker absence diagnostics\t2026-09-24T23:05:58.4404438Z OK"
+      ],
+      "passed": true,
+      "historicalTestBinding": "424d31fe33cade5d0fb1dc23d3910ea5b0dfe722aed5bb03a4f5fe4b157ed056"
+    },
+    "baseLifecycleStages": [
+      "image_pulled",
+      "volume_bound",
+      "isolated_bootstrap_bound",
+      "owner_and_key_captured",
+      "bootstrap_stopped_and_absent",
+      "replacement_runtime_bound",
+      "negative_and_authenticated_probe_passed"
+    ],
+    "baseLifecycleMatchesExpected": true,
+    "importStages": [
+      "workflow_list_passed",
+      "workflow_morning_brief.json_created_inactive_verified",
+      "workflow_daily_summary.json_created_inactive_verified",
+      "workflow_weekly_stats.json_created_inactive_verified"
+    ],
+    "importsMatchExpected": true,
+    "executionStages": [
+      "dummy_http_header_credential_created",
+      "execution_copies_created_inactive_verified",
+      "runtime_stopped_and_absent_before_execution",
+      "internal_mock_and_execution_container_bound",
+      "two_cli_executions_and_mock_assertions_passed"
+    ],
+    "executionStagesMatchExpected": true,
+    "execution": {
+      "copyCount": 2,
+      "mockCalls": 6,
+      "providerCalls": 2,
+      "recallCalls": 2,
+      "sendCalls": 2,
+      "twoTemplateExecutionsProven": true
+    },
+    "noReceiptErrorOrRetentionFields": true,
+    "cleanupProvenBySuccessfulBoundExecutionModule": true
+  },
+  "localExecutableValidationRan": false,
+  "realNeothBootstrapValidated": false,
+  "channelDeliveryValidated": false,
+  "weeklyArchiveValidated": false,
+  "rootVerified": true,
+  "rootVerifiedSourceBindings": 7
+}

@@ -1,6 +1,6 @@
 //! N-2 — bootstrap n8n workflow library.
 //!
-//! Three operator-ready workflows ship in `assets/n8n_workflows/`:
+//! Three configurable inactive workflow templates ship in `assets/n8n_workflows/`:
 //!   - `daily_summary.json` — evening 21:00 NEOTH activity digest
 //!   - `morning_brief.json` — weekday 07:30 motivating brief
 //!   - `weekly_stats.json` — Sunday 18:00 stats + archive write
@@ -9,16 +9,16 @@
 //! offline operator can `neoth init` + import bootstrap workflows
 //! without downloading anything. The wizard step (deferred to a
 //! follow-up) consumes [`BOOTSTRAP_WORKFLOWS`] to render a picker
-//! + writes the chosen JSONs into n8n via its REST API.
+//! + submits a mapped create DTO to n8n. The managed importer is still open.
 //!
 //! Every workflow ships **inactive** so the operator must
 //! explicitly enable it inside the n8n UI after import — matches
 //! the AGENTER hard rule "no destructive auto-action without
 //! operator GO per command".
 
-/// One bootstrap workflow. `body` is the JSON the wizard POSTs to
-/// `<n8n>/api/v1/workflows`; `description` is what the wizard
-/// shows in the picker.
+/// One bootstrap workflow. `body` is the inactive source JSON, not a public
+/// create DTO. API importers must strip active/tags/description and verify
+/// inactive state on exact-ID readback. `description` is picker metadata.
 #[derive(Clone, Copy, Debug)]
 pub struct BootstrapWorkflow {
     pub slug: &'static str,
@@ -27,7 +27,7 @@ pub struct BootstrapWorkflow {
     pub body: &'static str,
 }
 
-/// The three operator-ready bootstrap workflows. Adding a fourth
+/// The three configurable inactive bootstrap workflows. Adding a fourth
 /// needs a JSON asset + an entry here + a test pin for the
 /// description length so the wizard picker stays scannable.
 pub const BOOTSTRAP_WORKFLOWS: &[BootstrapWorkflow] = &[
@@ -46,7 +46,7 @@ pub const BOOTSTRAP_WORKFLOWS: &[BootstrapWorkflow] = &[
     BootstrapWorkflow {
         slug: "weekly_stats",
         name: "NEOTH Weekly Stats",
-        description: "Sunday 18:00 — week's stats archived to disk + short highlights sent to your channel.",
+        description: "Sunday 18:00 — cumulative stats snapshot archived to disk, then sent to your channel.",
         body: include_str!("../../assets/n8n_workflows/weekly_stats.json"),
     },
 ];

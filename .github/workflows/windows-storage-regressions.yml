@@ -330,6 +330,18 @@ jobs:
           integrations::n8n::bootstrap_transport::tests::closed_stdin_is_a_coarse_failure_without_a_join_panic	neothd/src/integrations/n8n/bootstrap_transport.rs
           integrations::n8n::bootstrap_transport::tests::debug_is_length_only_and_never_exposes_response_bytes	neothd/src/integrations/n8n/bootstrap_transport.rs
           integrations::n8n::bootstrap_transport::tests::docker_host_is_compile_target_local	neothd/src/integrations/n8n/bootstrap_transport.rs
+          installers::n8n_starter_workflows::tests::each_starter_description_fits_picker_width	neothd/src/installers/n8n_starter_workflows.rs
+          installers::n8n_starter_workflows::tests::each_starter_body_is_valid_json_and_inactive	neothd/src/installers/n8n_starter_workflows.rs
+          installers::n8n_starter_workflows::tests::each_starter_body_contains_its_own_name	neothd/src/installers/n8n_starter_workflows.rs
+          installers::n8n_starter_workflows::tests::each_starter_body_embeds_its_cron_in_a_schedule_node	neothd/src/installers/n8n_starter_workflows.rs
+          installers::n8n_starter_workflows::tests::each_starter_body_embeds_its_endpoint_in_an_http_node	neothd/src/installers/n8n_starter_workflows.rs
+          installers::n8n_starter_workflows::tests::each_starter_body_connects_schedule_configuration_and_http	neothd/src/installers/n8n_starter_workflows.rs
+          installers::n8n_starter_workflows::tests::each_starter_body_uses_generic_header_auth_and_visible_origin	neothd/src/installers/n8n_starter_workflows.rs
+          installers::n8n_starter_workflows::tests::starter_bodies_are_distinct_across_workflows	neothd/src/installers/n8n_starter_workflows.rs
+          installers::n8n_starter_workflows::tests::all_known_workflows_concatenates_bootstrap_then_starter	neothd/src/installers/n8n_starter_workflows.rs
+          installers::n8n_starter_workflows::tests::all_known_workflows_no_slug_collisions_across_bootstrap_starter	neothd/src/installers/n8n_starter_workflows.rs
+          installers::n8n_starter_workflows::tests::starter_slugs_match_picker_documentation_intent	neothd/src/installers/n8n_starter_workflows.rs
+          installers::n8n_starter_workflows::tests::build_workflow_skeleton_embeds_name_cron_endpoint	neothd/src/installers/n8n_starter_workflows.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -346,7 +358,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 260 ]]; then
+          if [[ "$expected" -ne 272 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -356,7 +368,7 @@ jobs:
             cargo test -p neoth --lib --locked --no-run > "$evidence/compile.log" 2>&1 || compile_status=$?
           else
             compile_status=64
-            printf 'selection is not the required 260 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 272 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

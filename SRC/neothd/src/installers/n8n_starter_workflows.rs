@@ -16,16 +16,16 @@
 //!     n8n's workflow list).
 //!   - `active: false` — operator GO required (AGENTER hard rule).
 //!   - A `scheduleTrigger` node with the spec's cron expression.
-//!   - An `httpRequest` node hitting `NEOTH_HTTP_BASE + endpoint`
-//!     with an Authorization Bearer header sourced from
-//!     `$env.NEOTH_TOKEN`.
+//!   - A visible operator configuration node for a reachable NEOTH
+//!     origin and an HTTP Request node that uses an operator-bound
+//!     HTTP Header Auth credential.
 //!   - Deterministic node IDs derived from the slug for stable local
 //!     workflow shape. Public workflow POSTs do not deduplicate on node IDs.
-//!   - A `connections` block wiring Schedule → NEOTH HTTP.
+//!   - A connections block wiring Schedule → Configuration → NEOTH HTTP.
 //!
 //! Drift-guard tests assert each of these properties per workflow
-//! (name match, cron match, endpoint match, Schedule→HTTP wiring,
-//! Bearer header, slug-derived IDs, **bodies are pairwise distinct
+//! (name match, cron match, endpoint match, Schedule→Configuration→HTTP wiring,
+//! credential configuration, slug-derived IDs, **bodies are pairwise distinct
 //! across all 10**). See `cfg(test)` block below.
 //!
 //! ## Why minimal skeletons, not handcrafted production flows
@@ -56,17 +56,18 @@ use std::sync::OnceLock;
 
 use super::n8n_workflows::BootstrapWorkflow;
 
-/// Default NEOTH HTTP base URL the workflows POST/GET against.
-/// Operators rewrite this post-import in the n8n UI (e.g. when the
-/// daemon binds a non-default port). Kept as a constant so the
-/// generator + tests share one source of truth.
-pub const NEOTH_HTTP_BASE: &str = "http://localhost:8765";
+/// Visible non-secret origin placeholder for generated n8n workflows.
+/// The loopback-only n8n API normally listens on port 9744, but an n8n
+/// container needs an operator-configured reachable origin; localhost is not
+/// a universal container-to-host bridge.
+pub const NEOTH_HTTP_BASE: &str = "http://REPLACE_WITH_NEOTH_HOST:9744";
 
-/// Generate a real n8n-importable workflow JSON. Two nodes:
+/// Generate a real n8n-importable workflow JSON. Three nodes:
 ///
 ///   1. Schedule trigger with the operator's cron expression.
-///   2. HTTP Request hitting `NEOTH_HTTP_BASE + endpoint` with a
-///      Bearer token from the `NEOTH_TOKEN` env var.
+///   2. Operator Configuration with a visible non-secret NEOTH origin.
+///   3. HTTP Request hitting the configured origin + endpoint with a
+///      generic HTTP Header Auth credential selected after import.
 ///
 /// Node IDs are derived deterministically from the slug + role for a stable
 /// workflow shape. They do not make public workflow POSTs idempotent. Schedule
@@ -75,10 +76,20 @@ pub const NEOTH_HTTP_BASE: &str = "http://localhost:8765";
 /// `active: false` per the AGENTER "no destructive auto-action
 /// without operator GO per command" hard rule — operators
 /// explicitly enable in the n8n UI after import.
-fn build_workflow_skeleton(slug: &str, name: &str, cron: &str, endpoint: &str) -> String {
+fn build_workflow_skeleton(
+    slug: &str,
+    name: &str,
+    cron: &str,
+    endpoint: &str,
+    method: &str,
+) -> String {
     let trigger_id = format!("{slug}_schedule");
+    let configuration_id = format!("{slug}_configuration");
     let http_id = format!("{slug}_http");
-    let url = format!("{NEOTH_HTTP_BASE}{endpoint}");
+    let url = format!("={{{{ $json.neothBaseUrl + '{endpoint}' }}}}");
+    let unavailable_note = format!(
+        "Unavailable starter intent: {endpoint} is not one of the six current NEOTH n8n API routes. Keep this workflow inactive until an explicit adapter and its request-payload contract are implemented; no payload adapter is shipped here."
+    );
 
     // Build via serde_json so escape rules + valid JSON come for
     // free. The shape matches n8n's import format (workflow → nodes
@@ -99,32 +110,57 @@ fn build_workflow_skeleton(slug: &str, name: &str, cron: &str, endpoint: &str) -
                 "name": "Schedule Trigger",
                 "type": "n8n-nodes-base.scheduleTrigger",
                 "typeVersion": 1,
-                "position": [200, 200]
+                "position": [0, 200],
+                "notesInFlow": true,
+                "notes": "Inactive after import. The schedule only runs after the operator configures and explicitly activates this workflow."
+            },
+            {
+                "parameters": {
+                    "mode": "manual",
+                    "assignments": {
+                        "assignments": [
+                            {
+                                "id": format!("{slug}_neoth_base_url"),
+                                "name": "neothBaseUrl",
+                                "type": "string",
+                                "value": NEOTH_HTTP_BASE
+                            }
+                        ]
+                    },
+                    "options": {}
+                },
+                "id": configuration_id,
+                "name": "Operator Configuration",
+                "type": "n8n-nodes-base.set",
+                "typeVersion": 3.5,
+                "position": [220, 200],
+                "notesInFlow": true,
+                "notes": "Set neothBaseUrl to an address reachable from the n8n runtime. The NEOTH n8n API is loopback-only; 127.0.0.1 works only when n8n shares its host network. Bind an HTTP Header Auth credential with Authorization: Bearer <NEOTH n8n API token> on the request node before activation."
             },
             {
                 "parameters": {
                     "url": url,
-                    "authentication": "headerAuth",
-                    "sendHeaders": true,
-                    "headerParameters": {
-                        "parameters": [
-                            {
-                                "name": "Authorization",
-                                "value": "Bearer ={{ $env.NEOTH_TOKEN }}"
-                            }
-                        ]
-                    },
+                    "method": method,
+                    "authentication": "genericCredentialType",
+                    "genericAuthType": "httpHeaderAuth",
                     "options": {}
                 },
                 "id": http_id,
                 "name": "NEOTH HTTP",
                 "type": "n8n-nodes-base.httpRequest",
                 "typeVersion": 4,
-                "position": [500, 200]
+                "position": [460, 200],
+                "notesInFlow": true,
+                "notes": unavailable_note
             }
         ],
         "connections": {
             "Schedule Trigger": {
+                "main": [[
+                    { "node": "Operator Configuration", "type": "main", "index": 0 }
+                ]]
+            },
+            "Operator Configuration": {
                 "main": [[
                     { "node": "NEOTH HTTP", "type": "main", "index": 0 }
                 ]]
@@ -148,7 +184,9 @@ fn starter_bodies() -> &'static [&'static str] {
             STARTER_SPECS
                 .iter()
                 .map(|s| {
-                    let body = build_workflow_skeleton(s.slug, s.name, s.cron, s.endpoint);
+                    let body = build_workflow_skeleton(
+                        s.slug, s.name, s.cron, s.endpoint, s.method,
+                    );
                     // Leak into 'static once at startup — workflows are
                     // baked into the binary surface anyway; this avoids
                     // every test re-rendering the JSON.
@@ -169,78 +207,89 @@ struct StarterSpec {
     description: &'static str,
     cron: &'static str,
     endpoint: &'static str,
+    method: &'static str,
 }
 
 const STARTER_SPECS: &[StarterSpec] = &[
     StarterSpec {
         slug: "paperless_invoice_consult",
         name: "Paperless invoice → consult + draft",
-        description: "When paperless-ngx imports a new document, consult the vault for related notes and draft a reply.",
+        description: "Unavailable adapter: intended PL-02/PL-03 paperless-ngx consult and draft workflow.",
         cron: "*/5 * * * *",
         endpoint: "/paperless/consult",
+        method: "POST",
     },
     StarterSpec {
         slug: "email_threat_quarantine",
         name: "Email threat → review queue",
-        description: "Score each new email via PL-05 and route ReviewQueue/Quarantine bands into the proactive review pile.",
+        description: "Unavailable adapter: intended PL-05 email threat scan and review-queue workflow.",
         cron: "*/10 * * * *",
         endpoint: "/email/threat/scan",
+        method: "POST",
     },
     StarterSpec {
         slug: "calendar_morning_agenda",
         name: "Calendar morning agenda",
-        description: "EM-02 daily agenda: weekdays 08:00 fetch today's events + flag back-to-back conflicts + 5-line summary.",
+        description: "Unavailable adapter: intended EM-02 weekday agenda and conflict-summary workflow.",
         cron: "0 8 * * 1-5",
         endpoint: "/calendar/today",
+        method: "GET",
     },
     StarterSpec {
         slug: "proposal_review_reminder",
         name: "Proposal review reminder (24 h)",
-        description: "Once a day at 17:00, nudge the operator about OB-03 proposals still in Pending after 24 hours.",
+        description: "Unavailable adapter: intended OB-03 pending-proposal reminder workflow.",
         cron: "0 17 * * *",
         endpoint: "/proactive/proposals/pending",
+        method: "GET",
     },
     StarterSpec {
         slug: "dream_obsidian_sync",
         name: "Dream Obsidian sync (nightly)",
-        description: "Every night 02:00, run sync_dreams_to_obsidian for the previous day so the Dreams folder stays fresh.",
+        description: "Unavailable adapter: intended nightly sync_dreams_to_obsidian workflow.",
         cron: "0 2 * * *",
         endpoint: "/dreaming/sync_obsidian",
+        method: "POST",
     },
     StarterSpec {
         slug: "reflection_weekly_sync",
         name: "Reflection weekly sync",
-        description: "Sunday 19:00 — sync_reflections_to_obsidian for the closing ISO week, before the new week starts.",
+        description: "Unavailable adapter: intended weekly sync_reflections_to_obsidian workflow.",
         cron: "0 19 * * 0",
         endpoint: "/reflection/sync_obsidian",
+        method: "POST",
     },
     StarterSpec {
         slug: "consent_audit_export",
         name: "Consent audit export",
-        description: "Weekly export of permission decisions (KF-06 audit scan) to <vault>/Audit/consent-YYYY-WXX.md.",
+        description: "Unavailable adapter: intended KF-06 permission-decision audit export workflow.",
         cron: "0 20 * * 0",
         endpoint: "/permissions/audit/export",
+        method: "POST",
     },
     StarterSpec {
         slug: "memory_decay_report",
         name: "Memory decay early warning",
-        description: "Daily 16:00 — KF-07 drift report; surfaces At-Risk + Imminent memories so the operator can reinforce.",
+        description: "Unavailable adapter: intended KF-07 memory-decay early-warning report.",
         cron: "0 16 * * *",
         endpoint: "/memory/drift/report",
+        method: "GET",
     },
     StarterSpec {
         slug: "paperless_threat_alert",
         name: "Paperless prompt-injection alert",
-        description: "Watch for PL-04 prompt-injection findings on paperless ingests and proactively alert the operator.",
+        description: "Unavailable adapter: intended PL-04 paperless prompt-injection alert workflow.",
         cron: "*/15 * * * *",
         endpoint: "/paperless/findings/recent",
+        method: "GET",
     },
     StarterSpec {
         slug: "drafts_pending_review",
         name: "Email drafts pending review (48 h)",
-        description: "Nudge twice a day about EM-04 drafts still in Pending after 48 hours so the operator doesn't lose them.",
+        description: "Unavailable adapter: intended EM-04 drafts-pending-review reminder workflow.",
         cron: "0 9,17 * * *",
         endpoint: "/email/drafts/pending",
+        method: "GET",
     },
 ];
 
@@ -395,47 +444,87 @@ mod tests {
             let url = http["parameters"]["url"]
                 .as_str()
                 .unwrap_or_else(|| panic!("missing url in {:?}", spec.slug));
-            let expected = format!("{NEOTH_HTTP_BASE}{}", spec.endpoint);
+            let expected = ["={{ $json.neothBaseUrl + '", spec.endpoint, "' }}"].concat();
             assert_eq!(url, expected, "body for {:?} has wrong URL", spec.slug);
+            assert_eq!(
+                http["parameters"]["method"], spec.method,
+                "body for {:?} has wrong HTTP method",
+                spec.slug,
+            );
         }
     }
 
     /// Real-skeleton drift guard #4: every body MUST wire the
-    /// Schedule → NEOTH-HTTP connection so an activated workflow wires its
-    /// trigger to the HTTP request node.
+    /// Schedule → Configuration → NEOTH-HTTP connection so an activated
+    /// workflow carries the visible operator origin into the request.
     #[test]
-    fn each_starter_body_connects_schedule_to_http() {
+    fn each_starter_body_connects_schedule_configuration_and_http() {
         for w in starter_workflows() {
             let v: serde_json::Value = serde_json::from_str(w.body).unwrap();
-            let conn = &v["connections"]["Schedule Trigger"]["main"][0][0];
+            let schedule_conn = &v["connections"]["Schedule Trigger"]["main"][0][0];
             assert_eq!(
-                conn["node"], "NEOTH HTTP",
-                "{:?} Schedule→HTTP wiring missing",
+                schedule_conn["node"], "Operator Configuration",
+                "{:?} Schedule→Configuration wiring missing",
+                w.slug,
+            );
+            let configuration_conn = &v["connections"]["Operator Configuration"]["main"][0][0];
+            assert_eq!(
+                configuration_conn["node"], "NEOTH HTTP",
+                "{:?} Configuration→HTTP wiring missing",
                 w.slug,
             );
         }
     }
 
-    /// Real-skeleton drift guard #5: every body MUST carry an
-    /// Authorization Bearer header sourced from NEOTH_TOKEN env so
-    /// the daemon authenticates the call (not anonymous).
+    /// Real-skeleton drift guard #5: every body MUST use the n8n generic
+    /// HTTP Header Auth credential selector, never a blocked environment
+    /// expression or a raw Authorization header.
     #[test]
-    fn each_starter_body_carries_bearer_auth_header() {
+    fn each_starter_body_uses_generic_header_auth_and_visible_origin() {
         for w in starter_workflows() {
+            let v: serde_json::Value = serde_json::from_str(w.body).unwrap();
+            let nodes = v["nodes"].as_array().expect("nodes is array");
+            let configuration = nodes
+                .iter()
+                .find(|n| n["type"] == "n8n-nodes-base.set")
+                .unwrap_or_else(|| panic!("missing configuration node in {:?}", w.slug));
+            assert_eq!(configuration["typeVersion"].as_f64(), Some(3.5));
+            assert_eq!(configuration["parameters"]["mode"], "manual");
+            assert_eq!(
+                configuration["parameters"]["assignments"]["assignments"][0]["name"],
+                "neothBaseUrl",
+            );
+            assert_eq!(
+                configuration["parameters"]["assignments"]["assignments"][0]["value"],
+                NEOTH_HTTP_BASE,
+            );
+            let http = nodes
+                .iter()
+                .find(|n| n["type"] == "n8n-nodes-base.httpRequest")
+                .unwrap_or_else(|| panic!("missing HTTP node in {:?}", w.slug));
             assert!(
-                w.body.contains("Authorization"),
-                "{:?} missing Authorization header",
+                http["parameters"]["authentication"] == "genericCredentialType",
+                "{:?} missing generic credential auth",
                 w.slug,
             );
             assert!(
-                w.body.contains("NEOTH_TOKEN"),
-                "{:?} missing NEOTH_TOKEN env reference",
+                http["parameters"]["genericAuthType"] == "httpHeaderAuth",
+                "{:?} missing HTTP Header Auth selector",
+                w.slug,
+            );
+            assert!(!w.body.contains("NEOTH_TOKEN"), "{:?} leaks env auth", w.slug);
+            assert!(!w.body.contains("$env"), "{:?} leaks env expression", w.slug);
+            assert!(
+                http["notes"]
+                    .as_str()
+                    .is_some_and(|notes| notes.contains("Unavailable starter intent")),
+                "{:?} must disclose unavailable adapter status",
                 w.slug,
             );
         }
     }
 
-    /// Real-skeleton drift guard #6: every body's two node IDs MUST
+    /// Real-skeleton drift guard #6: every body's node IDs MUST
     /// derive from the slug for stable local workflow shape; node IDs do not
     /// deduplicate public workflow POSTs.
     #[test]
@@ -472,7 +561,7 @@ mod tests {
         // Drift guard — n8n workflows are baked at compile time;
         // if a future PR changes this constant, every body changes
         // + the operator must re-import. Pin to catch unintended drift.
-        assert_eq!(NEOTH_HTTP_BASE, "http://localhost:8765");
+        assert_eq!(NEOTH_HTTP_BASE, "http://REPLACE_WITH_NEOTH_HOST:9744");
     }
 
     #[test]
@@ -559,6 +648,7 @@ mod tests {
             "Test Workflow",
             "*/5 * * * *",
             "/test/endpoint",
+            "POST",
         );
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["name"], "Test Workflow");
@@ -578,13 +668,16 @@ mod tests {
             .unwrap();
         assert_eq!(
             http["parameters"]["url"],
-            "http://localhost:8765/test/endpoint"
+            "={{ $json.neothBaseUrl + '/test/endpoint' }}"
         );
+        assert_eq!(http["parameters"]["method"], "POST");
+        assert_eq!(http["parameters"]["authentication"], "genericCredentialType");
+        assert_eq!(http["parameters"]["genericAuthType"], "httpHeaderAuth");
     }
 
     #[test]
     fn build_workflow_skeleton_node_ids_use_slug() {
-        let json = build_workflow_skeleton("my_slug", "x", "* * * * *", "/x");
+        let json = build_workflow_skeleton("my_slug", "x", "* * * * *", "/x", "GET");
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         let ids: Vec<&str> = v["nodes"]
             .as_array()
@@ -593,13 +686,14 @@ mod tests {
             .map(|n| n["id"].as_str().unwrap())
             .collect();
         assert!(ids.contains(&"my_slug_schedule"));
+        assert!(ids.contains(&"my_slug_configuration"));
         assert!(ids.contains(&"my_slug_http"));
     }
 
     #[test]
     fn build_workflow_skeleton_distinct_outputs_for_distinct_inputs() {
-        let a = build_workflow_skeleton("a", "Aaa", "0 * * * *", "/a");
-        let b = build_workflow_skeleton("b", "Bbb", "0 * * * *", "/b");
+        let a = build_workflow_skeleton("a", "Aaa", "0 * * * *", "/a", "GET");
+        let b = build_workflow_skeleton("b", "Bbb", "0 * * * *", "/b", "GET");
         assert_ne!(a, b);
     }
 }

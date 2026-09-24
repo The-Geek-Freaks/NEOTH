@@ -8,6 +8,22 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1017 hosted template execution accepted (2026-09-25):** Root verified
+run36070979538 at e06d555e: the API ZIP digest, seven historical source/input
+bindings, actual22-helper-test terminal, three inactive graph imports and two
+real n8n CLI executions passed. Their internal mock observed exactly six
+ordered authenticated calls with recall/provider/send data-flow assertions.
+This admits the two template copies on the pinned image; product bootstrap,
+real NEOTH/provider/channel effects and weekly archive persistence remain open.
+**W1011/W1016 generated starter contracts (2026-09-25):** The ten generated
+starter workflows now use visible Set-node origin configuration, generic HTTP
+Header Auth credentials and explicit intended HTTP methods. They preserve the
+thirteen-slug catalog and schedules. The current six-route n8n API implements
+none of their ten historical endpoints, so picker descriptions and node notes
+now disclose the unavailable adapters. Root repaired Rust format-string brace
+escaping and kept an independent literal expression oracle. Twelve existing
+contract tests are registered for Native1714, Group1489 and Windows272; hosted
+execution is pending. No missing route or managed-import criterion is closed.
 **W995/W1000/W1003/W1007 n8n template execution batch (2026-09-25):**
 The three inactive assets now use explicit Set-node configuration, HTTP Header
 Auth credentials, typed request bodies and NEOTH's actual data.hits and
