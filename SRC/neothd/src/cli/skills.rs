@@ -1745,17 +1745,27 @@ fn document_staging_selection(
         (Some(route), Some(target)) => (route, target),
         _ => anyhow::bail!("--stage-route and --stage-target must be supplied together"),
     };
-    anyhow::ensure!(args.distill_doc.is_some(), "document staging requires --distill-doc");
+    anyhow::ensure!(
+        args.distill_doc.is_some(),
+        "document staging requires --distill-doc"
+    );
     anyhow::ensure!(
         args.stage_subdir.is_none() || route == DocumentStageRoute::Wiki,
         "--stage-subdir is only valid for the wiki route"
     );
     let request = match route {
-        DocumentStageRoute::Skill => DocumentStagingRequest::Skill { skill_id: target.clone() },
-        DocumentStageRoute::Memory => DocumentStagingRequest::Memory { scope: target.clone() },
+        DocumentStageRoute::Skill => DocumentStagingRequest::Skill {
+            skill_id: target.clone(),
+        },
+        DocumentStageRoute::Memory => DocumentStagingRequest::Memory {
+            scope: target.clone(),
+        },
         DocumentStageRoute::Wiki => DocumentStagingRequest::Wiki {
             vault_root: target.clone(),
-            subdir: args.stage_subdir.clone().unwrap_or_else(|| "NEOTH".to_owned()),
+            subdir: args
+                .stage_subdir
+                .clone()
+                .unwrap_or_else(|| "NEOTH".to_owned()),
         },
     };
     request.validate()?;
@@ -1797,7 +1807,10 @@ fn stage_document_outcome(
             && outcome.reflexion.score >= outcome.reflexion.minimum_score,
         "document staging requires an accepted scored review"
     );
-    let draft_json = outcome.draft_json.as_ref().context("accepted document has no draft")?;
+    let draft_json = outcome
+        .draft_json
+        .as_ref()
+        .context("accepted document has no draft")?;
     let draft_hash = hex::encode(sha2::Sha256::digest(draft_json.as_bytes()));
     anyhow::ensure!(
         outcome.draft_sha256.as_deref() == Some(draft_hash.as_str()),
@@ -1811,7 +1824,10 @@ fn stage_document_outcome(
             && draft.minimum_reflexion_score == outcome.reflexion.minimum_score,
         "document staging source or scored-review binding changed"
     );
-    anyhow::ensure!(serde_json::to_string(&draft)? == *draft_json, "document draft is not canonical");
+    anyhow::ensure!(
+        serde_json::to_string(&draft)? == *draft_json,
+        "document draft is not canonical"
+    );
     let route = match &draft.route {
         DocumentStagingRoute::Skill { .. } => "skill",
         DocumentStagingRoute::Memory { .. } => "memory",
@@ -1824,19 +1840,22 @@ fn stage_document_outcome(
         title,
         rationale: format!(
             "Document source SHA-256: {}. Candidate SHA-256: {}. Self-review score: {}/100 (minimum {}). Review the exact draft and destination before accepting. Approval does not activate a Skill.",
-            draft.source_bytes_sha256, draft.candidate_sha256,
-            draft.reflexion_score, draft.minimum_reflexion_score,
+            draft.source_bytes_sha256,
+            draft.candidate_sha256,
+            draft.reflexion_score,
+            draft.minimum_reflexion_score,
         ),
         draft_yaml: draft_json.clone(),
         generated_ts_unix: now_unix,
         status: ProposalStatus::Pending,
         operator_note: String::new(),
     };
-    let result = crate::proactive::ProactiveQueue::modify(&home.join("proactive_queue.json"), |queue| {
-        let staged = stage_and_enqueue(home, proposal, queue);
-        let changed = staged.as_ref().is_ok_and(|(_, enqueued)| *enqueued);
-        (changed, staged)
-    })??;
+    let result =
+        crate::proactive::ProactiveQueue::modify(&home.join("proactive_queue.json"), |queue| {
+            let staged = stage_and_enqueue(home, proposal, queue);
+            let changed = staged.as_ref().is_ok_and(|(_, enqueued)| *enqueued);
+            (changed, staged)
+        })??;
     Ok(Some(result.0))
 }
 
@@ -1857,7 +1876,10 @@ async fn run_document_distillation(
     let mut preflight = document_preflight_for_config(&document, &config)?;
     if let Some(request) = &staging {
         preflight = crate::skills::document_staging::staging_preflight_estimate(
-            &document, &preflight.provider, &preflight.model, request,
+            &document,
+            &preflight.provider,
+            &preflight.model,
+            request,
         )?;
     }
     let model = preflight.model.clone();
@@ -1896,10 +1918,17 @@ async fn run_document_distillation(
             );
             let result = match staging {
                 Some(request) => crate::skills::document_staging::distill_for_staging(
-                    &document, &wrapped, &model, minimum_score, request,
-                ).await.map(DocumentProviderOutcome::Staging),
+                    &document,
+                    &wrapped,
+                    &model,
+                    minimum_score,
+                    request,
+                )
+                .await
+                .map(DocumentProviderOutcome::Staging),
                 None => distill_with_reflexion(&document, &wrapped, &model, minimum_score)
-                    .await.map(DocumentProviderOutcome::Review),
+                    .await
+                    .map(DocumentProviderOutcome::Review),
             };
             drop(wrapped);
             drop(writer);
@@ -1915,12 +1944,12 @@ async fn run_document_distillation(
     let outcome = match outcome {
         DocumentProviderOutcome::Review(outcome) => outcome,
         DocumentProviderOutcome::Staging(outcome) => {
-            let proposal = stage_document_outcome(
-                &home, &document, &outcome, crate::time::now_unix_i64(),
-            )?;
+            let proposal =
+                stage_document_outcome(&home, &document, &outcome, crate::time::now_unix_i64())?;
             match output {
-                OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string(
-                    &serde_json::json!({
+                OutputFormat::Json | OutputFormat::Jsonl => println!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
                         "event": "document_staging_result",
                         "source_bytes_sha256": document.provenance.source_bytes_sha256,
                         "reflexion": outcome.reflexion,
@@ -1929,17 +1958,23 @@ async fn run_document_distillation(
                         "staged": proposal.is_some(),
                         "effect_applied": false,
                         "skill_activated": false,
-                    })
-                )?),
+                    }))?
+                ),
                 OutputFormat::Table => {
                     println!("Self-review score: {} / 100.", outcome.reflexion.score);
                     if let Some(proposal) = proposal {
-                        println!("Document proposal {} [{}].", proposal.id, proposal.status.as_str());
+                        println!(
+                            "Document proposal {} [{}].",
+                            proposal.id,
+                            proposal.status.as_str()
+                        );
                         println!("Review: neoth proactive show {}", proposal.id);
                         println!("Approve: neoth proactive accept {}", proposal.id);
                         println!("Reject: neoth proactive reject {}", proposal.id);
                     } else {
-                        println!("Self-review did not accept the candidate; no proposal was staged.");
+                        println!(
+                            "Self-review did not accept the candidate; no proposal was staged."
+                        );
                     }
                 }
             }
@@ -2669,7 +2704,8 @@ mod tests {
             scope: "document-review".to_owned(),
             claims: vec!["An admitted source.".to_owned()],
         };
-        let candidate_sha256 = hex::encode(sha2::Sha256::digest(serde_json::to_vec(&route).unwrap()));
+        let candidate_sha256 =
+            hex::encode(sha2::Sha256::digest(serde_json::to_vec(&route).unwrap()));
         let draft = DocumentStagingDraftV1 {
             schema_version: 1,
             source_bytes_sha256: document.provenance.source_bytes_sha256.clone(),
@@ -2697,42 +2733,91 @@ mod tests {
     #[test]
     fn document_staging_cli_requires_an_explicit_compatible_destination() {
         fn args(extra: &[&str]) -> Result<SkillsArgs> {
-            let mut argv = vec!["neoth", "skills", "--distill-doc", "guide.md", "--min-reflexion-score", "80"];
+            let mut argv = vec![
+                "neoth",
+                "skills",
+                "--distill-doc",
+                "guide.md",
+                "--min-reflexion-score",
+                "80",
+            ];
             argv.extend_from_slice(extra);
             let cli = crate::cli::Cli::try_parse_from(argv)?;
-            let crate::cli::Commands::Skills(args) = cli.command else { panic!("skills command") };
+            let crate::cli::Commands::Skills(args) = cli.command else {
+                panic!("skills command")
+            };
             Ok(args)
         }
-        assert!(document_staging_selection(&args(&[]).unwrap()).unwrap().is_none());
+        assert!(
+            document_staging_selection(&args(&[]).unwrap())
+                .unwrap()
+                .is_none()
+        );
         assert!(args(&["--stage-route", "memory"]).is_err());
         assert!(args(&["--stage-target", "scope"]).is_err());
-        let selected = args(&["--stage-route", "memory", "--stage-target", "document-review"]).unwrap();
-        assert!(matches!(document_staging_selection(&selected).unwrap(), Some(
+        let selected = args(&[
+            "--stage-route",
+            "memory",
+            "--stage-target",
+            "document-review",
+        ])
+        .unwrap();
+        assert!(
+            matches!(document_staging_selection(&selected).unwrap(), Some(
             crate::skills::document_staging::DocumentStagingRequest::Memory { scope }
-        ) if scope == "document-review"));
-        let wrong_subdir = args(&["--stage-route", "memory", "--stage-target", "scope", "--stage-subdir", "NEOTH"]).unwrap();
+        ) if scope == "document-review")
+        );
+        let wrong_subdir = args(&[
+            "--stage-route",
+            "memory",
+            "--stage-target",
+            "scope",
+            "--stage-subdir",
+            "NEOTH",
+        ])
+        .unwrap();
         assert!(document_staging_selection(&wrong_subdir).is_err());
-        let relative = args(&["--stage-route", "wiki", "--stage-target", "relative-vault"]).unwrap();
+        let relative =
+            args(&["--stage-route", "wiki", "--stage-target", "relative-vault"]).unwrap();
         assert!(document_staging_selection(&relative).is_err());
     }
 
     #[test]
     fn document_staging_persists_pending_once_without_applying_effects() {
-        use crate::proactive::action_staging::{ProposalStatus, list_proposals, set_proposal_status};
+        use crate::proactive::action_staging::{
+            ProposalStatus, list_proposals, set_proposal_status,
+        };
         let home = tempfile::tempdir().unwrap();
         let document = document_fixture();
         let outcome = document_staging_outcome_fixture(&document);
-        let first = stage_document_outcome(home.path(), &document, &outcome, 1).unwrap().unwrap();
-        let replay = stage_document_outcome(home.path(), &document, &outcome, 2).unwrap().unwrap();
+        let first = stage_document_outcome(home.path(), &document, &outcome, 1)
+            .unwrap()
+            .unwrap();
+        let replay = stage_document_outcome(home.path(), &document, &outcome, 2)
+            .unwrap()
+            .unwrap();
         assert_eq!(first.id, replay.id);
         assert_eq!(first.status, ProposalStatus::Pending);
         assert_eq!(list_proposals(home.path(), None).unwrap().len(), 1);
-        assert_eq!(crate::proactive::ProactiveQueue::load_from(&home.path().join("proactive_queue.json")).unwrap().len(), 1);
+        assert_eq!(
+            crate::proactive::ProactiveQueue::load_from(&home.path().join("proactive_queue.json"))
+                .unwrap()
+                .len(),
+            1
+        );
         assert!(!home.path().join("views.db").exists());
         assert!(!home.path().join("skills").exists());
         assert!(!home.path().join("wal").exists());
-        set_proposal_status(home.path(), &first.id, ProposalStatus::Rejected, "not wanted").unwrap();
-        let rejected = stage_document_outcome(home.path(), &document, &outcome, 3).unwrap().unwrap();
+        set_proposal_status(
+            home.path(),
+            &first.id,
+            ProposalStatus::Rejected,
+            "not wanted",
+        )
+        .unwrap();
+        let rejected = stage_document_outcome(home.path(), &document, &outcome, 3)
+            .unwrap()
+            .unwrap();
         assert_eq!(rejected.status, ProposalStatus::Rejected);
         assert_eq!(list_proposals(home.path(), None).unwrap().len(), 1);
     }
@@ -2748,7 +2833,11 @@ mod tests {
         assert!(stage_document_outcome(home.path(), &document, &outcome, 1).is_err());
         outcome.draft_json = None;
         outcome.draft_sha256 = None;
-        assert!(stage_document_outcome(home.path(), &document, &outcome, 1).unwrap().is_none());
+        assert!(
+            stage_document_outcome(home.path(), &document, &outcome, 1)
+                .unwrap()
+                .is_none()
+        );
         assert!(!home.path().join("proposals").exists());
         assert!(!home.path().join("proactive_queue.json").exists());
     }

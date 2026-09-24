@@ -104,17 +104,25 @@ pub fn apply_document_claim_batch(
                 continue;
             }
 
-            let fact_id = groundtruth::insert(conn, claim, &Source::BulkText, &batch.scope, now_ns)?;
+            let fact_id =
+                groundtruth::insert(conn, claim, &Source::BulkText, &batch.scope, now_ns)?;
             let updated = conn.execute(
                 "UPDATE b7_applied_document_claim SET fact_id = ?1 \
                  WHERE source_bytes_sha256 = ?2 AND claim_sha256 = ?3 AND scope = ?4 AND fact_id IS NULL",
                 params![fact_id, &batch.source_bytes_sha256, &claim_sha256, &batch.scope],
             )?;
-            ensure!(updated == 1, "B7 applied-once ledger reservation was not completed");
+            ensure!(
+                updated == 1,
+                "B7 applied-once ledger reservation was not completed"
+            );
             fact_ids.push(fact_id);
             applied_count += 1;
         }
-        Ok(DocumentClaimApplyReceipt { fact_ids, applied_count, replayed_count })
+        Ok(DocumentClaimApplyReceipt {
+            fact_ids,
+            applied_count,
+            replayed_count,
+        })
     })();
 
     match result {
@@ -144,15 +152,30 @@ pub fn apply_document_claim_batch(
 }
 
 fn validate_batch(batch: &DocumentClaimBatch) -> Result<Vec<&str>> {
-    ensure!(is_sha256_hex(&batch.source_bytes_sha256), "B7 source SHA-256 must be 64 lowercase hex characters");
-    ensure!(is_metadata(&batch.scope, MAX_DOCUMENT_SCOPE_BYTES), "B7 claim scope must be non-empty, trimmed, and at most {MAX_DOCUMENT_SCOPE_BYTES} bytes");
-    ensure!(is_metadata(&batch.proposal_id, MAX_DOCUMENT_PROPOSAL_ID_BYTES), "B7 proposal id must be non-empty, trimmed, and at most {MAX_DOCUMENT_PROPOSAL_ID_BYTES} bytes");
-    ensure!(!batch.claims.is_empty() && batch.claims.len() <= MAX_DOCUMENT_CLAIMS, "B7 document claim count must be between 1 and {MAX_DOCUMENT_CLAIMS}");
+    ensure!(
+        is_sha256_hex(&batch.source_bytes_sha256),
+        "B7 source SHA-256 must be 64 lowercase hex characters"
+    );
+    ensure!(
+        is_metadata(&batch.scope, MAX_DOCUMENT_SCOPE_BYTES),
+        "B7 claim scope must be non-empty, trimmed, and at most {MAX_DOCUMENT_SCOPE_BYTES} bytes"
+    );
+    ensure!(
+        is_metadata(&batch.proposal_id, MAX_DOCUMENT_PROPOSAL_ID_BYTES),
+        "B7 proposal id must be non-empty, trimmed, and at most {MAX_DOCUMENT_PROPOSAL_ID_BYTES} bytes"
+    );
+    ensure!(
+        !batch.claims.is_empty() && batch.claims.len() <= MAX_DOCUMENT_CLAIMS,
+        "B7 document claim count must be between 1 and {MAX_DOCUMENT_CLAIMS}"
+    );
 
     let mut claims = Vec::with_capacity(batch.claims.len());
     for claim in &batch.claims {
         let trimmed = claim.trim();
-        ensure!(!trimmed.is_empty() && trimmed.len() <= MAX_DOCUMENT_CLAIM_BYTES, "B7 document claim must be non-empty after trimming and at most {MAX_DOCUMENT_CLAIM_BYTES} bytes");
+        ensure!(
+            !trimmed.is_empty() && trimmed.len() <= MAX_DOCUMENT_CLAIM_BYTES,
+            "B7 document claim must be non-empty after trimming and at most {MAX_DOCUMENT_CLAIM_BYTES} bytes"
+        );
         claims.push(trimmed);
     }
     Ok(claims)
@@ -163,7 +186,10 @@ fn is_metadata(value: &str, maximum: usize) -> bool {
 }
 
 fn is_sha256_hex(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 fn claim_sha256(claim: &str) -> String {
@@ -204,8 +230,21 @@ mod tests {
         let mut invalid = batch('A', &["fact"]);
         invalid.scope = " ".to_owned();
         assert!(apply_document_claim_batch(&conn, &invalid, 1).is_err());
-        assert_eq!(conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM b7_applied_document_claim", [], |row| row.get(0)).unwrap(), 0);
-        assert_eq!(conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM idx_groundtruth", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            conn.query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM b7_applied_document_claim",
+                [],
+                |row| row.get(0)
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM idx_groundtruth", [], |row| row
+                .get(0))
+                .unwrap(),
+            0
+        );
     }
     #[test]
     fn first_apply_then_same_document_replay_does_not_inflate_fact() {
@@ -216,9 +255,13 @@ mod tests {
         assert_eq!(first.applied_count, 1);
         assert_eq!(replay.replayed_count, 1);
         assert_eq!(first.fact_ids, replay.fact_ids);
-        let state: (f64, i64) = conn.query_row(
-            "SELECT confidence, confirmed_count FROM idx_groundtruth", [], |row| Ok((row.get(0)?, row.get(1)?)),
-        ).unwrap();
+        let state: (f64, i64) = conn
+            .query_row(
+                "SELECT confidence, confirmed_count FROM idx_groundtruth",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(state, (0.5, 0));
     }
 
@@ -226,13 +269,19 @@ mod tests {
     fn different_document_corroborates_once_then_replays() {
         let conn = conn();
         apply_document_claim_batch(&conn, &batch('a', &["retain this fact"]), 1).unwrap();
-        let second = apply_document_claim_batch(&conn, &batch('b', &["retain this fact"]), 2).unwrap();
-        let replay = apply_document_claim_batch(&conn, &batch('b', &["retain this fact"]), 3).unwrap();
+        let second =
+            apply_document_claim_batch(&conn, &batch('b', &["retain this fact"]), 2).unwrap();
+        let replay =
+            apply_document_claim_batch(&conn, &batch('b', &["retain this fact"]), 3).unwrap();
         assert_eq!(second.applied_count, 1);
         assert_eq!(replay.applied_count, 0);
-        let state: (f64, i64) = conn.query_row(
-            "SELECT confidence, confirmed_count FROM idx_groundtruth", [], |row| Ok((row.get(0)?, row.get(1)?)),
-        ).unwrap();
+        let state: (f64, i64) = conn
+            .query_row(
+                "SELECT confidence, confirmed_count FROM idx_groundtruth",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
         assert!(state.0 > 0.5);
         assert_eq!(state.1, 1);
     }
@@ -242,8 +291,21 @@ mod tests {
         let conn = conn();
         conn.execute_batch("CREATE TRIGGER fail_b7_fact_link BEFORE UPDATE OF fact_id ON b7_applied_document_claim BEGIN SELECT RAISE(ABORT, 'injected B7 failure'); END;").unwrap();
         assert!(apply_document_claim_batch(&conn, &batch('a', &["one", "two"]), 1).is_err());
-        assert_eq!(conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM b7_applied_document_claim", [], |row| row.get(0)).unwrap(), 0);
-        assert_eq!(conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM idx_groundtruth", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            conn.query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM b7_applied_document_claim",
+                [],
+                |row| row.get(0)
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM idx_groundtruth", [], |row| row
+                .get(0))
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -252,8 +314,21 @@ mod tests {
         conn.execute_batch("BEGIN IMMEDIATE").unwrap();
         apply_document_claim_batch(&conn, &batch('a', &["fact"]), 1).unwrap();
         conn.execute_batch("ROLLBACK").unwrap();
-        assert_eq!(conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM b7_applied_document_claim", [], |row| row.get(0)).unwrap(), 0);
-        assert_eq!(conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM idx_groundtruth", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            conn.query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM b7_applied_document_claim",
+                [],
+                |row| row.get(0)
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM idx_groundtruth", [], |row| row
+                .get(0))
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -265,32 +340,66 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut conn = crate::memory::store::open(&root.path().join("views.db")).unwrap();
         crate::coding::store::ensure_schema(&conn).unwrap();
-        assert_eq!(conn.query_row::<i64, _, _>("PRAGMA foreign_keys", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(
+            conn.query_row::<i64, _, _>("PRAGMA foreign_keys", [], |row| row.get(0))
+                .unwrap(),
+            1
+        );
         let source_id = "conv-b7";
         let statement = "OMI summary held for B7 purge regression.";
         let conversation = OmiConversation {
-            source_id: source_id.to_owned(), revision: "r1".to_owned(), status: "completed".to_owned(),
-            source: None, language: None, started_at_ms: None, finished_at_ms: None, call_id: None,
-            title: None, summary: Some(statement.to_owned()), metadata: None,
-            segments: Vec::new(), media: Vec::new(), actions: Vec::new(),
+            source_id: source_id.to_owned(),
+            revision: "r1".to_owned(),
+            status: "completed".to_owned(),
+            source: None,
+            language: None,
+            started_at_ms: None,
+            finished_at_ms: None,
+            call_id: None,
+            title: None,
+            summary: Some(statement.to_owned()),
+            metadata: None,
+            segments: Vec::new(),
+            media: Vec::new(),
+            actions: Vec::new(),
         };
-        let omi = commit_conversation(&mut conn, &conversation, OmiCommitOptions::default(), 1).unwrap();
+        let omi =
+            commit_conversation(&mut conn, &conversation, OmiCommitOptions::default(), 1).unwrap();
         let expected_fact_id = omi.groundtruth_id.unwrap();
         let batch = DocumentClaimBatch {
-            proposal_id: "b7-omi-purge".to_owned(), source_bytes_sha256: "a".repeat(64),
-            scope: format!("omi:{source_id}"), claims: vec![statement.to_owned()],
+            proposal_id: "b7-omi-purge".to_owned(),
+            source_bytes_sha256: "a".repeat(64),
+            scope: format!("omi:{source_id}"),
+            claims: vec![statement.to_owned()],
         };
         let applied = apply_document_claim_batch(&conn, &batch, 2).unwrap();
         assert_eq!(applied.fact_ids, vec![expected_fact_id]);
-        assert_eq!(purge_conversation(&mut conn, source_id, 3).unwrap().groundtruth, 1);
-        let tombstone: Option<i64> = conn.query_row(
-            "SELECT fact_id FROM b7_applied_document_claim", [], |row| row.get(0),
-        ).unwrap();
+        assert_eq!(
+            purge_conversation(&mut conn, source_id, 3)
+                .unwrap()
+                .groundtruth,
+            1
+        );
+        let tombstone: Option<i64> = conn
+            .query_row("SELECT fact_id FROM b7_applied_document_claim", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(tombstone, None);
-        assert_eq!(conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM idx_groundtruth", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM idx_groundtruth", [], |row| row
+                .get(0))
+                .unwrap(),
+            0
+        );
         let replay = apply_document_claim_batch(&conn, &batch, 4).unwrap_err();
         assert!(format!("{replay:#}").contains("previously applied fact removed; replay refused"));
-        assert_eq!(conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM idx_groundtruth", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM idx_groundtruth", [], |row| row
+                .get(0))
+                .unwrap(),
+            0
+        );
     }
     #[test]
     fn reopened_database_replays_from_durable_ledger() {

@@ -608,7 +608,10 @@ mod w61_code_map_result_receipt_tests {
             ExtendedSubtype::DocumentNoteApplied,
         ] {
             assert!(ALLOWED_CLIENT_EXTENDED_SUBTYPES.contains(&(subtype as u8)));
-            assert!(is_allowed_client_event_pair(EVENT_TYPE_EXTENDED, subtype as u8));
+            assert!(is_allowed_client_event_pair(
+                EVENT_TYPE_EXTENDED,
+                subtype as u8
+            ));
         }
     }
 

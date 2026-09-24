@@ -12,10 +12,10 @@ use cap_std::fs::Dir;
 use sha2::{Digest as _, Sha256};
 
 use crate::skills::store::{
-    atomic_write_private_child_create_new_reported, open_absolute_bound_directory,
-    open_bound_regular_file, open_or_create_private_child_dir, sync_parent_directory,
     BoundDirectory, BoundDirectoryChild, DirectorySyncOutcome, PrivateChildCommit,
-    PrivateChildDurabilityUnknown,
+    PrivateChildDurabilityUnknown, atomic_write_private_child_create_new_reported,
+    open_absolute_bound_directory, open_bound_regular_file, open_or_create_private_child_dir,
+    sync_parent_directory,
 };
 
 const MAX_PROPOSAL_ID_BYTES: usize = 128;
@@ -68,11 +68,15 @@ struct BoundDocumentNoteTarget {
 
 impl BoundDocumentNoteTarget {
     fn open(vault_root: &Path, subdir: &str) -> Result<Self> {
-        anyhow::ensure!(vault_root.is_absolute(), "document vault must be an existing absolute path");
+        anyhow::ensure!(
+            vault_root.is_absolute(),
+            "document vault must be an existing absolute path"
+        );
         crate::cli::obsidian::validate_subdir(Path::new(subdir))
             .context("validate document vault subdirectory")?;
-        let vault = open_absolute_bound_directory(vault_root, false, "operator-selected document vault")?
-            .context("operator-selected document vault is missing")?;
+        let vault =
+            open_absolute_bound_directory(vault_root, false, "operator-selected document vault")?
+                .context("operator-selected document vault is missing")?;
         let mut target = Self {
             vault,
             chain: Vec::with_capacity(2),
@@ -90,9 +94,8 @@ impl BoundDocumentNoteTarget {
         };
         let path = parent_path.join(name);
         let child = open_or_create_private_child_dir(&parent, name, &path)?;
-        let (dir, binding) = crate::skills::store::bind_retained_real_child_dir(
-            &parent, name, &path, child,
-        )?;
+        let (dir, binding) =
+            crate::skills::store::bind_retained_real_child_dir(&parent, name, &path, child)?;
         self.chain.push(BoundDocumentDirectoryLink {
             parent,
             name: name.to_os_string(),
@@ -104,15 +107,26 @@ impl BoundDocumentNoteTarget {
     }
 
     fn documents(&self) -> &Dir {
-        &self.chain.last().expect("Documents link is always created").dir
+        &self
+            .chain
+            .last()
+            .expect("Documents link is always created")
+            .dir
     }
 
     fn documents_path(&self) -> &Path {
-        &self.chain.last().expect("Documents link is always created").path
+        &self
+            .chain
+            .last()
+            .expect("Documents link is always created")
+            .path
     }
 
     fn revalidate(&self) -> Result<()> {
-        self.vault.dir.dir_metadata().context("inspect bound document vault")?;
+        self.vault
+            .dir
+            .dir_metadata()
+            .context("inspect bound document vault")?;
         for link in &self.chain {
             link.dir.dir_metadata().with_context(|| {
                 format!("inspect bound document directory {}", link.path.display())
@@ -145,7 +159,8 @@ pub(crate) fn apply_document_note(
     validate_proposal_id(proposal_id)?;
     validate_sha256("source", source_sha256)?;
     validate_sha256("candidate", candidate_sha256)?;
-    let expected = render_document_note(proposal_id, source_sha256, candidate_sha256, note_markdown)?;
+    let expected =
+        render_document_note(proposal_id, source_sha256, candidate_sha256, note_markdown)?;
     let note_sha256 = sha256_hex(&expected);
     let name = note_file_name(proposal_id)?;
     let target = BoundDocumentNoteTarget::open(vault_root, subdir)?;
@@ -210,7 +225,11 @@ fn verify_exact_note(
 ) -> Result<()> {
     target.revalidate()?;
     let actual = read_bound_note(target.documents(), name, path)?;
-    anyhow::ensure!(actual == expected, "existing document note differs and is preserved: {}", path.display());
+    anyhow::ensure!(
+        actual == expected,
+        "existing document note differs and is preserved: {}",
+        path.display()
+    );
     target.revalidate()?;
     Ok(())
 }
@@ -261,7 +280,10 @@ fn render_document_note(
     candidate_sha256: &str,
     note_markdown: &str,
 ) -> Result<Vec<u8>> {
-    anyhow::ensure!(!note_markdown.trim().is_empty(), "document note body must not be empty");
+    anyhow::ensure!(
+        !note_markdown.trim().is_empty(),
+        "document note body must not be empty"
+    );
     anyhow::ensure!(
         note_markdown.len() <= MAX_DOCUMENT_NOTE_BODY_BYTES,
         "document note body exceeds bounded maximum"
@@ -270,13 +292,19 @@ fn render_document_note(
     let note = format!(
         "---\nneoth_document_note_version: 1\nproposal_id: \"{proposal_id}\"\nsource_sha256: \"{source_sha256}\"\ncandidate_sha256: \"{candidate_sha256}\"\nbody_sha256: \"{body_sha256}\"\n---\n\n{note_markdown}"
     );
-    anyhow::ensure!(note.len() <= MAX_DOCUMENT_NOTE_BYTES, "document note exceeds bounded maximum");
+    anyhow::ensure!(
+        note.len() <= MAX_DOCUMENT_NOTE_BYTES,
+        "document note exceeds bounded maximum"
+    );
     Ok(note.into_bytes())
 }
 
 fn note_file_name(proposal_id: &str) -> Result<OsString> {
     validate_proposal_id(proposal_id)?;
-    Ok(OsString::from(format!("{}.md", sha256_hex(proposal_id.as_bytes()))))
+    Ok(OsString::from(format!(
+        "{}.md",
+        sha256_hex(proposal_id.as_bytes())
+    )))
 }
 
 fn validate_proposal_id(proposal_id: &str) -> Result<()> {
@@ -293,7 +321,10 @@ fn validate_proposal_id(proposal_id: &str) -> Result<()> {
 
 fn validate_sha256(label: &str, value: &str) -> Result<()> {
     anyhow::ensure!(
-        value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
+        value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
         "{label} SHA-256 must be lowercase hexadecimal"
     );
     Ok(())
@@ -323,7 +354,10 @@ fn durability_from_directory_sync(outcome: DirectorySyncOutcome) -> DocumentNote
     }
 }
 
-fn error_chain_has_io_kind(error: &(dyn std::error::Error + 'static), expected: std::io::ErrorKind) -> bool {
+fn error_chain_has_io_kind(
+    error: &(dyn std::error::Error + 'static),
+    expected: std::io::ErrorKind,
+) -> bool {
     let mut current = Some(error);
     while let Some(error) = current {
         if error
@@ -350,10 +384,24 @@ mod tests {
     fn create_then_identical_replay_reconciles_the_same_note() {
         let vault = tempfile::tempdir().expect("vault");
 
-        let created = apply_document_note(vault.path(), "NEOTH", "proposal-1", SOURCE, CANDIDATE, "# Approved note\n")
-            .expect("create note");
-        let replay = apply_document_note(vault.path(), "NEOTH", "proposal-1", SOURCE, CANDIDATE, "# Approved note\n")
-            .expect("reconcile exact existing note");
+        let created = apply_document_note(
+            vault.path(),
+            "NEOTH",
+            "proposal-1",
+            SOURCE,
+            CANDIDATE,
+            "# Approved note\n",
+        )
+        .expect("create note");
+        let replay = apply_document_note(
+            vault.path(),
+            "NEOTH",
+            "proposal-1",
+            SOURCE,
+            CANDIDATE,
+            "# Approved note\n",
+        )
+        .expect("reconcile exact existing note");
 
         assert!(!created.reconciled);
         assert!(replay.reconciled);
@@ -364,12 +412,32 @@ mod tests {
     #[test]
     fn operator_edited_note_refuses_a_replacement() {
         let vault = tempfile::tempdir().expect("vault");
-        let created = apply_document_note(vault.path(), "NEOTH", "proposal-2", SOURCE, CANDIDATE, "# First\n")
-            .expect("create note");
+        let created = apply_document_note(
+            vault.path(),
+            "NEOTH",
+            "proposal-2",
+            SOURCE,
+            CANDIDATE,
+            "# First\n",
+        )
+        .expect("create note");
         fs::write(&created.note_path, b"operator-owned edit\n").expect("edit note");
 
-        assert!(apply_document_note(vault.path(), "NEOTH", "proposal-2", SOURCE, CANDIDATE, "# First\n").is_err());
-        assert_eq!(fs::read(&created.note_path).expect("read operator edit"), b"operator-owned edit\n");
+        assert!(
+            apply_document_note(
+                vault.path(),
+                "NEOTH",
+                "proposal-2",
+                SOURCE,
+                CANDIDATE,
+                "# First\n"
+            )
+            .is_err()
+        );
+        assert_eq!(
+            fs::read(&created.note_path).expect("read operator edit"),
+            b"operator-owned edit\n"
+        );
     }
 
     #[cfg(unix)]
@@ -382,14 +450,34 @@ mod tests {
         fs::create_dir(&real).expect("real vault");
         let linked = base.path().join("linked-vault");
         symlink(&real, &linked).expect("link vault");
-        assert!(apply_document_note(&linked, "NEOTH", "proposal-3", SOURCE, CANDIDATE, "# Note\n").is_err());
+        assert!(
+            apply_document_note(
+                &linked,
+                "NEOTH",
+                "proposal-3",
+                SOURCE,
+                CANDIDATE,
+                "# Note\n"
+            )
+            .is_err()
+        );
 
         let direct = base.path().join("direct-vault");
         let documents = direct.join("NEOTH").join("Documents");
         fs::create_dir_all(&documents).expect("documents");
         let target = documents.join(note_file_name("proposal-4").expect("name"));
         symlink(base.path().join("elsewhere.md"), &target).expect("link note target");
-        assert!(apply_document_note(&direct, "NEOTH", "proposal-4", SOURCE, CANDIDATE, "# Note\n").is_err());
+        assert!(
+            apply_document_note(
+                &direct,
+                "NEOTH",
+                "proposal-4",
+                SOURCE,
+                CANDIDATE,
+                "# Note\n"
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -400,16 +488,49 @@ mod tests {
         let target = documents.join(note_file_name("proposal-5").expect("name"));
         fs::write(&target, vec![b'x'; MAX_DOCUMENT_NOTE_BYTES + 1]).expect("oversize note");
 
-        assert!(apply_document_note(vault.path(), "NEOTH", "proposal-5", SOURCE, CANDIDATE, "# Note\n").is_err());
+        assert!(
+            apply_document_note(
+                vault.path(),
+                "NEOTH",
+                "proposal-5",
+                SOURCE,
+                CANDIDATE,
+                "# Note\n"
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn malformed_provenance_or_oversize_body_never_creates_a_note() {
         let vault = tempfile::tempdir().expect("vault");
-        assert!(apply_document_note(vault.path(), "NEOTH", "proposal-6", "not-a-hash", CANDIDATE, "# Note\n").is_err());
+        assert!(
+            apply_document_note(
+                vault.path(),
+                "NEOTH",
+                "proposal-6",
+                "not-a-hash",
+                CANDIDATE,
+                "# Note\n"
+            )
+            .is_err()
+        );
         let oversized = "x".repeat(MAX_DOCUMENT_NOTE_BODY_BYTES + 1);
-        assert!(apply_document_note(vault.path(), "NEOTH", "proposal-6", SOURCE, CANDIDATE, &oversized).is_err());
-        assert!(!vault.path().join("NEOTH").exists(), "invalid input must precede vault mutation");
+        assert!(
+            apply_document_note(
+                vault.path(),
+                "NEOTH",
+                "proposal-6",
+                SOURCE,
+                CANDIDATE,
+                &oversized
+            )
+            .is_err()
+        );
+        assert!(
+            !vault.path().join("NEOTH").exists(),
+            "invalid input must precede vault mutation"
+        );
     }
 
     #[test]
@@ -459,13 +580,25 @@ mod tests {
         let right = std::thread::spawn(move || {
             apply_document_note(&root, "NEOTH", "proposal-7", SOURCE, CANDIDATE, "# Note\n")
         });
-        let outcomes = [left.join().expect("left worker"), right.join().expect("right worker")];
+        let outcomes = [
+            left.join().expect("left worker"),
+            right.join().expect("right worker"),
+        ];
         assert!(outcomes.iter().all(|outcome| outcome.is_ok()));
         let receipts: Vec<_> = outcomes
             .into_iter()
             .map(|outcome| outcome.expect("document-note outcome"))
             .collect();
-        assert_eq!(receipts.iter().filter(|receipt| receipt.reconciled).count(), 1);
-        assert_eq!(receipts.iter().filter(|receipt| !receipt.reconciled).count(), 1);
+        assert_eq!(
+            receipts.iter().filter(|receipt| receipt.reconciled).count(),
+            1
+        );
+        assert_eq!(
+            receipts
+                .iter()
+                .filter(|receipt| !receipt.reconciled)
+                .count(),
+            1
+        );
     }
 }

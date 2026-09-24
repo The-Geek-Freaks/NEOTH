@@ -15,7 +15,8 @@ use sha2::{Digest as _, Sha256};
 
 use crate::memory::document_claims::{DocumentClaimBatch, apply_document_claim_batch};
 use crate::proactive::action_staging::{
-    ProposalKind, ProposalStatus, ProposedAction, adopt_approved_skill, make_proposal_id_content_only,
+    ProposalKind, ProposalStatus, ProposedAction, adopt_approved_skill,
+    make_proposal_id_content_only,
 };
 use crate::skills::document_staging::{
     DocumentStagingDraftV1, DocumentStagingRoute, decode_document_staging_draft,
@@ -25,10 +26,18 @@ use crate::wal::events::ExtendedSubtype;
 /// Publicly printable, metadata-only result of one approved document route.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocumentStagingApplyReceipt {
-    Skill { installed: bool },
-    Memory { applied_count: usize, replayed_count: usize },
+    Skill {
+        installed: bool,
+    },
+    Memory {
+        applied_count: usize,
+        replayed_count: usize,
+    },
     /// Operator-owned document note. This is never `wiki/*` or self-wiki.
-    VaultNote { reconciled: bool, namespace_durability_unsupported: bool },
+    VaultNote {
+        reconciled: bool,
+        namespace_durability_unsupported: bool,
+    },
 }
 
 impl DocumentStagingApplyReceipt {
@@ -43,14 +52,33 @@ impl DocumentStagingApplyReceipt {
 
 /// Decode only an immutable `Document` proposal.  Operator-facing rationale
 /// is deliberately excluded from this authority path.
-pub fn parse_approved_document_staging(proposal: &ProposedAction) -> Result<DocumentStagingDraftV1> {
-    anyhow::ensure!(proposal.kind == ProposalKind::Document, "proposal {} is not a Document proposal", proposal.id);
-    let draft = decode_document_staging_draft(&proposal.draft_yaml)
-        .with_context(|| format!("validate immutable document staging proposal {}", proposal.id))?;
+pub fn parse_approved_document_staging(
+    proposal: &ProposedAction,
+) -> Result<DocumentStagingDraftV1> {
+    anyhow::ensure!(
+        proposal.kind == ProposalKind::Document,
+        "proposal {} is not a Document proposal",
+        proposal.id
+    );
+    let draft = decode_document_staging_draft(&proposal.draft_yaml).with_context(|| {
+        format!(
+            "validate immutable document staging proposal {}",
+            proposal.id
+        )
+    })?;
     let canonical = serde_json::to_string(&draft).context("canonicalize document staging draft")?;
-    anyhow::ensure!(canonical == proposal.draft_yaml, "document proposal {} draft is not canonical", proposal.id);
-    let expected_id = make_proposal_id_content_only(ProposalKind::Document, &proposal.title, &canonical);
-    anyhow::ensure!(proposal.id == expected_id, "document proposal {} does not bind its immutable title and draft", proposal.id);
+    anyhow::ensure!(
+        canonical == proposal.draft_yaml,
+        "document proposal {} draft is not canonical",
+        proposal.id
+    );
+    let expected_id =
+        make_proposal_id_content_only(ProposalKind::Document, &proposal.title, &canonical);
+    anyhow::ensure!(
+        proposal.id == expected_id,
+        "document proposal {} does not bind its immutable title and draft",
+        proposal.id
+    );
     Ok(draft)
 }
 
@@ -65,17 +93,32 @@ pub fn apply_approved_document_staging(
     proposal: &ProposedAction,
     now_ns: i64,
 ) -> Result<DocumentStagingApplyReceipt> {
-    anyhow::ensure!(proposal.kind == ProposalKind::Document, "proposal {} is not a Document proposal", proposal.id);
-    anyhow::ensure!(proposal.status == ProposalStatus::Approved, "document proposal {} is not approved", proposal.id);
+    anyhow::ensure!(
+        proposal.kind == ProposalKind::Document,
+        "proposal {} is not a Document proposal",
+        proposal.id
+    );
+    anyhow::ensure!(
+        proposal.status == ProposalStatus::Approved,
+        "document proposal {} is not approved",
+        proposal.id
+    );
     let draft = parse_approved_document_staging(proposal)?;
 
     let (receipt, subtype, target_identity_sha256, route_content_sha256) = match &draft.route {
-        DocumentStagingRoute::Skill { skill_manifest_yaml } => {
+        DocumentStagingRoute::Skill {
+            skill_manifest_yaml,
+        } => {
             let derived = ProposedAction {
-                id: make_proposal_id_content_only(ProposalKind::Skill, &proposal.id, skill_manifest_yaml),
+                id: make_proposal_id_content_only(
+                    ProposalKind::Skill,
+                    &proposal.id,
+                    skill_manifest_yaml,
+                ),
                 kind: ProposalKind::Skill,
                 title: format!("Approved document skill from {}", proposal.id),
-                rationale: "Derived only from an explicitly approved immutable document proposal.".to_owned(),
+                rationale: "Derived only from an explicitly approved immutable document proposal."
+                    .to_owned(),
                 draft_yaml: skill_manifest_yaml.clone(),
                 generated_ts_unix: proposal.generated_ts_unix,
                 status: ProposalStatus::Approved,
@@ -114,7 +157,11 @@ pub fn apply_approved_document_staging(
                 draft.candidate_sha256.clone(),
             )
         }
-        DocumentStagingRoute::Wiki { vault_root, subdir, note_markdown } => {
+        DocumentStagingRoute::Wiki {
+            vault_root,
+            subdir,
+            note_markdown,
+        } => {
             let note = crate::proactive::document_note::apply_document_note(
                 Path::new(vault_root),
                 subdir,
@@ -201,9 +248,15 @@ impl DocumentRouteAuditV1 {
     ) -> Self {
         let (applied_count, replayed_count, reconciled, namespace_durability) = match receipt {
             DocumentStagingApplyReceipt::Skill { .. } => (1, 0, false, "not_applicable"),
-            DocumentStagingApplyReceipt::Memory { applied_count, replayed_count } => {
-                (*applied_count, *replayed_count, *replayed_count > 0, "not_applicable")
-            }
+            DocumentStagingApplyReceipt::Memory {
+                applied_count,
+                replayed_count,
+            } => (
+                *applied_count,
+                *replayed_count,
+                *replayed_count > 0,
+                "not_applicable",
+            ),
             DocumentStagingApplyReceipt::VaultNote {
                 reconciled,
                 namespace_durability_unsupported,
@@ -211,7 +264,11 @@ impl DocumentRouteAuditV1 {
                 1,
                 0,
                 *reconciled,
-                if *namespace_durability_unsupported { "unsupported" } else { "confirmed" },
+                if *namespace_durability_unsupported {
+                    "unsupported"
+                } else {
+                    "confirmed"
+                },
             ),
         };
         Self {

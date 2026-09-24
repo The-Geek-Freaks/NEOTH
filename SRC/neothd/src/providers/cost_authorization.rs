@@ -9077,7 +9077,7 @@ mod tests {
                 // The explicit document route receives the same CLI-owned
                 // CostAuthorizingProvider after its exact staged preflight
                 // and consent; neither leaf constructs a provider or retries.
-                "1742ea5d179621a905405450325a17bade214dfa8941e30442e6030d2cd68a1e",
+                "ddd7cb7976b59e38a4dc12d9099d7a55b28f712f6ddde4349c3c0d53e37a546a",
             ),
             (
                 "skills/test_harness.rs",

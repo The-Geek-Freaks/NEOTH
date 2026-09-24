@@ -5346,7 +5346,10 @@ mod tests {
         let mut conn = open_with_meta(45);
         assert_eq!(migrate(&mut conn, 45, 46).unwrap(), 46);
         assert!(sqlite_object_exists(&conn, "b7_applied_document_claim"));
-        assert!(sqlite_object_exists(&conn, "idx_b7_applied_document_claim_fact"));
+        assert!(sqlite_object_exists(
+            &conn,
+            "idx_b7_applied_document_claim_fact"
+        ));
         assert_eq!(current_version(&conn).unwrap(), 46);
     }
     #[test]

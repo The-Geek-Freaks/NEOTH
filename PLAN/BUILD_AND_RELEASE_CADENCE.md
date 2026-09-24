@@ -3,6 +3,15 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W858 exact hosted formatting (2026-09-24):** Preflight36032584867@149821ce
+parsed the corrected fixture and produced the nine-file rustfmt receipt.
+Root verified ZIP/inner digests plus every before/after Git blob before import.
+The two-call document-staging guard is explicitly rebound to its formatted
+five-line contexts; provider behavior is unchanged. Source manifest994,
+Native1569+Windows39/Linux54/macOS54 and Group1335 remain the acceptance set.
+Fresh Core/Group checks follow; no B3/B7 closure or local execution is claimed.
+Evidence: docs/verification/gold-wave858-hosted-format.json.
+
 **W855 hosted parser repair (2026-09-24):** W853 is published at8844dc72.
 Preflight36032184376 found one test-only raw-string delimiter collision with
 Markdown heading text in skills/document_staging.rs. The delimiter is corrected

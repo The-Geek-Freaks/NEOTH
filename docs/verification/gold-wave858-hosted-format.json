@@ -1,0 +1,65 @@
+{
+  "schema": "neoth-hosted-rustfmt-admission/v1",
+  "runId": 36032584867,
+  "sourceHead": "149821ce662212e16ffa032eff7c09fa7e3e2cda",
+  "artifactId": 10823196670,
+  "artifactSha256": "b077165ed3723caa2efd4869d7416a8e30c47af16c70e524f0c68c63dcc59c78",
+  "patchSha256": "cfe3362e12301eaa55ebda56f46f2929433c167c1eae29fcb5b96ac4cdd52cf1",
+  "sourceReceiptSha256": "04c06b052d6434def085a5ed1629ceda046a9e83b196dc05cd3cfb56cc06b33b",
+  "files": [
+    {
+      "path": "SRC/neothd/src/cli/proactive.rs",
+      "old": "46019b82914df6bb7317ab84dc877855ac14280a",
+      "new": "3a79ce60bd0fc2dd7493a3480a2a76feb7fcec2d"
+    },
+    {
+      "path": "SRC/neothd/src/cli/skills.rs",
+      "old": "3b848630ab3d09562510cc08f0a2af857d613c0b",
+      "new": "c756a898f03473d9ee6e8da318d287de530d03e4"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+      "old": "ba3a1c25454fa3d2397e9b43af32900294f19b7a",
+      "new": "38706f93d5bf38cf32d30ef2e5650694ad98705a"
+    },
+    {
+      "path": "SRC/neothd/src/memory/document_claims.rs",
+      "old": "5207f7eba7789993ffd9cfc4d43c37ebd529dead",
+      "new": "2adf08fe8a6c69fb6472c46cba176c40820d3331"
+    },
+    {
+      "path": "SRC/neothd/src/memory/migrations/mod.rs",
+      "old": "dafd216fad7a6fdcbdbc81a98f6f79fafb836351",
+      "new": "6dbde9f5348426b387a6ddce2a9fbd488cea158e"
+    },
+    {
+      "path": "SRC/neothd/src/memory/mod.rs",
+      "old": "20c087f99bce3c0c29ee6f733ea048e18781f766",
+      "new": "0097baab8972aae91cf10d3ea6c7e34224a49033"
+    },
+    {
+      "path": "SRC/neothd/src/proactive/document_note.rs",
+      "old": "f766f3855080100710818d8fbfbd2b9bf18dd925",
+      "new": "b6dfcb73202bf0b6a800ae9fce5dd82b5b302e5a"
+    },
+    {
+      "path": "SRC/neothd/src/proactive/document_staging.rs",
+      "old": "2efc3b5d99815dc531631f208f8d2032cb0700dc",
+      "new": "9b224c278551349f37892b82f8fff7141582af90"
+    },
+    {
+      "path": "SRC/neothd/src/skills/document_staging.rs",
+      "old": "bd5b5e998badd95d40b5b2fa31f33109fb0d5d08",
+      "new": "c78bc04202faa963a472199f62f953dfd92dc85a"
+    }
+  ],
+  "providerCallsiteRebind": {
+    "path": "skills/document_staging.rs",
+    "formatted": "ddd7cb7976b59e38a4dc12d9099d7a55b28f712f6ddde4349c3c0d53e37a546a",
+    "calls": 2,
+    "prior": "1742ea5d179621a905405450325a17bade214dfa8941e30442e6030d2cd68a1e",
+    "reason": "Hosted rustfmt changes five-line text fingerprint context. Both existing authorized provider calls unchanged."
+  },
+  "localExecutableValidationRan": false,
+  "acceptance": "Exact hosted formatting only; B3/B7 behavior and compile pending."
+}
