@@ -104,7 +104,7 @@ pub(crate) async fn request_route_at(
         let audit_nonce = crate::daemon::audit_rpc::verified_daemon_endpoint_nonce(home)?;
         let response = crate::connectors::control_plane::rpc::unix_client(home, &audit_nonce)
             .context("discover authenticated connector-control endpoint")?
-            .post(route, &body)
+            .post(route, body)
             .await?;
         let response =
             std::str::from_utf8(&response).context("connector-control response is not UTF-8")?;

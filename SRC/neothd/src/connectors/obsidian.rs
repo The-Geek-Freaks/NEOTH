@@ -555,6 +555,7 @@ pub(crate) fn plan_import(
 /// while holding its pairing authority mutex, so selection, sanitization, DB
 /// commit, reader-state persistence, and the pairing receipt have one
 /// linearization boundary.
+#[allow(clippy::too_many_arguments)] // Each input is independently authority-bound.
 pub(crate) fn with_selected_archive_bridge_draft<T>(
     configuration: &ConnectorConfiguration,
     selected_root: PathBuf,

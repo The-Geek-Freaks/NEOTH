@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W648-W650 Obsidian0.2 generated bundle and cross-platform build repair (2026-09-24):**
+Hosted plugin35956341651 atce42784e passes typecheck/build and all12 actual
+bundle tests, including129-note finite batches, newer-ACK protection, re-pair,
+offline retry, stalled-pipe timeout and unload. Root verified all three ZIPs,
+six exact source Gitblobs and three bundle hashes; unchanged manifest/lock match.
+The generated main.js (SHA256B1DC532BC781057BA6D3A95EB2A29D559C53FFA9AED5CBEB87B0679899C9CAD2)
+is imported byte-exact. The job's expected old-bundle drift is still a failure;
+a fresh committed-bundle replay remains required.
+Core35956044188 exposed9Clippy errors; narrow borrow/CFG/tail repairs remove
+them without changing authority. Windows4735956048283 compiled0tests: the new
+owner used std metadata dev/ino unavailable onWindows. It now uses the existing
+no-follow directory capability and its cross-platform physical metadata.
+W477 independently approved; Windows handle diagnosis and native behavior
+remain pending. No Road closure or local executable validation.
+
 **W645-W647 finite Obsidian batching and hosted macOS continuation (2026-09-24):**
 Plugin run35956042379 atb71ebba3 passes immutable install, TypeScript and build;
 11/12 actual bundle tests pass. The129-note test exposes overlapping per-note

@@ -312,6 +312,7 @@ impl ArchiveBridgeOwner {
         })
     }
 
+    #[cfg(windows)]
     pub(crate) fn endpoint_nonce(&self) -> Option<String> {
         self.state.lock().ok().and_then(|state| {
             state
@@ -577,7 +578,10 @@ fn same_vault(left: &Path, right: &Path) -> Result<bool> {
 /// only this domain-separated digest.
 fn vault_identity(vault: &Path) -> Result<String> {
     use cap_fs_ext::MetadataExt as _;
-    let metadata = std::fs::metadata(vault)
+    let root = crate::os_tools::gate::open_absolute_directory_no_follow(vault)
+        .with_context(|| format!("open configured vault capability {}", vault.display()))?;
+    let metadata = root
+        .dir_metadata()
         .with_context(|| format!("read configured vault metadata {}", vault.display()))?;
     ensure!(
         metadata.is_dir() && metadata.ino() != 0,

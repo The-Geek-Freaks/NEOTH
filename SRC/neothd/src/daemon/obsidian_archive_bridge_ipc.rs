@@ -19,6 +19,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use super::obsidian_archive_bridge_owner::{ArchiveBridgeOwner, SyncRequest};
 
 const MAX_LINE_BYTES: usize = 8 * 1024;
+#[cfg(windows)]
 const SERVICE: &str = "neoth-obsidian-bridge-v1";
 
 #[derive(Clone)]
@@ -64,21 +65,17 @@ pub(crate) struct ArchiveBridgeIpcGuard {
     #[cfg(unix)]
     socket_inode: u64,
 }
-impl ArchiveBridgeIpcGuard {
-    pub(crate) fn stop(&self) {
-        self.shutdown.stop();
-    }
-}
 impl Drop for ArchiveBridgeIpcGuard {
     fn drop(&mut self) {
         self.shutdown.stop();
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt as _;
-            if let Ok(metadata) = std::fs::symlink_metadata(&self.socket) {
-                if metadata.dev() == self.socket_device && metadata.ino() == self.socket_inode {
-                    let _ = std::fs::remove_file(&self.socket);
-                }
+            if let Ok(metadata) = std::fs::symlink_metadata(&self.socket)
+                && metadata.dev() == self.socket_device
+                && metadata.ino() == self.socket_inode
+            {
+                let _ = std::fs::remove_file(&self.socket);
             }
         }
     }
@@ -141,7 +138,7 @@ pub(crate) fn bind_and_serve(
         runtime.spawn(async move {
             let _ = completion_tx.send(run_unix(listener, owner, task_shutdown).await);
         });
-        return Ok(ArchiveBridgeIpcBinding {
+        Ok(ArchiveBridgeIpcBinding {
             guard: ArchiveBridgeIpcGuard {
                 shutdown,
                 socket,
@@ -149,7 +146,7 @@ pub(crate) fn bind_and_serve(
                 socket_inode: metadata.ino(),
             },
             completion,
-        });
+        })
     }
     #[cfg(windows)]
     {

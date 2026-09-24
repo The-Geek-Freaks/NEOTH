@@ -432,6 +432,7 @@ fn save_bridge_state(home: &Path, state: &HashMap<String, String>) -> Result<()>
 /// Its caller owns the pairing authority mutex for the full selection, insert,
 /// state write, and receipt phase; do not add an independent pairing reload
 /// here because that would split the revocation linearization point.
+#[allow(clippy::too_many_arguments)] // Each input is independently authority-bound.
 pub(crate) fn run_one_archive_bridge_note(
     configuration: &crate::connectors::ConnectorConfiguration,
     vault: &Path,

@@ -243,7 +243,7 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
     match args.action {
         ObsidianAction::Bridge { action } => {
             if let BridgeAction::Pair { vault } = &action {
-                let installed = crate::installers::obsidian_archive_bridge::status(&vault)
+                let installed = crate::installers::obsidian_archive_bridge::status(vault)
                     .map_err(anyhow::Error::msg)?;
                 anyhow::ensure!(
                     matches!(

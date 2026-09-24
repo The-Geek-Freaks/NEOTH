@@ -1,0 +1,63 @@
+{
+  "schema": "neoth-w648-obsidian020-artifact/v1",
+  "source": "ce42784ebe96fd8f03a7ab3e9b80f9369e73d643",
+  "run": 35956341651,
+  "sources": [
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/package.json",
+      "blob": "ca82080324d796b3fa56cf2d01c806b6143fa60b",
+      "sha256": "2fcf474fbe8cede9b3c005c195d7e82c02ecd6c71d31406d1452e819282eb211"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/tsconfig.json",
+      "blob": "1f7b0f4e52e247d3dd5bc78b2d0477a4869bfadd",
+      "sha256": "b2d50b9bbe2e4dd899915e763c33842140751bfcc7102571dff398c2a81c4c0d"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/manifest.json",
+      "blob": "4a2bc9086159bd4d2b26bb54522d0089042767d6",
+      "sha256": "aaba42de965a53568b9c7365a663d54e98861ecd87f750debea8047b4a867a7e"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/src/main.ts",
+      "blob": "24601f0471fe6ec210a9a87458f3e06d01b288f0",
+      "sha256": "d67c5275dce46604f24e7aed9c472589b48fd75d29e4f986576f884fa2cef366"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/test/plugin-contract.mjs",
+      "blob": "30027a488589dd2bb76c600eafabee70cbc7af50",
+      "sha256": "7b938504c844ec19e9ae0fc64dfd21d91d46c5c9039330cc4911ad7d59cd593f"
+    },
+    {
+      "path": ".github/workflows/obsidian-bridge-artifact.yml",
+      "blob": "798fa866b7bc762228af5b11fa1b0bb24c64a8f7",
+      "sha256": "49906e7fc2e530128cea0ce7d51518db3352eb6bf63336c423e76da3a8a53d80"
+    }
+  ],
+  "bundles": [
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/manifest.json",
+      "sha256": "aaba42de965a53568b9c7365a663d54e98861ecd87f750debea8047b4a867a7e"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/package-lock.json",
+      "sha256": "bca0336cfb5a60b2eb8af1a0625fdc4fd4b63fc0603340702fa7a73d3c6d999b"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/main.js",
+      "sha256": "b1dc532bc781057ba6d3a95eb2a29d559c53ffa9aed5cbeb87b0679899c9cad2"
+    }
+  ],
+  "zipHashes": {
+    "bundle": "88C180951D26DE8E5BE3C72D3E390972944D0E01E5A54C6694AD62ECBBFA0F2B",
+    "log": "0015DBAD913FF5E80A5AA49D424566D3F0E310BA611B6279C19931F6E2C406FF",
+    "source": "85D3A8DE40558069E589FBDBEE31EC9A5B60A184767769761C5B9EC38C82160B"
+  },
+  "typecheck": 0,
+  "build": 0,
+  "testsPassed": 12,
+  "testsFailed": 0,
+  "trackedBundleDrift": 1,
+  "status": "Generated candidate source-bound and tested; byte-exact import; locked replay pending",
+  "localExecutablesRan": false
+}

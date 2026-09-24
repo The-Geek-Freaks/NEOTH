@@ -1,0 +1,15 @@
+{
+  "schema": "neoth-w650-windows47-compile-failure/v1",
+  "source": "b71ebba3a9756f8b7bd30e44a86980a1187a949b",
+  "run": 35956048283,
+  "artifact": 10791020325,
+  "zipSha256": "3861B7093B800550D2A7BA488BFCABA671010A24322FB061457569641571031B",
+  "internalHashesVerified": 8,
+  "selected": 47,
+  "executed": 0,
+  "unstarted": 47,
+  "compileExit": 101,
+  "error": "Obsidian owner vault_identity uses std::fs::Metadata dev/ino unsupported onWindows",
+  "runtimeConclusion": "No Windows behavior executed; retained-DELETE twin still pending",
+  "localExecutablesRan": false
+}
