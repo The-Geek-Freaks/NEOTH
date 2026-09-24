@@ -142,6 +142,10 @@ pub mod monitor_cron;
 /// WAL-free (groundtruth insert is the durable record).  Off by default
 /// (`obsidian_vault_reader_enabled = false`).
 pub mod obsidian_vault_reader_cron;
+/// W622 — daemon-owned pairing authority for the local Obsidian Archive Bridge.
+pub(crate) mod obsidian_archive_bridge_owner;
+/// W622 — same-user IPC endpoint for an already-paired Archive Bridge plugin.
+pub(crate) mod obsidian_archive_bridge_ipc;
 /// Official OMI Developer API client: bounded paginated reads, full-detail
 /// revision digests, and idempotent transcript-segment export.
 pub mod omi_client;

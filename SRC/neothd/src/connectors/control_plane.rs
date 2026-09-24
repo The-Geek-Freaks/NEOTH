@@ -380,8 +380,11 @@ pub(crate) fn test_context_import_runtime_fixture(
     lifecycle_revision: u64,
 ) -> anyhow::Result<ContextImportRuntimeBinding> {
     anyhow::ensure!(
-        instance_id.connector_id == super::ConnectorId::LocalImport,
-        "the context-import runtime fixture supports only local_import"
+        matches!(
+            instance_id.connector_id,
+            super::ConnectorId::LocalImport | super::ConnectorId::Obsidian
+        ),
+        "the context-import runtime fixture supports only local_import and obsidian"
     );
     anyhow::ensure!(
         policy_revision != 0 && lifecycle_revision != 0,

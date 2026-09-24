@@ -4347,6 +4347,7 @@ pub(crate) async fn spawn_connector_control_rpc(
     plane: Arc<crate::connectors::control_plane::ConnectorControlPlane>,
     daemon_subject: Option<crate::connectors::SubjectId>,
     writer: &WalWriterHandle,
+    archive_bridge: Option<Arc<crate::daemon::obsidian_archive_bridge_owner::ArchiveBridgeOwner>>,
 ) -> anyhow::Result<(
     JoinHandle<anyhow::Result<()>>,
     crate::connectors::control_plane::rpc::SidecarGuard,
@@ -4358,6 +4359,7 @@ pub(crate) async fn spawn_connector_control_rpc(
         plane,
         daemon_subject,
         writer.clone(),
+        archive_bridge,
     )
     .await
     .context("bind private connector-control RPC listener")
@@ -4372,6 +4374,22 @@ pub(crate) struct LocalModelsRuntime {
     pub(crate) ipc_task: JoinHandle<anyhow::Result<()>>,
     pub(crate) ipc_guard: crate::daemon::local_models_ipc::LocalModelsIpcGuard,
     pub(crate) refresh_task: JoinHandle<()>,
+}
+
+/// W622 — a paired Archive Bridge is daemon-lifetime only.  An unpaired or
+/// disabled configuration has no listener and no discoverable endpoint.
+pub(crate) struct ArchiveBridgeRuntime {
+    pub(crate) owner: Arc<crate::daemon::obsidian_archive_bridge_owner::ArchiveBridgeOwner>,
+}
+
+pub(crate) fn spawn_obsidian_archive_bridge_runtime(
+    config: &FreedomConfig,
+    home: &std::path::Path,
+) -> anyhow::Result<Option<ArchiveBridgeRuntime>> {
+    let Some(owner) = crate::daemon::obsidian_archive_bridge_owner::ArchiveBridgeOwner::open(config, home)? else {
+        return Ok(None);
+    };
+    Ok(Some(ArchiveBridgeRuntime { owner }))
 }
 
 fn local_models_runtime_enabled(config: &FreedomConfig) -> bool {
@@ -8218,6 +8236,7 @@ pub(crate) struct BackgroundHandles {
     pub local_models_controller: Option<Arc<crate::daemon::local_models::LocalModelController>>,
     /// W185: after its guard withdrew discovery, join every accepted local-model IPC handler.
     pub local_models_ipc_task: Option<JoinHandle<anyhow::Result<()>>>,
+    pub obsidian_archive_bridge_owner: Option<Arc<crate::daemon::obsidian_archive_bridge_owner::ArchiveBridgeOwner>>,
     pub healthz_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub decay_task: Option<JoinHandle<()>>,
     pub gc_task: Option<JoinHandle<anyhow::Result<()>>>,
@@ -8348,6 +8367,7 @@ pub(crate) async fn shutdown_background_tasks(
         local_models_ipc_guard,
         local_models_controller,
         local_models_ipc_task,
+        obsidian_archive_bridge_owner,
         healthz_task,
         decay_task,
         gc_task,
@@ -8658,6 +8678,11 @@ pub(crate) async fn shutdown_background_tasks(
     if let Some(controller) = local_models_controller {
         controller.shutdown().await;
     }
+    if let Some(owner) = obsidian_archive_bridge_owner.as_ref() {
+        let owner = Arc::clone(owner);
+        let _ = tokio::task::spawn_blocking(move || owner.shutdown()).await;
+    }
+    drop(obsidian_archive_bridge_owner);
     // Abort the independent /healthz listener; it never writes WAL.
     crate::cli::serve_tasks::abort_optional(healthz_task).await;
 

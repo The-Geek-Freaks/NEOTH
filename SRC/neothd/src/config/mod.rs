@@ -1483,6 +1483,11 @@ pub struct FreedomConfig {
     /// Field unused when `obsidian_vault_reader_enabled = false`.
     #[serde(default)]
     pub obsidian_vault_reader_secs: Option<u64>,
+    /// W622 — explicit opt-in for the daemon-owned Obsidian Archive Bridge.
+    /// Pairing alone never enables plugin-originated sync; both this flag and
+    /// the existing vault-reader gate must be true.
+    #[serde(default)]
+    pub obsidian_archive_bridge_enabled: bool,
     /// GOLD-ADAPT-VAULT-PRELOAD-01 — optional curated vault-template directory
     /// copied by `neoth obsidian preload --template`. The importer reads the
     /// template's `preload_manifest.yaml` and keeps raw/restricted corpora out

@@ -77,7 +77,9 @@ jobs:
             printf '%s\n' 'main.js is an initial hosted candidate, not yet a tracked artifact' > "$W558_RECEIPT_DIR/log/05-tracked-bundle-drift.log"
             printf '%s\n' 0 > "$W558_RECEIPT_DIR/receipt/05-tracked-bundle-drift.exit-code"
           fi
-          if [ "$status" -eq 0 ]; then
+          # A rebuilt candidate is still testable when the committed bundle differs.
+          # Keep drift failure in overall status; record behavior before import.
+          if [ "${build_status:-125}" -eq 0 ]; then
             npm test >"$W558_RECEIPT_DIR/log/06-test.log" 2>&1
             test_status=$?
             printf '%s\n' "$test_status" > "$W558_RECEIPT_DIR/receipt/06-test.exit-code"

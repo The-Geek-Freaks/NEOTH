@@ -74,6 +74,17 @@ pub(crate) async fn run_at(home: &std::path::Path, args: ContextArgs) -> Result<
 
 pub(crate) async fn request_at(home: &std::path::Path, args: &ContextArgs) -> Result<String> {
     let (route, body) = request_route_and_body(args)?;
+    request_route_at(home, route, &body).await
+}
+
+/// Shared authenticated Connector-Control client for daemon-owned adjunct
+/// controllers.  Callers supply only a fixed local route and bounded JSON;
+/// endpoint discovery and its bearer token stay in this module.
+pub(crate) async fn request_route_at(
+    home: &std::path::Path,
+    route: &str,
+    body: &[u8],
+) -> Result<String> {
     #[cfg(windows)]
     {
         let audit_nonce = crate::daemon::audit_rpc::verified_daemon_endpoint_nonce(home)?;
@@ -104,7 +115,7 @@ pub(crate) async fn request_at(home: &std::path::Path, args: &ContextArgs) -> Re
     }
     #[cfg(not(any(unix, windows)))]
     {
-        let _ = (home, route, body, args.output);
+        let _ = (home, route, body);
         anyhow::bail!("context import client is currently available only on Unix/macOS and Windows")
     }
 }
@@ -324,6 +335,7 @@ mod windows_tests {
             active_plane(),
             Some(SubjectId::new("operator").unwrap()),
             writer.clone(),
+            None,
         )
         .await
         .unwrap();
@@ -621,6 +633,7 @@ mod unix_tests {
             active_plane(),
             Some(SubjectId::new("operator").unwrap()),
             writer.clone(),
+            None,
         )
         .await
         .unwrap();

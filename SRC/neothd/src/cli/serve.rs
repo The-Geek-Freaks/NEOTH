@@ -627,6 +627,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         None => (None, None, None, None),
     };
     let local_models_ipc_required = local_models_ipc_task.is_some();
+    // W622: pairing is explicit and default-off.  The owner reuses the daemon
+    // lifecycle; no bridge listener exists until a paired generation is present.
+    let obsidian_archive_bridge_runtime =
+        crate::cli::serve_tasks::spawn_obsidian_archive_bridge_runtime(&config, &neoth_home)?;
+    let obsidian_archive_bridge_owner = obsidian_archive_bridge_runtime.map(|runtime| runtime.owner);
     #[cfg(any(unix, windows))]
     let connector_control_replay_enabled = config.context_connectors.enabled
         && config
@@ -648,8 +653,20 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let connector_control_subject =
         crate::connectors::control_plane::rpc::daemon_subject_from_operator_id(
             config.operator_id.as_deref(),
-            connector_control_replay_enabled,
+            connector_control_replay_enabled || obsidian_archive_bridge_owner.is_some(),
         )?;
+    #[cfg(any(unix, windows))]
+    crate::connectors::control_plane::rpc::attach_archive_bridge_runtime(
+        obsidian_archive_bridge_owner.as_ref(),
+        &connector_control_plane,
+        connector_control_subject.clone(),
+    )
+    .context("attach sealed connector-control runtime to Obsidian Archive Bridge")?;
+    #[cfg(any(unix, windows))]
+    if let Some(owner) = obsidian_archive_bridge_owner.as_ref() {
+        owner.start_if_paired()
+            .context("bind existing private Obsidian Archive Bridge IPC")?;
+    }
     #[cfg(any(unix, windows))]
     if connector_control_replay_enabled {
         let replayed = crate::cli::serve_tasks::replay_connector_control_receipts_at_startup(
@@ -676,6 +693,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             Arc::clone(&connector_control_plane),
             connector_control_subject,
             &writer,
+            obsidian_archive_bridge_owner.clone(),
         )
         .await
         .context("start private connector-control RPC")?;
@@ -2960,6 +2978,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         local_models_ipc_guard,
         local_models_controller,
         local_models_ipc_task,
+        obsidian_archive_bridge_owner,
         healthz_task,
         decay_task,
         gc_task,

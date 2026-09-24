@@ -3,6 +3,24 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W638 Obsidian0.2 pairing and exact-revision source batch (2026-09-24):**
+Pair/unpair/pairing-status now use authenticated resident Connector-Control;
+the plugin receives only its scoped pairing payload. Pair and sync retain the
+actual CC operation lease. Unpair durably revokes before listener withdrawal
+and drain, and remains available after policy pause. Unix crash recovery checks
+the daemon PID lock, owned socket identity and bounded refusal probe.
+The capability planner binds the paired physical vault and selects the exact
+plugin HMAC descriptor from NFC paths/raw note bytes. Sanitized selected ingest
+and its source/revision ledger share one SQLite transaction, preventing replay
+from becoming extra corroboration. The plugin preserves bounded opaque queues,
+newer revisions, re-pair/unload epochs, settings and explicit offline retry.
+Authentic0.1.0/0.1.1 predecessors remain supported; two real0.1.1 update/recovery
+tests preserve notes/settings.13 new native cases bring universal1260,
+Linux47/macOS46 extras and Group990. Independent reviews and Root corrections
+are recorded; plugin bundle generation, native compile and behavior remain
+pending. The artifact job records candidate tests even on expected bundle drift
+while retaining the drift failure. No Road closure or local executable run.
+
 **W636 complete grouped recall regression pass (2026-09-24):**
 Group977 run35952811727 at258c0653 is independently admitted977PASS/0FAIL/
 0missing with191 source/input bindings. All six new operator-anchor and actual

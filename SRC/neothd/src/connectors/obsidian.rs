@@ -30,11 +30,33 @@ use super::{
     ResourceLimits, admit_entry_point,
 };
 
+/// Return the one active, accountless Obsidian context-source configuration.
+/// Runtime owners use this narrow selector instead of accepting a caller-made
+/// configuration or treating a friendly vault path as connector authority.
+#[allow(dead_code)]
+pub(crate) fn active_archive_bridge_configuration(
+    control: &super::control_state::ConnectorControlConfig,
+) -> Result<ConnectorConfiguration, ObsidianPlanError> {
+    if !control.enabled {
+        return Err(ObsidianPlanError::AdmissionDenied);
+    }
+    let instance = super::ConnectorInstanceId::accountless(ConnectorId::Obsidian);
+    let account = control.account(&instance).ok_or(ObsidianPlanError::AdmissionDenied)?;
+    if !account.lifecycle.admits_context_import() {
+        return Err(ObsidianPlanError::AuthorityNoLongerLive);
+    }
+    admit_obsidian_configuration(&account.configuration)?;
+    Ok(account.configuration.clone())
+}
+
 type HmacSha256 = Hmac<Sha256>;
 
 const VAULT_ID_DOMAIN: &[u8] = b"neoth/cc04/obsidian/vault-id/v1\0";
 const SOURCE_ID_DOMAIN: &[u8] = b"neoth/cc04/obsidian/source-id/v1\0";
 const REVISION_DOMAIN: &[u8] = b"neoth/cc04/obsidian/revision/v1\0";
+const ARCHIVE_BRIDGE_SOURCE_DOMAIN: &[u8] = b"neoth/obsidian-archive-bridge/source/v1\0";
+const ARCHIVE_BRIDGE_REVISION_DOMAIN: &[u8] = b"neoth/obsidian-archive-bridge/revision/v1\0";
+const ARCHIVE_BRIDGE_ROOT_BINDING_DOMAIN: &[u8] = b"neoth/cc04/obsidian/archive-bridge-root/v1\0";
 
 const ABSOLUTE_MAX_ENTRIES: usize = 32_768;
 const ABSOLUTE_MAX_FILES: usize = 8_192;
@@ -199,6 +221,28 @@ pub(crate) struct ObsidianVaultId([u8; 32]);
 impl ObsidianVaultId {
     pub(crate) fn encoded(self) -> String {
         format!("obsidian:vault:hmac-sha256:{}", hex::encode(self.0))
+    }
+}
+
+/// Opaque persisted binding for the physical root selected by the pairing
+/// transaction. It never contains a pathname, device, or inode in plaintext.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ArchiveBridgeVaultBinding([u8; 32]);
+
+impl ArchiveBridgeVaultBinding {
+    pub(crate) fn encoded(self) -> String {
+        format!("obsidian:archive-bridge-root:hmac-sha256:{}", hex::encode(self.0))
+    }
+
+    pub(crate) fn parse(value: &str) -> Result<Self, ObsidianPlanError> {
+        let encoded = value
+            .strip_prefix("obsidian:archive-bridge-root:hmac-sha256:")
+            .ok_or(ObsidianPlanError::InvalidArchiveBridgeVaultBinding)?;
+        let bytes = hex::decode(encoded).map_err(|_| ObsidianPlanError::InvalidArchiveBridgeVaultBinding)?;
+        let binding: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| ObsidianPlanError::InvalidArchiveBridgeVaultBinding)?;
+        Ok(Self(binding))
     }
 }
 
@@ -494,19 +538,132 @@ pub(crate) fn plan_import(
     vault: ApprovedObsidianVault,
     limits: ObsidianImportLimits,
 ) -> Result<ObsidianImportPlan, ObsidianPlanError> {
+    plan_import_with_managed_source(&vault, limits, None)
+}
+
+/// Select one Archive Bridge note through the same capability planner used for
+/// ordinary Obsidian imports.  The caller supplies only policy-bound inputs;
+/// this function neither accepts a relative path nor exposes a root handle.
+///
+/// The callback is deliberately synchronous.  The daemon controller calls it
+/// while holding its pairing authority mutex, so selection, sanitization, DB
+/// commit, reader-state persistence, and the pairing receipt have one
+/// linearization boundary.
+pub(crate) fn with_selected_archive_bridge_draft<T>(
+    configuration: &ConnectorConfiguration,
+    selected_root: PathBuf,
+    stable_policy_vault_id: impl Into<String>,
+    identity_key: [u8; 32],
+    expected_root_binding: ArchiveBridgeVaultBinding,
+    pairing_secret: &str,
+    expected_source_id: &str,
+    expected_revision: &str,
+    consume: impl FnOnce(&ObsidianImportDraft) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let authority = ObsidianPolicyAuthority::for_admitted_configuration(configuration)?;
+    let grant = authority.issue_root_grant(
+        configuration,
+        selected_root,
+        stable_policy_vault_id,
+        identity_key,
+    )?;
+    let vault = ApprovedObsidianVault::issue(configuration, grant)?;
+    ensure_archive_bridge_root_binding(&vault, expected_root_binding)?;
+    let plan = plan_import_with_archive_bridge_descriptor(
+        &vault,
+        ObsidianImportLimits::default(),
+        ArchiveBridgeDescriptor {
+            pairing_secret,
+            expected_source_id,
+            expected_revision,
+        },
+    )?;
+    let mut matches = plan.into_drafts().into_iter();
+    let selected = matches
+        .next()
+        .ok_or(ObsidianPlanError::SelectedDraftNotCurrent)?;
+    if matches.next().is_some() {
+        return Err(ObsidianPlanError::SelectedDraftAmbiguous);
+    }
+    ensure_vault_unchanged(&vault)?;
+    ensure_archive_bridge_root_binding(&vault, expected_root_binding)?;
+    let outcome = consume(&selected)?;
+    ensure_vault_unchanged(&vault)?;
+    ensure_archive_bridge_root_binding(&vault, expected_root_binding)?;
+    Ok(outcome)
+}
+
+/// Pairing calls this before it writes its record. Sync later feeds the exact
+/// returned opaque value back into [`with_selected_archive_bridge_draft`].
+pub(crate) fn archive_bridge_vault_binding(
+    configuration: &ConnectorConfiguration,
+    selected_root: PathBuf,
+    stable_policy_vault_id: impl Into<String>,
+    identity_key: [u8; 32],
+) -> Result<ArchiveBridgeVaultBinding, ObsidianPlanError> {
+    let authority = ObsidianPolicyAuthority::for_admitted_configuration(configuration)?;
+    let grant = authority.issue_root_grant(
+        configuration,
+        selected_root,
+        stable_policy_vault_id,
+        identity_key,
+    )?;
+    let vault = ApprovedObsidianVault::issue(configuration, grant)?;
+    ensure_vault_unchanged(&vault)?;
+    Ok(archive_bridge_root_binding(&vault))
+}
+
+fn ensure_archive_bridge_root_binding(
+    vault: &ApprovedObsidianVault,
+    expected: ArchiveBridgeVaultBinding,
+) -> Result<(), ObsidianPlanError> {
+    if archive_bridge_root_binding(vault) != expected {
+        return Err(ObsidianPlanError::ArchiveBridgeRootChanged);
+    }
+    Ok(())
+}
+
+fn archive_bridge_root_binding(vault: &ApprovedObsidianVault) -> ArchiveBridgeVaultBinding {
+    let device = vault.root_identity.device.to_le_bytes();
+    let inode = vault.root_identity.inode.to_le_bytes();
+    let kind = [match vault.root_identity.kind {
+        PhysicalKind::Directory => 1,
+        PhysicalKind::File => 2,
+    }];
+    ArchiveBridgeVaultBinding(domain_hmac(
+        &vault.identity_key[..],
+        ARCHIVE_BRIDGE_ROOT_BINDING_DOMAIN,
+        &[vault.vault_id.0.as_slice(), &device, &inode, &kind],
+    ))
+}
+
+fn plan_import_with_managed_source(
+    vault: &ApprovedObsidianVault,
+    limits: ObsidianImportLimits,
+    accepted_managed_source: Option<&'static str>,
+) -> Result<ObsidianImportPlan, ObsidianPlanError> {
+    plan_import_with_selector(vault, limits, accepted_managed_source, None)
+}
+
+fn plan_import_with_archive_bridge_descriptor(
+    vault: &ApprovedObsidianVault,
+    limits: ObsidianImportLimits,
+    descriptor: ArchiveBridgeDescriptor<'_>,
+) -> Result<ObsidianImportPlan, ObsidianPlanError> {
+    plan_import_with_selector(vault, limits, Some("neoth-archive-bridge"), Some(descriptor))
+}
+
+fn plan_import_with_selector(
+    vault: &ApprovedObsidianVault,
+    limits: ObsidianImportLimits,
+    accepted_managed_source: Option<&'static str>,
+    archive_bridge_descriptor: Option<ArchiveBridgeDescriptor<'_>>,
+) -> Result<ObsidianImportPlan, ObsidianPlanError> {
     // This precedes every retained capability operation. A queued vault must
     // not touch the filesystem after its authority is revoked, superseded, or
     // dropped by the control plane.
-    vault.ensure_live_authority()?;
+    ensure_vault_unchanged(vault)?;
     limits.validate(vault.policy_limits)?;
-    validate_namespace_fences(&vault.namespace_fences)?;
-    let current_root = physical_identity(
-        &vault.root.dir_metadata().map_err(map_io)?,
-        PhysicalKind::Directory,
-    )?;
-    if current_root != vault.root_identity {
-        return Err(ObsidianPlanError::ChangedDuringPlanning);
-    }
 
     let mut state = PlannerState {
         limits,
@@ -522,17 +679,12 @@ pub(crate) fn plan_import(
         normalized_source_bytes: 0,
         retained_draft_bytes: 0,
         drafts: Vec::new(),
+        accepted_managed_source,
+        archive_bridge_descriptor,
     };
     walk_directory(&vault.root, 0, &mut Vec::new(), &mut state)?;
 
-    validate_namespace_fences(&vault.namespace_fences)?;
-    let final_root = physical_identity(
-        &vault.root.dir_metadata().map_err(map_io)?,
-        PhysicalKind::Directory,
-    )?;
-    if final_root != vault.root_identity {
-        return Err(ObsidianPlanError::ChangedDuringPlanning);
-    }
+    ensure_vault_unchanged(vault)?;
 
     Ok(ObsidianImportPlan {
         status: ObsidianPlanStatus {
@@ -546,6 +698,19 @@ pub(crate) fn plan_import(
         },
         drafts: state.drafts,
     })
+}
+
+fn ensure_vault_unchanged(vault: &ApprovedObsidianVault) -> Result<(), ObsidianPlanError> {
+    vault.ensure_live_authority()?;
+    validate_namespace_fences(&vault.namespace_fences)?;
+    let current_root = physical_identity(
+        &vault.root.dir_metadata().map_err(map_io)?,
+        PhysicalKind::Directory,
+    )?;
+    if current_root != vault.root_identity {
+        return Err(ObsidianPlanError::ChangedDuringPlanning);
+    }
+    Ok(())
 }
 
 struct PlannerState<'a> {
@@ -562,6 +727,15 @@ struct PlannerState<'a> {
     normalized_source_bytes: usize,
     retained_draft_bytes: usize,
     drafts: Vec<ObsidianImportDraft>,
+    accepted_managed_source: Option<&'static str>,
+    archive_bridge_descriptor: Option<ArchiveBridgeDescriptor<'a>>,
+}
+
+#[derive(Clone, Copy)]
+struct ArchiveBridgeDescriptor<'a> {
+    pairing_secret: &'a str,
+    expected_source_id: &'a str,
+    expected_revision: &'a str,
 }
 
 struct ScannedEntry {
@@ -685,6 +859,11 @@ fn walk_directory(
             return Err(ObsidianPlanError::DirectoryCycleOrAmbiguity);
         }
 
+        if state.accepted_managed_source.is_some()
+            && relative_components.first().map(String::as_str) != Some("NEOTH-sessions")
+        {
+            continue;
+        }
         relative_components.push(entry.normalized_name);
         let relative_path = relative_components.join("/");
         let source_id = source_id(state.identity_key, state.vault_id, relative_path.as_bytes());
@@ -711,6 +890,22 @@ fn walk_directory(
             return Err(ObsidianPlanError::LimitExceeded(ObsidianLimit::TotalBytes));
         }
 
+        if let Some(descriptor) = state.archive_bridge_descriptor {
+            let protocol_source_id = archive_bridge_source_id(descriptor.pairing_secret, &relative_path);
+            let raw_note = std::str::from_utf8(&source.bytes)
+                .map_err(|_| ObsidianPlanError::InvalidUtf8)?;
+            let protocol_revision = archive_bridge_revision(
+                descriptor.pairing_secret,
+                &protocol_source_id,
+                raw_note,
+            );
+            if protocol_source_id != descriptor.expected_source_id
+                || protocol_revision != descriptor.expected_revision
+            {
+                continue;
+            }
+        }
+
         let normalized = normalize_markdown(&source.bytes, state.limits.max_normalized_file_bytes)?;
         state.normalized_source_bytes = state
             .normalized_source_bytes
@@ -724,8 +919,10 @@ fn walk_directory(
             ));
         }
         let frontmatter = parse_frontmatter(&normalized)?;
-        if frontmatter.managed {
-            continue;
+        match state.accepted_managed_source {
+            None if frontmatter.managed => continue,
+            Some(expected) if frontmatter.source.as_deref() != Some(expected) => continue,
+            _ => {}
         }
         let body = &normalized[frontmatter.body_start..];
         if body.trim().is_empty() {
@@ -1208,6 +1405,7 @@ fn normalize_markdown(bytes: &[u8], max_bytes: usize) -> Result<String, Obsidian
 struct ParsedFrontmatter {
     body_start: usize,
     managed: bool,
+    source: Option<String>,
 }
 
 fn parse_frontmatter(text: &str) -> Result<ParsedFrontmatter, ObsidianPlanError> {
@@ -1218,6 +1416,7 @@ fn parse_frontmatter(text: &str) -> Result<ParsedFrontmatter, ObsidianPlanError>
         return Ok(ParsedFrontmatter {
             body_start: 0,
             managed: false,
+            source: None,
         });
     }
     let mut offset = 4usize;
@@ -1238,21 +1437,22 @@ fn parse_frontmatter(text: &str) -> Result<ParsedFrontmatter, ObsidianPlanError>
         .ok_or(ObsidianPlanError::MalformedFrontmatter)?;
     let yaml: YamlValue = serde_yaml::from_str(&text[4..closing_start])
         .map_err(|_| ObsidianPlanError::MalformedFrontmatter)?;
-    let managed = match yaml {
-        YamlValue::Null => false,
+    let source = match yaml {
+        YamlValue::Null => None,
         YamlValue::Mapping(mapping) => match mapping.get(YamlValue::String("source".to_owned())) {
-            None => false,
-            Some(YamlValue::String(source)) => {
-                let source = source.trim().to_ascii_lowercase();
-                source.starts_with("neoth-") || source.starts_with("openclaw-")
-            }
+            None => None,
+            Some(YamlValue::String(source)) => Some(source.trim().to_ascii_lowercase()),
             Some(_) => return Err(ObsidianPlanError::MalformedFrontmatter),
         },
         _ => return Err(ObsidianPlanError::MalformedFrontmatter),
     };
+    let managed = source
+        .as_deref()
+        .is_some_and(|source| source.starts_with("neoth-") || source.starts_with("openclaw-"));
     Ok(ParsedFrontmatter {
         body_start,
         managed,
+        source,
     })
 }
 
@@ -1263,6 +1463,36 @@ fn source_id(key: &[u8], vault_id: ObsidianVaultId, relative_path: &[u8]) -> Str
         &[vault_id.0.as_slice(), relative_path],
     );
     format!("obsidian:source:hmac-sha256:{}", hex::encode(digest))
+}
+
+fn archive_bridge_source_id(pairing_secret: &str, normalized_relative_path: &str) -> String {
+    let digest = archive_bridge_hmac(
+        pairing_secret.as_bytes(),
+        ARCHIVE_BRIDGE_SOURCE_DOMAIN,
+        &[normalized_relative_path.as_bytes()],
+    );
+    format!("obsidian:source:hmac-sha256:{}", hex::encode(digest))
+}
+
+fn archive_bridge_revision(pairing_secret: &str, source_id: &str, raw_note: &str) -> String {
+    let digest = archive_bridge_hmac(
+        pairing_secret.as_bytes(),
+        ARCHIVE_BRIDGE_REVISION_DOMAIN,
+        &[source_id.as_bytes(), b"\0", raw_note.as_bytes()],
+    );
+    format!("hmac-sha256:{}", hex::encode(digest))
+}
+
+/// The pinned TypeScript plugin signs a UTF-8 concatenation, rather than the
+/// length-delimited CC04 field framing. Keep this separate from `domain_hmac`:
+/// these descriptor bytes are a cross-language wire contract.
+fn archive_bridge_hmac(key: &[u8], domain: &[u8], fields: &[&[u8]]) -> [u8; 32] {
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC-SHA256 accepts every key length");
+    mac.update(domain);
+    for field in fields {
+        mac.update(field);
+    }
+    mac.finalize().into_bytes().into()
 }
 
 fn domain_hmac(key: &[u8], domain: &[u8], fields: &[&[u8]]) -> [u8; 32] {
@@ -1404,6 +1634,14 @@ pub(crate) enum ObsidianPlanError {
     MalformedFrontmatter,
     #[error("a source or ancestor changed while the plan was being built")]
     ChangedDuringPlanning,
+    #[error("the requested Archive Bridge source revision is not current in the approved vault")]
+    SelectedDraftNotCurrent,
+    #[error("the requested Archive Bridge source revision resolved ambiguously")]
+    SelectedDraftAmbiguous,
+    #[error("the persisted Archive Bridge root binding is malformed")]
+    InvalidArchiveBridgeVaultBinding,
+    #[error("the paired Archive Bridge vault root changed")]
+    ArchiveBridgeRootChanged,
     #[error("a planning resource limit was exceeded: {0:?}")]
     LimitExceeded(ObsidianLimit),
     #[error("filesystem access failed ({0:?})")]
@@ -1717,6 +1955,100 @@ mod tests {
             second.drafts()[0].source_revision_hmac_sha256()
         );
         assert_eq!(second.drafts()[0].body(), "second\n");
+    }
+
+    #[test]
+    fn archive_bridge_selects_only_the_exact_planned_neoth_sessions_revision() {
+        let root = test_tempdir();
+        let sessions = root.path().join("NEOTH-sessions");
+        std::fs::create_dir(&sessions).unwrap();
+        std::fs::write(
+            sessions.join("emoji-é.md"),
+            "---\r\nsource: neoth-archive-bridge\r\n---\r\nRaw café\r\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.path().join("outside.md"),
+            "---\nsource: neoth-archive-bridge\n---\noutside bridge body\n",
+        )
+        .unwrap();
+
+        // Fixed plugin-compatible HMAC-SHA256 vector. The path is NFC and the
+        // revision uses the raw CRLF note text, exactly as the TypeScript
+        // plugin's `descriptorFor` does; it is intentionally not derived from
+        // this Rust planner.
+        let protocol_source_id = "obsidian:source:hmac-sha256:ec978485727c39cbe54a22dc64cfb0cbccc6e6921bf2d82eeea731585fe83654";
+        let protocol_revision = "hmac-sha256:dd5c7eda320b4131f69a2e5c7ab238fa57f61b22a768484a851dffdecf52d8f4";
+        let root_binding = archive_bridge_vault_binding(
+            &configuration(),
+            root.path().to_path_buf(),
+            "primary-vault",
+            TEST_KEY,
+        )
+        .unwrap();
+        let selected = with_selected_archive_bridge_draft(
+            &configuration(),
+            root.path().to_path_buf(),
+            "primary-vault",
+            TEST_KEY,
+            root_binding,
+            "fixed-test-pairing-secret",
+            protocol_source_id,
+            protocol_revision,
+            |draft| Ok(draft.body().to_owned()),
+        )
+        .unwrap();
+        assert_eq!(selected, "Raw café\n");
+    }
+
+    #[test]
+    fn archive_bridge_rejects_a_stale_exact_revision_without_exposing_a_draft() {
+        let root = test_tempdir();
+        let sessions = root.path().join("NEOTH-sessions");
+        std::fs::create_dir(&sessions).unwrap();
+        std::fs::write(
+            sessions.join("selected.md"),
+            "---\nsource: neoth-archive-bridge\n---\nfirst body\n",
+        )
+        .unwrap();
+        let source_id = archive_bridge_source_id(
+            "fixed-test-pairing-secret",
+            "NEOTH-sessions/selected.md",
+        );
+        let stale_revision = archive_bridge_revision(
+            "fixed-test-pairing-secret",
+            &source_id,
+            "---\nsource: neoth-archive-bridge\n---\nfirst body\n",
+        );
+        std::fs::write(
+            sessions.join("selected.md"),
+            "---\nsource: neoth-archive-bridge\n---\nsecond body\n",
+        )
+        .unwrap();
+        let root_binding = archive_bridge_vault_binding(
+            &configuration(),
+            root.path().to_path_buf(),
+            "primary-vault",
+            TEST_KEY,
+        )
+        .unwrap();
+
+        let error = with_selected_archive_bridge_draft(
+            &configuration(),
+            root.path().to_path_buf(),
+                "primary-vault",
+                TEST_KEY,
+                root_binding,
+                "fixed-test-pairing-secret",
+            &source_id,
+            &stale_revision,
+            |draft| Ok(draft.body().to_owned()),
+        )
+        .expect_err("a stale plugin revision must not expose a planned draft");
+        assert_eq!(
+            error.downcast_ref::<ObsidianPlanError>(),
+            Some(&ObsidianPlanError::SelectedDraftNotCurrent)
+        );
     }
 
     #[test]

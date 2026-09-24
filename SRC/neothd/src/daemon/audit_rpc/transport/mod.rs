@@ -48,6 +48,13 @@ impl<T> AuditIo for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
 
 pub(crate) type AuditStream = Box<dyn AuditIo>;
 
+/// Bounded Unix-domain reachability probe reused by private daemon endpoints.
+/// It never treats an ambiguous connect error as a stale listener.
+#[cfg(unix)]
+pub(crate) fn probe_unix_socket_refused(path: &Path, timeout: Duration) -> Result<bool> {
+    unix::probe_refused_with_deadline(path, std::time::Instant::now() + timeout)
+}
+
 /// Platform listener.  Its `accept` method authenticates the OS peer before it
 /// yields the stream, so callers can acquire connection semaphores afterwards.
 pub(crate) struct AuditListener {

@@ -34,7 +34,7 @@ pub(crate) mod local_import;
 // authenticated same-user control RPC, including bounded startup receipt
 // recovery; Windows remains unavailable pending the SID-pipe/VFS Road slice.
 #[allow(dead_code)]
-mod obsidian;
+pub(crate) mod obsidian;
 #[allow(dead_code)]
 pub(crate) mod runtime_local_import;
 

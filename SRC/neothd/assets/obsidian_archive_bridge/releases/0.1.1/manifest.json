@@ -1,0 +1,9 @@
+{
+  "id": "neoth-archive-bridge",
+  "name": "NEOTH Archive Bridge",
+  "version": "0.1.1",
+  "minAppVersion": "1.5.0",
+  "description": "Read-only NEOTH archive-note inspector. Pairing and sync are disabled until a native NEOTH owner is available.",
+  "author": "NEOTH",
+  "isDesktopOnly": false
+}

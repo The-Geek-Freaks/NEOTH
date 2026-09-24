@@ -258,6 +258,7 @@ struct RpcState {
     home: PathBuf,
     config_path: PathBuf,
     writer: WalWriterHandle,
+    archive_bridge: Option<Arc<crate::daemon::obsidian_archive_bridge_owner::ArchiveBridgeOwner>>,
     plans: Mutex<PlanRegistry>,
 }
 
@@ -300,6 +301,27 @@ struct LifecycleRequest {
     lifecycle_revision: u64,
 }
 
+#[cfg(any(unix, windows))]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ArchiveBridgeVaultRequest { vault: String }
+
+/// Attach the one daemon-owned Obsidian runtime while this module still owns
+/// the sealed daemon session constructor.  Request data cannot mint, select,
+/// or substitute this capability.
+#[cfg(any(unix, windows))]
+pub(crate) fn attach_archive_bridge_runtime(
+    owner: Option<&Arc<crate::daemon::obsidian_archive_bridge_owner::ArchiveBridgeOwner>>,
+    plane: &Arc<ConnectorControlPlane>,
+    daemon_subject: Option<SubjectId>,
+) -> Result<()> {
+    let Some(owner) = owner else { return Ok(()); };
+    let subject = daemon_subject.context("Archive Bridge requires a configured connector-control daemon subject")?;
+    let instance = ConnectorInstanceId::accountless(ConnectorId::Obsidian);
+    let authority = plane.authorize_context_import(&daemon_authenticated_session(subject), &instance)?;
+    owner.attach_context_import_runtime(authority.acquire_context_import_runtime()?)
+}
+
 /// Start the private control endpoint. `audit_pid_nonce` has already been
 /// committed to the held daemon PID lock; the connector nonce is a
 /// domain-separated digest of it, so discovery cannot substitute audit's
@@ -312,6 +334,7 @@ pub(crate) async fn bind_and_serve(
     plane: Arc<ConnectorControlPlane>,
     daemon_subject: Option<SubjectId>,
     writer: WalWriterHandle,
+    archive_bridge: Option<Arc<crate::daemon::obsidian_archive_bridge_owner::ArchiveBridgeOwner>>,
 ) -> Result<(JoinHandle<Result<()>>, SidecarGuard)> {
     validate_nonce(audit_pid_nonce)?;
     let endpoint_nonce = connector_nonce(audit_pid_nonce);
@@ -350,6 +373,7 @@ pub(crate) async fn bind_and_serve(
         home: home.to_path_buf(),
         config_path: config_path.to_path_buf(),
         writer,
+        archive_bridge,
         plans: Mutex::new(PlanRegistry {
             planning: BTreeMap::new(),
             pending: BTreeMap::new(),
@@ -398,6 +422,7 @@ pub(crate) async fn bind_and_serve(
     plane: Arc<ConnectorControlPlane>,
     daemon_subject: Option<SubjectId>,
     writer: WalWriterHandle,
+    archive_bridge: Option<Arc<crate::daemon::obsidian_archive_bridge_owner::ArchiveBridgeOwner>>,
 ) -> Result<(JoinHandle<Result<()>>, SidecarGuard)> {
     validate_nonce(audit_pid_nonce)?;
     let endpoint_nonce = connector_nonce(audit_pid_nonce);
@@ -424,6 +449,7 @@ pub(crate) async fn bind_and_serve(
         home: home.to_path_buf(),
         config_path: config_path.to_path_buf(),
         writer,
+        archive_bridge,
         plans: Mutex::new(PlanRegistry {
             planning: BTreeMap::new(),
             pending: BTreeMap::new(),
@@ -458,6 +484,7 @@ pub(crate) async fn bind_and_serve(
     _: Arc<ConnectorControlPlane>,
     _: Option<SubjectId>,
     _: WalWriterHandle,
+    _: Option<Arc<crate::daemon::obsidian_archive_bridge_owner::ArchiveBridgeOwner>>,
 ) -> Result<(JoinHandle<Result<()>>, SidecarGuard)> {
     bail!("connector-control RPC is unavailable on this platform; no TCP fallback exists")
 }
@@ -2024,6 +2051,9 @@ where
                 | "/cc/local-import/apply"
                 | "/cc/local-import/pause"
                 | "/cc/local-import/resume"
+                | "/cc/obsidian-archive-bridge/pair"
+                | "/cc/obsidian-archive-bridge/unpair"
+                | "/cc/obsidian-archive-bridge/status"
         )
     {
         write_response(&mut stream, 404, "not_found", None).await?;
@@ -2253,6 +2283,22 @@ fn process_route(
             let outcome = transition_lifecycle(state, request, ConnectorLifecycle::Active)
                 .map_err(|_| "local_import_lifecycle_failed")?;
             Ok(Some(outcome))
+        }
+        "/cc/obsidian-archive-bridge/pair" => {
+            let request: ArchiveBridgeVaultRequest = serde_json::from_slice(body).map_err(|_| "invalid_obsidian_bridge_request")?;
+            let owner = state.archive_bridge.as_ref().ok_or("obsidian_bridge_unavailable")?;
+            owner.matches_vault(Path::new(&request.vault)).map_err(|_| "obsidian_bridge_vault_mismatch")?;
+            serde_json::to_string(&owner.pair().map_err(|_| "obsidian_bridge_pair_failed")?).map(Some).map_err(|_| "response_encode_failed")
+        }
+        "/cc/obsidian-archive-bridge/unpair" => {
+            let request: ArchiveBridgeVaultRequest = serde_json::from_slice(body).map_err(|_| "invalid_obsidian_bridge_request")?;
+            let owner = state.archive_bridge.as_ref().ok_or("obsidian_bridge_unavailable")?;
+            owner.matches_vault(Path::new(&request.vault)).map_err(|_| "obsidian_bridge_vault_mismatch")?;
+            serde_json::to_string(&owner.unpair().map_err(|_| "obsidian_bridge_unpair_failed")?).map(Some).map_err(|_| "response_encode_failed")
+        }
+        "/cc/obsidian-archive-bridge/status" if body.is_empty() => {
+            let owner = state.archive_bridge.as_ref().ok_or("obsidian_bridge_unavailable")?;
+            serde_json::to_string(&owner.status()).map(Some).map_err(|_| "response_encode_failed")
         }
         _ => Err("not_found"),
     }

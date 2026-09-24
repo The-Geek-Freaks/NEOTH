@@ -395,6 +395,18 @@ fn connect_std_with_deadline(path: &Path, deadline: Instant) -> Result<StdUnixSt
     Ok(stream)
 }
 
+/// Bounded same-user local socket reachability probe for daemon-owned private
+/// endpoints. `false` is returned only for a refused connection; every other
+/// connect/poll/SO_ERROR failure remains an error for the caller to fail closed.
+pub(super) fn probe_refused_with_deadline(path: &Path, deadline: Instant) -> Result<bool> {
+    match connect_std_with_deadline(path, deadline) {
+        Ok(_) => Ok(true),
+        Err(error) if error.downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::ConnectionRefused) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 fn set_fd_flag(
     fd: RawFd,
     get_command: libc::c_int,

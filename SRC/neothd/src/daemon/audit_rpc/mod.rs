@@ -107,6 +107,8 @@ pub use token::{init_rpc_token, read_rpc_token, rpc_token_path};
 #[cfg(test)]
 pub(crate) use transport::AuditEndpointV2;
 pub(crate) use transport::AuditStream;
+#[cfg(unix)]
+pub(crate) use transport::probe_unix_socket_refused;
 #[cfg(test)]
 pub(crate) use transport::endpoint_for_home;
 pub(crate) use transport::homes_same_identity;

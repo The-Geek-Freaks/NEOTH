@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T04:04:44.9036404Z",
-  "validationStatus": "W636 Group977 all977PASS191bindings; W622 native/plugin integration pending",
+  "capturedUtc": "2026-09-24T04:14:47.8027731Z",
+  "validationStatus": "W638 reviewed Obsidian0.2 native/plugin source; hosted bundle/compile/behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -68,8 +68,8 @@
     },
     {
       "path": ".github/workflows/obsidian-bridge-artifact.yml",
-      "bytes": 5975,
-      "sha256": "CCBDE9534CE3B2734DACAD9EC9958CEB397CB44F03AA30EAAD902D0599FC636D"
+      "bytes": 6154,
+      "sha256": "49906E7FC2E530128CEA0CE7D51518DB3352EB6BF63336C423E76DA3A8A53D80"
     },
     {
       "path": ".github/workflows/openclaw-schema-inventory.yml",
@@ -108,8 +108,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 21353,
-      "sha256": "A2CFF7E4FB3948AF42CF43FB625F4FF6FFF960CAC2ACA2E79E91A83534BD92E5"
+      "bytes": 21407,
+      "sha256": "A89703895D32FA6A9976532F3B80EB41BF9A5C93417DCE23967549E51BCED8A7"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -1077,6 +1077,11 @@
       "sha256": "332FC8FAAFEE9AAEEEE9CA4042E66870858C1BC9E013C3C77D829085C33D7D2E"
     },
     {
+      "path": "docs/obsidian-archive-bridge.md",
+      "bytes": 4905,
+      "sha256": "23E91BBE7EEAC91691589B8B371A6BF2D6BD86A22711EFA6032261CE80AF677D"
+    },
+    {
       "path": "docs/paperless-readiness.md",
       "bytes": 5294,
       "sha256": "4E311942A53D091FD7565D63E252EB59FE8D5EE34A4B4256340AD4B10E47F9DA"
@@ -1533,18 +1538,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 225184,
-      "sha256": "3744C936C26263841B87B94BE71BB2A1D2A1EE2C318663910F0F8AED5DBC9245"
+      "bytes": 226496,
+      "sha256": "87221E253260DE562F9955409309EFF240CA7A818074B9AA009B21CC4E96CB50"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1236512,
-      "sha256": "D75329C831C716B68F796A9184C6BE35A9CF3D6EF61EB531FE24E39B805FC14D"
+      "bytes": 1237824,
+      "sha256": "DB61EFE2CC8233434BDA7A8E997E0733EAE0BD590AE3F7FB85448EFDAA810804"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1835794,
-      "sha256": "AB2969F0B9A023F12AD8329ADFEE71B34EFE34DA00FA197B0A593E228CE3D643"
+      "bytes": 1837106,
+      "sha256": "0A0151A09E95FC5132702901F0FBC4DAB8A87119C38632F8EF61AFC9F5599D85"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -1968,18 +1973,18 @@
     },
     {
       "path": "SRC/neothd/assets/obsidian_archive_bridge/manifest.json",
-      "bytes": 297,
-      "sha256": "4FE077EF4C077FB0A8ADA6BC0EB688E508E32257EDC80FC3B4EE9F6DE9BDD2D4"
+      "bytes": 255,
+      "sha256": "AABA42DE965A53568B9C7365A663D54E98861ECD87F750DEBEA8047B4A867A7E"
     },
     {
       "path": "SRC/neothd/assets/obsidian_archive_bridge/package-lock.json",
       "bytes": 19256,
-      "sha256": "112D51D9DADE8E44689678BAE0A433545D58CAF7BC41BACE24036525EF236053"
+      "sha256": "BCA0336CFB5A60B2EB8AF1A0625FDC4FD4B63FC0603340702FA7A73D3C6D999B"
     },
     {
       "path": "SRC/neothd/assets/obsidian_archive_bridge/package.json",
       "bytes": 489,
-      "sha256": "C432E7E24E81BA6EADF890265248F6AA98CA8E086F42F0F73773609816492551"
+      "sha256": "2FCF474FBE8CEDE9B3C005C195D7E82C02ECD6C71D31406D1452E819282EB211"
     },
     {
       "path": "SRC/neothd/assets/obsidian_archive_bridge/releases/0.1.0/main.js",
@@ -1997,19 +2002,34 @@
       "sha256": "7320A419728FFCCA8A1C4CEBA0E75EE975E2EE0401DE228D6D6FFDC948D30856"
     },
     {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/releases/0.1.1/main.js",
+      "bytes": 1963,
+      "sha256": "0D7E20C5B9B0BCA2162D1A2E99FA3C97B06380B7861652E5B83F5F31C1D642D1"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/releases/0.1.1/manifest.json",
+      "bytes": 297,
+      "sha256": "4FE077EF4C077FB0A8ADA6BC0EB688E508E32257EDC80FC3B4EE9F6DE9BDD2D4"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/releases/0.1.1/ownership.json",
+      "bytes": 262,
+      "sha256": "14D540061743D63F471338278E77D35F905EB9E01B00088B787DC48E56B24E35"
+    },
+    {
       "path": "SRC/neothd/assets/obsidian_archive_bridge/src/main.ts",
-      "bytes": 1474,
-      "sha256": "B9B15E918B26EE9039953A9750E2B5F2257477301D45F36C8F1C56538043E856"
+      "bytes": 21116,
+      "sha256": "AA10F48EE2D8D191869F520EEF0017DD751B1C0AEE7ED220BCBDA138F16EE457"
     },
     {
       "path": "SRC/neothd/assets/obsidian_archive_bridge/test/plugin-contract.mjs",
-      "bytes": 2746,
-      "sha256": "02EBC7F283ADCB22976476668D51742FA7AB4C2A568A4F30D55B740191894C46"
+      "bytes": 14228,
+      "sha256": "7B938504C844EC19E9AE0FC64DFD21D91D46C5C9039330CC4911AD7D59CD593F"
     },
     {
       "path": "SRC/neothd/assets/obsidian_archive_bridge/tsconfig.json",
-      "bytes": 185,
-      "sha256": "E1EDE62B44C7DF043A8CEF2E335C68724628B6F313832674AC7F5DE4F7CBC0B5"
+      "bytes": 215,
+      "sha256": "B2D50B9BBE2E4DD899915E763C33842140751BFCC7102571DFF398C2A81C4C0D"
     },
     {
       "path": "SRC/neothd/assets/silero-vad/LICENSE",
@@ -2258,8 +2278,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/context.rs",
-      "bytes": 29365,
-      "sha256": "C574221866A8CF1A7FA45EB9FA2B96863CA0D0117587B096B34FBF2C91771891"
+      "bytes": 29776,
+      "sha256": "B5393CED5D5445ED214B8118ABAF84476AAB37A801BBFFE64E3F0CF4472838B0"
     },
     {
       "path": "SRC/neothd/src/cli/credential_transfer.rs",
@@ -2433,8 +2453,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/obsidian.rs",
-      "bytes": 175278,
-      "sha256": "AD1876F72835D0D8DF646DCEBDC1643F5F43CC359A0DE93D8950DC1190D08000"
+      "bytes": 179561,
+      "sha256": "40B06646A89DDEFA1874235E5B5263A8D7722AD44B62FB21BD8C1EF6986CDDCB"
     },
     {
       "path": "SRC/neothd/src/cli/ouro.rs",
@@ -2503,8 +2523,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
-      "bytes": 532234,
-      "sha256": "8712C58E7452C0ACCD20F21509D954F55687D6390901AB45FD07B05305C966E0"
+      "bytes": 533387,
+      "sha256": "DEE75B30911E31F4C093203093126E0A69910E391E79DB1C4B66A0B9BC47A428"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tests.rs",
@@ -2513,8 +2533,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve.rs",
-      "bytes": 174611,
-      "sha256": "0C824AA1D80D59AEE6C335CC3B409FAB5D28163B7AF8879B3B421338F10D5438"
+      "bytes": 175676,
+      "sha256": "82712A8542CCA79515ED77E852BC326312447DA69D81BD496468F75EFC3142DC"
     },
     {
       "path": "SRC/neothd/src/cli/updater.rs",
@@ -2833,8 +2853,8 @@
     },
     {
       "path": "SRC/neothd/src/config/mod.rs",
-      "bytes": 160006,
-      "sha256": "98505EE825F30C885F08B0F26070772862593D32BD08B9C5ED960DC883697FAE"
+      "bytes": 160286,
+      "sha256": "C8AF62721B21D45812A77F1083D2F5D9DF230FF3DCDBF006D8FFADA32DA71904"
     },
     {
       "path": "SRC/neothd/src/config/ops.rs",
@@ -2853,13 +2873,13 @@
     },
     {
       "path": "SRC/neothd/src/connectors/control_plane.rs",
-      "bytes": 77375,
-      "sha256": "06F279EC33EFFF63844E969C47EC8BA9460A21A5D447D799CB3AF08DE1AD4118"
+      "bytes": 77461,
+      "sha256": "643FB878C28141CCC930E915AFA8A69171C7CF90ED326805E5A8E1D44CED9C41"
     },
     {
       "path": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
-      "bytes": 136926,
-      "sha256": "54BD7ADBB868FCBB4CDC5A1875604851EDDC38FB6C760A587FD44605481AB228"
+      "bytes": 139877,
+      "sha256": "6ABB10B9B3DBE5CAC2B2A95DC109B04D1D0990CE64853E22A7E0540E10D5AFD3"
     },
     {
       "path": "SRC/neothd/src/connectors/local_import.rs",
@@ -2870,6 +2890,16 @@
       "path": "SRC/neothd/src/connectors/local_import/windows_source.rs",
       "bytes": 20814,
       "sha256": "D04F297C44832528C44B884AF1D8725EF8077BF83F7C1B95A0D71DEA036B5C94"
+    },
+    {
+      "path": "SRC/neothd/src/connectors/mod.rs",
+      "bytes": 44459,
+      "sha256": "C6C0C4BF2B3320899F5E266AFAA267F97128063CD55E841B3CC0E84545984D3E"
+    },
+    {
+      "path": "SRC/neothd/src/connectors/obsidian.rs",
+      "bytes": 80577,
+      "sha256": "40FBDC25CB92689C734B747ED78CC568D0FD3D4AC178E39783AB6641862BFBE8"
     },
     {
       "path": "SRC/neothd/src/context_graph/mod.rs",
@@ -2913,8 +2943,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
-      "bytes": 20140,
-      "sha256": "B20190E5BCF37C5D8742DB7FCCD9C74AB6D7772EFFB5A321DD3D4D1BBA1AD6AB"
+      "bytes": 20206,
+      "sha256": "F4CF539C015F12D48583C676F106A6D883E7CBD257964EB84A39F8B08A2C91DD"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
@@ -2925,6 +2955,16 @@
       "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
       "bytes": 118316,
       "sha256": "2209E8A010CAA51B7071BF6C005190B7407B8D8333E9401D121B81784FD57420"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/transport/mod.rs",
+      "bytes": 10180,
+      "sha256": "8FAF73CA18A29303E927413B815263032133B6DD9DBBFC3932FEEE8B29616D7D"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/transport/unix.rs",
+      "bytes": 37023,
+      "sha256": "4791772B81B0593E4D1F1CC8154B870B41C52F158D07F05BCB2A088012EFFEC2"
     },
     {
       "path": "SRC/neothd/src/daemon/auto_update.rs",
@@ -3023,8 +3063,23 @@
     },
     {
       "path": "SRC/neothd/src/daemon/mod.rs",
-      "bytes": 18799,
-      "sha256": "4A97CF3145D2CED529FC161C2EC667A06C2F324BB761332438ABA7D5BA6CFF7E"
+      "bytes": 19053,
+      "sha256": "5C31A9C20F3B7602B091E74E69D026AF4B4D5AA3AE48608ABB8E080B24BED90D"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/obsidian_archive_bridge_ipc.rs",
+      "bytes": 13728,
+      "sha256": "F8BB64D0928DBB69C18E0C423A59276F30E5518EC3C08C74F113077CC20430AC"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/obsidian_archive_bridge_owner.rs",
+      "bytes": 25515,
+      "sha256": "C1316C7FC04F0BAD008803CB8D43CAB92ECF7603E29F667726D2299BE82131A1"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/obsidian_vault_reader_cron.rs",
+      "bytes": 52532,
+      "sha256": "29DD6D26E9EAF9F98BD73E025027BB186E68B01A2A242E13B3DB92B23D3B1D90"
     },
     {
       "path": "SRC/neothd/src/daemon/omi_native_ingest.rs",
@@ -3178,8 +3233,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "bytes": 36948,
-      "sha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562"
+      "bytes": 39781,
+      "sha256": "AAA9F23578494932CE9D0A110C4B6CBB51D43A77C11208302E828C8B6E4AB575"
     },
     {
       "path": "SRC/neothd/src/installers/ocr.rs",
@@ -3463,8 +3518,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/store.rs",
-      "bytes": 202584,
-      "sha256": "880EB5F7569A3F581E462C81AB56D4346C6488E07E9155A77EBEF0A9678AAF9F"
+      "bytes": 203375,
+      "sha256": "8532DB99A1A842FC9EE04D880A2C3D0ECD908BAF7B1C0C8ADCEB64E96A264871"
     },
     {
       "path": "SRC/neothd/src/memory/transcript_mining_provenance.rs",

@@ -16,7 +16,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 pub const PLUGIN_ID: &str = "neoth-archive-bridge";
-pub const VERSION: &str = "0.1.1";
+pub const VERSION: &str = "0.2.0";
 const MARKER: &str = "ownership.json";
 const MANIFEST: &str = "manifest.json";
 const MAIN: &str = "main.js";
@@ -30,6 +30,12 @@ const PREVIOUS_MAIN_BYTES: &[u8] =
     include_bytes!("../../assets/obsidian_archive_bridge/releases/0.1.0/main.js");
 const PREVIOUS_OWNERSHIP_BYTES: &[u8] =
     include_bytes!("../../assets/obsidian_archive_bridge/releases/0.1.0/ownership.json");
+const PREDECESSOR_MANIFEST_BYTES: &[u8] =
+    include_bytes!("../../assets/obsidian_archive_bridge/releases/0.1.1/manifest.json");
+const PREDECESSOR_MAIN_BYTES: &[u8] =
+    include_bytes!("../../assets/obsidian_archive_bridge/releases/0.1.1/main.js");
+const PREDECESSOR_OWNERSHIP_BYTES: &[u8] =
+    include_bytes!("../../assets/obsidian_archive_bridge/releases/0.1.1/ownership.json");
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -46,6 +52,7 @@ pub enum BridgeStatus {
 enum Generation {
     Current,
     Previous,
+    Legacy,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -218,12 +225,13 @@ fn update_exact_predecessor(vault: &Path) -> Result<BridgeView, BridgeError> {
         &slot_display,
     )
     .map_err(|_| BridgeError::UnsafePath)?;
-    if marker_generation(&slot, &slot_display)? != Some(Generation::Previous) {
+    let generation = marker_generation(&slot, &slot_display)?;
+    if !matches!(generation, Some(Generation::Previous | Generation::Legacy)) {
         return Err(BridgeError::ForeignOrMismatch);
     }
     // Authenticate every predecessor byte before changing a known leaf. This
     // deliberately leaves additions such as data.json untouched.
-    for (name, expected) in owned_files(Generation::Previous) {
+    for (name, expected) in owned_files(generation.expect("checked predecessor generation")) {
         let actual = crate::skills::store::read_regular_file_bounded(
             &slot,
             OsStr::new(name),
@@ -558,8 +566,10 @@ fn marker_generation(
     };
     Ok(if bytes == ownership_bytes() {
         Some(Generation::Current)
-    } else if bytes == PREVIOUS_OWNERSHIP_BYTES {
+    } else if bytes == PREDECESSOR_OWNERSHIP_BYTES {
         Some(Generation::Previous)
+    } else if bytes == PREVIOUS_OWNERSHIP_BYTES {
+        Some(Generation::Legacy)
     } else {
         None
     })
@@ -583,6 +593,11 @@ fn owned_files(generation: Generation) -> Vec<(&'static str, Vec<u8>)> {
             (MAIN, MAIN_BYTES.to_vec()),
         ],
         Generation::Previous => vec![
+            (MARKER, PREDECESSOR_OWNERSHIP_BYTES.to_vec()),
+            (MANIFEST, PREDECESSOR_MANIFEST_BYTES.to_vec()),
+            (MAIN, PREDECESSOR_MAIN_BYTES.to_vec()),
+        ],
+        Generation::Legacy => vec![
             (MARKER, PREVIOUS_OWNERSHIP_BYTES.to_vec()),
             (MANIFEST, PREVIOUS_MANIFEST_BYTES.to_vec()),
             (MAIN, PREVIOUS_MAIN_BYTES.to_vec()),
@@ -701,9 +716,17 @@ mod tests {
     }
 
     fn install_predecessor(vault: &Path) {
+        install_generation(vault, Generation::Legacy);
+    }
+
+    fn install_0_1_1_predecessor(vault: &Path) {
+        install_generation(vault, Generation::Previous);
+    }
+
+    fn install_generation(vault: &Path, generation: Generation) {
         let root = vault.join(".obsidian/plugins").join(PLUGIN_ID);
         fs::create_dir_all(&root).unwrap();
-        for (name, bytes) in owned_files(Generation::Previous) {
+        for (name, bytes) in owned_files(generation) {
             fs::write(root.join(name), bytes).unwrap();
         }
     }
@@ -758,6 +781,38 @@ mod tests {
         );
         assert_eq!(fs::read(root.join("extension.js")).unwrap(), b"extension");
         assert_eq!(fs::read(note).unwrap(), b"operator note");
+    }
+
+    #[test]
+    fn update_exact_0_1_1_predecessor_recovery_preserves_unknown_files() {
+        let (_temp, vault) = vault();
+        install_0_1_1_predecessor(&vault);
+        let root = vault.join(".obsidian/plugins").join(PLUGIN_ID);
+        fs::write(root.join("data.json"), b"operator settings").unwrap();
+        assert_eq!(fs::read(root.join(MAIN)).unwrap(), PREDECESSOR_MAIN_BYTES);
+        set_before_update_marker_for_test(|| {
+            panic!("test crash before publishing the current marker");
+        });
+        let interrupted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| update(&vault)));
+        assert!(interrupted.is_err());
+        assert_eq!(fs::read(root.join(MARKER)).unwrap(), PREDECESSOR_OWNERSHIP_BYTES);
+        assert_eq!(repair(&vault).unwrap().status, BridgeStatus::InstalledDisabled);
+        assert_eq!(fs::read(root.join("data.json")).unwrap(), b"operator settings");
+        assert_eq!(fs::read(root.join(MARKER)).unwrap(), ownership_bytes());
+    }
+
+    #[test]
+    fn update_exact_0_1_1_predecessor_preserves_settings_extensions_and_vault() {
+        let (_temp, vault) = vault();
+        install_0_1_1_predecessor(&vault);
+        let root = vault.join(".obsidian/plugins").join(PLUGIN_ID);
+        fs::write(root.join("data.json"), b"operator settings").unwrap();
+        fs::write(root.join("extension.js"), b"extension").unwrap();
+        assert_eq!(status(&vault).unwrap().status, BridgeStatus::UpdateAvailable);
+        assert_eq!(update(&vault).unwrap().status, BridgeStatus::InstalledDisabled);
+        assert_eq!(fs::read(root.join("data.json")).unwrap(), b"operator settings");
+        assert_eq!(fs::read(root.join("extension.js")).unwrap(), b"extension");
+        assert_eq!(fs::read(root.join(MARKER)).unwrap(), ownership_bytes());
     }
 
     #[test]

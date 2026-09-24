@@ -1664,7 +1664,24 @@ fn open_with_prepared_history_target_and_hook(
         }
     }
 
+    ensure_obsidian_archive_bridge_dedup_ledger(&conn)?;
     Ok(conn)
+}
+
+/// Durable, source-revision-level replay ledger for Archive Bridge imports.
+/// It is deliberately created for every opened historical database instead of
+/// relying on an external JSON receipt, so a crash after a ground-truth commit
+/// cannot turn retry into a second corroboration event.
+pub(crate) fn ensure_obsidian_archive_bridge_dedup_ledger(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS obsidian_archive_bridge_dedup_v1 (\
+            source_id TEXT NOT NULL,\
+            source_revision TEXT NOT NULL,\
+            PRIMARY KEY (source_id, source_revision)\
+        ) WITHOUT ROWID;",
+    )
+    .context("create Archive Bridge source-revision dedup ledger")?;
+    Ok(())
 }
 
 /// Every ordinary views connection registers explicit deny functions.  SQLite

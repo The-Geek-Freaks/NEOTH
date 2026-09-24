@@ -54,6 +54,26 @@ use crate::memory::{
     store,
 };
 
+#[cfg(test)]
+thread_local! {
+    static ARCHIVE_BRIDGE_FAIL_BEFORE_COMMIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn set_archive_bridge_fail_before_commit_for_test(value: bool) {
+    ARCHIVE_BRIDGE_FAIL_BEFORE_COMMIT.with(|slot| slot.set(value));
+}
+
+#[cfg(test)]
+fn archive_bridge_fail_before_commit_for_test() -> bool {
+    ARCHIVE_BRIDGE_FAIL_BEFORE_COMMIT.with(std::cell::Cell::get)
+}
+
+#[cfg(not(test))]
+fn archive_bridge_fail_before_commit_for_test() -> bool {
+    false
+}
+
 /// Default cron interval: 6 hours.
 pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
@@ -369,6 +389,122 @@ pub async fn run_one_reader_pass(vault: &Path, home: &Path) -> Result<(usize, us
     save_state(home, &state)?;
 
     Ok((inserted, skipped))
+}
+
+/// Outcome for one daemon-authorized Archive Bridge descriptor.  The bridge
+/// never supplies a path or body: the connector capability planner identifies
+/// the one current note from the opaque source/revision descriptor before the
+/// existing ingress sanitizer and GroundTruth path see any content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BridgeReaderOutcome { Accepted, AlreadyCurrent, StaleRevision }
+
+fn bridge_state_file_path(home: &Path) -> PathBuf {
+    home.join("obsidian_archive_bridge_state.v1.json")
+}
+
+fn load_bridge_state(home: &Path) -> Result<HashMap<String, String>> {
+    let path = bridge_state_file_path(home);
+    if !path.exists() {
+        return Ok(HashMap::new());
+    }
+    let body = std::fs::read_to_string(&path)
+        .with_context(|| format!("read Archive Bridge reader state {}", path.display()))?;
+    serde_json::from_str(&body)
+        .with_context(|| format!("parse Archive Bridge reader state {}", path.display()))
+}
+
+fn save_bridge_state(home: &Path, state: &HashMap<String, String>) -> Result<()> {
+    let body = serde_json::to_vec(state).context("serialize Archive Bridge reader state")?;
+    let path = bridge_state_file_path(home);
+    crate::util::atomic_write::atomic_write_private(&path, &body)
+        .with_context(|| format!("atomically write Archive Bridge reader state {}", path.display()))
+}
+
+/// Runs only from the Archive Bridge controller's bounded blocking operation.
+/// Its caller owns the pairing authority mutex for the full selection, insert,
+/// state write, and receipt phase; do not add an independent pairing reload
+/// here because that would split the revocation linearization point.
+pub(crate) fn run_one_archive_bridge_note(
+    configuration: &crate::connectors::ConnectorConfiguration,
+    vault: &Path,
+    home: &Path,
+    stable_policy_vault_id: &str,
+    identity_key: [u8; 32],
+    expected_root_binding: crate::connectors::obsidian::ArchiveBridgeVaultBinding,
+    pairing_secret: &str,
+    expected_source_id: &str,
+    expected_revision: &str,
+) -> Result<BridgeReaderOutcome> {
+    let mut state = load_bridge_state(home)?;
+    let db_path = home.join("views.db");
+    let selected = crate::connectors::obsidian::with_selected_archive_bridge_draft(
+        configuration,
+        vault.to_path_buf(),
+        stable_policy_vault_id,
+        identity_key,
+        expected_root_binding,
+        pairing_secret,
+        expected_source_id,
+        expected_revision,
+        |draft| {
+            let source_id = draft.source_id();
+            let revision = draft.source_revision_hmac_sha256();
+            let report = crate::security::ingress_sanitizer::sanitize(
+                draft.body(),
+                "obsidian_archive_bridge",
+                false,
+            );
+            if report.quarantined {
+                return Ok(BridgeReaderOutcome::StaleRevision);
+            }
+            let conn = store::open(&db_path).context("open views.db for Archive Bridge")?;
+            let transaction = conn
+                .unchecked_transaction()
+                .context("begin Archive Bridge source-revision transaction")?;
+            let reserved = transaction.execute(
+                "INSERT INTO obsidian_archive_bridge_dedup_v1 (source_id, source_revision) \
+                 VALUES (?1, ?2) ON CONFLICT(source_id, source_revision) DO NOTHING",
+                rusqlite::params![source_id, revision],
+            )?;
+            if reserved == 0 {
+                transaction
+                    .commit()
+                    .context("commit Archive Bridge replay acknowledgement")?;
+                state.insert(source_id.to_owned(), revision.to_owned());
+                save_bridge_state(home, &state)?;
+                return Ok(BridgeReaderOutcome::AlreadyCurrent);
+            }
+            groundtruth::insert(
+                &transaction,
+                &report.text,
+                &Source::ImportObsidian,
+                "obsidian-archive-bridge",
+                crate::time::now_unix_ns_i64(),
+            )?;
+            if archive_bridge_fail_before_commit_for_test() {
+                anyhow::bail!("Archive Bridge test failpoint before transaction commit");
+            }
+            transaction
+                .commit()
+                .context("commit Archive Bridge source-revision ingest")?;
+            state.insert(source_id.to_owned(), revision.to_owned());
+            save_bridge_state(home, &state)?;
+            Ok(BridgeReaderOutcome::Accepted)
+        },
+    );
+    match selected {
+        Ok(outcome) => Ok(outcome),
+        Err(error)
+            if error
+                .downcast_ref::<crate::connectors::obsidian::ObsidianPlanError>()
+                .is_some_and(|error| {
+                    *error == crate::connectors::obsidian::ObsidianPlanError::SelectedDraftNotCurrent
+                }) =>
+        {
+            Ok(BridgeReaderOutcome::StaleRevision)
+        }
+        Err(error) => Err(error.context("select current Archive Bridge draft")),
+    }
 }
 
 // ── Writer pass ───────────────────────────────────────────────────────────────
@@ -737,6 +873,7 @@ async fn run_tick(vault: &Path, home: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connectors::{ConnectorConfiguration, ConnectorId, ConnectorPolicySnapshot, SubjectId};
     use crate::config::FreedomConfig;
     use crate::memory::store;
     use tempfile::tempdir;
@@ -763,6 +900,172 @@ mod tests {
             |r| r.get::<_, usize>(0),
         )
         .unwrap_or(0)
+    }
+
+    fn archive_bridge_configuration() -> ConnectorConfiguration {
+        ConnectorConfiguration {
+            connector_id: ConnectorId::Obsidian,
+            account_id: None,
+            subject_id: SubjectId::new("operator").unwrap(),
+            credential_ref: None,
+            policy: ConnectorPolicySnapshot::local_read_only(7),
+        }
+    }
+
+    #[test]
+    fn archive_bridge_precommit_failure_rolls_back_ledger_and_groundtruth_together() {
+        let vault = tempdir().unwrap();
+        let home = tempdir().unwrap();
+        let sessions = vault.path().join("NEOTH-sessions");
+        std::fs::create_dir(&sessions).unwrap();
+        std::fs::write(
+            sessions.join("emoji-é.md"),
+            "---\r\nsource: neoth-archive-bridge\r\n---\r\nRaw café\r\n",
+        )
+        .unwrap();
+        let db_path = home.path().join("views.db");
+        drop(store::open(&db_path).unwrap());
+        let config = archive_bridge_configuration();
+        let identity_key = [0x42; 32];
+        let root_binding = crate::connectors::obsidian::archive_bridge_vault_binding(
+            &config,
+            vault.path().to_path_buf(),
+            "primary-vault",
+            identity_key,
+        )
+        .unwrap();
+        set_archive_bridge_fail_before_commit_for_test(true);
+        let result = run_one_archive_bridge_note(
+            &config,
+            vault.path(),
+            home.path(),
+            "primary-vault",
+            identity_key,
+            root_binding,
+            "fixed-test-pairing-secret",
+            "obsidian:source:hmac-sha256:ec978485727c39cbe54a22dc64cfb0cbccc6e6921bf2d82eeea731585fe83654",
+            "hmac-sha256:dd5c7eda320b4131f69a2e5c7ab238fa57f61b22a768484a851dffdecf52d8f4",
+        );
+        set_archive_bridge_fail_before_commit_for_test(false);
+        assert!(result.is_err(), "test failpoint must abort the whole transaction");
+        assert_eq!(count_groundtruth_rows(&db_path, "import:obsidian"), 0);
+        let ledger_rows: i64 = store::open(&db_path)
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM obsidian_archive_bridge_dedup_v1", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(ledger_rows, 0, "rollback must not consume the source revision");
+    }
+
+    #[test]
+    fn archive_bridge_selected_revision_inserts_once_and_stale_revision_changes_nothing() {
+        let vault = tempdir().unwrap();
+        let home = tempdir().unwrap();
+        let sessions = vault.path().join("NEOTH-sessions");
+        std::fs::create_dir(&sessions).unwrap();
+        std::fs::write(
+            sessions.join("emoji-é.md"),
+            "---\r\nsource: neoth-archive-bridge\r\n---\r\nRaw café\r\n",
+        )
+        .unwrap();
+        let db_path = home.path().join("views.db");
+        let db = store::open(&db_path).unwrap();
+        drop(db);
+        let config = archive_bridge_configuration();
+        let identity_key = [0x42; 32];
+        let root_binding = crate::connectors::obsidian::archive_bridge_vault_binding(
+            &config,
+            vault.path().to_path_buf(),
+            "primary-vault",
+            identity_key,
+        )
+        .unwrap();
+        let source_id = "obsidian:source:hmac-sha256:ec978485727c39cbe54a22dc64cfb0cbccc6e6921bf2d82eeea731585fe83654";
+        let revision = "hmac-sha256:dd5c7eda320b4131f69a2e5c7ab238fa57f61b22a768484a851dffdecf52d8f4";
+
+        assert_eq!(
+            run_one_archive_bridge_note(
+                &config,
+                vault.path(),
+                home.path(),
+                "primary-vault",
+                identity_key,
+                root_binding,
+                "fixed-test-pairing-secret",
+                source_id,
+                revision,
+            )
+            .unwrap(),
+            BridgeReaderOutcome::Accepted
+        );
+        assert_eq!(count_groundtruth_rows(&db_path, "import:obsidian"), 1);
+        let state_before = std::fs::read(bridge_state_file_path(home.path())).unwrap();
+        let corroboration_before: (String, i64) = store::open(&db_path)
+            .unwrap()
+            .query_row(
+                "SELECT source_weight, confirmed_count FROM idx_groundtruth \
+                 WHERE source_weight LIKE '%import:obsidian%'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+
+        // Simulate the narrow post-commit crash window: the SQLite ledger
+        // committed, but its JSON mirror / owner receipt did not. A replay
+        // must acknowledge the exact source revision without corroborating it.
+        std::fs::remove_file(bridge_state_file_path(home.path())).unwrap();
+        assert_eq!(
+            run_one_archive_bridge_note(
+                &config,
+                vault.path(),
+                home.path(),
+                "primary-vault",
+                identity_key,
+                root_binding,
+                "fixed-test-pairing-secret",
+                source_id,
+                revision,
+            )
+            .unwrap(),
+            BridgeReaderOutcome::AlreadyCurrent
+        );
+        assert_eq!(count_groundtruth_rows(&db_path, "import:obsidian"), 1);
+        let corroboration_after: (String, i64) = store::open(&db_path)
+            .unwrap()
+            .query_row(
+                "SELECT source_weight, confirmed_count FROM idx_groundtruth \
+                 WHERE source_weight LIKE '%import:obsidian%'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(corroboration_after, corroboration_before);
+
+        std::fs::write(
+            sessions.join("emoji-é.md"),
+            "---\r\nsource: neoth-archive-bridge\r\n---\r\nChanged café\r\n",
+        )
+        .unwrap();
+        assert_eq!(
+            run_one_archive_bridge_note(
+                &config,
+                vault.path(),
+                home.path(),
+                "primary-vault",
+                identity_key,
+                root_binding,
+                "fixed-test-pairing-secret",
+                source_id,
+                revision,
+            )
+            .unwrap(),
+            BridgeReaderOutcome::StaleRevision
+        );
+        assert_eq!(count_groundtruth_rows(&db_path, "import:obsidian"), 1);
+        assert_eq!(
+            std::fs::read(bridge_state_file_path(home.path())).unwrap(),
+            state_before,
+            "stale plugin descriptor must not mutate reader state"
+        );
     }
 
     // TEST 1: reader picks up a managed note on first pass.
