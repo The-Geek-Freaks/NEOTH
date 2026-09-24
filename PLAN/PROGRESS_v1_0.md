@@ -115,6 +115,14 @@ W535's exact3-file hosted format patch was hash/blob-verified and imported
 from35930665319. Independent review complete; new executable checks pending.
 Road1044checked/278open/2partial remains unchanged. See docs/paperless-readiness.md.
 
+**W570 Paperless provenance-contract consumption (2026-09-24):**
+Paperless preparation records a versioned OCI contract identifier and the
+admitted coverage boundary beside the receipt identity. A stale contract is
+rejected while preserving the operator environment and state. This is a staged
+metadata-receipt consumer only: no Docker inspection, runtime assertion, or
+`artifact_verified` uplift is claimed. Hosted validation is pending; P2-20
+remains open.
+
 **W535 connection-bound durable delivery (2026-09-24):**
 Opaque one-shot live permits now bind v6 Claim/Intent/Armed/Result/history to
 the exact ChannelRef, generation and fingerprint. Expired Armed recovery

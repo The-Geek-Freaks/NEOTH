@@ -15,6 +15,15 @@ service to loopback and requires operator-supplied credentials and a port via
 PostgreSQL 18 state mount uses `/var/lib/postgresql`. Modern and standalone
 Compose command previews render only validation with `config`.
 
+`ownership.json` also records the immutable Paperless OCI contract identifier
+and its admitted coverage. The currently admitted contract is
+`index_and_child_metadata_only`: it binds the exact receipt and all three OCI
+index pins, but does not claim config or layer-byte verification. A stale or
+different contract marker is unowned and is refused without changing the
+operator `paperless.env` or `state/`. `neoth paperless prepare` reports this
+contract and coverage in both structured and table output. It still never pulls
+or inspects Docker images.
+
 Status reports the default instance's staging observation separately from API
 readiness. Preparing an explicit alternative directory does not change that
 default. `artifact_verified` remains false: admitted registry metadata and a

@@ -13,6 +13,15 @@ pub const RECEIPT_SHA256: &str = "3c8cabbaae8b77ae48e707447fe6440c9511711f199ff9
 pub const PAPERLESS_IMAGE: &str = "ghcr.io/paperless-ngx/paperless-ngx@sha256:5fa76604a81df6945086e0837b14b56543d137e8ce4f311cc5d9ebe907e74e79";
 pub const VALKEY_IMAGE: &str = "registry-1.docker.io/valkey/valkey@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11";
 pub const POSTGRES_IMAGE: &str = "registry-1.docker.io/library/postgres@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae";
+/// Stable identity of the exact provenance contract rendered into Compose.
+///
+/// This changes whenever the admitted receipt or a selected OCI index pin
+/// changes. It is intentionally distinct from an installed-image claim.
+pub const OCI_CONTRACT_ID: &str = "paperless-oci-v1-3c8cabbaae8b77ae";
+/// The currently admitted receipt contains index and child-manifest metadata,
+/// but no config or layer bytes. A later receipt may lift this only after its
+/// own admission and a matching contract update.
+pub const OCI_PROVENANCE_COVERAGE: &str = "index_and_child_metadata_only";
 
 const MARKER: &str = "ownership.json";
 const COMPOSE: &str = "compose.yaml";
@@ -68,6 +77,8 @@ pub enum PaperlessStagingStatus {
 pub struct PaperlessStagingView {
     pub status: PaperlessStagingStatus,
     pub receipt_id: &'static str,
+    pub contract_id: &'static str,
+    pub provenance_coverage: &'static str,
     pub prepared: bool,
 }
 
@@ -201,6 +212,8 @@ fn view(status: PaperlessStagingStatus) -> PaperlessStagingView {
     PaperlessStagingView {
         status,
         receipt_id: RECEIPT_SHA256,
+        contract_id: OCI_CONTRACT_ID,
+        provenance_coverage: OCI_PROVENANCE_COVERAGE,
         prepared,
     }
 }
@@ -212,7 +225,7 @@ fn expected_files() -> [(&'static str, &'static [u8]); 3] {
     ]
 }
 fn ownership_bytes() -> &'static [u8] {
-    b"{\"schema\":1,\"release\":\"3.2.1\",\"receipt_sha256\":\"3c8cabbaae8b77ae48e707447fe6440c9511711f199ff924bda1094801309931\",\"source_commit\":\"96f86a92c526275a97b2c1e44c3040ba3af55f43\"}\n"
+    b"{\"schema\":2,\"release\":\"3.2.1\",\"receipt_sha256\":\"3c8cabbaae8b77ae48e707447fe6440c9511711f199ff924bda1094801309931\",\"contract_id\":\"paperless-oci-v1-3c8cabbaae8b77ae\",\"provenance_coverage\":\"index_and_child_metadata_only\",\"source_commit\":\"96f86a92c526275a97b2c1e44c3040ba3af55f43\"}\n"
 }
 fn env_example_bytes() -> &'static [u8] {
     b"# Copy to paperless.env and set every value outside NEOTH.\nPAPERLESS_SECRET_KEY=\nPAPERLESS_DB_NAME=\nPAPERLESS_DB_USER=\nPAPERLESS_DB_PASSWORD=\nPAPERLESS_ADMIN_USER=\nPAPERLESS_ADMIN_PASSWORD=\nPAPERLESS_BIND_PORT=\n"
@@ -342,6 +355,15 @@ mod tests {
                 && !compose.contains("password=")
         );
     }
+
+    #[test]
+    fn ownership_binds_the_exact_receipt_contract_and_coverage_boundary() {
+        let ownership = std::str::from_utf8(ownership_bytes()).unwrap();
+        assert!(ownership.contains(RECEIPT_SHA256));
+        assert!(ownership.contains(OCI_CONTRACT_ID));
+        assert!(ownership.contains(OCI_PROVENANCE_COVERAGE));
+        assert!(!ownership.contains("artifact_verified"));
+    }
     #[test]
     fn prepare_is_deterministic_and_preserves_operator_env_and_state() {
         let parent = tempfile::tempdir().unwrap();
@@ -395,6 +417,32 @@ mod tests {
             fs::read(root.join("paperless.env")).unwrap(),
             b"operator-secret"
         );
+    }
+
+    #[test]
+    fn stale_contract_marker_is_rejected_without_touching_operator_env_or_state() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = canonical_temp_root(&parent).join("paperless");
+        prepare_at(&root).unwrap();
+        fs::write(
+            root.join(MARKER),
+            b"{\"schema\":1,\"contract_id\":\"stale\"}\n",
+        )
+        .unwrap();
+        fs::write(root.join("paperless.env"), b"operator-secret").unwrap();
+        let retained = root.join("state").join("data").join("retained");
+        fs::create_dir_all(retained.parent().unwrap()).unwrap();
+        fs::write(&retained, b"retained-state").unwrap();
+
+        assert!(matches!(
+            prepare_at(&root),
+            Err(PaperlessStagingError::UnownedOrMismatch)
+        ));
+        assert!(fs::read_to_string(root.join(MARKER))
+            .unwrap()
+            .contains("stale"));
+        assert_eq!(fs::read(root.join("paperless.env")).unwrap(), b"operator-secret");
+        assert_eq!(fs::read(&retained).unwrap(), b"retained-state");
     }
     #[cfg(unix)]
     #[test]

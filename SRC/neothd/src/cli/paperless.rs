@@ -180,8 +180,11 @@ fn render_paperless_staging(
             Ok(format!("{}\n", serde_json::to_string(staging)?))
         }
         OutputFormat::Table => Ok(format!(
-            "Paperless preparation: {:?}\nprepared: {}\nartifact verified: false\nDocker was not executed.\n",
-            staging.status, staging.prepared
+            "Paperless preparation: {:?}\nprepared: {}\nprovenance contract: {}\nprovenance coverage: {}\nartifact verified: false\nDocker was not executed.\n",
+            staging.status,
+            staging.prepared,
+            staging.contract_id,
+            staging.provenance_coverage,
         )),
     }
 }
@@ -450,10 +453,14 @@ mod tests {
         let view = PaperlessStagingView {
             status: crate::installers::paperless_staging::PaperlessStagingStatus::PreparedPinned,
             receipt_id: "receipt-only",
+            contract_id: "contract-only",
+            provenance_coverage: "metadata-only",
             prepared: true,
         };
         let json = render_paperless_staging(&view, OutputFormat::Json).unwrap();
         assert!(json.contains("prepared_pinned"));
+        assert!(json.contains("contract-only"));
+        assert!(json.contains("metadata-only"));
         assert!(!json.contains("PAPERLESS_SECRET_KEY"));
         assert!(!json.contains("operator-secret"));
         assert!(
