@@ -166,6 +166,13 @@ pub(crate) enum ChatOutput {
     StreamFrames {
         frames: String,
     },
+    /// A post-provider accepted body for the private GUI transport, paired
+    /// with the existing authenticated CLI frames. The direct CLI renders
+    /// only `frames`; its body is deliberately never written a second time.
+    DeferredProviderFrames {
+        frames: String,
+        accepted_body: String,
+    },
     StreamFinalizationError {
         control_token: String,
         message: String,
@@ -1271,6 +1278,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         abliterated_loader.as_deref(),
         PostReplyStreamPlan {
             control_token: stream_control_token_ref,
+            typed_gui_controls: *typed_gui_controls,
             done_line: stream_done_line,
             output_deferred: stream_output_deferred,
             provider_chunk_count: stream_chunk_count,

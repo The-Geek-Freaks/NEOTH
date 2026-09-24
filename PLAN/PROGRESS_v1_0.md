@@ -2,6 +2,25 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W577 accepted stream projection (2026-09-24):**
+The sole Group951 failure is repaired in source: accepted deferred provider
+output now carries a typed body to the GUI sink while the CLI writes its
+unchanged authenticated frames exactly once. W458 additionally checks strict
+Delta < ProviderDone < Terminal order, retaining no-secret, exact body/digest
+and Main/Buddy parity assertions. Independent static review approved; fresh
+native W458 and GUI W480 terminals are pending. No P2-26a closure yet.
+W576 also admits all seven repaired SQL regressions in Group951; historical
+Windows browser/WAL failures are covered by the admitted Windows24 run.
+No local executable checks. Road and test-selection counts are unchanged.
+**W576 native lifecycle evidence (2026-09-24):**
+Group95135939403055 atc38fae1c admitted950PASS/1FAIL/0missing,186bindings and
+all951actual terminals. All15Obsidian lifecycle/CLI/race cases and both W570
+Paperless contract cases pass; parity-inventory and2default-account regressions
+also pass. W458 alone fails: Replace yields0accepted deltas instead of1 after
+the replay-cursor repair. Strict assertions stay; W577 investigates this cause.
+No new Road closure; P2-21pairing/update and P2-26a remain open. Evidence:
+docs/verification/gold-wave576-native-selected-terminals.json.
+
 **W575 recursive Paperless bytes admitted (2026-09-24):**
 Hosted35939610119 at69a59828 passed13contracts and verified75distinct config/
 layer blobs (76references,1duplicate),1,951,126,239bytes over162requests. Root

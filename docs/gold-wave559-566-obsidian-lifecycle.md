@@ -51,3 +51,33 @@ The parity inventory now anchors the production
 `register_wizard_finish_callback(&window, move |w|` body and still requires its
 `finish(&state)` dispatch. Neither fix changes Slint files. Fresh W458 native
 and W480 GUI terminals are required for P2-26a; P118 is independently assessed.
+
+## W576 hosted lifecycle confirmation
+
+Group951 run35939403055 atc38fae1c is admitted:950PASS/1FAIL/0missing,186source
+bindings and all951ordered individual terminals. All15W559 module/CLI/race cases
+passed, including real CLI dispatch with retained note/settings, exclusive slot
+publication, parent replacement, leaf replacement and resumable uninstall.
+The two W570 marker/state-preservation cases also passed. The parity-inventory
+fix and both native default-account delivery regressions passed.
+
+W458 is the sole failure. Its corrected replay cursor now reaches the actual
+Replace behavior assertion, which observes zero accepted deltas instead of one.
+The producer/consumer criterion remains open for this concrete failure; its
+strict count and output assertions are retained. Evidence:
+`docs/verification/gold-wave576-native-selected-terminals.json`.
+
+## W577 accepted stream projection
+
+The deferred formatter's authenticated CLI frames were intentionally ignored
+by RuntimeSink, so accepted Replace output produced zero GUI deltas. A private
+DeferredProviderFrames variant now carries the accepted body alongside those
+unchanged wire frames. The GUI hashes and emits only the accepted body; the
+CLI writes only the original frames, once. Construction remains after the
+post-provider decision. W458 now also checks Delta < ProviderDone < Terminal.
+Independent static review approved. Native W458 and desktop W480 execution on
+this repair remain pending; P2-26a stays open. No new test identities.
+
+All seven SQL regression terminals from the old full cross-platform run are
+also passed in Group951 and retained in the W576 selected evidence. This does
+not turn the historical full job into a current cross-platform success.

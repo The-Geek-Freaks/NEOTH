@@ -121,6 +121,12 @@ impl ChatTurnEventSink for CliChatOutput {
                 stdout.write_all(frames.as_bytes())?;
                 stdout.flush()?;
             }
+            ChatOutput::DeferredProviderFrames { frames, .. } => {
+                let stdout = std::io::stdout();
+                let mut stdout = stdout.lock();
+                stdout.write_all(frames.as_bytes())?;
+                stdout.flush()?;
+            }
             ChatOutput::StreamFinalizationError {
                 control_token,
                 message,
@@ -5311,6 +5317,7 @@ struct StreamDoneMetadata<'a> {
 
 pub(super) struct PostReplyStreamPlan<'a> {
     pub(super) control_token: Option<&'a str>,
+    pub(super) typed_gui_controls: bool,
     pub(super) done_line: Option<String>,
     pub(super) output_deferred: bool,
     pub(super) provider_chunk_count: u32,
@@ -8313,13 +8320,17 @@ pub(super) async fn run_post_reply_pipelines(
             &response_text,
         )
         .context("write post-provider-gated reply and completion boundary")?;
-        emit_chat_output(
-            output,
-            ChatOutput::StreamFrames {
-                frames: String::from_utf8(stream_frames)
-                    .expect("stream protocol formatter emits UTF-8 control frames"),
-            },
-        )?;
+        let frames = String::from_utf8(stream_frames)
+            .expect("stream protocol formatter emits UTF-8 control frames");
+        let presentation = if stream_plan.typed_gui_controls {
+            ChatOutput::DeferredProviderFrames {
+                frames,
+                accepted_body: response_text.clone(),
+            }
+        } else {
+            ChatOutput::StreamFrames { frames }
+        };
+        emit_chat_output(output, presentation)?;
         stream_plan.provider_chunk_count = emitted.chunk_count;
         stream_plan.done_line = Some(emitted.done_line);
     } else if !args.stream {

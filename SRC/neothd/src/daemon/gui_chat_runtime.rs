@@ -1450,6 +1450,18 @@ impl ChatTurnEventSink for RuntimeSink {
                 self.response.update(text.as_bytes());
                 DaemonGuiChatRuntime::emit(turn, GuiChatFramePayload::Delta { text });
             }
+            ChatTurnEvent::Output(ChatOutput::DeferredProviderFrames {
+                accepted_body,
+                ..
+            }) => {
+                self.response.update(accepted_body.as_bytes());
+                DaemonGuiChatRuntime::emit(
+                    turn,
+                    GuiChatFramePayload::Delta {
+                        text: accepted_body,
+                    },
+                );
+            }
             ChatTurnEvent::Output(ChatOutput::ReasoningDelta {
                 sequence, delta, ..
             }) => {
@@ -3332,6 +3344,19 @@ mod lifecycle_tests {
                         assert_eq!(deltas.len(), 1, "Replace emits one accepted GUI delta");
                         assert_eq!(deltas[0]["payload"]["text"], body);
                         assert_eq!(done.len(), 1, "Replace emits one GUI provider boundary");
+                        let delta_index = frames
+                            .iter()
+                            .position(|frame| frame["payload"]["type"] == "delta")
+                            .expect("Replace delta is present in the shared runtime replay");
+                        let done_index = frames
+                            .iter()
+                            .position(|frame| frame["payload"]["type"] == "provider_done")
+                            .expect("Replace provider boundary is present in the shared runtime replay");
+                        let terminal_index = frames.len() - 1;
+                        assert!(
+                            delta_index < done_index && done_index < terminal_index,
+                            "the accepted typed delta precedes its boundary and the complete terminal"
+                        );
                         assert_eq!(terminal["payload"]["terminal"]["state"], "complete");
                         assert_eq!(
                             terminal["payload"]["terminal"]["response_digest"],

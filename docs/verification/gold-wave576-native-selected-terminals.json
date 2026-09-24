@@ -1,0 +1,209 @@
+{
+  "schema": "neoth-hosted-selected-evidence/v1",
+  "run": 35939403055,
+  "source": "c38fae1cfb86bf4397214a3187f45e94a3fb4391",
+  "grouped": {
+    "executed": 951,
+    "passed": 950,
+    "failed": 1,
+    "missing": 0,
+    "sourceBindings": 186
+  },
+  "artifacts": [
+    {
+      "id": 10784825329,
+      "name": "w190-research-lifecycle-receipt-c38fae1cfb86bf4397214a3187f45e94a3fb4391",
+      "digest": "sha256:3174a329e2b66a45babff791b172d15a1ba34a35ae0746ce64def1bdbd700650"
+    },
+    {
+      "id": 10784447322,
+      "name": "w190-research-lifecycle-log-c38fae1cfb86bf4397214a3187f45e94a3fb4391",
+      "digest": "sha256:c7a0aa2f445369ffc31a29bf65475398cbc7a1cacce312970cc70222be513717"
+    },
+    {
+      "id": 10784008778,
+      "name": "w190-research-lifecycle-source-c38fae1cfb86bf4397214a3187f45e94a3fb4391",
+      "digest": "sha256:27aed9b66fcb8b5836f7b4bb590d1acedfa1959f764c471ac3dc35b246807680"
+    }
+  ],
+  "sourceBindings": [
+    {
+      "path": "docs/verification/gold-wave95-96-test-matrix.json",
+      "blob": "086d8fa232b3cd8488ea2f530fb0cc1c5a9a7bd4",
+      "sha256": "BCD7393D94A30CA3B86BD9558D08EA41BA4BF045CA4902436FF8A1D2250C6465"
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "blob": "a49b0e51cbc8d33d1f351352e856fc89961f02e1",
+      "sha256": "722EE0446DBAC05B3E7D4EB9D44C7174E98E6E6FFF5B633B5A30993EDBCB61F0"
+    },
+    {
+      "path": "SRC/neothd/src/cli/obsidian.rs",
+      "blob": "8b9e67fdef3aab2f0eda9297a71267af61aac318",
+      "sha256": "B2D809DD5D6467C0364ADA984DF743030E6D883011E79290AF4F45D7647FF2E9"
+    },
+    {
+      "path": "SRC/neothd/src/cli/parity_drift.rs",
+      "blob": "833a16295ca2eb454b76b4e0b1bf891fedd09b62",
+      "sha256": "1F73C86090A3AC0969C92AD11B10A3083AAAC039C539C2BE5B3B902422EDBDAE"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+      "blob": "c55d3eed2010813dedd6879473989f2c2d14ab63",
+      "sha256": "1C6EF0676DD07A3F907504D2E974F4C2F93622ACC887D7EEB1D1B6B07DB06674"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "blob": "0d7c5f8ef8a100d318985d7fb9e208a7cc945c44",
+      "sha256": "E4619A04ACA3A5EEFA3C7E77BBDC7CE1CCE23310E1813224A317675E03AF8B93"
+    },
+    {
+      "path": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
+      "blob": "befdf0244a0adc0214c69ac15d915009b60e1ed0",
+      "sha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_staging.rs",
+      "blob": "59f74a485111731f572aaefb44dc65642794f59f",
+      "sha256": "3EB3BA602101785369056B33B571F4B12F4EBDD6D78F18DE834AE1E9D31E3A08"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/membership.rs",
+      "blob": "e627d61f045c3f27c6f757106d3732d9f306cc62",
+      "sha256": "24B2449D5CEF60FEDD2219C1F7457197A403D7DF69E12853A38556ADDBDBA173"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/outbound_tests.rs",
+      "blob": "3782b322852848c01bd6b55608f4a6ddeff97a34",
+      "sha256": "74BB42DB6A98874A60A06F04D7B890A60225E4DB706D64A9E5E188123CE86D10"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
+      "blob": "f7e6f0f96c9e1c5709ed13dfec4f3cf410f91a44",
+      "sha256": "B20190E5BCF37C5D8742DB7FCCD9C74AB6D7772EFFB5A321DD3D4D1BBA1AD6AB"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "blob": "6725f7987a4e192c7076b63713e389bf7efaa855",
+      "sha256": "2209E8A010CAA51B7071BF6C005190B7407B8D8333E9401D121B81784FD57420"
+    }
+  ],
+  "terminals": [
+    {
+      "test": "cli::obsidian::tests::bridge_clap_parses_each_action_with_a_trailing_vault_option",
+      "status": "passed"
+    },
+    {
+      "test": "cli::obsidian::tests::bridge_run_obsidian_lifecycle_preserves_vault_notes_and_settings",
+      "status": "passed"
+    },
+    {
+      "test": "cli::parity_drift::operation_inventory_binds_gui_callbacks_handlers_and_evidence",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::membership::tests::v6_to_v7_migration_preserves_scoped_assignment_and_keeps_outbound_empty",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::outbound_tests::clear_waits_for_inflight_dispatch_admission_then_fences_later_dispatches",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::outbound_tests::clearing_previously_live_peer_streams_refuses_new_outbound_dispatch_without_enqueueing",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::outbound_tests::outbound_candidates_order_by_priority_then_authenticated_peer_key_and_stale_cas_preserves_route",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::outbound_tests::outbound_candidates_require_the_exact_allowed_scope",
+      "status": "passed"
+    },
+    {
+      "test": "cluster::outbound_tests::runtime_dispatch_fails_over_from_unknown_or_closed_candidate_before_acceptance",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::audit_rpc::tests::outbound_task_delegate_rpc_requires_auth_reports_unavailable_and_queues_typed_receipt",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::gui_chat_runtime::lifecycle_tests::w458_real_producer_post_hook_is_visible_to_main_and_buddy_only_after_acceptance",
+      "status": "failed"
+    },
+    {
+      "test": "daemon::proactive_dispatcher::tests::connection_bound_delivery_uses_only_the_exact_live_channel_ref",
+      "status": "passed"
+    },
+    {
+      "test": "daemon::proactive_dispatcher::tests::failed_connection_bound_adapter_never_records_delivered",
+      "status": "passed"
+    },
+    {
+      "test": "installers::obsidian_archive_bridge::tests::competing_slot_before_publish_is_preserved",
+      "status": "passed"
+    },
+    {
+      "test": "installers::obsidian_archive_bridge::tests::drift_repairs_known_payload_and_preserves_settings",
+      "status": "passed"
+    },
+    {
+      "test": "installers::obsidian_archive_bridge::tests::foreign_slot_is_never_overwritten",
+      "status": "passed"
+    },
+    {
+      "test": "installers::obsidian_archive_bridge::tests::healthy_owned_slot_with_settings_is_idempotent_for_install_and_repair",
+      "status": "passed"
+    },
+    {
+      "test": "installers::obsidian_archive_bridge::tests::install_is_atomic_idempotent_and_disabled",
+      "status": "passed"
+    },
+    {
+      "test": "installers::obsidian_archive_bridge::tests::interrupted_uninstall_resumes_after_missing_payload_and_later_empty_slot",
+      "status": "passed"
+    },
+    {
+      "test": "installers::obsidian_archive_bridge::tests::malformed_obsidian_parent_surfaces_an_unsafe_path_error",
+      "status": "passed"
+    },
+    {
+      "test": "installers::obsidian_archive_bridge::tests::missing_vault_or_plugins_reports_absent",
+      "status": "passed"
+    },
+    {
+      "test": "installers::obsidian_archive_bridge::tests::replacement_after_payload_read_is_not_removed_by_uninstall",
+      "status": "passed"
+    },
+    {
+      "test": "installers::obsidian_archive_bridge::tests::requested_vault_parent_swap_before_publish_is_not_reported_as_success",
+      "status": "passed"
+    },
+    {
+      "test": "installers::obsidian_archive_bridge::tests::symlinked_plugin_slot_is_foreign_without_following_target",
+      "status": "passed"
+    },
+    {
+      "test": "installers::obsidian_archive_bridge::tests::uninstall_keeps_data_and_foreign_extensions",
+      "status": "passed"
+    },
+    {
+      "test": "installers::obsidian_archive_bridge::tests::uninstall_removes_an_empty_authenticated_slot",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_staging::tests::ownership_binds_the_exact_receipt_contract_and_coverage_boundary",
+      "status": "passed"
+    },
+    {
+      "test": "installers::paperless_staging::tests::stale_contract_marker_is_rejected_without_touching_operator_env_or_state",
+      "status": "passed"
+    }
+  ],
+  "logSha256": "5E8FE089332FB9EFB271D8EF0A9C5F569594A11865691985CE458FF33708F716",
+  "scope": "W55915 and W5702 pass; parity inventory and2connection-bound regressions pass. W458 now fails Replace delta count0 expected1; P226a open",
+  "localExecutableValidationRan": false,
+  "historicalSqlFailures": "All 7 common SQL errors from fullCI35871801240 are repaired by d0833c06 and now pass in exact-source Group951c38. Windows/macOS fullCI success is not inferred."
+}
