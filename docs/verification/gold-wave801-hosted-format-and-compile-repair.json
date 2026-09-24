@@ -35,5 +35,50 @@
     "path": "SRC/neothd/src/installers/yt_dlp.rs",
     "change": "Apply exact hosted diagnostic: split chained .ok()? conversions over separate lines",
     "localFormatterRan": false
+  },
+  "hostedPreflight": {
+    "run": 36002408201,
+    "source": "5a870310e5919d084cd81922a455b03e30d4e017",
+    "conclusion": "success",
+    "replayGateTests": 10,
+    "replayGateTerminal": "Ran 10 tests in 0.019s; OK",
+    "logSha256": "d46517c49bad6269bf5a676d0570b76676cf929188a397e7bd2e2bd6ab4b71a1",
+    "sourceBindings": [
+      {
+        "path": "packaging/workflow_replay_gate.py",
+        "sha256": "df18c6468563d56910088dbc6d7000cb5a22387e45925221ef69ea44eb16c6cb",
+        "blob": "924168a7ae46b8aca6aaa48d53b632725f2284da"
+      },
+      {
+        "path": "packaging/tests/test_workflow_replay_gate.py",
+        "sha256": "717ab69cec9ffaf2e31d83cbba384431ebf59682795f2c6ae75625871a2c1f52",
+        "blob": "70c47f04c9a33a987398b49ad1625b04302e31ac"
+      },
+      {
+        "path": ".github/workflows/workflow-replay-witness.yml",
+        "sha256": "7849a7940a6100c731cb22eb63a91230b64a3c08ab2e06e5d5090879e4b39af0",
+        "blob": "9f2f51a45977eb08bab0f41ed6e468293d4c1a53"
+      },
+      {
+        "path": ".github/workflows/release.yml",
+        "sha256": "2b9504f6413476d518cac20a902d50d225ee6a16ed59985a1f4c95b0788e011a",
+        "blob": "38392638139a6f1450eff9e1a34986c1ca283c14"
+      },
+      {
+        "path": ".github/workflows/preflight.yml",
+        "sha256": "6db279987a8d6fef92aa98ee47a5333f4edf48b1d2ea0d44e04b0b2133d30087",
+        "blob": "2f1fb8476f4309e1e33ef2bd11ebd6dcdf9781f6"
+      }
+    ],
+    "independentReview": "W804 static approve after exact producer-consumer comparison",
+    "scope": "Offline release-witness contracts only; Rust behavior and actual private workload not claimed"
+  },
+  "clippyFollowup": {
+    "run": 36002022036,
+    "source": "83297e30634ff390499e92e122a77db544ca7c06",
+    "diagnostic": "clippy::collapsible_str_replace",
+    "path": "SRC/neothd/src/cli/workflow_replay.rs",
+    "repair": "Replace CR/LF together with a character pattern array; markdown output semantics unchanged",
+    "validation": "hosted rerun pending"
   }
 }

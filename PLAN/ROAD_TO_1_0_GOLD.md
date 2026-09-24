@@ -16,6 +16,9 @@ comments, an Option/Result residual and two unused declarations; these exact
 sites are repaired without weakening assertions. D5/F4 remain OPEN pending
 hosted compilation and their34 selected behavior cases. No local executable
 checks ran. Counts remain1067checked255open2partial;Group1251/native1487.
+Hosted follow-up:Preflight36002408201 at5a870310 passes, including10/10
+replay-witness Python tests. Core83297 found one additional Clippy string-
+replacement style issue; its exact fix preserves Markdown output. Rerun pending.
 Evidence: docs/verification/gold-wave801-hosted-format-and-compile-repair.json.
 
 **W799/W800 video URL and real workflow replay (2026-09-24):**

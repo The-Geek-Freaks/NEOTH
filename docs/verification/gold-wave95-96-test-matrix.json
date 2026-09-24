@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Apply exact hosted yt-dlp chain formatting; core83297 still running",
+  "status": "Preflight passed incl10replay-gate tests; Clippy style repaired",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 172221,
-    "sha256": "8A30373E34F20297EF9DD2C95D4E52A7DD1E2439C7350C7A64C6C71409674989"
+    "bytes": 172217,
+    "sha256": "E24721F9A260D7B0778E2AFE4EBFCBA0B3FC9D6D39365B9283DB0BF0459AC25F"
   },
   "sourceInputs": 974,
   "requiredNativeTests": [
@@ -8862,55 +8862,55 @@
     {
       "test": "cli::workflow_replay::tests::contains_v1_is_case_insensitive_and_rejects_missing_expectation",
       "sourcePath": "SRC/neothd/src/cli/workflow_replay.rs",
-      "sourceSha256": "A418ACA6837A7FA695BBE2EB5D2B2AB287F424ECA969ED4C9DF57586452BFB57",
+      "sourceSha256": "2C9438FFA9E230863E704AFC324A4D49D129B83E7D44F5FDE6B7C01A75D6EF7A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::workflow_replay::tests::corpus_rejection_happens_before_any_runtime_setup",
       "sourcePath": "SRC/neothd/src/cli/workflow_replay.rs",
-      "sourceSha256": "A418ACA6837A7FA695BBE2EB5D2B2AB287F424ECA969ED4C9DF57586452BFB57",
+      "sourceSha256": "2C9438FFA9E230863E704AFC324A4D49D129B83E7D44F5FDE6B7C01A75D6EF7A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::workflow_replay::tests::scoring_requires_an_authenticated_provider_terminal_and_never_passes_errors",
       "sourcePath": "SRC/neothd/src/cli/workflow_replay.rs",
-      "sourceSha256": "A418ACA6837A7FA695BBE2EB5D2B2AB287F424ECA969ED4C9DF57586452BFB57",
+      "sourceSha256": "2C9438FFA9E230863E704AFC324A4D49D129B83E7D44F5FDE6B7C01A75D6EF7A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::workflow_replay::tests::replay_scoring_ignores_human_stdout_and_requires_typed_completed_body",
       "sourcePath": "SRC/neothd/src/cli/workflow_replay.rs",
-      "sourceSha256": "A418ACA6837A7FA695BBE2EB5D2B2AB287F424ECA969ED4C9DF57586452BFB57",
+      "sourceSha256": "2C9438FFA9E230863E704AFC324A4D49D129B83E7D44F5FDE6B7C01A75D6EF7A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::workflow_replay::tests::public_config_fingerprint_covers_the_effective_secret_free_config",
       "sourcePath": "SRC/neothd/src/cli/workflow_replay.rs",
-      "sourceSha256": "A418ACA6837A7FA695BBE2EB5D2B2AB287F424ECA969ED4C9DF57586452BFB57",
+      "sourceSha256": "2C9438FFA9E230863E704AFC324A4D49D129B83E7D44F5FDE6B7C01A75D6EF7A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::workflow_replay::tests::config_fingerprint_uses_actual_nul_field_separators",
       "sourcePath": "SRC/neothd/src/cli/workflow_replay.rs",
-      "sourceSha256": "A418ACA6837A7FA695BBE2EB5D2B2AB287F424ECA969ED4C9DF57586452BFB57",
+      "sourceSha256": "2C9438FFA9E230863E704AFC324A4D49D129B83E7D44F5FDE6B7C01A75D6EF7A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::workflow_replay::tests::actual_replay_turn_records_provider_terminal_and_scores_its_reply",
       "sourcePath": "SRC/neothd/src/cli/workflow_replay.rs",
-      "sourceSha256": "A418ACA6837A7FA695BBE2EB5D2B2AB287F424ECA969ED4C9DF57586452BFB57",
+      "sourceSha256": "2C9438FFA9E230863E704AFC324A4D49D129B83E7D44F5FDE6B7C01A75D6EF7A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::workflow_replay::tests::actual_replay_provider_failure_emits_no_terminal_or_accepted_body",
       "sourcePath": "SRC/neothd/src/cli/workflow_replay.rs",
-      "sourceSha256": "A418ACA6837A7FA695BBE2EB5D2B2AB287F424ECA969ED4C9DF57586452BFB57",
+      "sourceSha256": "2C9438FFA9E230863E704AFC324A4D49D129B83E7D44F5FDE6B7C01A75D6EF7A",
       "junitClass": "neoth"
     },
     {
       "test": "cli::workflow_replay::tests::actual_replay_reports_the_authority_bound_selected_skill_snapshot",
       "sourcePath": "SRC/neothd/src/cli/workflow_replay.rs",
-      "sourceSha256": "A418ACA6837A7FA695BBE2EB5D2B2AB287F424ECA969ED4C9DF57586452BFB57",
+      "sourceSha256": "2C9438FFA9E230863E704AFC324A4D49D129B83E7D44F5FDE6B7C01A75D6EF7A",
       "junitClass": "neoth"
     },
     {
@@ -33264,6 +33264,44 @@
       }
     ],
     "note": "Two-line formatting only. No local executables; no duplicate Core build.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave807ReplayGateAcceptance": {
+    "base": "5a870310e5919d084cd81922a455b03e30d4e017",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave801-hosted-format-and-compile-repair.json",
+        "bytes": 3748,
+        "sha256": "9DA26E72AA888A15223BEBD9B7DCB671D9C2AEE73A8D82DCB21497D784DD78C7",
+        "blob": "878cf52221d62ebc893f4f9a9410d4c90cc818e9"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 258122,
+        "sha256": "3B57D72BA18EFD1681EC589409D7C4197579AA5A405D25C05AD84555AD43E481",
+        "blob": "4addc729ba0f495cc4ff1a64356c02da069c56d3"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1269450,
+        "sha256": "1961387F2C3F1594FBC38DB7CA3E82BFAD5AEBC25D1C1A3585807A691951991A",
+        "blob": "9304ab1f8662905788d49be0ac9c7fd32c5a7d87"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1875240,
+        "sha256": "7876D46256455D4F21B73BC0B43B78A1958FD0C21312E31208E2403EA636E595",
+        "blob": "35c06b818bfdc69aaa13b58d72f6ca4dd630fcec"
+      },
+      {
+        "path": "SRC/neothd/src/cli/workflow_replay.rs",
+        "bytes": 34270,
+        "sha256": "2C9438FFA9E230863E704AFC324A4D49D129B83E7D44F5FDE6B7C01A75D6EF7A",
+        "blob": "aff1c481635c104fb63457c46acc6387d4bffa5f"
+      }
+    ],
+    "note": "D5/F4 behavior remains pending. Root only scope; D7/B3 worker WIP excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
