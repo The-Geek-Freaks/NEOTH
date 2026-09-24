@@ -2,6 +2,15 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W961 exact n8n API scope (2026-09-24):** Third image canary36062042412
+at0c7c9dea passes seven helper regressions, volume handoff, explicit readiness
+and unauthenticated denial; authenticated collection GET returns403. Root read
+the pinned controller: collection GET requires workflow:list, whereas
+workflow:read authorizes a single workflow ID. The canary now requests exactly
+workflow:list. Source-bound failure receipt: gold-wave960-n8n-bootstrap.json.
+Core d26 production Clippy and all test-target typechecking passed; CLI build
+continues. Group1446run36062226477 and Windows229run36062229748 started at
+0c7c9dea, whose Rust source is identical tod26. C7/n8n behavior still pending.
 **W958 n8n startup-readiness repair (2026-09-24):** The second hosted image
 canary36061161515 atd26ed44e passes five absence-regression tests and proves
 owner/key200, bootstrap stop/absence and replacement runtime binding. Final

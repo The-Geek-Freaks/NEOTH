@@ -1,0 +1,51 @@
+{
+  "schema": "neoth-n8n-bootstrap-hosted/v1",
+  "run": 36062042412,
+  "source": "0c7c9dea919ebe8b5722c8732b5476ebb02c42bf",
+  "artifact": 10835435691,
+  "apiZipSha256": "c48e340e92a743c3d1227445f90eb35c9ed88b198151ac45f3fab3f1c2b49e43",
+  "receipt": {
+    "encryption_key_sha256": "cc59f9df2b24a39e03b1b9bc07078465727d9caa069037da6152b9dd40446ab1",
+    "failure_stage": "final_authenticated_probe_failed",
+    "final_probe": {
+      "positive_error": "protocol",
+      "positive_status": 403
+    },
+    "final_runtime": {
+      "exit_code": 0,
+      "host_ip": "127.0.0.1",
+      "host_port": "32768",
+      "oom_killed": false,
+      "running": true
+    },
+    "github_sha": "0c7c9dea919ebe8b5722c8732b5476ebb02c42bf",
+    "image_digest": "sha256:9f693fd5565539efd5e75ad168526c8041a6af516d9e50bc4d9cb1c9c5031523",
+    "image_id": "sha256:2a8ec1d5dcf19532c0214b391777a756dfa94dd4bc74d75c0bc204a0b6a59cb3",
+    "mint_status": 200,
+    "node_version": "v26.7.0",
+    "outcome": "failed",
+    "raw_key_sha256": "3bf403c07a08ec3ffdb96c6b98a76b2b372b48323bc9195149b724406d50ed8e",
+    "schema": 2,
+    "script_sha256": "a6a7a79bbeb0fcbf84a27260bdd9327f4b7d1a7923194500ddad7c013c036059",
+    "stages": [
+      "image_pulled",
+      "volume_bound",
+      "isolated_bootstrap_bound",
+      "owner_and_key_captured",
+      "bootstrap_stopped_and_absent",
+      "replacement_runtime_bound"
+    ],
+    "upstream_commit": "a331d3858797b161e4acba288396be3835425d8e",
+    "workflow_sha256": "154eb175c706a81a45a3ae9a20ceed42e3ee565b692498835551f1051f56323c"
+  },
+  "admission": "ROOT_VERIFIED_FAILED",
+  "verified": [
+    "API ZIP digest",
+    "Exact run source",
+    "Historical script/workflow Git blobs and SHA256",
+    "Hosted seven helper regressions passed"
+  ],
+  "boundary": "Explicit readiness and unauthenticated denial pass; keyed collection request403. Pinned public controller GET / requires workflow:list, while workflow:read belongs to GET /:workflowId. Exact one-scope repair only; final hosted acceptance pending.",
+  "upstreamSource": "https://github.com/n8n-io/n8n/blob/a331d3858797b161e4acba288396be3835425d8e/packages/cli/src/public-api/v1/controllers/workflows.public.controller.ts",
+  "localExecutableValidationRan": false
+}

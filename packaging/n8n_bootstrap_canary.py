@@ -43,7 +43,7 @@ const main = async () => {
   try { r = await fetch(base + '/rest/owner/setup', {method:'POST', headers, body:JSON.stringify({email:p.email,firstName:'NEOTH',lastName:'Canary',password:p.password})}); } catch (_) { fail('owner_setup', 0, true); }
   const setup = await r.json().catch(() => null); const cookie = r.headers.get('set-cookie');
   if (!r.ok) fail('owner_setup', r.status); if (!setup?.data || !cookie) fail('owner_setup', r.status, true);
-  try { r = await fetch(base + '/rest/api-keys', {method:'POST', headers:{...headers, cookie}, body:JSON.stringify({label:p.label,scopes:['workflow:read'],expiresAt:null})}); } catch (_) { fail('key_mint', 0, true); }
+  try { r = await fetch(base + '/rest/api-keys', {method:'POST', headers:{...headers, cookie}, body:JSON.stringify({label:p.label,scopes:['workflow:list'],expiresAt:null})}); } catch (_) { fail('key_mint', 0, true); }
   const key = await r.json().catch(() => null);
   if (!r.ok) fail('key_mint', r.status); if (typeof key?.data?.rawApiKey !== 'string' || key.data.rawApiKey.length < 8) fail('key_mint', r.status, true);
   process.stdout.write(JSON.stringify({ok:true,rawApiKey:key.data.rawApiKey,keyId:typeof key.data.id==='string'?key.data.id:null,mintStatus:r.status})+'\n');
