@@ -2,6 +2,13 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W838 hosted test import repair (2026-09-24):**
+Group1292run36017807925 at7fdfb0a4 stopped at test compilation: three new
+preflight fixtures imported ProviderKind through a private config import.
+They now use the existing public cli::init re-export. Production Clippy passed
+in Core36017801960; no behavior ran in the failed grouped attempt. Preflight
+3835772c is green. Counts1070checked252open2partial remain; hosted rerun next.
+
 **W836 hosted formatting (2026-09-24):**
 Root imported the three-file Rust formatting patch from Preflight36017803481
 at7fdfb0a4 only after verifying artifact10814884303 ZIP, both inner digests,

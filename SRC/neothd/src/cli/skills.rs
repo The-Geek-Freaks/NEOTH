@@ -2095,7 +2095,7 @@ mod tests {
     #[test]
     fn document_preflight_uses_custom_endpoint_identity_and_unknown_price() {
         let mut config = FreedomConfig::default();
-        config.provider_kind = Some(crate::config::ProviderKind::OpenaiApi);
+        config.provider_kind = Some(crate::cli::init::ProviderKind::OpenaiApi);
         config.provider_model = Some("gpt-5".into());
         config.provider_endpoint = Some("https://gateway.example.test/v1".into());
         let receipt = document_preflight_for_config(&document_fixture(), &config).unwrap();
@@ -2118,7 +2118,7 @@ mod tests {
     #[test]
     fn document_preflight_binds_effective_utility_profile_and_model() {
         let mut config = FreedomConfig::default();
-        config.provider_kind = Some(crate::config::ProviderKind::OpenaiCompat);
+        config.provider_kind = Some(crate::cli::init::ProviderKind::OpenaiCompat);
         config.provider_endpoint = Some("https://openrouter.ai/api/v1".into());
         config.provider_model = Some("@document".into());
         config
@@ -2140,7 +2140,7 @@ mod tests {
     #[test]
     fn document_preflight_rejects_unbounded_claude_cli_before_emission() {
         let mut config = FreedomConfig::default();
-        config.provider_kind = Some(crate::config::ProviderKind::ClaudeCli);
+        config.provider_kind = Some(crate::cli::init::ProviderKind::ClaudeCli);
         config.provider_model = Some("opusplan".into());
         let error = document_preflight_for_config(&document_fixture(), &config).unwrap_err();
         assert!(error.to_string().contains("bounded completion"));
