@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W958 n8n startup-readiness repair (2026-09-24):** The second hosted image
+canary36061161515 atd26ed44e passes five absence-regression tests and proves
+owner/key200, bootstrap stop/absence and replacement runtime binding. Final
+unauthenticated API validation fails; its ZIP and exact source are admitted
+in `docs/verification/gold-wave957-n8n-bootstrap.json`. The pinned server can
+answer before initialization; the canary now requires explicit readiness200
+plus status=ok before strict401/403 and authenticated200/data checks. Two
+focused regressions cover startup200 rejection and readiness-before-auth order.
+Failure receipts gain only coarse statuses/runtime state, no payloads/logs.
+Hosted rerun remains required. W952 product bootstrap is separate unreviewed
+WIP; neither this feasibility lane nor source edits close GOLD-LF-002-09.
 **W955 HTTP coverage and W953 canary repair (2026-09-24):** Root found eight
 existing HTTP gate/permit/lifecycle tests absent from the focused selection;
 all are now selected on Linux and Windows. Native1671 remains unchanged;

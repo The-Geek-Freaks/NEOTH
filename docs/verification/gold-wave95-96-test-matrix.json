@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W953 canonical Docker absence, W955 HTTP selection and MCP test type fix; hosted pending",
+  "status": "W958 n8n readiness-first canary; hosted rerun pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 182799,
-    "sha256": "B6815E119CCB354B7BEC5A913DEF8B40210980D341976056E3890E0593CEAACB"
+    "bytes": 182948,
+    "sha256": "88412DD9ACF9620F4DCD71A6BC85EE996B39ECAC88E351E015CDD0CF43C90F7A"
   },
-  "sourceInputs": 1033,
+  "sourceInputs": 1034,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -37152,6 +37152,56 @@
       }
     ],
     "note": "First n8n canary failed after owner/key200; exact ZIP/source evidence admitted. Group1446 Windows229 Native1671. Core050 production Clippy passed but test expect_err Debug failed, narrow fixture correction. No local execution/feature closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave958BootstrapReadiness": {
+    "base": "d26ed44e775f4b3161382d32f950be1b1ffb6a3d",
+    "sources": [
+      {
+        "path": "docs/gold-wave937-n8n-bootstrap-canary.md",
+        "bytes": 3821,
+        "sha256": "DD3146F726F66E7B67C624C8D3C423F813F526EA8EEA423A10928EDD7E8846D1",
+        "blob": "6b94e49d3ee44e2f4bf6b4edbcc9274b17b767c0"
+      },
+      {
+        "path": "docs/verification/gold-wave957-n8n-bootstrap.json",
+        "bytes": 1909,
+        "sha256": "FC224E4E9DBD6DF2845996876AA9DC7E848822225A376DABF6DF22DE2CD9EDD1",
+        "blob": "dad5b7c5442c6b2e2f2be34f332b25c404d1ae6f"
+      },
+      {
+        "path": "packaging/n8n_bootstrap_canary.py",
+        "bytes": 26732,
+        "sha256": "A6A7A79BBEB0FCBF84A27260BDD9327F4B7D1A7923194500DDAD7C013C036059",
+        "blob": "f053177d2ec212e1a970019dd4988e0e9a27e123"
+      },
+      {
+        "path": "packaging/tests/test_n8n_bootstrap_canary.py",
+        "bytes": 4093,
+        "sha256": "5BE9D994D7B95D0C7006C3E431A72C6DB8D5DE6C3F2961450B97AA2ECBA22C93",
+        "blob": "7b2b2738cb7b78978ad347cf3cadea56ac13df88"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 295172,
+        "sha256": "BEED0BF670F091DEC96E9C77CA0B98688965BFA66B242DFBCE096ECB8FECF60A",
+        "blob": "90ffec7cc49ad09fa714be0a7f4915ef0ec4877e"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1306500,
+        "sha256": "20A488DBC5252EF2C11171A8E16475034AAB1AABF1E7866AA9336C465EA062F3",
+        "blob": "8935580d714613b2b4ece5c10f40ae47cc7862a7"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1916069,
+        "sha256": "B3AD42AB6BA7E9B11DB5BF9936A36D77F48266BE186AA6BD54A80731674CEDF6",
+        "blob": "24b82a9368a96b0340bc8927b8eacaac00ac08df"
+      }
+    ],
+    "note": "Second canary proves exact volume handoff, fails final host probe. Explicit readiness prevents startup placeholder classification; no product closure, no local execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

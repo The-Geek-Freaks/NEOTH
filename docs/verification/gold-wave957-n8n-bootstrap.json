@@ -1,0 +1,39 @@
+{
+  "schema": "neoth-n8n-bootstrap-hosted/v1",
+  "run": 36061161515,
+  "source": "d26ed44e775f4b3161382d32f950be1b1ffb6a3d",
+  "artifact": 10834024600,
+  "apiZipSha256": "68e13d945fcfa2e9d99d08464627df3e0f3725bfdc431d866c3c9219c17a0e50",
+  "receipt": {
+    "encryption_key_sha256": "514598a4cd918f59d4e40570f5e92c874c5dd2bd5ec8ddefa851f672eca0d534",
+    "failure_stage": "final_unauthenticated_probe_failed",
+    "github_sha": "d26ed44e775f4b3161382d32f950be1b1ffb6a3d",
+    "image_digest": "sha256:9f693fd5565539efd5e75ad168526c8041a6af516d9e50bc4d9cb1c9c5031523",
+    "image_id": "sha256:2a8ec1d5dcf19532c0214b391777a756dfa94dd4bc74d75c0bc204a0b6a59cb3",
+    "mint_status": 200,
+    "node_version": "v26.7.0",
+    "outcome": "failed",
+    "raw_key_sha256": "78bc7a0d09859197a69ef0c14ef2e66110fcf01a22d5b9a19d919e51e5e99c67",
+    "schema": 2,
+    "script_sha256": "bb8027576a08797cffffc9d338a54f64f689a9ed60b09ec738c1cd3d530edda6",
+    "stages": [
+      "image_pulled",
+      "volume_bound",
+      "isolated_bootstrap_bound",
+      "owner_and_key_captured",
+      "bootstrap_stopped_and_absent",
+      "replacement_runtime_bound"
+    ],
+    "upstream_commit": "a331d3858797b161e4acba288396be3835425d8e",
+    "workflow_sha256": "154eb175c706a81a45a3ae9a20ceed42e3ee565b692498835551f1051f56323c"
+  },
+  "admission": "ROOT_VERIFIED_FAILED",
+  "verified": [
+    "API ZIP digest",
+    "Exact run source",
+    "Historical script/workflow Git blobs and SHA256",
+    "Hosted five absence regression tests passed"
+  ],
+  "boundary": "Owner/key200, stopped-and-absent bootstrap and replacement runtime binding passed. Final host negative API probe failed; no final authenticated API acceptance. Cleanup succeeded. Pinned n8n source exposes readiness endpoint before API initialization; W958 waits for explicit readiness200/statusOK then strict negative/positive API checks.",
+  "localExecutableValidationRan": false
+}

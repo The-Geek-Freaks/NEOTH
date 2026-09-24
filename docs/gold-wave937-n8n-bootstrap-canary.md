@@ -17,6 +17,7 @@ Docker environment, workflow output, logs, artifacts, or receipts.
 After exactly one owner setup and key-mint attempt, the job stops and proves
 the exact bootstrap container absent before it creates a new final container
 on the same volume with a dynamically allocated `127.0.0.1` mapping.  It then
+waits for `/healthz/readiness` to return 200 with `status: ok`, before it
 checks the documented workflows API through that actual host-published mapping,
 both without credentials (401/403) and with the captured key (200 plus a
 workflows data envelope).  The host probe is a bounded Python standard-library

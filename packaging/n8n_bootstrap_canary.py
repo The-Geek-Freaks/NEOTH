@@ -55,6 +55,10 @@ const fs = require('fs'); const crypto = require('crypto');
 try { const c = JSON.parse(fs.readFileSync('/home/node/.n8n/config', 'utf8')); if (typeof c.encryptionKey !== 'string' || c.encryptionKey.length < 8) process.exit(2); process.stdout.write(JSON.stringify({ok:true,encryptionKeySha256:crypto.createHash('sha256').update(c.encryptionKey).digest('hex')})+'\n'); } catch (_) { process.exit(2); }
 """.strip()
 
+IN_CONTAINER_NEGATIVE_PROBE_NODE = r"""
+fetch('http://127.0.0.1:5678/api/v1/workflows?limit=1').then(r => process.stdout.write(JSON.stringify({status:r.status})+'\n')).catch(() => process.stdout.write(JSON.stringify({error:'transport'})+'\n'));
+""".strip()
+
 
 class CanaryFailure(RuntimeError):
     pass
@@ -62,6 +66,12 @@ class CanaryFailure(RuntimeError):
 
 class UnknownEffect(CanaryFailure):
     pass
+
+
+class ProbeFailure(CanaryFailure):
+    def __init__(self, stage: str, diagnosis: dict[str, object]):
+        super().__init__(stage)
+        self.diagnosis = diagnosis
 
 
 @dataclass
@@ -217,36 +227,95 @@ def http_response(connection: http.client.HTTPConnection) -> tuple[int, bytes]:
 
 
 def final_host_probe(port: int, raw_key: str) -> dict:
-    path = "/api/v1/workflows?limit=1"
     deadline = time.monotonic() + 60
-    negative_status = 0
+    ready = False
+    readiness_status: int | None = None
+    readiness_error: str | None = None
     while time.monotonic() < deadline:
         connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
         try:
-            connection.request("GET", path, headers={"Connection": "close"})
-            negative_status, _ = http_response(connection)
-            break
-        except (OSError, http.client.HTTPException):
-            time.sleep(0.5)
+            connection.request("GET", "/healthz/readiness", headers={"Connection": "close"})
+            readiness_status, readiness_body = http_response(connection)
+            try:
+                readiness = json.loads(readiness_body)
+            except json.JSONDecodeError:
+                readiness = None
+            if readiness_status == 200 and isinstance(readiness, dict) and readiness.get("status") == "ok":
+                ready = True
+                break
+            readiness_error = "not_ready" if readiness_status == 503 else "unexpected_response"
+        except OSError:
+            readiness_error = "transport"
+        except http.client.HTTPException:
+            readiness_error = "http"
         finally:
             connection.close()
+        time.sleep(0.5)
+    if not ready:
+        raise ProbeFailure("final_readiness_probe_failed", {"readiness_status": readiness_status, "readiness_error": readiness_error or "readiness_deadline"})
+    path = "/api/v1/workflows?limit=1"
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        connection.request("GET", path, headers={"Connection": "close"})
+        negative_status, _ = http_response(connection)
+    except OSError as error:
+        raise ProbeFailure("final_unauthenticated_probe_failed", {"negative_status": None, "negative_error": "transport"}) from error
+    except http.client.HTTPException as error:
+        raise ProbeFailure("final_unauthenticated_probe_failed", {"negative_status": None, "negative_error": "http"}) from error
+    finally:
+        connection.close()
     if negative_status not in (401, 403):
-        raise CanaryFailure("final_unauthenticated_probe_failed")
+        raise ProbeFailure("final_unauthenticated_probe_failed", {"negative_status": negative_status, "negative_error": None})
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     try:
         connection.request("GET", path, headers={"Connection": "close", "X-N8N-API-KEY": raw_key})
         positive_status, raw_body = http_response(connection)
-    except (OSError, http.client.HTTPException) as error:
-        raise CanaryFailure("final_authenticated_probe_failed") from error
+    except OSError as error:
+        raise ProbeFailure("final_authenticated_probe_failed", {"positive_status": None, "positive_error": "transport"}) from error
+    except http.client.HTTPException as error:
+        raise ProbeFailure("final_authenticated_probe_failed", {"positive_status": None, "positive_error": "http"}) from error
     finally:
         connection.close()
     try:
         body = json.loads(raw_body)
     except json.JSONDecodeError as error:
-        raise CanaryFailure("final_authenticated_probe_invalid_json") from error
+        raise ProbeFailure("final_authenticated_probe_invalid_json", {"positive_status": positive_status, "positive_error": "invalid_json"}) from error
     if positive_status != 200 or not isinstance(body, dict) or not isinstance(body.get("data"), list):
-        raise CanaryFailure("final_authenticated_probe_failed")
+        raise ProbeFailure("final_authenticated_probe_failed", {"positive_status": positive_status, "positive_error": "protocol"})
     return {"negativeStatus": negative_status, "positiveStatus": positive_status}
+
+
+def runtime_observation(identifier: str) -> dict[str, object]:
+    try:
+        row = inspect(identifier)
+        state = row.get("State", {})
+        ports = row.get("NetworkSettings", {}).get("Ports", {}).get("5678/tcp")
+        observed = ports[0] if isinstance(ports, list) and len(ports) == 1 and isinstance(ports[0], dict) else {}
+        return {"running": state.get("Running") if isinstance(state.get("Running"), bool) else None, "exit_code": state.get("ExitCode") if type(state.get("ExitCode")) is int else None, "oom_killed": state.get("OOMKilled") if isinstance(state.get("OOMKilled"), bool) else None, "host_ip": observed.get("HostIp") if isinstance(observed.get("HostIp"), str) else None, "host_port": observed.get("HostPort") if isinstance(observed.get("HostPort"), str) else None}
+    except CanaryFailure:
+        return {"observation_error": "inspect_unavailable"}
+
+
+def in_container_negative_probe(identifier: str) -> dict[str, object]:
+    try:
+        result = run(("docker", "exec", "-u", "node", identifier, "node", "-e", IN_CONTAINER_NEGATIVE_PROBE_NODE), timeout=COMMAND_TIMEOUT)
+    except OSError:
+        return {"error": "exec_transport"}
+    if result.timed_out:
+        return {"error": "timeout"}
+    if result.overflow:
+        return {"error": "overflow"}
+    if result.code != 0:
+        return {"error": "exec_exit"}
+    try:
+        value = sanitize_json(result.stdout)
+    except CanaryFailure:
+        return {"error": "invalid_response"}
+    if isinstance(value, dict) and type(value.get("status")) is int:
+        return {"status": value["status"]}
+    if isinstance(value, dict) and value.get("error") == "transport":
+        return {"error": "transport"}
+    return {"error": "invalid_response"}
 
 
 def write_receipt(path: Path, receipt: dict) -> None:
@@ -383,7 +452,14 @@ def main() -> int:
         key_after = sanitize_json(docker("exec", "-u", "node", runtime_id, "node", "-e", CONFIG_KEY_NODE))
         if key_after.get("ok") is not True or key_after.get("encryptionKeySha256") != key_before["encryptionKeySha256"]:
             raise CanaryFailure("volume_encryption_key_handoff_unproven")
-        probe = final_host_probe(assigned_port, raw_key)
+        try:
+            probe = final_host_probe(assigned_port, raw_key)
+        except ProbeFailure as error:
+            receipt["final_probe"] = error.diagnosis
+            receipt["final_runtime"] = runtime_observation(runtime_id)
+            if str(error) == "final_unauthenticated_probe_failed":
+                receipt["in_container_negative_probe"] = in_container_negative_probe(runtime_id)
+            raise
         receipt["negative_status"] = probe.get("negativeStatus"); receipt["positive_status"] = probe.get("positiveStatus"); receipt["stages"].append("negative_and_authenticated_probe_passed")
         receipt["outcome"] = "passed"
         exit_code = 0
