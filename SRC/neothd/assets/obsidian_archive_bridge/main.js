@@ -25,7 +25,7 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 var import_obsidian = require("obsidian");
 var PLUGIN_ID = "neoth-archive-bridge";
-var PLUGIN_VERSION = "0.1.0";
+var PLUGIN_VERSION = "0.1.1";
 var DISABLED_STATUS = "NEOTH Archive Bridge: not paired (sync disabled)";
 var NeothArchiveBridge = class extends import_obsidian.Plugin {
   async onload() {

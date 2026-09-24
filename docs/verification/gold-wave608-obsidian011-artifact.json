@@ -1,0 +1,110 @@
+{
+  "schema": "neoth-w608-obsidian011/v1",
+  "run": 35948230490,
+  "source": "aeab1fe07d84cfeaeec8404cf40de4cf6b90d3ca",
+  "zipDigests": [
+    {
+      "id": 10787622322,
+      "name": "w558-obsidian-bridge-log-receipt-aeab1fe07d84cfeaeec8404cf40de4cf6b90d3ca",
+      "apiDigest": "sha256:c187239c49741cbccf03c0ac7cc1e91d229aae758a43d648f7bda6eb5da97728",
+      "localZipSha256": "c187239c49741cbccf03c0ac7cc1e91d229aae758a43d648f7bda6eb5da97728",
+      "verified": true
+    },
+    {
+      "id": 10787363988,
+      "name": "w558-obsidian-bridge-bundle-aeab1fe07d84cfeaeec8404cf40de4cf6b90d3ca",
+      "apiDigest": "sha256:3ffc45a724c73603cee8b9b48cae206c0b31526e035dbb8790343aad4fcceff1",
+      "localZipSha256": "3ffc45a724c73603cee8b9b48cae206c0b31526e035dbb8790343aad4fcceff1",
+      "verified": true
+    },
+    {
+      "id": 10787109804,
+      "name": "w558-obsidian-bridge-source-aeab1fe07d84cfeaeec8404cf40de4cf6b90d3ca",
+      "apiDigest": "sha256:94bf2ea7a686516213d66a403ad1eb2a62433fffa9f7a418acc6d556716444b1",
+      "localZipSha256": "94bf2ea7a686516213d66a403ad1eb2a62433fffa9f7a418acc6d556716444b1",
+      "verified": true
+    }
+  ],
+  "sourceBindings": [
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/package.json",
+      "blob": "57b43e8b36461a7ad627ebb9901d63562e0f8bca",
+      "sha256": "c432e7e24e81ba6eadf890265248f6aa98ca8e086f42f0f73773609816492551"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/tsconfig.json",
+      "blob": "e2a85a5b3e0be6ce35e444db7e26f29615d8fafe",
+      "sha256": "e1ede62b44c7df043a8cef2e335c68724628b6f313832674ac7f5de4f7cbc0b5"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/manifest.json",
+      "blob": "81e3fc31819ceb597077da3ba03ad199aebf378c",
+      "sha256": "4fe077ef4c077fb0a8ada6bc0eb688e508e32257edc80fc3b4ee9f6de9bdd2d4"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/src/main.ts",
+      "blob": "9f1af6aa4f889bb1307fdefa01e3079906f14430",
+      "sha256": "b9b15e918b26ee9039953a9750e2b5f2257477301d45f36c8f1c56538043e856"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/test/plugin-contract.mjs",
+      "blob": "0266be63c50d93c97169029e3ed70b3f9c0f127d",
+      "sha256": "02ebc7f283adcb22976476668d51742fa7ab4c2a568a4f30d55b740191894c46"
+    },
+    {
+      "path": ".github/workflows/obsidian-bridge-artifact.yml",
+      "blob": "db7a6dc918df351dcc1a4954f68f4754daa973b4",
+      "sha256": "ccbde9534ce3b2734dacad9ec9958ceb397cb44f03aa30eaad902d0599fc636d"
+    }
+  ],
+  "sourceBindingCount": 6,
+  "bundleHashes": [
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/manifest.json",
+      "sha256": "4fe077ef4c077fb0a8ada6bc0eb688e508e32257edc80fc3b4ee9f6de9bdd2d4",
+      "present": true
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/package-lock.json",
+      "sha256": "112d51d9dade8e44689678bae0a433545d58caf7bc41bace24036525ef236053",
+      "present": true
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/main.js",
+      "sha256": "0d7e20c5b9b0bca2162d1a2e99fa3c97b06380b7861652e5b83f5f31c1d642d1",
+      "present": true
+    }
+  ],
+  "bundleHashCount": 3,
+  "mainJs": {
+    "generatedPath": "work/gold-20260906/wave608-obsidian011/10787363988/main.js",
+    "sha256": "0d7e20c5b9b0bca2162d1a2e99fa3c97b06380b7861652e5b83f5f31c1d642d1",
+    "sourcePath": "SRC/neothd/assets/obsidian_archive_bridge/main.js",
+    "expectedSha256": "0d7e20c5b9b0bca2162d1a2e99fa3c97b06380b7861652e5b83f5f31c1d642d1"
+  },
+  "lock": {
+    "path": "SRC/neothd/assets/obsidian_archive_bridge/package-lock.json",
+    "sha256": "112d51d9dade8e44689678bae0a433545d58caf7bc41bace24036525ef236053",
+    "committedUnchanged": true
+  },
+  "exitCodes": {
+    "02-install.exit-code": "0",
+    "03-typecheck.exit-code": "0",
+    "04-build.exit-code": "0",
+    "06-test.exit-code": "125",
+    "overall.exit-code": "1",
+    "05-tracked-bundle-drift.exit-code": "1",
+    "01-lock-generation.exit-code": "0"
+  },
+  "status": "EXPECTED_TRACKED_BUNDLE_DRIFT_FAILURE",
+  "localExecutablesRan": false,
+  "rootAdmission": {
+    "sourceBindings": 6,
+    "zipDigests": 3,
+    "bundleHashes": 3,
+    "manifestLockMatchCommit": true,
+    "importedSha256": "0d7e20c5b9b0bca2162d1a2e99fa3c97b06380b7861652e5b83f5f31c1d642d1",
+    "tests": "not yet run; drift prevented test stage",
+    "localExecutablesRan": false
+  }
+}

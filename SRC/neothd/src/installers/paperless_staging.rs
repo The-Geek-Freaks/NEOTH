@@ -181,8 +181,7 @@ pub fn prepare_at(root: &Path) -> Result<PaperlessStagingView, PaperlessStagingE
             OsStr::new(name),
             &file_display,
             bytes,
-        )
-        {
+        ) {
             let _ = crate::skills::store::remove_bound_real_directory_tree(
                 &parent.dir,
                 &stage_name,

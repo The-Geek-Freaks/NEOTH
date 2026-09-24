@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W600 source reviewed, generated0.1.1/CLI/hostedpending;W604 Windows38pass3fail and test-only diagnostic;W606 hostedformat",
+  "status": "W608 exact hosted generatedJS imported;W609 hostedformat;locked replay and CLI/native pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 145032,
-    "sha256": "4A0DAAEF7A0F3FF0D6ACC75E89EB2D4E650233890A7030FB8E6D184BE75473CD"
+    "bytes": 145195,
+    "sha256": "F6CF7E130101C814578FDDB85F80A5F9E0CAAF2300D132E28E6999C00164F931"
   },
-  "sourceInputs": 823,
+  "sourceInputs": 824,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -7212,25 +7212,25 @@
     {
       "test": "installers::paperless_staging::tests::renderer_is_pinned_loopback_and_secret_free",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "4527762989B6EED30F362574DB620ED946BBBAD4FC4C5680C9AC98FE3E9D02E1",
+      "sourceSha256": "D484000D5669CE8A629E4843E08163255F923CDEEF3D04E76A06F261849EF270",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_staging::tests::prepare_is_deterministic_and_preserves_operator_env_and_state",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "4527762989B6EED30F362574DB620ED946BBBAD4FC4C5680C9AC98FE3E9D02E1",
+      "sourceSha256": "D484000D5669CE8A629E4843E08163255F923CDEEF3D04E76A06F261849EF270",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_staging::tests::foreign_entry_after_prepare_is_rejected_without_touching_operator_env",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "4527762989B6EED30F362574DB620ED946BBBAD4FC4C5680C9AC98FE3E9D02E1",
+      "sourceSha256": "D484000D5669CE8A629E4843E08163255F923CDEEF3D04E76A06F261849EF270",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_staging::tests::changed_owned_file_is_rejected_without_touching_operator_env",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "4527762989B6EED30F362574DB620ED946BBBAD4FC4C5680C9AC98FE3E9D02E1",
+      "sourceSha256": "D484000D5669CE8A629E4843E08163255F923CDEEF3D04E76A06F261849EF270",
       "junitClass": "neoth"
     },
     {
@@ -7290,67 +7290,67 @@
     {
       "test": "installers::paperless_staging::tests::competing_root_before_publication_is_preserved",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "4527762989B6EED30F362574DB620ED946BBBAD4FC4C5680C9AC98FE3E9D02E1",
+      "sourceSha256": "D484000D5669CE8A629E4843E08163255F923CDEEF3D04E76A06F261849EF270",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_staging::tests::stage_source_swap_before_bound_publish_is_refused",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "4527762989B6EED30F362574DB620ED946BBBAD4FC4C5680C9AC98FE3E9D02E1",
+      "sourceSha256": "D484000D5669CE8A629E4843E08163255F923CDEEF3D04E76A06F261849EF270",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::install_is_atomic_idempotent_and_disabled",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+      "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::missing_vault_or_plugins_reports_absent",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+      "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::drift_repairs_known_payload_and_preserves_settings",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+      "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::foreign_slot_is_never_overwritten",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+      "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::uninstall_keeps_data_and_foreign_extensions",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+      "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::uninstall_removes_an_empty_authenticated_slot",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+      "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::healthy_owned_slot_with_settings_is_idempotent_for_install_and_repair",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+      "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::interrupted_uninstall_resumes_after_missing_payload_and_later_empty_slot",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+      "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::competing_slot_before_publish_is_preserved",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+      "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
       "junitClass": "neoth"
     },
     {
@@ -7368,13 +7368,13 @@
     {
       "test": "installers::paperless_staging::tests::ownership_binds_the_exact_receipt_contract_and_coverage_boundary",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "4527762989B6EED30F362574DB620ED946BBBAD4FC4C5680C9AC98FE3E9D02E1",
+      "sourceSha256": "D484000D5669CE8A629E4843E08163255F923CDEEF3D04E76A06F261849EF270",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_staging::tests::stale_contract_marker_is_rejected_without_touching_operator_env_or_state",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "4527762989B6EED30F362574DB620ED946BBBAD4FC4C5680C9AC98FE3E9D02E1",
+      "sourceSha256": "D484000D5669CE8A629E4843E08163255F923CDEEF3D04E76A06F261849EF270",
       "junitClass": "neoth"
     },
     {
@@ -7464,25 +7464,25 @@
     {
       "test": "installers::obsidian_archive_bridge::tests::update_exact_predecessor_preserves_settings_extensions_and_vault",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+      "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::update_rejects_tampered_predecessor_without_mutating_any_file",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+      "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::repair_resumes_panic_interrupted_predecessor_update_without_losing_additions",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+      "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
       "junitClass": "neoth"
     },
     {
       "test": "installers::obsidian_archive_bridge::tests::repair_recovers_concurrent_payload_replacement_during_update",
       "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-      "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+      "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
       "junitClass": "neoth"
     }
   ],
@@ -9491,43 +9491,43 @@
       {
         "test": "installers::paperless_staging::tests::symlink_root_is_rejected_without_following_target",
         "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-        "sourceSha256": "4527762989B6EED30F362574DB620ED946BBBAD4FC4C5680C9AC98FE3E9D02E1",
+        "sourceSha256": "D484000D5669CE8A629E4843E08163255F923CDEEF3D04E76A06F261849EF270",
         "junitClass": "neoth"
       },
       {
         "test": "installers::paperless_staging::tests::ancestor_swap_does_not_publish_into_replacement",
         "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-        "sourceSha256": "4527762989B6EED30F362574DB620ED946BBBAD4FC4C5680C9AC98FE3E9D02E1",
+        "sourceSha256": "D484000D5669CE8A629E4843E08163255F923CDEEF3D04E76A06F261849EF270",
         "junitClass": "neoth"
       },
       {
         "test": "installers::paperless_staging::tests::inspection_parent_swap_reports_mismatch",
         "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-        "sourceSha256": "4527762989B6EED30F362574DB620ED946BBBAD4FC4C5680C9AC98FE3E9D02E1",
+        "sourceSha256": "D484000D5669CE8A629E4843E08163255F923CDEEF3D04E76A06F261849EF270",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::requested_vault_parent_swap_before_publish_is_not_reported_as_success",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+        "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::replacement_after_payload_read_is_not_removed_by_uninstall",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+        "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::symlinked_plugin_slot_is_foreign_without_following_target",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+        "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::malformed_obsidian_parent_surfaces_an_unsafe_path_error",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+        "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
         "junitClass": "neoth"
       },
       {
@@ -9739,43 +9739,43 @@
       {
         "test": "installers::paperless_staging::tests::symlink_root_is_rejected_without_following_target",
         "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-        "sourceSha256": "4527762989B6EED30F362574DB620ED946BBBAD4FC4C5680C9AC98FE3E9D02E1",
+        "sourceSha256": "D484000D5669CE8A629E4843E08163255F923CDEEF3D04E76A06F261849EF270",
         "junitClass": "neoth"
       },
       {
         "test": "installers::paperless_staging::tests::ancestor_swap_does_not_publish_into_replacement",
         "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-        "sourceSha256": "4527762989B6EED30F362574DB620ED946BBBAD4FC4C5680C9AC98FE3E9D02E1",
+        "sourceSha256": "D484000D5669CE8A629E4843E08163255F923CDEEF3D04E76A06F261849EF270",
         "junitClass": "neoth"
       },
       {
         "test": "installers::paperless_staging::tests::inspection_parent_swap_reports_mismatch",
         "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-        "sourceSha256": "4527762989B6EED30F362574DB620ED946BBBAD4FC4C5680C9AC98FE3E9D02E1",
+        "sourceSha256": "D484000D5669CE8A629E4843E08163255F923CDEEF3D04E76A06F261849EF270",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::requested_vault_parent_swap_before_publish_is_not_reported_as_success",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+        "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::replacement_after_payload_read_is_not_removed_by_uninstall",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+        "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::symlinked_plugin_slot_is_foreign_without_following_target",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+        "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
         "junitClass": "neoth"
       },
       {
         "test": "installers::obsidian_archive_bridge::tests::malformed_obsidian_parent_surfaces_an_unsafe_path_error",
         "sourcePath": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
-        "sourceSha256": "7641671ED322A87E18CBBCA3528D64B4287B8086B2544478906F0F317EE0E874",
+        "sourceSha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
         "junitClass": "neoth"
       },
       {
@@ -27166,6 +27166,56 @@
       }
     ],
     "note": "Pinned predecessor-preserving update with4tests; Group971/native1246; test-only Windows stage diagnostics after exact failure admission; no local executable validation",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave610Obsidian011Import": {
+    "base": "aeab1fe07d84cfeaeec8404cf40de4cf6b90d3ca",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave608-obsidian011-artifact.json",
+        "bytes": 4398,
+        "sha256": "C96B5596D8C76286A759C0D3ABAE4DDFFEECFA7812DDD7CA237E3EB713D0040D",
+        "blob": "f971a554b2e6112fda7432a2b87d39aefe8cda79"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 218120,
+        "sha256": "E8F494296FC37DD372E6FDC819E0107800361C4588A11C6866947FFE0247A0E0",
+        "blob": "cadce9bf766715413d425637861e30a82aa938bc"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1229448,
+        "sha256": "248C75B988856BEC6AFC156E3CFE08B276466E283DFF0F8B27EB86CD696D1E11",
+        "blob": "52b9e48062f3951d4ad935182c710e26b1bb79b2"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1828730,
+        "sha256": "1D6CF20DB674924864842545EBD6E27BDC355394D69895CB6A473513F2A3C8BD",
+        "blob": "36ec46217bb38f2ce539a58e1be9de64a8539899"
+      },
+      {
+        "path": "SRC/neothd/assets/obsidian_archive_bridge/main.js",
+        "bytes": 1963,
+        "sha256": "0D7E20C5B9B0BCA2162D1A2E99FA3C97B06380B7861652E5B83F5F31C1D642D1",
+        "blob": "589dda36e4a6d387cd7a0ccf4bbdc6540c7d1d1f"
+      },
+      {
+        "path": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
+        "bytes": 36948,
+        "sha256": "7F290FB9FA09679D1657EF9518FE4BF89CD5DD9F8F41300E59EB4FFCAEAB4562",
+        "blob": "b8d8f3821d865d940b6e72c3c29913b208241ffb"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_staging.rs",
+        "bytes": 29661,
+        "sha256": "D484000D5669CE8A629E4843E08163255F923CDEEF3D04E76A06F261849EF270",
+        "blob": "b4888b3d4cc5e55be413228f221e8edba1893b79"
+      }
+    ],
+    "note": "Build/typecheck/npm ci0; tracked drift1 preventedtests125; imported exactSHA0d7e20c5 plus2file hostedrustfmt; no local execution",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

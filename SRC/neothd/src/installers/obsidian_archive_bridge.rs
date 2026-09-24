@@ -280,7 +280,8 @@ pub fn uninstall(vault: &Path) -> Result<BridgeView, BridgeError> {
     match inspect(vault)? {
         Inspection::Absent => return Ok(view(BridgeStatus::Absent)),
         Inspection::Foreign => return Ok(view(BridgeStatus::Foreign)),
-        Inspection::Drifted | Inspection::Residual | Inspection::Current | Inspection::Previous => {}
+        Inspection::Drifted | Inspection::Residual | Inspection::Current | Inspection::Previous => {
+        }
     }
     let parent = plugin_parent(vault, false)?;
     let slot_display = parent.display.join(PLUGIN_ID);
@@ -359,8 +360,8 @@ fn repair_owned_payloads(vault: &Path) -> Result<BridgeView, BridgeError> {
         &slot_display,
     )
     .map_err(|_| BridgeError::UnsafePath)?;
-    let generation = marker_generation(&slot, &slot_display)?
-        .ok_or(BridgeError::ForeignOrMismatch)?;
+    let generation =
+        marker_generation(&slot, &slot_display)?.ok_or(BridgeError::ForeignOrMismatch)?;
     for (name, expected) in owned_files(generation)
         .into_iter()
         .filter(|(name, _)| *name != MARKER)
@@ -737,12 +738,24 @@ mod tests {
         let root = vault.join(".obsidian/plugins").join(PLUGIN_ID);
         fs::write(root.join("data.json"), b"operator settings").unwrap();
         fs::write(root.join("extension.js"), b"extension").unwrap();
-        assert_eq!(status(&vault).unwrap().status, BridgeStatus::UpdateAvailable);
-        assert_eq!(update(&vault).unwrap().status, BridgeStatus::InstalledDisabled);
-        assert_eq!(update(&vault).unwrap().status, BridgeStatus::InstalledDisabled);
+        assert_eq!(
+            status(&vault).unwrap().status,
+            BridgeStatus::UpdateAvailable
+        );
+        assert_eq!(
+            update(&vault).unwrap().status,
+            BridgeStatus::InstalledDisabled
+        );
+        assert_eq!(
+            update(&vault).unwrap().status,
+            BridgeStatus::InstalledDisabled
+        );
         assert_eq!(fs::read(root.join(MANIFEST)).unwrap(), MANIFEST_BYTES);
         assert_eq!(fs::read(root.join(MAIN)).unwrap(), MAIN_BYTES);
-        assert_eq!(fs::read(root.join("data.json")).unwrap(), b"operator settings");
+        assert_eq!(
+            fs::read(root.join("data.json")).unwrap(),
+            b"operator settings"
+        );
         assert_eq!(fs::read(root.join("extension.js")).unwrap(), b"extension");
         assert_eq!(fs::read(note).unwrap(), b"operator note");
     }
@@ -755,9 +768,15 @@ mod tests {
         fs::write(root.join(MAIN), b"tampered predecessor").unwrap();
         fs::write(root.join("data.json"), b"operator settings").unwrap();
         assert_eq!(status(&vault).unwrap().status, BridgeStatus::Drifted);
-        assert!(matches!(update(&vault), Err(BridgeError::ForeignOrMismatch)));
+        assert!(matches!(
+            update(&vault),
+            Err(BridgeError::ForeignOrMismatch)
+        ));
         assert_eq!(fs::read(root.join(MAIN)).unwrap(), b"tampered predecessor");
-        assert_eq!(fs::read(root.join("data.json")).unwrap(), b"operator settings");
+        assert_eq!(
+            fs::read(root.join("data.json")).unwrap(),
+            b"operator settings"
+        );
     }
 
     #[test]
@@ -769,8 +788,7 @@ mod tests {
         set_before_update_marker_for_test(|| {
             panic!("test crash before publishing the current marker");
         });
-        let interrupted =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| update(&vault)));
+        let interrupted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| update(&vault)));
         assert!(
             interrupted.is_err(),
             "the failpoint must interrupt before marker publish"
@@ -781,8 +799,14 @@ mod tests {
             "the predecessor receipt survives an interrupted update"
         );
         assert_eq!(status(&vault).unwrap().status, BridgeStatus::Drifted);
-        assert_eq!(repair(&vault).unwrap().status, BridgeStatus::InstalledDisabled);
-        assert_eq!(fs::read(root.join("data.json")).unwrap(), b"operator settings");
+        assert_eq!(
+            repair(&vault).unwrap().status,
+            BridgeStatus::InstalledDisabled
+        );
+        assert_eq!(
+            fs::read(root.join("data.json")).unwrap(),
+            b"operator settings"
+        );
         assert_eq!(fs::read(root.join(MAIN)).unwrap(), MAIN_BYTES);
     }
 
@@ -796,10 +820,19 @@ mod tests {
         set_before_update_marker_for_test(move || {
             fs::write(competing_main, b"competing payload replacement").unwrap();
         });
-        assert!(matches!(update(&vault), Err(BridgeError::ForeignOrMismatch)));
+        assert!(matches!(
+            update(&vault),
+            Err(BridgeError::ForeignOrMismatch)
+        ));
         assert_eq!(status(&vault).unwrap().status, BridgeStatus::Drifted);
-        assert_eq!(repair(&vault).unwrap().status, BridgeStatus::InstalledDisabled);
-        assert_eq!(fs::read(root.join("data.json")).unwrap(), b"operator settings");
+        assert_eq!(
+            repair(&vault).unwrap().status,
+            BridgeStatus::InstalledDisabled
+        );
+        assert_eq!(
+            fs::read(root.join("data.json")).unwrap(),
+            b"operator settings"
+        );
     }
 
     #[test]

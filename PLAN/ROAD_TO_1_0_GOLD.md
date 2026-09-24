@@ -8,6 +8,14 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W608-W609 generated Obsidian0.1.1 artifact imported (2026-09-24):**
+Hosted run35948230490 ataeab1fe0 passes immutable npm install, typecheck and
+bundle build. Three ZIPs, six source Gitblobs, three bundle hashes and unchanged
+manifest/lock were independently verified. The generated main.js SHA2560d7e20c5
+is now imported exactly; the only emitted-code change is version0.1.0 to0.1.1.
+The first run stopped at expected tracked-bundle drift, so its tests were not
+run. A locked replay and fresh CLI export/native checks are next. W609 imports
+the exact two-file hosted rustfmt patch. No Road closure or local execution.
 **W600 Obsidian update and W604 Windows diagnostics (2026-09-24):**
 The offline `obsidian bridge update` now accepts the exact retained0.1.0
 predecessor and transitions its known payload to0.1.1. Vault notes, data.json
