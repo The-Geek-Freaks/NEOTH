@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T20:37:29.9565512Z",
-  "validationStatus": "W927 MCP provenance static reviewed; hosted gates pending; C7 remains open",
+  "capturedUtc": "2026-09-24T20:39:45.9953778Z",
+  "validationStatus": "W929 exact hosted MCP formatting imported; compile and behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3618,8 +3618,8 @@
     },
     {
       "path": "SRC/neothd/src/config/mod.rs",
-      "bytes": 185093,
-      "sha256": "C4479C5077A6866D8F2B2075FABBC28EDE1860E8F0A502CFD37FD569EB2215AE"
+      "bytes": 185409,
+      "sha256": "31D14A5C5764C72AE03CFD9C6CC58C308667694F95C17DD4048B6AD859191072"
     },
     {
       "path": "SRC/neothd/src/config/ops.rs",
@@ -4143,13 +4143,13 @@
     },
     {
       "path": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "bytes": 312990,
-      "sha256": "7CBDB832CB123EE5A9952F44D6641B01CDD440E0F28AD6A9A1E3D1CC50933A54"
+      "bytes": 313046,
+      "sha256": "223BE6F268536A384BF050CC2CDCAC2D8DAAD7392079DA68E40A20763FB96DA3"
     },
     {
       "path": "SRC/neothd/src/mcp/gate.rs",
-      "bytes": 147840,
-      "sha256": "2C0F4322ECCAEF00416B8346F84C284AA83CDC3974EE2C12A77083F42BB201A1"
+      "bytes": 147919,
+      "sha256": "EA9CCA87A177FC22FAC080999F56A8BE2C42FAB726A412BDB8624D584E71677D"
     },
     {
       "path": "SRC/neothd/src/mcp/goal_judge.rs",
@@ -4399,7 +4399,7 @@
     {
       "path": "SRC/neothd/src/permissions/mod.rs",
       "bytes": 94925,
-      "sha256": "B94D87720F75237E2F691919CB827BC52C5DDC5C654357C21CFE55607EA993F4"
+      "sha256": "29B8B742ED24E66B28FCF1818CA997E576DE8E8E7A1FC7CC1072F0F92F66E743"
     },
     {
       "path": "SRC/neothd/src/permissions/policy.rs",

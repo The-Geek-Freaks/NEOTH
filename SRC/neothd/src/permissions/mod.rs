@@ -28,11 +28,11 @@ pub mod policy;
 pub mod tier_classifier;
 pub mod trust_ledger;
 
+pub(crate) use crate::config::McpInvocationProvenance;
 pub use gate::{ConfirmStrategy, Gate, PermissionAuditSink};
 pub use ifc::{
     InformationFlowDenied, InformationLabel, SourceLabels, SourceLabelsError, may_flow_to_action,
 };
-pub(crate) use crate::config::McpInvocationProvenance;
 pub use policy::{
     ActionKind, AutonomyPolicySnapshot, CustomAutonomyConfig, CustomDecision,
     EffectiveAutonomyPolicy, PolicyArgument, SkillAutonomyOverride, SkillId,

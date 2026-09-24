@@ -656,7 +656,9 @@ pub(crate) async fn preflight_with_skill_policy_and_audit_sink<P: PolicyArgument
 /// path. The provenance moves into the opaque preflight and then into the
 /// resulting authorization, so a later compatibility caller cannot replace it.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn preflight_with_skill_policy_and_audit_sink_with_provenance<P: PolicyArgument + Copy>(
+pub(crate) async fn preflight_with_skill_policy_and_audit_sink_with_provenance<
+    P: PolicyArgument + Copy,
+>(
     cfg: &McpServerConfig,
     tool: &str,
     policy: P,
@@ -1041,7 +1043,8 @@ pub(crate) async fn invoke_authorized_with_audit_effect_gate(
     effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
     pre_tool_use: AdmittedPreToolUse,
 ) -> Result<ToolCallResult, GateError> {
-    let request_binding_sha256 = mcp_request_binding_for_provenance(cfg, tool, &arguments, mcp_ifc)?;
+    let request_binding_sha256 =
+        mcp_request_binding_for_provenance(cfg, tool, &arguments, mcp_ifc)?;
     invoke_authorized_with_audit_sink_effect_gate(
         client,
         cfg,
@@ -2367,10 +2370,11 @@ mod tests {
         let counter = home.path().join("calls.txt");
         let cfg = crate::mcp::client::stdio_fixture_config(&counter);
         let arguments = serde_json::json!({"read": "private"});
-        let provenance = crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
-            crate::permissions::InformationLabel::Confidential,
-            "trusted-gate",
-        );
+        let provenance =
+            crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
+                crate::permissions::InformationLabel::Confidential,
+                "trusted-gate",
+            );
         let binding =
             mcp_request_binding_for_provenance(&cfg, "read", &arguments, &provenance).unwrap();
         let preflight = preflight_with_skill_policy_and_audit_sink_with_provenance(
@@ -2398,17 +2402,14 @@ mod tests {
         )
         .await
         .unwrap();
-        let other_provenance = crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
-            crate::permissions::InformationLabel::Confidential,
-            "trusted-gate",
-        );
-        let other_binding = mcp_request_binding_for_provenance(
-            &cfg,
-            "read",
-            &arguments,
-            &other_provenance,
-        )
-        .unwrap();
+        let other_provenance =
+            crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
+                crate::permissions::InformationLabel::Confidential,
+                "trusted-gate",
+            );
+        let other_binding =
+            mcp_request_binding_for_provenance(&cfg, "read", &arguments, &other_provenance)
+                .unwrap();
         assert_ne!(binding, other_binding);
         assert!(
             !authorized.matches(&cfg, "read", Some(&other_binding)),
@@ -2455,17 +2456,17 @@ mod tests {
         let counter = home.path().join("calls.txt");
         let cfg = crate::mcp::client::stdio_fixture_config(&counter);
         let arguments = serde_json::json!({"read": "public"});
-        let provenance = crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
-            crate::permissions::InformationLabel::Public,
-            "trusted-public",
-        );
+        let provenance =
+            crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
+                crate::permissions::InformationLabel::Public,
+                "trusted-public",
+            );
         let same_turn_clone = provenance.clone();
         let binding =
             mcp_request_binding_for_provenance(&cfg, "read", &arguments, &provenance).unwrap();
         assert_eq!(
             binding,
-            mcp_request_binding_for_provenance(&cfg, "read", &arguments, &same_turn_clone)
-                .unwrap(),
+            mcp_request_binding_for_provenance(&cfg, "read", &arguments, &same_turn_clone).unwrap(),
             "one inbound turn must keep the same provenance commitment across clones"
         );
         let preflight = preflight_with_skill_policy_and_audit_sink_with_provenance(
@@ -2493,10 +2494,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let next_turn = crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
-            crate::permissions::InformationLabel::Public,
-            "trusted-public",
-        );
+        let next_turn =
+            crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
+                crate::permissions::InformationLabel::Public,
+                "trusted-public",
+            );
         let next_turn_binding =
             mcp_request_binding_for_provenance(&cfg, "read", &arguments, &next_turn).unwrap();
         assert_ne!(binding, next_turn_binding);
@@ -2545,10 +2547,11 @@ mod tests {
         let counter = home.path().join("calls.txt");
         let cfg = crate::mcp::client::stdio_fixture_config(&counter);
         let arguments = serde_json::json!({"read": "confidential"});
-        let provenance = crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
-            crate::permissions::InformationLabel::Confidential,
-            "trusted-replay",
-        );
+        let provenance =
+            crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
+                crate::permissions::InformationLabel::Confidential,
+                "trusted-replay",
+            );
         let binding =
             mcp_request_binding_for_provenance(&cfg, "read", &arguments, &provenance).unwrap();
         let preflight = preflight_with_skill_policy_and_audit_sink_with_provenance(

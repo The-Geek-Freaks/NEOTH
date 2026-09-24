@@ -2202,9 +2202,12 @@ async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
     // This check is deliberately before preflight, SmartApprove tools/list,
     // and cold-client spawn.  Unclassified compatibility is never relabelled
     // public; only a trusted configured account has labels to enforce.
-    mcp_ifc
-        .enforce_mcp_tool_invocation()
-        .map_err(|error| format!("dispatch `{}::{}`: IFC denied: {error}", call.server, call.tool))?;
+    mcp_ifc.enforce_mcp_tool_invocation().map_err(|error| {
+        format!(
+            "dispatch `{}::{}`: IFC denied: {error}",
+            call.server, call.tool
+        )
+    })?;
     // Run every static policy layer before starting or querying a process.
     // Only a genuine Confirm can justify SmartApprove's tools/list snapshot;
     // Allow uses the ordinary call path and every rejection returns here.
@@ -3059,10 +3062,11 @@ mod tests {
             tool: "read".to_owned(),
             arguments: serde_json::json!({"private": true}),
         };
-        let provenance = crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
-            crate::permissions::InformationLabel::Secret,
-            "trusted-dispatch",
-        );
+        let provenance =
+            crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
+                crate::permissions::InformationLabel::Secret,
+                "trusted-dispatch",
+            );
         let error = dispatch_one_configured_path_read(
             &call,
             &servers,

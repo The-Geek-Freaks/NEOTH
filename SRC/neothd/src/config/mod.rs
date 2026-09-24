@@ -278,8 +278,10 @@ pub struct ChannelAccountConfig {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ChannelAccountIfcSourceLabels {
-    pub telegram: BTreeMap<crate::channels::registry::ChannelAccountId, crate::permissions::InformationLabel>,
-    pub slack: BTreeMap<crate::channels::registry::ChannelAccountId, crate::permissions::InformationLabel>,
+    pub telegram:
+        BTreeMap<crate::channels::registry::ChannelAccountId, crate::permissions::InformationLabel>,
+    pub slack:
+        BTreeMap<crate::channels::registry::ChannelAccountId, crate::permissions::InformationLabel>,
 }
 
 fn deserialize_unique_slack_accounts<'de, D>(
@@ -457,7 +459,9 @@ impl McpInvocationProvenance {
 
     #[cfg(test)]
     pub(crate) fn test_highest_label(&self) -> Option<crate::permissions::InformationLabel> {
-        self.trusted.as_ref().map(|trusted| trusted.sources.highest())
+        self.trusted
+            .as_ref()
+            .map(|trusted| trusted.sources.highest())
     }
 }
 
@@ -470,10 +474,12 @@ impl ChannelAccountBinding {
         self.incarnation.as_ref()
     }
 
-    pub(crate) fn mcp_invocation_provenance(
-        &self,
-    ) -> crate::permissions::McpInvocationProvenance {
-        match self.ifc_sources.as_ref().map(crate::permissions::SourceLabels::highest) {
+    pub(crate) fn mcp_invocation_provenance(&self) -> crate::permissions::McpInvocationProvenance {
+        match self
+            .ifc_sources
+            .as_ref()
+            .map(crate::permissions::SourceLabels::highest)
+        {
             Some(label) => crate::permissions::McpInvocationProvenance::trusted_configured_channel(
                 &self.channel_ref,
                 self.incarnation.as_ref(),
@@ -628,7 +634,13 @@ impl RuntimeConfigPair {
             let account_binding = ChannelAccountBinding {
                 channel_ref: channel_ref.clone(),
                 incarnation: policy.incarnation.clone(),
-                ifc_sources: self.config.channel_accounts.ifc_source_labels.telegram.get(account_id).copied()
+                ifc_sources: self
+                    .config
+                    .channel_accounts
+                    .ifc_source_labels
+                    .telegram
+                    .get(account_id)
+                    .copied()
                     .map(|label| crate::permissions::SourceLabels::from_labels([label]))
                     .transpose()?,
             };
@@ -776,7 +788,13 @@ impl RuntimeConfigPair {
                 account_binding: Some(ChannelAccountBinding {
                     channel_ref: channel_ref.clone(),
                     incarnation: policy.incarnation.clone(),
-                    ifc_sources: self.config.channel_accounts.ifc_source_labels.slack.get(account_id).copied()
+                    ifc_sources: self
+                        .config
+                        .channel_accounts
+                        .ifc_source_labels
+                        .slack
+                        .get(account_id)
+                        .copied()
                         .map(|label| crate::permissions::SourceLabels::from_labels([label]))
                         .transpose()?,
                 }),
@@ -957,9 +975,7 @@ mod slack_account_tests {
             .account_binding()
             .expect("configured account must retain its authenticated binding");
         assert_eq!(
-            binding
-                .mcp_invocation_provenance()
-                .test_highest_label(),
+            binding.mcp_invocation_provenance().test_highest_label(),
             Some(crate::permissions::InformationLabel::Confidential)
         );
         let first_turn = binding.mcp_invocation_provenance();
