@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W963/W964/W965 source-bound hosted evidence accepted; W968/W969 reviewed fixture repairs awaiting hosted rerun",
+  "status": "W971 template settings/type fixes source-reviewed;3existing regressions newly registered, hosted behavior pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 183744,
-    "sha256": "D9B750821A3F0A4BD683BD26F55E79F808AFAEED5BD65E066EF756AC34D5D726"
+    "bytes": 184664,
+    "sha256": "CC712D0373BACE4A7C0C8B6B27E556C446E1FCF77284B903F408B0A7D0D9781F"
   },
-  "sourceInputs": 1038,
+  "sourceInputs": 1043,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -10033,6 +10033,24 @@
       "test": "permissions::ifc::tests::egress_provenance_debug_redacts_released_topic_and_digest",
       "sourcePath": "SRC/neothd/src/permissions/ifc.rs",
       "sourceSha256": "6301AF4EEE45C4104DC440C919753A4C740DD6476D1C4E0DEB3AE59C6557F651",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "installers::n8n_workflows::tests::every_workflow_body_carries_required_fields",
+      "sourcePath": "SRC/neothd/src/installers/n8n_workflows.rs",
+      "sourceSha256": "E141FC8CD047095CEBB0783763732419002829C27031C2C7E57777E5592293E2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "installers::n8n_workflows::tests::every_workflow_body_is_valid_json",
+      "sourcePath": "SRC/neothd/src/installers/n8n_workflows.rs",
+      "sourceSha256": "E141FC8CD047095CEBB0783763732419002829C27031C2C7E57777E5592293E2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "installers::n8n_workflows::tests::every_workflow_ships_inactive",
+      "sourcePath": "SRC/neothd/src/installers/n8n_workflows.rs",
+      "sourceSha256": "E141FC8CD047095CEBB0783763732419002829C27031C2C7E57777E5592293E2",
       "junitClass": "neoth"
     }
   ],
@@ -37302,6 +37320,82 @@
       }
     ],
     "note": "Core d26 success; pinned image canary e844 success; Group0c7 1440PASS6FAIL255bindings. Two test-only source repairs; product bootstrap WIP excluded.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave971WorkflowShapeAcceptance": {
+    "requiredTests": [
+      "installers::n8n_workflows::tests::every_workflow_body_carries_required_fields",
+      "installers::n8n_workflows::tests::every_workflow_body_is_valid_json",
+      "installers::n8n_workflows::tests::every_workflow_ships_inactive"
+    ],
+    "note": "Three bootstrap JSON shape/inactive regressions; no workflow execution/import acceptance."
+  },
+  "wave976WorkflowPayloadShape": {
+    "base": "e6f3d47433f493c6c83e0d7d0d5b6c44567b8571",
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 24015,
+        "sha256": "9C7CFCD7FBD9F38DBC91CC936465C54A15ED3FEAE131E7E85EDF5BBAD83E9542",
+        "blob": "abbc9a4d823515339ed033f9ee47fb93805c6edc"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 40392,
+        "sha256": "84B059DD336A5D5ABA205482CF61EB6C27838FDA3EE4C781355A88097A74C70F",
+        "blob": "277d49cc30d4b90255b70064280f57767e5c2985"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 298798,
+        "sha256": "FD1C2A8E807A273A6E3DA645C8408DCB566F0CB0FB63F791CE75FF28755EE1FB",
+        "blob": "82f2721764bcd1ceaee9cee150e62acb32d6387a"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1310126,
+        "sha256": "E9AB970BADDFB8A04AA1E918729489DB4EFE52072ED6ADEBEC1AAE2FA32FE1E9",
+        "blob": "1d4af0debda577b07ae670eb4a3463e97680e52a"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1919695,
+        "sha256": "CDA3E60027389E8E40340B4A5BF7A096A1A5D778A90B1C587DD63DB8F898C6C7",
+        "blob": "40c39242b013b166668a9cafe86db18f5472ab5a"
+      },
+      {
+        "path": "SRC/neothd/assets/n8n_workflows/daily_summary.json",
+        "bytes": 3355,
+        "sha256": "162AF106CB6712E88B4F80F80DEB3132A3177D13CFCFA5A0A8C7C193A2988F2B",
+        "blob": "bbf29659ec6dac4605ab4b740751d91c8f63e0fe"
+      },
+      {
+        "path": "SRC/neothd/assets/n8n_workflows/morning_brief.json",
+        "bytes": 3426,
+        "sha256": "77FC2E89ACC11218FA8BA95B417E699A867472E808B12158B1B60AA03B703BE2",
+        "blob": "b7c6ac4941791fd2d0d554ecb72981ba97375cca"
+      },
+      {
+        "path": "SRC/neothd/assets/n8n_workflows/weekly_stats.json",
+        "bytes": 3651,
+        "sha256": "7B5C415A53910C03ACF7D49890EC1973426899FC0EE7AB91106DB173C89B3165",
+        "blob": "72b21c1b9d6cf20839cb9ef0e5a4b848d1b68025"
+      },
+      {
+        "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+        "bytes": 23502,
+        "sha256": "9EDAD20DD34CD45E3907DD652C4D06FA76DB0C065543BEADE85D338FAD7BBE09",
+        "blob": "df89e2b8ac0effbf477bff53c5d58246224cdd87"
+      },
+      {
+        "path": "SRC/neothd/src/installers/n8n_workflows.rs",
+        "bytes": 7143,
+        "sha256": "E141FC8CD047095CEBB0783763732419002829C27031C2C7E57777E5592293E2",
+        "blob": "5dd1b23c56e03045bcabe9917de319bc64264e55"
+      }
+    ],
+    "note": "Pinned public DTO requires settings object, empty settings valid. No import/execution/reachability completion claim. Native1674 Group1449 Windows232.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

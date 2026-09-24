@@ -95,11 +95,31 @@ mod tests {
     fn every_workflow_body_carries_required_fields() {
         for w in BOOTSTRAP_WORKFLOWS {
             let parsed: serde_json::Value = serde_json::from_str(w.body).unwrap();
-            assert!(parsed.get("name").is_some(), "{} missing name", w.slug);
-            assert!(parsed.get("nodes").is_some(), "{} missing nodes", w.slug);
             assert!(
-                parsed.get("connections").is_some(),
-                "{} missing connections",
+                parsed.get("name").is_some_and(|field| field.is_string()),
+                "{} name must be a string",
+                w.slug
+            );
+            assert!(
+                parsed.get("nodes").is_some_and(|field| field.is_array()),
+                "{} nodes must be an array",
+                w.slug
+            );
+            assert!(
+                parsed
+                    .get("connections")
+                    .is_some_and(|field| field.is_object()),
+                "{} connections must be an object",
+                w.slug
+            );
+            assert!(
+                parsed.get("settings").is_some_and(|field| field.is_object()),
+                "{} settings must be an object",
+                w.slug
+            );
+            assert!(
+                parsed.get("active").is_some_and(|field| field.is_boolean()),
+                "{} active must be a boolean",
                 w.slug
             );
         }

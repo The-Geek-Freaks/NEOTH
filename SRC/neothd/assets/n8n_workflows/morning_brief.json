@@ -99,5 +99,6 @@
     "NEOTH Recall (open threads)": { "main": [[{ "node": "Compose brief", "type": "main", "index": 0 }]] },
     "Compose brief": { "main": [[{ "node": "Send via NEOTH channel", "type": "main", "index": 0 }]] }
   },
+  "settings": {},
   "tags": [{ "name": "neoth-bootstrap" }]
 }

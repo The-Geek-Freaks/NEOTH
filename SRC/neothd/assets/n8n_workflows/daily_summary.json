@@ -97,5 +97,6 @@
     "NEOTH Recall (today)": { "main": [[{ "node": "NEOTH Provider Call (summarise)", "type": "main", "index": 0 }]] },
     "NEOTH Provider Call (summarise)": { "main": [[{ "node": "Send via NEOTH channel", "type": "main", "index": 0 }]] }
   },
+  "settings": {},
   "tags": [{ "name": "neoth-bootstrap" }]
 }

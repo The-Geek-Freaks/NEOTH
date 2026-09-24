@@ -3,6 +3,17 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W971 workflow payload shape (2026-09-24):** The pinned n8n public create DTO
+requires a settings object. Root independently read the upstream write schema;
+all settings keys are optional, so the three bootstrap assets now provide
+settings:{} explicitly. Their existing regression checks actual field types.
+Three existing shape/JSON/inactive tests are registered as Native1674,
+Group1449 and Windows232, with the exact assets added to hosted input hashes.
+Starter comments no longer claim public POST deduplication through node IDs
+or working routes from templates alone. Hosted shape checks and real-image
+inactive-create acceptance are still pending; nine starter routes, container
+reachability and production import/recovery remain open. Claude RESULT021 was
+read; TASK022 audits actual node schedules, expressions and API payloads.
 **W965/W968/W969 focused fixture diagnosis (2026-09-24):** Root admitted
 Group1446 at0c7c9dea:1440PASS/6FAIL/0missing,255 historical source/input
 bindings and all1446 ordered terminals, with all three API ZIP digests verified.

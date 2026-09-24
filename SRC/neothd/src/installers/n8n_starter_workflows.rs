@@ -1,13 +1,13 @@
 //! N-06 — top-10 starter workflows beyond the N-2 bootstrap.
 //!
 //! The N-2 bootstrap ([`super::n8n_workflows::BOOTSTRAP_WORKFLOWS`])
-//! ships 3 always-on workflows (daily summary / morning brief /
+//! ships 3 inactive bootstrap workflow templates (daily summary / morning brief /
 //! weekly stats). N-06 extends with 10 OPTIONAL workflows operators
 //! browse + import as their NEOTH usage grows. Each is a thin
-//! n8n workflow JSON that calls back into the NEOTH HTTP API
+//! n8n workflow JSON that references a NEOTH HTTP API path
 //! (`/health`, `/proactive/drain`, `/paperless/consult`,
-//! `/reflection/sync_obsidian`, etc. — endpoints exposed by the
-//! daemon `serve` path).
+//! `/reflection/sync_obsidian`, etc.). Route availability and container-to-host
+//! reachability are separate deployment checks.
 //!
 //! ## What each body actually contains (post-2026-05-26 fix)
 //!
@@ -19,8 +19,8 @@
 //!   - An `httpRequest` node hitting `NEOTH_HTTP_BASE + endpoint`
 //!     with an Authorization Bearer header sourced from
 //!     `$env.NEOTH_TOKEN`.
-//!   - Deterministic node IDs derived from the slug so reimport
-//!     produces stable IDs (n8n dedupes on these).
+//!   - Deterministic node IDs derived from the slug for stable local
+//!     workflow shape. Public workflow POSTs do not deduplicate on node IDs.
 //!   - A `connections` block wiring Schedule → NEOTH HTTP.
 //!
 //! Drift-guard tests assert each of these properties per workflow
@@ -68,10 +68,9 @@ pub const NEOTH_HTTP_BASE: &str = "http://localhost:8765";
 ///   2. HTTP Request hitting `NEOTH_HTTP_BASE + endpoint` with a
 ///      Bearer token from the `NEOTH_TOKEN` env var.
 ///
-/// Node IDs are derived deterministically from the slug + role so
-/// importing the same workflow twice produces stable IDs (n8n
-/// dedupes on these). Schedule connects to HTTP via the standard
-/// n8n `main` channel.
+/// Node IDs are derived deterministically from the slug + role for a stable
+/// workflow shape. They do not make public workflow POSTs idempotent. Schedule
+/// connects to HTTP via the standard n8n `main` channel.
 ///
 /// `active: false` per the AGENTER "no destructive auto-action
 /// without operator GO per command" hard rule — operators
@@ -273,7 +272,7 @@ pub fn find_by_slug(slug: &str) -> Option<&'static BootstrapWorkflow> {
 
 /// Convenience: combined `BOOTSTRAP_WORKFLOWS + starter_workflows()`
 /// for wizard pickers that show every available workflow in one
-/// list. Bootstrap first (always-on), then starter (opt-in).
+/// list. Bootstrap first (inactive), then starter (opt-in).
 pub fn all_known_workflows() -> Vec<&'static BootstrapWorkflow> {
     super::n8n_workflows::BOOTSTRAP_WORKFLOWS
         .iter()
@@ -357,8 +356,8 @@ mod tests {
     }
 
     /// Real-skeleton drift guard #2: every body MUST embed the
-    /// spec's cron expression in a `scheduleTrigger` node so
-    /// importing it actually scheduled the workflow.
+    /// spec's cron expression in a `scheduleTrigger` node. Activation remains
+    /// an explicit operator action after import.
     #[test]
     fn each_starter_body_embeds_its_cron_in_a_schedule_node() {
         for (spec, w) in STARTER_SPECS.iter().zip(starter_workflows().iter()) {
@@ -382,8 +381,8 @@ mod tests {
     }
 
     /// Real-skeleton drift guard #3: every body MUST embed the
-    /// spec's NEOTH HTTP endpoint in an `httpRequest` node so the
-    /// trigger actually calls back into the daemon.
+    /// spec's intended NEOTH HTTP endpoint in an `httpRequest` node. This does
+    /// not assert route availability or container-to-host reachability.
     #[test]
     fn each_starter_body_embeds_its_endpoint_in_an_http_node() {
         for (spec, w) in STARTER_SPECS.iter().zip(starter_workflows().iter()) {
@@ -402,8 +401,8 @@ mod tests {
     }
 
     /// Real-skeleton drift guard #4: every body MUST wire the
-    /// Schedule → NEOTH-HTTP connection so the trigger actually
-    /// reaches the HTTP call.
+    /// Schedule → NEOTH-HTTP connection so an activated workflow wires its
+    /// trigger to the HTTP request node.
     #[test]
     fn each_starter_body_connects_schedule_to_http() {
         for w in starter_workflows() {
@@ -437,8 +436,8 @@ mod tests {
     }
 
     /// Real-skeleton drift guard #6: every body's two node IDs MUST
-    /// derive from the slug so reimport produces stable IDs (n8n
-    /// dedupes on these).
+    /// derive from the slug for stable local workflow shape; node IDs do not
+    /// deduplicate public workflow POSTs.
     #[test]
     fn each_starter_body_node_ids_derive_from_slug() {
         for (spec, w) in STARTER_SPECS.iter().zip(starter_workflows().iter()) {

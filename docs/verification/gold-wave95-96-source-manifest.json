@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T21:52:36.7000909Z",
-  "validationStatus": "W963/W964/W965 source-bound hosted evidence accepted; W968/W969 reviewed fixture repairs awaiting hosted rerun",
+  "capturedUtc": "2026-09-24T21:57:55.4899652Z",
+  "validationStatus": "W971 template settings/type fixes source-reviewed;3existing regressions newly registered, hosted behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -113,8 +113,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 23803,
-      "sha256": "87770FB96037A67F8A93E084F5EFD463F88EDD8276C0BBDAFA14EDC3F8C2685A"
+      "bytes": 24015,
+      "sha256": "9C7CFCD7FBD9F38DBC91CC936465C54A15ED3FEAE131E7E85EDF5BBAD83E9542"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -133,8 +133,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 39895,
-      "sha256": "CA04340DD3C8975BA5D986AC37136C3DB45B2313F2C2E075117661BD729F67F3"
+      "bytes": 40392,
+      "sha256": "84B059DD336A5D5ABA205482CF61EB6C27838FDA3EE4C781355A88097A74C70F"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -2183,18 +2183,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 297960,
-      "sha256": "6FE7564EDD046413D7FDA3E419FB185AAEEBB3555BAC016603BFB9E311455F8B"
+      "bytes": 298798,
+      "sha256": "FD1C2A8E807A273A6E3DA645C8408DCB566F0CB0FB63F791CE75FF28755EE1FB"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1309288,
-      "sha256": "83463376A96F2BE54D1A61E37C2CF6DB75E3675219D6AB28F651F3368FF4A7C1"
+      "bytes": 1310126,
+      "sha256": "E9AB970BADDFB8A04AA1E918729489DB4EFE52072ED6ADEBEC1AAE2FA32FE1E9"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1918857,
-      "sha256": "36750E5425DD4527869C7D84846762083B9BFBA84B8C254C66A704B96FCE41FA"
+      "bytes": 1919695,
+      "sha256": "CDA3E60027389E8E40340B4A5BF7A096A1A5D778A90B1C587DD63DB8F898C6C7"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -2630,6 +2630,21 @@
       "path": "SRC/neothd-gui/ui/wiki.slint",
       "bytes": 13905,
       "sha256": "8CF5DB649A73554AEA29D68FE360E1478B40A5FF106C3672A5345804FC8AA9DB"
+    },
+    {
+      "path": "SRC/neothd/assets/n8n_workflows/daily_summary.json",
+      "bytes": 3355,
+      "sha256": "162AF106CB6712E88B4F80F80DEB3132A3177D13CFCFA5A0A8C7C193A2988F2B"
+    },
+    {
+      "path": "SRC/neothd/assets/n8n_workflows/morning_brief.json",
+      "bytes": 3426,
+      "sha256": "77FC2E89ACC11218FA8BA95B417E699A867472E808B12158B1B60AA03B703BE2"
+    },
+    {
+      "path": "SRC/neothd/assets/n8n_workflows/weekly_stats.json",
+      "bytes": 3651,
+      "sha256": "7B5C415A53910C03ACF7D49890EC1973426899FC0EE7AB91106DB173C89B3165"
     },
     {
       "path": "SRC/neothd/assets/obsidian_archive_bridge/main.js",
@@ -4085,6 +4100,16 @@
       "path": "SRC/neothd/src/installers/mod.rs",
       "bytes": 28063,
       "sha256": "49FD35CD4FB014595868D416815C8171D57DAE3C32D835BCBFF5D9E08550BFB4"
+    },
+    {
+      "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+      "bytes": 23502,
+      "sha256": "9EDAD20DD34CD45E3907DD652C4D06FA76DB0C065543BEADE85D338FAD7BBE09"
+    },
+    {
+      "path": "SRC/neothd/src/installers/n8n_workflows.rs",
+      "bytes": 7143,
+      "sha256": "E141FC8CD047095CEBB0783763732419002829C27031C2C7E57777E5592293E2"
     },
     {
       "path": "SRC/neothd/src/installers/n8n.rs",

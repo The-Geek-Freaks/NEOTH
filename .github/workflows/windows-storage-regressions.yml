@@ -299,6 +299,9 @@ jobs:
           tools::external_http::tests::permit_rejects_a_provenance_binding_mismatch	neothd/src/tools/external_http.rs
           tools::external_http::tests::terminal_result_audit_failure_is_returned_after_transport	neothd/src/tools/external_http.rs
           tools::external_http::tests::request_drift_cannot_reach_transport	neothd/src/tools/external_http.rs
+          installers::n8n_workflows::tests::every_workflow_body_carries_required_fields	neothd/src/installers/n8n_workflows.rs
+          installers::n8n_workflows::tests::every_workflow_body_is_valid_json	neothd/src/installers/n8n_workflows.rs
+          installers::n8n_workflows::tests::every_workflow_ships_inactive	neothd/src/installers/n8n_workflows.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -315,17 +318,17 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 229 ]]; then
+          if [[ "$expected" -ne 232 ]]; then
             selection_valid=0
           fi
-          sha256sum Cargo.lock neothd/Cargo.toml "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
+          sha256sum Cargo.lock neothd/Cargo.toml neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
 
           compile_status=0
           if [[ "$selection_valid" -eq 1 ]]; then
             cargo test -p neoth --lib --locked --no-run > "$evidence/compile.log" 2>&1 || compile_status=$?
           else
             compile_status=64
-            printf 'selection is not the required 221 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 232 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0
