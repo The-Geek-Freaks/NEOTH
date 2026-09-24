@@ -77,8 +77,6 @@ pub mod editor;
 pub(crate) mod elicitation;
 pub mod email;
 pub mod eval;
-/// ADOPT31-D5 — operator-curated, contained single-turn workflow replay.
-pub(crate) mod workflow_replay;
 pub mod events;
 pub mod export;
 pub mod fact_check;
@@ -207,6 +205,8 @@ pub mod verify;
 pub mod wal;
 pub mod webhook;
 pub mod wizard_checkpoint;
+/// ADOPT31-D5 — operator-curated, contained single-turn workflow replay.
+pub(crate) mod workflow_replay;
 
 /// Output format for any subcommand that produces structured data.
 /// Established globally so streaming + format flags are consistent across

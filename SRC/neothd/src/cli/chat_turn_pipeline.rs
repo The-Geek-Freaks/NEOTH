@@ -1152,8 +1152,16 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     // Carry the old turn-level business fields into those request-bound frames.
     let turn_id = format!("{raw_event_id:016x}");
     let provider_audit_context = crate::providers::cost_authorization::ProviderCallAuditContext {
-        source: Some(if replay_context.is_some() { "workflow_replay" } else { "chat" }),
-        call_type: Some(if replay_context.is_some() { "workflow_replay_turn" } else { "chat_provider_round" }),
+        source: Some(if replay_context.is_some() {
+            "workflow_replay"
+        } else {
+            "chat"
+        }),
+        call_type: Some(if replay_context.is_some() {
+            "workflow_replay_turn"
+        } else {
+            "chat_provider_round"
+        }),
         request_id: Some(turn_id.clone()),
         operator_id: config.operator_id.clone(),
         session_id: Some(current_session_id.clone()),
@@ -1684,7 +1692,8 @@ mod tests {
                 ephemeral_consent: crate::consent::EphemeralConsent::default(),
                 stream_control_token: None,
                 typed_gui_controls: false,
-                replay_context: None, replay_selected_skill: None,
+                replay_context: None,
+                replay_selected_skill: None,
                 reasoning_display: false,
                 cancellation,
                 session_canary: std::sync::Arc::new(
@@ -2372,7 +2381,8 @@ mod tests {
                 ephemeral_consent: crate::consent::EphemeralConsent::default(),
                 stream_control_token: None,
                 typed_gui_controls: false,
-                replay_context: None, replay_selected_skill: None,
+                replay_context: None,
+                replay_selected_skill: None,
                 reasoning_display: false,
                 cancellation: ChatTurnCancellation::default(),
                 session_canary: std::sync::Arc::new(
@@ -3407,7 +3417,8 @@ mod tests {
                 ephemeral_consent: crate::consent::EphemeralConsent::default(),
                 stream_control_token: None,
                 typed_gui_controls: false,
-                replay_context: None, replay_selected_skill: None,
+                replay_context: None,
+                replay_selected_skill: None,
                 reasoning_display: false,
                 cancellation: ChatTurnCancellation::default(),
                 session_canary: std::sync::Arc::new(

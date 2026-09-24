@@ -8,6 +8,16 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W801/W802 hosted format and compile repair (2026-09-24):**
+Preflight36000967795 at063811ea reported formatting only. Root verified its
+artifact ZIP, inner digests, source head and all11 full-index old blobs before
+importing the hosted patch. Core36000986600 then identified parameter doc
+comments, an Option/Result residual and two unused declarations; these exact
+sites are repaired without weakening assertions. D5/F4 remain OPEN pending
+hosted compilation and their34 selected behavior cases. No local executable
+checks ran. Counts remain1067checked255open2partial;Group1251/native1487.
+Evidence: docs/verification/gold-wave801-hosted-format-and-compile-repair.json.
+
 **W799/W800 video URL and real workflow replay (2026-09-24):**
 F4 now connects explicit ingest --video-url, caption-first processing and
 separately bound/audited media fallback to the existing extractor. The real

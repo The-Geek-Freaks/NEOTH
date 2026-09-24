@@ -61,12 +61,20 @@ pub async fn extract_with_context(
     writer: &WalWriterHandle,
 ) -> Result<Extraction, ExtractionError> {
     let VideoSource::Url(raw_url) = source else {
-        return Err(ExtractionError::Unsupported { backend: "video-url", got: AssetKind::Video });
+        return Err(ExtractionError::Unsupported {
+            backend: "video-url",
+            got: AssetKind::Video,
+        });
     };
     let url = validate_url(raw_url).map_err(backend)?;
     let binary = crate::installers::yt_dlp::managed_path(home);
-    if crate::installers::yt_dlp::check_installed(home).await.is_none() {
-        return Err(backend("pinned managed yt-dlp is not installed; run interactive neoth init"));
+    if crate::installers::yt_dlp::check_installed(home)
+        .await
+        .is_none()
+    {
+        return Err(backend(
+            "pinned managed yt-dlp is not installed; run interactive neoth init",
+        ));
     }
     let request_binding = digest_url(url.as_str());
 
@@ -131,9 +139,18 @@ impl CaptionFirstOps for ProductionCaptionFirst<'_> {
         let stage = match action {
             "captions" => DownloadStage::Captions,
             "media_fallback" => DownloadStage::MediaFallback,
-            _ => return Box::pin(async move { anyhow::bail!("unknown video URL download stage: {action}") }),
+            _ => {
+                return Box::pin(async move {
+                    anyhow::bail!("unknown video URL download stage: {action}")
+                });
+            }
         };
-        Box::pin(authorize_and_audit(self.config, self.writer, self.url, stage))
+        Box::pin(authorize_and_audit(
+            self.config,
+            self.writer,
+            self.url,
+            stage,
+        ))
     }
 
     fn captions<'a>(&'a mut self) -> BoxFuture<'a, Result<Option<String>>> {
@@ -171,27 +188,48 @@ impl CaptionFirstOps for ProductionCaptionFirst<'_> {
 
 fn validate_url(raw: &str) -> Result<url::Url> {
     let url = url::Url::parse(raw).context("parse video URL")?;
-    anyhow::ensure!(matches!(url.scheme(), "https" | "http"), "video URL must use http or https");
+    anyhow::ensure!(
+        matches!(url.scheme(), "https" | "http"),
+        "video URL must use http or https"
+    );
     anyhow::ensure!(url.host_str().is_some(), "video URL must include a host");
-    anyhow::ensure!(url.username().is_empty() && url.password().is_none(), "video URL must not contain credentials");
+    anyhow::ensure!(
+        url.username().is_empty() && url.password().is_none(),
+        "video URL must not contain credentials"
+    );
     anyhow::ensure!(raw.len() <= 8 * 1024, "video URL exceeds 8192-byte limit");
     Ok(url)
 }
 
 async fn authorize_and_audit(
-    config: &crate::config::FreedomConfig, writer: &WalWriterHandle, url: &url::Url,
+    config: &crate::config::FreedomConfig,
+    writer: &WalWriterHandle,
+    url: &url::Url,
     stage: DownloadStage,
 ) -> Result<()> {
     let binding = stage_binding(stage, url.as_str());
     let destination = format!("{}://{}", url.scheme(), url.host_str().unwrap_or_default());
     let action = Action::ExternalHttpRequest {
-        method: "GET".into(), destination, surface: stage.surface().into(),
-        request_id: crate::wal::events::next_intent_id(stage.gate_intent_domain(), &binding, crate::time::now_unix_i64()),
+        method: "GET".into(),
+        destination,
+        surface: stage.surface().into(),
+        request_id: crate::wal::events::next_intent_id(
+            stage.gate_intent_domain(),
+            &binding,
+            crate::time::now_unix_i64(),
+        ),
         request_binding_sha256: binding.clone(),
     };
-    Gate::for_policy(config.autonomy_policy()).with_confirm(Gate::auto_confirm())
-        .check_with_audit_sink(&action, PermissionAuditSink::Writer(writer), true, Some(&binding))
-        .await.context("video URL request-bound egress consent")?;
+    Gate::for_policy(config.autonomy_policy())
+        .with_confirm(Gate::auto_confirm())
+        .check_with_audit_sink(
+            &action,
+            PermissionAuditSink::Writer(writer),
+            true,
+            Some(&binding),
+        )
+        .await
+        .context("video URL request-bound egress consent")?;
     let payload = serde_json::to_vec(&serde_json::json!({
         "operation_id": crate::wal::events::next_intent_id(stage.receipt_intent_domain(), &binding, crate::time::now_unix_i64()),
         "request_binding_sha256": binding, "action": stage.action_name(),
@@ -199,22 +237,37 @@ async fn authorize_and_audit(
         "ts_unix": crate::time::now_unix_secs(),
     }))?;
     let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
-        .event_subtype(crate::wal::events::ExtendedSubtype::VideoDownloadConsented as u8).build();
-    writer.append(header, payload).await.context("append VIDEO_DOWNLOAD_CONSENTED before yt-dlp egress")?;
+        .event_subtype(crate::wal::events::ExtendedSubtype::VideoDownloadConsented as u8)
+        .build();
+    writer
+        .append(header, payload)
+        .await
+        .context("append VIDEO_DOWNLOAD_CONSENTED before yt-dlp egress")?;
     Ok(())
 }
 
-async fn run_yt_dlp(binary: &Path, url: &url::Url, output_dir: &Path, captions: bool) -> Result<()> {
+async fn run_yt_dlp(
+    binary: &Path,
+    url: &url::Url,
+    output_dir: &Path,
+    captions: bool,
+) -> Result<()> {
     let template = output_dir.join("asset.%(ext)s");
     let mut command = Command::new(binary);
     command
         .args(yt_dlp_args(&template, url, captions))
-        .current_dir(output_dir).stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+        .current_dir(output_dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .kill_on_drop(true);
     // yt-dlp's `--max-filesize` is an early upstream-side guard for media;
     // the aggregate tree monitor below is the local authority for both modes.
-    let ceiling = if captions { MAX_CAPTION_BYTES } else { MAX_VIDEO_BYTES };
+    let ceiling = if captions {
+        MAX_CAPTION_BYTES
+    } else {
+        MAX_VIDEO_BYTES
+    };
     let mut child = command.spawn().context("spawn pinned yt-dlp")?;
     let started = tokio::time::Instant::now();
     let status = loop {
@@ -285,8 +338,13 @@ fn staging_bytes_at_most(dir: &Path, ceiling: u64) -> Result<u64> {
             if metadata.is_dir() {
                 visit(&entry.path(), ceiling, total)?;
             } else if metadata.is_file() {
-                *total = total.checked_add(metadata.len()).context("yt-dlp staging size overflow")?;
-                anyhow::ensure!(*total <= ceiling, "yt-dlp staging output exceeds {ceiling}-byte ceiling");
+                *total = total
+                    .checked_add(metadata.len())
+                    .context("yt-dlp staging size overflow")?;
+                anyhow::ensure!(
+                    *total <= ceiling,
+                    "yt-dlp staging output exceeds {ceiling}-byte ceiling"
+                );
             }
         }
         Ok(())
@@ -300,23 +358,44 @@ fn staging_bytes_at_most(dir: &Path, ceiling: u64) -> Result<u64> {
 fn read_caption(dir: &Path) -> Result<Option<String>> {
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
-        if !matches!(path.extension().and_then(|v| v.to_str()), Some("vtt" | "srt" | "ttml")) { continue; }
+        if !matches!(
+            path.extension().and_then(|v| v.to_str()),
+            Some("vtt" | "srt" | "ttml")
+        ) {
+            continue;
+        }
         let metadata = std::fs::metadata(&path)?;
-        anyhow::ensure!(metadata.len() <= MAX_CAPTION_BYTES, "caption output exceeds byte ceiling");
+        anyhow::ensure!(
+            metadata.len() <= MAX_CAPTION_BYTES,
+            "caption output exceeds byte ceiling"
+        );
         let text = std::fs::read_to_string(&path).context("read caption UTF-8")?;
-        if !text.trim().is_empty() { return Ok(Some(text)); }
+        if !text.trim().is_empty() {
+            return Ok(Some(text));
+        }
     }
     Ok(None)
 }
 
 fn downloaded_video(dir: &Path) -> Result<PathBuf> {
-    let path = std::fs::read_dir(dir)?.filter_map(|entry| entry.ok()).map(|entry| entry.path())
-        .find(|path| path.is_file() && matches!(
-            path.extension().and_then(|v| v.to_str()).map(str::to_ascii_lowercase).as_deref(),
-            Some("mp4" | "m4v" | "mov" | "mkv" | "webm" | "avi")
-        ))
+    let path = std::fs::read_dir(dir)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.is_file()
+                && matches!(
+                    path.extension()
+                        .and_then(|v| v.to_str())
+                        .map(str::to_ascii_lowercase)
+                        .as_deref(),
+                    Some("mp4" | "m4v" | "mov" | "mkv" | "webm" | "avi")
+                )
+        })
         .context("yt-dlp media fallback produced no video file")?;
-    anyhow::ensure!(std::fs::metadata(&path)?.len() <= MAX_VIDEO_BYTES, "yt-dlp video exceeds byte ceiling");
+    anyhow::ensure!(
+        std::fs::metadata(&path)?.len() <= MAX_VIDEO_BYTES,
+        "yt-dlp video exceeds byte ceiling"
+    );
     Ok(path)
 }
 
@@ -341,7 +420,12 @@ fn stage_binding(stage: DownloadStage, raw_url: &str) -> String {
     digest.update(raw_url.as_bytes());
     format!("{:x}", digest.finalize())
 }
-fn backend(reason: impl std::fmt::Display) -> ExtractionError { ExtractionError::Backend { backend: "video-url", reason: reason.to_string() } }
+fn backend(reason: impl std::fmt::Display) -> ExtractionError {
+    ExtractionError::Backend {
+        backend: "video-url",
+        reason: reason.to_string(),
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -356,7 +440,11 @@ mod tests {
     impl CaptionFirstOps for MockCaptionFirst {
         fn authorize<'a>(&'a mut self, action: &'a str) -> BoxFuture<'a, Result<()>> {
             Box::pin(async move {
-                self.calls.push(if action == "captions" { "authorize:captions" } else { "authorize:fallback" });
+                self.calls.push(if action == "captions" {
+                    "authorize:captions"
+                } else {
+                    "authorize:fallback"
+                });
                 if self.denied_action == Some(action) {
                     anyhow::bail!("required WAL admission refused for {action}");
                 }
@@ -407,7 +495,10 @@ mod tests {
         assert_eq!(media.len(), 64);
         assert!(!captions.contains("example"));
         assert!(!media.contains("example"));
-        assert_ne!(DownloadStage::Captions.surface(), DownloadStage::MediaFallback.surface());
+        assert_ne!(
+            DownloadStage::Captions.surface(),
+            DownloadStage::MediaFallback.surface()
+        );
     }
 
     #[test]
@@ -454,9 +545,7 @@ mod tests {
             calls: Vec::new(),
         };
         let binding = "a".repeat(64);
-        let extraction = caption_first_or_fallback(&mut ops, &binding)
-            .await
-            .unwrap();
+        let extraction = caption_first_or_fallback(&mut ops, &binding).await.unwrap();
         assert_eq!(extraction.text, "caption text");
         assert_eq!(ops.calls, ["authorize:captions", "captions"]);
     }
@@ -469,11 +558,17 @@ mod tests {
             calls: Vec::new(),
         };
         let binding = "a".repeat(64);
-        let extraction = caption_first_or_fallback(&mut ops, &binding)
-            .await
-            .unwrap();
+        let extraction = caption_first_or_fallback(&mut ops, &binding).await.unwrap();
         assert_eq!(extraction.text, "fallback text");
-        assert_eq!(ops.calls, ["authorize:captions", "captions", "authorize:fallback", "fallback"]);
+        assert_eq!(
+            ops.calls,
+            [
+                "authorize:captions",
+                "captions",
+                "authorize:fallback",
+                "fallback"
+            ]
+        );
     }
 
     #[tokio::test]
@@ -497,6 +592,9 @@ mod tests {
         };
         let binding = "a".repeat(64);
         assert!(caption_first_or_fallback(&mut ops, &binding).await.is_err());
-        assert_eq!(ops.calls, ["authorize:captions", "captions", "authorize:fallback"]);
+        assert_eq!(
+            ops.calls,
+            ["authorize:captions", "captions", "authorize:fallback"]
+        );
     }
 }

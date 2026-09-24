@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -687,6 +687,7 @@ fn resolve_out_dir(args: &EvalArgs) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     #[derive(Parser)]
     struct EvalParserFixture {
@@ -696,8 +697,8 @@ mod tests {
 
     #[test]
     fn cli_preserves_legacy_eval_flags_and_routes_capture_and_run() {
-        use clap::Parser as _;
         use crate::cli::{Cli, Commands};
+        use clap::Parser as _;
 
         let legacy = Cli::try_parse_from([
             "neoth",
@@ -714,13 +715,21 @@ mod tests {
             panic!("legacy invocation must route to eval");
         };
         assert!(legacy.command.is_none());
-        assert_eq!(legacy.suite, Some(std::path::PathBuf::from("legacy-suite.json")));
+        assert_eq!(
+            legacy.suite,
+            Some(std::path::PathBuf::from("legacy-suite.json"))
+        );
         assert!(legacy.json);
         assert_eq!(legacy.max_steps, 7);
         assert_eq!(legacy.preset.as_deref(), Some("offline"));
 
         let capture = Cli::try_parse_from([
-            "neoth", "eval", "capture", "input.json", "--out", "corpus.json",
+            "neoth",
+            "eval",
+            "capture",
+            "input.json",
+            "--out",
+            "corpus.json",
         ])
         .expect("workflow capture CLI invocation must parse");
         let Commands::Eval(capture) = capture.command else {
@@ -734,7 +743,13 @@ mod tests {
         ));
 
         let run = Cli::try_parse_from([
-            "neoth", "eval", "run", "corpus.json", "--out-dir", "reports", "--json",
+            "neoth",
+            "eval",
+            "run",
+            "corpus.json",
+            "--out-dir",
+            "reports",
+            "--json",
         ])
         .expect("workflow run CLI invocation must parse");
         let Commands::Eval(run) = run.command else {
@@ -750,10 +765,14 @@ mod tests {
 
     #[test]
     fn legacy_suite_parse_stays_separate_from_workflow_replay_subcommands() {
-        let legacy = EvalParserFixture::try_parse_from(["test", "legacy-suite.json", "--max-steps", "2"])
-            .expect("legacy eval suite must parse")
-            .eval;
-        assert_eq!(legacy.suite, Some(std::path::PathBuf::from("legacy-suite.json")));
+        let legacy =
+            EvalParserFixture::try_parse_from(["test", "legacy-suite.json", "--max-steps", "2"])
+                .expect("legacy eval suite must parse")
+                .eval;
+        assert_eq!(
+            legacy.suite,
+            Some(std::path::PathBuf::from("legacy-suite.json"))
+        );
         assert!(legacy.command.is_none());
 
         let replay = EvalParserFixture::try_parse_from(["test", "run", "replay.json", "--json"])

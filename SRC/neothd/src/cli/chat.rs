@@ -2446,7 +2446,9 @@ pub(super) async fn build_prompt_bundle(
     let (skills_dir, skill_config_path) = replay_skill_registry.unwrap_or_else(|| {
         (
             home.join("skills"),
-            args.config.clone().unwrap_or_else(|| home.join("freedom.yaml")),
+            args.config
+                .clone()
+                .unwrap_or_else(|| home.join("freedom.yaml")),
         )
     });
     let one_shot_reload = std::sync::Arc::new(crate::config::reload::ReloadController::new(
@@ -6012,8 +6014,8 @@ pub(super) async fn dispatch_provider(
     skill_invocation_policy: Option<crate::skills::resolver::SkillInvocationPolicy>,
     normal_chat_role: Option<&crate::cli::chat_turn_pipeline::NormalChatRoleBinding>,
     progress: Option<&crate::cli::chat_turn_watchdog::TurnProgressHandle>,
-    /// D5 replay retains normal authorization but binds its canonical usage
-    /// accounting to the real operator home, never the transient turn home.
+    // D5 replay retains normal authorization but binds its canonical usage
+    // accounting to the real operator home, never the transient turn home.
     replay_usage_home: Option<&std::path::Path>,
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<DispatchOutput> {
@@ -9114,14 +9116,17 @@ pub(crate) async fn run_workflow_replay_turn_at(
         }
     };
     let wal_dir = replay_home.join("wal");
-    std::fs::create_dir_all(&wal_dir)
-        .with_context(|| format!("create contained workflow replay WAL directory {}", wal_dir.display()))?;
-    let segment_path = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "workflow-replay");
-    let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(
-        segment_path.clone(),
-        replay_home,
-    )
-    .context("spawn contained workflow replay WAL writer")?;
+    std::fs::create_dir_all(&wal_dir).with_context(|| {
+        format!(
+            "create contained workflow replay WAL directory {}",
+            wal_dir.display()
+        )
+    })?;
+    let segment_path =
+        crate::wal::writer::unique_standalone_segment_path(&wal_dir, "workflow-replay");
+    let (writer, completion) =
+        crate::wal::writer::spawn_for_home_with_completion(segment_path.clone(), replay_home)
+            .context("spawn contained workflow replay WAL writer")?;
     let result = chat_turn_pipeline::run_prepared_chat_turn(
         &mut prepared,
         provider,

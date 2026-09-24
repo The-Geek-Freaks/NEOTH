@@ -630,13 +630,12 @@ pub(crate) async fn step6h_install_recommended(
             println!("\nManaged yt-dlp is required for `neoth ingest --video-url …`.");
             #[cfg(feature = "wizard")]
             {
-                let install = dialoguer::Confirm::with_theme(
-                    &dialoguer::theme::ColorfulTheme::default(),
-                )
-                .with_prompt("Install the pinned, SHA-256-verified yt-dlp release now?")
-                .default(false)
-                .interact()
-                .context("managed yt-dlp install prompt")?;
+                let install =
+                    dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                        .with_prompt("Install the pinned, SHA-256-verified yt-dlp release now?")
+                        .default(false)
+                        .interact()
+                        .context("managed yt-dlp install prompt")?;
                 if install {
                     let path = crate::installers::yt_dlp::install_pinned(neoth_dir)
                         .await

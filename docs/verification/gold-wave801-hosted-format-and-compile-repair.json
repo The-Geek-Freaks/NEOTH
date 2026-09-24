@@ -1,0 +1,32 @@
+{
+  "schema": "neoth-hosted-format-and-compile-repair/v1",
+  "sourceHead": "063811ea7f82399c699f212c07734adfa99f8243",
+  "formatRun": 36000967795,
+  "artifactId": 10808451559,
+  "artifactSha256": "1b4e021cb3c827a60e9c8bada966034708435bbbcbe90c147453b643a3c9878d",
+  "patchSha256": "a6cb60506c91b05fcd7a5784c2be38f67063a637778cecb97bc7f2b9f3a3d994",
+  "formatPaths": [
+    "SRC/neothd/src/cli/chat.rs",
+    "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+    "SRC/neothd/src/cli/eval.rs",
+    "SRC/neothd/src/cli/ingest.rs",
+    "SRC/neothd/src/cli/init/steps_channel.rs",
+    "SRC/neothd/src/cli/mod.rs",
+    "SRC/neothd/src/cli/workflow_replay.rs",
+    "SRC/neothd/src/installers/mod.rs",
+    "SRC/neothd/src/installers/yt_dlp.rs",
+    "SRC/neothd/src/media/mod.rs",
+    "SRC/neothd/src/media/video_url.rs"
+  ],
+  "rootAdmission": "ZIP, inner digests, exact source, all old full-index blobs and git apply --check verified before import",
+  "compilerRun": 36000986600,
+  "compilerResult": "failure: invalid parameter doc comments; Result residual in Option; unused Parser and mut",
+  "repairs": [
+    "chat.rs: parameter comments use ordinary comments",
+    "yt_dlp.rs: explicitly convert timeout and child output Results to Option",
+    "eval.rs: scope Parser import to tests",
+    "workflow_replay.rs: remove unused mut from bounded input file"
+  ],
+  "behaviorValidation": "pending hosted rerun; D5 and F4 remain open",
+  "localExecutableValidationRan": false
+}

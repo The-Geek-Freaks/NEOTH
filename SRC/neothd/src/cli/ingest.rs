@@ -22,7 +22,8 @@ use clap::Args;
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::media::{
-    Asset, AssetKind, Extraction, ExtractionError, MediaExtractor, VideoSource, route_to_first_match,
+    Asset, AssetKind, Extraction, ExtractionError, MediaExtractor, VideoSource,
+    route_to_first_match,
 };
 use crate::memory::{
     ctx::{IndexReport, IndexRequest, index_document},
@@ -119,7 +120,12 @@ async fn run_ingest_with_context(
                 mime: mime_hint(kind, path),
                 path: path.clone(),
             };
-            (Some(path.clone()), kind, canonical_source_ref(path), Some(asset))
+            (
+                Some(path.clone()),
+                kind,
+                canonical_source_ref(path),
+                Some(asset),
+            )
         }
         (None, Some(url)) => (
             None,
@@ -137,7 +143,9 @@ async fn run_ingest_with_context(
         anyhow::bail!("--analyze-video-frames requires a local video path");
     }
     if args.video_url.is_some() && args.no_audit {
-        anyhow::bail!("--no-audit is incompatible with --video-url: URL egress requires a WAL receipt");
+        anyhow::bail!(
+            "--no-audit is incompatible with --video-url: URL egress requires a WAL receipt"
+        );
     }
     let backends = default_backends(&effective_config.media);
 
@@ -198,11 +206,11 @@ async fn run_ingest_with_context(
             neoth_home,
             args.no_audit,
         )
-            .await
-            .map_err(|error| ExtractionError::Backend {
-                backend: "video",
-                reason: error.to_string(),
-            })
+        .await
+        .map_err(|error| ExtractionError::Backend {
+            backend: "video",
+            reason: error.to_string(),
+        })
     } else if let Some(raw_url) = args.video_url.as_ref() {
         crate::media::video_url::extract_with_context(
             &VideoSource::Url(raw_url.clone()),
@@ -566,8 +574,7 @@ fn persist_embedding_if_any(
         })
         .unwrap_or_else(|| clip_engine::DEFAULT_CLIP_REPO.to_string());
     let dim = embedding.len();
-    embeddings::upsert(&conn, kind, source_ref, &model, &embedding)
-        .context("persist embedding")?;
+    embeddings::upsert(&conn, kind, source_ref, &model, &embedding).context("persist embedding")?;
     Ok((true, Some(dim)))
 }
 
@@ -799,16 +806,21 @@ mod tests {
             panic!("expected ingest command");
         };
         assert!(args.path.is_none());
-        assert_eq!(args.video_url.as_deref(), Some("https://example.test/watch"));
+        assert_eq!(
+            args.video_url.as_deref(),
+            Some("https://example.test/watch")
+        );
         assert!(crate::cli::Cli::try_parse_from(["neoth", "ingest"]).is_err());
-        assert!(crate::cli::Cli::try_parse_from([
-            "neoth",
-            "ingest",
-            "fixture.mp4",
-            "--video-url",
-            "https://example.test/watch",
-        ])
-        .is_err());
+        assert!(
+            crate::cli::Cli::try_parse_from([
+                "neoth",
+                "ingest",
+                "fixture.mp4",
+                "--video-url",
+                "https://example.test/watch",
+            ])
+            .is_err()
+        );
     }
 
     #[tokio::test]
@@ -831,7 +843,11 @@ mod tests {
         )
         .await
         .expect_err("URL ingress must require durable audit before transport");
-        assert!(error.to_string().contains("--no-audit is incompatible with --video-url"));
+        assert!(
+            error
+                .to_string()
+                .contains("--no-audit is incompatible with --video-url")
+        );
     }
 
     #[test]

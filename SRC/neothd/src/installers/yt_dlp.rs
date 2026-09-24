@@ -5,11 +5,11 @@
 //! manager or pip install is intentionally not offered: caption parsing is
 //! executable-code input and must stay pinned.
 
+use std::future::Future;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
-use std::future::Future;
 
 use anyhow::{Context, Result};
 use futures_util::StreamExt as _;
@@ -26,12 +26,20 @@ pub struct PlatformAsset {
 }
 
 impl PlatformAsset {
-    pub const fn remote_name(self) -> &'static str { self.remote_name }
-    pub const fn sha256(self) -> &'static str { self.sha256 }
+    pub const fn remote_name(self) -> &'static str {
+        self.remote_name
+    }
+    pub const fn sha256(self) -> &'static str {
+        self.sha256
+    }
 }
 
 pub const fn asset_name() -> &'static str {
-    if cfg!(windows) { "yt-dlp.exe" } else { "yt-dlp" }
+    if cfg!(windows) {
+        "yt-dlp.exe"
+    } else {
+        "yt-dlp"
+    }
 }
 
 pub fn platform_asset() -> Result<PlatformAsset> {
@@ -84,9 +92,10 @@ pub fn managed_path(home: &Path) -> PathBuf {
 /// self-reported version both match the exact pinned release. The direct path
 /// command is deliberate: the generic probe invokes `cmd /C` on Windows.
 pub async fn check_installed(home: &Path) -> Option<String> {
-    check_installed_with_probe(home, |binary| async move {
-        direct_version_probe(&binary).await
-    })
+    check_installed_with_probe(
+        home,
+        |binary| async move { direct_version_probe(&binary).await },
+    )
     .await
 }
 
@@ -111,8 +120,12 @@ fn managed_binary_digest_matches(binary: &Path) -> bool {
     let mut buffer = [0_u8; 64 * 1024];
     let mut total = 0usize;
     loop {
-        let Ok(read) = file.read(&mut buffer) else { return false; };
-        if read == 0 { break; }
+        let Ok(read) = file.read(&mut buffer) else {
+            return false;
+        };
+        if read == 0 {
+            break;
+        }
         total = match total.checked_add(read) {
             Some(total) if total <= MAX_INSTALL_BYTES => total,
             _ => return false,
@@ -133,11 +146,13 @@ async fn direct_version_probe(binary: &Path) -> Option<String> {
     let child = command.spawn().ok()?;
     let output = tokio::time::timeout(Duration::from_secs(5), child.wait_with_output())
         .await
-        .ok()??;
+        .ok()?.ok()?;
     if !output.status.success() || output.stdout.len() > 1024 {
         return None;
     }
-    String::from_utf8(output.stdout).ok().filter(|version| !version.trim().is_empty())
+    String::from_utf8(output.stdout)
+        .ok()
+        .filter(|version| !version.trim().is_empty())
 }
 
 /// Download the named release, verify its GitHub-release SHA-256, and atomically
@@ -147,9 +162,15 @@ pub async fn install_pinned(home: &Path) -> Result<PathBuf> {
     let platform = platform_asset()?;
     let response = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::limited(3))
-        .build()?.get(download_url()?).send().await?
+        .build()?
+        .get(download_url()?)
+        .send()
+        .await?
         .error_for_status()?;
-    if response.content_length().is_some_and(|len| len > MAX_INSTALL_BYTES as u64) {
+    if response
+        .content_length()
+        .is_some_and(|len| len > MAX_INSTALL_BYTES as u64)
+    {
         anyhow::bail!("yt-dlp release exceeds bounded installer size");
     }
     let mut stream = response.bytes_stream();
@@ -158,7 +179,10 @@ pub async fn install_pinned(home: &Path) -> Result<PathBuf> {
         append_install_chunk(&mut bytes, &chunk?)?;
     }
     let actual = format!("{:x}", Sha256::digest(&bytes));
-    anyhow::ensure!(actual == platform.sha256(), "yt-dlp release SHA-256 mismatch");
+    anyhow::ensure!(
+        actual == platform.sha256(),
+        "yt-dlp release SHA-256 mismatch"
+    );
     let path = managed_path(home);
     let parent = path.parent().context("managed yt-dlp path has no parent")?;
     std::fs::create_dir_all(parent)?;
@@ -169,8 +193,13 @@ pub async fn install_pinned(home: &Path) -> Result<PathBuf> {
         use std::os::unix::fs::PermissionsExt as _;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))?;
     }
-    let found = check_installed(home).await.context("probe installed yt-dlp")?;
-    anyhow::ensure!(found == YT_DLP_VERSION, "installed yt-dlp did not report pinned version");
+    let found = check_installed(home)
+        .await
+        .context("probe installed yt-dlp")?;
+    anyhow::ensure!(
+        found == YT_DLP_VERSION,
+        "installed yt-dlp did not report pinned version"
+    );
     Ok(path)
 }
 
@@ -179,7 +208,10 @@ fn append_install_chunk(bytes: &mut Vec<u8>, chunk: &[u8]) -> Result<()> {
         .len()
         .checked_add(chunk.len())
         .context("yt-dlp installer length overflow")?;
-    anyhow::ensure!(next_len <= MAX_INSTALL_BYTES, "yt-dlp release exceeds bounded installer size");
+    anyhow::ensure!(
+        next_len <= MAX_INSTALL_BYTES,
+        "yt-dlp release exceeds bounded installer size"
+    );
     bytes.extend_from_slice(chunk);
     Ok(())
 }
@@ -190,9 +222,18 @@ mod tests {
     #[test]
     fn pinned_release_identity_is_exact_and_https() {
         assert_eq!(YT_DLP_VERSION, "2026.08.19");
-        assert!(download_url().unwrap().starts_with("https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/"));
+        assert!(
+            download_url()
+                .unwrap()
+                .starts_with("https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/")
+        );
         assert_eq!(expected_sha256().unwrap().len(), 64);
-        assert!(expected_sha256().unwrap().bytes().all(|b| b.is_ascii_hexdigit()));
+        assert!(
+            expected_sha256()
+                .unwrap()
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit())
+        );
     }
     #[test]
     fn managed_path_is_instance_owned() {
@@ -202,11 +243,34 @@ mod tests {
 
     #[test]
     fn platform_assets_are_standalone_and_unsupported_targets_fail_closed() {
-        assert_eq!(platform_asset_for("linux", "x86_64").unwrap().remote_name(), "yt-dlp_linux");
-        assert_eq!(platform_asset_for("linux", "aarch64").unwrap().remote_name(), "yt-dlp_linux_aarch64");
-        assert_eq!(platform_asset_for("macos", "aarch64").unwrap().remote_name(), "yt-dlp_macos");
-        assert_eq!(platform_asset_for("windows", "x86_64").unwrap().remote_name(), "yt-dlp.exe");
-        assert_eq!(platform_asset_for("windows", "aarch64").unwrap().remote_name(), "yt-dlp_arm64.exe");
+        assert_eq!(
+            platform_asset_for("linux", "x86_64").unwrap().remote_name(),
+            "yt-dlp_linux"
+        );
+        assert_eq!(
+            platform_asset_for("linux", "aarch64")
+                .unwrap()
+                .remote_name(),
+            "yt-dlp_linux_aarch64"
+        );
+        assert_eq!(
+            platform_asset_for("macos", "aarch64")
+                .unwrap()
+                .remote_name(),
+            "yt-dlp_macos"
+        );
+        assert_eq!(
+            platform_asset_for("windows", "x86_64")
+                .unwrap()
+                .remote_name(),
+            "yt-dlp.exe"
+        );
+        assert_eq!(
+            platform_asset_for("windows", "aarch64")
+                .unwrap()
+                .remote_name(),
+            "yt-dlp_arm64.exe"
+        );
         assert!(platform_asset_for("linux", "arm").is_err());
     }
 

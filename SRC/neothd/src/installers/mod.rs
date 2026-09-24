@@ -61,8 +61,8 @@ pub mod tailscale;
 pub mod tmux;
 pub mod tmux_w02;
 pub mod tududi;
-pub mod zero_install;
 pub mod yt_dlp;
+pub mod zero_install;
 
 /// How a managed CLI gets installed onto the operator's host.
 ///
