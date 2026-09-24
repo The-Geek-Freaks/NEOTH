@@ -162,9 +162,19 @@ def prove_absent(kind: str, identifier: str) -> None:
     if not daemon_healthy():
         raise CanaryFailure("docker_daemon_health_unproven")
     result = run(("docker", kind, "inspect", identifier))
-    diagnostic = (result.stdout + result.stderr).lower()
-    expected = b"no such object" if kind == "container" else b"no such volume"
-    if result.timed_out or result.overflow or result.code == 0 or expected not in diagnostic:
+    if kind == "container":
+        expected = {f"no such container: {identifier}"}
+    elif kind == "volume":
+        expected = {f"get {identifier}: no such volume", f"no such volume: {identifier}"}
+    else:
+        raise CanaryFailure("absence_kind_invalid")
+    valid_lines = expected | {f"error response from daemon: {line}" for line in expected}
+    diagnostic_lines = {
+        line.strip().lower()
+        for line in (result.stdout + result.stderr).decode("utf-8", "replace").splitlines()
+        if line.strip()
+    }
+    if result.timed_out or result.overflow or result.code == 0 or not diagnostic_lines.intersection(valid_lines):
         raise CanaryFailure(f"{kind}_absence_unproven")
 
 
@@ -419,7 +429,9 @@ def main() -> int:
             cleanup_failed = True
         if cleanup_failed:
             receipt["outcome"] = "failed"
-            receipt["failure_stage"] = "cleanup_unproven"
+            receipt["cleanup_failure_stage"] = "cleanup_unproven"
+            if exit_code == 0:
+                receipt["failure_stage"] = "cleanup_unproven"
             exit_code = 1
         write_receipt(receipt_path, receipt)
     return exit_code

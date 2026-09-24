@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T21:11:39.3007173Z",
-  "validationStatus": "W937 isolated pinned n8n image canary published; hosted feasibility pending",
+  "capturedUtc": "2026-09-24T21:21:01.9513308Z",
+  "validationStatus": "W953 canonical Docker absence, W955 HTTP selection and MCP test type fix; hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -68,8 +68,8 @@
     },
     {
       "path": ".github/workflows/n8n-bootstrap-canary.yml",
-      "bytes": 990,
-      "sha256": "1B1D6F5F9266B32F1E5E8E1B0E9A96E43FE71AAD3782BEED8AE4CA3A0134E1FB"
+      "bytes": 1138,
+      "sha256": "154EB175C706A81A45A3AE9A20CEED42E3EE565B692498835551F1051F56323C"
     },
     {
       "path": ".github/workflows/obsidian-bridge-artifact.yml",
@@ -113,8 +113,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 23746,
-      "sha256": "7371053C83C81CCAC465F3C6747184EDB12C4AC3137C52BB73F7CB31792C6CF6"
+      "bytes": 23803,
+      "sha256": "87770FB96037A67F8A93E084F5EFD463F88EDD8276C0BBDAFA14EDC3F8C2685A"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -133,8 +133,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 38925,
-      "sha256": "43092DE536437859F54AA810E9F377AE49549730A9928C91DC3BED7D7D01DE69"
+      "bytes": 39895,
+      "sha256": "CA04340DD3C8975BA5D986AC37136C3DB45B2313F2C2E075117661BD729F67F3"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -1987,6 +1987,11 @@
       "sha256": "93E31ED5493C9C22B291B607514C7AB223A7DB873672E0C894D106554FDD9C42"
     },
     {
+      "path": "docs/verification/gold-wave951-n8n-bootstrap.json",
+      "bytes": 1775,
+      "sha256": "A0D3666BD5782AF5EBD9A886AE01EB4062E0F3BB1AA73436D7A8C2DAA82CAAE5"
+    },
+    {
       "path": "docs/verification/managed-browser-cft154.json",
       "bytes": 2497,
       "sha256": "80443D2F6E6A6E226F1617F7F5463017071D9D21130D1FCD116470F147455337"
@@ -2073,8 +2078,8 @@
     },
     {
       "path": "packaging/n8n_bootstrap_canary.py",
-      "bytes": 21947,
-      "sha256": "F1C401902A428B1EC0CB71F9647BF3C25E75F4B802B4D1932F74905A8EB518DF"
+      "bytes": 22461,
+      "sha256": "BB8027576A08797CFFFFC9D338A54F64F689A9ED60B09EC738C1CD3D530EDDA6"
     },
     {
       "path": "packaging/rust-license-snapshots.json",
@@ -2095,6 +2100,11 @@
       "path": "packaging/tests/test_ci_cadence_contract.py",
       "bytes": 45089,
       "sha256": "E40CB484D233F71575E2FBF09534E273EBF0A41E523BFB9BFCE4547DDC6979F1"
+    },
+    {
+      "path": "packaging/tests/test_n8n_bootstrap_canary.py",
+      "bytes": 2237,
+      "sha256": "2C7D5B0CBCC6D473D5334AE85023F3925D5D6519D1334C16740F465DA10F360F"
     },
     {
       "path": "packaging/tests/test_preview_windows_workflow_contract.py",
@@ -2148,18 +2158,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 293264,
-      "sha256": "6028EB0D9E69A8C21221538E9C590B78FE3F86274400CDD24E9FE6047F575CC8"
+      "bytes": 294332,
+      "sha256": "D9DD23FB512E9A0B7F700047C4D56D44D0B68DEBEB0EC1A361EC5BA25FA9C9C6"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1304592,
-      "sha256": "367766BB4258EA0DB831D44D054418ECB5EF52F9BCFC08B0C03B7C5C522D2067"
+      "bytes": 1305660,
+      "sha256": "2A2B282D36C04395F2CF67D3BC3C0BD89C8FBA29F6BDD36ECCE4F7631536B033"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1914161,
-      "sha256": "42B91894960DD9D73AC69592ADF41FA5E0F57C23E2FC327B98935DC73860AEE6"
+      "bytes": 1915229,
+      "sha256": "396DDEEA8F471596FBAE015AE74D983F3D385E651CAE1434637E31B52C290918"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4173,8 +4183,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "bytes": 315778,
-      "sha256": "AC10DCAFF0946611A7632897D740807ADF2D6428A811B6E2FA7E609759660948"
+      "bytes": 315789,
+      "sha256": "EF427527CBB550581A809543EF3183FE4D187F89238F83330E012E5DF52C0716"
     },
     {
       "path": "SRC/neothd/src/mcp/gate.rs",

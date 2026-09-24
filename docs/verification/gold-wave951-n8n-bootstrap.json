@@ -1,0 +1,40 @@
+{
+  "schema": "neoth-n8n-bootstrap-hosted/v1",
+  "run": 36060086745,
+  "source": "04b56b6e4ccde5dab1a7a7788b8a94dde4bcc350",
+  "artifact": 10834405891,
+  "apiZipSha256": "18ecf812fe4f28541c705dcd6479b561c5a3558246b8c9126f5204dd6bdcd967",
+  "receipt": {
+    "cleanup": [
+      "container_retained_identity_unproven"
+    ],
+    "encryption_key_sha256": "f79961087c54b65959fdd5bb0cf5a471249c7990ad50b9101787ebcc35f37452",
+    "failure_stage": "cleanup_unproven",
+    "github_sha": "04b56b6e4ccde5dab1a7a7788b8a94dde4bcc350",
+    "image_digest": "sha256:9f693fd5565539efd5e75ad168526c8041a6af516d9e50bc4d9cb1c9c5031523",
+    "image_id": "sha256:2a8ec1d5dcf19532c0214b391777a756dfa94dd4bc74d75c0bc204a0b6a59cb3",
+    "mint_status": 200,
+    "node_version": "v26.7.0",
+    "outcome": "failed",
+    "raw_key_sha256": "9d74167f88dc2cda2c496a46644abc44ca5a6b5f921f6d7f3ab982169be23f6f",
+    "schema": 2,
+    "script_sha256": "f1c401902a428b1ec0cb71f9647bf3c25e75f4b802b4d1932f74905a8eb518df",
+    "stages": [
+      "image_pulled",
+      "volume_bound",
+      "isolated_bootstrap_bound",
+      "owner_and_key_captured"
+    ],
+    "upstream_commit": "a331d3858797b161e4acba288396be3835425d8e",
+    "workflow_sha256": "1b1d6f5f9266b32f1e5e8e1b0e9a96e43fe71aad3782beed8ae4ca3a0134e1fb"
+  },
+  "admission": "ROOT_VERIFIED_FAILED",
+  "verified": [
+    "API ZIP digest",
+    "Exact run source",
+    "Historical script Git blob and SHA256",
+    "Historical workflow Git blob and SHA256"
+  ],
+  "boundary": "Owner setup and API key200 captured, encryption config digest read; exact bootstrap removal and final handoff NOT accepted. Cleanup overwrote primary failure. Docker canonical absence text mismatch diagnosed statically; W953 rerun required.",
+  "localExecutableValidationRan": false
+}

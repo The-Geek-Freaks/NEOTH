@@ -231,6 +231,7 @@ jobs:
               "wave936HttpAndMcpEffectAcceptance": 10,
               "wave941HackerNewsConsumerAcceptance": 7,
               "wave945IfcLatticeAcceptance": 7,
+              "wave955HttpPermitLifecycleAcceptance": 8,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():
@@ -242,8 +243,8 @@ jobs:
                   raise SystemExit(f"{wave_name} requiredTests must contain exactly {expected} identities")
               required_names.extend(names)
           expected_count = sum(expected_wave_counts.values())
-          if expected_count != 1438:
-              raise SystemExit(f"Grouped required test catalog must contain exactly 1438 identities (got {expected_count})")
+          if expected_count != 1446:
+              raise SystemExit(f"Grouped required test catalog must contain exactly 1446 identities (got {expected_count})")
           if not all(isinstance(name, str) and name for name in required_names):
               raise SystemExit("Grouped requiredTests contains an invalid identity")
           if len(required_names) != expected_count or len(set(required_names)) != expected_count:
@@ -312,8 +313,8 @@ jobs:
           : > "$log"
           : > "$evidence_root/receipt/failed-fixtures.txt"
           expected_count="$(wc -l < "$evidence_root/source/fixture-names.txt" | tr -d '[:space:]')"
-          [[ "$expected_count" == "1438" ]] || {
-            echo "Grouped fixture catalog must contain exactly 1438 identities (got $expected_count)" >&2
+          [[ "$expected_count" == "1446" ]] || {
+            echo "Grouped fixture catalog must contain exactly 1446 identities (got $expected_count)" >&2
             exit 1
           }
           artifact_log="$evidence_root/log/neoth-lib-test-artifacts.jsonl"

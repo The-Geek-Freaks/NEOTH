@@ -19,6 +19,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Verify exact Docker absence diagnostics
+        run: python3 -m unittest discover -s packaging/tests -p test_n8n_bootstrap_canary.py
+
       - name: Run disposable pinned-image bootstrap canary
         timeout-minutes: 12
         env:

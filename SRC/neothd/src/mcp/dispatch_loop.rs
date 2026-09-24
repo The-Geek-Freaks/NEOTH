@@ -3092,7 +3092,8 @@ mod tests {
                 .expect("default requested-context policy"),
         )
         .await
-        .expect_err("trusted secret source must stop before any MCP process effect");
+        .err()
+        .expect("trusted secret source must stop before any MCP process effect");
         assert!(error.contains("IFC denied"));
         assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 0);
     }

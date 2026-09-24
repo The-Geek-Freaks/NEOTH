@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W955 HTTP coverage and W953 canary repair (2026-09-24):** Root found eight
+existing HTTP gate/permit/lifecycle tests absent from the focused selection;
+all are now selected on Linux and Windows. Native1671 remains unchanged;
+Group1446/Windows229 replace1438/221. Core050 passed production slim Clippy;
+test-target typecheck found one MCP test-only Debug bound from expect_err.
+The fixture now extracts Err without requiring Debug on the success payload,
+retaining IFC-denial and zero-process-call assertions. Hosted rerun required.
+Root admitted the failed first n8n image canary36060086745 at04b56b6e: owner
+setup, key mint200 and encryption-config digest passed, but bootstrap removal
+and final handoff are unproved. W953 corrects kind-specific Docker absence
+matching and preserves primary failures through cleanup, with focused hosted
+regressions. Artifact ZIP and both historical source hashes verified in
+`docs/verification/gold-wave951-n8n-bootstrap.json`; rerun required, no product
+bootstrap acceptance. Claude TASK019 covers the13 actual workflow imports.
 **W949 isolated n8n image canary (2026-09-24):** W937 is published as a
 manually dispatched main-only GitHub feasibility gate. A fresh labeled volume
 and network-none bootstrap keep owner setup/key mint isolated; secrets enter

@@ -291,6 +291,14 @@ jobs:
           permissions::ifc::tests::operator_research_public_release_is_topic_bound_and_legacy_is_not_public	neothd/src/permissions/ifc.rs
           permissions::ifc::tests::egress_provenance_debug_redacts_released_topic_and_digest	neothd/src/permissions/ifc.rs
           permissions::ifc::tests::every_action_kind_has_an_explicit_clearance	neothd/src/permissions/ifc.rs
+          tools::external_http::tests::gui_ready_rechecks_current_policy_and_keeps_normal_http_lifecycle	neothd/src/tools/external_http.rs
+          tools::external_http::tests::required_http_decision_failure_blocks_intent_and_transport	neothd/src/tools/external_http.rs
+          tools::external_http::tests::intent_failure_prevents_network	neothd/src/tools/external_http.rs
+          tools::external_http::tests::success_and_failure_close_the_same_request_binding	neothd/src/tools/external_http.rs
+          tools::external_http::tests::permit_is_bound_to_exact_url_and_body	neothd/src/tools/external_http.rs
+          tools::external_http::tests::permit_rejects_a_provenance_binding_mismatch	neothd/src/tools/external_http.rs
+          tools::external_http::tests::terminal_result_audit_failure_is_returned_after_transport	neothd/src/tools/external_http.rs
+          tools::external_http::tests::request_drift_cannot_reach_transport	neothd/src/tools/external_http.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -307,7 +315,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 221 ]]; then
+          if [[ "$expected" -ne 229 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
