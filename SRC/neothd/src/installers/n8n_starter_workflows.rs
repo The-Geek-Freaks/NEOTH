@@ -184,9 +184,8 @@ fn starter_bodies() -> &'static [&'static str] {
             STARTER_SPECS
                 .iter()
                 .map(|s| {
-                    let body = build_workflow_skeleton(
-                        s.slug, s.name, s.cron, s.endpoint, s.method,
-                    );
+                    let body =
+                        build_workflow_skeleton(s.slug, s.name, s.cron, s.endpoint, s.method);
                     // Leak into 'static once at startup — workflows are
                     // baked into the binary surface anyway; this avoids
                     // every test re-rendering the JSON.
@@ -512,8 +511,16 @@ mod tests {
                 "{:?} missing HTTP Header Auth selector",
                 w.slug,
             );
-            assert!(!w.body.contains("NEOTH_TOKEN"), "{:?} leaks env auth", w.slug);
-            assert!(!w.body.contains("$env"), "{:?} leaks env expression", w.slug);
+            assert!(
+                !w.body.contains("NEOTH_TOKEN"),
+                "{:?} leaks env auth",
+                w.slug
+            );
+            assert!(
+                !w.body.contains("$env"),
+                "{:?} leaks env expression",
+                w.slug
+            );
             assert!(
                 http["notes"]
                     .as_str()
@@ -671,7 +678,10 @@ mod tests {
             "={{ $json.neothBaseUrl + '/test/endpoint' }}"
         );
         assert_eq!(http["parameters"]["method"], "POST");
-        assert_eq!(http["parameters"]["authentication"], "genericCredentialType");
+        assert_eq!(
+            http["parameters"]["authentication"],
+            "genericCredentialType"
+        );
         assert_eq!(http["parameters"]["genericAuthType"], "httpHeaderAuth");
     }
 

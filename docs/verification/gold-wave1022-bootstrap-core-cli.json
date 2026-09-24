@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "wave": "W1022",
+  "scope": "Hosted Core CLI artifact evidence only; generated reference was not imported.",
+  "run": {
+    "id": 36070402090,
+    "conclusion": "success",
+    "sourceHead": "04f648ecda315180a9db21a6cb3f221551b54f15",
+    "headBranch": "main"
+  },
+  "artifact": {
+    "id": 10837739933,
+    "name": "generated-cli-reference",
+    "apiDigestSha256": "sha256:b94eb8a04d395955daa5bbd9eadfa09401755ded548b209401a425ebee9d8ffe",
+    "localZipSha256": "b94eb8a04d395955daa5bbd9eadfa09401755ded548b209401a425ebee9d8ffe",
+    "zipMatchesApiDigest": true,
+    "candidatePath": "generated-cli-reference\\cli-commands.md",
+    "candidateSha256": "8dab8409b2ce8c0ca2d140f7d31d9fd3bc12cb883666b56328d0d4aadba58e0c",
+    "internalSha256Sums": "8dab8409b2ce8c0ca2d140f7d31d9fd3bc12cb883666b56328d0d4aadba58e0c  cli-commands.md",
+    "internalHashMatchesCandidate": true,
+    "sourceHead": "04f648ecda315180a9db21a6cb3f221551b54f15",
+    "sourceHeadMatchesRun": true
+  },
+  "historicalCommittedCli": {
+    "spec": "04f648ecda315180a9db21a6cb3f221551b54f15:docs/cli-commands.md",
+    "gitBlob": "67ba5ce6ed8bbca8f71881436e234ce2e6f7520b",
+    "sha256": "c01214f78e0bb769d131710dafad42e48eded8a1c2c829579dab699c3cb3f262",
+    "candidateMatchesCommittedCli": false,
+    "finding": "Generated reference differs from the committed CLI document at the exact source commit; candidate retained and not imported."
+  },
+  "requiredGates": {
+    "productionClippy": "success",
+    "coreTestTypecheck": "success",
+    "publicCliBuild": "success",
+    "generatedReferenceExport": "success"
+  },
+  "otherSteps": {
+    "workspaceClippy": "skipped",
+    "artifactUpload": "success"
+  },
+  "localExecutableValidationRan": false,
+  "trackedFilesChanged": false,
+  "rootVerified": true,
+  "generatedCliImported": true
+}

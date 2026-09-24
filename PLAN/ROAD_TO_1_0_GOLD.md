@@ -8,6 +8,14 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1022/W1023 Core and formatter evidence (2026-09-25):** Core36070402090
+at04f648ec passed production Clippy, test-target typechecking, the public CLI
+build and reference export. Root checked its API ZIP, inner hash and source
+binding, then imported the generated --bootstrap-owner reference entry. The
+one-file hosted rustfmt patch from Preflight36071563579 at5132bdc0 was applied
+only after ZIP/inner hash/source/preimage checks and its expected postimage
+was verified. Group1489/Windows272 remain in progress; no local tools compiled,
+formatted or executed product code.
 **W1017 hosted template execution accepted (2026-09-25):** Root verified
 run36070979538 at e06d555e: the API ZIP digest, seven historical source/input
 bindings, actual22-helper-test terminal, three inactive graph imports and two

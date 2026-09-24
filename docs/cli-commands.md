@@ -2925,6 +2925,7 @@ Start the pinned, NEOTH-owned Docker n8n runtime and prove its API key
 
 - `--port <PORT>` — Literal loopback host port; the container is always bound to 127.0.0.1
 - `--api-key-stdin` — Read an already-issued n8n API key from piped standard input
+- `--bootstrap-owner` — Create the first n8n owner and API key inside an unexposed, networkless bootstrap container before publishing the runtime
 
 ### `neoth n8n status`
 
