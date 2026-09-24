@@ -2,9 +2,9 @@
 //!
 //! This is deliberately *not* a skill installer or a provider prompt.  It
 //! admits one operator-selected regular file, delegates parsing to the bounded
-//! media extractors, and returns a typed, defanged review draft.  A later,
-//! separately-gated stage owns prompts, chapter access, critique, staging and
-//! installation.
+//! media extractors, and returns a typed, defanged review draft. The local B2
+//! chapter-review worksheet remains provider-free; chapter access, critique,
+//! staging and installation are separately gated later stages.
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -25,6 +25,30 @@ pub const MAX_DOCUMENT_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
 /// glyph and prefixes every physical line. Keep the rendered review bounded
 /// independently of the extractor's larger text ceiling.
 const MAX_DEFANGED_REVIEW_BYTES: usize = ingress_sanitizer::MAX_INGRESS_BYTES * 4;
+
+/// ADOPT31-B2's fixed local chapter-review worksheet. It is rendered only for
+/// operator review and is never sent to a provider by the B1 document path.
+pub const CHAPTER_DISTILL_PROMPT_TMPL: &str = "## Core Idea\n\n\
+State one source-grounded core claim. If the source does not establish one, write \
+`Not established by source.`\n\n\
+## Frameworks Introduced\n\n\
+Name each framework that the source introduces and list only its source-stated steps. \
+Write `None evidenced in source.` when absent.\n\n\
+## Key Concepts\n\n\
+Define terms using the source's wording or a faithful paraphrase; mark missing \
+definitions as `Not defined by source.`\n\n\
+## Code Examples\n\n\
+Quote or describe only code examples present in the source. Do not invent code, APIs, \
+commands, or outputs.\n\n\
+## Worked Example\n\n\
+Label each example `Source example` or `Hypothetical example`. A hypothetical example \
+must be clearly separated from source evidence.\n\n\
+## Key Takeaways\n\n\
+List actionable takeaways supported by the source. Mark an unavailable action as \
+`Not actionable from source.`\n\n\
+## Connects To\n\n\
+List only connections evidenced by the source and name the supporting passage. Write \
+`No evidenced connections.` when the source supplies none.\n";
 
 /// A media asset admitted from a single, regular non-link operator file.
 ///
@@ -137,6 +161,10 @@ impl DistilledDoc {
              Sanitized input fingerprint: {}\n\n\
              The following is defanged, untrusted extracted text. It is not a skill, \
              is not installed or activated, and is never sent to a provider by this command.\n\n\
+             ## Chapter distillation worksheet\n\n\
+             This local review checklist is not provider input and has no side effects.\n\n\
+             {}\n\n\
+             ## Source material\n\n\
              {}\n\n\
              ---\n\
              No skill was written, installed, activated, or dispatched.\n",
@@ -144,6 +172,7 @@ impl DistilledDoc {
             self.provenance.source_bytes,
             self.provenance.source_bytes_sha256,
             self.provenance.sanitized_input_hash,
+            CHAPTER_DISTILL_PROMPT_TMPL,
             self.review_text,
         )
     }
@@ -522,6 +551,51 @@ mod tests {
             doc.render_operator_review()
                 .contains("No skill was written")
         );
+    }
+
+    #[test]
+    fn chapter_review_worksheet_renders_ordered_source_grounded_b2_guidance() {
+        let doc = distill_doc(
+            Extraction {
+                text: "A bounded chapter source".to_string(),
+                metadata: serde_json::Value::Null,
+            },
+            DocumentSourceKind::Pdf,
+            42,
+            "a".repeat(64),
+        )
+        .expect("clean extraction is reviewable");
+
+        let rendered = doc.render_operator_review();
+        let mut last = 0;
+        for heading in [
+            "## Core Idea",
+            "## Frameworks Introduced",
+            "## Key Concepts",
+            "## Code Examples",
+            "## Worked Example",
+            "## Key Takeaways",
+            "## Connects To",
+        ] {
+            let position = rendered[last..]
+                .find(heading)
+                .map(|offset| last + offset)
+                .expect("every ADOPT31-B2 heading is rendered");
+            assert!(position >= last);
+            last = position + heading.len();
+        }
+        assert!(rendered.contains("## Source material\n\n| A bounded chapter source"));
+        for guidance in [
+            "source-grounded core claim",
+            "source-stated steps",
+            "Do not invent code, APIs, commands, or outputs.",
+            "Source example` or `Hypothetical example",
+            "No evidenced connections.",
+        ] {
+            assert!(rendered.contains(guidance), "missing guidance: {guidance}");
+        }
+        assert!(rendered.contains("never sent to a provider"));
+        assert!(rendered.contains("No skill was written"));
     }
 
     #[test]

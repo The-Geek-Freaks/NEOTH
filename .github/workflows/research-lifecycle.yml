@@ -209,6 +209,7 @@ jobs:
               "wave735SlackQueueAdmission": 1,
               "wave739MediaSamplingAcceptance": 6,
               "wave741UsageMetricsAcceptance": 24,
+              "wave749DocumentReviewAcceptance": 22,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():
@@ -220,8 +221,8 @@ jobs:
                   raise SystemExit(f"{wave_name} requiredTests must contain exactly {expected} identities")
               required_names.extend(names)
           expected_count = sum(expected_wave_counts.values())
-          if expected_count != 1149:
-              raise SystemExit(f"Grouped required test catalog must contain exactly 1149 identities (got {expected_count})")
+          if expected_count != 1171:
+              raise SystemExit(f"Grouped required test catalog must contain exactly 1171 identities (got {expected_count})")
           if not all(isinstance(name, str) and name for name in required_names):
               raise SystemExit("Grouped requiredTests contains an invalid identity")
           if len(required_names) != expected_count or len(set(required_names)) != expected_count:
@@ -291,7 +292,7 @@ jobs:
           : > "$evidence_root/receipt/failed-fixtures.txt"
           expected_count="$(wc -l < "$evidence_root/source/fixture-names.txt" | tr -d '[:space:]')"
           [[ "$expected_count" == "1149" ]] || {
-            echo "Grouped fixture catalog must contain exactly 1149 identities (got $expected_count)" >&2
+            echo "Grouped fixture catalog must contain exactly 1171 identities (got $expected_count)" >&2
             exit 1
           }
           artifact_log="$evidence_root/log/neoth-lib-test-artifacts.jsonl"
@@ -416,7 +417,7 @@ jobs:
             [[ -n "$test_name" ]] || { echo "empty Grouped fixture identity" >&2; exit 1; }
             {
               echo "=== list $test_name ==="
-              if ! listed="$("$test_binary" "$test_name" --exact --list)"; then
+              if ! listed="$("$test_binary" "$test_name" --exact --list </dev/null)"; then
                 echo "exact Grouped discovery failed: $test_name" >&2
                 exit 1
               fi
@@ -428,7 +429,9 @@ jobs:
                 exit 1
               }
               echo "=== run $test_name ==="
-              if ! timeout --kill-after=10s 180s "$test_binary" "$test_name" --exact --test-threads=1; then
+              # A fixture may spawn an interactive child (for example ffmpeg).
+              # Never let it consume the catalog used by the surrounding loop.
+              if ! timeout --kill-after=10s 180s "$test_binary" "$test_name" --exact --test-threads=1 </dev/null; then
                 echo "exact Grouped fixture failed: $test_name" >&2
                 printf '%s\n' "$test_name" >> "$evidence_root/receipt/failed-fixtures.txt"
               fi

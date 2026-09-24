@@ -3,6 +3,21 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W747-W750 catalogue acceptance and document review batch (2026-09-24):**
+Root verified Group35986277953 at5e9:1120 actual PASS, zero FAIL,29 unrun,
+with217 fixture-source and two input bindings. The next selector lost its first
+character after the real ffmpeg fixture inherited the catalogue stdin. Discovery
+and test subprocesses now receive /dev/null; full rerun remains pending.
+H1 closes on its two exact catalogue/roster passes. Slack import/queue and the
+prior WebChat fixes passed their selected tests. No whole-job success is claimed.
+B2 now renders a substantive seven-section, source-grounded operator prompt
+beside defanged document text, preserving provider-free review. Independent
+review passed. Existing B1/B4 document/scanner/creator checks are newly selected:
+Group1171, native1416 plus Windows38/Linux51/macOS51; Windows lane55.
+B1/B2/B4 and F1-F3/D2/D3 remain open pending their relevant actual results.
+Road1324/1047checked/275open/2partial;277raw/276pre-tag;WS-LF38done80open.
+Evidence: docs/verification/gold-wave747-group1149.json. No local executables.
+
 **W738-W743 custody results and focused adoption qualification (2026-09-24):**
 Custody35984512675 atd1e51dc5 passed all44 tests and Clippy, including the three
 new Slack source-selection cases. Its only failed step was formatting; Root

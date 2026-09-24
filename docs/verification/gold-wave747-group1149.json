@@ -1,0 +1,62 @@
+{
+  "schema": "neoth-wave747-group-admission/v1",
+  "status": "ROOT_VERIFIED_SOURCE_BOUND_PARTIAL_SUCCESS",
+  "sourceHead": "5e9a9fd574e4df1520cf5b474694435a472c3486",
+  "sourceRef": "refs/heads/main",
+  "runId": 35986277953,
+  "selection": {
+    "requiredCount": 1149,
+    "selectedCount": 1149
+  },
+  "artifacts": [
+    {
+      "id": 10803160065,
+      "sha256": "fff427d95f5919204254fe60902b018872bdde8fd7b2bff3db7e01f0b5aba12f",
+      "verified": true
+    },
+    {
+      "id": 10802607969,
+      "sha256": "7003656bf8fcb18a70bdea9240b43619dbe9a916b4268954821edb5a79610b2c",
+      "verified": true
+    },
+    {
+      "id": 10802543243,
+      "sha256": "fc3ad49f1987bc7683db8bfe5134bfaa44eee56e63c792ebcc3f8e65890c1958",
+      "verified": true
+    }
+  ],
+  "sourceBindings": {
+    "fixtureSources": 217,
+    "inputs": 2,
+    "verified": 219,
+    "mismatches": 0,
+    "snapshotDirectory": "verified-source"
+  },
+  "terminal": {
+    "executed": 1120,
+    "passed": 1120,
+    "failed": 0,
+    "unexecuted": 29,
+    "orderedPrefix": true,
+    "firstUnrunOrdinal": 1121,
+    "firstUnrun": "media::video_dispatch::tests::dedup_frames_honours_the_exact_mean_absolute_difference_boundary"
+  },
+  "stop": {
+    "expectedSelector": "media::video_dispatch::tests::dedup_frames_honours_the_exact_mean_absolute_difference_boundary",
+    "observedSelector": "edia::video_dispatch::tests::dedup_frames_honours_the_exact_mean_absolute_difference_boundary",
+    "diagnosis": "ffmpeg fixture generator inherits catalog stdin; workflow now redirects subprocess stdin to /dev/null",
+    "hostedRerun": "pending"
+  },
+  "localExecutableValidationRan": false,
+  "rootTerminalVerification": true,
+  "verifiedPassingCriteria": [
+    "ADOPT31-H1"
+  ],
+  "criteriaEvidence": {
+    "H1": [
+      "providers::known_endpoints::tests::adopt31_h1_openai_compatible_catalog_entries_are_pinned_and_cloud_only",
+      "cli::providers::tests::adopt31_h1_targets_are_discoverable_in_the_legacy_public_roster"
+    ],
+    "scope": "OpenAI-compatible catalogue entries and roster visibility; no live-provider call claimed"
+  }
+}
