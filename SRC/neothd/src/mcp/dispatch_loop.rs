@@ -217,6 +217,7 @@ where
         max_iterations,
         security_policy,
         subject,
+        crate::permissions::McpInvocationProvenance::unclassified_compatibility(),
         goal_context,
         hints_enabled,
         compaction,
@@ -256,6 +257,7 @@ pub(crate) async fn run_tool_loop_with_budget<D, P>(
     max_iterations: u32,
     security_policy: &crate::config::SecurityPolicy,
     subject: Option<String>,
+    mcp_ifc: crate::permissions::McpInvocationProvenance,
     goal_context: crate::mcp::goal_tracker::GoalContext,
     hints_enabled: bool,
     compaction: crate::context::compaction::CompactionPolicy,
@@ -292,6 +294,7 @@ where
         max_iterations,
         security_policy,
         subject,
+        crate::permissions::McpInvocationProvenance::unclassified_compatibility(),
         goal_context,
         hints_enabled,
         compaction,
@@ -335,6 +338,9 @@ pub(crate) async fn run_tool_loop_with_budget_and_skill_policy<D, P>(
     // → preflight authorization. `None` = no lease upgrade (CLI/test paths).
     // `Some(sender_id)` = channel path (verified by channel adapter).
     subject: Option<String>,
+    // Sealed source provenance from an authenticated named channel, or an
+    // explicit unclassified compatibility value for older caller families.
+    mcp_ifc: crate::permissions::McpInvocationProvenance,
     // GOLD-ADOPT-22 — Goal/Grind nudge context (empty = no nudging).
     goal_context: crate::mcp::goal_tracker::GoalContext,
     // GOLD-ADOPT-18 — subdirectory-hint injection toggle (`freedom.yaml::hints.enabled`,
@@ -1199,6 +1205,7 @@ where
                 smart_session.as_mut(),
                 // GOLD-ADAPT-AWE-CODE-01 — thread the caller identity down.
                 subject.as_deref(),
+                &mcp_ifc,
                 turn_effect_gate.clone(),
                 instance_home,
                 pre_tool_hook_policy,
@@ -2151,6 +2158,7 @@ async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
     // GOLD-ADAPT-AWE-CODE-01 — pre-authenticated caller identity for
     // McpTool lease-backed consent upgrade. See the MCP gate docs.
     subject: Option<&str>,
+    mcp_ifc: &crate::permissions::McpInvocationProvenance,
     turn_effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
     instance_home: &std::path::Path,
     pre_tool_hook_policy: crate::hooks::PreToolUseHookPolicy<'_>,
@@ -2184,13 +2192,23 @@ async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
         })?;
     let cfg = &effective_cfg;
     let now_unix = crate::time::now_unix_i64();
-    let request_binding_sha256 =
-        crate::mcp::gate::mcp_request_binding(cfg, &call.tool, &call.arguments)
-            .map_err(|error| format!("dispatch `{}::{}`: {error}", call.server, call.tool))?;
+    let request_binding_sha256 = crate::mcp::gate::mcp_request_binding_for_provenance(
+        cfg,
+        &call.tool,
+        &call.arguments,
+        mcp_ifc,
+    )
+    .map_err(|error| format!("dispatch `{}::{}`: {error}", call.server, call.tool))?;
+    // This check is deliberately before preflight, SmartApprove tools/list,
+    // and cold-client spawn.  Unclassified compatibility is never relabelled
+    // public; only a trusted configured account has labels to enforce.
+    mcp_ifc
+        .enforce_mcp_tool_invocation()
+        .map_err(|error| format!("dispatch `{}::{}`: IFC denied: {error}", call.server, call.tool))?;
     // Run every static policy layer before starting or querying a process.
     // Only a genuine Confirm can justify SmartApprove's tools/list snapshot;
     // Allow uses the ordinary call path and every rejection returns here.
-    let preflight = crate::mcp::gate::preflight_with_skill_policy_and_audit_sink(
+    let preflight = crate::mcp::gate::preflight_with_skill_policy_and_audit_sink_with_provenance(
         cfg,
         &call.tool,
         policy,
@@ -2199,6 +2217,7 @@ async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
         now_unix,
         subject,
         Some(&request_binding_sha256),
+        mcp_ifc.clone(),
     )
     .await
     .map_err(|error| format!("dispatch `{}::{}`: {error}", call.server, call.tool))?;
@@ -2258,6 +2277,7 @@ async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
                         wal_session,
                         rollback_policy,
                         now_unix,
+                        mcp_ifc,
                         turn_effect_gate.clone(),
                         pre_tool_use,
                     )
@@ -2315,6 +2335,7 @@ async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
         wal_session,
         rollback_policy,
         now_unix,
+        mcp_ifc,
         turn_effect_gate,
         pre_tool_use,
     )
@@ -2402,6 +2423,7 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
         rollback_policy,
         smart_approve,
         subject,
+        &crate::permissions::McpInvocationProvenance::unclassified_compatibility(),
         turn_effect_gate,
         instance_home,
         pre_tool_hook_policy,
@@ -3021,6 +3043,54 @@ mod tests {
 
     fn test_instance_home() -> tempfile::TempDir {
         tempfile::tempdir().expect("create isolated NEOTH instance home")
+    }
+
+    #[tokio::test]
+    async fn trusted_nonpublic_source_refuses_before_spawn_or_smartapprove_list() {
+        let home = test_instance_home();
+        let counter = home.path().join("calls.txt");
+        let cfg = crate::mcp::client::stdio_fixture_config(&counter);
+        let servers = McpServers {
+            servers: vec![cfg],
+            smart_loading: true,
+        };
+        let call = ParsedToolCall {
+            server: "w46-stdio-fixture".to_owned(),
+            tool: "read".to_owned(),
+            arguments: serde_json::json!({"private": true}),
+        };
+        let provenance = crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
+            crate::permissions::InformationLabel::Secret,
+            "trusted-dispatch",
+        );
+        let error = dispatch_one_configured_path_read(
+            &call,
+            &servers,
+            crate::permissions::AutonomyLevel::Full,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &provenance,
+            None,
+            home.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &crate::hooks::SessionOnceGuard::new(),
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+            false,
+            &[],
+            crate::config::CodeMapImpactPolicy::default(),
+            crate::config::CodeMapConfig::default()
+                .requested_context_policy()
+                .expect("default requested-context policy"),
+        )
+        .await
+        .expect_err("trusted secret source must stop before any MCP process effect");
+        assert!(error.contains("IFC denied"));
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 0);
     }
 
     /// A private home whose HMAC identity lets SmartApprove verify and pin the

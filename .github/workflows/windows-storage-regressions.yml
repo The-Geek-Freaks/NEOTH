@@ -260,6 +260,11 @@ jobs:
           config::credentials::n8n_adoption_transaction_tests::adoption_round_trip_retains_unknown_public_yaml	neothd/src/config/credentials.rs
           config::credentials::n8n_adoption_transaction_tests::durable_phase_classifier_distinguishes_pair_pending_and_repairable_rollback	neothd/src/config/credentials.rs
           config::credentials::n8n_adoption_transaction_tests::injected_keychain_cleanup_can_retry_after_a_partial_delete	neothd/src/config/credentials.rs
+          mcp::dispatch_loop::tests::trusted_nonpublic_source_refuses_before_spawn_or_smartapprove_list	neothd/src/mcp/dispatch_loop.rs
+          mcp::gate::tests::trusted_nonpublic_provenance_stops_before_actual_tools_call	neothd/src/mcp/gate.rs
+          mcp::gate::tests::trusted_authorization_cannot_replay_through_compatibility_decoded_entrypoint	neothd/src/mcp/gate.rs
+          config::slack_account_tests::slack_ifc_labels_require_an_existing_account_and_reach_its_binding	neothd/src/config/mod.rs
+          mcp::gate::tests::trusted_public_provenance_reaches_tools_call_only_in_its_bound_turn	neothd/src/mcp/gate.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -276,7 +281,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 190 ]]; then
+          if [[ "$expected" -ne 195 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -286,7 +291,7 @@ jobs:
             cargo test -p neoth --lib --locked --no-run > "$evidence/compile.log" 2>&1 || compile_status=$?
           else
             compile_status=64
-            printf 'selection is not the required 190 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 195 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

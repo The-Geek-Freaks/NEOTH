@@ -37,7 +37,8 @@ pub(crate) const MAX_OPERATOR_RELEASED_RESEARCH_TOPIC_BYTES: usize = 2_048;
 /// Confidential < Secret`. `Secret` is the highest sensitivity and can flow
 /// only to destinations with secret clearance.
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum InformationLabel {
     Public = 0,
     Internal = 1,

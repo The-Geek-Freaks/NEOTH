@@ -618,6 +618,9 @@ pub async fn run_loop(
             elicitation,
             // GOLD-ADAPT-AWE-CODE-01 — no inbound subject at loop level.
             None,
+            // Loop-engine callers do not carry authenticated named-channel IFC
+            // provenance; keep compatibility explicitly unclassified.
+            crate::permissions::McpInvocationProvenance::unclassified_compatibility(),
             // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
             &freedom.tools.harness,
             &mut compaction_budget,

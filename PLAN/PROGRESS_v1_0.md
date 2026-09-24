@@ -2,6 +2,13 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W927 MCP provenance implementation (2026-09-24):** Authenticated named
+Telegram/Slack accounts can declare IFC source labels; opaque provenance is
+bound to account/incarnation and a fresh inbound-turn nonce. Preflight owns it;
+the actual MCP leaf rejects replacement, replay and compatibility downgrade.
+Five registered regressions include a real successful Public tools/call.
+W920 static review approved; hosted compile/behavior still pending. C7 remains
+open. Group1413/Windows195/native1646 selected; HTTP and n8n repair separate.
 **W912/W916/W921/W922 accepted evidence (2026-09-24):** Root admits all1383
 Group fixtures and all142 Windows fixtures at0448daf4:0fail/0missing,248Linux
 and31Windows historical source/input bindings,4API ZIP digests, every named

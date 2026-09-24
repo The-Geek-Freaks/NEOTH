@@ -268,6 +268,18 @@ pub struct ChannelAccountConfig {
     pub telegram: BTreeMap<crate::channels::registry::ChannelAccountId, TelegramAccountConfig>,
     #[serde(default, deserialize_with = "deserialize_unique_slack_accounts")]
     pub slack: BTreeMap<crate::channels::registry::ChannelAccountId, SlackAccountConfig>,
+    /// Optional classifications for named accounts only.  The parallel maps
+    /// avoid changing the established per-account struct-literal API; entries
+    /// are rejected unless the matching authenticated named account exists.
+    #[serde(default)]
+    pub ifc_source_labels: ChannelAccountIfcSourceLabels,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ChannelAccountIfcSourceLabels {
+    pub telegram: BTreeMap<crate::channels::registry::ChannelAccountId, crate::permissions::InformationLabel>,
+    pub slack: BTreeMap<crate::channels::registry::ChannelAccountId, crate::permissions::InformationLabel>,
 }
 
 fn deserialize_unique_slack_accounts<'de, D>(
@@ -348,6 +360,105 @@ pub(crate) struct AuthenticatedSlackAccount {
 pub(crate) struct ChannelAccountBinding {
     channel_ref: crate::channels::registry::ChannelRef,
     incarnation: Option<AccountIncarnation>,
+    /// Runtime-only output of the coherent named-account resolver.  It is not
+    /// a serializable account identity and must never enter persisted channel
+    /// binding material.
+    #[serde(skip)]
+    ifc_sources: Option<crate::permissions::SourceLabels>,
+}
+
+/// Opaque source provenance for an MCP invocation. Its trusted variant can be
+/// constructed only by this module while resolving coherent named-account
+/// config plus credentials; untrusted payloads and crate peers cannot mint it.
+#[derive(Clone, Debug)]
+pub(crate) struct McpInvocationProvenance {
+    trusted: Option<TrustedMcpChannelProvenance>,
+}
+
+#[derive(Clone, Debug)]
+struct TrustedMcpChannelProvenance {
+    sources: crate::permissions::SourceLabels,
+    /// SHA-256 binding to the exact authenticated account, its incarnation,
+    /// and the operator-configured label. This becomes part of the request
+    /// authorization commitment and prevents cross-account permit reuse.
+    account_commitment: String,
+}
+
+impl McpInvocationProvenance {
+    pub(crate) fn unclassified_compatibility() -> Self {
+        Self { trusted: None }
+    }
+
+    fn trusted_configured_channel(
+        channel_ref: &crate::channels::registry::ChannelRef,
+        incarnation: Option<&AccountIncarnation>,
+        label: crate::permissions::InformationLabel,
+    ) -> Self {
+        let mut digest = Sha256::new();
+        digest.update(b"neoth/mcp-ifc-authenticated-account/v1\0");
+        digest.update(
+            serde_json::to_vec(channel_ref)
+                .expect("typed ChannelRef has a stable serializable representation"),
+        );
+        match incarnation {
+            Some(incarnation) => {
+                digest.update([1]);
+                digest.update(incarnation.as_str().as_bytes());
+            }
+            None => digest.update([0]),
+        }
+        digest.update(label.as_str().as_bytes());
+        let turn_nonce = uuid::Uuid::new_v4().simple().to_string();
+        digest.update(turn_nonce.as_bytes());
+        Self {
+            trusted: Some(TrustedMcpChannelProvenance {
+                sources: crate::permissions::SourceLabels::from_labels([label])
+                    .expect("one configured information label is nonempty"),
+                account_commitment: hex::encode(digest.finalize()),
+            }),
+        }
+    }
+
+    pub(crate) fn request_binding_commitment(&self) -> Option<&str> {
+        self.trusted
+            .as_ref()
+            .map(|trusted| trusted.account_commitment.as_str())
+    }
+
+    pub(crate) fn matches(&self, other: &Self) -> bool {
+        self.request_binding_commitment() == other.request_binding_commitment()
+    }
+
+    pub(crate) fn enforce_mcp_tool_invocation(
+        &self,
+    ) -> Result<(), crate::permissions::InformationFlowDenied> {
+        match &self.trusted {
+            Some(trusted) => crate::permissions::may_flow_to_action(
+                &trusted.sources,
+                crate::permissions::ActionKind::McpToolInvocation,
+            ),
+            None => Ok(()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_trusted_configured_channel(
+        label: crate::permissions::InformationLabel,
+        fixture_account: &str,
+    ) -> Self {
+        let account_id = crate::channels::registry::ChannelAccountId::new(fixture_account)
+            .expect("fixed test account id is valid");
+        let channel_ref = crate::channels::registry::ChannelRef::new(
+            crate::channels::registry::ChannelId::Telegram,
+            account_id,
+        );
+        Self::trusted_configured_channel(&channel_ref, None, label)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_highest_label(&self) -> Option<crate::permissions::InformationLabel> {
+        self.trusted.as_ref().map(|trusted| trusted.sources.highest())
+    }
 }
 
 impl ChannelAccountBinding {
@@ -357,6 +468,19 @@ impl ChannelAccountBinding {
 
     pub(crate) fn incarnation(&self) -> Option<&AccountIncarnation> {
         self.incarnation.as_ref()
+    }
+
+    pub(crate) fn mcp_invocation_provenance(
+        &self,
+    ) -> crate::permissions::McpInvocationProvenance {
+        match self.ifc_sources.as_ref().map(crate::permissions::SourceLabels::highest) {
+            Some(label) => crate::permissions::McpInvocationProvenance::trusted_configured_channel(
+                &self.channel_ref,
+                self.incarnation.as_ref(),
+                label,
+            ),
+            None => crate::permissions::McpInvocationProvenance::unclassified_compatibility(),
+        }
     }
 }
 
@@ -472,6 +596,15 @@ impl RuntimeConfigPair {
             !accounts.is_empty(),
             "Telegram account map has no effective policy and credentials"
         );
+        anyhow::ensure!(
+            self.config
+                .channel_accounts
+                .ifc_source_labels
+                .telegram
+                .keys()
+                .all(|account_id| accounts.contains_key(account_id)),
+            "Telegram IFC source labels require a matching named account"
+        );
         let mut resolved = Vec::with_capacity(accounts.len());
         for (account_id, policy) in accounts {
             anyhow::ensure!(
@@ -495,6 +628,9 @@ impl RuntimeConfigPair {
             let account_binding = ChannelAccountBinding {
                 channel_ref: channel_ref.clone(),
                 incarnation: policy.incarnation.clone(),
+                ifc_sources: self.config.channel_accounts.ifc_source_labels.telegram.get(account_id).copied()
+                    .map(|label| crate::permissions::SourceLabels::from_labels([label]))
+                    .transpose()?,
             };
             let inbound_admission = match &policy.dm_pairing {
                 None => TelegramInboundAdmission::PinnedOperator {
@@ -596,6 +732,15 @@ impl RuntimeConfigPair {
             !accounts.is_empty(),
             "Slack account map has no effective policy and credentials"
         );
+        anyhow::ensure!(
+            self.config
+                .channel_accounts
+                .ifc_source_labels
+                .slack
+                .keys()
+                .all(|account_id| accounts.contains_key(account_id)),
+            "Slack IFC source labels require a matching named account"
+        );
         let mut resolved = Vec::with_capacity(accounts.len());
         for (account_id, policy) in accounts {
             let allowed_user_id =
@@ -631,6 +776,9 @@ impl RuntimeConfigPair {
                 account_binding: Some(ChannelAccountBinding {
                     channel_ref: channel_ref.clone(),
                     incarnation: policy.incarnation.clone(),
+                    ifc_sources: self.config.channel_accounts.ifc_source_labels.slack.get(account_id).copied()
+                        .map(|label| crate::permissions::SourceLabels::from_labels([label]))
+                        .transpose()?,
                 }),
                 channel_ref,
                 bot_token: bot_token.clone(),
@@ -791,6 +939,48 @@ mod slack_account_tests {
                 && account.account_binding().is_some()
                 && !account.app_token().expose_secret().is_empty()
         }));
+    }
+
+    #[test]
+    fn slack_ifc_labels_require_an_existing_account_and_reach_its_binding() {
+        let mut pair = pair();
+        add_account(&mut pair, "work", "U123WORK");
+        let work = ChannelAccountId::new("work").unwrap();
+        pair.config
+            .channel_accounts
+            .ifc_source_labels
+            .slack
+            .insert(work, crate::permissions::InformationLabel::Confidential);
+
+        let accounts = pair.authenticated_slack_accounts().unwrap();
+        let binding = accounts[0]
+            .account_binding()
+            .expect("configured account must retain its authenticated binding");
+        assert_eq!(
+            binding
+                .mcp_invocation_provenance()
+                .test_highest_label(),
+            Some(crate::permissions::InformationLabel::Confidential)
+        );
+        let first_turn = binding.mcp_invocation_provenance();
+        let next_turn = binding.mcp_invocation_provenance();
+        assert_ne!(
+            first_turn.request_binding_commitment(),
+            next_turn.request_binding_commitment(),
+            "the same account must mint a fresh MCP provenance for every inbound turn"
+        );
+
+        let orphan = ChannelAccountId::new("orphan").unwrap();
+        pair.config
+            .channel_accounts
+            .ifc_source_labels
+            .slack
+            .insert(orphan, crate::permissions::InformationLabel::Secret);
+        let error = pair
+            .authenticated_slack_accounts()
+            .err()
+            .expect("IFC labels without an authenticated named account must reject");
+        assert!(error.to_string().contains("IFC source labels require"));
     }
 
     #[test]

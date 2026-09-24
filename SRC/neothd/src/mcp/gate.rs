@@ -304,6 +304,13 @@ pub enum GateError {
     /// WAL audit append failed.
     #[error("WAL audit write failed: {0}")]
     Wal(anyhow::Error),
+    /// A trusted channel source exceeds the public MCP destination clearance.
+    #[error("MCP `{server}::{tool}` denied by information-flow policy: {reason}")]
+    InformationFlowDenied {
+        server: String,
+        tool: String,
+        reason: String,
+    },
 }
 
 /// One sanitized tool entry — preserves the verdict so the caller can
@@ -518,6 +525,7 @@ pub(crate) struct McpInvocationPreflight {
     skill_invocation_policy: Option<crate::skills::resolver::SkillInvocationPolicy>,
     skill_cap_requires_confirmation: bool,
     request_binding_sha256: Option<String>,
+    mcp_ifc: crate::permissions::McpInvocationProvenance,
 }
 
 /// Opaque proof that one already-authorized MCP call crossed PreToolUse. The
@@ -561,6 +569,7 @@ pub(crate) struct AuthorizedMcpInvocation {
     server_id: String,
     tool: String,
     request_binding_sha256: Option<String>,
+    mcp_ifc: crate::permissions::McpInvocationProvenance,
 }
 
 impl AuthorizedMcpInvocation {
@@ -628,6 +637,35 @@ pub(crate) async fn preflight_with_skill_policy_and_audit_sink<P: PolicyArgument
     now_unix: i64,
     subject: Option<&str>,
     request_binding_sha256: Option<&str>,
+) -> Result<McpInvocationPreflight, GateError> {
+    preflight_with_skill_policy_and_audit_sink_with_provenance(
+        cfg,
+        tool,
+        policy,
+        skill_policy,
+        sink,
+        now_unix,
+        subject,
+        request_binding_sha256,
+        crate::permissions::McpInvocationProvenance::unclassified_compatibility(),
+    )
+    .await
+}
+
+/// Provenance-aware form used only by the authenticated channel dispatch
+/// path. The provenance moves into the opaque preflight and then into the
+/// resulting authorization, so a later compatibility caller cannot replace it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn preflight_with_skill_policy_and_audit_sink_with_provenance<P: PolicyArgument + Copy>(
+    cfg: &McpServerConfig,
+    tool: &str,
+    policy: P,
+    skill_policy: Option<&crate::skills::resolver::SkillInvocationPolicy>,
+    sink: McpAuditSink<'_>,
+    now_unix: i64,
+    subject: Option<&str>,
+    request_binding_sha256: Option<&str>,
+    mcp_ifc: crate::permissions::McpInvocationProvenance,
 ) -> Result<McpInvocationPreflight, GateError> {
     let fallback_policy_snapshot = policy.policy_snapshot();
     let policy_snapshot = skill_policy.map_or_else(
@@ -778,6 +816,7 @@ pub(crate) async fn preflight_with_skill_policy_and_audit_sink<P: PolicyArgument
         skill_invocation_policy: skill_policy.cloned(),
         skill_cap_requires_confirmation,
         request_binding_sha256: request_binding_sha256.map(str::to_owned),
+        mcp_ifc,
     })
 }
 
@@ -977,6 +1016,7 @@ pub(crate) async fn authorize_preflight_with_audit_sink(
         server_id: cfg.id.clone(),
         tool: tool.to_string(),
         request_binding_sha256: preflight.request_binding_sha256,
+        mcp_ifc: preflight.mcp_ifc,
     })
 }
 
@@ -997,10 +1037,11 @@ pub(crate) async fn invoke_authorized_with_audit_effect_gate(
     wal_session: Option<WalSessionContext>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
     now_unix: i64,
+    mcp_ifc: &crate::permissions::McpInvocationProvenance,
     effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
     pre_tool_use: AdmittedPreToolUse,
 ) -> Result<ToolCallResult, GateError> {
-    let request_binding_sha256 = mcp_request_binding(cfg, tool, &arguments)?;
+    let request_binding_sha256 = mcp_request_binding_for_provenance(cfg, tool, &arguments, mcp_ifc)?;
     invoke_authorized_with_audit_sink_effect_gate(
         client,
         cfg,
@@ -1011,6 +1052,7 @@ pub(crate) async fn invoke_authorized_with_audit_effect_gate(
         rollback_policy,
         now_unix,
         Some(&request_binding_sha256),
+        mcp_ifc,
         effect_gate,
         pre_tool_use,
         false,
@@ -1046,6 +1088,7 @@ pub(crate) async fn invoke_authorized_with_audit_sink(
         rollback_policy,
         now_unix,
         request_binding_sha256,
+        &crate::permissions::McpInvocationProvenance::unclassified_compatibility(),
         None,
         pre_tool_use,
         false,
@@ -1080,6 +1123,7 @@ pub(crate) async fn invoke_authorized_with_audit_sink_decoded(
         rollback_policy,
         now_unix,
         request_binding_sha256,
+        &crate::permissions::McpInvocationProvenance::unclassified_compatibility(),
         None,
         pre_tool_use,
         require_context_binding,
@@ -1098,6 +1142,7 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
     rollback_policy: Option<&crate::config::RollbackConfig>,
     now_unix: i64,
     request_binding_sha256: Option<&str>,
+    mcp_ifc: &crate::permissions::McpInvocationProvenance,
     effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
     pre_tool_use: AdmittedPreToolUse,
     require_context_binding: bool,
@@ -1109,13 +1154,30 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
             reason: "internal MCP authorization binding mismatch".to_string(),
         });
     }
+    if !authorized.mcp_ifc.matches(mcp_ifc) {
+        return Err(GateError::PermissionDenied {
+            server: cfg.id.clone(),
+            tool: tool.to_string(),
+            reason: "internal MCP authorization provenance mismatch".to_string(),
+        });
+    }
     if !pre_tool_use.matches(cfg, tool, request_binding_sha256) {
         return Err(GateError::PreToolUsePermitMismatch {
             server: cfg.id.clone(),
             tool: tool.to_owned(),
         });
     }
-
+    // Final defense for direct internal callers.  Check before serializing
+    // arguments or emitting a rollback snapshot, so a denied trusted source
+    // cannot create any preparatory MCP-invocation effect either.
+    authorized
+        .mcp_ifc
+        .enforce_mcp_tool_invocation()
+        .map_err(|error| GateError::InformationFlowDenied {
+            server: cfg.id.clone(),
+            tool: tool.to_owned(),
+            reason: error.to_string(),
+        })?;
     let args_bytes = serde_json::to_vec(&arguments)
         .map_err(|error| GateError::Mcp(McpError::Protocol(cfg.id.clone(), error.to_string())))?;
     let arguments_hash = format!("{:016x}", xxh3_64(&args_bytes));
@@ -1337,6 +1399,28 @@ pub(crate) fn mcp_request_binding(
     });
     let bytes = serde_json::to_vec(&canonicalize_json(&request))
         .map_err(|error| GateError::Mcp(McpError::Protocol(cfg.id.clone(), error.to_string())))?;
+    Ok(hex::encode(Sha256::digest(bytes)))
+}
+
+/// Extends the canonical MCP request commitment with the sealed authenticated
+/// named-channel binding, when one exists. This keeps legacy direct callers
+/// on their established commitment while making a channel authorization
+/// unusable by a different authenticated account or configured IFC label.
+pub(crate) fn mcp_request_binding_for_provenance(
+    cfg: &McpServerConfig,
+    tool: &str,
+    arguments: &Value,
+    provenance: &crate::permissions::McpInvocationProvenance,
+) -> Result<String, GateError> {
+    let base = mcp_request_binding(cfg, tool, arguments)?;
+    let Some(account_commitment) = provenance.request_binding_commitment() else {
+        return Ok(base);
+    };
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "mcp_request_binding": base,
+        "authenticated_channel_binding": account_commitment,
+    }))
+    .map_err(|error| GateError::Mcp(McpError::Protocol(cfg.id.clone(), error.to_string())))?;
     Ok(hex::encode(Sha256::digest(bytes)))
 }
 
@@ -2275,6 +2359,258 @@ mod tests {
         assert!(
             matches!(&result.content[1], crate::mcp::client::McpContent::Text { text } if text == "trusted enrichment")
         );
+    }
+
+    #[tokio::test]
+    async fn trusted_nonpublic_provenance_stops_before_actual_tools_call() {
+        let home = tempfile::tempdir().unwrap();
+        let counter = home.path().join("calls.txt");
+        let cfg = crate::mcp::client::stdio_fixture_config(&counter);
+        let arguments = serde_json::json!({"read": "private"});
+        let provenance = crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
+            crate::permissions::InformationLabel::Confidential,
+            "trusted-gate",
+        );
+        let binding =
+            mcp_request_binding_for_provenance(&cfg, "read", &arguments, &provenance).unwrap();
+        let preflight = preflight_with_skill_policy_and_audit_sink_with_provenance(
+            &cfg,
+            "read",
+            crate::permissions::AutonomyLevel::Full,
+            None,
+            McpAuditSink::None,
+            1,
+            None,
+            Some(&binding),
+            provenance.clone(),
+        )
+        .await
+        .unwrap();
+        let authorized = authorize_preflight_with_audit_sink(
+            preflight,
+            &cfg,
+            "read",
+            McpAuditSink::None,
+            None,
+            1,
+            None,
+            home.path(),
+        )
+        .await
+        .unwrap();
+        let other_provenance = crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
+            crate::permissions::InformationLabel::Confidential,
+            "trusted-gate",
+        );
+        let other_binding = mcp_request_binding_for_provenance(
+            &cfg,
+            "read",
+            &arguments,
+            &other_provenance,
+        )
+        .unwrap();
+        assert_ne!(binding, other_binding);
+        assert!(
+            !authorized.matches(&cfg, "read", Some(&other_binding)),
+            "an authorization bound to an earlier turn cannot be reused by a later turn"
+        );
+        let permit = admit_pre_tool_use(
+            crate::hooks::PreToolUseOrigin::DirectCliMcp,
+            &cfg,
+            "read",
+            &arguments,
+            home.path(),
+            &binding,
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &crate::hooks::SessionOnceGuard::new(),
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+        )
+        .unwrap();
+        let mut client = McpClient::spawn(&cfg).await.unwrap();
+        let error = invoke_authorized_with_audit_sink_effect_gate(
+            &mut client,
+            &cfg,
+            "read",
+            arguments,
+            authorized,
+            McpAuditSink::None,
+            None,
+            1,
+            Some(&binding),
+            &provenance,
+            None,
+            permit,
+            false,
+        )
+        .await
+        .expect_err("trusted confidential source must not reach public MCP");
+        assert!(matches!(error, GateError::InformationFlowDenied { .. }));
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 0);
+    }
+
+    #[tokio::test]
+    async fn trusted_public_provenance_reaches_tools_call_only_in_its_bound_turn() {
+        let home = tempfile::tempdir().unwrap();
+        let counter = home.path().join("calls.txt");
+        let cfg = crate::mcp::client::stdio_fixture_config(&counter);
+        let arguments = serde_json::json!({"read": "public"});
+        let provenance = crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
+            crate::permissions::InformationLabel::Public,
+            "trusted-public",
+        );
+        let same_turn_clone = provenance.clone();
+        let binding =
+            mcp_request_binding_for_provenance(&cfg, "read", &arguments, &provenance).unwrap();
+        assert_eq!(
+            binding,
+            mcp_request_binding_for_provenance(&cfg, "read", &arguments, &same_turn_clone)
+                .unwrap(),
+            "one inbound turn must keep the same provenance commitment across clones"
+        );
+        let preflight = preflight_with_skill_policy_and_audit_sink_with_provenance(
+            &cfg,
+            "read",
+            crate::permissions::AutonomyLevel::Full,
+            None,
+            McpAuditSink::None,
+            1,
+            None,
+            Some(&binding),
+            provenance.clone(),
+        )
+        .await
+        .unwrap();
+        let authorized = authorize_preflight_with_audit_sink(
+            preflight,
+            &cfg,
+            "read",
+            McpAuditSink::None,
+            None,
+            1,
+            None,
+            home.path(),
+        )
+        .await
+        .unwrap();
+        let next_turn = crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
+            crate::permissions::InformationLabel::Public,
+            "trusted-public",
+        );
+        let next_turn_binding =
+            mcp_request_binding_for_provenance(&cfg, "read", &arguments, &next_turn).unwrap();
+        assert_ne!(binding, next_turn_binding);
+        assert!(
+            !authorized.matches(&cfg, "read", Some(&next_turn_binding)),
+            "a fresh turn cannot replay the previous turn's authorization"
+        );
+        let permit = admit_pre_tool_use(
+            crate::hooks::PreToolUseOrigin::DirectCliMcp,
+            &cfg,
+            "read",
+            &arguments,
+            home.path(),
+            &binding,
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &crate::hooks::SessionOnceGuard::new(),
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+        )
+        .unwrap();
+        let mut client = McpClient::spawn(&cfg).await.unwrap();
+        let result = invoke_authorized_with_audit_sink_effect_gate(
+            &mut client,
+            &cfg,
+            "read",
+            arguments,
+            authorized,
+            McpAuditSink::None,
+            None,
+            1,
+            Some(&binding),
+            &provenance,
+            None,
+            permit,
+            false,
+        )
+        .await
+        .expect("trusted public provenance must reach the actual tools/call fixture");
+        assert!(!result.result.is_error);
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 1);
+    }
+
+    #[tokio::test]
+    async fn trusted_authorization_cannot_replay_through_compatibility_decoded_entrypoint() {
+        let home = tempfile::tempdir().unwrap();
+        let counter = home.path().join("calls.txt");
+        let cfg = crate::mcp::client::stdio_fixture_config(&counter);
+        let arguments = serde_json::json!({"read": "confidential"});
+        let provenance = crate::permissions::McpInvocationProvenance::test_trusted_configured_channel(
+            crate::permissions::InformationLabel::Confidential,
+            "trusted-replay",
+        );
+        let binding =
+            mcp_request_binding_for_provenance(&cfg, "read", &arguments, &provenance).unwrap();
+        let preflight = preflight_with_skill_policy_and_audit_sink_with_provenance(
+            &cfg,
+            "read",
+            crate::permissions::AutonomyLevel::Full,
+            None,
+            McpAuditSink::None,
+            1,
+            None,
+            Some(&binding),
+            provenance,
+        )
+        .await
+        .unwrap();
+        let authorized = authorize_preflight_with_audit_sink(
+            preflight,
+            &cfg,
+            "read",
+            McpAuditSink::None,
+            None,
+            1,
+            None,
+            home.path(),
+        )
+        .await
+        .unwrap();
+        let permit = admit_pre_tool_use(
+            crate::hooks::PreToolUseOrigin::DirectCliMcp,
+            &cfg,
+            "read",
+            &arguments,
+            home.path(),
+            &binding,
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &crate::hooks::SessionOnceGuard::new(),
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+        )
+        .unwrap();
+        let mut client = McpClient::spawn(&cfg).await.unwrap();
+        let error = invoke_authorized_with_audit_sink_decoded(
+            &mut client,
+            &cfg,
+            "read",
+            arguments,
+            authorized,
+            McpAuditSink::None,
+            None,
+            1,
+            Some(&binding),
+            permit,
+            false,
+        )
+        .await
+        .expect_err("trusted authorization must not replay through a compatibility leaf");
+        assert!(matches!(
+            error,
+            GateError::PermissionDenied { ref reason, .. }
+                if reason == "internal MCP authorization provenance mismatch"
+        ));
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 0);
     }
 
     #[tokio::test]

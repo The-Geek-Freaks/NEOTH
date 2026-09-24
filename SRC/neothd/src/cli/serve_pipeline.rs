@@ -254,6 +254,16 @@ impl AuthenticatedInboundBinding {
             None => crate::permissions::lease::channel_lease_subject(&self.channel_ref, sender),
         }
     }
+
+    /// Only a coherent named-account binding may carry a configured IFC
+    /// source classification.  Generic and legacy adapter paths deliberately
+    /// preserve explicit unclassified compatibility.
+    fn mcp_invocation_provenance(&self) -> crate::permissions::McpInvocationProvenance {
+        self.account_binding
+            .as_ref()
+            .map(crate::config::ChannelAccountBinding::mcp_invocation_provenance)
+            .unwrap_or(crate::permissions::McpInvocationProvenance::unclassified_compatibility())
+    }
 }
 
 /// Stable canonical account key for durable non-operator communication scope.
@@ -4968,6 +4978,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         // by the channel adapter before this closure runs (L620
                         // ChannelSend gate also uses it as the lease subject).
                         Some(inbound_binding.lease_subject(&inbound.sender_id)),
+                        inbound_binding.mcp_invocation_provenance(),
                         // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
                         &config_for_handler.tools.harness,
                         &mut compaction_budget,

@@ -7299,6 +7299,9 @@ pub(super) async fn dispatch_provider(
                         // GOLD-ADAPT-AWE-CODE-01 — interactive CLI path: no inbound
                         // sender identity available, so no lease upgrade possible.
                         None,
+                        // The interactive CLI has no authenticated named-channel
+                        // source classification; keep that compatibility explicit.
+                        crate::permissions::McpInvocationProvenance::unclassified_compatibility(),
                         // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
                         &config.tools.harness,
                         &mut compaction_budget,
@@ -15410,6 +15413,9 @@ pub(crate) async fn run_mcp_dispatch_loop(
     // inbound sender identity). `Some(sender_id)` on the channel path
     // (HMAC/platform-verified sender_id from the inbound message).
     subject: Option<String>,
+    // Source classification can only be minted from an authenticated named
+    // channel account.  CLI callers pass explicit unclassified compatibility.
+    mcp_ifc: crate::permissions::McpInvocationProvenance,
     // GOLD-ADAPT-HARNESS-01/04/06 — operator-tunable MCP dispatch-loop knobs
     // (`freedom.yaml::tools.harness`), threaded straight into the loop.
     harness_cfg: &crate::config::tools::McpHarnessConfig,
@@ -15506,6 +15512,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         security_policy,
         // GOLD-ADAPT-AWE-CODE-01 — thread the caller identity for lease gate.
         subject,
+        mcp_ifc,
         goal_context,
         hints_enabled,
         compaction,
