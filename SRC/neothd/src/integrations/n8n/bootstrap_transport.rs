@@ -422,7 +422,40 @@ mod tests {
 
     #[test]
     #[ignore = "child-process fixture"]
-    fn fixture_close_stdin() {}
+    fn fixture_close_stdin() {
+        use std::io::Read as _;
+
+        // Consume one byte first, so the parent write is in flight before this
+        // fixture closes its inherited read end. The bounded linger gives the
+        // pending write an unambiguous BrokenPipe result before this child exits.
+        let mut start = [0_u8; 1];
+        std::io::stdin()
+            .lock()
+            .read_exact(&mut start)
+            .expect("fixture receives write start");
+        close_fixture_stdin();
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    fn close_fixture_stdin() {
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd as _;
+
+            let stdin = std::io::stdin();
+            // SAFETY: this child owns its inherited standard-input descriptor.
+            assert_eq!(unsafe { libc::close(stdin.as_raw_fd()) }, 0);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle as _;
+            use windows_sys::Win32::Foundation::CloseHandle;
+
+            let stdin = std::io::stdin();
+            // SAFETY: this child owns its inherited standard-input pipe handle.
+            assert_ne!(unsafe { CloseHandle(stdin.as_raw_handle().cast()) }, 0);
+        }
+    }
 
     #[tokio::test]
     async fn bounded_capture_retains_at_most_the_limit() {
@@ -529,7 +562,10 @@ mod tests {
                 &mut cancel,
             )
             .await;
-        assert!(matches!(result, Err(BootstrapCommandFailure::Stdin)));
+        assert!(
+            matches!(result, Err(BootstrapCommandFailure::Stdin)),
+            "closed stdin must be a coarse Stdin failure, got {result:?}"
+        );
     }
 
     #[test]

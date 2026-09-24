@@ -349,6 +349,17 @@ jobs:
           n8n_api::handlers::tests::memory_drift_route_success_envelopes_report_and_rejects_wrong_limit_type	neothd/src/n8n_api/handlers.rs
           n8n_api::handlers::tests::memory_drift_handler_missing_store_is_structured_without_creation	neothd/src/n8n_api/handlers.rs
           n8n_api::server::tests::memory_drift_requires_recall_read_not_stats_read	neothd/src/n8n_api/server.rs
+          n8n_api::server::tests::loopback_memory_drift_recall_scope_returns_200_envelope	neothd/src/n8n_api/server.rs
+          n8n_api::server::tests::loopback_memory_drift_stats_scope_is_forbidden_before_body_or_store	neothd/src/n8n_api/server.rs
+          n8n_api::server::tests::loopback_memory_drift_without_token_is_unauthorized	neothd/src/n8n_api/server.rs
+          n8n_api::server::tests::loopback_memory_drift_missing_store_recall_scope_is_503_without_creation	neothd/src/n8n_api/server.rs
+          n8n_api::server::tests::loopback_pending_proposals_requires_dedicated_scope	neothd/src/n8n_api/server.rs
+          n8n_api::handlers::pending_proposals::tests::pending_proposals_default_cap_zero_and_metadata_only	neothd/src/n8n_api/handlers/pending_proposals.rs
+          n8n_api::handlers::pending_proposals::tests::pending_proposals_filter_status_age_and_keep_id_order	neothd/src/n8n_api/handlers/pending_proposals.rs
+          n8n_api::handlers::pending_proposals::tests::pending_proposals_missing_store_is_empty_without_creation	neothd/src/n8n_api/handlers/pending_proposals.rs
+          n8n_api::handlers::pending_proposals::tests::pending_proposals_recognised_corruption_is_a_structured_error	neothd/src/n8n_api/handlers/pending_proposals.rs
+          n8n_api::handlers::pending_proposals::tests::pending_proposals_request_rejects_wrong_types	neothd/src/n8n_api/handlers/pending_proposals.rs
+          security::api_tokens::tests::proposals_read_is_a_known_dedicated_scope	neothd/src/security/api_tokens.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -365,17 +376,93 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 279 ]]; then
+          if [[ "$expected" -ne 290 ]]; then
             selection_valid=0
           fi
-          sha256sum Cargo.lock neothd/Cargo.toml neothd/src/memory/drift.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
+          sha256sum Cargo.lock neothd/Cargo.toml neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
+
+          artifact_log="$evidence/neoth-lib-test-artifacts.jsonl"
+          binary_receipt="$evidence/neoth-lib-test-binary.json"
+          binary_sha256="$evidence/neoth-lib-test-binary.sha256"
+          : > "$artifact_log"
+          : > "$binary_sha256"
+          printf '{"schema":"neoth-windows-storage-test-binary/v1","candidateCount":0,"selected":null}\n' > "$binary_receipt"
 
           compile_status=0
           if [[ "$selection_valid" -eq 1 ]]; then
-            cargo test -p neoth --lib --locked --no-run > "$evidence/compile.log" 2>&1 || compile_status=$?
+            cargo test -p neoth --lib --locked --no-run --message-format=json > "$artifact_log" 2> "$evidence/compile.log" || compile_status=$?
+            if [[ "$compile_status" -eq 0 ]]; then
+              python - "$artifact_log" "$binary_receipt" <<'PY' >> "$evidence/compile.log" 2>&1 || compile_status=$?
+          import json
+          import pathlib
+          import sys
+
+          artifact_log = pathlib.Path(sys.argv[1])
+          receipt_path = pathlib.Path(sys.argv[2])
+          target_root = (pathlib.Path.cwd() / "target").resolve()
+          candidates = []
+          for line_number, raw in enumerate(artifact_log.read_text(encoding="utf-8").splitlines(), 1):
+              try:
+                  message = json.loads(raw)
+              except json.JSONDecodeError as error:
+                  raise SystemExit(f"invalid Cargo JSON artifact line {line_number}: {error}")
+              if message.get("reason") != "compiler-artifact":
+                  continue
+              target = message.get("target")
+              profile = message.get("profile")
+              if not isinstance(target, dict) or not isinstance(profile, dict):
+                  continue
+              executable = message.get("executable")
+              source_path = target.get("src_path")
+              if (
+                  target.get("name") == "neothd"
+                  and target.get("kind") == ["lib"]
+                  and isinstance(source_path, str)
+                  and source_path.replace("\\", "/").endswith("/neothd/src/lib.rs")
+                  and profile.get("test") is True
+              ):
+                  if not isinstance(executable, str) or not executable:
+                      raise SystemExit("neoth lib test artifact has no executable path")
+                  executable_path = pathlib.Path(executable).resolve()
+                  if not executable_path.is_file():
+                      raise SystemExit(f"neoth lib test artifact is not a file: {executable}")
+                  try:
+                      executable_path.relative_to(target_root)
+                  except ValueError as error:
+                      raise SystemExit(
+                          f"neoth lib test artifact is outside SRC/target: {executable}"
+                      ) from error
+                  candidates.append(
+                      {
+                          "packageId": message.get("package_id"),
+                          "targetName": target.get("name"),
+                          "targetKind": target.get("kind"),
+                          "sourcePath": source_path,
+                          "executable": str(executable_path),
+                      }
+                  )
+          if len(candidates) != 1:
+              raise SystemExit(
+                  f"expected exactly one neoth lib test binary artifact, found {len(candidates)}"
+              )
+          receipt_path.write_text(
+              json.dumps(
+                  {
+                      "schema": "neoth-windows-storage-test-binary/v1",
+                      "candidateCount": len(candidates),
+                      "selected": candidates[0],
+                  },
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+              newline="\n",
+          )
+          PY
+            fi
           else
             compile_status=64
-            printf 'selection is not the required 279 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 290 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0
@@ -385,13 +472,47 @@ jobs:
           : > "$evidence/results.tsv"
 
           if [[ "$compile_status" -eq 0 ]]; then
+            test_binary_native="$(python - "$binary_receipt" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          receipt = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          selected = receipt.get("selected")
+          executable = selected.get("executable") if isinstance(selected, dict) else None
+          if receipt.get("candidateCount") != 1 or not isinstance(executable, str) or not executable:
+              raise SystemExit("selected neoth lib test binary receipt is incomplete or ambiguous")
+          print(executable)
+          PY
+            )" || compile_status=$?
+            if [[ "$compile_status" -eq 0 ]]; then
+              if ! command -v cygpath > /dev/null; then
+                printf 'cygpath is required to invoke a native Windows Cargo test executable\n' >> "$evidence/compile.log"
+                compile_status=68
+              elif ! test_binary="$(cygpath -u "$test_binary_native")"; then
+                printf 'could not convert selected Windows test binary path: %s\n' "$test_binary_native" >> "$evidence/compile.log"
+                compile_status=69
+              elif [[ ! -f "$test_binary" ]]; then
+                printf 'selected neoth lib test binary is not a file: %s\n' "$test_binary_native" >> "$evidence/compile.log"
+                compile_status=66
+              elif ! sha256sum "$test_binary" > "$binary_sha256"; then
+                compile_status=67
+              fi
+            fi
+          fi
+
+          if [[ "$compile_status" -eq 0 ]]; then
+            printf 'selected_neoth_lib_test_binary=%s\n' "$test_binary_native" >> "$evidence/compile.log"
+            # Cargo runs package tests from the package root; retain that
+            # working directory when invoking the selected harness directly.
+            cd neothd
             index=0
             while IFS=$'\t' read -r test_name source_path; do
               index=$((index + 1))
               total=$((total + 1))
               log="$evidence/logs/$(printf '%02d' "$index").log"
               list_status=0
-              cargo test -p neoth --lib --locked "$test_name" -- --exact --list > "$log" 2>&1 || list_status=$?
+              "$test_binary" "$test_name" --exact --list > "$log" 2>&1 || list_status=$?
               selected_count="$(grep -Fxc "$test_name: test" "$log" || true)"
               if [[ "$list_status" -ne 0 || "$selected_count" -ne 1 ]]; then
                 missing=$((missing + 1))
@@ -400,7 +521,7 @@ jobs:
               fi
               listed=$((listed + 1))
               run_status=0
-              cargo test -p neoth --lib --locked "$test_name" -- --exact --test-threads=1 >> "$log" 2>&1 || run_status=$?
+              "$test_binary" "$test_name" --exact --test-threads=1 >> "$log" 2>&1 || run_status=$?
               if [[ "$run_status" -eq 0 ]]; then
                 passed=$((passed + 1))
                 printf '%02d\tpassed\t%s\t%s\n' "$index" "$test_name" "$source_path" >> "$evidence/results.tsv"
@@ -417,7 +538,7 @@ jobs:
           while IFS= read -r -d '' log; do
             sha256sum "$log" >> "$evidence/log-sha256sums.txt"
           done < <(find "$evidence/logs" -type f -name '*.log' -print0 | sort -z)
-          sha256sum "$evidence/SOURCE_HEAD" "$evidence/selection.tsv" "$evidence/source-bindings.tsv" "$evidence/input-sha256sums.txt" "$evidence/results.tsv" "$evidence/final-counts.txt" "$evidence/log-sha256sums.txt" > "$evidence/evidence-sha256sums.txt"
+          sha256sum "$evidence/SOURCE_HEAD" "$evidence/selection.tsv" "$evidence/source-bindings.tsv" "$evidence/input-sha256sums.txt" "$artifact_log" "$binary_receipt" "$binary_sha256" "$evidence/results.tsv" "$evidence/final-counts.txt" "$evidence/log-sha256sums.txt" > "$evidence/evidence-sha256sums.txt"
           printf 'compile_status=%s\n' "$compile_status" >> "$GITHUB_OUTPUT"
           if [[ "$selection_valid" -ne 1 || "$compile_status" -ne 0 || "$total" -ne "$expected" || "$listed" -ne "$expected" || "$failed" -ne 0 || "$missing" -ne 0 ]]; then
             exit 1

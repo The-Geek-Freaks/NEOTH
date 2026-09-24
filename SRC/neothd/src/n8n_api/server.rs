@@ -59,6 +59,7 @@ fn required_scope_for(method: &str, path: &str) -> Option<&'static str> {
         ("POST", "/api/recall") => Some(api_tokens::SCOPE_RECALL_READ),
         ("GET", "/api/stats") => Some(api_tokens::SCOPE_STATS_READ),
         ("POST", "/api/memory/drift") => Some(api_tokens::SCOPE_RECALL_READ),
+        ("POST", "/api/proactive/proposals/pending") => Some(api_tokens::SCOPE_PROPOSALS_READ),
         ("POST", "/api/memory/save") => Some(api_tokens::SCOPE_MEMORY_WRITE),
         ("POST", "/api/provider/call") => Some(api_tokens::SCOPE_PROVIDER_CALL),
         ("POST", "/api/channel/send") => Some(api_tokens::SCOPE_CHANNEL_SEND),
@@ -526,6 +527,214 @@ pub fn load_or_init_token(home: &std::path::Path) -> std::io::Result<String> {
 mod tests {
     use super::*;
 
+    async fn start_drift_http_test_server(
+        home: &std::path::Path,
+    ) -> (
+        Arc<ApiState>,
+        crate::wal::writer::WalWriterHandle,
+        tokio::task::JoinHandle<()>,
+        tokio::task::JoinHandle<()>,
+        Arc<Notify>,
+        u16,
+    ) {
+        let (writer, wal_join) =
+            crate::wal::writer::spawn(home.join("n8n-drift-http-test.wal")).unwrap();
+        let config = FreedomConfig::default();
+        let state = Arc::new(ApiState {
+            writer: writer.clone(),
+            config: Arc::new(config.clone()),
+            reload_controller: Arc::new(crate::config::reload::ReloadController::new(
+                config,
+                home.join("freedom.yaml"),
+            )),
+            home: home.to_path_buf(),
+            token: "test-token".to_owned(),
+            cooldown: Arc::new(AuthCooldown::new()),
+            boot_instant: Instant::now(),
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let shutdown = Arc::new(Notify::new());
+        let server = tokio::spawn(run_server(
+            listener,
+            Arc::clone(&state),
+            Arc::clone(&shutdown),
+        ));
+        (state, writer, wal_join, server, shutdown, port)
+    }
+
+    async fn post_drift_http(port: u16, token: Option<&str>, body: &str) -> serde_json::Value {
+        post_test_http(port, "/api/memory/drift", token, body).await
+    }
+
+    async fn post_test_http(port: u16, path: &str, token: Option<&str>, body: &str) -> serde_json::Value {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let mut stream = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+                .await
+                .unwrap();
+            let authorization = token
+                .map(|value| format!("Authorization: Bearer {value}\r\n"))
+                .unwrap_or_default();
+            let request = format!(
+                "POST {path} HTTP/1.1\r\n\
+                 Host: localhost\r\n\
+                 {authorization}\
+                 Content-Type: application/json\r\n\
+                 Connection: close\r\n\
+                 Content-Length: {}\r\n\r\n{}",
+                body.len(),
+                body,
+            );
+            stream.write_all(request.as_bytes()).await.unwrap();
+            let mut response = Vec::new();
+            stream.read_to_end(&mut response).await.unwrap();
+            let response = String::from_utf8(response).unwrap();
+            let (head, body) = response.split_once("\r\n\r\n").unwrap();
+            let mut envelope: serde_json::Value = serde_json::from_str(body).unwrap();
+            envelope["_http_status"] = serde_json::Value::String(
+                head.split_whitespace().nth(1).unwrap().to_owned(),
+            );
+            envelope
+        })
+        .await
+        .expect("n8n drift HTTP exchange timed out")
+    }
+
+    async fn stop_drift_http_test_server(
+        state: Arc<ApiState>,
+        writer: crate::wal::writer::WalWriterHandle,
+        wal_join: tokio::task::JoinHandle<()>,
+        server: tokio::task::JoinHandle<()>,
+        shutdown: Arc<Notify>,
+    ) {
+        shutdown.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(3), server)
+            .await
+            .expect("n8n drift HTTP server did not stop")
+            .expect("n8n drift HTTP server task panicked");
+        drop(state);
+        drop(writer);
+        tokio::time::timeout(std::time::Duration::from_secs(3), wal_join)
+            .await
+            .expect("n8n drift HTTP WAL writer did not stop")
+            .expect("n8n drift HTTP WAL writer task panicked");
+    }
+
+    #[tokio::test]
+    async fn loopback_memory_drift_recall_scope_returns_200_envelope() {
+        let home = tempfile::tempdir().unwrap();
+        let views_path = home.path().join("views.db");
+        let conn = crate::memory::store::open(&views_path).unwrap();
+        conn.execute(
+            "INSERT INTO idx_episode \
+             (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (1, 1, 1, 'triage', 'hash-1', 0.15, 1)",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        let (record, token) = crate::security::api_tokens::create_token(
+            "drift-recall-read",
+            vec![api_tokens::SCOPE_RECALL_READ.to_owned()],
+            None,
+        )
+        .unwrap();
+        crate::security::api_tokens::save_store(home.path(), &[record]).unwrap();
+
+        let (state, writer, wal_join, server, shutdown, port) =
+            start_drift_http_test_server(home.path()).await;
+        let response = post_drift_http(port, Some(&token), r#"{"limit":1}"#).await;
+        assert_eq!(response["_http_status"], "200");
+        assert_eq!(response["ok"], true);
+        assert!(response["data"]["drifting"].is_array());
+        assert_eq!(response["data"]["drifting"].as_array().unwrap().len(), 1);
+        assert_eq!(response["data"]["imminent_count"], 1);
+        assert_eq!(response["data"]["at_risk_count"], 0);
+        assert_eq!(response["data"]["stable_count"], 0);
+        stop_drift_http_test_server(state, writer, wal_join, server, shutdown).await;
+    }
+
+    #[tokio::test]
+    async fn loopback_memory_drift_stats_scope_is_forbidden_before_body_or_store() {
+        let home = tempfile::tempdir().unwrap();
+        let (record, token) = crate::security::api_tokens::create_token(
+            "drift-stats-read",
+            vec![api_tokens::SCOPE_STATS_READ.to_owned()],
+            None,
+        )
+        .unwrap();
+        crate::security::api_tokens::save_store(home.path(), &[record]).unwrap();
+
+        let (state, writer, wal_join, server, shutdown, port) =
+            start_drift_http_test_server(home.path()).await;
+        let response = post_drift_http(port, Some(&token), "{not-json").await;
+        assert_eq!(response["_http_status"], "403");
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "PermissionDenied");
+        assert!(!home.path().join("views.db").exists());
+        stop_drift_http_test_server(state, writer, wal_join, server, shutdown).await;
+    }
+
+    #[tokio::test]
+    async fn loopback_memory_drift_without_token_is_unauthorized() {
+        let home = tempfile::tempdir().unwrap();
+        let (state, writer, wal_join, server, shutdown, port) =
+            start_drift_http_test_server(home.path()).await;
+        let response = post_drift_http(port, None, "{}").await;
+        assert_eq!(response["_http_status"], "401");
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "Unauthorized");
+        stop_drift_http_test_server(state, writer, wal_join, server, shutdown).await;
+    }
+
+    #[tokio::test]
+    async fn loopback_pending_proposals_requires_dedicated_scope() {
+        let home = tempfile::tempdir().unwrap();
+        let (proposal_record, proposal_token) = api_tokens::create_token(
+            "proposal-reader", vec![api_tokens::SCOPE_PROPOSALS_READ.to_owned()], None,
+        ).unwrap();
+        let (recall_record, recall_token) = api_tokens::create_token(
+            "recall-reader", vec![api_tokens::SCOPE_RECALL_READ.to_owned()], None,
+        ).unwrap();
+        api_tokens::save_store(home.path(), &[proposal_record, recall_record]).unwrap();
+        let (state, writer, wal_join, server, shutdown, port) =
+            start_drift_http_test_server(home.path()).await;
+        let path = "/api/proactive/proposals/pending";
+        let allowed = post_test_http(port, path, Some(&proposal_token), "{}").await;
+        assert_eq!(allowed["_http_status"], "200");
+        assert_eq!(allowed["ok"], true);
+        assert_eq!(allowed["data"]["total"], 0);
+        assert_eq!(allowed["data"]["pending"], serde_json::json!([]));
+        let denied = post_test_http(port, path, Some(&recall_token), "{not-json").await;
+        assert_eq!(denied["_http_status"], "403");
+        assert_eq!(denied["error"]["code"], "PermissionDenied");
+        assert!(!home.path().join("proposals").exists());
+        stop_drift_http_test_server(state, writer, wal_join, server, shutdown).await;
+    }
+
+    #[tokio::test]
+    async fn loopback_memory_drift_missing_store_recall_scope_is_503_without_creation() {
+        let home = tempfile::tempdir().unwrap();
+        let (record, token) = crate::security::api_tokens::create_token(
+            "drift-missing-store",
+            vec![api_tokens::SCOPE_RECALL_READ.to_owned()],
+            None,
+        )
+        .unwrap();
+        crate::security::api_tokens::save_store(home.path(), &[record]).unwrap();
+
+        let (state, writer, wal_join, server, shutdown, port) =
+            start_drift_http_test_server(home.path()).await;
+        let response = post_drift_http(port, Some(&token), "{}").await;
+        assert_eq!(response["_http_status"], "503");
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "StoreUnavailable");
+        assert!(!home.path().join("views.db").exists());
+        stop_drift_http_test_server(state, writer, wal_join, server, shutdown).await;
+    }
+
     #[tokio::test]
     async fn shutdown_aborts_idle_connection_before_wal_drain() {
         use tokio::io::AsyncWriteExt;
@@ -641,6 +850,7 @@ mod tests {
             ("POST", "/api/recall"),
             ("GET", "/api/stats"),
             ("POST", "/api/memory/drift"),
+            ("POST", "/api/proactive/proposals/pending"),
             ("POST", "/api/memory/save"),
             ("POST", "/api/provider/call"),
             ("POST", "/api/channel/send"),

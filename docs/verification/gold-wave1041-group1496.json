@@ -1,0 +1,82 @@
+{
+  "schema": "neoth-hosted-group-admission/v1",
+  "source": "1a20accb302c0f2516cc10d758aa3aad4d32bfdb",
+  "run": 36073354167,
+  "conclusion": "success",
+  "expected": 1496,
+  "passed": 1496,
+  "failed": 0,
+  "missing": 0,
+  "sourceBindings": 258,
+  "inputBindings": 6,
+  "artifactDigests": [
+    {
+      "id": 10840090065,
+      "name": "w190-research-lifecycle-log-1a20accb302c0f2516cc10d758aa3aad4d32bfdb",
+      "digest": "sha256:0cb23d464ccca93a99e9833d094f4ba5da4697c02317696ed943fb13954d019b"
+    },
+    {
+      "id": 10839163855,
+      "name": "w190-research-lifecycle-source-1a20accb302c0f2516cc10d758aa3aad4d32bfdb",
+      "digest": "sha256:b1bb7dedbd0e51ed262e7764f2a6c88f05f3959abccf412a70c7a9871b1d6262"
+    },
+    {
+      "id": 10838884898,
+      "name": "w190-research-lifecycle-receipt-1a20accb302c0f2516cc10d758aa3aad4d32bfdb",
+      "digest": "sha256:db0f33b0628fc7b1e46d2bab817888af195d5dce1198f76499d1ad0b6a688c8d"
+    }
+  ],
+  "driftTests": [
+    {
+      "ordinal": 1490,
+      "test": "n8n_api::handlers::tests::memory_drift_request_defaults_limit_to_none_and_rejects_wrong_type",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1491,
+      "test": "n8n_api::handlers::tests::memory_drift_reads_seeded_rows_with_limit_and_exact_counts",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1492,
+      "test": "n8n_api::handlers::tests::memory_drift_missing_store_is_structured_and_does_not_create_database",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1493,
+      "test": "n8n_api::handlers::tests::memory_drift_handler_default_cap_and_zero_keep_exact_counts",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1494,
+      "test": "n8n_api::handlers::tests::memory_drift_route_success_envelopes_report_and_rejects_wrong_limit_type",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1495,
+      "test": "n8n_api::handlers::tests::memory_drift_handler_missing_store_is_structured_without_creation",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1496,
+      "test": "n8n_api::server::tests::memory_drift_requires_recall_read_not_stats_read",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "rootVerified": true,
+  "boundary": "Exact historical grouped tests, including seven drift checks. Later proposal adapter and five real HTTP cases not included."
+}

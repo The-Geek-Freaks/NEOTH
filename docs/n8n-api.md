@@ -63,6 +63,7 @@ Enforcement layers (all active by default):
 | `/api/recall` | POST | `{query, limit?}` | `{hits: [...], total}` (routes through `memory::ctx::search`) |
 | `/api/stats` | GET | — | `{events_total, provider_requests, channel_inbound, channel_outbound}` |
 | `/api/memory/drift` | POST | `{limit?}` | `{drifting: [...], imminent_count, at_risk_count, stable_count}` |
+| `/api/proactive/proposals/pending` | POST | `{limit?, min_age_secs?}` | `{pending: [...], total}` (pending proposal metadata only) |
 | `/api/memory/save` | POST | `{kind, body, tags?}` | `{stored, bytes}` (writes a RAW_TEXT WAL frame) |
 | `/api/provider/call` | POST | `{prompt, system?, model?, incognito?}` | `{completion, model}` (authenticated operator communication profile + authorized provider leaf) |
 | `/api/channel/send` | POST | `{channel, recipient, text}` | `{queued}` (writes a CHANNEL_EGRESS WAL frame; adapter dispatch via the broker) |
@@ -74,10 +75,23 @@ text, so a scoped token needs `recall:read`; `stats:read` alone is insufficient.
 The handler does not create or migrate a database. A missing projection returns
 `StoreUnavailable` (503). The usual HTTP request audit still applies.
 
-The inactive `memory_decay_report` starter uses this route. The other nine
+The inactive `memory_decay_report` starter uses this route. The other eight
 generated starters still disclose their unavailable adapters; their presence
 in the thirteen-workflow catalog does not prove those routes work. Use an n8n
 HTTP Header Auth credential containing the appropriate bearer token.
+
+`/api/proactive/proposals/pending` requires the separate `proposals:read`
+scope. It reads the existing proposal files without creating a missing store,
+which returns an empty list. Recognised corrupt records return `UpstreamError`.
+Only Pending proposals are returned, sorted by their existing ID order. The
+default limit is 20, capped at 100; `total` counts matches before truncation.
+`min_age_secs` defaults to zero and uses an inclusive minimum age.
+
+Each summary contains `id`, `kind`, `title`, `generated_ts_unix`, and `status`.
+Draft configuration, rationale and operator notes stay out of this API. The
+inactive `proposal_review_reminder` starter selects proposals at least 24 hours
+old. Reading a reminder does not approve or apply a proposal. Tokens for recall
+or statistics do not grant access to this endpoint.
 
 ---
 

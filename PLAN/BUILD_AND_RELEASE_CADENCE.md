@@ -3,6 +3,29 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1045 pending proposals, real HTTP gates and Windows execution (2026-09-25):**
+The second real starter adapter, POST /api/proactive/proposals/pending, reads
+Pending proposal metadata from the existing no-create file store. It preserves
+recognised-corruption errors, deterministic ordering, a 20/100 row limit and
+an inclusive age filter. Its dedicated proposals:read scope does not grant
+recall/stats access. The inactive starter selects proposals at least24 hours
+old; eight generated adapters remain open. Eleven new tests include five
+actual loopback HTTP exchanges with persisted scoped tokens. Source review
+approved the handler, glue, HTTP fixtures and explicit closed-stdin child
+repair; no hosted pass for these new tests is claimed yet.
+The Windows gate now binds one compiled lib-test binary from Cargo JSON and
+uses it for every exact list/run, replacing repeated Cargo invocations while
+retaining all selections and evidence. Independent workflow review approved
+the Windows/MSYS path boundary for a hosted run. Native1732 / Group1507 /
+Windows290 are selected. The absolute local BSOD hold remains in force.
+
+**W1041 drift validation admitted (2026-09-25):** Root verified Group36073354167
+at1a20accb: all1496 selected tests passed, including seven new drift cases;
+258 fixture-source bindings, six inputs and all three API ZIPs matched.
+Core36073359135 at the same head passed Clippy, test typechecking and CLI
+build/export. The later proposal/HTTP/transport changes require fresh gates.
+No all13 importer, n8n activation, delivery or Paperless criterion is closed.
+
 **W1043 product bootstrap diagnostic follow-up (2026-09-25):** Run36073352058
 at1a20accb passed all9 helper tests and built the real CLI, then its first
 install command failed before the observer acquired complete identities.

@@ -46,6 +46,7 @@
 //! Defined scopes:
 //!   `"api:health"` — GET /api/health (always granted to any valid token)
 //!   `"recall:read"` — POST /api/recall
+//!   `"proposals:read"` — POST /api/proactive/proposals/pending
 //!   `"stats:read"` — GET /api/stats
 //!   `"memory:write"` — POST /api/memory/save (implies `memory:read`)
 //!   `"provider:call"` — POST /api/provider/call
@@ -67,6 +68,8 @@ use uuid::Uuid;
 pub const SCOPE_API_HEALTH: &str = "api:health";
 /// Read recall / memory search.
 pub const SCOPE_RECALL_READ: &str = "recall:read";
+/// Read pending proactive proposal metadata.
+pub const SCOPE_PROPOSALS_READ: &str = "proposals:read";
 /// Read stats.
 pub const SCOPE_STATS_READ: &str = "stats:read";
 /// Write to memory (POST /api/memory/save). Implies recall:read.
@@ -81,6 +84,7 @@ pub const ALL_SCOPES: &[&str] = &[
     SCOPE_API_HEALTH,
     SCOPE_CHANNEL_SEND,
     SCOPE_MEMORY_WRITE,
+    SCOPE_PROPOSALS_READ,
     SCOPE_PROVIDER_CALL,
     SCOPE_RECALL_READ,
     SCOPE_STATS_READ,
@@ -500,6 +504,16 @@ mod tests {
             "memory:write must imply recall:read; got scopes: {:?}",
             rec.scopes
         );
+    }
+
+    #[test]
+    fn proposals_read_is_a_known_dedicated_scope() {
+        assert!(ALL_SCOPES.windows(2).all(|pair| pair[0] < pair[1]));
+        let (rec, _) = create_token("proposal-reminder", vec![SCOPE_PROPOSALS_READ.to_string()], None)
+            .unwrap();
+        assert!(rec.has_scope(SCOPE_PROPOSALS_READ));
+        assert!(!rec.has_scope(SCOPE_RECALL_READ));
+        assert!(!rec.has_scope(SCOPE_STATS_READ));
     }
 
     #[test]

@@ -88,7 +88,7 @@ fn build_workflow_skeleton(
     let http_id = format!("{slug}_http");
     let url = format!("={{{{ $json.neothBaseUrl + '{endpoint}' }}}}");
     let unavailable_note = format!(
-        "Unavailable starter intent: {endpoint} is not one of the seven current NEOTH n8n API routes. Keep this workflow inactive until an explicit adapter and its request-payload contract are implemented; no payload adapter is shipped here."
+        "Unavailable starter intent: {endpoint} is not one of the eight current NEOTH n8n API routes. Keep this workflow inactive until an explicit adapter and its request-payload contract are implemented; no payload adapter is shipped here."
     );
     let (http_parameters, http_note) = if slug == "memory_decay_report" {
         (
@@ -104,6 +104,21 @@ fn build_workflow_skeleton(
                 "options": {}
             }),
             "Implemented POST /api/memory/drift reads the existing views.db projection with recall:read scope. It returns bounded drift rows and exact counts without creating, migrating, or modifying the database.",
+        )
+    } else if slug == "proposal_review_reminder" {
+        (
+            serde_json::json!({
+                "url": url,
+                "method": method,
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpHeaderAuth",
+                "sendBody": true,
+                "contentType": "json",
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify({ limit: 20, min_age_secs: 86400 }) }}",
+                "options": {}
+            }),
+            "Implemented POST /api/proactive/proposals/pending requires proposals:read and returns metadata for pending proposals at least 24 hours old. Draft YAML, rationale and operator notes stay in NEOTH; this workflow does not approve or apply proposals.",
         )
     } else {
         (
@@ -258,10 +273,10 @@ const STARTER_SPECS: &[StarterSpec] = &[
     StarterSpec {
         slug: "proposal_review_reminder",
         name: "Proposal review reminder (24 h)",
-        description: "Unavailable adapter: intended OB-03 pending-proposal reminder workflow.",
+        description: "Read pending proposal metadata after 24 hours; review and approval remain in NEOTH.",
         cron: "0 17 * * *",
-        endpoint: "/proactive/proposals/pending",
-        method: "GET",
+        endpoint: "/api/proactive/proposals/pending",
+        method: "POST",
     },
     StarterSpec {
         slug: "dream_obsidian_sync",
@@ -557,6 +572,11 @@ mod tests {
                         .is_some_and(|notes| notes.contains("Implemented POST /api/memory/drift")),
                     "implemented drift starter must identify its supported route",
                 );
+            } else if w.slug == "proposal_review_reminder" {
+                assert_eq!(http["parameters"]["method"], "POST");
+                assert_eq!(http["parameters"]["sendBody"], true);
+                assert_eq!(http["parameters"]["jsonBody"], "={{ JSON.stringify({ limit: 20, min_age_secs: 86400 }) }}");
+                assert!(http["notes"].as_str().is_some_and(|notes| notes.contains("requires proposals:read")));
             } else {
                 assert!(
                     http["notes"]
