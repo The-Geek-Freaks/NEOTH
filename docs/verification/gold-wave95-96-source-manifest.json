@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T03:32:21.0084558Z",
-  "validationStatus": "W628 storage repair/W624 capture diagnostics reviewed; Windows46/GUI148 pending",
+  "capturedUtc": "2026-09-24T03:35:30.2217584Z",
+  "validationStatus": "W624/W628 exact hosted formatting imported; Windows46/GUI148 executing",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1753,8 +1753,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2217548,
-      "sha256": "CD654C3704DB3F0619BF06DDA6D873BD23086ED4DD52D9C859862814A7F5384B"
+      "bytes": 2217385,
+      "sha256": "07627F36C555B09971869478C13C8E8504C02D3E29A0C5332217F843BF55A9E2"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -3848,8 +3848,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/store.rs",
-      "bytes": 256398,
-      "sha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB"
+      "bytes": 256386,
+      "sha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B"
     },
     {
       "path": "SRC/neothd/src/slash/schema.rs",

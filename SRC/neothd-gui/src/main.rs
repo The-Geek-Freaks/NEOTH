@@ -44014,7 +44014,9 @@ mod w58_gui_callback_runtime_tests {
             events
                 .iter()
                 .map(|event| match event {
-                    GuiChatBridgeEvent::Terminal { state, sequence, .. } => {
+                    GuiChatBridgeEvent::Terminal {
+                        state, sequence, ..
+                    } => {
                         format!("terminal:{state:?}@{sequence}")
                     }
                     _ => format!("event@{}", w480_captured_event_sequence(event)),
@@ -49452,42 +49454,37 @@ exit 0
             GuiChatSurface::Buddy => overlay.invoke_send_clicked("W480 Buddy".into(), false),
         }
         let completed_overlay = overlay.as_weak();
-        let settlement_label = format!(
-            "W480 captured producer settlement; captured_events=[{capture_summary}]"
-        );
-        w153_pump_until(
-            &window,
-            &settlement_label,
-            move |window| {
-                let terminal_observed = match expected_body {
-                    Some(expected_body) => {
-                        let completed = window.get_chat_live_messages().iter().any(|row| {
-                            row.role.as_str() == "assistant"
-                                && row.stream_phase.as_str() == "complete"
-                                && row.text.as_str() == expected_body
+        let settlement_label =
+            format!("W480 captured producer settlement; captured_events=[{capture_summary}]");
+        w153_pump_until(&window, &settlement_label, move |window| {
+            let terminal_observed = match expected_body {
+                Some(expected_body) => {
+                    let completed = window.get_chat_live_messages().iter().any(|row| {
+                        row.role.as_str() == "assistant"
+                            && row.stream_phase.as_str() == "complete"
+                            && row.text.as_str() == expected_body
+                    });
+                    let buddy_rendered = surface != GuiChatSurface::Buddy
+                        || completed_overlay.upgrade().is_some_and(|overlay| {
+                            overlay
+                                .get_recent_lines()
+                                .iter()
+                                .any(|line| line.contains(expected_body))
                         });
-                        let buddy_rendered = surface != GuiChatSurface::Buddy
-                            || completed_overlay.upgrade().is_some_and(|overlay| {
-                                overlay
-                                    .get_recent_lines()
-                                    .iter()
-                                    .any(|line| line.contains(expected_body))
-                            });
-                        completed && buddy_rendered
-                    }
-                    None => window.get_chat_live_messages().iter().any(|row| {
-                        row.role.as_str() == "error"
-                            || matches!(row.stream_phase.as_str(), "failed" | "cancelled")
-                    }),
-                };
-                !window.get_chat_send_in_flight()
-                    && completed_overlay
-                        .upgrade()
-                        .is_some_and(|overlay| !overlay.get_send_in_flight())
-                    && replay_bridge.attach_started(surface) > 0
-                    && terminal_observed
-            },
-        );
+                    completed && buddy_rendered
+                }
+                None => window.get_chat_live_messages().iter().any(|row| {
+                    row.role.as_str() == "error"
+                        || matches!(row.stream_phase.as_str(), "failed" | "cancelled")
+                }),
+            };
+            !window.get_chat_send_in_flight()
+                && completed_overlay
+                    .upgrade()
+                    .is_some_and(|overlay| !overlay.get_send_in_flight())
+                && replay_bridge.attach_started(surface) > 0
+                && terminal_observed
+        });
 
         let rendered = w480_rendered_text(&window, &overlay);
         assert!(
@@ -49573,9 +49570,7 @@ exit 0
                 state, sequence, ..
             }) = events.last()
             else {
-                panic!(
-                    "W480 {surface} capture has no final terminal; {diagnostic}"
-                );
+                panic!("W480 {surface} capture has no final terminal; {diagnostic}");
             };
             (*state, *sequence)
         }

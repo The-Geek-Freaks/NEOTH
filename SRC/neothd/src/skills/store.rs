@@ -6427,8 +6427,7 @@ mod reported_commit_tests {
         let root = open_bound_directory(temp.path(), false, "test store")
             .unwrap()
             .unwrap();
-        let stage_binding =
-            bind_child_object(&root.dir, OsStr::new("stage"), &stage_path).unwrap();
+        let stage_binding = bind_child_object(&root.dir, OsStr::new("stage"), &stage_path).unwrap();
         let stage = open_bound_real_child_dir_for_read(
             &root.dir,
             &stage_binding,

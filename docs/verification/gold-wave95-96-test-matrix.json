@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W628 storage repair/W624 capture diagnostics reviewed; Windows46/GUI148 pending",
+  "status": "W624/W628 exact hosted formatting imported; Windows46/GUI148 executing",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 147192,
-    "sha256": "7AEA92C9F44C37FE7DDAA9F17DBA7F05E7142802316191A5B135B379B21766BB"
+    "bytes": 147183,
+    "sha256": "8EEBF5EF8B94545B5A2C486877896C671F468B8F1D523D4CF5DE65E01E0B2E7C"
   },
   "sourceInputs": 835,
   "requiredNativeTests": [
@@ -5718,7 +5718,7 @@
     {
       "test": "skills::store::tests::bound_rename_refuses_same_byte_source_replacement_before_namespace_effect",
       "sourcePath": "SRC/neothd/src/skills/store.rs",
-      "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
+      "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
       "junitClass": "neoth"
     },
     {
@@ -8139,8 +8139,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2217548,
-      "sha256": "CD654C3704DB3F0619BF06DDA6D873BD23086ED4DD52D9C859862814A7F5384B"
+      "bytes": 2217385,
+      "sha256": "07627F36C555B09971869478C13C8E8504C02D3E29A0C5332217F843BF55A9E2"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -9267,31 +9267,31 @@
       {
         "test": "skills::store::tests::windows_verbatim_local_disk_root_remains_capability_walkable",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
+        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
         "junitClass": "neoth"
       },
       {
         "test": "skills::store::tests::windows_unc_and_device_prefixes_remain_outside_local_capability_walks",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
+        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
         "junitClass": "neoth"
       },
       {
         "test": "skills::store::reported_commit_tests::private_stage_replaces_a_delete_sharing_bound_target_without_closing_it",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
+        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
         "junitClass": "neoth"
       },
       {
         "test": "skills::store::reported_commit_tests::live_bound_parent_native_rename_is_denied",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
+        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
         "junitClass": "neoth"
       },
       {
         "test": "skills::store::reported_commit_tests::private_stage_publishes_through_bound_parent_despite_mismatched_display_path",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
+        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
         "junitClass": "neoth"
       },
       {
@@ -9327,7 +9327,7 @@
       {
         "test": "skills::store::reported_commit_tests::private_stage_create_new_composes_with_retained_delete_bound_parent",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
+        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
         "junitClass": "neoth"
       }
     ],
@@ -9377,7 +9377,7 @@
       {
         "test": "skills::store::tests::existing_nonprivate_child_is_rejected_without_permission_mutation",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
+        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
         "junitClass": "neoth"
       },
       {
@@ -9515,7 +9515,7 @@
       {
         "test": "skills::store::tests::bound_rename_unix_race_restores_foreign_replacement_and_keeps_original",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
+        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
         "junitClass": "neoth"
       },
       {
@@ -9625,7 +9625,7 @@
       {
         "test": "skills::store::tests::existing_nonprivate_child_is_rejected_without_permission_mutation",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
+        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
         "junitClass": "neoth"
       },
       {
@@ -9763,7 +9763,7 @@
       {
         "test": "skills::store::tests::bound_rename_unix_race_restores_foreign_replacement_and_keeps_original",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
+        "sourceSha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
         "junitClass": "neoth"
       },
       {
@@ -27624,6 +27624,26 @@
       }
     ],
     "note": "Preserve private Ex replacement; add exact retained DELETE-parent regression; W480 acceptance unchanged",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave631HostedFormat": {
+    "base": "701d5ebfe946a5573e25ec0004b6da5f21135191",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2217385,
+        "sha256": "07627F36C555B09971869478C13C8E8504C02D3E29A0C5332217F843BF55A9E2",
+        "blob": "d0265fa80c4213ff4184f7894228fc083072522a"
+      },
+      {
+        "path": "SRC/neothd/src/skills/store.rs",
+        "bytes": 256386,
+        "sha256": "E89F623FD4DC3F20BD0EA53A2D9BEA796CC13E08289A65B25128B89CA0A4373B",
+        "blob": "4067f9cd81cdce8f25ec1c848fd5ff7dd4c42c51"
+      }
+    ],
+    "note": "Two exact old/new Gitblob bindings; all ZIP/receipt hashes verified; no local formatter",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
