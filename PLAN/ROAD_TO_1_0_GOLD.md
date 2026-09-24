@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W816/W818 hosted format and chapter handle repair (2026-09-24):**
+Root admitted the five-file hosted format patch from run36006059637/artifact
+10810199507 after checking archive, inner digest, source and old/new Git blobs.
+Core36006062602 found two E0308 handle mismatches in the new chapter path.
+The retained snapshot and verifier now consistently use cap_std::fs::File,
+preserving the opened no-follow capability and all source revalidation.
+Hosted rerun is pending; D7/B3 remain OPEN. Group1251 finished with a failure;
+its individual D5/F4 terminals are being admitted separately. No local build,
+formatter or tests ran. Counts remain1067checked255open2partial.
+Evidence: docs/verification/gold-wave816-chapter-compile-repair.json.
+
 **W805/W806 routing and bounded text chapters (2026-09-24):**
 D7 adds explicit workflow/changing-facts inputs and a default-off route policy.
 It reuses the real research terminal and existing configured provider builder,

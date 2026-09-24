@@ -458,15 +458,18 @@ fn ensure_background_session_mode(name: &str, incognito: bool) -> Result<()> {
 /// Bind explicit changing-facts authority to the existing slash consumer before
 /// local action dispatch. Its existing research branch retains all authority.
 fn apply_changing_facts_research_route(args: &mut ChatArgs) -> Result<()> {
-    if !args.changing_facts { return Ok(()); }
-    let topic = args.message.as_deref().map(str::trim).filter(|topic| !topic.is_empty())
+    if !args.changing_facts {
+        return Ok(());
+    }
+    let topic = args
+        .message
+        .as_deref()
+        .map(str::trim)
+        .filter(|topic| !topic.is_empty())
         .ok_or_else(|| anyhow::anyhow!("--changing-facts requires a non-empty request topic"))?;
-    if topic
-        .strip_prefix("/research")
-        .is_some_and(|suffix| {
-            suffix.is_empty() || suffix.chars().next().is_some_and(char::is_whitespace)
-        })
-    {
+    if topic.strip_prefix("/research").is_some_and(|suffix| {
+        suffix.is_empty() || suffix.chars().next().is_some_and(char::is_whitespace)
+    }) {
         return Ok(());
     }
     args.message = Some(format!("/research {topic}"));
@@ -474,31 +477,82 @@ fn apply_changing_facts_research_route(args: &mut ChatArgs) -> Result<()> {
 }
 
 fn validate_verifiability_routing_request(args: &ChatArgs) -> Result<()> {
-    anyhow::ensure!(!args.incognito || (args.workflow.is_none() && !args.changing_facts), "Incognito rejects D7 workflow routing before retained evidence or retrieval can be opened");
-    anyhow::ensure!(!args.changing_facts || args.workflow.is_some(), "--changing-facts requires --workflow <closed-workflow-label>");
+    anyhow::ensure!(
+        !args.incognito || (args.workflow.is_none() && !args.changing_facts),
+        "Incognito rejects D7 workflow routing before retained evidence or retrieval can be opened"
+    );
+    anyhow::ensure!(
+        !args.changing_facts || args.workflow.is_some(),
+        "--changing-facts requires --workflow <closed-workflow-label>"
+    );
     if let Some(workflow) = args.workflow.as_deref() {
-        anyhow::ensure!(crate::analytics::specialist_advisor::is_closed_workflow(workflow), "--workflow must be one of the closed D2/D6 workflow labels");
+        anyhow::ensure!(
+            crate::analytics::specialist_advisor::is_closed_workflow(workflow),
+            "--workflow must be one of the closed D2/D6 workflow labels"
+        );
     }
     Ok(())
 }
 
 /// D7 consumes strict D6 records, bounded D2 volume, and explicit slots only.
-fn plan_verifiability_route(config: &FreedomConfig, args: &ChatArgs, home: &std::path::Path) -> crate::models::selector::VerifiabilityRoute {
+fn plan_verifiability_route(
+    config: &FreedomConfig,
+    args: &ChatArgs,
+    home: &std::path::Path,
+) -> crate::models::selector::VerifiabilityRoute {
     use crate::config::inference::InferenceProvider;
     use crate::models::selector::{VerifiabilityRoute, VerifiabilityRoutingInput};
-    let Some(workflow) = args.workflow.as_deref() else { return VerifiabilityRoute::PreserveConfigured; };
+    let Some(workflow) = args.workflow.as_deref() else {
+        return VerifiabilityRoute::PreserveConfigured;
+    };
     let policy = &config.verifiability_routing;
     let local = config.inference.slot_for(policy.local_specialist_role);
     let frontier = config.inference.slot_for(policy.frontier_role);
-    let evidence = policy.enabled.then(|| crate::analytics::specialist_advisor::load_operator_assessments(home).ok().and_then(|rows| crate::analytics::specialist_advisor::verifiability_evidence_for_workflow(&rows, workflow))).flatten();
+    let evidence = policy
+        .enabled
+        .then(|| {
+            crate::analytics::specialist_advisor::load_operator_assessments(home)
+                .ok()
+                .and_then(|rows| {
+                    crate::analytics::specialist_advisor::verifiability_evidence_for_workflow(
+                        &rows, workflow,
+                    )
+                })
+        })
+        .flatten();
     const WINDOW: i64 = 30 * 24 * 60 * 60;
     let now = crate::time::now_unix_i64();
-    let high_volume = policy.enabled && crate::daemon::usage_log::aggregate(home, now.saturating_sub(WINDOW), now).per_workflow.iter().find(|row| row.workflow.as_str() == workflow).is_some_and(|row| row.call_count >= crate::analytics::specialist_advisor::DEFAULT_MINIMUM_CALL_COUNT);
-    crate::models::selector::decide_verifiability_route(VerifiabilityRoutingInput { enabled: policy.enabled, workflow_bound: true, changing_facts: args.changing_facts, evidence, meets_specialist_volume: high_volume, local_specialist_role: policy.local_specialist_role, local_specialist_available: local.provider.is_some_and(InferenceProvider::is_local), frontier_role: policy.frontier_role, frontier_available: frontier.provider.is_some_and(|provider| !provider.is_local()) })
+    let high_volume = policy.enabled
+        && crate::daemon::usage_log::aggregate(home, now.saturating_sub(WINDOW), now)
+            .per_workflow
+            .iter()
+            .find(|row| row.workflow.as_str() == workflow)
+            .is_some_and(|row| {
+                row.call_count >= crate::analytics::specialist_advisor::DEFAULT_MINIMUM_CALL_COUNT
+            });
+    crate::models::selector::decide_verifiability_route(VerifiabilityRoutingInput {
+        enabled: policy.enabled,
+        workflow_bound: true,
+        changing_facts: args.changing_facts,
+        evidence,
+        meets_specialist_volume: high_volume,
+        local_specialist_role: policy.local_specialist_role,
+        local_specialist_available: local.provider.is_some_and(InferenceProvider::is_local),
+        frontier_role: policy.frontier_role,
+        frontier_available: frontier
+            .provider
+            .is_some_and(|provider| !provider.is_local()),
+    })
 }
 
-fn config_with_verifiability_role(config: &FreedomConfig, role: crate::config::inference::HemisphereRole) -> FreedomConfig {
-    let mut selected = config.clone(); selected.inference.mode = crate::config::inference::TopologyMode::Custom; selected.inference.left = config.inference.slot_for(role).clone(); selected
+fn config_with_verifiability_role(
+    config: &FreedomConfig,
+    role: crate::config::inference::HemisphereRole,
+) -> FreedomConfig {
+    let mut selected = config.clone();
+    selected.inference.mode = crate::config::inference::TopologyMode::Custom;
+    selected.inference.left = config.inference.slot_for(role).clone();
+    selected
 }
 
 fn emit_verifiability_human_handoff(
@@ -648,7 +702,10 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
             )?;
             return Ok(());
         }
-        crate::models::selector::VerifiabilityRoute::LocalSpecialist(role) | crate::models::selector::VerifiabilityRoute::Frontier(role) => config_with_verifiability_role(&config, role),
+        crate::models::selector::VerifiabilityRoute::LocalSpecialist(role)
+        | crate::models::selector::VerifiabilityRoute::Frontier(role) => {
+            config_with_verifiability_role(&config, role)
+        }
         crate::models::selector::VerifiabilityRoute::PreserveConfigured => config,
     };
 
@@ -28006,9 +28063,15 @@ mod attach_tests {
         args.message = Some("current facts about the release".to_owned());
         validate_verifiability_routing_request(&args).expect("explicit closed workflow");
         apply_changing_facts_research_route(&mut args).expect("research topic");
-        assert_eq!(args.message.as_deref(), Some("/research current facts about the release"));
+        assert_eq!(
+            args.message.as_deref(),
+            Some("/research current facts about the release")
+        );
         apply_changing_facts_research_route(&mut args).expect("idempotent research route");
-        assert_eq!(args.message.as_deref(), Some("/research current facts about the release"));
+        assert_eq!(
+            args.message.as_deref(),
+            Some("/research current facts about the release")
+        );
     }
 
     #[test]
@@ -28070,7 +28133,11 @@ mod attach_tests {
             "the normal Left-primary fallback builder receives the selected D7 slot"
         );
         assert_eq!(
-            pinned.inference.slot_for(HemisphereRole::Left).model.as_deref(),
+            pinned
+                .inference
+                .slot_for(HemisphereRole::Left)
+                .model
+                .as_deref(),
             Some("specialist-local")
         );
 
@@ -28081,7 +28148,11 @@ mod attach_tests {
             "the same builder receives the explicit frontier slot"
         );
         assert_eq!(
-            frontier.inference.slot_for(HemisphereRole::Left).model.as_deref(),
+            frontier
+                .inference
+                .slot_for(HemisphereRole::Left)
+                .model
+                .as_deref(),
             Some("frontier-selected")
         );
     }
@@ -28101,12 +28172,18 @@ mod attach_tests {
         let error = run_chat_with_to(
             args,
             FreedomConfig::default(),
-            &MockProvider { reply: "must not dispatch".to_owned() },
+            &MockProvider {
+                reply: "must not dispatch".to_owned(),
+            },
             &mut output,
         )
         .await
         .expect_err("D7 must be refused before private runtime setup");
-        assert!(error.to_string().contains("Incognito rejects D7 workflow routing"));
+        assert!(
+            error
+                .to_string()
+                .contains("Incognito rejects D7 workflow routing")
+        );
         assert!(
             !home.path().join("wal").exists(),
             "validation must precede the first runtime writer"

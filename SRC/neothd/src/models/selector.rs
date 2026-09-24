@@ -482,20 +482,67 @@ mod tests {
 
     #[test]
     fn d7_routes_only_explicit_and_usable_evidence() {
-        use crate::analytics::specialist_advisor::ChecklistEvidence::{Confirmed, Rejected, Unknown};
+        use crate::analytics::specialist_advisor::ChecklistEvidence::{
+            Confirmed, Rejected, Unknown,
+        };
         use crate::config::inference::HemisphereRole::{Cerebellum, Left};
         let base = VerifiabilityRoutingInput {
-            enabled: true, workflow_bound: true, changing_facts: false,
+            enabled: true,
+            workflow_bound: true,
+            changing_facts: false,
             evidence: Some(d7_evidence(Confirmed, Confirmed, Confirmed)),
-            meets_specialist_volume: true, local_specialist_role: Cerebellum,
-            local_specialist_available: true, frontier_role: Left, frontier_available: true,
+            meets_specialist_volume: true,
+            local_specialist_role: Cerebellum,
+            local_specialist_available: true,
+            frontier_role: Left,
+            frontier_available: true,
         };
-        assert_eq!(decide_verifiability_route(VerifiabilityRoutingInput { changing_facts: true, ..base }), VerifiabilityRoute::Retrieval);
-        assert_eq!(decide_verifiability_route(base), VerifiabilityRoute::LocalSpecialist(Cerebellum));
-        assert_eq!(decide_verifiability_route(VerifiabilityRoutingInput { meets_specialist_volume: false, evidence: Some(d7_evidence(Confirmed, Confirmed, Rejected)), ..base }), VerifiabilityRoute::Frontier(Left));
-        assert_eq!(decide_verifiability_route(VerifiabilityRoutingInput { evidence: Some(d7_evidence(Rejected, Confirmed, Confirmed)), ..base }), VerifiabilityRoute::HumanHandoff);
-        assert_eq!(decide_verifiability_route(VerifiabilityRoutingInput { evidence: Some(d7_evidence(Confirmed, Confirmed, Unknown)), ..base }), VerifiabilityRoute::PreserveConfigured);
-        assert_eq!(decide_verifiability_route(VerifiabilityRoutingInput { enabled: false, ..base }), VerifiabilityRoute::PreserveConfigured);
-        assert_eq!(decide_verifiability_route(VerifiabilityRoutingInput { workflow_bound: false, ..base }), VerifiabilityRoute::PreserveConfigured);
+        assert_eq!(
+            decide_verifiability_route(VerifiabilityRoutingInput {
+                changing_facts: true,
+                ..base
+            }),
+            VerifiabilityRoute::Retrieval
+        );
+        assert_eq!(
+            decide_verifiability_route(base),
+            VerifiabilityRoute::LocalSpecialist(Cerebellum)
+        );
+        assert_eq!(
+            decide_verifiability_route(VerifiabilityRoutingInput {
+                meets_specialist_volume: false,
+                evidence: Some(d7_evidence(Confirmed, Confirmed, Rejected)),
+                ..base
+            }),
+            VerifiabilityRoute::Frontier(Left)
+        );
+        assert_eq!(
+            decide_verifiability_route(VerifiabilityRoutingInput {
+                evidence: Some(d7_evidence(Rejected, Confirmed, Confirmed)),
+                ..base
+            }),
+            VerifiabilityRoute::HumanHandoff
+        );
+        assert_eq!(
+            decide_verifiability_route(VerifiabilityRoutingInput {
+                evidence: Some(d7_evidence(Confirmed, Confirmed, Unknown)),
+                ..base
+            }),
+            VerifiabilityRoute::PreserveConfigured
+        );
+        assert_eq!(
+            decide_verifiability_route(VerifiabilityRoutingInput {
+                enabled: false,
+                ..base
+            }),
+            VerifiabilityRoute::PreserveConfigured
+        );
+        assert_eq!(
+            decide_verifiability_route(VerifiabilityRoutingInput {
+                workflow_bound: false,
+                ..base
+            }),
+            VerifiabilityRoute::PreserveConfigured
+        );
     }
 }

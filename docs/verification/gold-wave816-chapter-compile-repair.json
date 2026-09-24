@@ -1,0 +1,48 @@
+{
+  "schema": "neoth-hosted-format-and-compile-repair/v1",
+  "sourceHead": "3375be592ae79560a96bafb27d34b883231877ae",
+  "formatRun": 36006059637,
+  "artifactId": 10810199507,
+  "artifactSha256": "sha256:e6a8220c6c1145a14e8df4d690082ef241b7b1c9605ca488caae755032c54703",
+  "patchSha256": "420fa3a75d98dc72a2d0e56f8518fb64d498ca0652617c6ed94bd4a82e907d2f",
+  "formatPaths": [
+    "SRC/neothd/src/analytics/specialist_advisor.rs",
+    "SRC/neothd/src/cli/chat.rs",
+    "SRC/neothd/src/cli/skills.rs",
+    "SRC/neothd/src/models/selector.rs",
+    "SRC/neothd/src/skills/doc_distill.rs"
+  ],
+  "rootAdmission": "ROOT verified archive digest, inner patch digest, source-head, five old HEAD/index/worktree blobs, apply check and five resulting blobs before compiler repair",
+  "compilerRun": 36006062602,
+  "compilerResult": "E0308 twice: cap_std::fs::File returned by capability opener versus std::fs::File expected by retained snapshot",
+  "repair": "Retain cap_std::fs::File in LargeTextSnapshot and verification helper, exactly matching the no-follow capability opener; no reopen or weakened identity/hash checks",
+  "behaviorValidation": "Pending GitHub checks; D7 and B3 remain open",
+  "localExecutableValidationRan": false,
+  "sourceBindings": [
+    {
+      "path": "SRC/neothd/src/analytics/specialist_advisor.rs",
+      "sha256": "BD7BBBC60A6E00CC56452697B2878580910A85D6A9A1DD379A5558212962D02E",
+      "blob": "2edef47ae63ee1cd3410de3d74c8bd82a8932427"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "sha256": "FCE7DC6D5CFFBB2B165640B066DB545007081DADB1BF19D01A55DDECADCA2357",
+      "blob": "f41bd8b4d66138d414e37c6eb8019714b1bf62b1"
+    },
+    {
+      "path": "SRC/neothd/src/cli/skills.rs",
+      "sha256": "9739A89593876C6D9961C714F391541E003D1FFF95A7F550D04C1F92AD07DE2C",
+      "blob": "da0ce650086876b2af0b056e42bd00226d109163"
+    },
+    {
+      "path": "SRC/neothd/src/models/selector.rs",
+      "sha256": "90E0425CFEE310CB9547CE671F9F1195D5E701EA508DCFB9C3DEC24CCDE53245",
+      "blob": "63f4489486fe061134bcfcf6b56884dbc1219f0d"
+    },
+    {
+      "path": "SRC/neothd/src/skills/doc_distill.rs",
+      "sha256": "C6B513406841DFB62642C080D88A8BE38189A482B1C9EFBCAB5EA792F9C1F9B6",
+      "blob": "2eb6827f8857622489b4140e87b063e232477867"
+    }
+  ]
+}

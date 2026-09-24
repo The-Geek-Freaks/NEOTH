@@ -7,9 +7,9 @@
 //! staging and installation are separately gated later stages.
 
 use std::io::{Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::path::Component;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
@@ -231,7 +231,7 @@ pub struct TextChapterRange {
 /// owns the source bytes: every scan and selected read is bounded and followed
 /// by identity, length, and whole-source SHA-256 revalidation.
 pub struct LargeTextSnapshot {
-    file: std::fs::File,
+    file: cap_std::fs::File,
     parent: crate::skills::store::BoundDirectory,
     binding: crate::skills::store::BoundChildObject,
     source_name: std::ffi::OsString,
@@ -253,8 +253,11 @@ pub struct SelectedTextChapter {
 /// capability walk used by document review. Binary containers deliberately do
 /// not enter this surface.
 pub fn admit_large_text_snapshot(path: &Path) -> Result<LargeTextSnapshot, DocDistillError> {
-    let extension = path.extension().and_then(|value| value.to_str())
-        .map(str::to_ascii_lowercase).ok_or(DocDistillError::ChapterRangeUnavailable)?;
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+        .ok_or(DocDistillError::ChapterRangeUnavailable)?;
     if !matches!(extension.as_str(), "txt" | "md" | "markdown") {
         return Err(DocDistillError::ChapterRangeUnavailable);
     }
@@ -268,19 +271,31 @@ pub fn admit_large_text_snapshot(path: &Path) -> Result<LargeTextSnapshot, DocDi
         source_parent,
         false,
         "large text review source parent",
-    ).map_err(|_| DocDistillError::UnsafeSource)?.ok_or(DocDistillError::SourceRead)?;
-    let (mut file, binding) = crate::skills::store::open_bound_regular_file_snapshot(
-        &parent.dir, source_name, path,
-    ).map_err(|_| DocDistillError::UnsafeSource)?;
+    )
+    .map_err(|_| DocDistillError::UnsafeSource)?
+    .ok_or(DocDistillError::SourceRead)?;
+    let (mut file, binding) =
+        crate::skills::store::open_bound_regular_file_snapshot(&parent.dir, source_name, path)
+            .map_err(|_| DocDistillError::UnsafeSource)?;
     let metadata = file.metadata().map_err(|_| DocDistillError::SourceRead)?;
     if !metadata.is_file() || metadata.len() <= LARGE_TEXT_CHAPTER_THRESHOLD_BYTES {
         return Err(DocDistillError::ChapterRangeUnavailable);
     }
     if metadata.len() > MAX_DOCUMENT_SOURCE_BYTES {
-        return Err(DocDistillError::OversizeSource { limit: MAX_DOCUMENT_SOURCE_BYTES });
+        return Err(DocDistillError::OversizeSource {
+            limit: MAX_DOCUMENT_SOURCE_BYTES,
+        });
     }
     let source_bytes_sha256 = hash_large_text_source(&mut file, metadata.len())?;
-    verify_large_text_snapshot(&mut file, &parent, &binding, source_name, path, metadata.len(), &source_bytes_sha256)?;
+    verify_large_text_snapshot(
+        &mut file,
+        &parent,
+        &binding,
+        source_name,
+        path,
+        metadata.len(),
+        &source_bytes_sha256,
+    )?;
     Ok(LargeTextSnapshot {
         file,
         parent,
@@ -304,15 +319,23 @@ impl LargeTextSnapshot {
     }
 
     pub fn discover_chapters(&mut self) -> Result<Vec<TextChapterRange>, DocDistillError> {
-        self.file.seek(SeekFrom::Start(0)).map_err(|_| DocDistillError::SourceRead)?;
+        self.file
+            .seek(SeekFrom::Start(0))
+            .map_err(|_| DocDistillError::SourceRead)?;
         let ranges = discover_text_chapter_ranges(&mut self.file, self.source_bytes)?;
         self.verify_unchanged()?;
         Ok(ranges)
     }
 
-    pub fn select_chapter(&mut self, chapter_index: usize) -> Result<SelectedTextChapter, DocDistillError> {
+    pub fn select_chapter(
+        &mut self,
+        chapter_index: usize,
+    ) -> Result<SelectedTextChapter, DocDistillError> {
         let ranges = self.discover_chapters()?;
-        let range = ranges.get(chapter_index).cloned().ok_or(DocDistillError::ChapterRangeUnavailable)?;
+        let range = ranges
+            .get(chapter_index)
+            .cloned()
+            .ok_or(DocDistillError::ChapterRangeUnavailable)?;
         let text = read_text_chapter_range(&mut self.file, &range)?;
         self.verify_unchanged()?;
         Ok(SelectedTextChapter {
@@ -337,24 +360,38 @@ impl LargeTextSnapshot {
     }
 }
 
-fn hash_large_text_source(file: &mut (impl Read + Seek), expected_len: u64) -> Result<String, DocDistillError> {
-    file.seek(SeekFrom::Start(0)).map_err(|_| DocDistillError::SourceRead)?;
+fn hash_large_text_source(
+    file: &mut (impl Read + Seek),
+    expected_len: u64,
+) -> Result<String, DocDistillError> {
+    file.seek(SeekFrom::Start(0))
+        .map_err(|_| DocDistillError::SourceRead)?;
     let mut digest = Sha256::new();
     let mut total = 0_u64;
     let mut buffer = [0_u8; CHAPTER_SCAN_BUFFER_BYTES];
     loop {
-        let read = file.read(&mut buffer).map_err(|_| DocDistillError::SourceRead)?;
-        if read == 0 { break; }
-        total = total.checked_add(read as u64).ok_or(DocDistillError::SourceChanged)?;
-        if total > expected_len { return Err(DocDistillError::SourceChanged); }
+        let read = file
+            .read(&mut buffer)
+            .map_err(|_| DocDistillError::SourceRead)?;
+        if read == 0 {
+            break;
+        }
+        total = total
+            .checked_add(read as u64)
+            .ok_or(DocDistillError::SourceChanged)?;
+        if total > expected_len {
+            return Err(DocDistillError::SourceChanged);
+        }
         digest.update(&buffer[..read]);
     }
-    if total != expected_len { return Err(DocDistillError::SourceChanged); }
+    if total != expected_len {
+        return Err(DocDistillError::SourceChanged);
+    }
     Ok(hex::encode(digest.finalize()))
 }
 
 fn verify_large_text_snapshot(
-    file: &mut std::fs::File,
+    file: &mut cap_std::fs::File,
     parent: &crate::skills::store::BoundDirectory,
     binding: &crate::skills::store::BoundChildObject,
     source_name: &std::ffi::OsStr,
@@ -363,9 +400,12 @@ fn verify_large_text_snapshot(
     expected_hash: &str,
 ) -> Result<(), DocDistillError> {
     let metadata = file.metadata().map_err(|_| DocDistillError::SourceRead)?;
-    if !metadata.is_file() || metadata.len() != expected_len
-        || !binding.matches_regular_file_snapshot(&parent.dir, source_name, display_path)
-            .map_err(|_| DocDistillError::SourceChanged)? {
+    if !metadata.is_file()
+        || metadata.len() != expected_len
+        || !binding
+            .matches_regular_file_snapshot(&parent.dir, source_name, display_path)
+            .map_err(|_| DocDistillError::SourceChanged)?
+    {
         return Err(DocDistillError::SourceChanged);
     }
     if hash_large_text_source(file, expected_len)? != expected_hash {
@@ -383,7 +423,9 @@ pub fn discover_text_chapter_ranges(
     expected_len: u64,
 ) -> Result<Vec<TextChapterRange>, DocDistillError> {
     if expected_len > MAX_DOCUMENT_SOURCE_BYTES {
-        return Err(DocDistillError::OversizeSource { limit: MAX_DOCUMENT_SOURCE_BYTES });
+        return Err(DocDistillError::OversizeSource {
+            limit: MAX_DOCUMENT_SOURCE_BYTES,
+        });
     }
     let mut ranges = Vec::new();
     let mut offset = 0_u64;
@@ -394,21 +436,42 @@ pub fn discover_text_chapter_ranges(
 
     while offset < expected_len {
         let remaining = (expected_len - offset).min(buffer.len() as u64) as usize;
-        let read = reader.read(&mut buffer[..remaining]).map_err(|_| DocDistillError::SourceRead)?;
-        if read == 0 { return Err(DocDistillError::SourceChanged); }
+        let read = reader
+            .read(&mut buffer[..remaining])
+            .map_err(|_| DocDistillError::SourceRead)?;
+        if read == 0 {
+            return Err(DocDistillError::SourceChanged);
+        }
         for byte in &buffer[..read] {
             if *byte & 0b1100_0000 != 0b1000_0000
                 && offset > start
-                && offset - start > (MAX_CHAPTER_RANGE_BYTES as u64).saturating_sub(4) {
-                push_text_chapter_range(&mut ranges, TextChapterRange { start_byte: start, end_byte: offset, truncated: true })?;
+                && offset - start > (MAX_CHAPTER_RANGE_BYTES as u64).saturating_sub(4)
+            {
+                push_text_chapter_range(
+                    &mut ranges,
+                    TextChapterRange {
+                        start_byte: start,
+                        end_byte: offset,
+                        truncated: true,
+                    },
+                )?;
                 start = offset;
             }
 
             if *byte == b'\n' {
                 let heading = line_prefix.starts_with(b"#")
-                    && line_prefix.get(1).is_some_and(|value| *value == b'#' || *value == b' ');
+                    && line_prefix
+                        .get(1)
+                        .is_some_and(|value| *value == b'#' || *value == b' ');
                 if heading && line_start > start {
-                    push_text_chapter_range(&mut ranges, TextChapterRange { start_byte: start, end_byte: line_start, truncated: false })?;
+                    push_text_chapter_range(
+                        &mut ranges,
+                        TextChapterRange {
+                            start_byte: start,
+                            end_byte: line_start,
+                            truncated: false,
+                        },
+                    )?;
                     start = line_start;
                 }
                 line_prefix.clear();
@@ -416,16 +479,31 @@ pub fn discover_text_chapter_ranges(
             } else if line_prefix.len() < MAX_CHAPTER_SCAN_LINE_BYTES {
                 line_prefix.push(*byte);
             }
-            offset = offset.checked_add(1).ok_or(DocDistillError::SourceChanged)?;
+            offset = offset
+                .checked_add(1)
+                .ok_or(DocDistillError::SourceChanged)?;
         }
     }
 
-    if reader.read(&mut [0_u8; 1]).map_err(|_| DocDistillError::SourceRead)? != 0 {
+    if reader
+        .read(&mut [0_u8; 1])
+        .map_err(|_| DocDistillError::SourceRead)?
+        != 0
+    {
         return Err(DocDistillError::SourceChanged);
     }
-    if offset != expected_len { return Err(DocDistillError::SourceChanged); }
+    if offset != expected_len {
+        return Err(DocDistillError::SourceChanged);
+    }
     if offset > start {
-        push_text_chapter_range(&mut ranges, TextChapterRange { start_byte: start, end_byte: offset, truncated: false })?;
+        push_text_chapter_range(
+            &mut ranges,
+            TextChapterRange {
+                start_byte: start,
+                end_byte: offset,
+                truncated: false,
+            },
+        )?;
     }
     Ok(ranges)
 }
@@ -445,11 +523,20 @@ pub fn read_text_chapter_range(
     reader: &mut (impl Read + Seek),
     range: &TextChapterRange,
 ) -> Result<String, DocDistillError> {
-    let len = range.end_byte.checked_sub(range.start_byte).ok_or(DocDistillError::ChapterRangeChanged)?;
-    if len > MAX_CHAPTER_RANGE_BYTES as u64 { return Err(DocDistillError::ChapterRangeChanged); }
-    reader.seek(SeekFrom::Start(range.start_byte)).map_err(|_| DocDistillError::SourceRead)?;
+    let len = range
+        .end_byte
+        .checked_sub(range.start_byte)
+        .ok_or(DocDistillError::ChapterRangeChanged)?;
+    if len > MAX_CHAPTER_RANGE_BYTES as u64 {
+        return Err(DocDistillError::ChapterRangeChanged);
+    }
+    reader
+        .seek(SeekFrom::Start(range.start_byte))
+        .map_err(|_| DocDistillError::SourceRead)?;
     let mut bytes = vec![0; len as usize];
-    reader.read_exact(&mut bytes).map_err(|_| DocDistillError::ChapterRangeChanged)?;
+    reader
+        .read_exact(&mut bytes)
+        .map_err(|_| DocDistillError::ChapterRangeChanged)?;
     String::from_utf8(bytes).map_err(|_| DocDistillError::ChapterRangeChanged)
 }
 
@@ -927,38 +1014,69 @@ mod tests {
     #[test]
     fn bounded_scanner_keeps_heading_ownership_and_complete_utf8_coverage() {
         let source = "preface\n# One\nalpha\n# Two\nbeta\n";
-        let ranges = discover_text_chapter_ranges(
-            &mut Cursor::new(source.as_bytes()), source.len() as u64,
-        ).expect("bounded scan");
+        let ranges =
+            discover_text_chapter_ranges(&mut Cursor::new(source.as_bytes()), source.len() as u64)
+                .expect("bounded scan");
         assert_eq!(ranges.len(), 3);
-        assert_eq!(read_text_chapter_range(&mut Cursor::new(source.as_bytes()), &ranges[0]).unwrap(), "preface\n");
-        let first_heading = read_text_chapter_range(&mut Cursor::new(source.as_bytes()), &ranges[1]).unwrap();
+        assert_eq!(
+            read_text_chapter_range(&mut Cursor::new(source.as_bytes()), &ranges[0]).unwrap(),
+            "preface\n"
+        );
+        let first_heading =
+            read_text_chapter_range(&mut Cursor::new(source.as_bytes()), &ranges[1]).unwrap();
         assert!(first_heading.starts_with("# One\n"));
         assert!(!first_heading.contains("# Two"));
-        assert!(read_text_chapter_range(&mut Cursor::new(source.as_bytes()), &ranges[2]).unwrap().starts_with("# Two\n"));
+        assert!(
+            read_text_chapter_range(&mut Cursor::new(source.as_bytes()), &ranges[2])
+                .unwrap()
+                .starts_with("# Two\n")
+        );
         assert_eq!(ranges[0].start_byte, 0);
         assert_eq!(ranges.last().unwrap().end_byte, source.len() as u64);
-        assert!(ranges.windows(2).all(|pair| pair[0].end_byte == pair[1].start_byte));
-        let reconstructed = ranges.iter().map(|range| {
-            read_text_chapter_range(&mut Cursor::new(source.as_bytes()), range).unwrap()
-        }).collect::<String>();
+        assert!(
+            ranges
+                .windows(2)
+                .all(|pair| pair[0].end_byte == pair[1].start_byte)
+        );
+        let reconstructed = ranges
+            .iter()
+            .map(|range| {
+                read_text_chapter_range(&mut Cursor::new(source.as_bytes()), range).unwrap()
+            })
+            .collect::<String>();
         assert_eq!(reconstructed, source);
     }
 
     #[test]
     fn bounded_scanner_splits_long_unbroken_unicode_without_gaps_or_mid_scalars() {
-        let source = format!("{}{}", "a".repeat(MAX_CHAPTER_RANGE_BYTES - 6), "🦀".repeat(4));
-        let ranges = discover_text_chapter_ranges(
-            &mut Cursor::new(source.as_bytes()), source.len() as u64,
-        ).expect("bounded unicode scan");
+        let source = format!(
+            "{}{}",
+            "a".repeat(MAX_CHAPTER_RANGE_BYTES - 6),
+            "🦀".repeat(4)
+        );
+        let ranges =
+            discover_text_chapter_ranges(&mut Cursor::new(source.as_bytes()), source.len() as u64)
+                .expect("bounded unicode scan");
         assert!(ranges.len() >= 2);
-        assert!(ranges.iter().all(|range| range.end_byte - range.start_byte <= MAX_CHAPTER_RANGE_BYTES as u64));
+        assert!(
+            ranges
+                .iter()
+                .all(|range| range.end_byte - range.start_byte <= MAX_CHAPTER_RANGE_BYTES as u64)
+        );
         assert_eq!(ranges[0].start_byte, 0);
         assert_eq!(ranges.last().unwrap().end_byte, source.len() as u64);
-        assert!(ranges.windows(2).all(|pair| pair[0].end_byte == pair[1].start_byte));
-        let reconstructed = ranges.iter().map(|range| {
-            read_text_chapter_range(&mut Cursor::new(source.as_bytes()), range).expect("UTF-8 boundary")
-        }).collect::<String>();
+        assert!(
+            ranges
+                .windows(2)
+                .all(|pair| pair[0].end_byte == pair[1].start_byte)
+        );
+        let reconstructed = ranges
+            .iter()
+            .map(|range| {
+                read_text_chapter_range(&mut Cursor::new(source.as_bytes()), range)
+                    .expect("UTF-8 boundary")
+            })
+            .collect::<String>();
         assert_eq!(reconstructed, source);
     }
 
@@ -966,11 +1084,17 @@ mod tests {
     fn bounded_scanner_refuses_early_eof_or_source_growth() {
         let source = "# One\nbody\n";
         assert!(matches!(
-            discover_text_chapter_ranges(&mut Cursor::new(source.as_bytes()), source.len() as u64 + 1),
+            discover_text_chapter_ranges(
+                &mut Cursor::new(source.as_bytes()),
+                source.len() as u64 + 1
+            ),
             Err(DocDistillError::SourceChanged)
         ));
         assert!(matches!(
-            discover_text_chapter_ranges(&mut Cursor::new(source.as_bytes()), source.len() as u64 - 1),
+            discover_text_chapter_ranges(
+                &mut Cursor::new(source.as_bytes()),
+                source.len() as u64 - 1
+            ),
             Err(DocDistillError::SourceChanged)
         ));
     }
@@ -990,7 +1114,11 @@ mod tests {
     #[test]
     fn selected_range_refuses_a_mid_scalar_utf8_boundary() {
         let source = "évidence";
-        let range = TextChapterRange { start_byte: 1, end_byte: source.len() as u64, truncated: false };
+        let range = TextChapterRange {
+            start_byte: 1,
+            end_byte: source.len() as u64,
+            truncated: false,
+        };
         assert!(matches!(
             read_text_chapter_range(&mut Cursor::new(source.as_bytes()), &range),
             Err(DocDistillError::ChapterRangeChanged)
@@ -1001,8 +1129,11 @@ mod tests {
     fn large_text_snapshot_requires_threshold_and_preserves_selected_receipt() {
         let root = tempfile::tempdir().expect("temp root");
         let source = root.path().join("guide.md");
-        std::fs::write(&source, format!("# Chapter\n{}", "content\n".repeat(40_000)))
-            .expect("write large text source");
+        std::fs::write(
+            &source,
+            format!("# Chapter\n{}", "content\n".repeat(40_000)),
+        )
+        .expect("write large text source");
         let mut snapshot = admit_large_text_snapshot(&source).expect("admit large text source");
         let selected = snapshot.select_chapter(0).expect("select first chapter");
         assert_eq!(selected.chapter_index, 0);
@@ -1017,16 +1148,25 @@ mod tests {
         std::fs::write(&source, format!("# Chapter\n{}", "before\n".repeat(40_000))).unwrap();
         let mut snapshot = admit_large_text_snapshot(&source).expect("admit source");
         match std::fs::write(&source, format!("# Chapter\n{}", "after!\n".repeat(40_000))) {
-            Ok(()) => assert!(matches!(snapshot.discover_chapters(), Err(DocDistillError::SourceChanged))),
-            Err(error) => assert!(cfg!(windows), "source mutation failed unexpectedly: {error}"),
+            Ok(()) => assert!(matches!(
+                snapshot.discover_chapters(),
+                Err(DocDistillError::SourceChanged)
+            )),
+            Err(error) => assert!(
+                cfg!(windows),
+                "source mutation failed unexpectedly: {error}"
+            ),
         }
     }
     #[test]
     fn binary_containers_cannot_enter_large_text_chapter_path() {
         let root = tempfile::tempdir().expect("temp root");
         let source = root.path().join("guide.pdf");
-        std::fs::write(&source, vec![0_u8; (LARGE_TEXT_CHAPTER_THRESHOLD_BYTES + 1) as usize])
-            .expect("write binary source");
+        std::fs::write(
+            &source,
+            vec![0_u8; (LARGE_TEXT_CHAPTER_THRESHOLD_BYTES + 1) as usize],
+        )
+        .expect("write binary source");
         assert!(matches!(
             admit_large_text_snapshot(&source),
             Err(DocDistillError::ChapterRangeUnavailable)
