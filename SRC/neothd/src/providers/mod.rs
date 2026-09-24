@@ -3861,18 +3861,23 @@ pub(crate) fn utility_model_for_config(config: &FreedomConfig) -> Option<String>
 pub(crate) fn utility_pricing_provider_for_config(config: &FreedomConfig) -> Result<&'static str> {
     let effective = build_utility_config(config);
     let effective = effective.as_ref().unwrap_or(config);
-    let kind = effective.provider_kind.ok_or_else(|| {
-        anyhow::anyhow!("configure a provider before document distillation")
-    })?;
+    let kind = effective
+        .provider_kind
+        .ok_or_else(|| anyhow::anyhow!("configure a provider before document distillation"))?;
     match kind {
         ProviderKind::OpenaiApi => Ok(openai_api::openai_provider_name(
-            effective.provider_endpoint.as_deref().unwrap_or("https://api.openai.com/v1"),
+            effective
+                .provider_endpoint
+                .as_deref()
+                .unwrap_or("https://api.openai.com/v1"),
         )),
         ProviderKind::OpenaiCompat => {
             let endpoint = effective.provider_endpoint.as_deref().ok_or_else(|| {
                 anyhow::anyhow!("openai_compat requires an endpoint URL in freedom.yaml")
             })?;
-            let profile = effective.inference.openai_compat_profile
+            let profile = effective
+                .inference
+                .openai_compat_profile
                 .or_else(|| known_endpoints::profile_for_endpoint(endpoint))
                 .unwrap_or_default();
             known_endpoints::validate_profile_endpoint(profile, endpoint)?;
@@ -6318,24 +6323,35 @@ mod tests {
         config.provider_kind = Some(ProviderKind::OpenaiApi);
         config.provider_model = Some("gpt-5".into());
         config.provider_key = Some(crate::secret::SecretString::from("fixture-key"));
-        for endpoint in ["https://gateway.example.test/v1", "https://api.openai.com/v1"] {
+        for endpoint in [
+            "https://gateway.example.test/v1",
+            "https://api.openai.com/v1",
+        ] {
             config.provider_endpoint = Some(endpoint.into());
             for utility in [None, Some(InferenceProvider::OpenAi)] {
                 config.inference.utility_provider = utility;
                 let expected = utility_pricing_provider_for_config(&config).unwrap();
                 let actual = from_config_for_utility(&config).await.unwrap();
-                assert_eq!(expected, actual.name(), "endpoint={endpoint}, utility={utility:?}");
+                assert_eq!(
+                    expected,
+                    actual.name(),
+                    "endpoint={endpoint}, utility={utility:?}"
+                );
             }
         }
         config.provider_kind = Some(ProviderKind::OpenaiCompat);
         config.inference.utility_provider = None;
-        for endpoint in ["https://gateway.example.test/v1", "https://openrouter.ai/api/v1"] {
+        for endpoint in [
+            "https://gateway.example.test/v1",
+            "https://openrouter.ai/api/v1",
+        ] {
             config.provider_endpoint = Some(endpoint.into());
             let expected = utility_pricing_provider_for_config(&config).unwrap();
             let actual = from_config_for_utility(&config).await.unwrap();
             assert_eq!(expected, actual.name());
         }
-        config.inference.openai_compat_profile = Some(crate::config::inference::OpenAiCompatibleProfile::DeepSeek);
+        config.inference.openai_compat_profile =
+            Some(crate::config::inference::OpenAiCompatibleProfile::DeepSeek);
         assert!(utility_pricing_provider_for_config(&config).is_err());
         config.provider_kind = None;
         assert!(utility_pricing_provider_for_config(&config).is_err());

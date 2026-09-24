@@ -1638,21 +1638,26 @@ mod tests {
     #[test]
     fn every_scanned_chapter_range_is_accepted_by_document_distillation() {
         let source = format!("# Chapter\n{}", "x".repeat(MAX_CHAPTER_RANGE_BYTES * 3));
-        let ranges = discover_text_chapter_ranges(
-            &mut Cursor::new(source.as_bytes()),
-            source.len() as u64,
-        ).expect("chapter scan");
+        let ranges =
+            discover_text_chapter_ranges(&mut Cursor::new(source.as_bytes()), source.len() as u64)
+                .expect("chapter scan");
         assert!(ranges.len() > 1);
         for range in ranges {
             let text = read_text_chapter_range(&mut Cursor::new(source.as_bytes()), &range)
                 .expect("scanner range is UTF-8 and within the admission cap");
             assert!(text.len() <= ingress_sanitizer::MAX_INGRESS_BYTES);
-            assert!(distill_doc(
-                Extraction { text, metadata: serde_json::Value::Null },
-                DocumentSourceKind::PlainText,
-                source.len() as u64,
-                "0".repeat(64),
-            ).is_ok());
+            assert!(
+                distill_doc(
+                    Extraction {
+                        text,
+                        metadata: serde_json::Value::Null
+                    },
+                    DocumentSourceKind::PlainText,
+                    source.len() as u64,
+                    "0".repeat(64),
+                )
+                .is_ok()
+            );
         }
     }
 

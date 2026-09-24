@@ -2,6 +2,14 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W836 hosted formatting (2026-09-24):**
+Root imported the three-file Rust formatting patch from Preflight36017803481
+at7fdfb0a4 only after verifying artifact10814884303 ZIP, both inner digests,
+source HEAD and each old/new full Git blob. No local formatter ran. Core
+36017801960 and Group1292run36017807925 cover the preceding behavioral source;
+those gates remain active. ROAD1070checked252open2partial stays unchanged.
+Evidence: docs/verification/gold-wave836-hosted-format.json.
+
 **W835 document boundary repairs and W832 replay acceptance (2026-09-24):**
 Root verified all three Group36015215923 archives at095d10f0,237fixture/twoinput
 bindings and every terminal:1282PASS/3FAIL. D5's12 cases all pass, including the

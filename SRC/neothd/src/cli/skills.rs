@@ -1622,7 +1622,9 @@ fn document_preflight_for_config(
     let model = crate::providers::utility_model_for_config(config)
         .filter(|model| !model.trim().is_empty())
         .context("document cost preflight requires an explicit main or utility model")?;
-    Ok(crate::skills::doc_distill::preflight_estimate(document, provider, &model))
+    Ok(crate::skills::doc_distill::preflight_estimate(
+        document, provider, &model,
+    ))
 }
 
 async fn run_document_distillation(
@@ -2083,7 +2085,11 @@ mod tests {
     }
 
     fn document_preflight_fixture() -> crate::skills::doc_distill::DocumentDistillationPreflight {
-        crate::skills::doc_distill::preflight_estimate(&document_fixture(), "local_ollama", "fixture-model")
+        crate::skills::doc_distill::preflight_estimate(
+            &document_fixture(),
+            "local_ollama",
+            "fixture-model",
+        )
     }
 
     #[test]
@@ -2103,7 +2109,10 @@ mod tests {
         config.provider_endpoint = Some("https://api.openai.com/v1".into());
         let official = document_preflight_for_config(&document_fixture(), &config).unwrap();
         assert_eq!(official.provider, "openai_api");
-        assert!(matches!(official.price, crate::skills::doc_distill::DocumentDistillationPrice::Known { .. }));
+        assert!(matches!(
+            official.price,
+            crate::skills::doc_distill::DocumentDistillationPrice::Known { .. }
+        ));
     }
 
     #[test]
@@ -2112,13 +2121,19 @@ mod tests {
         config.provider_kind = Some(crate::config::ProviderKind::OpenaiCompat);
         config.provider_endpoint = Some("https://openrouter.ai/api/v1".into());
         config.provider_model = Some("@document".into());
-        config.models_aliases.insert("@document".into(), "vendor/review-model".into());
+        config
+            .models_aliases
+            .insert("@document".into(), "vendor/review-model".into());
         let receipt = document_preflight_for_config(&document_fixture(), &config).unwrap();
         assert_eq!(receipt.provider, "openrouter_api");
         assert_eq!(receipt.model, "vendor/review-model");
-        config.inference.utility_provider = Some(crate::config::inference::InferenceProvider::OpenAi);
+        config.inference.utility_provider =
+            Some(crate::config::inference::InferenceProvider::OpenAi);
         let utility = document_preflight_for_config(&document_fixture(), &config).unwrap();
-        assert_eq!(utility.provider, "openai_api", "different vendor clears the main endpoint");
+        assert_eq!(
+            utility.provider, "openai_api",
+            "different vendor clears the main endpoint"
+        );
         assert_eq!(utility.model, "gpt-4o-mini");
     }
 
@@ -2130,7 +2145,8 @@ mod tests {
         let error = document_preflight_for_config(&document_fixture(), &config).unwrap_err();
         assert!(error.to_string().contains("bounded completion"));
         assert!(error.to_string().contains("inference.utility_provider"));
-        config.inference.utility_provider = Some(crate::config::inference::InferenceProvider::OpenAi);
+        config.inference.utility_provider =
+            Some(crate::config::inference::InferenceProvider::OpenAi);
         let receipt = document_preflight_for_config(&document_fixture(), &config).unwrap();
         assert_eq!(receipt.provider, "openai_api");
         assert_eq!(receipt.model, "gpt-4o-mini");
