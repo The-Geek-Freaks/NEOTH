@@ -1,0 +1,76 @@
+{
+  "runId": 36004158300,
+  "jobId": 107647915085,
+  "sourceHead": "c2179922c76cdb3a8f7b48ee86ed222490821750",
+  "conclusion": "success",
+  "artifact": {
+    "id": 10810630207,
+    "zipDigest": "sha256:d2983602911abd272c39bec9cd12e3ffd73f3058d431979ae93fbfdcd7ff00f9",
+    "verified": true,
+    "cliSha256": "6f6fdbc42a974b041a4e8c2ce4b4be5669e367c2360b6b8e9755b104e9d47094",
+    "innerChecksumVerified": true,
+    "sourceHeadVerified": true
+  },
+  "steps": [
+    {
+      "name": "Set up job",
+      "conclusion": "success"
+    },
+    {
+      "name": "Checkout requested source",
+      "conclusion": "success"
+    },
+    {
+      "name": "Setup Rust",
+      "conclusion": "success"
+    },
+    {
+      "name": "Install Linux workspace-Clippy build deps",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Restore Gold smoke compiler cache",
+      "conclusion": "success"
+    },
+    {
+      "name": "Check exact-source slim-core production Clippy",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Type-check core test targets before native validation",
+      "conclusion": "success"
+    },
+    {
+      "name": "Check exact Linux-quality workspace Clippy",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Build current public CLI",
+      "conclusion": "success"
+    },
+    {
+      "name": "Export generated reference",
+      "conclusion": "success"
+    },
+    {
+      "name": "Upload generated reference",
+      "conclusion": "success"
+    },
+    {
+      "name": "Post Checkout requested source",
+      "conclusion": "success"
+    },
+    {
+      "name": "Complete job",
+      "conclusion": "success"
+    }
+  ],
+  "priorProductionClippy": {
+    "runId": 36002877760,
+    "sourceHead": "4a438c95",
+    "conclusion": "passed",
+    "note": "separate prior reference; intentionally not rerun on c217 fixture-lifetime-only change"
+  },
+  "localExecutableValidationRan": false,
+  "rootStatus": "ROOT_VERIFIED_IMPORTED"
+}

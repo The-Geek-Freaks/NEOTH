@@ -3,6 +3,14 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W812 replay/video hosted core (2026-09-24):**
+Core36004158300 atc2179922 passes test-target typecheck, CLI build and export.
+Root verified artifact10810630207 ZIP/source/innerdigest and imports its real
+CLI reference. ProductionClippy passed earlier at4a438c95; only the retained
+fixture snapshot changed subsequently. Group1251 is next for34newD5/F4 cases.
+D5/F4 remain OPEN. No local executable checks. Counts1067checked255open2partial.
+Evidence: docs/verification/gold-wave812-replay-video-core-cli.json.
+
 **W801/W802 hosted format and compile repair (2026-09-24):**
 Preflight36000967795 at063811ea reported formatting only. Root verified its
 artifact ZIP, inner digests, source head and all11 full-index old blobs before

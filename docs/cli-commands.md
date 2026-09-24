@@ -1675,6 +1675,21 @@ GOLD-ADAPT-HARNESS-05 — JSON EvalCase suite runner
 - `--out-dir <OUT_DIR>` — Write report files to this directory instead of the default eval-runs/<ts>/
 - `--rubric-config <RUBRIC_CONFIG>` — Operator freedom.yaml holding D4 offline-rubric multipliers. Required only when the suite contains explicit `rubric_labels`
 
+### `neoth eval capture`
+
+Import one operator-selected completed task as a bounded replay corpus
+
+- `<INPUT>` — One explicit operator-selected capture input. WAL and history are never read
+- `--out <OUT>` — New corpus destination. Existing paths are refused
+
+### `neoth eval run`
+
+Execute a versioned workflow replay corpus through the current chat path
+
+- `<CORPUS>` — Versioned operator-curated workflow replay corpus
+- `--out-dir <OUT_DIR>` — Persist reports here. Without it, reports remain in the contained temp root
+- `--json` — Print the machine report to stdout as JSON
+
 ## `neoth events`
 
 Browse the WAL event-type registry. Self-documenting audit trail — `neoth events` lists every code NEOTH writes, `--code 0xNN` looks up a single byte, `--band 0x90` filters to memory-tier events
@@ -2173,6 +2188,7 @@ Import a past agent session transcript into ground-truth candidates
 Multimodal asset ingest pipeline
 
 - `<PATH>` — File to ingest. Extension drives the kind: `.pdf` → pdf, `.png|.jpg|.jpeg|.webp|.gif` → image, `.wav|.mp3|.flac|.ogg|.m4a` → audio, `.mp4|.mov|.mkv|.webm` → video, `.docx|.pptx|.xlsx|.odt|.ods|.odp|.epub|.rtf` → document
+- `--video-url <HTTPS_URL>` — HTTPS/HTTP video URL to ingest through the pinned, managed yt-dlp. The URL is never persisted by this command; persisted source references use a SHA-256 binding instead
 - `--db <PATH>` — Override the views.db path. Defaults to `~/.neoth/views.db`
 - `--wal-segment <PATH>` — Override the WAL segment used for audit events. It must be a canonical direct child of the selected instance home's `wal` directory and use a six-digit standalone/rotation suffix. Defaults to a collision-resistant standalone segment under `~/.neoth/wal`
 - `--no-persist` — Skip the embedding persistence pass — useful when running the pipeline against fixtures in tests or when the operator is just inspecting the metadata
