@@ -1,0 +1,123 @@
+{
+  "schema": "neoth-w626-windows41/v1",
+  "run": 35950133017,
+  "source": "235fa68e5974d38fe0f6d70bccf6bf2c64bf4cfa",
+  "artifact": {
+    "id": 10788174830,
+    "sha256": "2baa96e743c16f19c7aa0caf147a4ab0207910faf9755cec3cb413531b45ebc4",
+    "verified": true
+  },
+  "compileStatus": 0,
+  "selected": 41,
+  "executed": 41,
+  "passed": 38,
+  "failed": 3,
+  "missingTerminal": 0,
+  "status": "SOURCE_ADMITTED_PARTIAL_FAILURE",
+  "failedTerminals": [
+    {
+      "index": 38,
+      "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_keeps_existing_token_and_binds_full_install",
+      "status": "failed",
+      "sourcePath": "neothd/src/installers/paperless_lifecycle.rs",
+      "logSha256": "26f3026fcb98695979f3b8b3f12daebfc3896d1fba39f6a12b92d1ded4ade466"
+    },
+    {
+      "index": 39,
+      "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_rejects_remote_engine_before_pull",
+      "status": "failed",
+      "sourcePath": "neothd/src/installers/paperless_lifecycle.rs",
+      "logSha256": "b2bc3a39cf7a1a6791dc160b6ddd2607b9f21d8e28e45c570f48c2efa4376bf1"
+    },
+    {
+      "index": 40,
+      "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_bootstraps_missing_token_after_verified_containers",
+      "status": "failed",
+      "sourcePath": "neothd/src/installers/paperless_lifecycle.rs",
+      "logSha256": "5422e0007db9bb1a8b5f206a95eef28d8fd7840f20cdf2c56e0d9cad1aa59108"
+    }
+  ],
+  "diagnostic": "stage=write_owned_file;kind=Uncategorized;raw=Some(32);atomic_stage=rename;atomic_kind=Uncategorized;atomic_raw=Some(32)",
+  "fixtureSourceBindings": [
+    {
+      "sourcePath": "neothd/src/tools/managed_browser.rs",
+      "gitPath": "SRC/neothd/src/tools/managed_browser.rs",
+      "blob": "775434abbd17d4e872d84c7be23f59d7498dfff1",
+      "sha256": "2f2d9a6b351d74a1a076fd8756169bda170adc06bea24ef698fe821f5c8a02b7"
+    },
+    {
+      "sourcePath": "neothd/src/reflection/retention_v2_tests.rs",
+      "gitPath": "SRC/neothd/src/reflection/retention_v2_tests.rs",
+      "blob": "7d111771053bc9161a7f800099812505c0d8bd44",
+      "sha256": "2b90a61e0aa8138e41aef8f87db9b1f464a4af78ca30ee0fa543d45f71b6ca63"
+    },
+    {
+      "sourcePath": "neothd/src/installers/paperless_lifecycle.rs",
+      "gitPath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "blob": "eecb9da6eedebb8871d6480d5e97d2ce0172bdce",
+      "sha256": "05fc7a5cf2519868166687d367d4731029959b513d22bf7a235666b9f0229b56"
+    },
+    {
+      "sourcePath": "neothd/src/wal/redact.rs",
+      "gitPath": "SRC/neothd/src/wal/redact.rs",
+      "blob": "1d4f652dbafb054605f294e83d4ed118273658c2",
+      "sha256": "b1564c3555aa338b3e99b0d5f85ff26ed67dca1b2e37be3800ff24e97f5d6c9b"
+    },
+    {
+      "sourcePath": "neothd/src/skills/store.rs",
+      "gitPath": "SRC/neothd/src/skills/store.rs",
+      "blob": "c2045885949ca2c3bfd3e9d66540f190d8f0f6da",
+      "sha256": "900d047260903dac213e7648d081436188852c60c0b1ce35cef077e0968c55d1"
+    },
+    {
+      "sourcePath": "neothd/src/cli/memory.rs",
+      "gitPath": "SRC/neothd/src/cli/memory.rs",
+      "blob": "36d16239c636bb8934f9a5a89d2db47e913ffb72",
+      "sha256": "51595ecbcbb45914d85fe49a8d506ce8365c53d1395e0d978a30ac99e8ca7602"
+    },
+    {
+      "sourcePath": "neothd/src/connectors/local_import/windows_source.rs",
+      "gitPath": "SRC/neothd/src/connectors/local_import/windows_source.rs",
+      "blob": "943b63748eb75391708b8d4da5ca75563341b6c5",
+      "sha256": "d04f297c44832528c44b884af1d8725ef8077bf83f7c1b95a0d71dea036b5c94"
+    },
+    {
+      "sourcePath": "neothd/src/installers/paperless_bootstrap.rs",
+      "gitPath": "SRC/neothd/src/installers/paperless_bootstrap.rs",
+      "blob": "1832b2137176e9d8305bceb65409f5acfa7177fe",
+      "sha256": "e9c4681b4aa7dbb0d9963a594232e12c9c99cedef03fbdd4f575829bfaae598d"
+    },
+    {
+      "sourcePath": "neothd/src/reflection/periodic.rs",
+      "gitPath": "SRC/neothd/src/reflection/periodic.rs",
+      "blob": "df4819842fbe54205978ea2385b5710f95ed902a",
+      "sha256": "168ac0e1905d4352d234738fcb0e4a3538974b1cdb07b8f7c0532a3f03814a7f"
+    }
+  ],
+  "inputBindings": [
+    {
+      "path": "Cargo.lock",
+      "gitPath": "SRC/Cargo.lock",
+      "blob": "a49b0e51cbc8d33d1f351352e856fc89961f02e1",
+      "sha256": "722ee0446dbac05b3e7d4eb9d44c7174e98e6e6fff5b633b5a30993edbcb61f0"
+    },
+    {
+      "path": "neothd/Cargo.toml",
+      "gitPath": "SRC/neothd/Cargo.toml",
+      "blob": "afad1152a93e6ebf361932d31d75caeff8d723fd",
+      "sha256": "1ff2970c3edca354098ad82d19511909baa2f52c22866f82e1095f3e3dfb32e3"
+    }
+  ],
+  "sourceBindingCount": 11,
+  "internalHashEntries": 49,
+  "localTestsRan": false,
+  "rootAdmission": {
+    "verifiedUtc": "2026-09-24T03:29:36.9395000Z",
+    "zipDigest": true,
+    "internalHashes": 49,
+    "sourceBindings": 11,
+    "exactTerminals": 41,
+    "status": "SOURCE_ADMITTED_38PASS_3FAIL",
+    "localExecutableValidationRan": false
+  }
+}

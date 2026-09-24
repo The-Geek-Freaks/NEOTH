@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W618 exact hosted formatter imported; core/native pending",
+  "status": "W628 storage repair/W624 capture diagnostics reviewed; Windows46/GUI148 pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 146980,
-    "sha256": "A94EAAFB73B70C68DF4B965B44ED79A6608D6167EF5FD275EC056ADDF2D8DEAF"
+    "bytes": 147192,
+    "sha256": "7AEA92C9F44C37FE7DDAA9F17DBA7F05E7142802316191A5B135B379B21766BB"
   },
-  "sourceInputs": 834,
+  "sourceInputs": 835,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -5718,7 +5718,7 @@
     {
       "test": "skills::store::tests::bound_rename_refuses_same_byte_source_replacement_before_namespace_effect",
       "sourcePath": "SRC/neothd/src/skills/store.rs",
-      "sourceSha256": "9D564494B6FB7377EDEE992460DE2DC03EA50B664E79007B558DB317054FB72B",
+      "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
       "junitClass": "neoth"
     },
     {
@@ -8139,8 +8139,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2214271,
-      "sha256": "BC68B94745BD03BCE1C1BE024E898C0DAC938977D9A891E1D99E27A87452EB6E"
+      "bytes": 2217548,
+      "sha256": "CD654C3704DB3F0619BF06DDA6D873BD23086ED4DD52D9C859862814A7F5384B"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -8219,8 +8219,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/packaged_chat_probe.rs",
-      "bytes": 31938,
-      "sha256": "E4347C7396C8767452B486D76A9BCA05F4E84BF1AD6A0EDE8EF5318A3D21652D"
+      "bytes": 31847,
+      "sha256": "B2485AF0EAA8F0124DBD87B63ADA53AB98039F2C2DD1525E92484CF2ABA54173"
     }
   ],
   "remoteFormatCorrection": {
@@ -9267,31 +9267,31 @@
       {
         "test": "skills::store::tests::windows_verbatim_local_disk_root_remains_capability_walkable",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "9D564494B6FB7377EDEE992460DE2DC03EA50B664E79007B558DB317054FB72B",
+        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
         "junitClass": "neoth"
       },
       {
         "test": "skills::store::tests::windows_unc_and_device_prefixes_remain_outside_local_capability_walks",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "9D564494B6FB7377EDEE992460DE2DC03EA50B664E79007B558DB317054FB72B",
+        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
         "junitClass": "neoth"
       },
       {
         "test": "skills::store::reported_commit_tests::private_stage_replaces_a_delete_sharing_bound_target_without_closing_it",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "9D564494B6FB7377EDEE992460DE2DC03EA50B664E79007B558DB317054FB72B",
+        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
         "junitClass": "neoth"
       },
       {
         "test": "skills::store::reported_commit_tests::live_bound_parent_native_rename_is_denied",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "9D564494B6FB7377EDEE992460DE2DC03EA50B664E79007B558DB317054FB72B",
+        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
         "junitClass": "neoth"
       },
       {
         "test": "skills::store::reported_commit_tests::private_stage_publishes_through_bound_parent_despite_mismatched_display_path",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "9D564494B6FB7377EDEE992460DE2DC03EA50B664E79007B558DB317054FB72B",
+        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
         "junitClass": "neoth"
       },
       {
@@ -9322,6 +9322,12 @@
         "test": "connectors::local_import::windows_source::tests::held_regular_file_fence_blocks_writer_and_rename",
         "sourcePath": "SRC/neothd/src/connectors/local_import/windows_source.rs",
         "sourceSha256": "D04F297C44832528C44B884AF1D8725EF8077BF83F7C1B95A0D71DEA036B5C94",
+        "junitClass": "neoth"
+      },
+      {
+        "test": "skills::store::reported_commit_tests::private_stage_create_new_composes_with_retained_delete_bound_parent",
+        "sourcePath": "SRC/neothd/src/skills/store.rs",
+        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
         "junitClass": "neoth"
       }
     ],
@@ -9371,7 +9377,7 @@
       {
         "test": "skills::store::tests::existing_nonprivate_child_is_rejected_without_permission_mutation",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "9D564494B6FB7377EDEE992460DE2DC03EA50B664E79007B558DB317054FB72B",
+        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
         "junitClass": "neoth"
       },
       {
@@ -9509,7 +9515,7 @@
       {
         "test": "skills::store::tests::bound_rename_unix_race_restores_foreign_replacement_and_keeps_original",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "9D564494B6FB7377EDEE992460DE2DC03EA50B664E79007B558DB317054FB72B",
+        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
         "junitClass": "neoth"
       },
       {
@@ -9619,7 +9625,7 @@
       {
         "test": "skills::store::tests::existing_nonprivate_child_is_rejected_without_permission_mutation",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "9D564494B6FB7377EDEE992460DE2DC03EA50B664E79007B558DB317054FB72B",
+        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
         "junitClass": "neoth"
       },
       {
@@ -9757,7 +9763,7 @@
       {
         "test": "skills::store::tests::bound_rename_unix_race_restores_foreign_replacement_and_keeps_original",
         "sourcePath": "SRC/neothd/src/skills/store.rs",
-        "sourceSha256": "9D564494B6FB7377EDEE992460DE2DC03EA50B664E79007B558DB317054FB72B",
+        "sourceSha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
         "junitClass": "neoth"
       },
       {
@@ -27554,6 +27560,70 @@
       }
     ],
     "note": "Two-file exact generated patch; both old/new blobs and ZIP/receipt hashes verified",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave628WindowsComposition": {
+    "requiredTests": [
+      "skills::store::reported_commit_tests::private_stage_create_new_composes_with_retained_delete_bound_parent"
+    ],
+    "platform": "Windows",
+    "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+    "scope": "Private create-new rename under a retained DELETE-bound stage directory; keep Ex private replacement and collision semantics"
+  },
+  "wave629WindowsGui": {
+    "base": "88dccde61b842270ec8a596269ea840671c7ed10",
+    "sources": [
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 14633,
+        "sha256": "F7DEC9E2787DEC39B8752A2D1FD12E69D5966E4815EE47E9479189CFFF81957B",
+        "blob": "46f518b7fb5a8b8ad61eaba8e8ff5ad5b3954dd2"
+      },
+      {
+        "path": "docs/verification/gold-wave626-windows41-terminals.json",
+        "bytes": 4943,
+        "sha256": "AB428A6295278BDE9D867BF5F7BA6FE927947BD153ACFFF5EC38FF60D6105EA4",
+        "blob": "b0ac18563663ddbdd63631919e6d692bc006d816"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 223177,
+        "sha256": "1402BE10BF51D88502FFDF67FB916886EB2106A4B2008A92FC4F11F0E9211A4D",
+        "blob": "7cc9f0e4beecdfb09e21bdda7a64b8894b4096e4"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1234505,
+        "sha256": "DE3601F5B25DA0E619100B1B74BD0AA84D1F6A7FE5BDB41BCF1C2301ED1EA319",
+        "blob": "1f738b0c5e473ea48b78427bf9d043c854df3c70"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1833787,
+        "sha256": "64D60A88A8E2DE1824E7493BFB4DF33AFAFBB7DF8BDAEB355665A8D885087253",
+        "blob": "8ba85befffe7bba69dcde32088a42898e4ef90ce"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2217548,
+        "sha256": "CD654C3704DB3F0619BF06DDA6D873BD23086ED4DD52D9C859862814A7F5384B",
+        "blob": "77b1fdcfc6ee4fa459a5e7cedc9f36077c2b6220"
+      },
+      {
+        "path": "SRC/neothd-gui/src/packaged_chat_probe.rs",
+        "bytes": 31847,
+        "sha256": "B2485AF0EAA8F0124DBD87B63ADA53AB98039F2C2DD1525E92484CF2ABA54173",
+        "blob": "907e82eec3cf43cb88bf0e0d692aae3475db8316"
+      },
+      {
+        "path": "SRC/neothd/src/skills/store.rs",
+        "bytes": 256398,
+        "sha256": "1ADDF727E203105648E0504383D4010CF45E90CB56A7970857F294C6BAFAFAAB",
+        "blob": "4081e5301eae8d28b6818ad52e45ff44d3bfabf4"
+      }
+    ],
+    "note": "Preserve private Ex replacement; add exact retained DELETE-parent regression; W480 acceptance unchanged",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

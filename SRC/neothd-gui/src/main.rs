@@ -44002,6 +44002,26 @@ mod w58_gui_callback_runtime_tests {
             };
             counter.load(std::sync::atomic::Ordering::Acquire)
         }
+
+        /// Content-free fixture evidence for a replay timeout.  The typed
+        /// capture's terminal state and sequence must survive bridge mapping;
+        /// message text is deliberately never included.
+        fn pending_event_summary(&self, surface: GuiChatSurface) -> String {
+            let events = match surface {
+                GuiChatSurface::Main => self.main_events.lock().expect("W480 Main summary"),
+                GuiChatSurface::Buddy => self.buddy_events.lock().expect("W480 Buddy summary"),
+            };
+            events
+                .iter()
+                .map(|event| match event {
+                    GuiChatBridgeEvent::Terminal { state, sequence, .. } => {
+                        format!("terminal:{state:?}@{sequence}")
+                    }
+                    _ => format!("event@{}", w480_captured_event_sequence(event)),
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        }
     }
 
     /// Read the authenticated event cursor without changing the core-owned
@@ -49426,14 +49446,18 @@ exit 0
             )
             .expect("install W480 real producer replay bridge");
 
+        let capture_summary = replay_bridge.pending_event_summary(surface);
         match surface {
             GuiChatSurface::Main => window.invoke_chat_send_clicked("W480 Main".into(), false),
             GuiChatSurface::Buddy => overlay.invoke_send_clicked("W480 Buddy".into(), false),
         }
         let completed_overlay = overlay.as_weak();
+        let settlement_label = format!(
+            "W480 captured producer settlement; captured_events=[{capture_summary}]"
+        );
         w153_pump_until(
             &window,
-            "W480 captured producer settlement",
+            &settlement_label,
             move |window| {
                 let terminal_observed = match expected_body {
                     Some(expected_body) => {
@@ -49535,6 +49559,52 @@ exit 0
     }
 
     #[cfg(not(windows))]
+    fn w480_assert_capture_terminal_contract(
+        capture: &gui_bridge_test_support::W458ProducerBridgeCapture,
+        name: &str,
+        expect_complete: bool,
+    ) {
+        fn terminal(
+            events: &[GuiChatBridgeEvent],
+            surface: &str,
+            diagnostic: &str,
+        ) -> (neothd::daemon::gui_chat_bridge::GuiChatTerminalState, u64) {
+            let Some(GuiChatBridgeEvent::Terminal {
+                state, sequence, ..
+            }) = events.last()
+            else {
+                panic!(
+                    "W480 {surface} capture has no final terminal; {diagnostic}"
+                );
+            };
+            (*state, *sequence)
+        }
+
+        let (main_state, main_sequence) =
+            terminal(&capture.main_events, "Main", &capture.terminal_diagnostic);
+        let (buddy_state, buddy_sequence) =
+            terminal(&capture.buddy_events, "Buddy", &capture.terminal_diagnostic);
+        let main_complete = matches!(
+            main_state,
+            neothd::daemon::gui_chat_bridge::GuiChatTerminalState::Complete
+        );
+        let buddy_complete = matches!(
+            buddy_state,
+            neothd::daemon::gui_chat_bridge::GuiChatTerminalState::Complete
+        );
+        assert_eq!(
+            main_complete, expect_complete,
+            "W480 {name} Main terminal state/sequence mismatch: {main_state:?}@{main_sequence}; {}",
+            capture.terminal_diagnostic,
+        );
+        assert_eq!(
+            buddy_complete, expect_complete,
+            "W480 {name} Buddy terminal state/sequence mismatch: {buddy_state:?}@{buddy_sequence}; {}",
+            capture.terminal_diagnostic,
+        );
+    }
+
+    #[cfg(not(windows))]
     #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w480_real_producer_post_provider_outcomes_replay_through_main_and_buddy() {
         use gui_bridge_test_support::{
@@ -49554,7 +49624,12 @@ exit 0
         let (block, replace) = runtime
             .block_on(async {
                 let block = capture_w458_real_producer(Block).await?;
+                w480_assert_capture_terminal_contract(&block, "Block", false);
                 let replace = capture_w458_real_producer(Replace).await?;
+                // The two captures are sequential, but verify Block again
+                // after Replace to fence any accidental shared fixture state.
+                w480_assert_capture_terminal_contract(&block, "Block after Replace", false);
+                w480_assert_capture_terminal_contract(&replace, "Replace", true);
                 anyhow::Ok((block, replace))
             })
             .expect("capture actual W458 producer outcomes once each");

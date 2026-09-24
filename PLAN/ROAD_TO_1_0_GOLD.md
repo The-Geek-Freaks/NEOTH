@@ -8,6 +8,21 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W624/W626/W628 focused Windows repair and capture diagnostics (2026-09-24):**
+Windows41 run35950133017 at235fa68e is independently admitted38PASS/3FAIL/
+0missing with49 internal hashes and11 source bindings. All three failures now
+pin the operation to `atomic_stage=rename;atomic_raw=Some(32)`. W628 routes only
+private create-new stages through the existing capability-relative no-replace
+information class; private replacement keeps FileRenameInformationEx. Native
+collision codes retain AlreadyExists. A Windows fixture reproduces the retained
+DELETE-parent composition; Windows-only inventory30 and hosted lane46 now include
+it and the four Obsidian update cases. Runtime verification is pending.
+W624 keeps W480 strict and checks Block/Replace typed capture terminals directly
+before replay, before/after the second capture. Its content-free event snapshot
+is captured before attach consumes the queue. Three unused packaged-probe
+imports are removed. Independent static review approves both scopes; no Slint,
+visual-token or UI copy change is involved. GUI behavior and packaged acceptance
+remain separate pending gates. No Road closure or local executable validation.
 **W618/W620/W623 actual grader inputs and admitted regressions (2026-09-24):**
 Group971 run35949861050 ate1faeccf is independently admitted971PASS/0FAIL/
 0missing with188 source bindings; all four pinned Obsidian update/recovery

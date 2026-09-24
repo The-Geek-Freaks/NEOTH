@@ -25,7 +25,6 @@ use sha2::{Digest, Sha256};
 use slint::{ComponentHandle, Model as _};
 
 use crate::{
-    ChatRecallChipProjections, ChatResponseFeedbackProjections, ChatThroughputProjections,
     MainWindow, MiniOverlay,
     gui_chat_bridge_controller::{self, InstalledGuiChat, PackagedChatProbeSnapshot},
 };

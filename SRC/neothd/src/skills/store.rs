@@ -3884,7 +3884,7 @@ mod windows_private_atomic_stage {
         ) -> Result<RenameCommit<'stage>> {
             #[cfg(test)]
             run_before_rename_for_test();
-            if self.stage.private_dacl {
+            if self.stage.private_dacl && replace_existing {
                 // Preserve the already-bound destination capability while using
                 // FileRenameInformationEx: its POSIX semantics can replace a
                 // DELETE-sharing bound target without a close/reopen race.
@@ -3899,6 +3899,13 @@ mod windows_private_atomic_stage {
                     return Err(error);
                 }
             } else {
+                // A create-new private stage has no authorized destination to
+                // replace. Its Windows parent can itself retain a DELETE
+                // binding, and the ordinary no-replace information class
+                // composes with that live directory handle where the extended
+                // POSIX rename class is rejected with sharing violation. The
+                // non-private replacement path retains its existing ordinary
+                // information-class behavior here.
                 if let Err(error) = super::windows_rename_open_handle(
                     &self.stage.file,
                     parent,
@@ -4233,7 +4240,7 @@ fn windows_rename_open_handle(
 ) -> Result<()> {
     use std::os::windows::ffi::OsStrExt as _;
     use std::os::windows::io::AsRawHandle as _;
-    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS, HANDLE};
     use windows_sys::Win32::Storage::FileSystem::{FILE_RENAME_INFO, FILE_RENAME_INFO_0};
 
     let target_w: Vec<u16> = target_name.encode_wide().collect();
@@ -4289,10 +4296,18 @@ fn windows_rename_open_handle(
         // SAFETY: RtlNtStatusToDosError is a pure status-code conversion and
         // the immediately preceding NTSTATUS is preserved in `status`.
         let code = unsafe { RtlNtStatusToDosError(status) };
-        anyhow::bail!(
+        let already_exists =
+            !replace_existing && (code == ERROR_ALREADY_EXISTS || code == ERROR_FILE_EXISTS);
+        let error = std::io::Error::from_raw_os_error(code as i32);
+        return Err(anyhow::Error::new(if already_exists {
+            std::io::Error::new(std::io::ErrorKind::AlreadyExists, error)
+        } else {
+            error
+        })
+        .context(format!(
             "atomically rename {} failed with NTSTATUS {status:#010x} / Win32 error {code:#010x}",
             display_path.display()
-        );
+        )));
     }
     Ok(())
 }
@@ -6400,6 +6415,38 @@ mod reported_commit_tests {
             .expect("private FileRenameInfoEx publish replaces a DELETE-sharing target");
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
         drop(bound_target);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_stage_create_new_composes_with_retained_delete_bound_parent() {
+        let _scope = windows_private_atomic_stage::qualified_local_ntfs_for_test();
+        let temp = tempdir().unwrap();
+        let stage_path = temp.path().join("stage");
+        std::fs::create_dir(&stage_path).unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+        let stage_binding =
+            bind_child_object(&root.dir, OsStr::new("stage"), &stage_path).unwrap();
+        let stage = open_bound_real_child_dir_for_read(
+            &root.dir,
+            &stage_binding,
+            OsStr::new("stage"),
+            &stage_path,
+        )
+        .expect("DELETE-sharing stage reader must retain the bound parent");
+        let target = stage_path.join("state.json");
+
+        atomic_write_private_child_create_new(
+            &stage,
+            OsStr::new("state.json"),
+            &target,
+            b"private state",
+        )
+        .expect("private create-new rename must compose with retained stage DELETE binding");
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"private state");
     }
 
     #[cfg(windows)]
