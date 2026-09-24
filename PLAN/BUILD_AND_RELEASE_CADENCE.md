@@ -3,6 +3,21 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W568/W570 integration and W572 core/reference (2026-09-24):**
+The recursive OCI checker now hashes actual configs/layers with bounded
+streaming, explicit CDN hosts, stripped redirect credentials and exact size/
+digest checks. Full selector-to-blob and negative fixtures protect the real
+handoff. Initial hosted35938744354 passed contracts then rejected an unknown
+CDN; no blob acquisition is admitted yet. The staged Paperless contract exposes
+its metadata-only coverage and preserves state when refusing a stale marker.
+Two new Rust cases raise native1228/Group951; all changed source bindings are
+reconciled after early parallel publication. P2-20 remains open.
+Core35938019476 atc21e29b1 passed slimClippy, test-target typecheck, CLIbuild and
+reference export; its SHA-bound Obsidian bridge reference is imported. W570
+postdates that source; its behavior remains pending in Group951. W571 closure
+counts are now synchronized in the release-gate marker and both LF dashboards:
+1045checked/277open/2partial; WS-LF38done/80open. No local executable checks.
+
 **W571 P1-18 accepted; W569 hosted formatting (2026-09-24):**
 GUI148 run35935063658 at829c37c3 is admitted147PASS/1FAIL/0missing,28bindings.
 Both real P118 GUI callback cases pass; all13native WizardIPC support cases

@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W568/W570 integration and W572 core/reference (2026-09-24):**
+The recursive OCI checker now hashes actual configs/layers with bounded
+streaming, explicit CDN hosts, stripped redirect credentials and exact size/
+digest checks. Full selector-to-blob and negative fixtures protect the real
+handoff. Initial hosted35938744354 passed contracts then rejected an unknown
+CDN; no blob acquisition is admitted yet. The staged Paperless contract exposes
+its metadata-only coverage and preserves state when refusing a stale marker.
+Two new Rust cases raise native1228/Group951; all changed source bindings are
+reconciled after early parallel publication. P2-20 remains open.
+Core35938019476 atc21e29b1 passed slimClippy, test-target typecheck, CLIbuild and
+reference export; its SHA-bound Obsidian bridge reference is imported. W570
+postdates that source; its behavior remains pending in Group951. W571 closure
+counts are now synchronized in the release-gate marker and both LF dashboards:
+1045checked/277open/2partial; WS-LF38done/80open. No local executable checks.
+
 **W571 P1-18 accepted; W569 hosted formatting (2026-09-24):**
 GUI148 run35935063658 at829c37c3 is admitted147PASS/1FAIL/0missing,28bindings.
 Both real P118 GUI callback cases pass; all13native WizardIPC support cases
@@ -5498,7 +5513,7 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay, P1-20 sidebar preview, P2-03 vault, P1-10 reasoning, P1-12 citation and P2-17 recorded skip decision and P1-22 provider wizard and P2-19 BudgetToken, P1-19 local resources, P1-02 mirror refusal, P1-09 Ouro Q8 and P2-04 reflection hygiene accepted: **37 done / 81
+> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay, P1-20 sidebar preview, P2-03 vault, P1-10 reasoning, P1-12 citation and P2-17 recorded skip decision and P1-22 provider wizard and P2-19 BudgetToken, P1-19 local resources, P1-02 mirror refusal, P1-09 Ouro Q8 and P2-04 reflection hygiene accepted: **38 done / 80
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

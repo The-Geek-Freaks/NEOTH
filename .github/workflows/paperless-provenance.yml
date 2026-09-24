@@ -30,7 +30,7 @@ jobs:
       - name: Test bounded acquisition contract
         run: python3 -m unittest scripts/test_acquire_paperless_provenance.py
 
-      - name: Acquire OCI index and platform-manifest receipts only
+      - name: Acquire recursively hash-verified OCI config and layer byte receipts
         shell: bash
         run: |
           set -euo pipefail

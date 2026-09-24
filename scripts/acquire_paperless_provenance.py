@@ -126,16 +126,20 @@ def approved_blob_redirect(registry: str, location: str) -> str:
         port = parsed.port
     except ValueError as error:
         raise AcquisitionError("blob redirect is not an approved HTTPS upstream") from error
+    host = parsed.hostname.lower() if parsed.hostname else None
     if (
         parsed.scheme != "https"
-        or not parsed.hostname
+        or not host
+        or not host.isascii()
+        or not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?", host)
         or parsed.username is not None
         or parsed.password is not None
         or parsed.fragment
         or port not in (None, 443)
-        or parsed.hostname.lower() not in APPROVED_BLOB_REDIRECT_HOSTS.get(registry, set())
     ):
         raise AcquisitionError("blob redirect is not an approved HTTPS upstream")
+    if host not in APPROVED_BLOB_REDIRECT_HOSTS.get(registry, set()):
+        raise AcquisitionError(f"blob redirect host rejected: {host}")
     return location
 
 
@@ -262,6 +266,8 @@ class BoundedClient:
                         if time.monotonic() - self.started_monotonic > MAX_ELAPSED_SECONDS:
                             raise AcquisitionError("acquisition deadline exceeded")
                         chunk = response.read(1024 * 1024)
+                        if time.monotonic() - self.started_monotonic > MAX_ELAPSED_SECONDS:
+                            raise AcquisitionError("acquisition deadline exceeded")
                         if not chunk:
                             break
                         observed_bytes += len(chunk)

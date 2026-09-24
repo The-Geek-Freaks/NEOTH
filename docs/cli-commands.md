@@ -2894,6 +2894,34 @@ One-way sync of the session archive into an Obsidian vault. Phase 13 R-5. Idempo
 
 - `--archive-root <DIR>` — Override the NEOTH archive root (mostly for tests). Defaults to `~/.neoth/archive/`
 
+### `neoth obsidian bridge`
+
+Manage the disabled NEOTH Archive Bridge plugin artifact. Pairing and sync remain unavailable until their dedicated lifecycle owner ships
+
+#### `neoth obsidian bridge install`
+
+Atomically install the disabled, read-only inspector
+
+- `--vault <PATH>`
+
+#### `neoth obsidian bridge repair`
+
+Restore only known bridge payload files after ownership validation
+
+- `--vault <PATH>`
+
+#### `neoth obsidian bridge status`
+
+Inspect the bridge artifact without modifying the vault
+
+- `--vault <PATH>`
+
+#### `neoth obsidian bridge uninstall`
+
+Remove known owned files while preserving plugin settings and additions
+
+- `--vault <PATH>`
+
 ### `neoth obsidian days`
 
 List archive days that have at least one session MD file

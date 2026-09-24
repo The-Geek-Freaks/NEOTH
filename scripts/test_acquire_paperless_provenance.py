@@ -190,7 +190,7 @@ class PaperlessProvenanceContractTests(unittest.TestCase):
         self.assertEqual(client.verified_blob_bytes, len(body))
         self.assertEqual(len(client.verified_blobs), 1)
 
-        for wrong_body, wrong_size in ((body[:-1], len(body)), (body + b"x", len(body)), (body, len(body) + 1)):
+        for wrong_body, wrong_size in ((body[:-1], len(body)), (body + b"x", len(body)), (b"X" * len(body), len(body)), (body, len(body) + 1)):
             client = module.BoundedClient()
             client.blob_opener = self.RecordingBlobOpener([self.StreamingResponse(wrong_body)])
             with self.assertRaises(module.AcquisitionError):
@@ -235,6 +235,39 @@ class PaperlessProvenanceContractTests(unittest.TestCase):
         for location in ("http://pkg-containers.githubusercontent.com/blob", "https://token@pkg-containers.githubusercontent.com/blob", "https://127.0.0.1/blob"):
             with self.assertRaises(module.AcquisitionError):
                 module.approved_blob_redirect("ghcr.io", location)
+        with self.assertRaises(module.AcquisitionError) as caught:
+            module.approved_blob_redirect("ghcr.io", "https://unknown.example.invalid/signed/path?token=never-print")
+        self.assertEqual(str(caught.exception), "blob redirect host rejected: unknown.example.invalid")
+        self.assertNotIn("token", str(caught.exception))
+        self.assertNotIn("path", str(caught.exception))
+
+    def test_blob_deadline_after_read_and_redirect_cap_fail_closed(self):
+        body = b"late-eof"
+        descriptor = {"digest": module.sha256(body), "size": len(body), "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip"}
+        original_monotonic = module.time.monotonic
+        # Init, request admission, body read before/after, then EOF before/after.
+        # Only the final empty read crosses the deadline.
+        ticks = iter((0, 0, 0, 0, 0, module.MAX_ELAPSED_SECONDS + 1))
+        try:
+            module.time.monotonic = lambda: next(ticks)
+            client = module.BoundedClient()
+            client.blob_opener = self.RecordingBlobOpener([self.StreamingResponse(body)])
+            with self.assertRaises(module.AcquisitionError) as caught:
+                client.verified_blob("ghcr.io", "paperless-ngx/paperless-ngx", "token", descriptor, "layer")
+            self.assertEqual(str(caught.exception), "acquisition deadline exceeded")
+        finally:
+            module.time.monotonic = original_monotonic
+
+        redirect = module.urllib.error.HTTPError(
+            "https://ghcr.io/v2/x", 307, "redirect", {"Location": "https://pkg-containers.githubusercontent.com/blob"}, None
+        )
+        client = module.BoundedClient()
+        opener = self.RecordingBlobOpener([redirect, redirect, redirect])
+        client.blob_opener = opener
+        with self.assertRaises(module.AcquisitionError) as caught:
+            client.verified_blob("ghcr.io", "paperless-ngx/paperless-ngx", "token", descriptor, "layer")
+        self.assertEqual(str(caught.exception), "blob redirect limit exceeded")
+        self.assertEqual(len(opener.requests), module.MAX_BLOB_REDIRECTS + 1)
 
     def test_request_ceiling_covers_each_blob_with_two_redirects(self):
         self.assertEqual(module.MAX_REQUESTS, 12 + module.MAX_BLOBS * (module.MAX_BLOB_REDIRECTS + 1))

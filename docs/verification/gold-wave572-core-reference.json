@@ -1,0 +1,17 @@
+{
+  "schema": "neoth-hosted-cli-reference-admission/v1",
+  "status": "ADMITTED",
+  "run": 35938019476,
+  "source": "c21e29b1eb954c96a5456995a7f3b56acc264b8b",
+  "artifact": 10784033330,
+  "artifactSha256": "9070108bf70463d0280694e48539517b8814163b1cd01fe112fb401763f7e9a9",
+  "referenceSha256": "0bd07415597ad410876f0fc6a4c4306dd672875a66fbc510be304ab9062d97eb",
+  "steps": [
+    "slim production Clippy success",
+    "core test-target typecheck success",
+    "public CLI build success",
+    "reference export success"
+  ],
+  "scope": "W559+W566 source compiled; no behavior claim from compile. W570 additions postdate this source and remain pending",
+  "localExecutableValidationRan": false
+}
