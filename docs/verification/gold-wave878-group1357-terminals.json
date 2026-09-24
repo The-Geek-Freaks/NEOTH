@@ -1,0 +1,42 @@
+{
+  "schema": "neoth-grouped-terminal-admission/v1",
+  "runId": 36041212636,
+  "sourceHead": "ad2429e6c4475a423e0c5e43380c306cc6056f45",
+  "sourceBindings": 246,
+  "artifacts": [
+    {
+      "artifactId": 10827560693,
+      "name": "w190-research-lifecycle-source-ad2429e6c4475a423e0c5e43380c306cc6056f45",
+      "zip": "group1357-source.zip",
+      "apiDigest": "2bb68d6fcb573c333976b8d8cbfda1e95c8281e0ed686cf955fde259fccc2987",
+      "downloadedZipSha256": "2bb68d6fcb573c333976b8d8cbfda1e95c8281e0ed686cf955fde259fccc2987",
+      "matches": true
+    },
+    {
+      "artifactId": 10827550748,
+      "name": "w190-research-lifecycle-receipt-ad2429e6c4475a423e0c5e43380c306cc6056f45",
+      "zip": "group1357-receipt.zip",
+      "apiDigest": "efd1dc87f5b5d3a029111c4ad24ba6f563fed40f053849b559729fd5001d0e76",
+      "downloadedZipSha256": "efd1dc87f5b5d3a029111c4ad24ba6f563fed40f053849b559729fd5001d0e76",
+      "matches": true
+    },
+    {
+      "artifactId": 10827101290,
+      "name": "w190-research-lifecycle-log-ad2429e6c4475a423e0c5e43380c306cc6056f45",
+      "zip": "group1357-log.zip",
+      "apiDigest": "a7e26ad9af3b8e26864ec71cdea3a120bd4f3c26fa7b7bc9b5ca0ff6c98feb6f",
+      "downloadedZipSha256": "a7e26ad9af3b8e26864ec71cdea3a120bd4f3c26fa7b7bc9b5ca0ff6c98feb6f",
+      "matches": true
+    }
+  ],
+  "selected": 1357,
+  "passed": 1356,
+  "failed": [
+    "proactive::document_note::tests::concurrent_identical_creators_preserve_one_exact_note"
+  ],
+  "missing": 0,
+  "allHistoricalSourceBindingsVerified": true,
+  "rootVerifiedNamedTerminals": true,
+  "currentSourceAcceptance": "Historical source only. B7 remains open for concurrent identical document note failure; B8 GUI remains open.",
+  "localExecutableValidationRan": false
+}

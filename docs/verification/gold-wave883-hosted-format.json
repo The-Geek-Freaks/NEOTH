@@ -1,0 +1,27 @@
+{
+  "schema": "neoth-hosted-rustfmt-admission/v1",
+  "runId": 36043416812,
+  "sourceHead": "08881721d6a18c1a20a3642895d7629f6e363cdd",
+  "artifactId": 10828196118,
+  "artifactSha256": "e4625de9318fb1c24fc2b2685ac68949dd9b810e10685621adf0a36b848d993c",
+  "patchSha256": "97d4106f728d964f7c0b374bcb3303d431e2ef248cffd92d40aa0885c3dcf7da",
+  "files": [
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "old": "c525c1e8968202f49004d7fb4eff4a4ebcfeb58e",
+      "new": "3e10d3889968e8ec44f931437bc407a0ad06c010"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "old": "93c357613e2bba1de010a7f2db408e964f0666d9",
+      "new": "a96c617a962602484356d2c6c3e24a5c9fc54e48"
+    },
+    {
+      "path": "SRC/neothd/src/security/refusal_abliterated.rs",
+      "old": "3351f3028c717bb24821f9753a285919b308faa7",
+      "new": "629efcfc9cabdc53536354de7d02b8c658bedb2a"
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "acceptance": "Exact hosted formatting only; C1a behavior and compile pending."
+}

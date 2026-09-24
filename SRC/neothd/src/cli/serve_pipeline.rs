@@ -2263,9 +2263,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
     // This is deliberately separate from `SessionOnceGuard`: the hook guard
     // spans the adapter handler, whereas canaries must be scoped to the
     // canonical bound conversation and never shared between channel peers.
-    let channel_canary_registry = Arc::new(ChannelCanaryRegistry::new(
-        CHANNEL_CANARY_REGISTRY_CAPACITY,
-    ));
+    let channel_canary_registry =
+        Arc::new(ChannelCanaryRegistry::new(CHANNEL_CANARY_REGISTRY_CAPACITY));
 
     Box::new(move |inbound: InboundMessage| {
         let provider = Arc::clone(&provider);
@@ -5390,7 +5389,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         }
                         let error = crate::cli::chat::opaque_chat_post_mint_failure(
                             "channel_refusal_recovery_provider_error",
-                            &error,
+                            &anyhow::Error::msg(error),
                         );
                         warn!(
                             channel = channel_str,
@@ -7395,8 +7394,8 @@ mod tests {
     }
 
     #[test]
-    fn pipeline_handler_quarantines_a_real_finalized_canary_before_receipts_archive_wal_and_egress(
-    ) {
+    fn pipeline_handler_quarantines_a_real_finalized_canary_before_receipts_archive_wal_and_egress()
+    {
         let _environment = crate::test_env::lock();
         tokio::runtime::Builder::new_current_thread()
             .enable_all()

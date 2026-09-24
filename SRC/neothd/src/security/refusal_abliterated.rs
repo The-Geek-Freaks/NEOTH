@@ -62,8 +62,7 @@ pub(crate) struct AbliteratedFallbackOptions<'a> {
     /// The already-rendered channel/CLI request owns this token.  A recovery
     /// leaf must inspect its raw completion before it may classify, persist,
     /// or compose that completion into another provider request.
-    pub(crate) session_canary:
-        Option<&'a crate::security::injection_tracker::CanaryToken>,
+    pub(crate) session_canary: Option<&'a crate::security::injection_tracker::CanaryToken>,
     #[cfg(test)]
     /// Per-invocation fixture dependency. This stays crate-private and is
     /// absent from production builds; it cannot alter another turn's loader.
@@ -346,13 +345,10 @@ async fn try_abliterated_fallback_with_loader(
             anyhow::bail!("turn-wide refusal-recovery deadline elapsed before local shadow")
         }
     };
-    let shadow = crate::cli::chat::guard_optional_chat_canary_completion(
-        session_canary,
-        shadow,
-    )
-    .map_err(|error| {
-        crate::cli::chat::opaque_chat_post_mint_failure("abliterated_local_shadow", &error)
-    })?;
+    let shadow = crate::cli::chat::guard_optional_chat_canary_completion(session_canary, shadow)
+        .map_err(|error| {
+            crate::cli::chat::opaque_chat_post_mint_failure("abliterated_local_shadow", &error)
+        })?;
 
     if crate::security::refusal_recovery::observe_completion_refusal(&shadow).is_some() {
         emit_wal(
@@ -412,16 +408,14 @@ async fn try_abliterated_fallback_with_loader(
         .await
     {
         crate::security::refusal_recovery::RecoveryDispatch::Completed(completion) => {
-            let completion = crate::cli::chat::guard_optional_chat_canary_completion(
-                session_canary,
-                completion,
-            )
-            .map_err(|error| {
-                crate::cli::chat::opaque_chat_post_mint_failure(
-                    "abliterated_cloud_continuation",
-                    &error,
-                )
-            })?;
+            let completion =
+                crate::cli::chat::guard_optional_chat_canary_completion(session_canary, completion)
+                    .map_err(|error| {
+                        crate::cli::chat::opaque_chat_post_mint_failure(
+                            "abliterated_cloud_continuation",
+                            &error,
+                        )
+                    })?;
             let completion =
                 crate::security::refusal_recovery::merge_recovered_completion(&shadow, completion);
             if crate::security::refusal_recovery::observe_completion_refusal(&completion).is_some()
@@ -1024,7 +1018,9 @@ mod tests {
         let canary = crate::security::injection_tracker::CanaryToken::generate().unwrap();
         let literal = canary.as_context_literal();
         let leaked = format!("{}\n{}", &literal[..10], &literal[10..]);
-        let loader = LeakingAbliteratedLoader { reply: leaked.clone() };
+        let loader = LeakingAbliteratedLoader {
+            reply: leaked.clone(),
+        };
         let cloud_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let cloud = CountingCloudProvider(std::sync::Arc::clone(&cloud_calls));
         let refused = cloud_refusal();

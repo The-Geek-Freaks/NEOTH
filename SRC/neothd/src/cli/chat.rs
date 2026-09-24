@@ -1458,7 +1458,9 @@ impl Provider for CanaryGuardedProvider<'_> {
         self.inner
             .stream_authorized(req, authorizer, call_scope)
             .await
-            .map_err(|error| sanitize_chat_post_mint_provider_error("guarded_stream_authorized", &error))
+            .map_err(|error| {
+                sanitize_chat_post_mint_provider_error("guarded_stream_authorized", &error)
+            })
     }
 }
 
@@ -16185,10 +16187,8 @@ mod tests {
             done: true,
             ..Default::default()
         };
-        let inner: crate::providers::ChunkStream = Box::pin(futures_util::stream::iter(vec![
-            Ok(first),
-            Ok(second),
-        ]));
+        let inner: crate::providers::ChunkStream =
+            Box::pin(futures_util::stream::iter(vec![Ok(first), Ok(second)]));
         let mut guarded = guard_chat_canary_stream(std::sync::Arc::clone(&canary), inner);
 
         let first = guarded

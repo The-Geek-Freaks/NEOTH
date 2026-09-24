@@ -3,6 +3,24 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W883/W878 hosted evidence (2026-09-24):** W880 is published at08881721.
+Preflight36043416812 exported a three-file formatting-only patch. Root verified
+the API ZIP digest, inner hashes, exact source and old/new Git blobs before
+import; all raw-provider callsite fingerprints remain unchanged by formatting.
+Group1357 run36041212636 atad2429e6 executed all1,357 named cases:1,356PASS,
+1FAIL,0missing, with246 historical source/input bindings verified. The failure
+is concurrent_identical_creators_preserve_one_exact_note; W881 is repairing the
+actual note-publication race. B7 remains OPEN. All21 watcher group cases passed,
+while B8's GUI scope remains OPEN. Canary Core36043417979 failed with one
+E0308: a recovery String reached an Error-only opaque adapter. W884 wraps
+that value at the caller; quarantine/logging behavior is unchanged. A new
+hosted Core gate is required; no current compilation success is claimed.
+C1a remains OPEN until its hosted behavioral acceptance. RESULT011 reports no
+static leak defect on its moving snapshot; final W877 frozen review applies.
+Claude TASK012 requests foreground/background C1a consumer and test mapping.
+Evidence: docs/verification/gold-wave883-hosted-format.json and
+ docs/verification/gold-wave878-group1357-terminals.json. No local runtime ran.
+
 **W880 channel conversation canary publication (2026-09-24):** W869/W873/W876
 wire an in-memory, bounded canonical-conversation canary into Required Block A,
 direct/recovery/MCP/loop/Council provider leaves and the stream before previews.
