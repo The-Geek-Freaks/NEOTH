@@ -1,0 +1,73 @@
+{
+  "schema": "neoth-gold-core-cli-admission/v1",
+  "runId": 36018697181,
+  "sourceHead": "033bccf0fb207a69df26fd1c641342155c263900",
+  "conclusion": "success",
+  "artifact": {
+    "cliGitBlob": "29365cf4c454d412311b4381e451c520e6f83025",
+    "zipVerified": true,
+    "id": 10817345209,
+    "cliSha256": "7a4f8aa846b951b33f5dfc4b3e570cd159b75e004d4a9eee4bc1f7cd3898d742",
+    "referenceUnchanged": true,
+    "innerVerified": true,
+    "zipSha256": "34b3978883a8c8bb7ad88942786e62a6e01344eeef29f053d04c8cb7bb8b10ec",
+    "sourceVerified": true
+  },
+  "steps": [
+    {
+      "name": "Set up job",
+      "conclusion": "success"
+    },
+    {
+      "name": "Checkout requested source",
+      "conclusion": "success"
+    },
+    {
+      "name": "Setup Rust",
+      "conclusion": "success"
+    },
+    {
+      "name": "Install Linux workspace-Clippy build deps",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Restore Gold smoke compiler cache",
+      "conclusion": "success"
+    },
+    {
+      "name": "Check exact-source slim-core production Clippy",
+      "conclusion": "success"
+    },
+    {
+      "name": "Type-check core test targets before native validation",
+      "conclusion": "success"
+    },
+    {
+      "name": "Check exact Linux-quality workspace Clippy",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Build current public CLI",
+      "conclusion": "success"
+    },
+    {
+      "name": "Export generated reference",
+      "conclusion": "success"
+    },
+    {
+      "name": "Upload generated reference",
+      "conclusion": "success"
+    },
+    {
+      "name": "Post Checkout requested source",
+      "conclusion": "success"
+    },
+    {
+      "name": "Complete job",
+      "conclusion": "success"
+    }
+  ],
+  "scope": "Published W835/W838 document provider/chapter-cap/testimport repairs. W840 extracted PDF/Office chapter source is later and remains unvalidated.",
+  "behavior": "Group1292run36018692982same033sourceROOTADMITTED1292PASS0FAIL",
+  "localExecutableValidationRan": false
+}

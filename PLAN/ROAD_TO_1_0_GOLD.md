@@ -8,6 +8,24 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W840 extracted-document chapters; W841 core acceptance (2026-09-24):**
+Large PDF/Office/book text now enters bounded chapter discovery after the
+existing extractor, through the shared /skill-from-doc review preparation.
+Explicit selection sanitizes only the chosen UTF8 range; metadata receipts
+retain original-source and extracted-text identities without raw text.
+Extractor-reported truncation is refused so an early chapter cannot hide an
+omitted tail. Small PDF/RTF reviews retain the full-review branch. Four new
+fixtures cover actual admitted PDFs/RTFs, selected receipt custody and real
+cappedRTF refusal; Group1296/native1532 are next. Independent source review
+approved including Root's source-hash and nonvacuous text-exclusion checks.
+B3 stays open until hosted behavior admission; B5 provider chapter invocation
+is outside this provider-free review slice. Separately, Core36018697181 at033
+passes productionClippy/testtargets/CLIbuild/export; Root verified archive,
+source and inner CLI digest, which matches the existing reference exactly.
+ROAD1072checked250open2partial remains. No local executable validation ran.
+Evidence: docs/gold-wave840-extracted-chapters.md and
+ docs/verification/gold-wave841-core-cli.json.
+
 **W839 grouped acceptance and remaining document scope (2026-09-24):**
 Group1292run36018692982 at033bccf0 passes all1292 fixtures. Root checked all
 three archive digests,237fixture/twoinput bindings and every terminal. B5's

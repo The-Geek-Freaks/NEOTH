@@ -504,6 +504,8 @@ pub enum DocDistillError {
     SourceRead,
     #[error("document extraction produced no usable text")]
     EmptyExtraction,
+    #[error("document extraction was truncated and cannot be used for chapter selection")]
+    TruncatedExtraction,
     #[error("document extraction was rejected by the untrusted-content sanitizer")]
     RejectedUntrustedContent,
     #[error("defanged document review exceeds its bounded output limit")]
@@ -551,6 +553,86 @@ pub struct SelectedTextChapter {
     pub text: String,
 }
 
+/// Owned extracted text for a large PDF/Office/book document. The original
+/// binary remains in the existing admitted asset boundary; chapter offsets are
+/// only over the extractor output and never binary-container byte ranges.
+pub struct ExtractedDocumentChapters {
+    text: String,
+    pub source_kind: DocumentSourceKind,
+    pub source_bytes: u64,
+    pub source_bytes_sha256: String,
+    pub extracted_text_bytes: u64,
+    pub extracted_text_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectedExtractedTextChapter {
+    pub chapter_index: usize,
+    pub range: TextChapterRange,
+    pub source_kind: DocumentSourceKind,
+    pub source_bytes: u64,
+    pub source_bytes_sha256: String,
+    pub extracted_text_bytes: u64,
+    pub extracted_text_sha256: String,
+    pub text: String,
+}
+
+/// Detect bounded heading-owned ranges in already extracted UTF-8 document
+/// text. This is deliberately post-extraction: PDF/Office bytes are never
+/// sliced or interpreted as text ranges.
+pub fn detect_chapter_offsets(text: &str) -> Result<Vec<TextChapterRange>, DocDistillError> {
+    discover_text_chapter_ranges(&mut std::io::Cursor::new(text.as_bytes()), text.len() as u64)
+}
+
+/// Preserve exact source and extractor-text identities while exposing chapter
+/// selection only when the extracted text crosses the large-document threshold.
+pub fn prepare_extracted_document_chapters(
+    extraction: Extraction,
+    source_kind: DocumentSourceKind,
+    source_bytes: u64,
+    source_bytes_sha256: String,
+) -> Result<Option<ExtractedDocumentChapters>, DocDistillError> {
+    if extraction.metadata.get("truncated").and_then(serde_json::Value::as_bool) == Some(true) {
+        return Err(DocDistillError::TruncatedExtraction);
+    }
+    if extraction.text.len() <= LARGE_TEXT_CHAPTER_THRESHOLD_BYTES as usize {
+        return Ok(None);
+    }
+    let extracted_text_bytes = extraction.text.len() as u64;
+    let extracted_text_sha256 = hex::encode(Sha256::digest(extraction.text.as_bytes()));
+    Ok(Some(ExtractedDocumentChapters {
+        text: extraction.text,
+        source_kind,
+        source_bytes,
+        source_bytes_sha256,
+        extracted_text_bytes,
+        extracted_text_sha256,
+    }))
+}
+
+impl ExtractedDocumentChapters {
+    pub fn discover_chapters(&self) -> Result<Vec<TextChapterRange>, DocDistillError> {
+        detect_chapter_offsets(&self.text)
+    }
+
+    pub fn select_chapter(&self, chapter_index: usize) -> Result<SelectedExtractedTextChapter, DocDistillError> {
+        let ranges = self.discover_chapters()?;
+        let range = ranges.get(chapter_index).cloned().ok_or(DocDistillError::ChapterRangeUnavailable)?;
+        let start = usize::try_from(range.start_byte).map_err(|_| DocDistillError::ChapterRangeChanged)?;
+        let end = usize::try_from(range.end_byte).map_err(|_| DocDistillError::ChapterRangeChanged)?;
+        let text = self.text.get(start..end).ok_or(DocDistillError::ChapterRangeChanged)?.to_owned();
+        Ok(SelectedExtractedTextChapter {
+            chapter_index,
+            range,
+            source_kind: self.source_kind,
+            source_bytes: self.source_bytes,
+            source_bytes_sha256: self.source_bytes_sha256.clone(),
+            extracted_text_bytes: self.extracted_text_bytes,
+            extracted_text_sha256: self.extracted_text_sha256.clone(),
+            text,
+        })
+    }
+}
 /// Admit only a large plain UTF-8 text source through the same no-follow
 /// capability walk used by document review. Binary containers deliberately do
 /// not enter this surface.
@@ -1566,6 +1648,50 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn extracted_large_document_chapters_keep_identities_and_fit_distillation() {
+        let extraction = Extraction {
+            text: format!("# One\n{}\n# Two\n{}", "a".repeat(LARGE_TEXT_CHAPTER_THRESHOLD_BYTES as usize), "b".repeat(MAX_CHAPTER_RANGE_BYTES)),
+            metadata: serde_json::json!({"extractor": "fixture"}),
+        };
+        let chapters = prepare_extracted_document_chapters(
+            extraction,
+            DocumentSourceKind::Pdf,
+            123,
+            "a".repeat(64),
+        ).unwrap().expect("large extracted text requires selection");
+        let ranges = chapters.discover_chapters().unwrap();
+        assert!(ranges.len() > 1);
+        let selected = chapters.select_chapter(0).unwrap();
+        assert_eq!(selected.source_kind, DocumentSourceKind::Pdf);
+        assert_eq!(selected.source_bytes, 123);
+        assert_eq!(selected.source_bytes_sha256.len(), 64);
+        assert_eq!(selected.extracted_text_sha256.len(), 64);
+        assert!(selected.text.len() <= ingress_sanitizer::MAX_INGRESS_BYTES);
+        assert!(distill_doc(
+            Extraction { text: selected.text, metadata: serde_json::Value::Null },
+            selected.source_kind,
+            selected.source_bytes,
+            selected.source_bytes_sha256,
+        ).is_ok());
+    }
+
+    #[test]
+    fn truncated_extraction_is_refused_before_chapter_selection() {
+        let extraction = Extraction {
+            text: "# First\n".to_owned() + &"x".repeat(LARGE_TEXT_CHAPTER_THRESHOLD_BYTES as usize),
+            metadata: serde_json::json!({"truncated": true}),
+        };
+        assert!(matches!(
+            prepare_extracted_document_chapters(
+                extraction,
+                DocumentSourceKind::OfficeOrBook,
+                123,
+                "a".repeat(64),
+            ),
+            Err(DocDistillError::TruncatedExtraction)
+        ));
+    }
     #[test]
     fn bounded_scanner_keeps_heading_ownership_and_complete_utf8_coverage() {
         let source = "preface\n# One\nalpha\n# Two\nbeta\n";

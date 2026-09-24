@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W839Group1292@033bccf0ADMITTED1292PASS0FAIL;B5D7accepted;B3PDFOfficeconsumerstillopen",
+  "status": "W840PDFOfficeextractedchaptersSTATICAPPROVED;Group1296native1532hostedpending;W841Core033allPASS",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 173862,
-    "sha256": "2FC38E2DEAA18113A7E35BDA7DECB9DD01952B7454E9B0E43ECDCBDAF5599B4E"
+    "bytes": 174226,
+    "sha256": "93E5529BD957F41895FCBC2BB3F0615F218DAB9059EAD8FADF6794232D6D83EC"
   },
-  "sourceInputs": 983,
+  "sourceInputs": 985,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -8400,61 +8400,61 @@
     {
       "test": "skills::doc_distill::tests::distillation_defangs_clean_extractor_text_without_provider_work",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::injected_extractor_text_is_rejected_without_returning_raw_content",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::unsupported_extensions_fail_closed",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::terminal_controls_are_rendered_as_visible_safe_glyphs",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::c1_terminal_controls_are_quarantined_as_visible_codepoints",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::regular_supported_source_is_admitted_as_owned_bytes",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::skills::tests::from_doc_is_a_typed_read_only_cli_mode_and_rejects_mutator_combinations",
       "sourcePath": "SRC/neothd/src/cli/skills.rs",
-      "sourceSha256": "831D31D1AF97006D4C1D52DB5AA0FFD67D47AADB049CA9B8A800E9C2964BD904",
+      "sourceSha256": "C1FAB0244909254511223D6BD874FF77FF38F46BB8D4FF5D96514BAEE2FF21C3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::skills::tests::document_review_backends_keep_disabled_docling_before_native_fallbacks",
       "sourcePath": "SRC/neothd/src/cli/skills.rs",
-      "sourceSha256": "831D31D1AF97006D4C1D52DB5AA0FFD67D47AADB049CA9B8A800E9C2964BD904",
+      "sourceSha256": "C1FAB0244909254511223D6BD874FF77FF38F46BB8D4FF5D96514BAEE2FF21C3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::skills::tests::document_review_rtf_falls_back_from_disabled_docling_to_native_metadata",
       "sourcePath": "SRC/neothd/src/cli/skills.rs",
-      "sourceSha256": "831D31D1AF97006D4C1D52DB5AA0FFD67D47AADB049CA9B8A800E9C2964BD904",
+      "sourceSha256": "C1FAB0244909254511223D6BD874FF77FF38F46BB8D4FF5D96514BAEE2FF21C3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::skills::tests::document_review_fatal_errors_stop_before_native_fallbacks",
       "sourcePath": "SRC/neothd/src/cli/skills.rs",
-      "sourceSha256": "831D31D1AF97006D4C1D52DB5AA0FFD67D47AADB049CA9B8A800E9C2964BD904",
+      "sourceSha256": "C1FAB0244909254511223D6BD874FF77FF38F46BB8D4FF5D96514BAEE2FF21C3",
       "junitClass": "neoth"
     },
     {
@@ -8502,7 +8502,7 @@
     {
       "test": "skills::doc_distill::tests::chapter_review_worksheet_renders_ordered_source_grounded_b2_guidance",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
@@ -8994,49 +8994,49 @@
     {
       "test": "skills::doc_distill::tests::bounded_scanner_keeps_heading_ownership_and_complete_utf8_coverage",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::bounded_scanner_splits_long_unbroken_unicode_without_gaps_or_mid_scalars",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::bounded_scanner_refuses_early_eof_or_source_growth",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::bounded_scanner_rejects_oversized_source_or_dense_heading_ranges",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::selected_range_refuses_a_mid_scalar_utf8_boundary",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::large_text_snapshot_requires_threshold_and_preserves_selected_receipt",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::large_text_snapshot_rejects_same_length_source_mutation",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::binary_containers_cannot_enter_large_text_chapter_path",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
@@ -9054,103 +9054,103 @@
     {
       "test": "cli::skills::tests::large_text_chapter_cli_requires_explicit_selection_and_rejects_mutators",
       "sourcePath": "SRC/neothd/src/cli/skills.rs",
-      "sourceSha256": "831D31D1AF97006D4C1D52DB5AA0FFD67D47AADB049CA9B8A800E9C2964BD904",
+      "sourceSha256": "C1FAB0244909254511223D6BD874FF77FF38F46BB8D4FF5D96514BAEE2FF21C3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::skills::tests::large_text_chapter_discovery_cli_is_read_only_and_conflicts_with_selection",
       "sourcePath": "SRC/neothd/src/cli/skills.rs",
-      "sourceSha256": "831D31D1AF97006D4C1D52DB5AA0FFD67D47AADB049CA9B8A800E9C2964BD904",
+      "sourceSha256": "C1FAB0244909254511223D6BD874FF77FF38F46BB8D4FF5D96514BAEE2FF21C3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::skills::tests::connected_large_text_review_keeps_raw_text_out_of_json_receipt",
       "sourcePath": "SRC/neothd/src/cli/skills.rs",
-      "sourceSha256": "831D31D1AF97006D4C1D52DB5AA0FFD67D47AADB049CA9B8A800E9C2964BD904",
+      "sourceSha256": "C1FAB0244909254511223D6BD874FF77FF38F46BB8D4FF5D96514BAEE2FF21C3",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::preflight_distinguishes_known_free_and_unknown_prices",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::preflight_bounds_both_actual_provider_requests",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::reflexion_rejects_malformed_unknown_out_of_range_and_empty_results",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::reflexion_threshold_and_explicit_rejection_block_staging",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::document_pipeline_calls_candidate_then_exactly_one_reflexion",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::document_pipeline_refuses_bad_candidates_before_reflexion",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::document_pipeline_never_retries_provider_errors_or_low_scores",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "skills::doc_distill::tests::document_pipeline_refuses_native_refusal_or_truncation_at_either_call",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::skills::tests::document_distillation_cli_requires_threshold_and_excludes_mutators",
       "sourcePath": "SRC/neothd/src/cli/skills.rs",
-      "sourceSha256": "831D31D1AF97006D4C1D52DB5AA0FFD67D47AADB049CA9B8A800E9C2964BD904",
+      "sourceSha256": "C1FAB0244909254511223D6BD874FF77FF38F46BB8D4FF5D96514BAEE2FF21C3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::skills::tests::document_preflight_is_delivered_before_provider_resolution",
       "sourcePath": "SRC/neothd/src/cli/skills.rs",
-      "sourceSha256": "831D31D1AF97006D4C1D52DB5AA0FFD67D47AADB049CA9B8A800E9C2964BD904",
+      "sourceSha256": "C1FAB0244909254511223D6BD874FF77FF38F46BB8D4FF5D96514BAEE2FF21C3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::skills::tests::document_preflight_output_failure_prevents_provider_resolution",
       "sourcePath": "SRC/neothd/src/cli/skills.rs",
-      "sourceSha256": "831D31D1AF97006D4C1D52DB5AA0FFD67D47AADB049CA9B8A800E9C2964BD904",
+      "sourceSha256": "C1FAB0244909254511223D6BD874FF77FF38F46BB8D4FF5D96514BAEE2FF21C3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::skills::tests::document_preflight_uses_custom_endpoint_identity_and_unknown_price",
       "sourcePath": "SRC/neothd/src/cli/skills.rs",
-      "sourceSha256": "831D31D1AF97006D4C1D52DB5AA0FFD67D47AADB049CA9B8A800E9C2964BD904",
+      "sourceSha256": "C1FAB0244909254511223D6BD874FF77FF38F46BB8D4FF5D96514BAEE2FF21C3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::skills::tests::document_preflight_binds_effective_utility_profile_and_model",
       "sourcePath": "SRC/neothd/src/cli/skills.rs",
-      "sourceSha256": "831D31D1AF97006D4C1D52DB5AA0FFD67D47AADB049CA9B8A800E9C2964BD904",
+      "sourceSha256": "C1FAB0244909254511223D6BD874FF77FF38F46BB8D4FF5D96514BAEE2FF21C3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::skills::tests::document_preflight_rejects_unbounded_claude_cli_before_emission",
       "sourcePath": "SRC/neothd/src/cli/skills.rs",
-      "sourceSha256": "831D31D1AF97006D4C1D52DB5AA0FFD67D47AADB049CA9B8A800E9C2964BD904",
+      "sourceSha256": "C1FAB0244909254511223D6BD874FF77FF38F46BB8D4FF5D96514BAEE2FF21C3",
       "junitClass": "neoth"
     },
     {
@@ -9174,7 +9174,31 @@
     {
       "test": "skills::doc_distill::tests::every_scanned_chapter_range_is_accepted_by_document_distillation",
       "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-      "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "skills::doc_distill::tests::extracted_large_document_chapters_keep_identities_and_fit_distillation",
+      "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "skills::doc_distill::tests::truncated_extraction_is_refused_before_chapter_selection",
+      "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
+      "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::skills::tests::admitted_pdf_and_rtf_files_enter_large_extracted_chapter_selection",
+      "sourcePath": "SRC/neothd/src/cli/skills.rs",
+      "sourceSha256": "C1FAB0244909254511223D6BD874FF77FF38F46BB8D4FF5D96514BAEE2FF21C3",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::skills::tests::admitted_truncated_rtf_refuses_chapter_selection",
+      "sourcePath": "SRC/neothd/src/cli/skills.rs",
+      "sourceSha256": "C1FAB0244909254511223D6BD874FF77FF38F46BB8D4FF5D96514BAEE2FF21C3",
       "junitClass": "neoth"
     }
   ],
@@ -11018,19 +11042,19 @@
       {
         "test": "skills::doc_distill::tests::review_handle_rejects_later_writer_and_deleter",
         "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-        "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+        "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
         "junitClass": "neoth"
       },
       {
         "test": "skills::doc_distill::tests::final_reparse_point_is_rejected_before_document_bytes_are_admitted",
         "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-        "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+        "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
         "junitClass": "neoth"
       },
       {
         "test": "skills::doc_distill::tests::intermediate_reparse_point_is_rejected_from_the_disk_root_walk",
         "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-        "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+        "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
         "junitClass": "neoth"
       },
       {
@@ -11332,13 +11356,13 @@
       {
         "test": "skills::doc_distill::tests::final_symlink_is_rejected_by_capability_bound_snapshot_open",
         "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-        "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+        "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
         "junitClass": "neoth"
       },
       {
         "test": "skills::doc_distill::tests::intermediate_symlink_is_rejected_by_capability_bound_directory_walk",
         "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-        "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+        "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
         "junitClass": "neoth"
       },
       {
@@ -11646,13 +11670,13 @@
       {
         "test": "skills::doc_distill::tests::final_symlink_is_rejected_by_capability_bound_snapshot_open",
         "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-        "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+        "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
         "junitClass": "neoth"
       },
       {
         "test": "skills::doc_distill::tests::intermediate_symlink_is_rejected_by_capability_bound_directory_walk",
         "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
-        "sourceSha256": "25270033AFB27DD5CB61E9FF8EE1609CD194EEA828B769405BBDCA548DF81220",
+        "sourceSha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
         "junitClass": "neoth"
       },
       {
@@ -34092,6 +34116,73 @@
       }
     ],
     "note": "Root verified three archives237sources2inputs1292terminals. D7all12;B5all11+sixpreflightboundaries. W840productchanges remain unstaged and unaccepted.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave840ExtractedChapterAcceptance": {
+    "requiredTests": [
+      "skills::doc_distill::tests::extracted_large_document_chapters_keep_identities_and_fit_distillation",
+      "skills::doc_distill::tests::truncated_extraction_is_refused_before_chapter_selection",
+      "cli::skills::tests::admitted_pdf_and_rtf_files_enter_large_extracted_chapter_selection",
+      "cli::skills::tests::admitted_truncated_rtf_refuses_chapter_selection"
+    ],
+    "scope": "Actual admitted PDF/RTF post-extraction chapter selection, exact source and extracted identities, JSON raw-text exclusion, small PDF/RTF full review, actual cappedRTF truncation refusal",
+    "status": "Independent static review approved; hosted validation pending",
+    "localExecutableValidationRan": false
+  },
+  "wave840ExtractedChapterPublication": {
+    "base": "a22cc5fbeda1621e91954af03734b34a9d94f095",
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 23282,
+        "sha256": "B309469BE12C1902BAC8A49D6A9B103A64BC2452313EFF1D5310DBB3AD597CEA",
+        "blob": "82f6b76f8e525e18a3cf05c6884ba3a3a1bcac51"
+      },
+      {
+        "path": "docs/gold-wave840-extracted-chapters.md",
+        "bytes": 1960,
+        "sha256": "185BE8DD2A5ADBFCDB6B2FFAD7216B06FBFD7DA94E44CE07653002A56676351D",
+        "blob": "d19e84ee357b4c07560bb91fef5c736adc92e792"
+      },
+      {
+        "path": "docs/verification/gold-wave841-core-cli.json",
+        "bytes": 2016,
+        "sha256": "97D48919E0A2B6C389B2C8AE14FA97F43D1C3EC55C5F47F797B4D58070EBDF2C",
+        "blob": "9e12cc5d5733982b9dfd6b0516ab4fcfdb653ed7"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 269006,
+        "sha256": "68DB4791B20B1C316074E213125EF0CCF2248C8D7ECC175F2BDF8250940D346C",
+        "blob": "a900fcdbf0ac233d9fc8b59c9bfabc789c4ab8e2"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1280334,
+        "sha256": "4BB5C270343A15EBCB12E476DECE0A05F558BE9E2DDD3325E9AF920085DA6387",
+        "blob": "b3b64e5eea3c479a74acb136ce065c9167c18c0e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1888355,
+        "sha256": "6B8AA2A561A9BFC2AD51F2C0879CDF16B0037A7D17381F59625AE1994841943D",
+        "blob": "5bdbf59f929ea8261742ff0e507f13ddadf0d6cc"
+      },
+      {
+        "path": "SRC/neothd/src/cli/skills.rs",
+        "bytes": 175857,
+        "sha256": "C1FAB0244909254511223D6BD874FF77FF38F46BB8D4FF5D96514BAEE2FF21C3",
+        "blob": "ba6ad5cffc27479d867547b8f1d82dade0bc4262"
+      },
+      {
+        "path": "SRC/neothd/src/skills/doc_distill.rs",
+        "bytes": 77316,
+        "sha256": "3B97CBFEB784559C82B7596908B7ED0CD18A296834350AE2437E0A1271E67ED4",
+        "blob": "f6425d09fe4cacfd92029ba9818e59ad397a3a80"
+      }
+    ],
+    "note": "W840 independent review and Root test-tightening addendum APPROVE SHA2565700278E65B0E56496374C99439E40BF1930D46FE075E60C94B73B9CD09AD895. OriginalB3 remains open until hosted actual extractor/receipt/truncation results. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
