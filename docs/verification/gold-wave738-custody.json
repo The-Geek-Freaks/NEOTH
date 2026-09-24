@@ -1,0 +1,28 @@
+{
+  "schema": "neoth-custody-package-admission/v1",
+  "wave": 738,
+  "run": 35984512675,
+  "job": 107583999682,
+  "source": "d1e51dc5b5a6e359185c2ba127649e3dda358fd3",
+  "status": "ROOT_VERIFIED_TESTS_AND_LINT_PASS",
+  "passed": 44,
+  "failed": 0,
+  "ignored": 0,
+  "filteredOut": 0,
+  "targetedPassed": [
+    "tests::selected_slack_account_is_exact_and_never_serializes_its_tokens",
+    "tests::selected_slack_account_keeps_the_exact_loaded_source_set",
+    "tests::selected_slack_account_rejects_broad_or_ambiguous_shapes_without_tokens_in_error"
+  ],
+  "extractor": "SUCCESS",
+  "lint": "SUCCESS",
+  "workflowConclusion": "failure",
+  "workflowFailure": "Formatting only; exact GitHub patch independently verified and imported",
+  "sourcePaths": [
+    "SRC/neoth-openclaw-custody/src/lib.rs",
+    "SRC/neoth-openclaw-custody/src/pinned_inventory.rs",
+    "SRC/neoth-openclaw-custody/src/pinned_schema.rs"
+  ],
+  "rootLogSha256": "A30C2C32C563FA4D6878C83E6A8FDA0622FB289B44EBD5DABDB0FB0C39ED68F2",
+  "localExecutableValidationRan": false
+}

@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W738-W743 custody results and focused adoption qualification (2026-09-24):**
+Custody35984512675 atd1e51dc5 passed all44 tests and Clippy, including the three
+new Slack source-selection cases. Its only failed step was formatting; Root
+verified/imported the exact three-file Preflight formatter artifact. F1/F2/F3
+are already implemented; six existing scene/decode, MAD-boundary/dedup and
+sparse-keyframe tests now join the hosted selection, including real ffmpeg on
+Linux. Twenty-four existing workflow-cost/prompt-tax checks also join the
+selection. Ten existing GUI workflow-cost checks are also selected: GUI159Linux/
+155macOS, with no Slint/source changes. Native1398/Group1149; no Road closure.
+Core35984509622 atd1e passed all four gates; W743 imports its exact new CLI
+reference. Group1149 and GUI159 can now validate the selected source.
+See docs/verification/gold-wave738-custody.json and gold-wave738-hosted-format.json.
+
 **W731-W736 OpenClaw Slack import and queue admission (2026-09-24):**
 The CLI selects one schema-backed OpenClaw Slack account and requires an
 explicit target account and allowed member. Only direct bot/app tokens from

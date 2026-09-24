@@ -2917,7 +2917,12 @@ mod default_invocation_tests {
                 "{forbidden} must never become an import input path"
             );
         }
-        for missing in ["--config", "--source-account", "--account", "--allowed-user-id"] {
+        for missing in [
+            "--config",
+            "--source-account",
+            "--account",
+            "--allowed-user-id",
+        ] {
             let args = [
                 "neoth",
                 "channel",
@@ -2944,7 +2949,10 @@ mod default_invocation_tests {
                     }
                 })
                 .collect();
-            assert!(Cli::try_parse_from(filtered).is_err(), "{missing} is required");
+            assert!(
+                Cli::try_parse_from(filtered).is_err(),
+                "{missing} is required"
+            );
         }
     }
 

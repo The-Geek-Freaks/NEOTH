@@ -318,10 +318,7 @@ impl LoadedOpenClawDocument {
         select_from_merged(&self.merged, source_account_label, self.source_set.clone())
     }
 
-    pub fn select_slack_account(
-        &self,
-        source_account_label: &str,
-    ) -> Result<SelectedSlackAccount> {
+    pub fn select_slack_account(&self, source_account_label: &str) -> Result<SelectedSlackAccount> {
         select_slack_from_merged(&self.merged, source_account_label, self.source_set.clone())
     }
 }
@@ -648,7 +645,9 @@ fn select_slack_from_merged(
             format!("OpenClaw channels.slack.accounts.{source_account_label} must be an object")
         })?;
     anyhow::ensure!(
-        selected.len() == 2 && selected.contains_key("botToken") && selected.contains_key("appToken"),
+        selected.len() == 2
+            && selected.contains_key("botToken")
+            && selected.contains_key("appToken"),
         "selected OpenClaw Slack account must contain only botToken and appToken"
     );
     let bot_token = selected
@@ -2382,10 +2381,7 @@ mod tests {
             "{ slack: { accounts: { work: { botToken: 'original-bot-token', appToken: 'original-app-token' } } } }",
         )
         .unwrap();
-        let path = write_config(
-            temp.path(),
-            "{ channels: { $include: './slack.json5' } }",
-        );
+        let path = write_config(temp.path(), "{ channels: { $include: './slack.json5' } }");
 
         let loaded =
             load_openclaw_document(&path, &canonical_known_channel_inventory_sha256()).unwrap();

@@ -590,6 +590,15 @@ Add a channel non-interactively (pass --token etc.) or interactively (stdin prom
 - `--irc-allowed-nick <IRC_ALLOWED_NICK>` — IRC only: optional secondary nick filter. Authentication still requires --allowed-sender as the IRCv3 services account
 - `--allow-plaintext` — Matrix only: explicitly permit plaintext rooms. Encrypted rooms are required when this flag is absent
 
+### `neoth channel import-openclaw-slack`
+
+Import one explicitly selected OpenClaw Slack account into one explicit NEOTH account
+
+- `--config <CONFIG>`
+- `--source-account <SOURCE_ACCOUNT>`
+- `--account <ACCOUNT>`
+- `--allowed-user-id <ALLOWED_USER_ID>`
+
 ### `neoth channel import-openclaw-telegram`
 
 Import one explicitly selected OpenClaw Telegram token into one explicit NEOTH account

@@ -7787,8 +7787,9 @@ mod tests {
         .await
         .unwrap();
 
-        let pair = crate::config::load_runtime_config_pair_from_path(&home.path().join("freedom.yaml"))
-            .unwrap();
+        let pair =
+            crate::config::load_runtime_config_pair_from_path(&home.path().join("freedom.yaml"))
+                .unwrap();
         let accounts = pair.authenticated_slack_accounts().unwrap();
         assert_eq!(accounts.len(), 1);
         let account = accounts
@@ -7799,10 +7800,11 @@ mod tests {
         assert_eq!(account.team_id(), Some("TWORK123"));
         assert_eq!(account.bot_token().expose(), "xoxb-work-secret");
         assert_eq!(account.app_token().expose(), "xapp-work-secret");
-        assert!(home
-            .path()
-            .join(crate::config::reload::RELOAD_SENTINEL_NAME)
-            .exists());
+        assert!(
+            home.path()
+                .join(crate::config::reload::RELOAD_SENTINEL_NAME)
+                .exists()
+        );
     }
 
     #[tokio::test]
@@ -7865,10 +7867,12 @@ mod tests {
             assert!(!rendered.contains("xapp-work-secret"));
             assert_eq!(std::fs::read(&freedom).unwrap(), before_freedom);
             assert_eq!(std::fs::read(&credentials).ok(), before_credentials);
-            assert!(!home
-                .path()
-                .join(crate::config::reload::RELOAD_SENTINEL_NAME)
-                .exists());
+            assert!(
+                !home
+                    .path()
+                    .join(crate::config::reload::RELOAD_SENTINEL_NAME)
+                    .exists()
+            );
         }
     }
 
@@ -7879,11 +7883,7 @@ mod tests {
         let source_dir = tempfile::tempdir().unwrap();
         let source = source_dir.path().join("openclaw.json");
         let included = source_dir.path().join("slack.json5");
-        std::fs::write(
-            &source,
-            "{ channels: { $include: './slack.json5' } }",
-        )
-        .unwrap();
+        std::fs::write(&source, "{ channels: { $include: './slack.json5' } }").unwrap();
         std::fs::write(
             &included,
             "{ slack: { accounts: { work: { botToken: 'xoxb-work-secret', appToken: 'xapp-work-secret' } } } }",
@@ -7931,10 +7931,12 @@ mod tests {
         assert!(!rendered.contains("xapp-work-secret"));
         assert_eq!(std::fs::read(&freedom).unwrap(), before_freedom);
         assert_eq!(std::fs::read(&credentials).ok(), before_credentials);
-        assert!(!home
-            .path()
-            .join(crate::config::reload::RELOAD_SENTINEL_NAME)
-            .exists());
+        assert!(
+            !home
+                .path()
+                .join(crate::config::reload::RELOAD_SENTINEL_NAME)
+                .exists()
+        );
     }
 
     #[tokio::test]
@@ -7966,10 +7968,12 @@ mod tests {
         assert!(!rendered.contains("xapp-work-secret"));
         assert_eq!(std::fs::read(&freedom).unwrap(), before_freedom);
         assert_eq!(std::fs::read(&credentials).ok(), before_credentials);
-        assert!(!home
-            .path()
-            .join(crate::config::reload::RELOAD_SENTINEL_NAME)
-            .exists());
+        assert!(
+            !home
+                .path()
+                .join(crate::config::reload::RELOAD_SENTINEL_NAME)
+                .exists()
+        );
     }
 
     #[test]

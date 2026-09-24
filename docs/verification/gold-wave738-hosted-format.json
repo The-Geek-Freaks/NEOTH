@@ -1,0 +1,34 @@
+{
+  "schema": "neoth-gold-hosted-format-admission/v1",
+  "wave": 738,
+  "source": "d1e51dc5b5a6e359185c2ba127649e3dda358fd3",
+  "run": 35984492748,
+  "artifact": 10801661332,
+  "artifactZipSha256": "d9b0beaf23b96673e1b0439dfc9b9aeee163a57679ff4c824f64a325e702fef0",
+  "patchSha256": "2C271B89D6F8C3EEE731C20976412B0E3C038DBB0E6781126D6DD59691B967CF",
+  "status": "ROOT_VERIFIED_IMPORTED",
+  "paths": [
+    {
+      "path": "SRC/neoth-openclaw-custody/src/lib.rs",
+      "oldBlob": "b1ba831721e58db5f20abd0b0ceb7e519ad1fe17",
+      "expectedNewBlob": "96b7eb25f7ae85b4b9e5fa81ed8665d14f803b76"
+    },
+    {
+      "path": "SRC/neothd/src/cli/channel.rs",
+      "oldBlob": "c17f6c887676cb56119f9f064a17d40adaf3107c",
+      "expectedNewBlob": "4b726788b7ed97e2e30f335bca90b5130ecf433c"
+    },
+    {
+      "path": "SRC/neothd/src/cli/mod.rs",
+      "oldBlob": "b44faa56cb83a63b765b875f8bc6b15245a728a9",
+      "expectedNewBlob": "b820232ae4bcfb5f268aabf4f0600046c8d60043"
+    }
+  ],
+  "rootVerified": [
+    "ZIP digest and all three entry hashes",
+    "internal checksums and source receipt",
+    "three old source/worktree blobs",
+    "git apply --check and three resulting blobs"
+  ],
+  "localExecutableValidationRan": false
+}
