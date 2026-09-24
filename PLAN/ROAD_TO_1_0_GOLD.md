@@ -8,6 +8,21 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W839 grouped acceptance and remaining document scope (2026-09-24):**
+Group1292run36018692982 at033bccf0 passes all1292 fixtures. Root checked all
+three archive digests,237fixture/twoinput bindings and every terminal. B5's
+11reflexion plus six provider/preflight boundaries pass; D7's12 cases pass,
+including the existing research terminal and zero outer-provider calls.
+ADOPT31-B5/D7 close. B3's11raw-text cases and sanitizer compatibility also
+pass, but its original adoption scope includes large extracted PDF/Office
+text: that missing consumer remains open and is the next implementation.
+B6 GUI/proactive, B7 staging and E2 AST code embeddings remain open. Claude's
+RESULT007 arrived and was read; TASK008 now requests actual vault custody and
+same-transaction memory deduplication. Preparation is not delivery/acceptance.
+ROAD1324/1072checked250open2partial;raw252/pre-tag251;ADOPT38open29done;
+dashboard186open;WS-LF38done80open. No local executable validation ran.
+Evidence: docs/verification/gold-wave839-group1292.json.
+
 **W838 hosted test import repair (2026-09-24):**
 Group1292run36017807925 at7fdfb0a4 stopped at test compilation: three new
 preflight fixtures imported ProviderKind through a private config import.
@@ -5583,7 +5598,7 @@ already-gated release workflow itself.
 | WS-R4 Zero-friction install, GUI parity and public launch (2026-07-14) | 15 | **14** | **1** |
 | WS-LF Confirmed lost-feature recovery (2026-07-18) | 118 materialized (52 recovered source rows + 65 plan leaves + 1 inventory-integrity gate) | **80** | **38** |
 | WS-NCT Cognitive Transport + selective Buzz/Prime coordination (2026-07-27; Prime decision 2026-08-10) | 30 (`GOLD-NCT-00..27` + `GOLD-ADOPT-BUZZ-01` + `GOLD-ADOPT-PRIME-01`) | **28** | **2** |
-| WS-ADOPT31 18-source forensic adoption wave + Wayfinder/ADW/Evidence-Gated pipeline (2026-07-31) | 67 (`ADOPT31-*`; lanes A7/B12/C10/D7/E2/F4/G7/H2/**W2+I7+V5**/X2) | **40** | **27** |
+| WS-ADOPT31 18-source forensic adoption wave + Wayfinder/ADW/Evidence-Gated pipeline (2026-07-31) | 67 (`ADOPT31-*`; lanes A7/B12/C10/D7/E2/F4/G7/H2/**W2+I7+V5**/X2) | **38** | **29** |
 | WS-CC Context Connectors & People Intelligence (2026-08-13) | 13 (`GOLD-CC-00..12`) | **12** | **1** |
 | WS-ADOPT30 8-source bounded external-adoption review (2026-08-30) | 8 (`GOLD-ADAPT-ARCHIFY-01`, `GOLD-ADAPT-GN-01`, `GOLD-ADAPT-S2C-VISUAL-REVIEW-01`, `GOLD-ADAPT-TAILCAT-01`, `GOLD-ADOPT-FREELLMAPI-01`, `GOLD-ADAPT-WIKISKILL-01`, `GOLD-ADAPT-AIMEM-01`, `GOLD-ADOPT-MODULAR-01`) | **7** | **1** |
 
@@ -5591,20 +5606,20 @@ already-gated release workflow itself.
 inside their already-open parent rollups and therefore are not added a second
 time to the WS-R4 top-level total.
 
-**Current count semantics (reconciled 2026-09-24 after W832 workflow-replay acceptance):**
-the dashboard tracks broad/workstream rollups; its OPEN column sums to **188**
-(`1 + 6 + 14 + 80 + 28 + 40 + 12 + 7`). The release workflow uses a different
+**Current count semantics (reconciled 2026-09-24 after W839 reflexion/routing acceptance):**
+the dashboard tracks broad/workstream rollups; its OPEN column sums to **186**
+(`1 + 6 + 14 + 80 + 28 + 38 + 12 + 7`). The release workflow uses a different
 and stricter contract: `packaging/roadmap_release_gate.py` counts every Markdown
 task outside fenced code, including mandatory child contracts. The whole-file
-result is **1,324 total / 1,070 done / 252 open / 2 partial = 254 raw blockers**.
-A release tag has **253 pre-tag blockers**, because only the single
+result is **1,324 total / 1,072 done / 250 open / 2 partial = 252 raw blockers**.
+A release tag has **251 pre-tag blockers**, because only the single
 `GOLD-RELEASE-ARTIFACTS` task may remain open while that workflow creates its
-evidence. The values 188, 254 and 253 answer different questions and must not be
+evidence. The values 186, 252 and 251 answer different questions and must not be
 substituted for one another in release-readiness claims. The two partials still
 block release; notably A6 has a tested VAD primitive but no live Playback-Cancel
 consumer until A2/A7 exist. `ADOPT31-C3` retains the canonical open state.
 
-<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1324 complete=1070 open=252 partial=2 raw_blockers=254 release_tag_blockers=253 release_generated_items=1 -->
+<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1324 complete=1072 open=250 partial=2 raw_blockers=252 release_tag_blockers=251 release_generated_items=1 -->
 
 _¹ Counts mechanically recomputed 2026-06-19 from the plan's checkboxes (unique bold GOLD-ids per workstream). WS-V's 44 residual findings are tracked in the gitignored `REVIEWS/_gold_audit/` triage file, not as in-plan checkboxes. WS-I figures differ from earlier hand-curated totals due to dedup of repeated deep-read batch listings + the bold-id method, not lost work. **WS-I recomputed 2026-06-21** (dedup by unique `GOLD-ADAPT-` id, an id is DONE if any entry is `[x]`): **304 total / 130 open / 174 done** — reflects the parallel-loop ships + this session's wirings (LOWKEY-04/07, SPEAKR-01, OH-09, AWE-AIDER-01) since the 2026-06-19 recompute. **Re-recomputed 2026-06-21 (partials loop): 304/122/182** — + ODY-27/ODY-19/ODY-13 wired + parallel ships. **Re-recomputed 2026-06-22 (followups loop): 299/118/181** — KB-02 re-UPGRADED [~]→[x] (wired into self-improve execute stop gate); total drift 304→299 = parallel-instance dedup of repeated batch listings, not lost work. **Re-recomputed 2026-06-22 (followups loop B): 299/112/187** — CBM-02 re-UPGRADED [~]→[x] (verify-then-register), + ~5 parallel-instance WS-I closures since the last recompute. Non-WS-I ships this loop: ODY-23b (`neoth fetch --goal`), ODY-07b parts 1+2, FEAT-07b 0xDF audit, HERMES-03b channel clarification, FEAT-08b jailbreak retry. **Re-recomputed 2026-06-22 (SPEAKR-02b/c + NN-MEM-05 followup): 298/106/192** — mechanical re-count (`uv run` script over all `**GOLD-ADAPT-<id>**` checkboxes, an id DONE if any entry `[x]`): SPEAKR-02 confirmed DONE (matcher SPEAKR-02 + stt_dispatch wire SPEAKR-02b both shipped; stale duplicate `[ ]` at the WS-I-tail flipped to `[x]`), NN-MEM-05 confirmed DONE; total 299→298 = one more dedup of a repeated batch listing, done 187→192 = +5 parallel-instance WS-I closures + this loop, open 112→106. Non-WS-I ship this followup: forget-cascade-txn (atomic erasure). In progress: SPEAKR-02c (candle speaker-embedding encoder filling the `utterance_embeddings()` seam). **Re-recomputed 2026-07-03 (B3 session)**: section-checkbox count for WS-A..H (WS-E 24/1/23 — the open box is the GOLD-ARCH-07 rest line; WS-F 26/5/21 — the 6 GOLD-LOOP ids live physically in the WS-I batch-2 listing and count there; WS-G incl. Batch C 28/1/27 — open = GOLD-ADOPT-25; WS-H 19/3/16 — open = PROG-06 + operator-parked PROG-13/15), WS-DELTA row added (16/16 complete 2026-07-02), WS-I unique-`GOLD-ADAPT-` id dedup **299 total / 37 open / 262 done**. Raw file truth at recompute: 70 open boxes / 0 partial / 743 done (the 70 includes repeated batch listings + the 11 Definition-of-GOLD roll-up boxes in §5). **Re-recomputed 2026-07-03b (post B3/B4/B5 + error-hunt #1):** raw 58 open; WS-E COMPLETE (ARCH-07b), WS-H 19/2/17 (PROG-06 shipped; rest = operator-parked PROG-13/15), WS-I unique-id 299/32/267 (GRILL-02/04, ODY-26, PRO-08, HR-06, G-02+QUEUE-01, SPEAKR-01-dup, LOOP-02/04/05/06/07 flipped; +G02-COUNCIL-01/G02-CLUSTER-01 new). **Re-recomputed 2026-07-10 (ChatGPT-R3 gold-tag-blocker session, `8892255f`), mechanical raw checkbox scan over the whole file: 901 `[x]` / 3 `[ ]` / 1 `[~]` = 905 total.** The 3 open `[ ]` are all operator/v1.1, NOT code-blockers: GOLD-HR-00 (operator-machine headroom install), signed-release-artifacts (operator runs the signed release build — no longer blocked on PROG-13 provisioning, which is done), OMI-MULTIMODAL-01 (v1.1 multi-week). The 1 `[~]` is DES-13 (mesh-failover, weitgehend geschlossen; only the foreign→recall auto-merge-restore is honestly deferred). This session flipped `[~]`→`[x]`: SELF-IMPROVE-SAFETY-01 (both residuals closed) + FEAT-06 (real swarm resource values), and `[ ]`→`[x]`: the stale DES-11 GUI duplicate. No `[~]` remain except DES-13; the earlier "no partials" header claim is now nearly true (1 honest partial). **Re-recomputed 2026-07-11 (B17-B25 audit wave + ChatGPT-review follow-up), mechanical raw whole-file scan: `910 [x] / 3 [ ] / 1 [~]` = 914 total.** The header-row "226/8/218" at line 75 is the WS-A..H+DELTA section subtotal (per footnote ¹), NOT the whole-file raw count — do not read it as the global total. Deltas since the 901/3/1 recount: +9 raw `[x]` (B17-B25 audit residuals all shipped across W0 `116d8921` / W1 `44d61cb1` / W2 `17135237` / W3 `25c6702c`, +B19 cross-process follow-up `c7d32de4`; **B07 CHANNEL-CREDENTIAL-ATOMICITY-01 flipped `[~]`→`[x]`** — its startup-fail-open residual was batched into B17 and is verified closed: `serve.rs:666-676` is now fail-closed `load_or_default(…).with_context(…)?`). The lone remaining `[~]` is DES-13 (mesh-failover foreign→recall auto-merge, honestly deferred). **Forensic adoption-completeness re-audit 2026-07-11** (workflow `wf_4f848c23-f2b`, 9 find→classify pipelines over the REAL Hermes/OpenClaw/OpenHuman sources vs the old deep-reads → adversarial verify; full data `REVIEWS/_gold_audit/forensic_adoption_completeness_2026-07-11.md`): **VERDICT — adoptions are COMPLETE, nothing high-value missed.** The workflow's ~90 raw `confirmed_gap` items are ~90% false-positive (its verify layer couldn't tell "absent under this exact name" from "genuinely missing"); every high-plausibility hit was hand-verified as already-built (15/15 channels shipped; Signal rate-limiter `signal.rs:114-124` + `channels/rate_limit.rs`; Discord gateway heartbeat/identify/resume; Nostr/Matrix dedup+E2EE), an intentional FEAT-10 SKIP (msteams/feishu/google-meet/tlon/twilio/simplex/ntfy), or a **documented** low-marginal Matrix/Signal follow-up already superseded by a NEOTH equivalent (sender-allowlist ≥ `MATRIX_IGNORE_USER_PATTERNS`; always-on-E2EE ≥ `E2EE_MODE`). Building the raw list would be bloat, not completeness — no adoption build is required for v1.0. The 3 `[ ]` are unchanged and all genuinely not-agent-performable: HR-00 (reroutes operator's live `ANTHROPIC_BASE_URL`), signed-release (CI complete — only the operator `v*` tag push materializes the public artifacts), OMI-MULTIMODAL-01 (v1.1 multi-week, heavy live-capture dep + new consent-boundary system — half-building it would be a degrade). **Re-recomputed 2026-07-12 (ChatGPT-9.89-review follow-up session), mechanical raw whole-file scan: `911 [x] / 3 [ ] / 0 [~]` — ZERO partials.** The stale DES-13 `[~]` was resolved (its deferred remainder shipped 2026-07-10 as DES-13-AUTO-RESTORE-01, whose own entry states „DES-13 damit KOMPLETT"), so the §0 „No `[~]`" governance rule is mechanically true again. Per-section mechanical recount same date: WS-A..H, WS-DELTA, WS-DES, WS-ZF, WS-V all **0 open**; **WS-I unique-`GOLD-ADAPT-` id dedup 308 total / 0 open / 308 done — WS-I COMPLETE** (370 raw section entries incl. repeated batch listings, every one `[x]`). Dashboard rows above updated to these mechanical values; the only 3 open boxes in the entire file are the operator/v1.1 trio (WS-HR line ~1345, §5 line ~1446, §6 line ~1578)._
 
@@ -9499,8 +9514,15 @@ seeded by Fabric's `reflexion.json` / `self-refine.json`.
   checks pass despite a separate W153 fixture failure. See
   docs/verification/gold-wave770-gui-windows.json; unrelated GUI work stays open.
 
-- [ ] **ADOPT31-B5** Self-critique / reflexion pass — one scored self-review call between
+- [x] **ADOPT31-B5** Self-critique / reflexion pass — one scored self-review call between
   distillation and staging, rejecting below threshold. *NEOTH:* `doc_distill.rs`. **S**
+  **Accepted 2026-09-24 (W839):** all11 reflexion and six provider/preflight
+  boundary cases pass in Group1292 at033bccf0. Root verified three archives,
+  237 fixture/two input bindings and every individual terminal. One scored
+  review follows the candidate; refusal, malformed output and low scores do
+  not grant staging eligibility. Independent W828 source review is approved.
+  B6 GUI/proactive and B7 staging remain separate open consumers. Evidence:
+  docs/verification/gold-wave839-group1292.json.
 - [ ] **ADOPT31-B6** Pre-flight token/cost estimate shown before a long distillation starts.
   *NEOTH:* `doc_distill.rs::preflight_estimate`. *Consumer:* proactive queue + GUI. **S**
 - [ ] **ADOPT31-B7** Consent-gated skill staging — route decision (new skill vs. memory vs.
@@ -9804,10 +9826,15 @@ to run training in-process** (Rules 1 and 8).
   **Accepted 2026-09-24 (W797):** all13 source-bound checklist/G02/cooldown
   and malformed-evidence cases passed in Group1217 at f7cc563b. Evidence:
   docs/verification/gold-wave797-specialist-advisor.json.
-- [ ] **ADOPT31-D7** Route-by-verifiability — encode volume × verifiability as an explicit
+- [x] **ADOPT31-D7** Route-by-verifiability — encode volume × verifiability as an explicit
   routing input (high-volume + verifiable → local specialist; verifiable + rare → frontier;
   changing facts → retrieval; unverifiable → human). *NEOTH:* `models/selector.rs` +
   `models/hemisphere_preset.rs`. **M**
+  **Accepted 2026-09-24 (W839):** all12 exact source-bound routing, evidence
+  and consumer tests pass at033bccf0, including the actual research terminal
+  with zero outer-provider calls, typed human handoff and existing provider
+  role selection. This closes explicit request routing, not unrelated model
+  training or release evidence. docs/verification/gold-wave839-group1292.json.
 
 ### Lane E — code context residuals (code-review-graph + claude-context, MIT)
 

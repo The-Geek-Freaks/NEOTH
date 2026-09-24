@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T15:12:11.5951507Z",
-  "validationStatus": "W838 public ProviderKind test import repair;W835productionClippyPASS;Group1292compilefailed before fixtures",
+  "capturedUtc": "2026-09-24T15:28:52.8007833Z",
+  "validationStatus": "W839Group1292@033bccf0ADMITTED1292PASS0FAIL;B5D7accepted;B3PDFOfficeconsumerstillopen",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1812,6 +1812,11 @@
       "sha256": "0CEFD84FA039F7B994D6A523771B59FD0746586C103A02A767BA4182AF33BCA1"
     },
     {
+      "path": "docs/verification/gold-wave839-group1292.json",
+      "bytes": 94589,
+      "sha256": "4E764A33FE1EAD575E076E93AF2BA665B2B5340CD6134460E3380096E2C938B6"
+    },
+    {
       "path": "docs/verification/managed-browser-cft154.json",
       "bytes": 2497,
       "sha256": "80443D2F6E6A6E226F1617F7F5463017071D9D21130D1FCD116470F147455337"
@@ -1968,18 +1973,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 266741,
-      "sha256": "FA1264CC9CD0CF9B861989A6FE116284B250FF898E5DC8BA7BE1794A9369C63D"
+      "bytes": 267773,
+      "sha256": "1C4AE77F47C053982FA3965627B34453282299CBF7B6DBB451546FEFFBB9ACE9"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1278069,
-      "sha256": "FCA01E75B9D3F6D42D928218DCC17A3E77CB8F3821BAC346B9FC1A1F12AA8453"
+      "bytes": 1279101,
+      "sha256": "680847A0612DAE8C32FA00C4D2700F751552F803530F1123A7B880D34BCA3F73"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1885196,
-      "sha256": "44CF955E46E976C9D5B62490840A4721094CD68C5C1CF8669EC63690D374C0D0"
+      "bytes": 1887122,
+      "sha256": "E6215BC8D675B5A8E02E182492003BF5593041F6BC8064390DCF57D643BC178A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

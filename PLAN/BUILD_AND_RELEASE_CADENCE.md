@@ -3,6 +3,21 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W839 grouped acceptance and remaining document scope (2026-09-24):**
+Group1292run36018692982 at033bccf0 passes all1292 fixtures. Root checked all
+three archive digests,237fixture/twoinput bindings and every terminal. B5's
+11reflexion plus six provider/preflight boundaries pass; D7's12 cases pass,
+including the existing research terminal and zero outer-provider calls.
+ADOPT31-B5/D7 close. B3's11raw-text cases and sanitizer compatibility also
+pass, but its original adoption scope includes large extracted PDF/Office
+text: that missing consumer remains open and is the next implementation.
+B6 GUI/proactive, B7 staging and E2 AST code embeddings remain open. Claude's
+RESULT007 arrived and was read; TASK008 now requests actual vault custody and
+same-transaction memory deduplication. Preparation is not delivery/acceptance.
+ROAD1324/1072checked250open2partial;raw252/pre-tag251;ADOPT38open29done;
+dashboard186open;WS-LF38done80open. No local executable validation ran.
+Evidence: docs/verification/gold-wave839-group1292.json.
+
 **W838 hosted test import repair (2026-09-24):**
 Group1292run36017807925 at7fdfb0a4 stopped at test compilation: three new
 preflight fixtures imported ProviderKind through a private config import.
