@@ -1,0 +1,16 @@
+{
+  "schema": "neoth-hosted-cli-reference/v1",
+  "run": 35948530640,
+  "source": "33e8a9a3a7966a93906487c56f27af69fa375e41",
+  "artifactId": 10788755286,
+  "artifactSha256": "97e1a9bd2d48c898640baa95e41b07cc3a8a2cbaa3ae60ad30bf003a7d932d27",
+  "referenceSha256": "376bb65b0cd932bfd215e91c0b75b06933558add28dca55a0b52dc64cf0a231f",
+  "sourceReceiptVerified": true,
+  "zipDigestVerified": true,
+  "referenceHashVerified": true,
+  "committedSourceMatches": true,
+  "slimClippy": "PASS",
+  "coreTestTargets": "PASS",
+  "cliBuild": "PASS",
+  "localExecutableValidationRan": false
+}

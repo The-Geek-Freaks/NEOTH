@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W615-W616 Windows diagnosis and hosted CLI export (2026-09-24):**
+Core run35948530640 at33e8a9a3 passes slim production Clippy, core test-target
+checking and public CLI build/export. The generated reference is imported
+byte-exact after ZIP digest, source receipt and SHA256 verification; it adds
+`obsidian bridge update`. Group971 can now exercise the four native update
+cases. Windows41 run35948232925 ataeab1fe0 is independently admitted38PASS/
+3FAIL/0missing with49 internal hashes and11 source bindings. The three guarded
+installer failures share `stage=write_owned_file;kind=Uncategorized;raw=Some(32)`.
+Test-only inner-operation diagnosis is next; no speculative sharing or identity
+fence change is accepted. GUI W480 and macOS package execution remain pending.
+No Road closure or local executable validation.
 **W611-W612 full grouped pass and locked plugin replay (2026-09-24):**
 Group967 run35947835430 atd6d76425 is independently admitted967PASS/0FAIL/
 0missing with188 source bindings; both supplied-keychain cases pass. Obsidian

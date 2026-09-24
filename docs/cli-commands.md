@@ -2922,6 +2922,12 @@ Remove known owned files while preserving plugin settings and additions
 
 - `--vault <PATH>`
 
+#### `neoth obsidian bridge update`
+
+Update only an exact authenticated predecessor artifact
+
+- `--vault <PATH>`
+
 ### `neoth obsidian days`
 
 List archive days that have at least one session MD file
