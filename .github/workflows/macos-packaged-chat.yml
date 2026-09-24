@@ -47,10 +47,10 @@ jobs:
           git ls-files -z SRC packaging/macos .github/workflows/macos-packaged-chat.yml \
             | xargs -0 shasum -a 256 > "$evidence/source-inputs.sha256"
 
-      - name: Setup Rust 1.91
+      - name: Setup Rust 1.93
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: '1.91.0'
+          toolchain: '1.93.0'
 
       - name: Setup receipt verifier Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -65,9 +65,9 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             SRC/target/
-          key: packaged-chat-${{ matrix.arch }}-1.91-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
+          key: packaged-chat-${{ matrix.arch }}-1.93-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            packaged-chat-${{ matrix.arch }}-1.91-${{ hashFiles('SRC/Cargo.lock') }}-
+            packaged-chat-${{ matrix.arch }}-1.93-${{ hashFiles('SRC/Cargo.lock') }}-
 
       - name: Build the actual desktop daemon and GUI
         id: desktop-build
@@ -127,7 +127,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             SRC/target/
-          key: packaged-chat-${{ matrix.arch }}-1.91-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
+          key: packaged-chat-${{ matrix.arch }}-1.93-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
 
       - name: Upload source, package and external process evidence
         if: always()

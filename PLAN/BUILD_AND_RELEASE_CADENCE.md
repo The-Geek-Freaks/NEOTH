@@ -3,6 +3,17 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W599/W602 grouped evidence and macOS release toolchain (2026-09-24):**
+Group966 run35945986803 atce8caa19 is independently source-admitted with
+965PASS/1FAIL/0missing and188 bindings. The lone failure is the Paperless
+supplied-keychain fixture entering the ambient OS keychain through config
+loading; a narrow repair is under way. Package run35946989585 reaches the
+actual release-desktop dependency set, whose locked Matrix SDK0.18 requires
+Rust1.93. The new package lane now matches the existing release/preview pin
+1.93.0 and isolates its cache accordingly; no feature or dependency is removed.
+W593 Preflight35946989744 at9e14e5fc passes after exact hosted formatting.
+Package runtime, GUI148 terminal admission, Windows41 and Road closure remain
+pending; no local executable validation ran.
 **W597 hosted package-probe formatting (2026-09-24):**
 Preflight35946845117 generated an exact three-file rustfmt patch for W593
 sourceda5635c6. ZIP digest, receipt hashes and every old/new Gitblob were checked

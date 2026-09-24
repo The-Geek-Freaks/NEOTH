@@ -1,0 +1,66 @@
+{
+  "schema": "neoth-group966-summary/v1",
+  "run": 35945986803,
+  "job": 107463908924,
+  "workflow": "Research and loop lifecycle quality",
+  "runConclusion": "failure",
+  "source": {
+    "head": "ce8caa197a5722e1b6cdb80ad25e610595e4730c",
+    "ref": "refs/heads/main",
+    "receiptHeadVerified": true,
+    "receiptRefVerified": true
+  },
+  "group966": {
+    "required": 966,
+    "selected": 966,
+    "executed": 966,
+    "passed": 965,
+    "failed": 1,
+    "missingTerminal": 0,
+    "status": "SOURCE_ADMITTED_PARTIAL_FAILURE",
+    "sourceBindingCount": 188
+  },
+  "failedTerminals": [
+    {
+      "terminal": "installers::paperless_bootstrap::tests::keychain_write_follows_real_pair_publication_and_rechecks_effective_state",
+      "status": "failed",
+      "sourcePath": "SRC/neothd/src/installers/paperless_bootstrap.rs",
+      "sourceSha256": "2c4971978adff889d81ccd03620da4fbbb1eaaced1d5ce1fcb033bad852aa64c",
+      "gitBlob": "0b1196010090cb40f30e0035af16a654e10f3580",
+      "verifiedSha256": "2C4971978ADFF889D81CCD03620DA4FBBB1EAACED1D5CE1FCB033BAD852AA64C",
+      "hostedFailure": "paperless_bootstrap_persist"
+    }
+  ],
+  "artifacts": [
+    {
+      "name": "w190-research-lifecycle-log-ce8caa197a5722e1b6cdb80ad25e610595e4730c",
+      "id": 10787435849,
+      "apiDigest": "sha256:3ac748a4ee457f99045e518c55711df81affa082b9d800acd95d27946eba3b8c",
+      "localZipSha256": "3ac748a4ee457f99045e518c55711df81affa082b9d800acd95d27946eba3b8c",
+      "verified": true
+    },
+    {
+      "name": "w190-research-lifecycle-receipt-ce8caa197a5722e1b6cdb80ad25e610595e4730c",
+      "id": 10786918086,
+      "apiDigest": "sha256:e425f5fffc5ef3cfb908b08687139609eb62240f6d4b5b79d63495d99ed10f5f",
+      "localZipSha256": "e425f5fffc5ef3cfb908b08687139609eb62240f6d4b5b79d63495d99ed10f5f",
+      "verified": true
+    },
+    {
+      "name": "w190-research-lifecycle-source-ce8caa197a5722e1b6cdb80ad25e610595e4730c",
+      "id": 10786813478,
+      "apiDigest": "sha256:5b1637b33c03f13ce23518d31ac85479c6ebf2ce795ac3e88868e36e8c493f8f",
+      "localZipSha256": "5b1637b33c03f13ce23518d31ac85479c6ebf2ce795ac3e88868e36e8c493f8f",
+      "verified": true
+    }
+  ],
+  "validation": {
+    "artifactDigestEquality": true,
+    "fixtureIdentityOrder": true,
+    "terminalMarkersAndExactOneTestResult": true,
+    "receiptFailureInventory": true,
+    "sourceCommitBlobSha256": true,
+    "localExecutableValidationRan": false
+  },
+  "rootAdmission": "Root reran source/terminal verifier:966/965PASS1FAIL0missing188bindings; independently rehashed three ZIPs; no local test execution"
+}

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T02:20:51.2287730Z",
-  "validationStatus": "W597 exact hosted formatting imported; package runtime pending",
+  "capturedUtc": "2026-09-24T02:24:11.4601720Z",
+  "validationStatus": "W599966/965PASS1FAIL; W602 package Rust1.93 matches existing release pin; runtime pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -59,7 +59,7 @@
     {
       "path": ".github/workflows/macos-packaged-chat.yml",
       "bytes": 5446,
-      "sha256": "9EE33F97522A4616151AE30BD833865EC8F687611C09AEF1CB375C24D0BE4297"
+      "sha256": "BA685208C51587A01A62D0EA89F9299C9D73BE7E586181EE0F6F1001DDFB0EAC"
     },
     {
       "path": ".github/workflows/managed-browser-provenance.yml",
@@ -1317,6 +1317,11 @@
       "sha256": "AB18030C6E8F7566636894F2B0C43C97A66F400B7F4BF75220D60C5E138E9F90"
     },
     {
+      "path": "docs/verification/gold-wave599-group966-summary.json",
+      "bytes": 2574,
+      "sha256": "F9DD5366B1BD50658E925FE92F89069AD72C6129C86C924F810555AC7E940626"
+    },
+    {
       "path": "docs/verification/managed-browser-cft154.json",
       "bytes": 2497,
       "sha256": "80443D2F6E6A6E226F1617F7F5463017071D9D21130D1FCD116470F147455337"
@@ -1458,18 +1463,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 214452,
-      "sha256": "FCF096979FB2831A3CDB2D1E9F7E871D865BD06FE2C9B465F6D188577AF1ADE4"
+      "bytes": 215250,
+      "sha256": "20DFA4701B94DD1A493D54CB4205916CBB8752638932C06C83686BB8C1A12220"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1225780,
-      "sha256": "CECEF6E4318EAF0012B205FD323870813237B716E3AFD4C65F0AEF279250F6C6"
+      "bytes": 1226578,
+      "sha256": "951E3A1DBED0F34608D6A4734C4EB2D133F265DBF2BCC30DE9D9051EA5657252"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1825062,
-      "sha256": "0B61BBB54938F01447927642372829D565261F7F7BF633D3ADD522E5B6C3B6D3"
+      "bytes": 1825860,
+      "sha256": "B072340933736F9279732C1AEB1362F80CB34BDC74F24EEAB95C024CCF61AAA2"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
