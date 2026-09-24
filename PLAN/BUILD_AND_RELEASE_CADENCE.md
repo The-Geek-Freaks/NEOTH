@@ -3,6 +3,21 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W891 hosted validation and compile cache (2026-09-24):** Core36045259775
+atca4bf9e8 passed strict slim production Clippy and default-feature core-test
+typecheck; public CLI build/export remains in progress. Group1383 run36047068548
+and Windows142 run36047072833 now validate the same source. B7/B8/C1a stay open
+until their actual behavior and consumer criteria pass. macOS35983808777
+attempt2 has built both desktop daemons and is building both GUIs.
+The CLI-reference workflow now owns one completed Cargo checkpoint per OS,
+Rust1.91 and lockfile, saved only after successful preceding gates and CLI build.
+Measured prior runs restored the same old1.46GB partial cache; no speedup is
+claimed before a completed cache warm-up and subsequent exact-hit measurement.
+W892 is implementing n8n's one-job runtime custody transaction; its unfinished
+source is excluded from this publication. Claude TASK014 requests pinned-source
+bootstrap/import contracts. No local executable validation ran. Road counts
+remain1324:1073done/249open/2partial; inventories1007/native1616/group1383.
+
 **W888 document concurrency/Windows repair and C1a coverage (2026-09-24):**
 W881 serializes the complete in-process document-note publication/reconciliation
 path; W885 independent source review approved. Existing exact-byte/operator-edit

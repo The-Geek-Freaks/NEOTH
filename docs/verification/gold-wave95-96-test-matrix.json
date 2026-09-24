@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W888source-reviewed;Windows115admitted105PASS10FAIL;Group1383Windows142pending;noRoadclosure",
+  "status": "W891 own completed CLI compile cache; ca4 strict Clippy and core typecheck PASS; behavior pending; no local runtime",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 178147,
-    "sha256": "594F1E8EB6E6242BD1275D4F467F8EA852FC0D92DE6BF5FC10E8AD4133190B58"
+    "bytes": 178170,
+    "sha256": "D4444FF94294CB262832BF8DD2413AF9DB830A3B2C89D837266E97A193D736ED"
   },
   "sourceInputs": 1007,
   "requiredNativeTests": [
@@ -35735,6 +35735,38 @@
       }
     ],
     "note": "W881 in-process note serialization reviewedW885;W886 read-only physical lock identity repair;W884 unused unguarded Council wrapper removed;Claude background canary2 selected. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave891HostedCache": {
+    "base": "ca4bf9e8405cceacafb2c514e401050ea9e12674",
+    "sources": [
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "bytes": 4950,
+        "sha256": "DB6A7B1811071A4002C352DE4CB23E2DE8C0DDEE47B58286FB2CF7C1D4495321",
+        "blob": "ba9f9c0fc49979997c217da4e921a881bcdbc53a"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 282558,
+        "sha256": "9490D76D8454C3E4763AB4689B3E726445A48FF7A9BAF1D5E5E02C42FF2F9ADE",
+        "blob": "27836f0e346b43bdedd7ef9bd3b236b61be170bc"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1293886,
+        "sha256": "87062148651FC2DAE90971E2E0740AF89C3E317E6046B14F4EF721F53FA56625",
+        "blob": "72612b50c2a7bf75826070fda95246dd6162dab5"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1902498,
+        "sha256": "7B9A498D8B7411ABAD4C7005191174C453AEB381A9E1344C6A6CE08ECBFC5406",
+        "blob": "1898fe54098c89ad94c9a2a1c57cdd1b9c64df3f"
+      }
+    ],
+    "note": "Workflow-only cache change after measured repeated old partial restore. Group1383 and Windows142 dispatched atca4bf9e8. No runtime behavior or measured performance claim; n8n WIP excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

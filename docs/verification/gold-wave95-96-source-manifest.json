@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T18:59:03.0173806Z",
-  "validationStatus": "W888source-reviewed;Windows115admitted105PASS10FAIL;Group1383Windows142pending;noRoadclosure",
+  "capturedUtc": "2026-09-24T19:16:54.6667884Z",
+  "validationStatus": "W891 own completed CLI compile cache; ca4 strict Clippy and core typecheck PASS; behavior pending; no local runtime",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -38,8 +38,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 4085,
-      "sha256": "7010FCB9F74183C021E459899E08BC8821AA11AA288B4190E58E57570A810824"
+      "bytes": 4950,
+      "sha256": "DB6A7B1811071A4002C352DE4CB23E2DE8C0DDEE47B58286FB2CF7C1D4495321"
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
@@ -2053,18 +2053,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 281479,
-      "sha256": "D842962BE4A8EBDAC733AB3E7893B4149909022E7CB358486895BE9035832326"
+      "bytes": 282558,
+      "sha256": "9490D76D8454C3E4763AB4689B3E726445A48FF7A9BAF1D5E5E02C42FF2F9ADE"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1292807,
-      "sha256": "8534E8A39D6CAA953F9ADF8069592237E4174ECC428E81A8996F4AB92F5E8E4F"
+      "bytes": 1293886,
+      "sha256": "87062148651FC2DAE90971E2E0740AF89C3E317E6046B14F4EF721F53FA56625"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1901419,
-      "sha256": "2B6DBB975AAF9ECC44710E9D459809099E37B2F36483FAC4CB1EBDD13E7DC42F"
+      "bytes": 1902498,
+      "sha256": "7B9A498D8B7411ABAD4C7005191174C453AEB381A9E1344C6A6CE08ECBFC5406"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
