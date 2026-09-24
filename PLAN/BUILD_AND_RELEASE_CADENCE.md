@@ -3,6 +3,13 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1009 hosted test-target repair (2026-09-25):** Core36069478916 at
+abac29e7 passed strict slim-core production Clippy. Its test-target check then
+found two stale `enqueue` calls in the managed-runtime fixtures. Both now call
+the existing `enqueue_prepared` helper through their parent module, preserving
+the same durable queue/start path. This is a two-call fixture repair; fresh
+hosted typechecking and Group1477/Windows260 execution remain required. No
+local executable validation or roadmap criterion closure was performed.
 **W975/W980 inactive workflow image gate (2026-09-25):** The main-only n8n
 image canary now reads and hashes the three checked-in bootstrap assets, maps
 only public write fields and creates each once without activation. Exact-ID

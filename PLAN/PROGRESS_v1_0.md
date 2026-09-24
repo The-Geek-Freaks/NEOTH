@@ -2,6 +2,13 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1009 hosted test-target repair (2026-09-25):** Core36069478916 at
+abac29e7 passed strict slim-core production Clippy. Its test-target check then
+found two stale `enqueue` calls in the managed-runtime fixtures. Both now call
+the existing `enqueue_prepared` helper through their parent module, preserving
+the same durable queue/start path. This is a two-call fixture repair; fresh
+hosted typechecking and Group1477/Windows260 execution remain required. No
+local executable validation or roadmap criterion closure was performed.
 **W1001/W1002 bootstrap lint cleanup (2026-09-25):** Core36068868085 at
 01994fb9 resolved the prior six type/import errors and found eleven strict
 warnings. Completed stdin futures are now explicitly taken and dropped before

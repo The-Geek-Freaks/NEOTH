@@ -457,7 +457,7 @@ impl ManagedRecoveryRunner for FakeRecovery {
 
 fn active_managed_job(home: &std::path::Path) -> super::super::IntegrationJob {
     let service = super::super::open_n8n_job_service(home).unwrap();
-    let queued = enqueue(&service, &request()).unwrap();
+    let queued = enqueue_prepared(&service, &request()).unwrap();
     service
         .start(&queued.job_id, queued.state_revision, STEPS[0])
         .unwrap()
@@ -465,7 +465,7 @@ fn active_managed_job(home: &std::path::Path) -> super::super::IntegrationJob {
 
 fn queued_managed_job(home: &std::path::Path) -> super::super::IntegrationJob {
     let service = super::super::open_n8n_job_service(home).unwrap();
-    enqueue(&service, &request()).unwrap()
+    enqueue_prepared(&service, &request()).unwrap()
 }
 
 fn bound_binding(job: &super::super::IntegrationJob, id: String) -> RuntimeBinding {
