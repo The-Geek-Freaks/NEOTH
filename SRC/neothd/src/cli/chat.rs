@@ -14566,29 +14566,6 @@ impl Drop for CouncilBudgetOutcomeRecorder<'_> {
     }
 }
 
-pub(crate) async fn dispatch_council_with_recovery(
-    req: &crate::providers::Request,
-    config: &FreedomConfig,
-    neoth_home: &std::path::Path,
-    writer: &crate::wal::writer::WalWriterHandle,
-    authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
-    tool_scope: &crate::mcp::McpToolScope,
-) -> Result<String> {
-    let mut output = CliChatOutput;
-    dispatch_council_with_recovery_for_turn(
-        req,
-        config,
-        neoth_home,
-        writer,
-        authorizer,
-        tool_scope,
-        false,
-        None,
-        &mut output,
-    )
-    .await
-}
-
 /// Channel callers share the same council orchestration, but must carry their
 /// admitted conversation canary into every hemisphere and recovery leaf.
 /// Quarantine any post-mint failure before the channel pipeline can log or

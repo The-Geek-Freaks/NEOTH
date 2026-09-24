@@ -769,7 +769,11 @@ fn with_locked_state<T>(
             .map_err(|_| anyhow::anyhow!("document discovery commit fence is poisoned"))?;
         control.check()?;
         anyhow::ensure!(
-            lock_binding.matches_child(&home.dir, OsStr::new(LOCK_FILE), &lock_path)?,
+            lock_binding.matches_regular_file_child_readonly(
+                &home.dir,
+                OsStr::new(LOCK_FILE),
+                &lock_path,
+            )?,
             "document-ingest state lock binding changed before commit"
         );
         save_state(&home, &state)?;
@@ -1010,6 +1014,18 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(std::fs::read(home.path().join(STATE_FILE)).unwrap(), before);
         assert_eq!(list_pending(home.path()).unwrap().len(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn locked_state_commit_revalidates_held_lock_with_readonly_identity_probe() {
+        let home = tempfile::tempdir().expect("home");
+        let control = ScanControl::default();
+
+        with_locked_state(home.path(), &control, |_, _| Ok(((), true)))
+            .expect("held lock permits its read-only no-follow identity revalidation");
+
+        assert!(home.path().join(STATE_FILE).is_file());
     }
 
     #[test]

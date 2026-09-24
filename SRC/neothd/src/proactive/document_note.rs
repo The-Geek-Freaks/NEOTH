@@ -6,6 +6,7 @@
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use cap_std::fs::Dir;
@@ -22,6 +23,12 @@ const MAX_PROPOSAL_ID_BYTES: usize = 128;
 const MAX_DOCUMENT_NOTE_BODY_BYTES: usize = 256 * 1024;
 const MAX_DOCUMENT_NOTE_BYTES: usize = MAX_DOCUMENT_NOTE_BODY_BYTES + 1024;
 const DOCUMENTS_DIR: &str = "Documents";
+
+// The atomic create-new primitive protects the final name across processes.
+// Serialize the full capability-binding, staging, and reconciliation pipeline
+// inside this daemon as well: two local callers may otherwise race while they
+// establish independent directory capabilities for the same publication.
+static DOCUMENT_NOTE_APPLY_LOCK: Mutex<()> = Mutex::new(());
 
 /// Whether the namespace publication has a platform-supported durability
 /// confirmation. A published-but-unknown outcome is an effect, never a
@@ -149,6 +156,27 @@ impl BoundDocumentNoteTarget {
 /// Its deterministic proposal-id filename makes an exact pre-existing file a
 /// reconciled effect and any byte difference an operator-edit refusal.
 pub(crate) fn apply_document_note(
+    vault_root: &Path,
+    subdir: &str,
+    proposal_id: &str,
+    source_sha256: &str,
+    candidate_sha256: &str,
+    note_markdown: &str,
+) -> Result<DocumentNoteReceipt> {
+    let _guard = DOCUMENT_NOTE_APPLY_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    apply_document_note_locked(
+        vault_root,
+        subdir,
+        proposal_id,
+        source_sha256,
+        candidate_sha256,
+        note_markdown,
+    )
+}
+
+fn apply_document_note_locked(
     vault_root: &Path,
     subdir: &str,
     proposal_id: &str,
@@ -584,7 +612,10 @@ mod tests {
             left.join().expect("left worker"),
             right.join().expect("right worker"),
         ];
-        assert!(outcomes.iter().all(|outcome| outcome.is_ok()));
+        assert!(
+            outcomes.iter().all(|outcome| outcome.is_ok()),
+            "concurrent document-note outcomes: {outcomes:#?}"
+        );
         let receipts: Vec<_> = outcomes
             .into_iter()
             .map(|outcome| outcome.expect("document-note outcome"))

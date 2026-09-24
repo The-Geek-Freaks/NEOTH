@@ -2,6 +2,24 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W888 document concurrency/Windows repair and C1a coverage (2026-09-24):**
+W881 serializes the complete in-process document-note publication/reconciliation
+path; W885 independent source review approved. Existing exact-byte/operator-edit
+and cross-process create-only checks remain, and failed concurrent fixtures now
+retain both error chains. The prior log does not identify a narrower syscall cause.
+W886 fixes the demonstrated Windows watcher sharing violation: the held lock
+intentionally denies DELETE sharing, so its commit fence now uses the existing
+read-only no-follow regular-file identity probe. No lock sharing is relaxed.
+A Windows-only real held-lock commit regression is added. Root admitted all115
+historical Windows terminals:105PASS/10FAIL/0missing with26 source/input bindings;
+all failures share that lock inspection error. New behavior awaits hosted rerun.
+C1a gains the two missing detached-background cases from Claude RESULT012:
+Native1616 +Win41/Linux55/mac55; Group1383; Windows142; canary selection26.
+Core36044304900 passed the earlier type error and found one obsolete uncalled
+Council wrapper under strict dead_code. W884 removes it; all live channel paths
+keep the session-canary wrapper. Fresh Core validation follows; no Road closure.
+Evidence: docs/verification/gold-wave878-windows115-terminals.json.
+
 **W883/W878 hosted evidence (2026-09-24):** W880 is published at08881721.
 Preflight36043416812 exported a three-file formatting-only patch. Root verified
 the API ZIP digest, inner hashes, exact source and old/new Git blobs before

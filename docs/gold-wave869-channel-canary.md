@@ -109,12 +109,13 @@ has no canary and remains on its established compatibility path.
 
 ## Behavioral regression selection
 
-The hosted C1a selection contains 24 named cases shared by the native matrix,
-the 1,381-case lifecycle group, and the 139-case Windows regression lane.
+The hosted C1a selection contains 26 named cases shared by the native matrix,
+the 1,383-case lifecycle group, and the 142-case Windows regression lane.
 It covers typed prompt/budget retention, per-conversation token reuse and LRU
 eviction, bounded streaming/Unicode handling, sanitized provider and Council
 errors, MCP/loop/Council leaves, local-shadow and teacher boundaries, and the
-actual channel handler.
+actual channel handler. The detached-background selection also proves typed
+insertion before dispatch, token-free persisted requests, and opaque failures.
 
 The handler regression builds a real small code-map snapshot and confirms the
 provider sees the canary in its finalized system request. A whitespace-split

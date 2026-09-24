@@ -209,6 +209,9 @@ jobs:
           cli::serve_pipeline::tests::pipeline_handler_quarantines_a_real_finalized_canary_before_receipts_archive_wal_and_egress	neothd/src/cli/serve_pipeline.rs
           security::refusal_abliterated::tests::local_shadow_canary_leak_is_opaque_and_never_reaches_cloud_continuation	neothd/src/security/refusal_abliterated.rs
           skills::teacher::tests::teacher_leaf_canary_leak_is_opaque_before_correction_persistence	neothd/src/skills/teacher.rs
+          cli::bg_session::tests::detached_canary_is_not_persisted_but_is_bound_before_dispatch	neothd/src/cli/bg_session.rs
+          cli::bg_session::tests::post_mint_background_failures_never_surface_provider_or_canary_content	neothd/src/cli/bg_session.rs
+          daemon::doc_ingest_cron::tests::locked_state_commit_revalidates_held_lock_with_readonly_identity_probe	neothd/src/daemon/doc_ingest_cron.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -225,7 +228,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 139 ]]; then
+          if [[ "$expected" -ne 142 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -235,7 +238,7 @@ jobs:
             cargo test -p neoth --lib --locked --no-run > "$evidence/compile.log" 2>&1 || compile_status=$?
           else
             compile_status=64
-            printf 'selection is not the required 139 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 142 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

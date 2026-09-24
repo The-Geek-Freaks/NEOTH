@@ -1,0 +1,28 @@
+{
+  "schema": "neoth-windows-terminal-admission/v1",
+  "runId": 36040413126,
+  "sourceHead": "aec43ce600e7dc277747bbea9dee2c17f9d68dc5",
+  "artifactId": 10827831753,
+  "zipSha256": "cb8834e28040fc191ad9665cca8bac8b9de5a467203eb896ad273823dfcd108c",
+  "sourceBindings": 26,
+  "selected": 115,
+  "passed": 105,
+  "failed": [
+    "daemon::doc_ingest_cron::tests::retiring_worker_fences_late_blocking_state_publication",
+    "daemon::doc_ingest_cron::tests::cancellation_before_commit_preserves_existing_state_bytes",
+    "daemon::doc_ingest_cron::tests::valid_hex_digest_tampering_refuses_state_mutation",
+    "daemon::doc_ingest_cron::tests::real_file_scan_reopens_state_and_deduplicates_revision",
+    "daemon::doc_ingest_cron::tests::real_change_supersedes_pending_and_quota_defers_next_revision",
+    "daemon::doc_ingest_cron::tests::deferred_revision_requires_current_root_snapshot_before_promotion",
+    "daemon::doc_ingest_cron::tests::bounded_inventory_rotates_after_reopen_and_revisits_a_changed_later_file",
+    "daemon::doc_ingest_cron::tests::overlapping_roots_attribute_the_shared_file_to_the_longest_root_once",
+    "cli::proactive::tests::document_discovery_cli_lists_real_revision_and_dismisses_without_source_effect",
+    "daemon::doc_ingest_cron::tests::drive_case_aliases_share_one_physical_root_inventory"
+  ],
+  "missing": 0,
+  "rootVerifiedNamedTerminals": true,
+  "allHistoricalSourceBindingsVerified": true,
+  "failureSignature": "doc_ingest_state.v1.lock mutation inspection returns Windows sharing violation os error32; nine watcher plus one CLI case",
+  "acceptance": "Historical source partial pass; W886 repair pending, no full Windows acceptance",
+  "localExecutableValidationRan": false
+}

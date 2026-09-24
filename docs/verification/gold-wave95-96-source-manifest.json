@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T18:50:34.5035641Z",
-  "validationStatus": "W880published;W883verifiedhostedformat;W884E0308callerrepair;Group1357admitted1356PASS1FAIL;freshCorepending",
+  "capturedUtc": "2026-09-24T18:59:03.0173806Z",
+  "validationStatus": "W888source-reviewed;Windows115admitted105PASS10FAIL;Group1383Windows142pending;noRoadclosure",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -109,7 +109,7 @@
     {
       "path": ".github/workflows/research-lifecycle.yml",
       "bytes": 23442,
-      "sha256": "6F6189ED20E2E7DD1E8422B4D8BDEC72F2EADA2187F79DE1917628F909AD3308"
+      "sha256": "B553E20F8A7AEB45C7D6062991A595E38B188B59C9E9EB2A93972EB64C03487D"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -128,8 +128,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 26966,
-      "sha256": "63C4C96504473F7E02F24BB56B3E495C64850F5E0D31059ADB7FF7A1F9739C67"
+      "bytes": 27375,
+      "sha256": "D74593FDC1E4D2FBE5053DE89A0BE427939D0BB5592BD9B04E68725FF2A4B8B7"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -1203,8 +1203,8 @@
     },
     {
       "path": "docs/gold-wave869-channel-canary.md",
-      "bytes": 6606,
-      "sha256": "CFAAB66FA691699653694B08289DF4D7B02503DCCA711DA504F0E7653240A80A"
+      "bytes": 6737,
+      "sha256": "C7E746141180804E44061BDF0CBF1B9A06B404F7B109980656524C6092786336"
     },
     {
       "path": "docs/install.md",
@@ -1887,6 +1887,11 @@
       "sha256": "C28455463714688D0DA90C09459C86AE8383D49CBA895B4B9B782F0DDB7345A3"
     },
     {
+      "path": "docs/verification/gold-wave878-windows115-terminals.json",
+      "bytes": 1717,
+      "sha256": "75580C5FF5D478C29BA6497D566C0BEF99D1B1651B37BB95D295DC7D2DD74548"
+    },
+    {
       "path": "docs/verification/gold-wave883-hosted-format.json",
       "bytes": 1019,
       "sha256": "C815CDF7E948DABC70F4129FF1B9111663189F6A0017B035C34B9C1ECB6DEE5E"
@@ -2048,18 +2053,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 280142,
-      "sha256": "552B68A819F8EE0937FBE4AB3FA3644E21EB6892B51CCE6138B0E06A7B27E748"
+      "bytes": 281479,
+      "sha256": "D842962BE4A8EBDAC733AB3E7893B4149909022E7CB358486895BE9035832326"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1291470,
-      "sha256": "C719AA9CDC9B413E9C5C61D3C17FB1F9036C5A7EC24F890587DB4F3E63A54E07"
+      "bytes": 1292807,
+      "sha256": "8534E8A39D6CAA953F9ADF8069592237E4174ECC428E81A8996F4AB92F5E8E4F"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1900082,
-      "sha256": "720BFF8407F7AE39C2A33920004AAA530850B35684560B7516CE6DF42A4831FC"
+      "bytes": 1901419,
+      "sha256": "2B6DBB975AAF9ECC44710E9D459809099E37B2F36483FAC4CB1EBDD13E7DC42F"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -2878,8 +2883,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1181647,
-      "sha256": "A413B811A333524AD22DD01F73FFD2E3F94EE131ACB75A630472070EFFDC3860"
+      "bytes": 1181047,
+      "sha256": "549ECFA36383CBCBD2484281C76263EFF3950A389D3C4D562CB7FDF14374DC97"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -3723,8 +3728,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
-      "bytes": 48936,
-      "sha256": "177E6D4E630028B963B90114226CD6CE7CDE51289F7EEC2A2D2B760742C66246"
+      "bytes": 49462,
+      "sha256": "4A0F9AF0D48BD221283DE2A61F46BFC054FB300B12AE5B40265F461F08A240A9"
     },
     {
       "path": "SRC/neothd/src/daemon/dream_phases.rs",
@@ -4343,8 +4348,8 @@
     },
     {
       "path": "SRC/neothd/src/proactive/document_note.rs",
-      "bytes": 20335,
-      "sha256": "68EFE22955C7A5E6C2E7643CFF7D139FF39ECEA0937AA1058C5E210FA77EADA7"
+      "bytes": 21311,
+      "sha256": "0825B340F35DF08E1C6FDE758C0DE4B33F350B3A2AD171DFB42F036256F81DB6"
     },
     {
       "path": "SRC/neothd/src/proactive/document_staging.rs",
