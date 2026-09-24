@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1043 product bootstrap diagnostic follow-up (2026-09-25):** Run36073352058
+at1a20accb passed all9 helper tests and built the real CLI, then its first
+install command failed before the observer acquired complete identities.
+Root verified the artifact ZIP and11 historical source/input bindings; exact
+product cause remains unknown and cleanup is unproven. The reviewed observer
+now records fixed command/error categories, exit status, byte counts, separate
+timeout/overflow flags and closed-vocabulary custody phases without raw stderr
+or credentials. Two new privacy/diagnosis tests are added (11 total). The
+one-file hosted formatter patch for the drift handler was separately admitted
+with ZIP/inner/source/preimage/postimage checks. A fresh isolated GitHub run is
+required; no local executable or product-success claim.
+
 **W1031 memory-drift and compiled-product bootstrap batch (2026-09-25):**
 POST /api/memory/drift now calls the existing drift report through a read-only
 views.db connection. It requires recall:read, defaults to 20 rows, caps at 100,

@@ -42,6 +42,25 @@ class ProductReceiptTests(unittest.TestCase):
 
 
 class CustodyBoundaryTests(unittest.TestCase):
+    def test_command_diagnosis_reveals_only_fixed_categories(self) -> None:
+        secret = "must-never-appear-in-receipt"
+        result = canary.bounded.Result(1, secret.encode(), b"Error: n8n_bootstrap_docker_failed " + secret.encode(), False, False)
+        failure = canary.CommandFailure(["SRC/target/debug/neoth", "--output", "json", "n8n", "install", secret], result)
+        encoded = json.dumps(failure.diagnostic)
+        self.assertNotIn(secret, encoded)
+        self.assertEqual(failure.diagnostic["command"], "product_install")
+        self.assertEqual(failure.diagnostic["exit_code"], 1)
+        self.assertEqual(failure.diagnostic["known_error_categories"], ["n8n_bootstrap_docker_failed"])
+
+    def test_command_diagnosis_preserves_timeout_and_overflow_separately(self) -> None:
+        result = canary.bounded.Result(-1, b"", b"private unknown failure", True, True)
+        failure = canary.CommandFailure(["secret-tool", "lookup", "private-key"], result)
+        self.assertEqual(failure.diagnostic["command"], "secret-tool")
+        self.assertTrue(failure.diagnostic["timed_out"])
+        self.assertTrue(failure.diagnostic["overflow"])
+        self.assertEqual(failure.diagnostic["known_error_categories"], [])
+        self.assertNotIn("private", json.dumps(failure.diagnostic))
+
     def test_absence_rejects_identifier_prefix_collision(self) -> None:
         result = canary.bounded.Result(1, b"", b"Error response from daemon: No such container: expected-extra", False, False)
         with patch.object(canary.bounded, "daemon_healthy", return_value=True), patch.object(canary.bounded, "run", return_value=result):

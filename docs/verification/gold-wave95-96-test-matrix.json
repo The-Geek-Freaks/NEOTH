@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Memory drift adapter and real product bootstrap canary reviewed; hosted execution pending",
+  "status": "Product bootstrap failed; reviewed redacted diagnostics and hosted drift format ready for rerun",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 188231,
-    "sha256": "05EDCF34BB3FDEF79C3538A4BA90C03FAE6ED58484836C654898E69F2557019A"
+    "bytes": 188434,
+    "sha256": "D89832BD2C3D7A18C6C14FA7EFADEE05A4BAD9CCDCA4DD9B1B26B7823244FF95"
   },
-  "sourceInputs": 1063,
+  "sourceInputs": 1064,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -3678,25 +3678,25 @@
     {
       "test": "n8n_api::handlers::tests::n8n_provider_request_includes_exactly_one_guarded_registry_without_route_leaks",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "A5D6D5204B0C489C7B29519D2C8BE54036C6C76B3152A3EA5D16C770A55F0F04",
+      "sourceSha256": "4DD7948224E6F65A6D1D7E60E4D3538BD926560A18841CA202E6BC4C12AD6F47",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::n8n_registry_excludes_eval_and_pinned_hash_mismatch_skills",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "A5D6D5204B0C489C7B29519D2C8BE54036C6C76B3152A3EA5D16C770A55F0F04",
+      "sourceSha256": "4DD7948224E6F65A6D1D7E60E4D3538BD926560A18841CA202E6BC4C12AD6F47",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::n8n_registry_refuses_absent_foreign_or_stale_daemon_registry",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "A5D6D5204B0C489C7B29519D2C8BE54036C6C76B3152A3EA5D16C770A55F0F04",
+      "sourceSha256": "4DD7948224E6F65A6D1D7E60E4D3538BD926560A18841CA202E6BC4C12AD6F47",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::n8n_provider_request_retains_registry_a_after_later_accepted_b",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "A5D6D5204B0C489C7B29519D2C8BE54036C6C76B3152A3EA5D16C770A55F0F04",
+      "sourceSha256": "4DD7948224E6F65A6D1D7E60E4D3538BD926560A18841CA202E6BC4C12AD6F47",
       "junitClass": "neoth"
     },
     {
@@ -10296,37 +10296,37 @@
     {
       "test": "n8n_api::handlers::tests::memory_drift_request_defaults_limit_to_none_and_rejects_wrong_type",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "A5D6D5204B0C489C7B29519D2C8BE54036C6C76B3152A3EA5D16C770A55F0F04",
+      "sourceSha256": "4DD7948224E6F65A6D1D7E60E4D3538BD926560A18841CA202E6BC4C12AD6F47",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::memory_drift_reads_seeded_rows_with_limit_and_exact_counts",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "A5D6D5204B0C489C7B29519D2C8BE54036C6C76B3152A3EA5D16C770A55F0F04",
+      "sourceSha256": "4DD7948224E6F65A6D1D7E60E4D3538BD926560A18841CA202E6BC4C12AD6F47",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::memory_drift_missing_store_is_structured_and_does_not_create_database",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "A5D6D5204B0C489C7B29519D2C8BE54036C6C76B3152A3EA5D16C770A55F0F04",
+      "sourceSha256": "4DD7948224E6F65A6D1D7E60E4D3538BD926560A18841CA202E6BC4C12AD6F47",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::memory_drift_handler_default_cap_and_zero_keep_exact_counts",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "A5D6D5204B0C489C7B29519D2C8BE54036C6C76B3152A3EA5D16C770A55F0F04",
+      "sourceSha256": "4DD7948224E6F65A6D1D7E60E4D3538BD926560A18841CA202E6BC4C12AD6F47",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::memory_drift_route_success_envelopes_report_and_rejects_wrong_limit_type",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "A5D6D5204B0C489C7B29519D2C8BE54036C6C76B3152A3EA5D16C770A55F0F04",
+      "sourceSha256": "4DD7948224E6F65A6D1D7E60E4D3538BD926560A18841CA202E6BC4C12AD6F47",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::handlers::tests::memory_drift_handler_missing_store_is_structured_without_creation",
       "sourcePath": "SRC/neothd/src/n8n_api/handlers.rs",
-      "sourceSha256": "A5D6D5204B0C489C7B29519D2C8BE54036C6C76B3152A3EA5D16C770A55F0F04",
+      "sourceSha256": "4DD7948224E6F65A6D1D7E60E4D3538BD926560A18841CA202E6BC4C12AD6F47",
       "junitClass": "neoth"
     },
     {
@@ -38342,6 +38342,62 @@
       }
     ],
     "note": "Read-only drift+7tests;Native1721/Group1496/Windows279;actualCLIbootstrap+9helpertests;historicalGroup1488PASS1staledocFAIL admitted. No broad closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1043": {
+    "base": "1a20accb302c0f2516cc10d758aa3aad4d32bfdb",
+    "sources": [
+      {
+        "path": "docs/gold-wave1018-product-bootstrap-canary.md",
+        "bytes": 2413,
+        "sha256": "9CC95421CE2025C64999D757FDCF7685911B9F64879C355A892B74892980D5B7",
+        "blob": "a6a1978ab93f32c93445cb77e14e0a91f0d44fba"
+      },
+      {
+        "path": "docs/verification/gold-wave1037-product-bootstrap-failure.json",
+        "bytes": 2048,
+        "sha256": "92F6FCDE38AC19A1B6F5F2B55763AF107C606CBD3993E1EB8EFE28CD12BE8475",
+        "blob": "5bd8207a34e948924d890f207d0cd6369d13e3ca"
+      },
+      {
+        "path": "packaging/n8n_product_bootstrap_canary.py",
+        "bytes": 17201,
+        "sha256": "AA3761DE8B1B95692E54CBAA7D991CF0BDADC5DFEB263E0F48DD309B1835FDD6",
+        "blob": "29b797ae8cc82f8b6aed91595b02f33dd9ada59c"
+      },
+      {
+        "path": "packaging/tests/test_n8n_product_bootstrap_canary.py",
+        "bytes": 7198,
+        "sha256": "C8FCEE3C1F20B84EA3633FA632059182DE06DC4A62545F80796F0492B8997975",
+        "blob": "fb368edd9d4e2bf7777f4747ced077cbc90fa1bc"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 305764,
+        "sha256": "39876596A9B1B6C512DC66F317D17416756923FB7DA160FEF69B16CFD032DA17",
+        "blob": "96f725581febbded759c308c99cf91565baf01af"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1321642,
+        "sha256": "190910AAA609E0CCC54FBC50AFF0AC63086AD38E6DA72A68F1FEBC365C10ECA3",
+        "blob": "1a4f4ba32203743937ed4368cf0c43973bf7899c"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1931583,
+        "sha256": "245E9B9D6A40EA1F0D0A1F946351F44F6A6F1B4EE6029CE6C4C4D293981CCD5A",
+        "blob": "912b4ac8705c22e75e22a82fc1d13638a97a8e6a"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/handlers.rs",
+        "bytes": 63298,
+        "sha256": "4DD7948224E6F65A6D1D7E60E4D3538BD926560A18841CA202E6BC4C12AD6F47",
+        "blob": "3258cfaf7fdd974f05c98eafbf7cf1a013167bef"
+      }
+    ],
+    "note": "Actual CLI built;9helpers passed;firstinstallfailed;11sourceinputs+ZIP verified;2newhelpertests pending. No local executable.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

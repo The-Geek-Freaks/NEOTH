@@ -14,6 +14,35 @@ JOB = re.compile(r"[0-9a-f-]{36}")
 
 class Failure(RuntimeError): pass
 
+class CommandFailure(Failure):
+    def __init__(self, argv: list[str], result: bounded.Result):
+        super().__init__("command_failed")
+        program = Path(argv[0]).name
+        command = "other"
+        if program == "neoth" and argv[1:4] == ["--output", "json", "n8n"]:
+            command = {"install": "product_install", "status": "product_status"}.get(argv[4], "other") if len(argv) > 4 else "other"
+        elif program in {"docker", "sqlite3", "secret-tool"}:
+            command = program
+        self.diagnostic = {
+            "command": command, "exit_code": result.code,
+            "timed_out": result.timed_out, "overflow": result.overflow,
+            "stdout_bytes": len(result.stdout), "stderr_bytes": len(result.stderr),
+        }
+        # Only literal source-defined categories are disclosed. Never emit
+        # arbitrary stderr, JSON error text, arguments or credential values.
+        known = (
+            "n8n_bootstrap_docker_unavailable", "n8n_bootstrap_docker_failed",
+            "n8n_bootstrap_volume_mismatch", "n8n_bootstrap_http_unknown",
+            "n8n_bootstrap_http_rejected", "n8n_managed_instance_already_owned",
+            "n8n bootstrap requires the private OS secret store",
+            "open a Linux Secret Service collection",
+            "Cannot start a runtime from within a runtime",
+            "Cannot drop a runtime in a context where blocking is not allowed",
+        )
+        self.diagnostic["known_error_categories"] = [
+            marker for marker in known if marker.encode() in result.stderr
+        ]
+
 def read_json(path: Path) -> dict:
     try:
         value = json.loads(path.read_bytes())
@@ -50,7 +79,7 @@ def validate_custody(boot: dict, runtime: dict, job: str, port: int) -> tuple[st
 def run(argv: list[str], timeout: int = 180) -> bytes:
     result = bounded.run(argv, timeout=timeout)
     if result.code != 0 or result.timed_out or result.overflow:
-        raise Failure("command_failed")
+        raise CommandFailure(argv, result)
     return result.stdout
 
 def docker_inspect(identifier: str) -> dict:
@@ -144,6 +173,7 @@ def main() -> int:
                 "SRC/neothd/src/config/keychain.rs",
             )
         }
+        receipt["stage"] = "first_product_install"
         first = read_json_from_command([str(binary), "--output", "json", "n8n", "install", "--bootstrap-owner", "--port", str(args.port)])
         job = validate_product(first); receipt["job_id"] = job; receipt["first_state"] = first["state"]
         status = read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", job]); validate_status(status, job, args.port)
@@ -175,6 +205,21 @@ def main() -> int:
         receipt["outcome"] = "passed"
     except Exception as error:
         receipt["failure_stage"] = str(error) if isinstance(error, Failure) else "unexpected"
+        if isinstance(error, CommandFailure):
+            receipt["command_failure"] = error.diagnostic
+        # Capture only closed-vocabulary local custody state, even when the
+        # first product call failed before returning a job. No guessed cleanup.
+        for name, allowed in (
+            ("n8n-managed-bootstrap.v2.json", {"VolumeIntent", "VolumeBound", "BootstrapContainerBound", "OwnerSetupInFlight", "OwnerEstablished", "KeyMintInFlight", "KeyMintUnknown", "KeyCaptured", "BootstrapStopped", "BootstrapRemoved", "RuntimeContainerBound", "Ready"}),
+            ("n8n-managed-runtime.v2.json", {"CreateIntent", "Bound", "Ready", "AbsentVerified"}),
+        ):
+            path = home / name
+            if path.is_file() and not path.is_symlink():
+                try:
+                    phase = read_json(path).get("phase")
+                    receipt[name] = {"exists": True, "phase": phase if isinstance(phase, str) and phase in allowed else "unclassified"}
+                except Exception:
+                    receipt[name] = {"exists": True, "phase": "unreadable"}
     finally:
         # A failed product command can leave partial custody. Preserve it and
         # report it unproven if the complete exact identities were not read.

@@ -1,0 +1,32 @@
+{
+  "schema": "neoth-product-bootstrap-failure/v1",
+  "run": 36073352058,
+  "source": "1a20accb302c0f2516cc10d758aa3aad4d32bfdb",
+  "artifactId": 10838913926,
+  "artifactDigest": "sha256:7d7770cbd765fbe5ad5eef4e57ab4a9b72abfe517e65e899d891bc0dfa09a32e",
+  "rootSourceBindingsVerified": 11,
+  "receipt": {
+    "binary_sha256": "85f89c7ac6d7eff42f7e5f3821022e6786975944367313fa2b3c937205f59947",
+    "bounded_helper_sha256": "23118857e4655bad3fedbb702e4d0840aec9114482386aab5fee783ef688500a",
+    "cargo_lock_sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+    "cleanup_proven": false,
+    "docker_cleanup_proven": false,
+    "failure_stage": "command_failed",
+    "helper_sha256": "8cfea0d9b954c20c9b53681a50806b80788be1676f719795e7623a0757864b76",
+    "input_sha256": {
+      "SRC/neothd/src/cli/n8n.rs": "252ecf3c64af39060a31871a3ae33d9a6f406ebecbc4595e35ff56be3145f925",
+      "SRC/neothd/src/config/keychain.rs": "d6b7fbfa92fe10c07ce84adcfb5ce12898bdd842ecc0c3bbaaf3abe38b6a5bb5",
+      "SRC/neothd/src/integrations/n8n.rs": "25aefad3b28caa1b3f023398dfd56146b4f186addc76f5165d22d83d802be4b1",
+      "SRC/neothd/src/integrations/n8n/bootstrap_transport.rs": "bcd54c78e6f5135d6bcc3a2c2a1aae310702a61382406df84a2dfb3288ce2404",
+      "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs": "fb0ed0fae2454b5d94c71cae7af3bbf756e055ed86813168fb0d1d1f7ec0e446",
+      "SRC/neothd/src/integrations/n8n/managed_runtime.rs": "09589b9c6879610d2653d21d9206a97e5218bed9ddc0b976211f4286e2d19913",
+      "packaging/tests/test_n8n_product_bootstrap_canary.py": "1a49b9466b1238b6c78e3f078025d8b8b12cfac380cf0dd12450301af2538376"
+    },
+    "outcome": "failed",
+    "port": 5681,
+    "schema": 1,
+    "source_sha": "1a20accb302c0f2516cc10d758aa3aad4d32bfdb",
+    "workflow_sha256": "524fe2055c0c86bf5feada7929f92d85043bdc380d0df85993151c228150a3a7"
+  },
+  "boundary": "Helper9 and public CLI build passed; first product install failed. Actual failure category and partial custody unknown. No bootstrap acceptance or cleanup claim."
+}

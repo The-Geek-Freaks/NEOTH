@@ -277,7 +277,10 @@ fn read_memory_drift(
     if !views_path.is_file() {
         return Err(HandlerOutcome::error(
             ApiErrorCode::StoreUnavailable,
-            format!("memory drift store is unavailable: {}", views_path.display()),
+            format!(
+                "memory drift store is unavailable: {}",
+                views_path.display()
+            ),
             "run neoth serve once to materialise views.db; this read-only endpoint will not create it",
         ));
     }

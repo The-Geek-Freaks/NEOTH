@@ -28,8 +28,8 @@ retains its custody and cannot claim cleanup. Only the redacted receipt is
 uploaded, never NEOTH_HOME or the keyring. A pre-Python session failure gets a
 coarse failure receipt as well.
 
-Nine helper regressions and the first real product execution are registered
-for GitHub, pending execution at publication. The workstation BSOD hold remains
+Eleven helper regressions and the real product execution are registered
+for GitHub. The first run passed nine helper tests and the CLI build but failed the first install command; the new redacted diagnosis and two additional helper tests await a fresh isolated run. The workstation BSOD hold remains
 absolute: no local compiler, parser, test or product runtime ran. This lane is
 separate from the already accepted pinned-image/template execution canary.
 All-thirteen managed workflow import, nine remaining starter adapters,
