@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T12:27:07.7334993Z",
-  "validationStatus": "D6 ACCEPTED13PASS Group1217allPASS; GUI159allPASS; D5F4inreview",
+  "capturedUtc": "2026-09-24T12:29:48.7392268Z",
+  "validationStatus": "W797 D6accepted;published machine summary aligned with actual1067/255/2checkboxes",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1904,7 +1904,7 @@
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
       "bytes": 1873030,
-      "sha256": "E6828A034DEC17DF8C3DB3BF80CF84DDFD5119ED774DFAA88D79F3D1D240C7FE"
+      "sha256": "F733A0BB3A686E8F6356813E366C26759EBE9FE1848A9D9029668C016CA919D3"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
