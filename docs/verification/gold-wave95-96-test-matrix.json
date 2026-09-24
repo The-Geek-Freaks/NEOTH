@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 141380,
-    "sha256": "B63D2ACB93188B90A7DE0F7509466399C70B6DFE488118F24DF0E29AFB996554"
+    "sha256": "D662C80E219231125F391C7243BB3F340BC788F309CC8DFB6A51AB96C30234CC"
   },
   "sourceInputs": 804,
   "requiredNativeTests": [
@@ -7995,8 +7995,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2212213,
-      "sha256": "4089C6FBED4DA8B47A705319733B56E23E05FC282449B96B4A06A92003483C97"
+      "bytes": 2212252,
+      "sha256": "728CCB06DA739BA199DB72D280AFF15892756A1FFBF993B1691EE3296C793BE2"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -26312,6 +26312,20 @@
       }
     ],
     "note": "W579GUI148 admitted145PASS3FAIL with28bindings; W581 fixes only whitespace-sensitive source contracts retaining semantic assertions; W580 hostedformat admitted; P118 passes; source reviewed, behaviorpending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave582Evidence": {
+    "base": "f35e3237a1c15371bf1da46227c83b20fbbbbc13",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2212252,
+        "sha256": "728CCB06DA739BA199DB72D280AFF15892756A1FFBF993B1691EE3296C793BE2",
+        "blob": "1f2011fa2a2716d943f8b9113858fe01b9597ad7"
+      }
+    ],
+    "note": "W582 imports exact GitHub rustfmt normalization-helper layout from35942150100@f35e; ZIP+receiptSHA+old/newGit blobs verified; no behavior/localformatter; sourceGUI runf35pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

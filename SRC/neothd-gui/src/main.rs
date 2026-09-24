@@ -43276,7 +43276,10 @@ mod dream_cron_gui_tests {
     use tempfile::TempDir;
 
     fn source_contract_view(source: &str) -> String {
-        source.split_whitespace().collect::<String>().replace(",}", "}")
+        source
+            .split_whitespace()
+            .collect::<String>()
+            .replace(",}", "}")
     }
 
     fn receipt(enabled: bool, autonomy: &str, allows: bool) -> gui_action::DreamCronAck {
