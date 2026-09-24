@@ -157,10 +157,29 @@ pub(crate) fn with_current_freedom_config_authority_locked<T>(
     path: &Path,
     action: impl FnOnce(&FreedomConfig) -> Result<T>,
 ) -> Result<T> {
+    with_current_freedom_config_authority_locked_with_store(path, None, |config, _| {
+        action(config)
+    })
+}
+
+/// Like [`with_current_freedom_config_authority_locked`], but uses an already
+/// opened OS store for the effective credential view. This keeps a caller's
+/// final keychain compare-and-set bound to the exact store it just inspected.
+pub(crate) fn with_current_freedom_config_authority_locked_with_store<T>(
+    path: &Path,
+    injected_store: Option<&dyn keychain::SecretStore>,
+    action: impl FnOnce(&FreedomConfig, &credentials::Credentials) -> Result<T>,
+) -> Result<T> {
     with_coherent_freedom_update_lock(path, || {
-        let config = FreedomConfig::load_from_path_unlocked(path)
-            .with_context(|| format!("load {} under config authority lock", path.display()))?;
-        action(&config)
+        let (config, credentials) =
+            load_optional_runtime_config_pair_read_only_with_store_from_path(path, injected_store)?;
+        let config = config.ok_or_else(|| {
+            anyhow::anyhow!(
+                "freedom.yaml not found at {}. Run `neoth init` first to generate it.",
+                path.display()
+            )
+        })?;
+        action(&config, &credentials)
     })
 }
 

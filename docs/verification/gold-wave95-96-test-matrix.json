@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W599966/965PASS1FAIL; W602 package Rust1.93 matches existing release pin; runtime pending",
+  "status": "W599 supplied-store repair reviewed;W601 GUI147pass1fail;W603 unchanged assertions with secret-free diagnostics;hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 144013,
-    "sha256": "CB3147EB8CE6C4707CCB6C548D4DE4E7895B5ACC2D5F7D832DDB44871AF94D2D"
+    "bytes": 144238,
+    "sha256": "FBE87C089BD5D5CAB469433001C06A41FD59B76A5535DF8FEB9DCF48C980E32B"
   },
-  "sourceInputs": 818,
+  "sourceInputs": 819,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -306,7 +306,7 @@
     {
       "test": "config::code_map_config_tests::configured_mcp_read_path_selectors_are_exact_and_bounded",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "FFAC644F79AF104295A87C46F01BBC630D0C446C18CE49A69DF789B241283D2B",
+      "sourceSha256": "CF408A5ADA02E90AAED6DBB6F25DD9EE1DDDD37E7C349573CADEB0480E63362B",
       "junitClass": "neoth"
     },
     {
@@ -876,25 +876,25 @@
     {
       "test": "config::skill_autonomy_config_tests::public_config_load_rejects_invalid_skill_id",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "FFAC644F79AF104295A87C46F01BBC630D0C446C18CE49A69DF789B241283D2B",
+      "sourceSha256": "CF408A5ADA02E90AAED6DBB6F25DD9EE1DDDD37E7C349573CADEB0480E63362B",
       "junitClass": "neoth"
     },
     {
       "test": "config::skill_autonomy_config_tests::public_config_load_rejects_malformed_or_non_custom_skill_action_maps",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "FFAC644F79AF104295A87C46F01BBC630D0C446C18CE49A69DF789B241283D2B",
+      "sourceSha256": "CF408A5ADA02E90AAED6DBB6F25DD9EE1DDDD37E7C349573CADEB0480E63362B",
       "junitClass": "neoth"
     },
     {
       "test": "config::skill_autonomy_config_tests::public_config_load_rejects_more_than_128_skill_overrides",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "FFAC644F79AF104295A87C46F01BBC630D0C446C18CE49A69DF789B241283D2B",
+      "sourceSha256": "CF408A5ADA02E90AAED6DBB6F25DD9EE1DDDD37E7C349573CADEB0480E63362B",
       "junitClass": "neoth"
     },
     {
       "test": "config::skill_autonomy_config_tests::public_config_load_preserves_legacy_absence_of_skill_overrides",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "FFAC644F79AF104295A87C46F01BBC630D0C446C18CE49A69DF789B241283D2B",
+      "sourceSha256": "CF408A5ADA02E90AAED6DBB6F25DD9EE1DDDD37E7C349573CADEB0480E63362B",
       "junitClass": "neoth"
     },
     {
@@ -2874,13 +2874,13 @@
     {
       "test": "config::vault_mirror_config_boundary_tests::vault_mirror_defaults_roundtrip_through_public_config_boundary",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "FFAC644F79AF104295A87C46F01BBC630D0C446C18CE49A69DF789B241283D2B",
+      "sourceSha256": "CF408A5ADA02E90AAED6DBB6F25DD9EE1DDDD37E7C349573CADEB0480E63362B",
       "junitClass": "neoth"
     },
     {
       "test": "config::vault_mirror_config_boundary_tests::public_config_boundary_rejects_invalid_enabled_vault_mirror",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "FFAC644F79AF104295A87C46F01BBC630D0C446C18CE49A69DF789B241283D2B",
+      "sourceSha256": "CF408A5ADA02E90AAED6DBB6F25DD9EE1DDDD37E7C349573CADEB0480E63362B",
       "junitClass": "neoth"
     },
     {
@@ -6198,7 +6198,7 @@
     {
       "test": "config::managed_browser_config_tests::managed_browser_defaults_disabled_and_roundtrips",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "FFAC644F79AF104295A87C46F01BBC630D0C446C18CE49A69DF789B241283D2B",
+      "sourceSha256": "CF408A5ADA02E90AAED6DBB6F25DD9EE1DDDD37E7C349573CADEB0480E63362B",
       "junitClass": "neoth"
     },
     {
@@ -7009,19 +7009,19 @@
       "test": "config::budget_raft_config_tests::budget_raft_is_default_disabled_and_has_no_implicit_authority",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
       "junitClass": "neoth",
-      "sourceSha256": "FFAC644F79AF104295A87C46F01BBC630D0C446C18CE49A69DF789B241283D2B"
+      "sourceSha256": "CF408A5ADA02E90AAED6DBB6F25DD9EE1DDDD37E7C349573CADEB0480E63362B"
     },
     {
       "test": "config::budget_raft_config_tests::enabled_budget_raft_requires_exact_peeroxide_three_voter_policy",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
       "junitClass": "neoth",
-      "sourceSha256": "FFAC644F79AF104295A87C46F01BBC630D0C446C18CE49A69DF789B241283D2B"
+      "sourceSha256": "CF408A5ADA02E90AAED6DBB6F25DD9EE1DDDD37E7C349573CADEB0480E63362B"
     },
     {
       "test": "config::budget_raft_config_tests::enabled_budget_raft_refuses_iroh_until_authenticated_budget_carrier_exists",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
       "junitClass": "neoth",
-      "sourceSha256": "FFAC644F79AF104295A87C46F01BBC630D0C446C18CE49A69DF789B241283D2B"
+      "sourceSha256": "CF408A5ADA02E90AAED6DBB6F25DD9EE1DDDD37E7C349573CADEB0480E63362B"
     },
     {
       "test": "providers::cost_authorization::tests::cluster_budget_rounds_positive_reserves_up_but_allows_zero_actual_cost",
@@ -7380,37 +7380,37 @@
     {
       "test": "installers::paperless_bootstrap::tests::dotenv_parser_accepts_literal_and_basic_quoted_admin_values",
       "sourcePath": "SRC/neothd/src/installers/paperless_bootstrap.rs",
-      "sourceSha256": "DB12006ECC0DE1EA2A0C54D9597404C1BBAE38D5A06B10014295D2C50EAFDEF3",
+      "sourceSha256": "E9C4681B4AA7DBB0D9963A594232E12C9C99CEDEF03FBDD4F575829BFAAE598D",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_bootstrap::tests::dotenv_parser_rejects_ambiguous_or_duplicate_admin_values",
       "sourcePath": "SRC/neothd/src/installers/paperless_bootstrap.rs",
-      "sourceSha256": "DB12006ECC0DE1EA2A0C54D9597404C1BBAE38D5A06B10014295D2C50EAFDEF3",
+      "sourceSha256": "E9C4681B4AA7DBB0D9963A594232E12C9C99CEDEF03FBDD4F575829BFAAE598D",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_bootstrap::tests::canonical_origin_accepts_only_literal_ipv4_loopback",
       "sourcePath": "SRC/neothd/src/installers/paperless_bootstrap.rs",
-      "sourceSha256": "DB12006ECC0DE1EA2A0C54D9597404C1BBAE38D5A06B10014295D2C50EAFDEF3",
+      "sourceSha256": "E9C4681B4AA7DBB0D9963A594232E12C9C99CEDEF03FBDD4F575829BFAAE598D",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_bootstrap::tests::file_persistence_refuses_existing_token_and_preserves_url",
       "sourcePath": "SRC/neothd/src/installers/paperless_bootstrap.rs",
-      "sourceSha256": "DB12006ECC0DE1EA2A0C54D9597404C1BBAE38D5A06B10014295D2C50EAFDEF3",
+      "sourceSha256": "E9C4681B4AA7DBB0D9963A594232E12C9C99CEDEF03FBDD4F575829BFAAE598D",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_bootstrap::tests::keychain_write_follows_real_pair_publication_and_rechecks_effective_state",
       "sourcePath": "SRC/neothd/src/installers/paperless_bootstrap.rs",
-      "sourceSha256": "DB12006ECC0DE1EA2A0C54D9597404C1BBAE38D5A06B10014295D2C50EAFDEF3",
+      "sourceSha256": "E9C4681B4AA7DBB0D9963A594232E12C9C99CEDEF03FBDD4F575829BFAAE598D",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_bootstrap::tests::obtains_token_from_a_bounded_local_http_endpoint",
       "sourcePath": "SRC/neothd/src/installers/paperless_bootstrap.rs",
-      "sourceSha256": "DB12006ECC0DE1EA2A0C54D9597404C1BBAE38D5A06B10014295D2C50EAFDEF3",
+      "sourceSha256": "E9C4681B4AA7DBB0D9963A594232E12C9C99CEDEF03FBDD4F575829BFAAE598D",
       "junitClass": "neoth"
     },
     {
@@ -7453,6 +7453,12 @@
       "test": "installers::paperless_lifecycle::tests::docker_command_removes_only_compose_interpolation_overrides",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
       "sourceSha256": "FD27B1A9E735B0F295DB2653076A28EAAD102F8FC3D475B85013C471692355B6",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "installers::paperless_bootstrap::tests::keychain_phase_two_uses_its_supplied_store_and_never_writes_after_read_failure",
+      "sourcePath": "SRC/neothd/src/installers/paperless_bootstrap.rs",
+      "sourceSha256": "E9C4681B4AA7DBB0D9963A594232E12C9C99CEDEF03FBDD4F575829BFAAE598D",
       "junitClass": "neoth"
     }
   ],
@@ -8073,8 +8079,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2213628,
-      "sha256": "48C86B8D61F86E78578522E878B176C7C887456D1DC61F48CB8B332218842DE4"
+      "bytes": 2214271,
+      "sha256": "BC68B94745BD03BCE1C1BE024E898C0DAC938977D9A891E1D99E27A87452EB6E"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -26947,6 +26953,69 @@
       }
     ],
     "note": "Hosted ARM64 failed MSRV before compile: Matrix SDK0.18 requires Rust1.93; new lane/cache match established1.93.0 release toolchain; lock and full features unchanged",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave599SuppliedStoreAcceptance": {
+    "requiredTests": [
+      "installers::paperless_bootstrap::tests::keychain_phase_two_uses_its_supplied_store_and_never_writes_after_read_failure"
+    ],
+    "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+    "scope": "Same supplied store under canonical config authority; read failure leaves token absent"
+  },
+  "wave605KeychainRepairGuiDiagnostics": {
+    "base": "cdb40d30040418d5b8c0551d4353cdc5c46da0aa",
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 21201,
+        "sha256": "3936BDD6698A62023B67918D1BAD758FBF246B2BF154E65B349927B704199261",
+        "blob": "7cde0d63a6d6ad3e852c2c2dbea42c523a83bfe5"
+      },
+      {
+        "path": "docs/verification/gold-wave601-gui148-terminals.json",
+        "bytes": 59663,
+        "sha256": "9EA9DA88B669BA9B4119476EE6FF3B77AA92522B87BCB9EFF7A013E30D3030AE",
+        "blob": "324a2bb76e609c06883a29e99bf7a84a9b58e2ad"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 216298,
+        "sha256": "A36DE0D44D80B824AC2D32E411256A88DB880DFDBDCA65F9B4CE220312271AE9",
+        "blob": "c5297f2d9f899fdaab6c77f3f7ff56ca22469f47"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1227626,
+        "sha256": "D0BB67F7D363424E3820121E273FE5265FBB77427F056989D675ECF099EF9776",
+        "blob": "897a3278a00d15bc716b1f7492511ad18672f945"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1826908,
+        "sha256": "98A61BED7EEA6548B7BA0FBC02BA535BD46A9EF2A8CB72DDE54956B2CBB0FB8D",
+        "blob": "e5e364d5e87574ddf3f6e1ead86533ff23576161"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2214271,
+        "sha256": "BC68B94745BD03BCE1C1BE024E898C0DAC938977D9A891E1D99E27A87452EB6E",
+        "blob": "88b4d2aa4a7e8d87ebc4dbc3ae8b1e9ae5e24bad"
+      },
+      {
+        "path": "SRC/neothd/src/config/mod.rs",
+        "bytes": 160022,
+        "sha256": "CF408A5ADA02E90AAED6DBB6F25DD9EE1DDDD37E7C349573CADEB0480E63362B",
+        "blob": "f245e8152f02166216165641a4f1cccd0711be8b"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_bootstrap.rs",
+        "bytes": 26873,
+        "sha256": "E9C4681B4AA7DBB0D9963A594232E12C9C99CEDEF03FBDD4F575829BFAAE598D",
+        "blob": "1832b2137176e9d8305bceb65409f5acfa7177fe"
+      }
+    ],
+    "note": "Same supplied store throughout config authority/final token set; regression no write after failed read. GUI W480 diagnostic only, P226a open. No local execution",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -3,6 +3,20 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W599 supplied-store repair and W601/W603 GUI diagnosis (2026-09-24):**
+Paperless final token persistence now loads effective credentials under the
+canonical config authority using its already-open supplied keychain store.
+This removes the accidental ambient Linux keychain read before the injected
+store could participate. The existing authority wrapper and lock order stay
+compatible; a new regression checks read failure cannot write the token.
+Independent review approves; universal native catalog1242 and Group967 include
+this case, with hosted execution pending. GUI148 run35943595820 at1a304f03 is
+source-admitted147PASS/1FAIL/0missing with28 bindings and148 exact receipts.
+W480 alone times out during GUI settlement after successful producer capture.
+W603 adds only content-free in-flight/role/phase timeout diagnostics; timeout
+and acceptance assertions remain unchanged. P2-26a remains open. Windows41
+c9d070e9 has completed with failure and its exact results are being admitted.
+No local executable validation or Road checkbox change.
 **W599/W602 grouped evidence and macOS release toolchain (2026-09-24):**
 Group966 run35945986803 atce8caa19 is independently source-admitted with
 965PASS/1FAIL/0missing and188 bindings. The lone failure is the Paperless

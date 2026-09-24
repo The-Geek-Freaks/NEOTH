@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T02:24:11.4601720Z",
-  "validationStatus": "W599966/965PASS1FAIL; W602 package Rust1.93 matches existing release pin; runtime pending",
+  "capturedUtc": "2026-09-24T02:32:38.3719103Z",
+  "validationStatus": "W599 supplied-store repair reviewed;W601 GUI147pass1fail;W603 unchanged assertions with secret-free diagnostics;hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -108,8 +108,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 21150,
-      "sha256": "199B2A3C91757BC6F253C2E2044BED4DAFD3C53E3D77FD1E286D26827982B49D"
+      "bytes": 21201,
+      "sha256": "3936BDD6698A62023B67918D1BAD758FBF246B2BF154E65B349927B704199261"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -1322,6 +1322,11 @@
       "sha256": "F9DD5366B1BD50658E925FE92F89069AD72C6129C86C924F810555AC7E940626"
     },
     {
+      "path": "docs/verification/gold-wave601-gui148-terminals.json",
+      "bytes": 59663,
+      "sha256": "9EA9DA88B669BA9B4119476EE6FF3B77AA92522B87BCB9EFF7A013E30D3030AE"
+    },
+    {
       "path": "docs/verification/managed-browser-cft154.json",
       "bytes": 2497,
       "sha256": "80443D2F6E6A6E226F1617F7F5463017071D9D21130D1FCD116470F147455337"
@@ -1463,18 +1468,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 215250,
-      "sha256": "20DFA4701B94DD1A493D54CB4205916CBB8752638932C06C83686BB8C1A12220"
+      "bytes": 216298,
+      "sha256": "A36DE0D44D80B824AC2D32E411256A88DB880DFDBDCA65F9B4CE220312271AE9"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1226578,
-      "sha256": "951E3A1DBED0F34608D6A4734C4EB2D133F265DBF2BCC30DE9D9051EA5657252"
+      "bytes": 1227626,
+      "sha256": "D0BB67F7D363424E3820121E273FE5265FBB77427F056989D675ECF099EF9776"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1825860,
-      "sha256": "B072340933736F9279732C1AEB1362F80CB34BDC74F24EEAB95C024CCF61AAA2"
+      "bytes": 1826908,
+      "sha256": "98A61BED7EEA6548B7BA0FBC02BA535BD46A9EF2A8CB72DDE54956B2CBB0FB8D"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -1698,8 +1703,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2213628,
-      "sha256": "48C86B8D61F86E78578522E878B176C7C887456D1DC61F48CB8B332218842DE4"
+      "bytes": 2214271,
+      "sha256": "BC68B94745BD03BCE1C1BE024E898C0DAC938977D9A891E1D99E27A87452EB6E"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -2748,8 +2753,8 @@
     },
     {
       "path": "SRC/neothd/src/config/mod.rs",
-      "bytes": 159214,
-      "sha256": "FFAC644F79AF104295A87C46F01BBC630D0C446C18CE49A69DF789B241283D2B"
+      "bytes": 160022,
+      "sha256": "CF408A5ADA02E90AAED6DBB6F25DD9EE1DDDD37E7C349573CADEB0480E63362B"
     },
     {
       "path": "SRC/neothd/src/config/ops.rs",
@@ -3103,8 +3108,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_bootstrap.rs",
-      "bytes": 25107,
-      "sha256": "DB12006ECC0DE1EA2A0C54D9597404C1BBAE38D5A06B10014295D2C50EAFDEF3"
+      "bytes": 26873,
+      "sha256": "E9C4681B4AA7DBB0D9963A594232E12C9C99CEDEF03FBDD4F575829BFAAE598D"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",

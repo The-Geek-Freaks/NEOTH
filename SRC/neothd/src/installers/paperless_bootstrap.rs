@@ -313,28 +313,26 @@ fn persist_keychain_token_after_url_with_store(
     token: &SecretString,
     store: &dyn crate::config::keychain::SecretStore,
 ) -> Result<(), &'static str> {
-    crate::config::with_current_freedom_config_authority_locked(freedom_path, |config| {
-        if config.secrets_backend != SecretsBackend::Keychain {
-            return Err(anyhow::anyhow!("paperless_bootstrap_backend_changed"));
-        }
-        // This is a same-home re-entrant coherent reader. It reloads the
-        // effective pair after the URL publication, including an operator's
-        // file override and the OS-store supplement, before this final set.
-        let (_, effective) =
-            crate::config::load_optional_runtime_config_pair_read_only_with_store_from_path(
-                freedom_path,
-                Some(store),
-            )
-            .map_err(|_| anyhow::anyhow!("paperless_bootstrap_persist"))?;
-        if effective.paperless_url.as_deref() != Some(origin) {
-            return Err(anyhow::anyhow!("paperless_bootstrap_url_changed"));
-        }
-        if effective.paperless_token.is_some() {
-            return Err(anyhow::anyhow!("paperless_bootstrap_token_conflict"));
-        }
-        store_token_if_absent(store, token)?;
-        Ok(())
-    })
+    crate::config::with_current_freedom_config_authority_locked_with_store(
+        freedom_path,
+        Some(store),
+        |config, effective| {
+            if config.secrets_backend != SecretsBackend::Keychain {
+                return Err(anyhow::anyhow!("paperless_bootstrap_backend_changed"));
+            }
+            // The supplied-store authority read has just loaded this effective
+            // pair under the canonical lock, including any file override and
+            // the same OS-store supplement used for the final compare-and-set.
+            if effective.paperless_url.as_deref() != Some(origin) {
+                return Err(anyhow::anyhow!("paperless_bootstrap_url_changed"));
+            }
+            if effective.paperless_token.is_some() {
+                return Err(anyhow::anyhow!("paperless_bootstrap_token_conflict"));
+            }
+            store_token_if_absent(store, token)?;
+            Ok(())
+        },
+    )
     .map_err(|error| match error.to_string().as_str() {
         "paperless_bootstrap_backend_changed" => "paperless_bootstrap_backend_changed",
         "paperless_bootstrap_token_conflict" => "paperless_bootstrap_token_conflict",
@@ -571,6 +569,62 @@ mod tests {
             "paperless_bootstrap_token_conflict"
         );
         assert!(other_store.get("paperless_token").unwrap().is_none());
+    }
+
+    #[test]
+    fn keychain_phase_two_uses_its_supplied_store_and_never_writes_after_read_failure() {
+        use crate::config::keychain::{InMemorySecretStore, SecretStore};
+
+        struct FailOnReadStore {
+            inner: InMemorySecretStore,
+        }
+
+        impl SecretStore for FailOnReadStore {
+            fn get(&self, _key: &str) -> anyhow::Result<Option<SecretString>> {
+                anyhow::bail!("injected keychain read failure")
+            }
+
+            fn set(&self, key: &str, value: &SecretString) -> anyhow::Result<()> {
+                self.inner.set(key, value)
+            }
+
+            fn delete(&self, key: &str) -> anyhow::Result<()> {
+                self.inner.delete(key)
+            }
+
+            fn backend_name(&self) -> &'static str {
+                "fail-on-read (test)"
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let freedom_path = home.path().join("freedom.yaml");
+        let credentials_path = home.path().join("credentials.yaml");
+        std::fs::write(&freedom_path, "secrets_backend: keychain\n").unwrap();
+        Credentials::update_raw_freedom_with_credentials_at(
+            &freedom_path,
+            &credentials_path,
+            |_, credentials| {
+                credentials.paperless_url = Some("http://127.0.0.1:18000".to_owned());
+                Ok((None, ()))
+            },
+        )
+        .unwrap();
+        let store = FailOnReadStore {
+            inner: InMemorySecretStore::default(),
+        };
+
+        assert_eq!(
+            persist_keychain_token_after_url_with_store(
+                &freedom_path,
+                "http://127.0.0.1:18000",
+                &SecretString::from("issued-token"),
+                &store,
+            )
+            .unwrap_err(),
+            "paperless_bootstrap_persist"
+        );
+        assert!(store.inner.get("paperless_token").unwrap().is_none());
     }
 
     #[tokio::test]

@@ -47937,7 +47937,21 @@ exit 0
         let _ = window.hide();
         slint::run_event_loop_until_quit().expect("pump W153 Slint event loop");
         drop(timer);
-        assert!(done.get(), "timed out waiting for W153 {label}");
+        // Keep timeout evidence structural: fixture content (including a
+        // provider source or operator body) is never emitted into CI logs.
+        // The W480 replay path otherwise has no evidence of whether attach,
+        // terminal projection, or only Slint settlement was missing.
+        let visible_rows = window
+            .get_chat_live_messages()
+            .iter()
+            .map(|row| format!("{}:{}", row.role, row.stream_phase))
+            .collect::<Vec<_>>();
+        assert!(
+            done.get(),
+            "timed out waiting for W153 {label}; main_in_flight={}; live_rows=[{}]",
+            window.get_chat_send_in_flight(),
+            visible_rows.join(",")
+        );
     }
 
     #[cfg(not(windows))]
