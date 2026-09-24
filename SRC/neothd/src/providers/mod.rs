@@ -3855,6 +3855,34 @@ pub(crate) fn utility_model_for_config(config: &FreedomConfig) -> Option<String>
         .map(|model| effective.resolve_model_alias(model).to_owned())
 }
 
+/// Resolve the utility leaf's pricing identity without constructing a provider,
+/// reading credentials, or starting a transport. Use the same effective config
+/// and endpoint/profile classifiers as the actual utility adapter factory.
+pub(crate) fn utility_pricing_provider_for_config(config: &FreedomConfig) -> Result<&'static str> {
+    let effective = build_utility_config(config);
+    let effective = effective.as_ref().unwrap_or(config);
+    let kind = effective.provider_kind.ok_or_else(|| {
+        anyhow::anyhow!("configure a provider before document distillation")
+    })?;
+    match kind {
+        ProviderKind::OpenaiApi => Ok(openai_api::openai_provider_name(
+            effective.provider_endpoint.as_deref().unwrap_or("https://api.openai.com/v1"),
+        )),
+        ProviderKind::OpenaiCompat => {
+            let endpoint = effective.provider_endpoint.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("openai_compat requires an endpoint URL in freedom.yaml")
+            })?;
+            let profile = effective.inference.openai_compat_profile
+                .or_else(|| known_endpoints::profile_for_endpoint(endpoint))
+                .unwrap_or_default();
+            known_endpoints::validate_profile_endpoint(profile, endpoint)?;
+            Ok(profile.adapter_name())
+        }
+        ProviderKind::Skip => anyhow::bail!("configure a provider before document distillation"),
+        _ => Ok(kind.as_provider_id()),
+    }
+}
+
 /// GOLD-ADAPT-ODY-08 — build the SOTA teacher provider for escalation when a
 /// local model fails or replies with low confidence.
 ///
@@ -6282,6 +6310,35 @@ mod tests {
             utility_model_for_config(&cfg).as_deref(),
             Some("claude-haiku-4-5-20251001")
         );
+    }
+
+    #[tokio::test]
+    async fn utility_pricing_identity_matches_constructed_endpoint_leaf() {
+        let mut config = base_config();
+        config.provider_kind = Some(ProviderKind::OpenaiApi);
+        config.provider_model = Some("gpt-5".into());
+        config.provider_key = Some(crate::secret::SecretString::from("fixture-key"));
+        for endpoint in ["https://gateway.example.test/v1", "https://api.openai.com/v1"] {
+            config.provider_endpoint = Some(endpoint.into());
+            for utility in [None, Some(InferenceProvider::OpenAi)] {
+                config.inference.utility_provider = utility;
+                let expected = utility_pricing_provider_for_config(&config).unwrap();
+                let actual = from_config_for_utility(&config).await.unwrap();
+                assert_eq!(expected, actual.name(), "endpoint={endpoint}, utility={utility:?}");
+            }
+        }
+        config.provider_kind = Some(ProviderKind::OpenaiCompat);
+        config.inference.utility_provider = None;
+        for endpoint in ["https://gateway.example.test/v1", "https://openrouter.ai/api/v1"] {
+            config.provider_endpoint = Some(endpoint.into());
+            let expected = utility_pricing_provider_for_config(&config).unwrap();
+            let actual = from_config_for_utility(&config).await.unwrap();
+            assert_eq!(expected, actual.name());
+        }
+        config.inference.openai_compat_profile = Some(crate::config::inference::OpenAiCompatibleProfile::DeepSeek);
+        assert!(utility_pricing_provider_for_config(&config).is_err());
+        config.provider_kind = None;
+        assert!(utility_pricing_provider_for_config(&config).is_err());
     }
 
     #[test]

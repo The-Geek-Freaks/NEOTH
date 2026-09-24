@@ -139,6 +139,16 @@ fn is_official_openai_endpoint(endpoint: &str) -> bool {
         && url.path().trim_end_matches('/') == "/v1"
 }
 
+/// The same pure endpoint classification used before construction by cost
+/// previews and by the actual adapter. A custom service has no official quote.
+pub(crate) fn openai_provider_name(endpoint: &str) -> &'static str {
+    if is_official_openai_endpoint(endpoint) {
+        "openai_api"
+    } else {
+        "openai_api_custom"
+    }
+}
+
 fn is_openrouter_endpoint(endpoint: &str) -> bool {
     let Ok(url) = reqwest::Url::parse(endpoint) else {
         return false;
@@ -279,11 +289,7 @@ impl OpenAiAdapter {
         api_key: SecretString,
         default_model: String,
     ) -> Result<Self> {
-        let name = if is_official_openai_endpoint(&endpoint) {
-            "openai_api"
-        } else {
-            "openai_api_custom"
-        };
+        let name = openai_provider_name(&endpoint);
         Self::build(endpoint, api_key, default_model, name, None)
     }
 

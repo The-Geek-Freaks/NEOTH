@@ -9064,6 +9064,14 @@ mod tests {
                 "3088cac0ba4108e5ecad9e44506d70660a5a526677a9f3a4ef4dff80b032ce2a",
             ),
             (
+                "skills/doc_distill.rs",
+                2,
+                // Both document leaves use the CostAuthorizingProvider supplied
+                // by cli::skills after its preflight and consent. The bounded
+                // helper has no factory, fallback, retry, or staging capability.
+                "c93b541ef3e17794424f6560676adef39ea733a8166b879194a0a0005c9a52e8",
+            ),
+            (
                 "skills/test_harness.rs",
                 2,
                 "0c2d8e9e116a587bfacdd6d702eb773e272f049b690041c051ef18e801b6c603",

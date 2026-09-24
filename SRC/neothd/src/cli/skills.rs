@@ -1610,12 +1610,27 @@ fn print_document_preflight(
     Ok(())
 }
 
+fn document_preflight_for_config(
+    document: &crate::skills::doc_distill::DistilledDoc,
+    config: &FreedomConfig,
+) -> Result<crate::skills::doc_distill::DocumentDistillationPreflight> {
+    let provider = crate::providers::utility_pricing_provider_for_config(config)?;
+    anyhow::ensure!(
+        provider != "claude_cli",
+        "document distillation requires a provider with a bounded completion; configure inference.utility_provider with a token-bounded API or local provider instead of claude_cli"
+    );
+    let model = crate::providers::utility_model_for_config(config)
+        .filter(|model| !model.trim().is_empty())
+        .context("document cost preflight requires an explicit main or utility model")?;
+    Ok(crate::skills::doc_distill::preflight_estimate(document, provider, &model))
+}
+
 async fn run_document_distillation(
     path: &Path,
     minimum_score: u8,
     output: OutputFormat,
 ) -> Result<()> {
-    use crate::skills::doc_distill::{distill_with_reflexion, preflight_estimate};
+    use crate::skills::doc_distill::distill_with_reflexion;
     let document = prepare_document_review(path).await?;
     let config_path = FreedomConfig::default_path();
     let home = config_path
@@ -1623,16 +1638,8 @@ async fn run_document_distillation(
         .context("document config has no home")?
         .to_path_buf();
     let config = FreedomConfig::load_from_path_or_default(&config_path)?;
-    let provider_kind = config
-        .inference
-        .utility_provider
-        .map(|kind| kind.to_provider_kind())
-        .or(config.provider_kind)
-        .context("configure a provider before document distillation")?;
-    let model = crate::providers::utility_model_for_config(&config)
-        .filter(|model| !model.trim().is_empty())
-        .context("document cost preflight requires an explicit main or utility model")?;
-    let preflight = preflight_estimate(&document, provider_kind.as_provider_id(), &model);
+    let preflight = document_preflight_for_config(&document, &config)?;
+    let model = preflight.model.clone();
     let outcome = emit_document_preflight_then_run(
         &preflight,
         |receipt| print_document_preflight(receipt, minimum_score, output),
@@ -2062,8 +2069,8 @@ mod tests {
         }
     }
 
-    fn document_preflight_fixture() -> crate::skills::doc_distill::DocumentDistillationPreflight {
-        let doc = crate::skills::doc_distill::distill_doc(
+    fn document_fixture() -> crate::skills::doc_distill::DistilledDoc {
+        crate::skills::doc_distill::distill_doc(
             crate::media::Extraction {
                 text: "An admitted source.".to_owned(),
                 metadata: serde_json::Value::Null,
@@ -2072,8 +2079,61 @@ mod tests {
             19,
             "a".repeat(64),
         )
-        .unwrap();
-        crate::skills::doc_distill::preflight_estimate(&doc, "local_ollama", "fixture-model")
+        .unwrap()
+    }
+
+    fn document_preflight_fixture() -> crate::skills::doc_distill::DocumentDistillationPreflight {
+        crate::skills::doc_distill::preflight_estimate(&document_fixture(), "local_ollama", "fixture-model")
+    }
+
+    #[test]
+    fn document_preflight_uses_custom_endpoint_identity_and_unknown_price() {
+        let mut config = FreedomConfig::default();
+        config.provider_kind = Some(crate::config::ProviderKind::OpenaiApi);
+        config.provider_model = Some("gpt-5".into());
+        config.provider_endpoint = Some("https://gateway.example.test/v1".into());
+        let receipt = document_preflight_for_config(&document_fixture(), &config).unwrap();
+        assert_eq!(receipt.provider, "openai_api_custom");
+        assert_eq!(receipt.model, "gpt-5");
+        let json = serde_json::to_value(&receipt).unwrap();
+        assert_eq!(json["price"]["state"], "unknown");
+        for field in ["input_eur", "output_eur", "total_eur"] {
+            assert!(json["price"][field].is_null());
+        }
+        config.provider_endpoint = Some("https://api.openai.com/v1".into());
+        let official = document_preflight_for_config(&document_fixture(), &config).unwrap();
+        assert_eq!(official.provider, "openai_api");
+        assert!(matches!(official.price, crate::skills::doc_distill::DocumentDistillationPrice::Known { .. }));
+    }
+
+    #[test]
+    fn document_preflight_binds_effective_utility_profile_and_model() {
+        let mut config = FreedomConfig::default();
+        config.provider_kind = Some(crate::config::ProviderKind::OpenaiCompat);
+        config.provider_endpoint = Some("https://openrouter.ai/api/v1".into());
+        config.provider_model = Some("@document".into());
+        config.models_aliases.insert("@document".into(), "vendor/review-model".into());
+        let receipt = document_preflight_for_config(&document_fixture(), &config).unwrap();
+        assert_eq!(receipt.provider, "openrouter_api");
+        assert_eq!(receipt.model, "vendor/review-model");
+        config.inference.utility_provider = Some(crate::config::inference::InferenceProvider::OpenAi);
+        let utility = document_preflight_for_config(&document_fixture(), &config).unwrap();
+        assert_eq!(utility.provider, "openai_api", "different vendor clears the main endpoint");
+        assert_eq!(utility.model, "gpt-4o-mini");
+    }
+
+    #[test]
+    fn document_preflight_rejects_unbounded_claude_cli_before_emission() {
+        let mut config = FreedomConfig::default();
+        config.provider_kind = Some(crate::config::ProviderKind::ClaudeCli);
+        config.provider_model = Some("opusplan".into());
+        let error = document_preflight_for_config(&document_fixture(), &config).unwrap_err();
+        assert!(error.to_string().contains("bounded completion"));
+        assert!(error.to_string().contains("inference.utility_provider"));
+        config.inference.utility_provider = Some(crate::config::inference::InferenceProvider::OpenAi);
+        let receipt = document_preflight_for_config(&document_fixture(), &config).unwrap();
+        assert_eq!(receipt.provider, "openai_api");
+        assert_eq!(receipt.model, "gpt-4o-mini");
     }
 
     #[tokio::test]

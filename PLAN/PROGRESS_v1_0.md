@@ -2,6 +2,26 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W835 document boundary repairs and W832 replay acceptance (2026-09-24):**
+Root verified all three Group36015215923 archives at095d10f0,237fixture/twoinput
+bindings and every terminal:1282PASS/3FAIL. D5's12 cases all pass, including the
+production HOME/skills repair, so ADOPT31-D5 closes. ADOPT31-B11 also closes:
+18 existing catalog and actual session-consumer terminals pass. The shared,
+authority-bound composer already provides the logical-session injection;
+adding it to a daemon-boot hook would duplicate the wrong lifecycle boundary.
+D7 is11/12; B3 is10/11;
+B5's11 cases pass but its independent review found two real preflight defects.
+W831 now shares the actual utility endpoint/profile identity, keeps custom
+prices unknown, and refuses unbounded Claude CLI before emitting a finite
+receipt. W833 derives chapter ranges from the64KiB sanitizer cap instead of
+256KiB; the original large CLI source remains unchanged. W834 supplies the
+counting test provider's required default model without weakening terminal or
+zero-call assertions. The raw-callsite inventory records the two reviewed,
+cost-authorized document calls. Seven boundary cases join Group1292; executable
+repair validation remains hosted-only. ROAD1070checked252open2partial;
+raw254/pre-tag253;ADOPT40open27done;dashboard188open. B6 GUI and B7 remain open.
+Evidence: docs/verification/gold-wave832-group1285.json.
+
 **W827 grouped source binding repair (2026-09-24):**
 Group1285 run36014123642 atbd81ffde stopped before compilation or fixtures:
 seven platform-specific document tests still referenced the pre-format source

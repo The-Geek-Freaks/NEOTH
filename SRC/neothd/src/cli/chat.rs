@@ -27909,6 +27909,10 @@ mod attach_tests {
             "d7-counting-outer-provider"
         }
 
+        fn default_model(&self) -> Option<&str> {
+            Some("d7-counting-outer-model")
+        }
+
         async fn complete(&self, _req: Request) -> Result<crate::providers::Completion> {
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             anyhow::bail!("D7 pre-provider terminal must not dispatch the outer provider")

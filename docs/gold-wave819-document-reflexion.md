@@ -19,6 +19,14 @@ reviewed exact-model table. Local/free estimates are zero; unknown estimates
 have `state: unknown` and null monetary fields. This receipt grants no spending
 permission. Existing consent and request-bound cost authorization still apply.
 
+The receipt uses the same effective utility configuration and endpoint/profile
+classifier as the actual adapter. Custom OpenAI endpoints are identified as
+`openai_api_custom` with unknown/null pricing; compatible vendor profiles keep
+their actual leaf identity. A configured Claude CLI is refused before emitting
+a bounded estimate because one CLI invocation may perform multiple internal
+model calls and has no enforceable whole-invocation output cap. Configure a
+token-bounded API or local `inference.utility_provider` for this operation.
+
 With `--output json`, the preflight is emitted to stderr and the result remains
 one JSON object on stdout. With `--output jsonl`, both are ordered stdout events.
 The human-readable format prints the preflight before the candidate and score.

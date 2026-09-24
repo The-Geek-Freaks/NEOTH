@@ -23,7 +23,9 @@ pub const MAX_DOCUMENT_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
 /// Above this source-byte threshold the review surface must use chapter ranges
 /// for UTF-8 text rather than construct one whole-file text buffer.
 pub const LARGE_TEXT_CHAPTER_THRESHOLD_BYTES: u64 = 200 * 1024;
-pub const MAX_CHAPTER_RANGE_BYTES: usize = 256 * 1024;
+/// A selected chapter becomes untrusted text for `distill_doc`; keep its exact
+/// byte cap tied to that sanitizer's accepted ingress ceiling.
+pub const MAX_CHAPTER_RANGE_BYTES: usize = ingress_sanitizer::MAX_INGRESS_BYTES;
 /// The provider-backed B5 path has one candidate call and one reflection call.
 /// These concrete ceilings make the B6 receipt finite before either call starts.
 pub const DOCUMENT_DISTILLATION_OUTPUT_TOKENS: u32 = 2_048;
@@ -1631,6 +1633,27 @@ mod tests {
             })
             .collect::<String>();
         assert_eq!(reconstructed, source);
+    }
+
+    #[test]
+    fn every_scanned_chapter_range_is_accepted_by_document_distillation() {
+        let source = format!("# Chapter\n{}", "x".repeat(MAX_CHAPTER_RANGE_BYTES * 3));
+        let ranges = discover_text_chapter_ranges(
+            &mut Cursor::new(source.as_bytes()),
+            source.len() as u64,
+        ).expect("chapter scan");
+        assert!(ranges.len() > 1);
+        for range in ranges {
+            let text = read_text_chapter_range(&mut Cursor::new(source.as_bytes()), &range)
+                .expect("scanner range is UTF-8 and within the admission cap");
+            assert!(text.len() <= ingress_sanitizer::MAX_INGRESS_BYTES);
+            assert!(distill_doc(
+                Extraction { text, metadata: serde_json::Value::Null },
+                DocumentSourceKind::PlainText,
+                source.len() as u64,
+                "0".repeat(64),
+            ).is_ok());
+        }
     }
 
     #[test]
