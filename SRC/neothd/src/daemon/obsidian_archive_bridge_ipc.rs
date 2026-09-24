@@ -202,11 +202,19 @@ fn recover_owned_stale_socket_with_probe(
     probe: impl FnOnce(&Path) -> Result<bool>,
 ) -> Result<()> {
     use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
-    let before = match std::fs::symlink_metadata(socket) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error).context("inspect pre-existing Obsidian bridge socket"),
+    if !socket.try_exists().context("inspect Obsidian bridge socket presence")? {
+        return Ok(());
+    }
+    ensure!(
+        crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid"))?
+            == Some(std::process::id()),
+        "refuse stale Obsidian bridge recovery without this daemon's held PID lock"
+    );
+    let Some(custody) = retain_socket_custody(socket)? else {
+        return Ok(());
     };
+    let before = std::fs::symlink_metadata(&custody.path)
+        .context("inspect retained pre-existing Obsidian bridge socket")?;
     ensure!(
         before.file_type().is_socket(),
         "refuse to recover non-socket Obsidian bridge leaf"
@@ -216,11 +224,6 @@ fn recover_owned_stale_socket_with_probe(
     ensure!(
         before.uid() == effective_uid,
         "refuse to recover Obsidian bridge socket owned by another UID"
-    );
-    ensure!(
-        crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid"))?
-            == Some(std::process::id()),
-        "refuse stale Obsidian bridge recovery without this daemon's held PID lock"
     );
     ensure!(
         !probe(socket)?,
@@ -236,6 +239,68 @@ fn recover_owned_stale_socket_with_probe(
         "refuse recovery because the Obsidian bridge socket changed during probe"
     );
     std::fs::remove_file(socket).context("remove verified stale Obsidian bridge socket")
+}
+
+#[cfg(unix)]
+struct RetainedSocketCustody {
+    path: PathBuf,
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(unix)]
+impl Drop for RetainedSocketCustody {
+    fn drop(&mut self) {
+        use std::os::unix::fs::MetadataExt as _;
+        if let Ok(metadata) = std::fs::symlink_metadata(&self.path)
+            && metadata.dev() == self.device
+            && metadata.ino() == self.inode
+        {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn retain_socket_custody(socket: &Path) -> Result<Option<RetainedSocketCustody>> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let name = socket
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("Obsidian bridge socket has no leaf name"))?;
+    for _ in 0..16 {
+        let mut custody_name = name.to_os_string();
+        custody_name.push(format!(
+            ".neoth-stale-custody-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        let custody = socket.with_file_name(custody_name);
+        match std::fs::hard_link(socket, &custody) {
+            Ok(()) => {
+                let metadata = match std::fs::symlink_metadata(&custody) {
+                    Ok(metadata) => metadata,
+                    Err(error) => {
+                        // Identity is unavailable: preserve the leaf rather
+                        // than unlink a possibly replaced custody name.
+                        return Err(error)
+                            .context("inspect retained Obsidian bridge socket custody");
+                    }
+                };
+                return Ok(Some(RetainedSocketCustody {
+                    path: custody,
+                    device: metadata.dev(),
+                    inode: metadata.ino(),
+                }));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error).context("retain pre-existing Obsidian bridge socket custody");
+            }
+        }
+    }
+    anyhow::bail!("could not allocate Obsidian bridge socket custody name")
 }
 
 #[cfg(unix)]
@@ -418,5 +483,24 @@ mod tests {
             socket.exists(),
             "replacement leaf remains after identity recheck"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_socket_custody_retains_the_bound_socket_identity() {
+        use std::os::unix::fs::MetadataExt as _;
+
+        let home = crate::test_env::canonical_tempdir().unwrap();
+        let socket = home.path().join("macos-obsidian-bridge.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let before = std::fs::symlink_metadata(&socket).unwrap();
+        let custody = retain_socket_custody(&socket).unwrap().unwrap();
+        let retained = std::fs::symlink_metadata(&custody.path).unwrap();
+        assert_eq!(
+            (retained.dev(), retained.ino()),
+            (before.dev(), before.ino())
+        );
+        drop(custody);
+        assert!(socket.exists(), "custody cleanup must retain the live socket leaf");
     }
 }

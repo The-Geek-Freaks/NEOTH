@@ -1,0 +1,51 @@
+{
+  "schema": "neoth-w669-p226a-acceptance/v1",
+  "criterion": "GOLD-LF-P2-26a",
+  "status": "ACCEPTED",
+  "date": "2026-09-24",
+  "native": {
+    "sourceBinding": {
+      "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+      "blob": "2a1cb75f891678d2d9eee6fe513fb17125c5fbb8",
+      "sha256": "7A2CE9B629BE8E71B9B05323E32519CC86DB10694B5D1CD78F2FC93E9A130B2D"
+    },
+    "terminal": {
+      "test": "daemon::gui_chat_runtime::lifecycle_tests::w458_real_producer_post_hook_is_visible_to_main_and_buddy_only_after_acceptance",
+      "status": "passed"
+    },
+    "carry": "Current Git blob and working SHA256 identical",
+    "source": "258c0653f8af85e6f29e44e266cf785d181cbf91",
+    "run": 35952811727
+  },
+  "gui": {
+    "carry": {
+      "scope": "Source-bound Linux fixtures; macOS package/runtime acceptance remains separate",
+      "testedBlob": "e15708e96634c4541ac8bdb961906d9ed400460f",
+      "formattedGuiFile": "SRC/neothd-gui/src/main.rs",
+      "difference": "Only formatter line wrapping in two Buddy-recents helper declarations; root inspected the complete Git diff",
+      "currentBlob": "73347cae2d0abb3d6bfeebec235d1858ebee8479",
+      "unchangedGuiFiles": 23
+    },
+    "sourceAdmission": "docs/verification/gold-wave658-gui149-terminals.json",
+    "terminal": {
+      "index": 147,
+      "test": "w58_gui_callback_runtime_tests::w480_real_producer_post_provider_outcomes_replay_through_main_and_buddy",
+      "class": "neothd-gui::bin/neothd-gui",
+      "status": "passed",
+      "logSha256": "0B69DFFC7EE9376F287F5ABBDD125E2EEAEE3A6B58A033017329D736E6ABDC11",
+      "executionSha256": "585030D18B92BF646B5CFD63485A59449C55717B737F938717E4BB625BFB1352"
+    },
+    "run": 35956046048,
+    "all24GuiBlobsVerified": true,
+    "source": "b71ebba3a9756f8b7bd30e44a86980a1187a949b"
+  },
+  "verifiedBehavior": [
+    "real three-chunk producer and actual Main/Buddy callbacks",
+    "Block exposes no provider text, completion or Local CLI preview",
+    "Replace renders only accepted replacement with matching count, hash and terminal identity",
+    "Buddy Recents and Local CLI preview project only the accepted replacement"
+  ],
+  "independentCriterionReview": "W477 agreed native producer plus real consumers satisfies this evidence leaf",
+  "excluded": "P2-26b packaged macOS/reconnect runtime remains independently open",
+  "localExecutableValidationRan": false
+}

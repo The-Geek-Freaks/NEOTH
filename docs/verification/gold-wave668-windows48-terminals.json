@@ -1,0 +1,99 @@
+{
+  "schema": "neoth-w668-windows48/v1",
+  "run": 35959097476,
+  "source": "009cabbf64eb5678a27b355d397d5d5ce6618b8d",
+  "artifact": 10792151361,
+  "zipSha256": "9B2C91B8B95E3E0258DC7678FF63ADCC287A6166E403F1F2DF010FB22D3D7408",
+  "internalHashesVerified": 56,
+  "sourceBindings": [
+    {
+      "blob": "36d16239c636bb8934f9a5a89d2db47e913ffb72",
+      "path": "SRC/neothd/src/cli/memory.rs",
+      "sha256": "51595ecbcbb45914d85fe49a8d506ce8365c53d1395e0d978a30ac99e8ca7602"
+    },
+    {
+      "blob": "943b63748eb75391708b8d4da5ca75563341b6c5",
+      "path": "SRC/neothd/src/connectors/local_import/windows_source.rs",
+      "sha256": "d04f297c44832528c44b884af1d8725ef8077bf83f7c1b95a0d71dea036b5c94"
+    },
+    {
+      "blob": "33db4f8a96fc81d6e9238873162ffd0297fec76b",
+      "path": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
+      "sha256": "1f69e09f57735e69dc0d018ed98f5f22bfc35b4a0a8164fec66f47f170a8a523"
+    },
+    {
+      "blob": "1832b2137176e9d8305bceb65409f5acfa7177fe",
+      "path": "SRC/neothd/src/installers/paperless_bootstrap.rs",
+      "sha256": "e9c4681b4aa7dbb0d9963a594232e12c9c99cedef03fbdd4f575829bfaae598d"
+    },
+    {
+      "blob": "eecb9da6eedebb8871d6480d5e97d2ce0172bdce",
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sha256": "05fc7a5cf2519868166687d367d4731029959b513d22bf7a235666b9f0229b56"
+    },
+    {
+      "blob": "76b76639e9f2630904962693e6a795393a776799",
+      "path": "SRC/neothd/src/installers/paperless_staging.rs",
+      "sha256": "80d5145643ee25a1c8548e8364616224e3236e9c223c32f8ef3b97747cabfc9e"
+    },
+    {
+      "blob": "df4819842fbe54205978ea2385b5710f95ed902a",
+      "path": "SRC/neothd/src/reflection/periodic.rs",
+      "sha256": "168ac0e1905d4352d234738fcb0e4a3538974b1cdb07b8f7c0532a3f03814a7f"
+    },
+    {
+      "blob": "7d111771053bc9161a7f800099812505c0d8bd44",
+      "path": "SRC/neothd/src/reflection/retention_v2_tests.rs",
+      "sha256": "2b90a61e0aa8138e41aef8f87db9b1f464a4af78ca30ee0fa543d45f71b6ca63"
+    },
+    {
+      "blob": "368be790d974e50cc6e441c2433caadd35fe40f4",
+      "path": "SRC/neothd/src/skills/store.rs",
+      "sha256": "4a7a09d0afc4579baf0d96602f9b297f534a9ac16a63840eb3c53b1ad89f5557"
+    },
+    {
+      "blob": "775434abbd17d4e872d84c7be23f59d7498dfff1",
+      "path": "SRC/neothd/src/tools/managed_browser.rs",
+      "sha256": "2f2d9a6b351d74a1a076fd8756169bda170adc06bea24ef698fe821f5c8a02b7"
+    },
+    {
+      "blob": "1d4f652dbafb054605f294e83d4ed118273658c2",
+      "path": "SRC/neothd/src/wal/redact.rs",
+      "sha256": "b1564c3555aa338b3e99b0d5f85ff26ed67dca1b2e37be3800ff24e97f5d6c9b"
+    }
+  ],
+  "buildInputsVerified": 2,
+  "selected": 48,
+  "executed": 48,
+  "passed": 45,
+  "failed": 3,
+  "missingTerminal": 0,
+  "failedTerminals": [
+    {
+      "index": "38",
+      "status": "failed",
+      "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_keeps_existing_token_and_binds_full_install",
+      "path": "neothd/src/installers/paperless_lifecycle.rs"
+    },
+    {
+      "index": "39",
+      "status": "failed",
+      "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_rejects_remote_engine_before_pull",
+      "path": "neothd/src/installers/paperless_lifecycle.rs"
+    },
+    {
+      "index": "40",
+      "status": "failed",
+      "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_bootstraps_missing_token_after_verified_containers",
+      "path": "neothd/src/installers/paperless_lifecycle.rs"
+    }
+  ],
+  "stageSwap": {
+    "index": "48",
+    "status": "passed",
+    "test": "installers::paperless_staging::tests::stage_source_swap_before_late_mutation_rebind_is_refused",
+    "path": "neothd/src/installers/paperless_staging.rs"
+  },
+  "status": "SOURCE_ADMITTED_PARTIAL_FAILURE",
+  "localExecutablesRan": false
+}

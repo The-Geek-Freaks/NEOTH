@@ -252,13 +252,16 @@ pub fn prepare_at(root: &Path) -> Result<PaperlessStagingView, PaperlessStagingE
         );
         return Err(PaperlessStagingError::UnownedOrMismatch);
     }
-    if !requested_namespace_still_names_stage(root, stage_binding.identity_token()) {
+    if !requested_namespace_still_names_stage(root, &stage_read_binding) {
         return Err(PaperlessStagingError::UnownedOrMismatch);
     }
     Ok(view(PaperlessStagingStatus::PreparedPinned))
 }
 
-fn requested_namespace_still_names_stage(root: &Path, expected_identity: &str) -> bool {
+fn requested_namespace_still_names_stage(
+    root: &Path,
+    expected_binding: &crate::skills::store::BoundDirectoryChild,
+) -> bool {
     let Some(parent_path) = root.parent() else {
         return false;
     };
@@ -271,12 +274,9 @@ fn requested_namespace_still_names_stage(root: &Path, expected_identity: &str) -
         return false;
     };
     let display = parent.physical_display_path.join(root_name);
-    let Ok((_root_dir, binding)) =
-        crate::skills::store::open_bound_real_child_dir(&parent.dir, root_name, &display)
-    else {
-        return false;
-    };
-    binding.identity_token() == expected_identity
+    expected_binding
+        .matches_directory_child(&parent.dir, root_name, &display)
+        .unwrap_or(false)
 }
 
 fn view(status: PaperlessStagingStatus) -> PaperlessStagingView {
@@ -338,7 +338,7 @@ pub(crate) fn still_exactly_owned(
     root: &OwnedPaperlessRoot,
 ) -> Result<bool, PaperlessStagingError> {
     if !root.still_bound()?
-        || !requested_namespace_still_names_stage(&root.display, root.binding.identity_token())
+        || !requested_namespace_still_names_stage(&root.display, &root.binding)
     {
         return Ok(false);
     }
@@ -466,7 +466,7 @@ fn inspect_owned(root: &Path) -> Result<bool, PaperlessStagingError> {
     {
         return Err(PaperlessStagingError::UnownedOrMismatch);
     }
-    if !requested_namespace_still_names_stage(root, root_binding.identity_token()) {
+    if !requested_namespace_still_names_stage(root, &root_binding) {
         return Err(PaperlessStagingError::UnownedOrMismatch);
     }
     Ok(true)
@@ -619,6 +619,108 @@ mod tests {
         );
         assert_eq!(fs::read(&retained).unwrap(), b"retained-state");
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn requested_namespace_revalidation_composes_with_held_delete_binding() {
+        let parent = tempfile::tempdir().unwrap();
+        let parent_root = canonical_temp_root(&parent);
+        let root = parent_root.join("paperless");
+        fs::create_dir(&root).unwrap();
+        let bound_parent = crate::skills::store::open_absolute_bound_directory(
+            &parent_root,
+            false,
+            "test paperless parent",
+        )
+        .unwrap()
+        .unwrap();
+        let initial_binding = crate::skills::store::bind_child_object(
+            &bound_parent.dir,
+            OsStr::new("paperless"),
+            &root,
+        )
+        .unwrap();
+        let shared_root = crate::skills::store::open_bound_real_child_dir_for_read(
+            &bound_parent.dir,
+            &initial_binding,
+            OsStr::new("paperless"),
+            &root,
+        )
+        .unwrap();
+        let (shared_root, root_binding) = crate::skills::store::bind_retained_real_child_dir(
+            &bound_parent.dir,
+            OsStr::new("paperless"),
+            &root,
+            shared_root,
+        )
+        .unwrap();
+        drop(initial_binding);
+        let held_delete_binding = crate::skills::store::bind_child_object(
+            &bound_parent.dir,
+            OsStr::new("paperless"),
+            &root,
+        )
+        .unwrap();
+
+        assert!(requested_namespace_still_names_stage(&root, &root_binding));
+
+        drop(held_delete_binding);
+        drop(shared_root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn requested_namespace_revalidation_rejects_wrong_generation_with_held_delete_binding() {
+        let parent = tempfile::tempdir().unwrap();
+        let parent_root = canonical_temp_root(&parent);
+        let root = parent_root.join("paperless");
+        let displaced = parent_root.join("displaced-paperless");
+        fs::create_dir(&root).unwrap();
+        let bound_parent = crate::skills::store::open_absolute_bound_directory(
+            &parent_root,
+            false,
+            "test paperless parent",
+        )
+        .unwrap()
+        .unwrap();
+        let initial_binding = crate::skills::store::bind_child_object(
+            &bound_parent.dir,
+            OsStr::new("paperless"),
+            &root,
+        )
+        .unwrap();
+        let shared_root = crate::skills::store::open_bound_real_child_dir_for_read(
+            &bound_parent.dir,
+            &initial_binding,
+            OsStr::new("paperless"),
+            &root,
+        )
+        .unwrap();
+        let (shared_root, root_binding) = crate::skills::store::bind_retained_real_child_dir(
+            &bound_parent.dir,
+            OsStr::new("paperless"),
+            &root,
+            shared_root,
+        )
+        .unwrap();
+        drop(initial_binding);
+        let held_delete_binding = crate::skills::store::bind_child_object(
+            &bound_parent.dir,
+            OsStr::new("paperless"),
+            &root,
+        )
+        .unwrap();
+
+        fs::rename(&root, &displaced).unwrap();
+        fs::create_dir(&root).unwrap();
+        assert!(!requested_namespace_still_names_stage(&root, &root_binding));
+        assert!(displaced.is_dir());
+        assert!(root.is_dir());
+
+        drop(held_delete_binding);
+        drop(shared_root);
+    }
+
     #[cfg(unix)]
     #[test]
     fn symlink_root_is_rejected_without_following_target() {

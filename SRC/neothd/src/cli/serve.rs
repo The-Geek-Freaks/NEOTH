@@ -257,11 +257,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             )
         })?;
     let initial_health_tags = {
-        let authenticated = runtime_config.authenticated_telegram_accounts()?;
-        crate::cli::serve_tasks::runtime_health_binding_tags(&authenticated)
+        let telegram = runtime_config.authenticated_telegram_accounts()?;
+        let slack = runtime_config.authenticated_slack_accounts()?;
+        crate::cli::serve_tasks::runtime_health_binding_tags(&telegram, &slack)
     };
     let telegram_accounts = crate::cli::serve_tasks::telegram_account_bundles(&runtime_config)
         .context("validated Telegram account bundles cannot be derived from runtime config pair")?;
+    let slack_accounts = crate::cli::serve_tasks::slack_account_bundles(&runtime_config)
+        .context("validated Slack account bundles cannot be derived from runtime config pair")?;
     let config = runtime_config.config;
     let creds = runtime_config.credentials;
     #[cfg(feature = "cluster")]
@@ -1161,10 +1164,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // → return reply for the channel to send.
     let mut channel_tasks: crate::cli::serve_tasks::ChannelFleet = std::collections::HashMap::new();
     let live_channels = Arc::new(crate::daemon::channel_live_registry::ChannelLiveRegistry::new());
-    let initial_channel_fingerprints = crate::cli::serve_tasks::channel_account_fingerprints(
+    let initial_channel_fingerprints = crate::cli::serve_tasks::channel_account_fingerprints_with_slack(
         &config,
         &creds,
         &telegram_accounts,
+        &slack_accounts,
         &neoth_home,
     );
     let mut readiness_publishers: crate::cli::serve_tasks::ChannelReadinessPublishers =
@@ -1268,6 +1272,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     crate::cli::serve_tasks::spawn_channel_adapters(
         &config,
         &telegram_accounts,
+        &slack_accounts,
         &shared_provider,
         &writer,
         &provider_meter,
@@ -1379,6 +1384,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 std::sync::Arc<FreedomConfig>,
                 crate::config::credentials::Credentials,
                 Vec<crate::cli::serve_tasks::TelegramAccountBundle>,
+                Vec<crate::cli::serve_tasks::SlackAccountBundle>,
                 std::collections::BTreeMap<
                     crate::channels::registry::ChannelRef,
                     crate::daemon::channel_runtime_health::BindingTag,
@@ -1486,10 +1492,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         continue;
                     }
                 };
-                let fresh_health_tags = match fresh_runtime.authenticated_telegram_accounts() {
-                    Ok(authenticated) => {
-                        crate::cli::serve_tasks::runtime_health_binding_tags(&authenticated)
-                    }
+                let fresh_health_tags = match (|| {
+                    let telegram = fresh_runtime.authenticated_telegram_accounts()?;
+                    let slack = fresh_runtime.authenticated_slack_accounts()?;
+                    Ok::<_, anyhow::Error>(
+                        crate::cli::serve_tasks::runtime_health_binding_tags(&telegram, &slack),
+                    )
+                })() {
+                    Ok(tags) => tags,
                     Err(load_error) => {
                         pending = None;
                         for channel_ref in known_fingerprints.keys() {
@@ -1516,7 +1526,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         }
                         failed_channels.extend(known_fingerprints.keys().cloned());
                         credentials_valid = false;
-                        error!(error = %load_error, "validated Telegram account generation became unusable; all channel adapters stopped fail-closed");
+                        error!(error = %load_error, "validated channel account generation became unusable; all channel adapters stopped fail-closed");
                         publish_channel_runtime_health(
                             channel_runtime_health.as_deref(),
                             &known_health_tags,
@@ -1528,10 +1538,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         continue;
                     }
                 };
-                let fresh_telegram_accounts =
-                    match crate::cli::serve_tasks::telegram_account_bundles(&fresh_runtime) {
-                        Ok(accounts) => accounts,
-                        Err(load_error) => {
+                let (fresh_telegram_accounts, fresh_slack_accounts) =
+                    match (
+                        crate::cli::serve_tasks::telegram_account_bundles(&fresh_runtime),
+                        crate::cli::serve_tasks::slack_account_bundles(&fresh_runtime),
+                    ) {
+                        (Ok(telegram), Ok(slack)) => (telegram, slack),
+                        (Err(load_error), _) | (_, Err(load_error)) => {
                             pending = None;
                             for channel_ref in known_fingerprints.keys() {
                                 live_channels.revoke_and_drain(channel_ref).await;
@@ -1558,7 +1571,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                             }
                             failed_channels.extend(known_fingerprints.keys().cloned());
                             credentials_valid = false;
-                            error!(error = %load_error, "validated Telegram account generation became unusable; all channel adapters stopped fail-closed");
+                            error!(error = %load_error, "validated channel account generation became unusable; all channel adapters stopped fail-closed");
                             publish_channel_runtime_health(
                                 channel_runtime_health.as_deref(),
                                 &known_health_tags,
@@ -1579,10 +1592,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         .keys()
                         .cloned()
                         .collect();
-                    for channel_ref in crate::cli::serve_tasks::channel_account_fingerprints(
+                    for channel_ref in crate::cli::serve_tasks::channel_account_fingerprints_with_slack(
                         &fresh_config,
                         &fresh_creds,
                         &fresh_telegram_accounts,
+                        &fresh_slack_accounts,
                         &channel_neoth_home,
                     )
                     .into_keys()
@@ -1591,6 +1605,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                             &fresh_config,
                             &fresh_creds,
                             &fresh_telegram_accounts,
+                            &fresh_slack_accounts,
                             &channel_ref,
                         ) && !running.contains(&channel_ref)
                         {
@@ -1598,10 +1613,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         }
                     }
                 }
-                let fresh_fingerprints = crate::cli::serve_tasks::channel_account_fingerprints(
+                let fresh_fingerprints = crate::cli::serve_tasks::channel_account_fingerprints_with_slack(
                     &fresh_config,
                     &fresh_creds,
                     &fresh_telegram_accounts,
+                    &fresh_slack_accounts,
                     &channel_neoth_home,
                 );
                 let retry_latched = pending
@@ -1634,6 +1650,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         fresh_config,
                         fresh_creds,
                         fresh_telegram_accounts,
+                        fresh_slack_accounts,
                         fresh_health_tags,
                         retry_failed,
                     ));
@@ -1651,6 +1668,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     fresh_config,
                     fresh_creds,
                     fresh_telegram_accounts,
+                    fresh_slack_accounts,
                     fresh_health_tags,
                     retry_failed,
                 ) = pending.take().expect("candidate checked above");
@@ -1701,6 +1719,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     crate::cli::serve_tasks::spawn_channel_adapters(
                         &fresh_config,
                         &fresh_telegram_accounts,
+                        &fresh_slack_accounts,
                         &shared_provider,
                         &writer,
                         &provider_meter,
@@ -1734,6 +1753,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                                 &fresh_config,
                                 &fresh_creds,
                                 &fresh_telegram_accounts,
+                                &fresh_slack_accounts,
                                 &channel_ref,
                             )
                         {

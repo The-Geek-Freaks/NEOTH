@@ -80,6 +80,31 @@ pub struct TelegramAccountProbe {
     pub dm_pairing: bool,
 }
 
+/// Secret-free static readiness for one authenticated named Slack account.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SlackAccountProbe {
+    pub channel_ref: ChannelRef,
+    pub status: ProbeStatus,
+    pub detail: String,
+}
+
+/// Project each validated named Slack bundle without exposing its bot or app
+/// token. An invalid account map is an error rather than a fabricated status.
+pub(crate) fn slack_account_probes(
+    pair: &crate::config::RuntimeConfigPair,
+) -> Result<Vec<SlackAccountProbe>> {
+    let accounts = pair.authenticated_slack_accounts()?;
+    Ok(accounts
+        .into_iter()
+        .filter(|account| !account.is_legacy_singleton() && account.channel_ref().channel_id == ChannelId::Slack)
+        .map(|account| SlackAccountProbe {
+            channel_ref: account.channel_ref().clone(),
+            status: ProbeStatus::Ok,
+            detail: "configured account; readiness is static only".to_string(),
+        })
+        .collect())
+}
+
 /// Project the same exact account bundles that the daemon accepts, without
 /// exposing a token or an allowed-user id. Invalid or partial maps remain an
 /// error for the caller: fabricating usable-looking child rows would hide the
@@ -638,6 +663,33 @@ mod tests {
     use crate::channels::registry::ChannelAccountId;
     use crate::config::credentials::{Credentials, TelegramAccountCredentials};
     use crate::config::{TelegramAccountConfig, TelegramDmPairingConfig};
+
+    fn slack_pair(entries: &[&str]) -> crate::config::RuntimeConfigPair {
+        let mut pair = crate::config::RuntimeConfigPair { config: crate::config::FreedomConfig::default(), raw_credentials: Credentials::default(), credentials: Credentials::default() };
+        for id in entries {
+            let id = ChannelAccountId::new(*id).unwrap();
+            pair.config.channel_accounts.slack.insert(id.clone(), crate::config::SlackAccountConfig { allowed_user_id: "U123".into(), incarnation: None });
+            let secrets = crate::config::credentials::SlackAccountCredentials { bot_token: Some(crate::secret::SecretString::from(format!("bot-{id}"))), app_token: Some(crate::secret::SecretString::from(format!("app-{id}"))) };
+            pair.raw_credentials.channel_accounts.slack.insert(id.clone(), secrets.clone());
+            pair.credentials.channel_accounts.slack.insert(id, secrets);
+        }
+        pair
+    }
+
+    #[test]
+    fn slack_account_projection_is_sorted_and_secret_free() {
+        let rows = slack_account_probes(&slack_pair(&["ops_b", "ops_a"])).unwrap();
+        assert_eq!(rows.iter().map(|row| row.channel_ref.account_id.as_str()).collect::<Vec<_>>(), vec!["ops_a", "ops_b"]);
+        let encoded = serde_json::to_string(&rows).unwrap();
+        for forbidden in ["bot-ops_a", "app-ops_a", "bot-ops_b", "app-ops_b", "U123"] { assert!(!encoded.contains(forbidden)); }
+    }
+
+    #[test]
+    fn slack_account_projection_refuses_orphaned_policy_map() {
+        let mut pair = slack_pair(&["ops_a"]);
+        pair.credentials.channel_accounts.slack.clear();
+        assert!(slack_account_probes(&pair).is_err());
+    }
 
     fn mapped_pair(entries: &[(&str, u64, Option<&str>)]) -> crate::config::RuntimeConfigPair {
         let mut pair = crate::config::RuntimeConfigPair {

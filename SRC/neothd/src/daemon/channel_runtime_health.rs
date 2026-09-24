@@ -16,7 +16,10 @@ use anyhow::{Context as _, Result, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use crate::{channels::registry::ChannelRef, config::AuthenticatedTelegramAccount};
+use crate::{
+    channels::registry::ChannelRef,
+    config::{AuthenticatedSlackAccount, AuthenticatedTelegramAccount},
+};
 
 use super::audit_rpc::{DaemonInstanceProof, InstanceCommitment, authenticated_live_instance};
 
@@ -25,6 +28,12 @@ const SCHEMA_VERSION: u32 = 1;
 const MAX_BYTES: u64 = 64 * 1024;
 const MAX_AGE: Duration = Duration::from_secs(3);
 const BINDING_TAG_DOMAIN: &[u8] = b"neoth/channel-runtime-health-binding/v1";
+const SLACK_BINDING_TAG_DOMAIN: &[u8] = b"neoth/channel-runtime-health-slack-binding/v1";
+
+fn update_framed_slack_field(digest: &mut Sha256, value: &[u8]) {
+    digest.update((value.len() as u64).to_be_bytes());
+    digest.update(value);
+}
 
 /// Private opaque equality metadata. It does not implement Debug, Display, or
 /// serde so a caller cannot accidentally include it in operator output.
@@ -45,6 +54,39 @@ impl BindingTag {
             account.token().expose_secret().as_bytes(),
             account.inbound_admission(),
         )
+    }
+
+    /// Hash one validated Slack account without exposing either capability
+    /// secret. The Slack-specific domain separates this equality tag from an
+    /// otherwise coincident Telegram account tuple.
+    pub(crate) fn from_authenticated_slack_account(
+        account: &AuthenticatedSlackAccount,
+    ) -> Self {
+        let mut digest = Sha256::new();
+        digest.update(SLACK_BINDING_TAG_DOMAIN);
+        update_framed_slack_field(
+            &mut digest,
+            serde_json::to_vec(account.channel_ref())
+                .expect("validated ChannelRef serialization is infallible")
+                .as_slice(),
+        );
+        match account.account_binding().as_ref() {
+            None => digest.update(b"/legacy-singleton"),
+            Some(binding) => {
+                digest.update(b"/mapped-account/incarnation/");
+                update_framed_slack_field(
+                    &mut digest,
+                    binding
+                        .incarnation()
+                        .map_or(&b"none"[..], |value| value.as_str().as_bytes()),
+                );
+            }
+        }
+        update_framed_slack_field(&mut digest, account.allowed_user_id().as_bytes());
+        digest.update([u8::from(account.is_legacy_singleton())]);
+        update_framed_slack_field(&mut digest, account.bot_token().expose_secret().as_bytes());
+        update_framed_slack_field(&mut digest, account.app_token().expose_secret().as_bytes());
+        Self(hex::encode(digest.finalize()))
     }
 
     fn from_parts_with_binding(

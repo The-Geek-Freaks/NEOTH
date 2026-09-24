@@ -1,0 +1,26 @@
+{
+  "schema": "neoth-wave672-core-cli-reference/v1",
+  "preparedOnly": false,
+  "run": 35959093253,
+  "source": "009cabbf64eb5678a27b355d397d5d5ce6618b8d",
+  "artifact": 10791933002,
+  "artifactZip": "artifact-10791933002.zip",
+  "artifactZipSha256": "4916A06ECC49D56EAA04866D12AD6A2B781500DBDA6A259FF5CBD1CBD1BD30FA",
+  "artifactEntries": [
+    "cli-commands.md",
+    "SHA256SUMS",
+    "source-head.txt"
+  ],
+  "artifactSourceHead": "009cabbf64eb5678a27b355d397d5d5ce6618b8d",
+  "artifactReferenceSha256": "8D97C9A7DDD81E8284BDCF724E324084E12A9C3D7AA127056C71F715833CE09F",
+  "artifactReferenceBytes": 248772,
+  "committedPath": "docs/cli-commands.md",
+  "committedSource": "009cabbf64eb5678a27b355d397d5d5ce6618b8d",
+  "committedReferenceSha256": "8D97C9A7DDD81E8284BDCF724E324084E12A9C3D7AA127056C71F715833CE09F",
+  "committedReferenceBytes": 248772,
+  "referenceMatchesCommitted": true,
+  "priorImportedReference": "docs/verification/gold-wave657-cli-reference.json",
+  "priorImportedReferenceSha256": "8d97c9a7ddd81e8284bdcf724e324084e12a9c3d7aa127056c71f715833ce09f",
+  "localExecutablesRan": false,
+  "status": "ROOT_ADMITTED_CORE_SUCCESS_CLI_BYTE_IDENTICAL"
+}

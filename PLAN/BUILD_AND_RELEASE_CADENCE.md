@@ -3,6 +3,28 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W664-W673 Slack accounts, source-bound GUI acceptance and targeted repairs (2026-09-24):**
+Named Slack accounts now have exact policy/secret pairing, duplicate-map rejection,
+separate startup/reload/health identities, secret-free status, isolated ingress,
+and authenticated live reply/WAL provenance. Seventeen focused portable tests
+exercise the production factories, including framed-token collision rejection.
+CLI account mutation and proactive Slack routes remain separate P1-16 work.
+Windows48run35959097476 is Root-admitted45PASS3FAIL; final namespace validation
+now uses the retained stage identity and DELETE-sharing probe. Two new Windows
+regressions keep both retained-handle success and wrong-generation rejection.
+Group1025run35959735629 completed1015 exact tests:1014PASS1FAIL; the next discovery
+aborted on a wrong Cron module path and nine later tests never started. Three
+Cron identities are corrected. Socket recovery now pins the old inode through
+probe/recheck using a temporary identity-checked hard link; a macOS test is added.
+P2-26a is ACCEPTED from native W458 and actual Main/Buddy W480 consumer terminals,
+with source carry verified. P2-26b macOS package/runtime stays independently open.
+Core35959093253 is SUCCESS and its CLI export remains byte-identical8d97c9a7.
+Inventory:1312portable native + Windows33/Linux47/macOS47; Group1042;
+Windows focus50; GUI149Linux145macOS. New source behavior awaits GitHub checks.
+Road:1324total/1046checked/276open/2partial;278raw/277pre-tag blockers.
+WS-LF top-level remains38done/80open. No local executable validation.
+See docs/gold-wave673-slack-and-hosted-repairs.md and W668-W672 receipts.
+
 **W658/W661-W663 GUI acceptance and hosted build repairs (2026-09-24):**
 GUI149run35956046048 atb71ebba3 is Root-admitted149PASS0FAIL0missing.
 Three ZIPs,29source/inputbindings and149execution receipts plus logs verified.

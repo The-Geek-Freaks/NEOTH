@@ -5370,6 +5370,19 @@ pub(crate) struct TelegramAccountBundle {
     dm_pairing: Option<TelegramDmPairingCapability>,
 }
 
+/// Runtime-only projection of one validated Slack account. Both Socket Mode
+/// secrets and the immutable sender allowlist travel together until the exact
+/// adapter is constructed.
+#[derive(Clone)]
+pub(crate) struct SlackAccountBundle {
+    pub(crate) channel_ref: ChannelRef,
+    account_binding: Option<crate::config::ChannelAccountBinding>,
+    bot_token: crate::secret::SecretString,
+    app_token: crate::secret::SecretString,
+    allowed_user_id: String,
+    legacy_singleton: bool,
+}
+
 /// Opaque proof that a live adapter was built from an admitted nonlegacy
 /// Telegram map entry. Its only constructor stays with TelegramAccountBundle,
 /// so generic channel startup and inbound envelopes cannot invent a binding.
@@ -5377,6 +5390,25 @@ pub(crate) struct TelegramAccountBundle {
 pub(crate) struct MappedTelegramLiveEgressProvenance {
     channel_ref: ChannelRef,
     account_binding: crate::config::ChannelAccountBinding,
+}
+
+/// Opaque proof that one live Slack adapter was built from an admitted
+/// nonlegacy account-map entry. It cannot be assembled from a loose route or
+/// inbound Slack envelope.
+#[derive(Clone)]
+pub(crate) struct MappedSlackLiveEgressProvenance {
+    channel_ref: ChannelRef,
+    account_binding: crate::config::ChannelAccountBinding,
+}
+
+impl MappedSlackLiveEgressProvenance {
+    pub(crate) fn channel_ref(&self) -> &ChannelRef {
+        &self.channel_ref
+    }
+
+    pub(crate) fn account_binding(&self) -> &crate::config::ChannelAccountBinding {
+        &self.account_binding
+    }
 }
 
 impl MappedTelegramLiveEgressProvenance {
@@ -5601,6 +5633,22 @@ impl TelegramAccountBundle {
     }
 }
 
+impl SlackAccountBundle {
+    /// The only production factory for mapped Slack live-delivery proof.
+    /// Legacy scalar Slack deliberately remains on the closed legacy path.
+    pub(crate) fn mapped_live_egress_provenance(
+        &self,
+    ) -> Option<MappedSlackLiveEgressProvenance> {
+        (!self.legacy_singleton && self.channel_ref.channel_id == ChannelKind::Slack)
+            .then(|| self.account_binding.clone())
+            .flatten()
+            .map(|account_binding| MappedSlackLiveEgressProvenance {
+                channel_ref: self.channel_ref.clone(),
+                account_binding,
+            })
+    }
+}
+
 pub(crate) fn telegram_account_bundles(
     runtime: &crate::config::RuntimeConfigPair,
 ) -> anyhow::Result<Vec<TelegramAccountBundle>> {
@@ -5654,14 +5702,43 @@ pub(crate) fn telegram_account_bundles(
     Ok(bundles)
 }
 
+pub(crate) fn slack_account_bundles(
+    runtime: &crate::config::RuntimeConfigPair,
+) -> anyhow::Result<Vec<SlackAccountBundle>> {
+    runtime
+        .authenticated_slack_accounts()?
+        .into_iter()
+        .map(|account| -> anyhow::Result<SlackAccountBundle> {
+            let account_binding = account.account_binding();
+            anyhow::ensure!(
+                account.is_legacy_singleton() == account_binding.is_none(),
+                "authenticated Slack account binding does not match its origin"
+            );
+            anyhow::ensure!(
+                account.channel_ref().channel_id == ChannelKind::Slack,
+                "authenticated Slack account has a non-Slack channel reference"
+            );
+            Ok(SlackAccountBundle {
+                channel_ref: account.channel_ref().clone(),
+                account_binding,
+                bot_token: account.bot_token().clone(),
+                app_token: account.app_token().clone(),
+                allowed_user_id: account.allowed_user_id().to_string(),
+                legacy_singleton: account.is_legacy_singleton(),
+            })
+        })
+        .collect()
+}
+
 /// Private equality tags for the exact validated Telegram account bindings.
 /// These are deliberately separate from the non-durable `u64` reconciler
 /// fingerprints: the health projection uses tags only to reject an old
 /// lifecycle statement after a token, sender, provenance, or account rotation.
 pub(crate) fn runtime_health_binding_tags(
-    accounts: &[crate::config::AuthenticatedTelegramAccount],
+    telegram_accounts: &[crate::config::AuthenticatedTelegramAccount],
+    slack_accounts: &[crate::config::AuthenticatedSlackAccount],
 ) -> std::collections::BTreeMap<ChannelRef, crate::daemon::channel_runtime_health::BindingTag> {
-    accounts
+    telegram_accounts
         .iter()
         .map(|account| {
             (
@@ -5671,6 +5748,14 @@ pub(crate) fn runtime_health_binding_tags(
                 ),
             )
         })
+        .chain(slack_accounts.iter().map(|account| {
+            (
+                account.channel_ref().clone(),
+                crate::daemon::channel_runtime_health::BindingTag::from_authenticated_slack_account(
+                    account,
+                ),
+            )
+        }))
         .collect()
 }
 
@@ -5967,13 +6052,24 @@ pub(crate) fn changed_channel_credentials(
         .collect()
 }
 
+fn hash_framed_slack_fingerprint_field(
+    hasher: &mut xxhash_rust::xxh3::Xxh3,
+    value: &[u8],
+) {
+    use std::hash::Hasher as _;
+
+    hasher.write_u64(value.len() as u64);
+    hasher.write(value);
+}
+
 /// Account-keyed reload fingerprint. Legacy adapters retain the default account
 /// key; Telegram uses only the validated runtime bundles so a shadowed legacy
 /// token cannot reanimate an account-map adapter.
-pub(crate) fn channel_account_fingerprints(
+pub(crate) fn channel_account_fingerprints_with_slack(
     config: &FreedomConfig,
     credentials: &crate::config::credentials::Credentials,
     telegram_accounts: &[TelegramAccountBundle],
+    slack_accounts: &[SlackAccountBundle],
     neoth_home: &std::path::Path,
 ) -> std::collections::HashMap<ChannelRef, u64> {
     use std::hash::Hasher as _;
@@ -5981,7 +6077,10 @@ pub(crate) fn channel_account_fingerprints(
 
     let mut fingerprints = channel_credential_fingerprints(config, credentials, neoth_home)
         .into_iter()
-        .filter(|(kind, _)| *kind != ChannelKind::Telegram)
+        .filter(|(kind, _)| {
+            *kind != ChannelKind::Telegram
+                && (*kind != ChannelKind::Slack || slack_accounts.is_empty())
+        })
         .map(|(kind, fingerprint)| (ChannelRef::default_account(kind), fingerprint))
         .collect::<std::collections::HashMap<_, _>>();
     for account in telegram_accounts {
@@ -6010,7 +6109,56 @@ pub(crate) fn channel_account_fingerprints(
         token.zeroize();
         fingerprints.insert(account.channel_ref.clone(), hasher.finish());
     }
+    for account in slack_accounts {
+        let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+        hasher.write(b"neoth/slack-account-fingerprint/v1");
+        hash_framed_slack_fingerprint_field(
+            &mut hasher,
+            account.channel_ref.channel_id.as_str().as_bytes(),
+        );
+        hash_framed_slack_fingerprint_field(
+            &mut hasher,
+            account.channel_ref.account_id.as_str().as_bytes(),
+        );
+        if let Some(binding) = &account.account_binding {
+            hasher.write(b"/incarnation/");
+            hash_framed_slack_fingerprint_field(
+                &mut hasher,
+                binding
+                    .incarnation()
+                    .map_or(b"none", |value| value.as_str().as_bytes()),
+            );
+        } else {
+            hasher.write(b"/legacy-singleton");
+        }
+        hash_framed_slack_fingerprint_field(&mut hasher, account.allowed_user_id.as_bytes());
+        hasher.write_u8(u8::from(account.legacy_singleton));
+        let mut bot_token = account.bot_token.expose().as_bytes().to_vec();
+        hash_framed_slack_fingerprint_field(&mut hasher, &bot_token);
+        bot_token.zeroize();
+        let mut app_token = account.app_token.expose().as_bytes().to_vec();
+        hash_framed_slack_fingerprint_field(&mut hasher, &app_token);
+        app_token.zeroize();
+        fingerprints.insert(account.channel_ref.clone(), hasher.finish());
+    }
     fingerprints
+}
+
+/// Compatibility projection for consumers that only need Telegram account
+/// identity. Slack startup/reload uses the explicit dual-account helper above.
+pub(crate) fn channel_account_fingerprints(
+    config: &FreedomConfig,
+    credentials: &crate::config::credentials::Credentials,
+    telegram_accounts: &[TelegramAccountBundle],
+    neoth_home: &std::path::Path,
+) -> std::collections::HashMap<ChannelRef, u64> {
+    channel_account_fingerprints_with_slack(
+        config,
+        credentials,
+        telegram_accounts,
+        &[],
+        neoth_home,
+    )
 }
 
 pub(crate) fn changed_channel_accounts(
@@ -6049,10 +6197,16 @@ pub(crate) fn channel_account_runtime_expected(
     config: &FreedomConfig,
     credentials: &crate::config::credentials::Credentials,
     telegram_accounts: &[TelegramAccountBundle],
+    slack_accounts: &[SlackAccountBundle],
     channel_ref: &ChannelRef,
 ) -> bool {
     if channel_ref.channel_id == ChannelKind::Telegram {
         return telegram_accounts
+            .iter()
+            .any(|account| account.channel_ref == *channel_ref);
+    }
+    if channel_ref.channel_id == ChannelKind::Slack {
+        return slack_accounts
             .iter()
             .any(|account| account.channel_ref == *channel_ref);
     }
@@ -6088,6 +6242,7 @@ pub(crate) fn channel_runtime_expected(
 pub(crate) async fn spawn_channel_adapters(
     config: &FreedomConfig,
     telegram_accounts: &[TelegramAccountBundle],
+    slack_accounts: &[SlackAccountBundle],
     shared_provider: &Option<Arc<dyn Provider>>,
     writer: &WalWriterHandle,
     provider_meter: &crate::providers::meter::Meter,
@@ -6118,6 +6273,9 @@ pub(crate) async fn spawn_channel_adapters(
         only.map(|channel_ref| credentials_for_channel(creds, channel_ref.channel_id));
     let creds = selected_credentials.as_ref().unwrap_or(creds);
     let selected_telegram_accounts = telegram_accounts
+        .iter()
+        .filter(|account| only.is_none_or(|channel_ref| channel_ref == &account.channel_ref));
+    let selected_slack_accounts = slack_accounts
         .iter()
         .filter(|account| only.is_none_or(|channel_ref| channel_ref == &account.channel_ref));
     if only.is_none_or(|channel_ref| channel_ref.channel_id == ChannelKind::Telegram) {
@@ -6236,35 +6394,38 @@ pub(crate) async fn spawn_channel_adapters(
     // Slack socket-mode inbound is fail-closed: a single canonical operator
     // user id and the WAL rejection writer are bound before the receive loop
     // can start. Tokens without the policy remain outbound/probe-only.
-    let slack_allowed_user = creds
-        .slack_allowed_user_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-    let slack_any_configured = creds.slack_bot_token.is_some()
-        || creds.slack_app_token.is_some()
-        || creds.slack_allowed_user_id.is_some();
-    match (
-        creds.slack_bot_token.clone(),
-        creds.slack_app_token.clone(),
-        slack_allowed_user,
-        shared_provider.as_ref(),
-    ) {
-        (Some(bot), Some(app), Some(allowed_user), Some(provider)) => {
+    if only.is_none_or(|channel_ref| channel_ref.channel_id == ChannelKind::Slack) {
+        for account in selected_slack_accounts {
+            let Some(provider) = shared_provider.as_ref() else {
+                warn!(
+                    channel = %account.channel_ref.channel_id.as_str(),
+                    account = %account.channel_ref.account_id,
+                    status = "CONFIGURED-NOT-STARTED",
+                    "Slack account configured but provider unavailable; channel not started"
+                );
+                continue;
+            };
             match crate::channels::slack::SlackChannel::new_inbound(
-                bot,
-                app,
-                &allowed_user,
+                account.bot_token.clone(),
+                account.app_token.clone(),
+                &account.allowed_user_id,
                 writer.clone(),
             ) {
                 Ok(channel) => {
                     let channel = Arc::new(channel);
                     let live_channel: Arc<dyn Channel> = channel.clone();
                     let handler: PipelineHandler = build_live_channel_handler(
-                        AuthenticatedInboundBinding::for_legacy_live_slack(
-                            legacy_live_egress_provenance(ChannelKind::Slack),
-                        ),
+                        if account.legacy_singleton {
+                            AuthenticatedInboundBinding::for_legacy_live_slack(
+                                legacy_live_egress_provenance(ChannelKind::Slack),
+                            )
+                        } else {
+                            AuthenticatedInboundBinding::for_mapped_slack(
+                                account
+                                    .mapped_live_egress_provenance()
+                                    .expect("nonlegacy Slack account must yield mapped live provenance"),
+                            )
+                        },
                         provider.clone(),
                         live_channel,
                         config,
@@ -6278,15 +6439,16 @@ pub(crate) async fn spawn_channel_adapters(
                         confirm_bus.clone(),
                         views_executor.clone(),
                     );
-                    spawn_shared_channel_run(
+                    spawn_shared_channel_run_for_ref(
                         channel,
                         handler,
-                        ChannelKind::Slack,
+                        account.channel_ref.clone(),
                         "Slack",
                         channel_tasks,
                     );
                     info!(
-                        channel = "slack",
+                        channel = %account.channel_ref.channel_id.as_str(),
+                        account = %account.channel_ref.account_id,
                         status = "LIVE",
                         "channel: spawned (socket-mode WS loop)"
                     );
@@ -6299,17 +6461,7 @@ pub(crate) async fn spawn_channel_adapters(
                 ),
             }
         }
-        (Some(_), Some(_), Some(_), None) => warn!(
-            channel = "slack",
-            status = "CONFIGURED-NOT-STARTED",
-            "Slack credentials and sender policy are configured but provider unavailable; channel not started"
-        ),
-        _ if slack_any_configured => warn!(
-            channel = "slack",
-            status = "CONFIGURED-NOT-STARTED",
-            "Slack inbound needs slack_bot_token, slack_app_token, and a non-empty slack_allowed_user_id; refusing an open or partial adapter"
-        ),
-        _ => {}
+        }
     }
 
     // Discord inbound is fail-closed: the immutable sender snowflake and WAL
@@ -11456,6 +11608,179 @@ mod channel_reconcile_tests {
         )
     }
 
+    fn slack_account(account: &str) -> ChannelRef {
+        ChannelRef::new(
+            ChannelKind::Slack,
+            ChannelAccountId::new(account).unwrap(),
+        )
+    }
+
+    fn add_slack_account(
+        runtime: &mut crate::config::RuntimeConfigPair,
+        channel_ref: &ChannelRef,
+        allowed_user_id: &str,
+        bot_token: &str,
+        app_token: &str,
+    ) {
+        runtime.config.channel_accounts.slack.insert(
+            channel_ref.account_id.clone(),
+            crate::config::SlackAccountConfig {
+                allowed_user_id: allowed_user_id.to_string(),
+                incarnation: None,
+            },
+        );
+        let entry = crate::config::credentials::SlackAccountCredentials {
+            bot_token: Some(SecretString::from(bot_token)),
+            app_token: Some(SecretString::from(app_token)),
+        };
+        runtime
+            .raw_credentials
+            .channel_accounts
+            .slack
+            .insert(channel_ref.account_id.clone(), entry.clone());
+        runtime
+            .credentials
+            .channel_accounts
+            .slack
+            .insert(channel_ref.account_id.clone(), entry);
+    }
+
+    #[test]
+    fn slack_startup_factory_keeps_two_named_accounts_and_reload_is_account_scoped() {
+        let account_a = slack_account("personal");
+        let account_b = slack_account("work");
+        let mut runtime = crate::config::RuntimeConfigPair {
+            config: FreedomConfig::default(),
+            raw_credentials: crate::config::credentials::Credentials::default(),
+            credentials: crate::config::credentials::Credentials::default(),
+        };
+        add_slack_account(
+            &mut runtime,
+            &account_a,
+            "U123PERSONAL",
+            "xoxb-personal",
+            "xapp-personal",
+        );
+        add_slack_account(
+            &mut runtime,
+            &account_b,
+            "U123WORK",
+            "xoxb-work",
+            "xapp-work",
+        );
+
+        let bundles = slack_account_bundles(&runtime).unwrap();
+        assert_eq!(
+            bundles
+                .iter()
+                .map(|bundle| bundle.channel_ref.clone())
+                .collect::<Vec<_>>(),
+            vec![account_a.clone(), account_b.clone()]
+        );
+        assert!(
+            bundles
+                .iter()
+                .all(|bundle| bundle.mapped_live_egress_provenance().is_some()),
+            "only authenticated named Slack bundles mint mapped egress provenance"
+        );
+        let started_refs = bundles
+            .iter()
+            .map(|bundle| {
+                crate::channels::slack::SlackChannel::new_inbound(
+                    bundle.bot_token.clone(),
+                    bundle.app_token.clone(),
+                    &bundle.allowed_user_id,
+                    crate::wal::writer::closed_test_writer(),
+                )
+                .map(|_| bundle.channel_ref.clone())
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+            .expect("each authenticated named bundle constructs its exact Slack adapter");
+        assert_eq!(started_refs, vec![account_a.clone(), account_b.clone()]);
+        let home = tempfile::tempdir().unwrap();
+        let before = channel_account_fingerprints_with_slack(
+            &runtime.config,
+            &runtime.credentials,
+            &[],
+            &bundles,
+            home.path(),
+        );
+        runtime
+            .credentials
+            .channel_accounts
+            .slack
+            .get_mut(&account_a.account_id)
+            .unwrap()
+            .bot_token = Some(SecretString::from("xoxb-personal-rotated"));
+        runtime
+            .raw_credentials
+            .channel_accounts
+            .slack
+            .get_mut(&account_a.account_id)
+            .unwrap()
+            .bot_token = Some(SecretString::from("xoxb-personal-rotated"));
+        let rotated = slack_account_bundles(&runtime).unwrap();
+        let after = channel_account_fingerprints_with_slack(
+            &runtime.config,
+            &runtime.credentials,
+            &[],
+            &rotated,
+            home.path(),
+        );
+        assert_eq!(changed_channel_accounts(&before, &after), vec![account_a]);
+        let tags = runtime_health_binding_tags(&[], &runtime.authenticated_slack_accounts().unwrap());
+        assert!(tags.contains_key(&account_b));
+    }
+
+    #[test]
+    fn slack_framed_tokens_disambiguate_health_and_reload_fingerprints() {
+        let account = slack_account("boundary");
+        let mut left = crate::config::RuntimeConfigPair {
+            config: FreedomConfig::default(),
+            raw_credentials: crate::config::credentials::Credentials::default(),
+            credentials: crate::config::credentials::Credentials::default(),
+        };
+        let mut right = crate::config::RuntimeConfigPair {
+            config: FreedomConfig::default(),
+            raw_credentials: crate::config::credentials::Credentials::default(),
+            credentials: crate::config::credentials::Credentials::default(),
+        };
+        add_slack_account(&mut left, &account, "U123BOUNDARY", "ab", "c");
+        add_slack_account(&mut right, &account, "U123BOUNDARY", "a", "bc");
+
+        let left_bundles = slack_account_bundles(&left).unwrap();
+        let right_bundles = slack_account_bundles(&right).unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let left_fingerprints = channel_account_fingerprints_with_slack(
+            &left.config,
+            &left.credentials,
+            &[],
+            &left_bundles,
+            home.path(),
+        );
+        let right_fingerprints = channel_account_fingerprints_with_slack(
+            &right.config,
+            &right.credentials,
+            &[],
+            &right_bundles,
+            home.path(),
+        );
+        assert_eq!(
+            changed_channel_accounts(&left_fingerprints, &right_fingerprints),
+            vec![account.clone()]
+        );
+
+        let left_tags = runtime_health_binding_tags(
+            &[],
+            &left.authenticated_slack_accounts().unwrap(),
+        );
+        let right_tags = runtime_health_binding_tags(
+            &[],
+            &right.authenticated_slack_accounts().unwrap(),
+        );
+        assert_ne!(left_tags[&account], right_tags[&account]);
+    }
+
     #[tokio::test]
     async fn paired_reply_binding_releases_a_retired_telegram_adapter() {
         let account = telegram_account("paired-retirement");
@@ -11580,7 +11905,7 @@ mod channel_reconcile_tests {
                 .insert(channel_ref.account_id.clone(), entry);
         }
         let authenticated = runtime.authenticated_telegram_accounts().unwrap();
-        let tags = runtime_health_binding_tags(&authenticated);
+        let tags = runtime_health_binding_tags(&authenticated, &[]);
         let mut fleet = ChannelFleet::new();
         fleet
             .entry(account_a.clone())
@@ -11634,7 +11959,7 @@ mod channel_reconcile_tests {
             .unwrap()
             .token = Some(SecretString::from("a-rotated"));
         let rotated_authenticated = runtime.authenticated_telegram_accounts().unwrap();
-        let rotated_tags = runtime_health_binding_tags(&rotated_authenticated);
+        let rotated_tags = runtime_health_binding_tags(&rotated_authenticated, &[]);
         assert!(
             tags[&account_a] != rotated_tags[&account_a],
             "rotating A must derive a distinct opaque binding tag"
@@ -11898,9 +12223,9 @@ mod channel_reconcile_tests {
             "same-credential re-add must replace only A's adapter"
         );
         let before_tags =
-            runtime_health_binding_tags(&before.authenticated_telegram_accounts().unwrap());
+            runtime_health_binding_tags(&before.authenticated_telegram_accounts().unwrap(), &[]);
         let after_tags =
-            runtime_health_binding_tags(&after.authenticated_telegram_accounts().unwrap());
+            runtime_health_binding_tags(&after.authenticated_telegram_accounts().unwrap(), &[]);
         let a = ChannelRef::new(
             ChannelKind::Telegram,
             crate::channels::registry::ChannelAccountId::new("account-a").unwrap(),

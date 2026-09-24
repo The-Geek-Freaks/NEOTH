@@ -24,8 +24,9 @@ replay identity and the actual `HOOK_BLOCKED` WAL causation assertions.
 The test is registered in the Linux/macOS selection and macOS native callback
 harness. No Slint file or production event shape changes. Stream finalization
 receipts, lifecycle receipts and response-feedback targets retain their existing
-distinct meanings. P2-26a remains open until the new consumer test actually passes
-with its relevant source binding.
+distinct meanings. P2-26a is accepted in W669: native W458 passes in Group977
+and the actual Main/Buddy W480 test passes in GUI149. Source carry is verified;
+see verification/gold-wave669-p226a-acceptance.json. P2-26b remains separate.
 
 ## Buddy assignment commands
 

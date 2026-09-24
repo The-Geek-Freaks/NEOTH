@@ -23,6 +23,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result};
 use base64::Engine as _;
+use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use zeroize::Zeroize;
@@ -476,8 +477,57 @@ pub struct TelegramAccountCredentials {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
+pub struct SlackAccountCredentials {
+    pub bot_token: Option<SecretString>,
+    pub app_token: Option<SecretString>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
 pub struct ChannelAccountCredentials {
     pub telegram: BTreeMap<crate::channels::registry::ChannelAccountId, TelegramAccountCredentials>,
+    #[serde(default, deserialize_with = "deserialize_unique_slack_account_credentials")]
+    pub slack: BTreeMap<crate::channels::registry::ChannelAccountId, SlackAccountCredentials>,
+}
+
+fn deserialize_unique_slack_account_credentials<'de, D>(
+    deserializer: D,
+) -> std::result::Result<
+    BTreeMap<crate::channels::registry::ChannelAccountId, SlackAccountCredentials>,
+    D::Error,
+>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct SlackCredentialsVisitor;
+
+    impl<'de> Visitor<'de> for SlackCredentialsVisitor {
+        type Value = BTreeMap<crate::channels::registry::ChannelAccountId, SlackAccountCredentials>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a Slack credential object with unique account IDs")
+        }
+
+        fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            let mut accounts = BTreeMap::new();
+            while let Some((account_id, credentials)) = map.next_entry::<
+                crate::channels::registry::ChannelAccountId,
+                SlackAccountCredentials,
+            >()? {
+                if accounts.insert(account_id.clone(), credentials).is_some() {
+                    return Err(serde::de::Error::custom(format!(
+                        "duplicate Slack credential account `{account_id}`"
+                    )));
+                }
+            }
+            Ok(accounts)
+        }
+    }
+
+    deserializer.deserialize_map(SlackCredentialsVisitor)
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -1039,6 +1089,13 @@ impl Credentials {
     /// legacy Telegram fields or keychain material.
     pub fn telegram_account_map_active(&self) -> bool {
         !self.channel_accounts.telegram.is_empty()
+    }
+
+    /// Presence-only map guard. Slack named accounts are persisted in the
+    /// normal credentials file until a dedicated account-keychain lifecycle is
+    /// introduced; they must never disappear through an empty-store shortcut.
+    pub fn slack_account_map_active(&self) -> bool {
+        !self.channel_accounts.slack.is_empty()
     }
 
     /// Prepare an outbound n8n endpoint/key binding. Preparation captures the
@@ -2991,6 +3048,7 @@ impl Credentials {
             && azure_tts_api_key.is_none()
             && telegram_token.is_none()
             && channel_accounts.telegram.is_empty()
+            && channel_accounts.slack.is_empty()
             && omi_developer_api_key.is_none()
             && omi_ingest_token.is_none()
             && inference_left_key.is_none()

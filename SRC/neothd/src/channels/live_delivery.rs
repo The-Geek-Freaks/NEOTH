@@ -56,6 +56,7 @@ pub enum SendOutcome {
 #[derive(Clone)]
 pub(crate) enum LiveEgressProvenance {
     MappedTelegram(crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance),
+    MappedSlack(crate::cli::serve_tasks::MappedSlackLiveEgressProvenance),
     LegacySingleton(crate::cli::serve_tasks::LegacyLiveEgressProvenance),
 }
 
@@ -64,6 +65,12 @@ impl LiveEgressProvenance {
         value: crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance,
     ) -> Self {
         Self::MappedTelegram(value)
+    }
+
+    pub(crate) fn mapped_slack(
+        value: crate::cli::serve_tasks::MappedSlackLiveEgressProvenance,
+    ) -> Self {
+        Self::MappedSlack(value)
     }
 
     pub(crate) fn legacy_singleton(
@@ -75,6 +82,7 @@ impl LiveEgressProvenance {
     fn channel_ref(&self) -> &crate::channels::registry::ChannelRef {
         match self {
             Self::MappedTelegram(value) => value.channel_ref(),
+            Self::MappedSlack(value) => value.channel_ref(),
             Self::LegacySingleton(value) => value.channel_ref(),
         }
     }
@@ -226,6 +234,10 @@ impl LiveDelivery {
             LiveEgressProvenance::MappedTelegram(value)
                 if kind == ChannelKind::Telegram
                     && value.channel_ref().channel_id == ChannelKind::Telegram
+                    && value.account_binding().channel_ref() == value.channel_ref() => {}
+            LiveEgressProvenance::MappedSlack(value)
+                if kind == ChannelKind::Slack
+                    && value.channel_ref().channel_id == ChannelKind::Slack
                     && value.account_binding().channel_ref() == value.channel_ref() => {}
             LiveEgressProvenance::LegacySingleton(_)
                 if matches!(kind, ChannelKind::Telegram | ChannelKind::Slack)
@@ -408,6 +420,18 @@ impl LiveDelivery {
                 )
                 .await
             }
+            Some(LiveEgressProvenance::MappedSlack(provenance)) => {
+                crate::channels::send_gate::emit_mapped_slack_egress_intent_in(
+                    writer,
+                    self.kind.as_str(),
+                    &self.chat_id,
+                    text,
+                    crate::time::now_unix_secs(),
+                    provenance,
+                    self.wal_session,
+                )
+                .await
+            }
             Some(LiveEgressProvenance::LegacySingleton(provenance)) => {
                 crate::channels::send_gate::emit_legacy_live_egress_intent_in(
                     writer,
@@ -485,6 +509,18 @@ impl LiveDelivery {
                             )
                             .await
                         }
+                        LiveEgressProvenance::MappedSlack(value) => {
+                            crate::channels::send_gate::emit_mapped_slack_egress_result_in(
+                                writer,
+                                &intent_id,
+                                "delivered",
+                                Some(&id.0),
+                                crate::time::now_unix_secs(),
+                                value,
+                                self.wal_session,
+                            )
+                            .await
+                        }
                         LiveEgressProvenance::LegacySingleton(value) => {
                             crate::channels::send_gate::emit_legacy_live_egress_result_in(
                                 writer,
@@ -546,6 +582,18 @@ impl LiveDelivery {
                     let receipt = match provenance {
                         LiveEgressProvenance::MappedTelegram(value) => {
                             crate::channels::send_gate::emit_account_bound_egress_result_in(
+                                writer,
+                                &intent_id,
+                                error_kind,
+                                None,
+                                crate::time::now_unix_secs(),
+                                value,
+                                self.wal_session,
+                            )
+                            .await
+                        }
+                        LiveEgressProvenance::MappedSlack(value) => {
+                            crate::channels::send_gate::emit_mapped_slack_egress_result_in(
                                 writer,
                                 &intent_id,
                                 error_kind,
@@ -939,6 +987,53 @@ mod tests {
             .expect("one exact mapped fixture bundle")
     }
 
+    fn mapped_slack_bundle_from_runtime(
+        account_id: &str,
+        allowed_user_id: &str,
+        incarnation: &str,
+    ) -> crate::cli::serve_tasks::SlackAccountBundle {
+        let account_id = crate::channels::registry::ChannelAccountId::new(account_id)
+            .expect("valid mapped Slack fixture account id");
+        let mut runtime = crate::config::RuntimeConfigPair {
+            config: crate::config::FreedomConfig::default(),
+            raw_credentials: crate::config::credentials::Credentials::default(),
+            credentials: crate::config::credentials::Credentials::default(),
+        };
+        runtime.config.channel_accounts.slack.insert(
+            account_id.clone(),
+            crate::config::SlackAccountConfig {
+                allowed_user_id: allowed_user_id.to_owned(),
+                incarnation: Some(
+                    crate::config::AccountIncarnation::parse(incarnation)
+                        .expect("canonical mapped Slack incarnation"),
+                ),
+            },
+        );
+        let credential = crate::config::credentials::SlackAccountCredentials {
+            bot_token: Some(crate::secret::SecretString::new(
+                "mapped-slack-fixture-bot-token".to_owned(),
+            )),
+            app_token: Some(crate::secret::SecretString::new(
+                "mapped-slack-fixture-app-token".to_owned(),
+            )),
+        };
+        runtime
+            .raw_credentials
+            .channel_accounts
+            .slack
+            .insert(account_id.clone(), credential.clone());
+        runtime
+            .credentials
+            .channel_accounts
+            .slack
+            .insert(account_id, credential);
+        crate::cli::serve_tasks::slack_account_bundles(&runtime)
+            .expect("coherent mapped Slack runtime pair yields one fixture bundle")
+            .into_iter()
+            .next()
+            .expect("one exact mapped Slack fixture bundle")
+    }
+
     fn count_channel_edit_frames(seg: &std::path::Path) -> usize {
         let Ok(bytes) = std::fs::read(seg) else {
             return 0;
@@ -1115,6 +1210,63 @@ mod tests {
         assert_eq!(intent["live_provenance"], "legacy_singleton_v2");
         assert_eq!(terminal["intent_id"], intent["intent_id"]);
         assert_eq!(terminal["outcome"], "transport");
+    }
+
+    #[tokio::test]
+    async fn mapped_slack_mock_transport_writes_account_and_incarnation_bound_lifecycle() {
+        let bundle = mapped_slack_bundle_from_runtime(
+            "ops_slack",
+            "U-OPS",
+            "550e8400-e29b-41d4-a716-446655440003",
+        );
+        let channel = Arc::new(MockChannel::new(false));
+        let mut live = LiveDelivery::new_authenticated_live(
+            channel.clone(),
+            "private-slack-chat".into(),
+            ChannelKind::Slack,
+            fast_config(),
+            LiveEgressProvenance::mapped_slack(bundle
+                .mapped_live_egress_provenance()
+                .expect("mapped Slack runtime bundle mints a live capability")),
+        )
+        .expect("matching mapped Slack factory accepts its capability");
+        let (home, writer, join) = authenticated_home_writer().await;
+        let segment = home.path().join("wal").join("000001.wal");
+        live.send_or_edit(&writer, "private Slack reply", false)
+            .await
+            .expect("mapped Slack mock send");
+        assert_eq!(channel.sends.load(Ordering::SeqCst), 1);
+        drop(writer);
+        join.await.unwrap().unwrap();
+
+        let bytes = std::fs::read(segment).unwrap();
+        let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = header.header_len();
+        let mut intent = None;
+        let mut terminal = None;
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            if frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8
+            {
+                intent = Some(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+            } else if frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8
+            {
+                terminal = Some(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        let intent = intent.expect("mapped Slack intent");
+        let terminal = terminal.expect("mapped Slack terminal");
+        assert_eq!(intent["channel"], "slack");
+        assert_eq!(intent["channel_ref"]["account_id"], "ops_slack");
+        assert_eq!(
+            intent["account_binding"]["incarnation"],
+            "550e8400-e29b-41d4-a716-446655440003"
+        );
+        assert_eq!(terminal["intent_id"], intent["intent_id"]);
+        assert_eq!(terminal["outcome"], "delivered");
     }
 
     #[test]
@@ -1438,6 +1590,29 @@ mod tests {
                 bundle.mapped_live_egress_provenance().unwrap(),
             )
             .is_err()
+        );
+        assert_eq!(channel.sends.load(Ordering::SeqCst), 0);
+        assert_eq!(channel.edits.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn mapped_slack_constructor_rejects_telegram_factory_before_any_adapter_effect() {
+        let channel = Arc::new(MockChannel::new(false));
+        let bundle = mapped_slack_bundle_from_runtime(
+            "ops_slack",
+            "U-OPS",
+            "550e8400-e29b-41d4-a716-446655440004",
+        );
+        assert!(
+            LiveDelivery::new_authenticated_live(
+                channel.clone(),
+                "private-slack-chat".into(),
+                ChannelKind::Telegram,
+                fast_config(),
+                LiveEgressProvenance::mapped_slack(bundle.mapped_live_egress_provenance().unwrap()),
+            )
+            .is_err(),
+            "mapped Slack proof cannot construct a Telegram factory"
         );
         assert_eq!(channel.sends.load(Ordering::SeqCst), 0);
         assert_eq!(channel.edits.load(Ordering::SeqCst), 0);

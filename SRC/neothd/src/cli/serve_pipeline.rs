@@ -120,6 +120,11 @@ pub(crate) struct AuthenticatedInboundBinding {
     /// sealed account provenance. Generic and legacy constructors keep None.
     mapped_telegram_live_egress:
         Option<crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance>,
+    /// Present only when the nonlegacy Slack map startup handed over its
+    /// sealed account provenance. This is deliberately distinct from the
+    /// Telegram capability so the payload channel cannot be relabelled.
+    mapped_slack_live_egress:
+        Option<crate::cli::serve_tasks::MappedSlackLiveEgressProvenance>,
     legacy_live_egress: Option<crate::cli::serve_tasks::LegacyLiveEgressProvenance>,
 }
 
@@ -131,6 +136,7 @@ impl AuthenticatedInboundBinding {
             account_binding: None,
             legacy_singleton_alias_claim: None,
             mapped_telegram_live_egress: None,
+            mapped_slack_live_egress: None,
             legacy_live_egress: None,
         }
     }
@@ -145,6 +151,23 @@ impl AuthenticatedInboundBinding {
             account_binding: Some(provenance.account_binding().clone()),
             legacy_singleton_alias_claim: None,
             mapped_telegram_live_egress: Some(provenance),
+            mapped_slack_live_egress: None,
+            legacy_live_egress: None,
+        }
+    }
+
+    /// Consume the opaque proof made by the admitted nonlegacy Slack-map
+    /// bundle. It carries the exact account binding but never grants the
+    /// Telegram legacy alias authority.
+    pub(super) fn for_mapped_slack(
+        provenance: crate::cli::serve_tasks::MappedSlackLiveEgressProvenance,
+    ) -> Self {
+        Self {
+            channel_ref: provenance.channel_ref().clone(),
+            account_binding: Some(provenance.account_binding().clone()),
+            legacy_singleton_alias_claim: None,
+            mapped_telegram_live_egress: None,
+            mapped_slack_live_egress: Some(provenance),
             legacy_live_egress: None,
         }
     }
@@ -167,6 +190,7 @@ impl AuthenticatedInboundBinding {
                 crate::channels::identity::LegacySingletonAliasClaimAuthority::from_admitted_telegram_singleton(&admission),
             )),
             mapped_telegram_live_egress: None,
+            mapped_slack_live_egress: None,
             legacy_live_egress: Some(provenance),
         }
     }
@@ -183,6 +207,7 @@ impl AuthenticatedInboundBinding {
             account_binding: None,
             legacy_singleton_alias_claim: None,
             mapped_telegram_live_egress: None,
+            mapped_slack_live_egress: None,
             legacy_live_egress: Some(provenance),
         }
     }
@@ -199,11 +224,21 @@ impl AuthenticatedInboundBinding {
         self.mapped_telegram_live_egress.clone()
     }
 
+    fn mapped_slack_live_egress(
+        &self,
+    ) -> Option<crate::cli::serve_tasks::MappedSlackLiveEgressProvenance> {
+        self.mapped_slack_live_egress.clone()
+    }
+
     fn live_egress_provenance(
         &self,
     ) -> Option<crate::channels::live_delivery::LiveEgressProvenance> {
         self.mapped_telegram_live_egress()
             .map(crate::channels::live_delivery::LiveEgressProvenance::mapped_telegram)
+            .or_else(|| {
+                self.mapped_slack_live_egress()
+                    .map(crate::channels::live_delivery::LiveEgressProvenance::mapped_slack)
+            })
             .or_else(|| {
                 self.legacy_live_egress
                     .clone()
@@ -6515,6 +6550,9 @@ mod tests {
                 crate::channels::live_delivery::LiveEgressProvenance::MappedTelegram(_) => {
                     panic!("legacy startup must not receive a mapped account capability")
                 }
+                crate::channels::live_delivery::LiveEgressProvenance::MappedSlack(_) => {
+                    panic!("legacy startup must not receive a mapped account capability")
+                }
             }
         }
         assert!(matches!(
@@ -8435,6 +8473,49 @@ mod tests {
         }
         assert!(accepted.is_none());
         assert_eq!(effects.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn mapped_slack_ingress_separates_identical_vendor_sender_chat_and_claimed_identity() {
+        let mut pair = crate::config::RuntimeConfigPair {
+            config: FreedomConfig::default(),
+            raw_credentials: crate::config::credentials::Credentials::default(),
+            credentials: crate::config::credentials::Credentials::default(),
+        };
+        for name in ["work", "personal"] {
+            let id = crate::channels::registry::ChannelAccountId::new(name).unwrap();
+            pair.config.channel_accounts.slack.insert(id.clone(), crate::config::SlackAccountConfig {
+                allowed_user_id: "U123ABC".into(), incarnation: None,
+            });
+            let secrets = crate::config::credentials::SlackAccountCredentials {
+                bot_token: Some(crate::secret::SecretString::from("xoxb-test")),
+                app_token: Some(crate::secret::SecretString::from("xapp-test")),
+            };
+            pair.credentials.channel_accounts.slack.insert(id, secrets);
+        }
+        pair.raw_credentials = pair.credentials.clone();
+        let bindings = crate::cli::serve_tasks::slack_account_bundles(&pair).unwrap()
+            .iter().map(|bundle| AuthenticatedInboundBinding::for_mapped_slack(
+                bundle.mapped_live_egress_provenance().unwrap())).collect::<Vec<_>>();
+        let a = &bindings[0];
+        let b = &bindings[1];
+        let mut msg = inbound(Some("same transport message"), None);
+        msg.channel = ChannelId::Slack;
+        msg.sender_id = "U123ABC".into();
+        msg.chat_id = "D123SAME".into();
+        msg.human_uuid = Some("forged-human-identity".into());
+        let admitted = admit_bound_inbound(a, msg.clone()).unwrap();
+        assert!(admitted.human_uuid.is_none());
+        assert_ne!(scoped_sender_hash_of(a, &msg.sender_id), scoped_sender_hash_of(b, &msg.sender_id));
+        assert_ne!(canonical_admitted_channel_wal_identity(a, &admitted).unwrap(),
+            canonical_admitted_channel_wal_identity(b, &admitted).unwrap());
+        assert_ne!(crate::permissions::lease::channel_lease_subject(&a.channel_ref, &msg.sender_id),
+            crate::permissions::lease::channel_lease_subject(&b.channel_ref, &msg.sender_id));
+        assert_ne!(channel_media_source_ref(a, &admitted), channel_media_source_ref(b, &admitted));
+        assert!(a.account_binding.as_ref().is_some_and(|bound| bound.channel_ref() == &a.channel_ref));
+        assert!(a.legacy_singleton_alias_claim().is_none());
+        msg.channel = ChannelId::Telegram;
+        assert!(admit_bound_inbound(a, msg).is_none());
     }
 
     #[test]

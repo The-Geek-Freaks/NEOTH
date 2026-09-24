@@ -56,6 +56,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result};
+use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use zeroize::Zeroize as _;
@@ -215,6 +216,17 @@ pub struct TelegramAccountConfig {
     pub dm_pairing: Option<TelegramDmPairingConfig>,
 }
 
+/// Public policy for one named Slack account. The immutable member ID remains
+/// outside credentials so an operator can audit inbound authority separately
+/// from Slack bearer tokens.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SlackAccountConfig {
+    pub allowed_user_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incarnation: Option<AccountIncarnation>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TelegramDmPairingConfig {
@@ -235,6 +247,48 @@ impl TelegramDmPairingConfig {
 #[serde(default)]
 pub struct ChannelAccountConfig {
     pub telegram: BTreeMap<crate::channels::registry::ChannelAccountId, TelegramAccountConfig>,
+    #[serde(default, deserialize_with = "deserialize_unique_slack_accounts")]
+    pub slack: BTreeMap<crate::channels::registry::ChannelAccountId, SlackAccountConfig>,
+}
+
+fn deserialize_unique_slack_accounts<'de, D>(
+    deserializer: D,
+) -> std::result::Result<
+    BTreeMap<crate::channels::registry::ChannelAccountId, SlackAccountConfig>,
+    D::Error,
+>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct SlackAccountsVisitor;
+
+    impl<'de> Visitor<'de> for SlackAccountsVisitor {
+        type Value = BTreeMap<crate::channels::registry::ChannelAccountId, SlackAccountConfig>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a Slack account object with unique account IDs")
+        }
+
+        fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            let mut accounts = BTreeMap::new();
+            while let Some((account_id, config)) = map.next_entry::<
+                crate::channels::registry::ChannelAccountId,
+                SlackAccountConfig,
+            >()? {
+                if accounts.insert(account_id.clone(), config).is_some() {
+                    return Err(serde::de::Error::custom(format!(
+                        "duplicate Slack account `{account_id}`"
+                    )));
+                }
+            }
+            Ok(accounts)
+        }
+    }
+
+    deserializer.deserialize_map(SlackAccountsVisitor)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -250,6 +304,21 @@ pub(crate) struct AuthenticatedTelegramAccount {
     allowed_user_id: u64,
     origin: TelegramAccountOrigin,
     inbound_admission: TelegramInboundAdmission,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SlackAccountOrigin {
+    LegacySingleton,
+    ConfiguredAccount,
+}
+
+pub(crate) struct AuthenticatedSlackAccount {
+    channel_ref: crate::channels::registry::ChannelRef,
+    account_binding: Option<ChannelAccountBinding>,
+    bot_token: crate::secret::SecretString,
+    app_token: crate::secret::SecretString,
+    allowed_user_id: String,
+    origin: SlackAccountOrigin,
 }
 
 /// Authenticated authority identity for a named account.  Fields and
@@ -307,6 +376,27 @@ impl AuthenticatedTelegramAccount {
     }
     pub(crate) fn inbound_admission(&self) -> &TelegramInboundAdmission {
         &self.inbound_admission
+    }
+}
+
+impl AuthenticatedSlackAccount {
+    pub(crate) fn channel_ref(&self) -> &crate::channels::registry::ChannelRef {
+        &self.channel_ref
+    }
+    pub(crate) fn account_binding(&self) -> Option<ChannelAccountBinding> {
+        self.account_binding.clone()
+    }
+    pub(crate) fn bot_token(&self) -> &crate::secret::SecretString {
+        &self.bot_token
+    }
+    pub(crate) fn app_token(&self) -> &crate::secret::SecretString {
+        &self.app_token
+    }
+    pub(crate) fn allowed_user_id(&self) -> &str {
+        &self.allowed_user_id
+    }
+    pub(crate) fn is_legacy_singleton(&self) -> bool {
+        self.origin == SlackAccountOrigin::LegacySingleton
     }
 }
 
@@ -424,6 +514,246 @@ impl RuntimeConfigPair {
             });
         }
         Ok(resolved)
+    }
+
+    pub(crate) fn authenticated_slack_accounts(&self) -> Result<Vec<AuthenticatedSlackAccount>> {
+        let accounts = &self.config.channel_accounts.slack;
+        let secrets = &self.credentials.channel_accounts.slack;
+        let map_active = !accounts.is_empty()
+            || !secrets.is_empty()
+            || self.raw_credentials.slack_account_map_active();
+        if !map_active {
+            return match (
+                self.credentials.slack_bot_token.clone(),
+                self.credentials.slack_app_token.clone(),
+                self.credentials.slack_allowed_user_id.as_deref(),
+            ) {
+                (Some(bot_token), Some(app_token), Some(allowed_user_id))
+                    if !bot_token.expose_secret().trim().is_empty()
+                        && !app_token.expose_secret().trim().is_empty() =>
+                {
+                    // The scalar startup historically left an invalid Slack
+                    // sender policy inactive without blocking other channels.
+                    let Ok(allowed_user_id) =
+                        crate::channels::slack::normalize_allowed_user_id(allowed_user_id)
+                    else {
+                        return Ok(Vec::new());
+                    };
+                    Ok(vec![AuthenticatedSlackAccount {
+                        channel_ref: crate::channels::registry::ChannelRef::default_account(
+                            crate::channels::registry::ChannelId::Slack,
+                        ),
+                        account_binding: None,
+                        bot_token,
+                        app_token,
+                        allowed_user_id,
+                        origin: SlackAccountOrigin::LegacySingleton,
+                    }])
+                }
+                _ => Ok(Vec::new()),
+            };
+        }
+        anyhow::ensure!(
+            self.credentials.slack_bot_token.is_none()
+                && self.credentials.slack_app_token.is_none()
+                && self.credentials.slack_allowed_user_id.is_none()
+                && self.raw_credentials.slack_bot_token.is_none()
+                && self.raw_credentials.slack_app_token.is_none()
+                && self.raw_credentials.slack_allowed_user_id.is_none(),
+            "legacy Slack fields cannot coexist with channel_accounts.slack"
+        );
+        anyhow::ensure!(
+            accounts.keys().eq(secrets.keys())
+                && accounts.keys().eq(self.raw_credentials.channel_accounts.slack.keys()),
+            "Slack account policy, effective credential, and raw credential keys must match exactly"
+        );
+        anyhow::ensure!(
+            !accounts.is_empty(),
+            "Slack account map has no effective policy and credentials"
+        );
+        let mut resolved = Vec::with_capacity(accounts.len());
+        for (account_id, policy) in accounts {
+            let allowed_user_id = crate::channels::slack::normalize_allowed_user_id(
+                &policy.allowed_user_id,
+            )
+            .with_context(|| format!("slack account `{account_id}` has an invalid allowed_user_id"))?;
+            let entry = secrets
+                .get(account_id)
+                .with_context(|| format!("slack account `{account_id}` has no credentials"))?;
+            let bot_token = entry.bot_token.as_ref().with_context(|| {
+                format!("slack account `{account_id}` has no credential bot_token")
+            })?;
+            let app_token = entry.app_token.as_ref().with_context(|| {
+                format!("slack account `{account_id}` has no credential app_token")
+            })?;
+            anyhow::ensure!(
+                !bot_token.expose_secret().trim().is_empty()
+                    && !app_token.expose_secret().trim().is_empty(),
+                "slack account `{account_id}` has an empty credential token"
+            );
+            let channel_ref = crate::channels::registry::ChannelRef::new(
+                crate::channels::registry::ChannelId::Slack,
+                account_id.clone(),
+            );
+            resolved.push(AuthenticatedSlackAccount {
+                account_binding: Some(ChannelAccountBinding {
+                    channel_ref: channel_ref.clone(),
+                    incarnation: policy.incarnation.clone(),
+                }),
+                channel_ref,
+                bot_token: bot_token.clone(),
+                app_token: app_token.clone(),
+                allowed_user_id,
+                origin: SlackAccountOrigin::ConfiguredAccount,
+            });
+        }
+        Ok(resolved)
+    }
+}
+
+#[cfg(test)]
+mod slack_account_tests {
+    use super::*;
+    use crate::channels::registry::{ChannelAccountId, ChannelId, ChannelRef};
+    use crate::config::credentials::SlackAccountCredentials;
+    use crate::secret::SecretString;
+
+    fn pair() -> RuntimeConfigPair {
+        RuntimeConfigPair {
+            config: FreedomConfig::default(),
+            raw_credentials: credentials::Credentials::default(),
+            credentials: credentials::Credentials::default(),
+        }
+    }
+
+    fn add_account(pair: &mut RuntimeConfigPair, id: &str, allowed: &str) {
+        let id = ChannelAccountId::new(id).unwrap();
+        pair.config.channel_accounts.slack.insert(
+            id.clone(),
+            SlackAccountConfig {
+                allowed_user_id: allowed.into(),
+                incarnation: None,
+            },
+        );
+        let secrets = SlackAccountCredentials {
+            bot_token: Some(SecretString::from(format!("xoxb-{id}"))),
+            app_token: Some(SecretString::from(format!("xapp-{id}"))),
+        };
+        pair.raw_credentials
+            .channel_accounts
+            .slack
+            .insert(id.clone(), secrets.clone());
+        pair.credentials.channel_accounts.slack.insert(id, secrets);
+    }
+
+    #[test]
+    fn slack_legacy_complete_pair_is_default_singleton_and_partial_is_disabled() {
+        let mut pair = pair();
+        pair.credentials.slack_bot_token = Some(SecretString::from("xoxb-legacy"));
+        pair.credentials.slack_app_token = Some(SecretString::from("xapp-legacy"));
+        pair.credentials.slack_allowed_user_id = Some(" U123ABC ".into());
+        let accounts = pair.authenticated_slack_accounts().unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].channel_ref(), &ChannelRef::default_account(ChannelId::Slack));
+        assert_eq!(accounts[0].allowed_user_id(), "U123ABC");
+        assert!(accounts[0].is_legacy_singleton());
+        assert!(accounts[0].account_binding().is_none());
+
+        pair.credentials.slack_app_token = None;
+        assert!(pair.authenticated_slack_accounts().unwrap().is_empty());
+        pair.credentials.slack_app_token = Some(SecretString::from("xapp-legacy"));
+        for invalid in ["", " ", "@mutable-name"] {
+            pair.credentials.slack_allowed_user_id = Some(invalid.into());
+            assert!(pair.authenticated_slack_accounts().unwrap().is_empty(),
+                "invalid scalar Slack policy must not stop unrelated channel startup");
+        }
+    }
+
+    #[test]
+    fn slack_map_requires_exact_public_effective_and_raw_key_custody() {
+        let mut pair = pair();
+        add_account(&mut pair, "work", "U123WORK");
+        let personal = ChannelAccountId::new("personal").unwrap();
+        pair.credentials.channel_accounts.slack.insert(
+            personal,
+            SlackAccountCredentials {
+                bot_token: Some(SecretString::from("xoxb-personal")),
+                app_token: Some(SecretString::from("xapp-personal")),
+            },
+        );
+        let error = pair.authenticated_slack_accounts().err().expect("orphan credential must reject");
+        assert!(error.to_string().contains("keys must match exactly"));
+    }
+
+    #[test]
+    fn slack_map_rejects_scalar_mix_invalid_operator_and_empty_tokens() {
+        let mut pair = pair();
+        add_account(&mut pair, "work", "not-a-slack-id");
+        let error = pair.authenticated_slack_accounts().err().expect("invalid Slack ID must reject");
+        assert!(error.to_string().contains("invalid allowed_user_id"));
+
+        pair.config.channel_accounts.slack.get_mut(&ChannelAccountId::new("work").unwrap()).unwrap().allowed_user_id = "U123WORK".into();
+        pair.credentials.channel_accounts.slack.get_mut(&ChannelAccountId::new("work").unwrap()).unwrap().bot_token = Some(SecretString::from(" "));
+        let error = pair.authenticated_slack_accounts().err().expect("empty token must reject");
+        assert!(error.to_string().contains("empty credential token"));
+
+        pair.credentials.channel_accounts.slack.get_mut(&ChannelAccountId::new("work").unwrap()).unwrap().bot_token = Some(SecretString::from("xoxb-work"));
+        pair.credentials.slack_allowed_user_id = Some("U123LEGACY".into());
+        let error = pair.authenticated_slack_accounts().err().expect("scalar/map mix must reject");
+        assert!(error.to_string().contains("legacy Slack fields cannot coexist"));
+    }
+
+    #[test]
+    fn two_slack_accounts_keep_distinct_refs_bindings_and_tokens() {
+        let mut pair = pair();
+        add_account(&mut pair, "personal", "U123PERSONAL");
+        add_account(&mut pair, "work", "U123WORK");
+        let accounts = pair.authenticated_slack_accounts().unwrap();
+        assert_eq!(accounts.len(), 2);
+        assert_eq!(accounts[0].channel_ref().account_id.as_str(), "personal");
+        assert_eq!(accounts[1].channel_ref().account_id.as_str(), "work");
+        assert_ne!(accounts[0].bot_token().expose_secret(), accounts[1].bot_token().expose_secret());
+        assert!(accounts.iter().all(|account| {
+            !account.is_legacy_singleton()
+                && account.account_binding().is_some()
+                && !account.app_token().expose_secret().is_empty()
+        }));
+    }
+
+    #[test]
+    fn slack_named_credentials_are_persisted_and_never_enter_public_policy() {
+        let mut pair = pair();
+        add_account(&mut pair, "work", "U123WORK");
+        assert!(pair.credentials.has_any(), "Slack account secrets must retain credentials.yaml");
+        let public = serde_yaml::to_string(&pair.config).unwrap();
+        assert!(public.contains("channel_accounts"));
+        assert!(public.contains("allowed_user_id: U123WORK"));
+        assert!(!public.contains("xoxb-work"));
+        assert!(!public.contains("xapp-work"));
+        let persisted = serde_yaml::to_string(&pair.credentials).unwrap();
+        assert!(persisted.contains("slack:"));
+        assert!(persisted.contains("bot_token: xoxb-work"));
+        let debug = format!("{:?}", pair.credentials);
+        assert!(!debug.contains("xoxb-work"));
+        assert!(!debug.contains("xapp-work"));
+    }
+
+    #[test]
+    fn slack_account_maps_reject_duplicate_yaml_entries() {
+        let public = r#"
+channel_accounts:
+  slack:
+    work: { allowed_user_id: U123WORK }
+    work: { allowed_user_id: U123OTHER }
+"#;
+        assert!(serde_yaml::from_str::<FreedomConfig>(public).is_err());
+        let secrets = r#"
+channel_accounts:
+  slack:
+    work: { bot_token: xoxb-work, app_token: xapp-work }
+    work: { bot_token: xoxb-other, app_token: xapp-other }
+"#;
+        assert!(serde_yaml::from_str::<credentials::Credentials>(secrets).is_err());
     }
 }
 

@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::channels::probe::{
-    ChannelCredsView, ProbeStatus, TelegramAccountProbe, probe_all, telegram_account_probes,
+    ChannelCredsView, ProbeStatus, SlackAccountProbe, TelegramAccountProbe, probe_all,
+    slack_account_probes, telegram_account_probes,
 };
 use crate::channels::registry::{
     CHANNEL_REGISTRY_SCHEMA_VERSION, ChannelAccountId, ChannelId, ChannelRef, channel_descriptors,
@@ -131,6 +132,10 @@ fn channel_statuses_for_pair(pair: &crate::config::RuntimeConfigPair) -> Vec<Cha
         || creds.telegram_account_map_active()
         || pair.raw_credentials.telegram_account_map_active();
     let telegram_accounts = telegram_account_probes(pair);
+    let slack_map_active = !cfg.channel_accounts.slack.is_empty()
+        || creds.slack_account_map_active()
+        || pair.raw_credentials.slack_account_map_active();
+    let slack_accounts = slack_account_probes(pair);
     probe_all(&view)
         .into_iter()
         .map(|h| {
@@ -158,6 +163,11 @@ fn channel_statuses_for_pair(pair: &crate::config::RuntimeConfigPair) -> Vec<Cha
                     accounts,
                 };
             }
+            if h.channel == ChannelId::Slack.as_str() && slack_map_active {
+                let accounts = slack_accounts.as_ref().map(|accounts| accounts.iter().map(slack_account_status).collect::<Vec<_>>()).unwrap_or_default();
+                let valid_map = matches!(&slack_accounts, Ok(accounts) if !accounts.is_empty());
+                return ChannelStatus { name: h.channel, status: if valid_map { ProbeStatus::Ok } else { ProbeStatus::Error }, configured: true, detail: if valid_map { "Slack account map configured; per-account readiness is static only.".to_owned() } else { "Slack account map is invalid or partial; no account is usable until matching policy and non-empty credentials are configured.".to_owned() }, accounts };
+            }
             ChannelStatus {
                 name: h.channel,
                 status: h.status,
@@ -170,6 +180,10 @@ fn channel_statuses_for_pair(pair: &crate::config::RuntimeConfigPair) -> Vec<Cha
             }
         })
         .collect()
+}
+
+fn slack_account_status(probe: &SlackAccountProbe) -> ChannelAccountStatus {
+    ChannelAccountStatus { channel_ref: probe.channel_ref.clone(), status: probe.status, detail: probe.detail.clone(), dm_pairing: false, runtime: None }
 }
 
 fn channel_account_status(probe: &TelegramAccountProbe) -> ChannelAccountStatus {
@@ -307,9 +321,8 @@ where
     ) -> Option<BTreeMap<ChannelRef, AccountRuntimeState>>,
 {
     let mut rows = channel_statuses_for_pair(pair);
-    let Some(current_tags) = current_telegram_runtime_tags(pair) else {
-        return rows;
-    };
+    let current_tags = current_account_runtime_tags(pair);
+    if current_tags.is_empty() { return rows; }
     if let Some(observations) = read(&current_tags) {
         merge_runtime_health(&mut rows, &observations);
     }
@@ -317,17 +330,15 @@ where
 }
 
 /// Current tags derive from the same coherent, authenticated account bundle
-/// as the static map rows. Legacy Telegram retains its historical top-level
-/// representation and therefore receives no account runtime child.
-fn current_telegram_runtime_tags(
+/// as the static map rows. Legacy scalar accounts retain their historical
+/// top-level representation and therefore receive no account runtime child.
+fn current_account_runtime_tags(
     pair: &crate::config::RuntimeConfigPair,
-) -> Option<BTreeMap<ChannelRef, BindingTag>> {
-    if !telegram_account_map_active(pair) {
-        return None;
-    }
-    let accounts = pair.authenticated_telegram_accounts().ok()?;
-    Some(
-        accounts
+) -> BTreeMap<ChannelRef, BindingTag> {
+    let mut tags = BTreeMap::new();
+    if telegram_account_map_active(pair)
+        && let Ok(accounts) = pair.authenticated_telegram_accounts() {
+            tags.extend(accounts
             .iter()
             .filter(|account| !account.is_legacy_singleton())
             .map(|account| {
@@ -336,8 +347,14 @@ fn current_telegram_runtime_tags(
                     BindingTag::from_authenticated_telegram_account(account),
                 )
             })
-            .collect(),
-    )
+            );
+    }
+    if let Ok(accounts) = pair.authenticated_slack_accounts() {
+        tags.extend(accounts.iter().filter(|account| !account.is_legacy_singleton()).map(|account| (
+            account.channel_ref().clone(), BindingTag::from_authenticated_slack_account(account),
+        )));
+    }
+    tags
 }
 
 fn merge_runtime_health(
@@ -5755,6 +5772,88 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(error.contains("invalid Telegram account id"));
+    }
+
+    fn slack_status_pair() -> crate::config::RuntimeConfigPair {
+        let mut pair = crate::config::RuntimeConfigPair {
+            config: FreedomConfig::default(),
+            raw_credentials: Credentials::default(),
+            credentials: Credentials::default(),
+        };
+        for name in ["work", "personal"] {
+            let id = ChannelAccountId::new(name).unwrap();
+            pair.config.channel_accounts.slack.insert(id.clone(), crate::config::SlackAccountConfig {
+                allowed_user_id: "U123PRIVATE".into(), incarnation: None,
+            });
+            let secrets = crate::config::credentials::SlackAccountCredentials {
+                bot_token: Some(SecretString::from(format!("bot-secret-{name}"))),
+                app_token: Some(SecretString::from(format!("app-secret-{name}"))),
+            };
+            pair.raw_credentials.channel_accounts.slack.insert(id.clone(), secrets.clone());
+            pair.credentials.channel_accounts.slack.insert(id, secrets);
+        }
+        pair
+    }
+
+    #[test]
+    fn slack_status_uses_exact_account_health_tags_and_rotation_invalidates_old_tags() {
+        let mut pair = slack_status_pair();
+        let before = current_account_runtime_tags(&pair);
+        assert_eq!(before.len(), 2);
+        let work = ChannelRef::new(ChannelId::Slack, ChannelAccountId::new("work").unwrap());
+        let personal = ChannelRef::new(ChannelId::Slack, ChannelAccountId::new("personal").unwrap());
+        let rows = channel_statuses_with_runtime(&pair, |tags| {
+            assert!(tags == &before);
+            Some(BTreeMap::from([(work.clone(), AccountRuntimeState::Running),
+                (personal.clone(), AccountRuntimeState::ConfiguredNotStarted)]))
+        });
+        let row = rows.iter().find(|row| row.name == "slack").unwrap();
+        assert_eq!(row.status, ProbeStatus::Ok);
+        assert_eq!(row.accounts.len(), 2);
+        assert_eq!(row.accounts[0].channel_ref, personal);
+        assert_eq!(row.accounts[0].runtime.as_deref(), Some("configured_not_started"));
+        assert_eq!(row.accounts[1].channel_ref, work);
+        assert_eq!(row.accounts[1].runtime.as_deref(), Some("running"));
+        let encoded = serde_json::to_string(row).unwrap();
+        for forbidden in ["bot-secret-", "app-secret-", "U123PRIVATE"] {
+            assert!(!encoded.contains(forbidden));
+        }
+        pair.credentials.channel_accounts.slack.get_mut(&work.account_id).unwrap().app_token = Some(SecretString::from("rotated-app"));
+        pair.raw_credentials = pair.credentials.clone();
+        let after = current_account_runtime_tags(&pair);
+        assert!(before[&work] != after[&work], "old runtime evidence cannot match rotated credentials");
+        assert!(before[&personal] == after[&personal], "unrelated account remains the same generation");
+    }
+
+    #[test]
+    fn slack_status_rejects_orphan_policy_or_credentials_without_usable_rows() {
+        for remove_policy in [false, true] {
+            let mut pair = slack_status_pair();
+            if remove_policy { pair.config.channel_accounts.slack.clear(); }
+            else { pair.credentials.channel_accounts.slack.clear(); pair.raw_credentials.channel_accounts.slack.clear(); }
+            let rows = channel_statuses_for_pair(&pair);
+            let row = rows.iter().find(|row| row.name == "slack").unwrap();
+            assert_eq!(row.status, ProbeStatus::Error);
+            assert!(row.configured);
+            assert!(row.accounts.is_empty());
+            assert!(current_account_runtime_tags(&pair).is_empty());
+        }
+    }
+
+    #[test]
+    fn legacy_slack_status_keeps_singleton_projection_without_account_rows() {
+        let config = FreedomConfig::default();
+        let credentials = Credentials {
+            slack_bot_token: Some(SecretString::from("xoxb-legacy")),
+            slack_app_token: Some(SecretString::from("xapp-legacy")),
+            slack_allowed_user_id: Some("U123LEGACY".into()),
+            ..Default::default()
+        };
+        let rows = channel_statuses(&config, &credentials);
+        let row = rows.iter().find(|row| row.name == "slack").unwrap();
+        assert_eq!(row.status, ProbeStatus::Ok);
+        assert!(row.configured);
+        assert!(row.accounts.is_empty());
     }
 
     fn telegram_map_status(

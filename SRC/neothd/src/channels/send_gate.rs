@@ -256,6 +256,63 @@ pub(crate) async fn emit_account_bound_egress_intent_in(
     }
 }
 
+/// Account-bound variant for the admitted nonlegacy Slack map live path.
+/// The Slack provenance type and channel check remain separate from Telegram
+/// so a valid mapped account cannot relabel one transport's payload as the
+/// other.
+pub(crate) async fn emit_mapped_slack_egress_intent_in(
+    writer: &crate::wal::writer::WalWriterHandle,
+    channel: &str,
+    recipient: &str,
+    message: &str,
+    ts_unix: u64,
+    provenance: &crate::cli::serve_tasks::MappedSlackLiveEgressProvenance,
+    wal_session: Option<crate::wal::WalSessionContext>,
+) -> Option<String> {
+    if provenance.channel_ref().channel_id != ChannelKind::Slack
+        || channel != ChannelKind::Slack.as_str()
+        || provenance.account_binding().channel_ref() != provenance.channel_ref()
+    {
+        tracing::warn!(
+            channel,
+            bound_channel = %provenance.channel_ref().channel_id.as_str(),
+            "refusing mapped Slack egress intent with mismatched channel reference"
+        );
+        return None;
+    }
+    let intent_id = crate::wal::events::next_intent_id(
+        b"channel-egress",
+        &format!("{channel}:{recipient}"),
+        ts_unix as i64,
+    );
+    let mut value = serde_json::json!({
+        "intent_id": intent_id,
+        "channel": channel,
+        "to_hash": format!("{:016x}", xxhash_rust::xxh3::xxh3_64(recipient.as_bytes())),
+        "message_hash": format!("{:016x}", xxhash_rust::xxh3::xxh3_64(message.as_bytes())),
+        "message_bytes": message.len(),
+        "ts_unix": ts_unix,
+    });
+    value["channel_ref"] = serde_json::to_value(provenance.channel_ref()).ok()?;
+    value["account_binding"] = serde_json::to_value(provenance.account_binding()).ok()?;
+    let payload = serde_json::to_vec(&value).unwrap_or_default();
+    let header = crate::wal::HeaderBuilder::new(0x00, &payload)
+        .event_subtype(crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8)
+        .session_context(wal_session)
+        .build();
+    match writer.append_authenticated(header, payload).await {
+        Ok(_) => Some(intent_id),
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                channel,
+                "mandatory authenticated mapped Slack egress intent could not be recorded; send refused"
+            );
+            None
+        }
+    }
+}
+
 /// Authenticated legacy singleton Intent. This is intentionally a distinct
 /// closed wire family from unmarked mapped Telegram records.
 pub(crate) async fn emit_legacy_live_egress_intent(
@@ -471,6 +528,49 @@ pub(crate) async fn emit_account_bound_egress_result_in(
         })
 }
 
+/// Terminal record for the sealed mapped Slack live path. The typed
+/// provenance proves the result belongs to the same account/incarnation-bound
+/// Slack family as its preceding authenticated intent.
+pub(crate) async fn emit_mapped_slack_egress_result_in(
+    writer: &crate::wal::writer::WalWriterHandle,
+    intent_id: &str,
+    outcome: &str,
+    provider_message_id: Option<&str>,
+    ts_unix: u64,
+    provenance: &crate::cli::serve_tasks::MappedSlackLiveEgressProvenance,
+    wal_session: Option<crate::wal::WalSessionContext>,
+) -> std::result::Result<(), ()> {
+    if provenance.channel_ref().channel_id != ChannelKind::Slack {
+        tracing::warn!("refusing mapped Slack egress result with non-Slack provenance");
+        return Err(());
+    }
+    if provenance.account_binding().channel_ref() != provenance.channel_ref() {
+        tracing::warn!("refusing mapped Slack egress result with mismatched sealed binding");
+        return Err(());
+    }
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "intent_id": intent_id,
+        "outcome": outcome,
+        "provider_message_id": provider_message_id,
+        "ts_unix": ts_unix,
+    }))
+    .unwrap_or_default();
+    let header = crate::wal::HeaderBuilder::new(0x00, &payload)
+        .event_subtype(crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8)
+        .session_context(wal_session)
+        .build();
+    writer
+        .append_authenticated(header, payload)
+        .await
+        .map(|_| ())
+        .map_err(|error| {
+            tracing::warn!(
+                error = %error,
+                "authenticated WAL append mapped Slack CHANNEL_EGRESS_RESULT failed after bound egress"
+            );
+        })
+}
+
 pub(crate) async fn emit_legacy_live_egress_result(
     writer: &crate::wal::writer::WalWriterHandle,
     intent_id: &str,
@@ -570,6 +670,53 @@ mod intent_tests {
             .into_iter()
             .next()
             .expect("one exact mapped fixture bundle")
+    }
+
+    fn mapped_slack_bundle_from_runtime(
+        account_id: &str,
+        allowed_user_id: &str,
+        incarnation: &str,
+    ) -> crate::cli::serve_tasks::SlackAccountBundle {
+        let account_id = crate::channels::registry::ChannelAccountId::new(account_id)
+            .expect("valid mapped Slack fixture account id");
+        let mut runtime = crate::config::RuntimeConfigPair {
+            config: crate::config::FreedomConfig::default(),
+            raw_credentials: crate::config::credentials::Credentials::default(),
+            credentials: crate::config::credentials::Credentials::default(),
+        };
+        runtime.config.channel_accounts.slack.insert(
+            account_id.clone(),
+            crate::config::SlackAccountConfig {
+                allowed_user_id: allowed_user_id.to_owned(),
+                incarnation: Some(
+                    crate::config::AccountIncarnation::parse(incarnation)
+                        .expect("canonical mapped Slack incarnation"),
+                ),
+            },
+        );
+        let credential = crate::config::credentials::SlackAccountCredentials {
+            bot_token: Some(crate::secret::SecretString::new(
+                "mapped-slack-fixture-bot-token".to_owned(),
+            )),
+            app_token: Some(crate::secret::SecretString::new(
+                "mapped-slack-fixture-app-token".to_owned(),
+            )),
+        };
+        runtime
+            .raw_credentials
+            .channel_accounts
+            .slack
+            .insert(account_id.clone(), credential.clone());
+        runtime
+            .credentials
+            .channel_accounts
+            .slack
+            .insert(account_id, credential);
+        crate::cli::serve_tasks::slack_account_bundles(&runtime)
+            .expect("coherent mapped Slack runtime pair yields one fixture bundle")
+            .into_iter()
+            .next()
+            .expect("one exact mapped Slack fixture bundle")
     }
 
     #[tokio::test]
@@ -729,6 +876,139 @@ mod intent_tests {
         }
         assert_eq!(id_a.len(), 32);
         assert_eq!(id_default.len(), 32);
+    }
+
+    #[tokio::test]
+    async fn mapped_slack_intents_isolate_accounts_and_reject_wrong_channel_before_transport() {
+        let home = tempfile::tempdir().expect("create mapped Slack evidence home");
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).expect("create mapped Slack evidence WAL");
+        let segment = wal.join("000001.wal");
+        let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
+            segment.clone(),
+            home.path().to_path_buf(),
+        )
+        .expect("spawn mapped Slack evidence WAL writer");
+        ready
+            .wait()
+            .await
+            .expect("initialize mapped Slack evidence WAL writer");
+        let alpha = mapped_slack_bundle_from_runtime(
+            "alpha",
+            "U-ALPHA",
+            "550e8400-e29b-41d4-a716-446655440001",
+        );
+        let bravo = mapped_slack_bundle_from_runtime(
+            "bravo",
+            "U-BRAVO",
+            "550e8400-e29b-41d4-a716-446655440002",
+        );
+        let provenance_alpha = alpha
+            .mapped_live_egress_provenance()
+            .expect("nonlegacy Slack alpha mints provenance");
+        let provenance_bravo = bravo
+            .mapped_live_egress_provenance()
+            .expect("nonlegacy Slack bravo mints provenance");
+        let alpha_intent = emit_mapped_slack_egress_intent_in(
+            &writer,
+            "slack",
+            "private-alpha",
+            "private-alpha-body",
+            1_700_000_000,
+            &provenance_alpha,
+            None,
+        )
+        .await
+        .expect("mapped Slack alpha intent");
+        let bravo_intent = emit_mapped_slack_egress_intent_in(
+            &writer,
+            "slack",
+            "private-bravo",
+            "private-bravo-body",
+            1_700_000_001,
+            &provenance_bravo,
+            None,
+        )
+        .await
+        .expect("mapped Slack bravo intent");
+        assert!(
+            emit_mapped_slack_egress_intent_in(
+                &writer,
+                "telegram",
+                "must-not-reach-wal",
+                "must-not-reach-wal",
+                1_700_000_002,
+                &provenance_alpha,
+                None,
+            )
+            .await
+            .is_none(),
+            "mapped Slack proof refuses a relabelled Telegram payload before WAL append"
+        );
+        emit_mapped_slack_egress_result_in(
+            &writer,
+            &alpha_intent,
+            "delivered",
+            Some("alpha-message"),
+            1_700_000_003,
+            &provenance_alpha,
+            None,
+        )
+        .await
+        .expect("mapped Slack alpha terminal");
+        emit_mapped_slack_egress_result_in(
+            &writer,
+            &bravo_intent,
+            "transport",
+            None,
+            1_700_000_004,
+            &provenance_bravo,
+            None,
+        )
+        .await
+        .expect("mapped Slack bravo terminal");
+        drop(writer);
+        join.await.unwrap().unwrap();
+
+        let bytes = tokio::fs::read(segment).await.expect("read mapped Slack WAL");
+        let mut cursor = SEGMENT_HEADER_LEN;
+        let mut intents = Vec::new();
+        let mut terminals = Vec::new();
+        while cursor < bytes.len() {
+            let frame = decode_frame(&bytes[cursor..]).expect("complete mapped Slack frame");
+            let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+            if frame.header.event_subtype == ExtendedSubtype::ChannelEgressIntent as u8 {
+                intents.push(payload);
+            } else if frame.header.event_subtype == ExtendedSubtype::ChannelEgressResult as u8 {
+                terminals.push(payload);
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        assert_eq!(intents.len(), 2, "wrong-channel request added no intent");
+        assert_eq!(terminals.len(), 2);
+        let mut accounts = intents
+            .iter()
+            .map(|payload| {
+                assert_eq!(payload["channel"], "slack");
+                assert_eq!(payload["account_binding"]["channel_ref"], payload["channel_ref"]);
+                assert!(payload["account_binding"]["incarnation"].is_string());
+                let rendered = payload.to_string();
+                assert!(!rendered.contains("private-"));
+                payload["channel_ref"]["account_id"].as_str().unwrap().to_owned()
+            })
+            .collect::<Vec<_>>();
+        accounts.sort();
+        assert_eq!(accounts, vec!["alpha", "bravo"]);
+        let intent_ids = intents
+            .iter()
+            .map(|payload| payload["intent_id"].as_str().unwrap().to_owned())
+            .collect::<std::collections::BTreeSet<_>>();
+        let terminal_ids = terminals
+            .iter()
+            .map(|payload| payload["intent_id"].as_str().unwrap().to_owned())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(terminal_ids.len(), 2, "each account keeps its own terminal custody");
+        assert_eq!(terminal_ids, intent_ids, "terminals pair only to their own mapped intents");
     }
 
     #[tokio::test]
