@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W801 hosted format imported; W802 exact compiler fixes; behavior pending",
+  "status": "Apply exact hosted yt-dlp chain formatting; core83297 still running",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 172226,
-    "sha256": "391566E632298CCD2B03FB79EB71B4D215615E074497323CECF57B3B4F25BA4B"
+    "bytes": 172221,
+    "sha256": "8A30373E34F20297EF9DD2C95D4E52A7DD1E2439C7350C7A64C6C71409674989"
   },
   "sourceInputs": 974,
   "requiredNativeTests": [
@@ -8730,31 +8730,31 @@
     {
       "test": "installers::yt_dlp::tests::pinned_release_identity_is_exact_and_https",
       "sourcePath": "SRC/neothd/src/installers/yt_dlp.rs",
-      "sourceSha256": "A38EDBB517360194F32E402A782B5E5DF400E512B855ED7A62353B2940AD569F",
+      "sourceSha256": "01CB24D816DF96ADD53900CAC8B0B55B1DAFA036CFAD2496C2F7D9D5100E1FE5",
       "junitClass": "neoth"
     },
     {
       "test": "installers::yt_dlp::tests::managed_path_is_instance_owned",
       "sourcePath": "SRC/neothd/src/installers/yt_dlp.rs",
-      "sourceSha256": "A38EDBB517360194F32E402A782B5E5DF400E512B855ED7A62353B2940AD569F",
+      "sourceSha256": "01CB24D816DF96ADD53900CAC8B0B55B1DAFA036CFAD2496C2F7D9D5100E1FE5",
       "junitClass": "neoth"
     },
     {
       "test": "installers::yt_dlp::tests::platform_assets_are_standalone_and_unsupported_targets_fail_closed",
       "sourcePath": "SRC/neothd/src/installers/yt_dlp.rs",
-      "sourceSha256": "A38EDBB517360194F32E402A782B5E5DF400E512B855ED7A62353B2940AD569F",
+      "sourceSha256": "01CB24D816DF96ADD53900CAC8B0B55B1DAFA036CFAD2496C2F7D9D5100E1FE5",
       "junitClass": "neoth"
     },
     {
       "test": "installers::yt_dlp::tests::wrong_digest_binary_is_rejected_before_any_probe",
       "sourcePath": "SRC/neothd/src/installers/yt_dlp.rs",
-      "sourceSha256": "A38EDBB517360194F32E402A782B5E5DF400E512B855ED7A62353B2940AD569F",
+      "sourceSha256": "01CB24D816DF96ADD53900CAC8B0B55B1DAFA036CFAD2496C2F7D9D5100E1FE5",
       "junitClass": "neoth"
     },
     {
       "test": "installers::yt_dlp::tests::streamed_installer_accumulator_refuses_overflow_before_append",
       "sourcePath": "SRC/neothd/src/installers/yt_dlp.rs",
-      "sourceSha256": "A38EDBB517360194F32E402A782B5E5DF400E512B855ED7A62353B2940AD569F",
+      "sourceSha256": "01CB24D816DF96ADD53900CAC8B0B55B1DAFA036CFAD2496C2F7D9D5100E1FE5",
       "junitClass": "neoth"
     },
     {
@@ -33244,6 +33244,26 @@
       }
     ],
     "note": "No local executable validation. D5/F4 remain open; exact-source hosted rerun next.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave802FormattingFollowup": {
+    "base": "83297e30634ff390499e92e122a77db544ca7c06",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave801-hosted-format-and-compile-repair.json",
+        "bytes": 1757,
+        "sha256": "BA50F89B84D0CF4DB698FEA3215476FE5505924B58EDF1119644D7006A6589F8",
+        "blob": "7d8a8020911a4d43920f58c83af36313eb2ffdcd"
+      },
+      {
+        "path": "SRC/neothd/src/installers/yt_dlp.rs",
+        "bytes": 9875,
+        "sha256": "01CB24D816DF96ADD53900CAC8B0B55B1DAFA036CFAD2496C2F7D9D5100E1FE5",
+        "blob": "b143d9001a0e5f495a3a8d9ef5ada5f20b340c82"
+      }
+    ],
+    "note": "Two-line formatting only. No local executables; no duplicate Core build.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

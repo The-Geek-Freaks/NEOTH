@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T12:51:50.6743350Z",
-  "validationStatus": "W801 hosted format imported; W802 exact compiler fixes; behavior pending",
+  "capturedUtc": "2026-09-24T12:55:31.6934230Z",
+  "validationStatus": "Apply exact hosted yt-dlp chain formatting; core83297 still running",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1773,8 +1773,8 @@
     },
     {
       "path": "docs/verification/gold-wave801-hosted-format-and-compile-repair.json",
-      "bytes": 1461,
-      "sha256": "957B556A48BBB1692C9BDF48EEF004E55DFDBD25486F342AD2BD492F5E756978"
+      "bytes": 1757,
+      "sha256": "BA50F89B84D0CF4DB698FEA3215476FE5505924B58EDF1119644D7006A6589F8"
     },
     {
       "path": "docs/verification/managed-browser-cft154.json",
@@ -3873,8 +3873,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/yt_dlp.rs",
-      "bytes": 9866,
-      "sha256": "A38EDBB517360194F32E402A782B5E5DF400E512B855ED7A62353B2940AD569F"
+      "bytes": 9875,
+      "sha256": "01CB24D816DF96ADD53900CAC8B0B55B1DAFA036CFAD2496C2F7D9D5100E1FE5"
     },
     {
       "path": "SRC/neothd/src/integrations/jobs.rs",

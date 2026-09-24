@@ -146,7 +146,8 @@ async fn direct_version_probe(binary: &Path) -> Option<String> {
     let child = command.spawn().ok()?;
     let output = tokio::time::timeout(Duration::from_secs(5), child.wait_with_output())
         .await
-        .ok()?.ok()?;
+        .ok()?
+        .ok()?;
     if !output.status.success() || output.stdout.len() > 1024 {
         return None;
     }

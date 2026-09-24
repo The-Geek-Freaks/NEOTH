@@ -28,5 +28,12 @@
     "workflow_replay.rs: remove unused mut from bounded input file"
   ],
   "behaviorValidation": "pending hosted rerun; D5 and F4 remain open",
-  "localExecutableValidationRan": false
+  "localExecutableValidationRan": false,
+  "followupFormatting": {
+    "run": 36002004102,
+    "source": "83297e30634ff390499e92e122a77db544ca7c06",
+    "path": "SRC/neothd/src/installers/yt_dlp.rs",
+    "change": "Apply exact hosted diagnostic: split chained .ok()? conversions over separate lines",
+    "localFormatterRan": false
+  }
 }
