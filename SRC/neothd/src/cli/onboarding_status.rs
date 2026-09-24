@@ -33,6 +33,23 @@ pub struct OnboardingStatusArgs {
 // Snapshot data model
 // ---------------------------------------------------------------------------
 
+/// Setup configuration only; listener readiness is reported by `neoth status`.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WebChatOnboardingState {
+    Disabled,
+    ConfiguredNeedsServe,
+}
+
+/// Configuration-only advisory. Actual listener readiness belongs to `neoth status`.
+fn webchat_onboarding_state(cfg: &FreedomConfig) -> WebChatOnboardingState {
+    if cfg.companion.enabled {
+        WebChatOnboardingState::ConfiguredNeedsServe
+    } else {
+        WebChatOnboardingState::Disabled
+    }
+}
+
 /// Pure, filesystem-free representation of onboarding state.
 /// Built from `FreedomConfig` + `DeviceProfile`; passed to `render_status`.
 #[derive(Debug, Serialize)]
@@ -42,6 +59,7 @@ pub struct OnboardingSnapshot {
     pub provider_auth_present: bool,
     pub telegram_enabled: bool,
     pub whatsapp_enabled: bool,
+    pub webchat: WebChatOnboardingState,
     pub autonomy_level: String,
     pub review_gate_enabled: bool,
     /// Device tier label (from OH-04).
@@ -111,6 +129,7 @@ impl OnboardingSnapshot {
             provider_auth_present,
             telegram_enabled,
             whatsapp_enabled,
+            webchat: webchat_onboarding_state(cfg),
             autonomy_level,
             review_gate_enabled: cfg.review_gate_enabled,
             device_tier: tier.as_str().to_string(),
@@ -159,6 +178,14 @@ pub fn render_status(snapshot: &OnboardingSnapshot) -> String {
     };
 
     let operator_str = snapshot.operator_id.as_deref().unwrap_or("(not set)");
+    let webchat = match snapshot.webchat {
+        WebChatOnboardingState::Disabled => {
+            "disabled; enable companion.enabled then serve and run neoth companion webchat"
+        }
+        WebChatOnboardingState::ConfiguredNeedsServe => {
+            "configured; start neoth serve then run neoth companion webchat"
+        }
+    };
 
     let mut out = format!(
         "## NEOTH Onboarding Status\n\
@@ -169,6 +196,7 @@ pub fn render_status(snapshot: &OnboardingSnapshot) -> String {
          | Provider configured | {provider_str} |\n\
          | Provider auth present | {auth_str} |\n\
          | Channels enabled | {channels_str} |\n\
+         | WebChat | {webchat} |\n\
          | Autonomy level | {autonomy} |\n\
          | Review gate | {review_gate} |\n\
          \n\
@@ -187,6 +215,7 @@ pub fn render_status(snapshot: &OnboardingSnapshot) -> String {
         provider_str = provider_str,
         auth_str = auth_str,
         channels_str = channels_str,
+        webchat = webchat,
         autonomy = snapshot.autonomy_level,
         review_gate = if snapshot.review_gate_enabled {
             "enabled"
@@ -244,6 +273,7 @@ mod tests {
             provider_auth_present: true,
             telegram_enabled: true,
             whatsapp_enabled: false,
+            webchat: WebChatOnboardingState::Disabled,
             autonomy_level: "Standard".to_string(),
             review_gate_enabled: false,
             device_tier: "local-capable".to_string(),
@@ -263,6 +293,7 @@ mod tests {
             provider_auth_present: true,
             telegram_enabled: false,
             whatsapp_enabled: false,
+            webchat: WebChatOnboardingState::Disabled,
             autonomy_level: "Standard".to_string(),
             review_gate_enabled: false,
             device_tier: "cloud-first".to_string(),
@@ -283,6 +314,7 @@ mod tests {
             provider_auth_present: false,
             telegram_enabled: true,
             whatsapp_enabled: false,
+            webchat: WebChatOnboardingState::Disabled,
             autonomy_level: "Standard".to_string(),
             review_gate_enabled: false,
             device_tier: "hybrid".to_string(),
@@ -293,6 +325,49 @@ mod tests {
             ready: false,
             not_ready_reason: "No provider configured — run `neoth init`.".to_string(),
         }
+    }
+
+    #[test]
+    fn companion_config_projects_configured_webchat_advisory_without_ready_claim() {
+        let credentials = crate::config::credentials::Credentials::default();
+        let baseline = FreedomConfig::default();
+        let mut cfg = FreedomConfig::default();
+        cfg.companion.enabled = true;
+        let snapshot = OnboardingSnapshot::from_readiness(
+            &cfg,
+            &crate::cli::onboarding_readiness::evaluate(&cfg, &credentials),
+        );
+        let unchanged = OnboardingSnapshot::from_readiness(
+            &baseline,
+            &crate::cli::onboarding_readiness::evaluate(&baseline, &credentials),
+        );
+        assert_eq!(snapshot.webchat, WebChatOnboardingState::ConfiguredNeedsServe);
+        assert_eq!(snapshot.ready, unchanged.ready);
+        assert_eq!(snapshot.telegram_enabled, unchanged.telegram_enabled);
+        assert_eq!(snapshot.whatsapp_enabled, unchanged.whatsapp_enabled);
+        assert_eq!(
+            serde_json::to_value(&snapshot).unwrap()["webchat"],
+            "configured_needs_serve"
+        );
+        assert!(
+            render_status(&snapshot)
+                .contains("configured; start neoth serve then run neoth companion webchat")
+        );
+    }
+
+    #[test]
+    fn default_config_projects_disabled_webchat_advisory() {
+        let cfg = FreedomConfig::default();
+        let credentials = crate::config::credentials::Credentials::default();
+        let snapshot = OnboardingSnapshot::from_readiness(
+            &cfg,
+            &crate::cli::onboarding_readiness::evaluate(&cfg, &credentials),
+        );
+        assert_eq!(snapshot.webchat, WebChatOnboardingState::Disabled);
+        assert_eq!(serde_json::to_value(&snapshot).unwrap()["webchat"], "disabled");
+        assert!(render_status(&snapshot).contains(
+            "disabled; enable companion.enabled then serve and run neoth companion webchat"
+        ));
     }
 
     #[test]

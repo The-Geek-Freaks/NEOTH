@@ -57,7 +57,8 @@ pub(crate) async fn step6_channel(
     } else if interactive {
         println!(
             "  [6/9] Telegram skipped. Run `neoth channel list` to see all {} adapters, \
-             then `neoth channel add <name>` to connect one.",
+             then `neoth channel add <name>` to connect one. For local browser WebChat, \
+             enable `companion.enabled: true`, start `neoth serve`, then run `neoth companion webchat`.",
             crate::channels::registry::channel_descriptors().len()
         );
     }

@@ -2,6 +2,28 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W712-W718 Slack workspace binding and hosted results (2026-09-24):**
+Claude RESULT-002's observed team_id now survives candidate auth.test into the
+paired-file CAS commit. Same known workspace keeps an existing incarnation;
+new/unknown/cross-team or missing-incarnation state gets fresh authority. Known
+account tests refuse mismatched or absent observed teams; legacy unknown remains
+compatible. Reload and health bind team identity; no named proactive DM claim.
+Seven new Slack cases plus W710's two extend native1360/Group1090. Source review
+passes; new execution is pending. W715 admits59e2d5eb1081executed1079PASS2FAIL,
+204sources+2inputs; all WebChat/CUA cases pass. W716 repairs the Cron self-heal
+alert distinction and canonical WAL test path. W717 Core at59e2d5eb passes all
+four gates; exact CLI reference unchanged. Road1324/1046checked/276open/2partial;
+WS-LF38done80open. No local executables. See docs/gold-wave718-slack-workspace-and-hosted-evidence.md.
+**W710 WebChat CLI onboarding (2026-09-24):**
+Interactive init now gives the enable/serve/mint browser setup sequence.
+Onboarding JSON/table project disabled or configured_needs_serve from Companion
+configuration; live readiness remains in neoth status. Existing provider/channel
+readiness and loader errors are preserved. Two real config/snapshot/JSON/render
+regressions extend native1353/Group1083. Independent source review passes; new
+execution remains pending. W70859e2d5eb Preflight35973509291 passes; its Core and
+Group1081 runs retain their own source binding. No Road closure or local runtime.
+Road1324/1046checked/276open/2partial;WS-LF38done80open.
+See docs/gold-wave710-webchat-onboarding.md.
 **W707/W708 hosted formatting and WebChat fixture compile repair (2026-09-24):**
 Root verified and imported nine exact formatter rewrites from Preflight35972375977
 at3ed5622b, including ZIP, inner checksums and old/new Gitblobs. Group1081

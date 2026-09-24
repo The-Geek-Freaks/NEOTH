@@ -688,6 +688,7 @@ mod intent_tests {
             account_id.clone(),
             crate::config::SlackAccountConfig {
                 allowed_user_id: allowed_user_id.to_owned(),
+                team_id: None,
                 incarnation: Some(
                     crate::config::AccountIncarnation::parse(incarnation)
                         .expect("canonical mapped Slack incarnation"),

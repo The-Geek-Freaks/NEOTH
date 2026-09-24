@@ -906,7 +906,6 @@ pub(crate) struct PreparedSlackAccountUpsert {
     candidate: crate::config::RuntimeConfigPair,
     freedom_before: FileSnapshot,
     credentials_before: FileSnapshot,
-    freedom_after: FileSnapshot,
     credentials_after: FileSnapshot,
 }
 
@@ -2722,19 +2721,21 @@ impl Credentials {
                             .allowed_user_id
                             .clone(),
                     };
-                    let existing_incarnation = config
+                    let existing_team_id = config
                         .channel_accounts
                         .slack
                         .get(&account_id)
-                        .and_then(|existing| existing.incarnation.clone());
+                        .and_then(|existing| existing.team_id.clone());
                     config.channel_accounts.slack.insert(
                         account_id.clone(),
                         crate::config::SlackAccountConfig {
                             allowed_user_id,
-                            incarnation: Some(
-                                existing_incarnation
-                                    .unwrap_or_else(crate::config::AccountIncarnation::new_random),
-                            ),
+                            // The external `auth.test` result is not known
+                            // until after this candidate has been probed.
+                            // Commit replaces this provisional authority under
+                            // the retained raw-pair CAS boundary.
+                            team_id: existing_team_id,
+                            incarnation: Some(crate::config::AccountIncarnation::new_random()),
                         },
                     );
                     credentials.channel_accounts.slack.insert(
@@ -2756,15 +2757,6 @@ impl Credentials {
                             .any(|account| account.channel_ref().account_id == account_id),
                         "prepared Slack account is not authenticated"
                     );
-                    let freedom_after = FileSnapshot::Present(zeroize::Zeroizing::new(
-                        render_freedom_preserving_unknown_yaml(
-                            &config,
-                            &freedom_before,
-                            InlineTelegramTokenPolicy::Preserve,
-                        )?
-                        .as_bytes()
-                        .to_vec(),
-                    ));
                     let credentials_after = credentials.rendered_file_snapshot_preserving_unknown(
                         credentials_path,
                         &credentials_before,
@@ -2776,7 +2768,6 @@ impl Credentials {
                         candidate,
                         freedom_before,
                         credentials_before,
-                        freedom_after,
                         credentials_after,
                     })
                 })
@@ -2788,7 +2779,10 @@ impl Credentials {
     /// raw file snapshots still match.
     pub(crate) fn commit_prepared_slack_account_upsert_at(
         prepared: PreparedSlackAccountUpsert,
+        verified_team_id: &str,
     ) -> Result<()> {
+        let verified_team_id = crate::config::normalize_slack_team_id(verified_team_id)
+            .context("verified Slack team_id is invalid")?;
         let freedom_dir = transaction_directory(&prepared.freedom_path);
         anyhow::ensure!(
             freedom_dir == transaction_directory(&prepared.credentials_path),
@@ -2804,12 +2798,57 @@ impl Credentials {
                                 .same_as(&prepared.credentials_before),
                         "Slack account configuration changed after its reviewed candidate; retry the command"
                     );
+                    let mut config = crate::config::FreedomConfig::load_public_from_path_unlocked(
+                        &prepared.freedom_path,
+                    )
+                    .with_context(|| {
+                        format!(
+                            "load {} for reviewed Slack workspace binding",
+                            prepared.freedom_path.display()
+                        )
+                    })?;
+                    let candidate_policy = prepared
+                        .candidate
+                        .config
+                        .channel_accounts
+                        .slack
+                        .get(&prepared.account_id)
+                        .context("prepared Slack account policy is missing")?;
+                    let prior = config.channel_accounts.slack.get(&prepared.account_id);
+                    let prior_team_id = prior
+                        .and_then(|policy| policy.team_id.as_deref())
+                        .map(crate::config::normalize_slack_team_id)
+                        .transpose()
+                        .context("stored Slack team_id is invalid")?;
+                    let incarnation = match prior_team_id.as_deref() {
+                        Some(existing) if existing == verified_team_id.as_str() => prior
+                            .and_then(|policy| policy.incarnation.clone())
+                            .or_else(|| Some(crate::config::AccountIncarnation::new_random())),
+                        _ => Some(crate::config::AccountIncarnation::new_random()),
+                    };
+                    config.channel_accounts.slack.insert(
+                        prepared.account_id.clone(),
+                        crate::config::SlackAccountConfig {
+                            allowed_user_id: candidate_policy.allowed_user_id.clone(),
+                            team_id: Some(verified_team_id),
+                            incarnation,
+                        },
+                    );
+                    let freedom_after = FileSnapshot::Present(zeroize::Zeroizing::new(
+                        render_freedom_preserving_unknown_yaml(
+                            &config,
+                            &prepared.freedom_before,
+                            InlineTelegramTokenPolicy::Preserve,
+                        )?
+                        .as_bytes()
+                        .to_vec(),
+                    ));
                     publish_prepared_file_pair(
                         &prepared.freedom_path,
                         &prepared.credentials_path,
                         &freedom_dir,
                         &prepared.freedom_before,
-                        &prepared.freedom_after,
+                        &freedom_after,
                         &prepared.credentials_before,
                         &prepared.credentials_after,
                         (),
@@ -3025,6 +3064,7 @@ impl Credentials {
                         account_id.clone(),
                         crate::config::SlackAccountConfig {
                             allowed_user_id,
+                            team_id: None,
                             incarnation: Some(crate::config::AccountIncarnation::new_random()),
                         },
                     );
@@ -8917,7 +8957,7 @@ mod slack_account_transaction_tests {
             &private,
             "work",
             "xoxb-work",
-        ))
+        ), "TTEAM1")
         .unwrap();
         let before = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
         let incarnation = before.config.channel_accounts.slack[&account("work")]
@@ -8935,13 +8975,13 @@ mod slack_account_transaction_tests {
             2
         );
         assert_eq!(before.credentials.channel_accounts.slack.len(), 1);
-        Credentials::commit_prepared_slack_account_upsert_at(candidate).unwrap();
+        Credentials::commit_prepared_slack_account_upsert_at(candidate, "TTEAM1").unwrap();
         Credentials::commit_prepared_slack_account_upsert_at(prepare(
             &public,
             &private,
             "work",
             "xoxb-rotated",
-        ))
+        ), "TTEAM1")
         .unwrap();
         let after = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
         assert_eq!(after.authenticated_slack_accounts().unwrap().len(), 2);
@@ -8978,6 +9018,141 @@ mod slack_account_transaction_tests {
     }
 
     #[test]
+    fn slack_workspace_binding_reuses_only_the_same_known_team() {
+        let (_dir, public, private) = seed();
+        Credentials::commit_prepared_slack_account_upsert_at(
+            prepare(&public, &private, "work", "xoxb-first"),
+            "TONE1",
+        )
+        .unwrap();
+        let first = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
+        let first_incarnation = first.config.channel_accounts.slack[&account("work")]
+            .incarnation
+            .clone();
+        Credentials::commit_prepared_slack_account_upsert_at(
+            Credentials::prepare_slack_account_rotation_at(
+                &public,
+                &private,
+                account("work"),
+                SecretString::from("xoxb-same"),
+                SecretString::from("xapp-same"),
+            )
+            .unwrap(),
+            "TONE1",
+        )
+        .unwrap();
+        let same = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
+        assert_eq!(
+            same.config.channel_accounts.slack[&account("work")].incarnation,
+            first_incarnation
+        );
+        Credentials::commit_prepared_slack_account_upsert_at(
+            Credentials::prepare_slack_account_rotation_at(
+                &public,
+                &private,
+                account("work"),
+                SecretString::from("xoxb-other"),
+                SecretString::from("xapp-other"),
+            )
+            .unwrap(),
+            "TTWO2",
+        )
+        .unwrap();
+        let crossed = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
+        assert_ne!(
+            crossed.config.channel_accounts.slack[&account("work")].incarnation,
+            first_incarnation
+        );
+        assert_eq!(
+            crossed.config.channel_accounts.slack[&account("work")]
+                .team_id
+                .as_deref(),
+            Some("TTWO2")
+        );
+    }
+
+    #[test]
+    fn slack_unknown_workspace_and_invalid_observation_never_reuse_authority() {
+        let (_dir, public, private) = seed();
+        std::fs::write(
+            &private,
+            "slack_bot_token: bot\nslack_app_token: app\nslack_allowed_user_id: U123ABC\n",
+        )
+        .unwrap();
+        Credentials::migrate_legacy_slack_to_account_at(&public, &private, account("work"))
+            .unwrap();
+        let migrated = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
+        let old = migrated.config.channel_accounts.slack[&account("work")]
+            .incarnation
+            .clone();
+        assert!(migrated.config.channel_accounts.slack[&account("work")]
+            .team_id
+            .is_none());
+        let invalid = Credentials::prepare_slack_account_rotation_at(
+            &public,
+            &private,
+            account("work"),
+            SecretString::from("xoxb-next"),
+            SecretString::from("xapp-next"),
+        )
+        .unwrap();
+        let before = snapshots(&public, &private);
+        assert!(Credentials::commit_prepared_slack_account_upsert_at(invalid, "workspace").is_err());
+        assert_eq!(snapshots(&public, &private), before);
+        Credentials::commit_prepared_slack_account_upsert_at(
+            Credentials::prepare_slack_account_rotation_at(
+                &public,
+                &private,
+                account("work"),
+                SecretString::from("xoxb-next"),
+                SecretString::from("xapp-next"),
+            )
+            .unwrap(),
+            "TBOUND1",
+        )
+        .unwrap();
+        let bound = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
+        assert_ne!(
+            bound.config.channel_accounts.slack[&account("work")].incarnation,
+            old
+        );
+    }
+
+    #[test]
+    fn slack_known_workspace_without_an_incarnation_mints_one_at_verified_commit() {
+        let (_dir, public, private) = seed();
+        std::fs::write(
+            &public,
+            "secrets_backend: file\nchannel_accounts:\n  slack:\n    work:\n      allowed_user_id: U123ABC\n      team_id: TTEAM1\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &private,
+            "channel_accounts:\n  slack:\n    work:\n      bot_token: xoxb-before\n      app_token: xapp-before\n",
+        )
+        .unwrap();
+        Credentials::commit_prepared_slack_account_upsert_at(
+            Credentials::prepare_slack_account_rotation_at(
+                &public,
+                &private,
+                account("work"),
+                SecretString::from("xoxb-after"),
+                SecretString::from("xapp-after"),
+            )
+            .unwrap(),
+            "TTEAM1",
+        )
+        .unwrap();
+        assert!(crate::config::load_runtime_config_pair_from_path(&public)
+            .unwrap()
+            .config
+            .channel_accounts
+            .slack[&account("work")]
+            .incarnation
+            .is_some());
+    }
+
+    #[test]
     fn slack_upsert_cas_rejects_either_raw_file_drift_without_overwrite() {
         for change_public in [true, false] {
             let (_dir, public, private) = seed();
@@ -8987,7 +9162,7 @@ mod slack_account_transaction_tests {
             text.push_str("concurrent_extension: keep\n");
             std::fs::write(changed, text).unwrap();
             let before = snapshots(&public, &private);
-            assert!(Credentials::commit_prepared_slack_account_upsert_at(candidate).is_err());
+            assert!(Credentials::commit_prepared_slack_account_upsert_at(candidate, "TTEAM1").is_err());
             assert_eq!(snapshots(&public, &private), before);
         }
     }
@@ -8998,7 +9173,7 @@ mod slack_account_transaction_tests {
         for name in ["work", "personal"] {
             Credentials::commit_prepared_slack_account_upsert_at(prepare(
                 &public, &private, name, name,
-            ))
+            ), "TTEAM1")
             .unwrap();
         }
         let before = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
@@ -9055,7 +9230,7 @@ mod slack_account_transaction_tests {
             &private,
             "work",
             "new-token",
-        ))
+        ), "TTEAM1")
         .unwrap();
         let readded = crate::config::load_runtime_config_pair_from_path(&public).unwrap();
         assert_ne!(
@@ -9071,7 +9246,7 @@ mod slack_account_transaction_tests {
         let (_dir, public, private) = seed();
         Credentials::commit_prepared_slack_account_upsert_at(prepare(
             &public, &private, "work", "work",
-        ))
+        ), "TTEAM1")
         .unwrap();
         let before = snapshots(&public, &private);
         assert!(
@@ -9084,7 +9259,7 @@ mod slack_account_transaction_tests {
                 .unwrap();
         Credentials::commit_prepared_slack_account_upsert_at(prepare(
             &public, &private, "personal", "personal",
-        ))
+        ), "TTEAM1")
         .unwrap();
         let updated = snapshots(&public, &private);
         assert!(Credentials::commit_prepared_slack_account_removal_at(candidate).is_err());

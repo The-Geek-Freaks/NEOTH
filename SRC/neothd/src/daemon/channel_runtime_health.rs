@@ -28,7 +28,7 @@ const SCHEMA_VERSION: u32 = 1;
 const MAX_BYTES: u64 = 64 * 1024;
 const MAX_AGE: Duration = Duration::from_secs(3);
 const BINDING_TAG_DOMAIN: &[u8] = b"neoth/channel-runtime-health-binding/v1";
-const SLACK_BINDING_TAG_DOMAIN: &[u8] = b"neoth/channel-runtime-health-slack-binding/v1";
+const SLACK_BINDING_TAG_DOMAIN: &[u8] = b"neoth/channel-runtime-health-slack-binding/v2";
 
 fn update_framed_slack_field(digest: &mut Sha256, value: &[u8]) {
     digest.update((value.len() as u64).to_be_bytes());
@@ -81,6 +81,7 @@ impl BindingTag {
             }
         }
         update_framed_slack_field(&mut digest, account.allowed_user_id().as_bytes());
+        update_framed_slack_field(&mut digest, account.team_id().unwrap_or("").as_bytes());
         digest.update([u8::from(account.is_legacy_singleton())]);
         update_framed_slack_field(&mut digest, account.bot_token().expose_secret().as_bytes());
         update_framed_slack_field(&mut digest, account.app_token().expose_secret().as_bytes());

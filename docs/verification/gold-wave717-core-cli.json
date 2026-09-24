@@ -1,0 +1,39 @@
+{
+  "schema": "neoth-w717-core-cli-admission/v1",
+  "preparedOnly": false,
+  "run": 35973521304,
+  "job": 107548496486,
+  "workflow": "Generate CLI reference",
+  "conclusion": "success",
+  "source": "59e2d5eb6fcaaa22cae7e29f156040d3d72fe198",
+  "hostedSteps": {
+    "slimCoreProductionClippy": "passed",
+    "coreTestTargetTypecheck": "passed",
+    "publicCliBuild": "passed",
+    "generatedReferenceExport": "passed"
+  },
+  "artifact": 10797412497,
+  "artifactZip": "artifact-10797412497.zip",
+  "artifactZipSha256": "5ACEC79B58C90399450B6841974D739C4DE4B9764867BA3083C4D13CA51709E3",
+  "receiptEntries": [
+    "SHA256SUMS",
+    "cli-commands.md",
+    "source-head.txt"
+  ],
+  "receiptSourceHead": "59e2d5eb6fcaaa22cae7e29f156040d3d72fe198",
+  "referenceSha256": "4445F7B2FA74FB54EB62D8841085EE757E12D6F33AB46AA30C4C4C9B1B0B18C8",
+  "referenceBytes": 249367,
+  "trackedReference": "docs/cli-commands.md",
+  "trackedReferenceSource": "59e2d5eb6fcaaa22cae7e29f156040d3d72fe198",
+  "trackedReferenceSha256": "4445F7B2FA74FB54EB62D8841085EE757E12D6F33AB46AA30C4C4C9B1B0B18C8",
+  "trackedReferenceBytes": 249367,
+  "referenceMatchesTracked": true,
+  "productImportApplied": false,
+  "localExecutablesRan": false,
+  "rootVerified": [
+    "GitHub exact source and four steps",
+    "outer ZIP and inner checksum",
+    "inner source-head",
+    "unchanged exact Git reference blob"
+  ]
+}

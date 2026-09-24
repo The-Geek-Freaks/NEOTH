@@ -1621,7 +1621,9 @@ mod tests {
                     .join(crate::channels::routing::CHANNEL_ROUTING_FILE),
             )
             .unwrap();
-        let corrected_segment = tmp.path().join("oversized-routing-corrected.wal");
+        let corrected_wal_dir = tmp.path().join("wal");
+        std::fs::create_dir_all(&corrected_wal_dir).unwrap();
+        let corrected_segment = corrected_wal_dir.join("000001.wal");
         let (corrected_writer, corrected_join, corrected_ready) =
             crate::wal::writer::spawn_for_home_ready(
                 corrected_segment.clone(),
@@ -3216,6 +3218,7 @@ channel_accounts:
             account.clone(),
             crate::config::SlackAccountConfig {
                 allowed_user_id: "U123WORK".to_string(),
+                team_id: None,
                 incarnation: None,
             },
         );

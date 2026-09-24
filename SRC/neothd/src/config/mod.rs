@@ -223,8 +223,26 @@ pub struct TelegramAccountConfig {
 #[serde(default)]
 pub struct SlackAccountConfig {
     pub allowed_user_id: String,
+    /// Immutable Slack workspace identity observed from `auth.test`. `None`
+    /// means a historical generation whose workspace is deliberately unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub incarnation: Option<AccountIncarnation>,
+}
+
+/// Canonicalize Slack's immutable workspace identifier from `auth.test`.
+/// Workspace display names are mutable; only a nonempty ASCII-alphanumeric
+/// suffix behind Slack's `T` namespace is admitted as durable authority.
+pub(crate) fn normalize_slack_team_id(raw: &str) -> Result<String> {
+    let value = raw.trim();
+    anyhow::ensure!(
+        value.len() >= 2
+            && value.starts_with('T')
+            && value[1..].bytes().all(|byte| byte.is_ascii_alphanumeric()),
+        "Slack team_id must be T followed by a nonempty ASCII-alphanumeric suffix"
+    );
+    Ok(value.to_owned())
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -317,6 +335,7 @@ pub(crate) struct AuthenticatedSlackAccount {
     bot_token: crate::secret::SecretString,
     app_token: crate::secret::SecretString,
     allowed_user_id: String,
+    team_id: Option<String>,
     origin: SlackAccountOrigin,
 }
 
@@ -393,6 +412,9 @@ impl AuthenticatedSlackAccount {
     }
     pub(crate) fn allowed_user_id(&self) -> &str {
         &self.allowed_user_id
+    }
+    pub(crate) fn team_id(&self) -> Option<&str> {
+        self.team_id.as_deref()
     }
     pub(crate) fn is_legacy_singleton(&self) -> bool {
         self.origin == SlackAccountOrigin::LegacySingleton
@@ -546,6 +568,7 @@ impl RuntimeConfigPair {
                         bot_token,
                         app_token,
                         allowed_user_id,
+                        team_id: None,
                         origin: SlackAccountOrigin::LegacySingleton,
                     }])
                 }
@@ -579,6 +602,12 @@ impl RuntimeConfigPair {
                     .with_context(|| {
                         format!("slack account `{account_id}` has an invalid allowed_user_id")
                     })?;
+            let team_id = policy
+                .team_id
+                .as_deref()
+                .map(normalize_slack_team_id)
+                .transpose()
+                .with_context(|| format!("slack account `{account_id}` has an invalid team_id"))?;
             let entry = secrets
                 .get(account_id)
                 .with_context(|| format!("slack account `{account_id}` has no credentials"))?;
@@ -606,6 +635,7 @@ impl RuntimeConfigPair {
                 bot_token: bot_token.clone(),
                 app_token: app_token.clone(),
                 allowed_user_id,
+                team_id,
                 origin: SlackAccountOrigin::ConfiguredAccount,
             });
         }
@@ -634,6 +664,7 @@ mod slack_account_tests {
             id.clone(),
             SlackAccountConfig {
                 allowed_user_id: allowed.into(),
+                team_id: Some("TTEAM1".into()),
                 incarnation: None,
             },
         );

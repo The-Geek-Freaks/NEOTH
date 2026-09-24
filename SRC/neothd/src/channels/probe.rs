@@ -678,6 +678,7 @@ mod tests {
                 id.clone(),
                 crate::config::SlackAccountConfig {
                     allowed_user_id: "U123".into(),
+                    team_id: None,
                     incarnation: None,
                 },
             );

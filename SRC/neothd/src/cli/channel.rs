@@ -777,6 +777,12 @@ struct TelegramProbeBinding {
 struct SlackProbeBinding {
     channel_ref: ChannelRef,
     bot_token: SecretString,
+    expected_team_id: Option<String>,
+}
+
+struct SlackProbeOutcome {
+    report: ChannelTestResult,
+    verified_team_id: Option<String>,
 }
 
 fn resolve_slack_probe_binding(
@@ -797,39 +803,52 @@ fn resolve_slack_probe_binding(
     Ok(SlackProbeBinding {
         channel_ref: account.channel_ref().clone(),
         bot_token: account.bot_token().clone(),
+        expected_team_id: account.team_id().map(str::to_owned),
     })
 }
 
 async fn probe_slack_account_binding_with<F, Fut>(
     binding: SlackProbeBinding,
     validate: F,
-) -> Result<ChannelTestResult>
+) -> Result<SlackProbeOutcome>
 where
     F: FnOnce(SecretString) -> Fut,
     Fut: std::future::Future<Output = Result<crate::channels::slack_api::AuthTestResult>>,
 {
     let account_id = binding.channel_ref.account_id.clone();
     let result = match validate(binding.bot_token).await {
-        Ok(response) if response.ok => account_result(
-            ok(
-                "slack".to_owned(),
-                format!(
-                    "auth.test succeeded as {}",
-                    response.user.as_deref().unwrap_or("?")
+        Ok(response) if response.ok => SlackProbeOutcome {
+            report: account_result(
+                ok(
+                    "slack".to_owned(),
+                    format!(
+                        "auth.test succeeded as {}",
+                        response.user.as_deref().unwrap_or("?")
+                    ),
                 ),
+                account_id,
             ),
-            account_id,
-        ),
-        Ok(response) => account_result(
-            fail(
-                "slack".to_owned(),
-                response
-                    .error
-                    .unwrap_or_else(|| "auth.test returned ok=false".into()),
+            verified_team_id: response
+                .team_id
+                .as_deref()
+                .and_then(|team_id| crate::config::normalize_slack_team_id(team_id).ok()),
+        },
+        Ok(response) => SlackProbeOutcome {
+            report: account_result(
+                fail(
+                    "slack".to_owned(),
+                    response
+                        .error
+                        .unwrap_or_else(|| "auth.test returned ok=false".into()),
+                ),
+                account_id,
             ),
-            account_id,
-        ),
-        Err(error) => account_result(fail("slack".to_owned(), error.to_string()), account_id),
+            verified_team_id: None,
+        },
+        Err(error) => SlackProbeOutcome {
+            report: account_result(fail("slack".to_owned(), error.to_string()), account_id),
+            verified_team_id: None,
+        },
     };
     Ok(result)
 }
@@ -844,7 +863,23 @@ where
     Fut: std::future::Future<Output = Result<crate::channels::slack_api::AuthTestResult>>,
 {
     let binding = resolve_slack_probe_binding(pair, &requested_account)?;
-    probe_slack_account_binding_with(binding, validate).await
+    let expected_team_id = binding.expected_team_id.clone();
+    let outcome = probe_slack_account_binding_with(binding, validate).await?;
+    if outcome.report.status == "ok" {
+        if let Some(expected_team_id) = expected_team_id {
+            if outcome.verified_team_id.as_deref() != Some(expected_team_id.as_str()) {
+                return Ok(account_result(
+                    fail(
+                        "slack".to_owned(),
+                        "auth.test team ID does not match the configured Slack account team"
+                            .to_owned(),
+                    ),
+                    requested_account,
+                ));
+            }
+        }
+    }
+    Ok(outcome.report)
 }
 
 fn telegram_account_map_active(pair: &crate::config::RuntimeConfigPair) -> bool {
@@ -3090,7 +3125,7 @@ async fn run_slack_account_add_at_with_probe<F, Fut>(
 ) -> Result<()>
 where
     F: FnOnce(SlackProbeBinding) -> Fut,
-    Fut: std::future::Future<Output = Result<ChannelTestResult>>,
+    Fut: std::future::Future<Output = Result<SlackProbeOutcome>>,
 {
     let freedom_path = home.join("freedom.yaml");
     let credentials_path = home.join("credentials.yaml");
@@ -3121,10 +3156,13 @@ where
     let binding = resolve_slack_probe_binding(prepared.candidate_pair(), &account_id)?;
     let result = probe(binding).await?;
     anyhow::ensure!(
-        result.status == "ok",
+        result.report.status == "ok",
         "candidate Slack account auth.test failed; no account state was saved"
     );
-    Credentials::commit_prepared_slack_account_upsert_at(prepared)?;
+    let verified_team_id = result.verified_team_id.context(
+        "candidate Slack account auth.test returned no canonical team ID; no account state was saved",
+    )?;
+    Credentials::commit_prepared_slack_account_upsert_at(prepared, &verified_team_id)?;
     crate::cli::reload::request_reload_at(home).context(
         "Slack account storage committed, but the live-reload request failed; run `neoth reload`",
     )?;
@@ -6115,6 +6153,7 @@ mod tests {
                 id.clone(),
                 crate::config::SlackAccountConfig {
                     allowed_user_id: "U123PRIVATE".into(),
+                    team_id: None,
                     incarnation: None,
                 },
             );
@@ -6129,6 +6168,62 @@ mod tests {
             pair.credentials.channel_accounts.slack.insert(id, secrets);
         }
         pair
+    }
+
+    fn slack_auth_test_ok(team_id: Option<&str>) -> crate::channels::slack_api::AuthTestResult {
+        crate::channels::slack_api::AuthTestResult {
+            ok: true,
+            bot_id: None,
+            team: Some("Work".into()),
+            team_id: team_id.map(str::to_owned),
+            user: Some("operator".into()),
+            url: None,
+            error: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn slack_account_test_refuses_known_team_mismatch_missing_or_malformed_auth_test_team() {
+        for observed_team_id in [Some("T2"), None, Some("workspace")] {
+            let mut pair = slack_status_pair();
+            let account_id = ChannelAccountId::new("work").unwrap();
+            pair.config
+                .channel_accounts
+                .slack
+                .get_mut(&account_id)
+                .unwrap()
+                .team_id = Some("T1".into());
+            let result = test_slack_account_at_with_probe(
+                &pair,
+                account_id.clone(),
+                move |_token| async move { Ok(slack_auth_test_ok(observed_team_id)) },
+            )
+            .await
+            .unwrap();
+            assert_eq!(result.status, "fail");
+            assert_eq!(result.account.as_ref(), Some(&account_id));
+            assert_eq!(
+                result.detail,
+                "auth.test team ID does not match the configured Slack account team"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn slack_account_test_permits_unknown_prior_team_auth_test_results() {
+        for observed_team_id in [Some("T2"), None, Some("workspace")] {
+            let pair = slack_status_pair();
+            let account_id = ChannelAccountId::new("work").unwrap();
+            let result = test_slack_account_at_with_probe(
+                &pair,
+                account_id.clone(),
+                move |_token| async move { Ok(slack_auth_test_ok(observed_team_id)) },
+            )
+            .await
+            .unwrap();
+            assert_eq!(result.status, "ok");
+            assert_eq!(result.account.as_ref(), Some(&account_id));
+        }
     }
 
     #[test]
@@ -6311,12 +6406,18 @@ mod tests {
             |binding| async move {
                 assert_eq!(binding.channel_ref.account_id.as_str(), "work");
                 assert_eq!(binding.bot_token.expose(), "xoxb-work");
-                Ok(ChannelTestResult {
-                    channel: "slack".into(),
-                    account: Some(ChannelAccountId::new("work").unwrap()),
-                    status: "ok",
-                    detail: "accepted".into(),
+                probe_slack_account_binding_with(binding, |_token| async move {
+                    Ok(crate::channels::slack_api::AuthTestResult {
+                        ok: true,
+                        bot_id: None,
+                        team: Some("Work".into()),
+                        team_id: Some("TWORK123".into()),
+                        user: Some("operator".into()),
+                        url: None,
+                        error: None,
+                    })
                 })
+                .await
             },
         )
         .await
@@ -6325,6 +6426,60 @@ mod tests {
             crate::config::load_runtime_config_pair_from_path(&home.path().join("freedom.yaml"))
                 .unwrap();
         assert_eq!(pair.authenticated_slack_accounts().unwrap().len(), 1);
+        assert_eq!(
+            pair.config.channel_accounts.slack[&ChannelAccountId::new("work").unwrap()]
+                .team_id
+                .as_deref(),
+            Some("TWORK123")
+        );
+    }
+
+    #[tokio::test]
+    async fn slack_account_add_refuses_missing_or_malformed_auth_test_team_without_writes() {
+        for verified_team_id in [None, Some("workspace")] {
+            let home = tempfile::tempdir().unwrap();
+            write_default_freedom(home.path());
+            let freedom = home.path().join("freedom.yaml");
+            let credentials = home.path().join("credentials.yaml");
+            std::fs::write(&credentials, "preserve: exact\n").unwrap();
+            let before_freedom = std::fs::read(&freedom).unwrap();
+            let before_credentials = std::fs::read(&credentials).unwrap();
+            let fields = SlackAccountAddFields {
+                account_id: ChannelAccountId::new("work").unwrap(),
+                allowed_user_id: Some("U123PRIVATE".into()),
+                bot_token: SecretString::from("xoxb-work"),
+                app_token: SecretString::from("xapp-work"),
+            };
+            let error = run_slack_account_add_at_with_probe(
+                home.path(),
+                fields,
+                &OutputFormat::Json,
+                |binding| async move {
+                    let team_id = verified_team_id.map(str::to_owned);
+                    probe_slack_account_binding_with(binding, move |_token| async move {
+                        Ok(crate::channels::slack_api::AuthTestResult {
+                            ok: true,
+                            bot_id: None,
+                            team: None,
+                            team_id,
+                            user: Some("operator".into()),
+                            url: None,
+                            error: None,
+                        })
+                    })
+                    .await
+                },
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+            assert_eq!(
+                error,
+                "candidate Slack account auth.test returned no canonical team ID; no account state was saved"
+            );
+            assert_eq!(std::fs::read(&freedom).unwrap(), before_freedom);
+            assert_eq!(std::fs::read(&credentials).unwrap(), before_credentials);
+        }
     }
 
     #[tokio::test]
@@ -6348,11 +6503,14 @@ mod tests {
                 failed,
                 &OutputFormat::Json,
                 |_binding| async move {
-                    Ok(ChannelTestResult {
-                        channel: "slack".into(),
-                        account: None,
-                        status: "fail",
-                        detail: "rejected".into(),
+                    Ok(SlackProbeOutcome {
+                        report: ChannelTestResult {
+                            channel: "slack".into(),
+                            account: None,
+                            status: "fail",
+                            detail: "rejected".into(),
+                        },
+                        verified_team_id: None,
                     })
                 }
             )
@@ -6374,11 +6532,14 @@ mod tests {
                 &OutputFormat::Json,
                 move |_binding| async move {
                     std::fs::write(&freedom, "raced: true\n").unwrap();
-                    Ok(ChannelTestResult {
-                        channel: "slack".into(),
-                        account: None,
-                        status: "ok",
-                        detail: "accepted".into(),
+                    Ok(SlackProbeOutcome {
+                        report: ChannelTestResult {
+                            channel: "slack".into(),
+                            account: None,
+                            status: "ok",
+                            detail: "accepted".into(),
+                        },
+                        verified_team_id: Some("TWORK123".into()),
                     })
                 }
             )
@@ -6406,11 +6567,14 @@ mod tests {
             original,
             &OutputFormat::Json,
             |_binding| async move {
-                Ok(ChannelTestResult {
-                    channel: "slack".into(),
-                    account: None,
-                    status: "ok",
-                    detail: "accepted".into(),
+                Ok(SlackProbeOutcome {
+                    report: ChannelTestResult {
+                        channel: "slack".into(),
+                        account: None,
+                        status: "ok",
+                        detail: "accepted".into(),
+                    },
+                    verified_team_id: Some("TWORK123".into()),
                 })
             },
         )
@@ -6428,11 +6592,14 @@ mod tests {
             &OutputFormat::Json,
             |binding| async move {
                 assert_eq!(binding.bot_token.expose(), "xoxb-rotated");
-                Ok(ChannelTestResult {
-                    channel: "slack".into(),
-                    account: None,
-                    status: "ok",
-                    detail: "accepted".into(),
+                Ok(SlackProbeOutcome {
+                    report: ChannelTestResult {
+                        channel: "slack".into(),
+                        account: None,
+                        status: "ok",
+                        detail: "accepted".into(),
+                    },
+                    verified_team_id: Some("TROTATED123".into()),
                 })
             },
         )
@@ -6445,6 +6612,12 @@ mod tests {
             pair.config.channel_accounts.slack[&ChannelAccountId::new("work").unwrap()]
                 .allowed_user_id,
             "U123PRIVATE"
+        );
+        assert_eq!(
+            pair.config.channel_accounts.slack[&ChannelAccountId::new("work").unwrap()]
+                .team_id
+                .as_deref(),
+            Some("TROTATED123")
         );
     }
 
@@ -6464,7 +6637,13 @@ mod tests {
                 SecretString::from(format!("xapp-{account}")),
             )
             .unwrap();
-            Credentials::commit_prepared_slack_account_upsert_at(prepared).unwrap();
+            let verified_team_id = if account == "work" {
+                "TWORK123"
+            } else {
+                "TPERSONAL123"
+            };
+            Credentials::commit_prepared_slack_account_upsert_at(prepared, verified_team_id)
+                .unwrap();
         }
         run_slack_account_remove_at(
             home.path(),

@@ -5385,6 +5385,7 @@ pub(crate) struct SlackAccountBundle {
     bot_token: crate::secret::SecretString,
     app_token: crate::secret::SecretString,
     allowed_user_id: String,
+    team_id: Option<String>,
     legacy_singleton: bool,
 }
 
@@ -5727,6 +5728,7 @@ pub(crate) fn slack_account_bundles(
                 bot_token: account.bot_token().clone(),
                 app_token: account.app_token().clone(),
                 allowed_user_id: account.allowed_user_id().to_string(),
+                team_id: account.team_id().map(str::to_owned),
                 legacy_singleton: account.is_legacy_singleton(),
             })
         })
@@ -6091,7 +6093,7 @@ pub(crate) fn channel_account_fingerprints_with_slack(
     }
     for account in slack_accounts {
         let mut hasher = xxhash_rust::xxh3::Xxh3::new();
-        hasher.write(b"neoth/slack-account-fingerprint/v1");
+        hasher.write(b"neoth/slack-account-fingerprint/v2");
         hash_framed_slack_fingerprint_field(
             &mut hasher,
             account.channel_ref.channel_id.as_str().as_bytes(),
@@ -6112,6 +6114,10 @@ pub(crate) fn channel_account_fingerprints_with_slack(
             hasher.write(b"/legacy-singleton");
         }
         hash_framed_slack_fingerprint_field(&mut hasher, account.allowed_user_id.as_bytes());
+        hash_framed_slack_fingerprint_field(
+            &mut hasher,
+            account.team_id.as_deref().unwrap_or("").as_bytes(),
+        );
         hasher.write_u8(u8::from(account.legacy_singleton));
         let mut bot_token = account.bot_token.expose().as_bytes().to_vec();
         hash_framed_slack_fingerprint_field(&mut hasher, &bot_token);
@@ -11596,6 +11602,7 @@ mod channel_reconcile_tests {
             channel_ref.account_id.clone(),
             crate::config::SlackAccountConfig {
                 allowed_user_id: allowed_user_id.to_string(),
+                team_id: None,
                 incarnation: None,
             },
         );
@@ -11701,6 +11708,64 @@ mod channel_reconcile_tests {
         let tags =
             runtime_health_binding_tags(&[], &runtime.authenticated_slack_accounts().unwrap());
         assert!(tags.contains_key(&account_b));
+    }
+
+    #[test]
+    fn slack_workspace_change_retires_only_matching_runtime_health_and_reload_generation() {
+        let work = slack_account("work");
+        let personal = slack_account("personal");
+        let mut runtime = crate::config::RuntimeConfigPair {
+            config: FreedomConfig::default(),
+            raw_credentials: crate::config::credentials::Credentials::default(),
+            credentials: crate::config::credentials::Credentials::default(),
+        };
+        add_slack_account(&mut runtime, &work, "U123WORK", "work-bot", "work-app");
+        add_slack_account(
+            &mut runtime,
+            &personal,
+            "U123PERSONAL",
+            "personal-bot",
+            "personal-app",
+        );
+        runtime
+            .config
+            .channel_accounts
+            .slack
+            .get_mut(&work.account_id)
+            .unwrap()
+            .team_id = Some("TWORKONE".into());
+        let home = tempfile::tempdir().unwrap();
+        let before = channel_account_fingerprints_with_slack(
+            &runtime.config,
+            &runtime.credentials,
+            &[],
+            &slack_account_bundles(&runtime).unwrap(),
+            home.path(),
+        );
+        let before_health =
+            runtime_health_binding_tags(&[], &runtime.authenticated_slack_accounts().unwrap());
+
+        // Hold token, operator and incarnation fixed: workspace itself must
+        // retire the old local runtime projection, without touching siblings.
+        runtime
+            .config
+            .channel_accounts
+            .slack
+            .get_mut(&work.account_id)
+            .unwrap()
+            .team_id = Some("TWORKTWO".into());
+        let after = channel_account_fingerprints_with_slack(
+            &runtime.config,
+            &runtime.credentials,
+            &[],
+            &slack_account_bundles(&runtime).unwrap(),
+            home.path(),
+        );
+        let after_health =
+            runtime_health_binding_tags(&[], &runtime.authenticated_slack_accounts().unwrap());
+        assert_eq!(changed_channel_accounts(&before, &after), vec![work.clone()]);
+        assert!(before_health[&work] != after_health[&work]);
+        assert!(before_health[&personal] == after_health[&personal]);
     }
 
     #[test]

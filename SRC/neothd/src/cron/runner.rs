@@ -3029,9 +3029,18 @@ channel_accounts:
         assert!(outcome.error.as_deref().is_some_and(|error| {
             error.contains("unsupported") && error.contains("account-bound Cron delivery route")
         }));
+        let queued = ProactiveQueue::load_from(&queue_path)
+            .expect("self-heal alert queue remains readable after route rejection");
         assert!(
-            !queue_path.exists(),
-            "an unsupported account-bound route must fail before queue admission"
+            queued
+                .peek()
+                .iter()
+                .all(|item| item.source != "cron:delivery-job"),
+            "an unsupported account-bound route must fail before its Cron delivery enters the queue"
+        );
+        assert!(
+            queued.peek().iter().all(|item| item.source == "hermes_07"),
+            "only the independent self-heal failure alert may be queued after route rejection"
         );
     }
 
