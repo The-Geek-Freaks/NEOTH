@@ -2217,6 +2217,12 @@ pub(crate) mod w458_test_support {
     const FAILURE_PRE_PROVIDER: u8 = 3;
     const FAILURE_PROVIDER_OR_POST_PROVIDER: u8 = 4;
     const FAILURE_OTHER: u8 = 5;
+    // Attach begins after Accepted. The historical Block budget remains eight.
+    // W577 adds at most its one accepted typed Delta for Replace, so that
+    // scenario's fixed maximum is the prior bound plus one.
+    const W458_BLOCK_POST_ATTACH_MAX_FRAME_BUDGET: usize = 8;
+    const W458_REPLACE_POST_ATTACH_MAX_FRAME_BUDGET: usize =
+        W458_BLOCK_POST_ATTACH_MAX_FRAME_BUDGET + 1;
 
     pub(crate) fn record_terminal_failure_stage(error: Option<&anyhow::Error>) {
         let Some(error) = error else {
@@ -2546,10 +2552,11 @@ pub(crate) mod w458_test_support {
         runtime: &DaemonGuiChatRuntime,
         turn_id: Uuid,
         name: &str,
+        frame_budget: usize,
         stream: &mut tokio::io::DuplexStream,
     ) -> anyhow::Result<Vec<GuiChatStreamFrame>> {
         let mut frames = Vec::new();
-        for _ in 0..8 {
+        for _ in 0..frame_budget {
             let frame = tokio::time::timeout(Duration::from_secs(10), read_frame(stream)).await.map_err(|_| {
                 let state = runtime.state.lock_sync().ok();
                 let turn = state.as_ref().and_then(|state| state.turns.get(&turn_id));
@@ -2561,7 +2568,25 @@ pub(crate) mod w458_test_support {
                 return Ok(frames);
             }
         }
-        anyhow::bail!("W458 stream exceeded the bounded terminal frame budget")
+        let kinds = frames
+            .iter()
+            .map(|frame| match &frame.payload {
+                GuiChatFramePayload::Accepted => "accepted",
+                GuiChatFramePayload::PhaseChanged { .. } => "phase",
+                GuiChatFramePayload::Notice { .. } => "notice",
+                GuiChatFramePayload::TurnSilenceTimeout { .. } => "silence_timeout",
+                GuiChatFramePayload::Delta { .. } => "delta",
+                GuiChatFramePayload::ReasoningDelta { .. } => "reasoning_delta",
+                GuiChatFramePayload::ReasoningCheckpoint { .. } => "reasoning_checkpoint",
+                GuiChatFramePayload::ReasoningState { .. } => "reasoning_state",
+                GuiChatFramePayload::RecallChipBatch { .. } => "recall_chips",
+                GuiChatFramePayload::ThroughputState { .. } => "throughput",
+                GuiChatFramePayload::ProviderDone => "provider_done",
+                GuiChatFramePayload::CancelRequested => "cancel_requested",
+                GuiChatFramePayload::Terminal { .. } => "terminal",
+            })
+            .collect::<Vec<_>>();
+        anyhow::bail!("W458 {name} stream exceeded frame budget {frame_budget}; kinds={kinds:?}")
     }
 
     async fn join_attach_for_diagnostic(
@@ -2686,10 +2711,16 @@ pub(crate) mod w458_test_support {
             )));
         }
         release.add_permits(1);
+        let frame_budget = if replace {
+            W458_REPLACE_POST_ATTACH_MAX_FRAME_BUDGET
+        } else {
+            W458_BLOCK_POST_ATTACH_MAX_FRAME_BUDGET
+        };
         let main_frames = match read_terminal_frames(
             &runtime,
             turn_id,
             if replace { "replace" } else { "block" },
+            frame_budget,
             &mut main_client,
         )
         .await
@@ -2708,6 +2739,7 @@ pub(crate) mod w458_test_support {
             &runtime,
             turn_id,
             if replace { "replace" } else { "block" },
+            frame_budget,
             &mut buddy_client,
         )
         .await

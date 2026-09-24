@@ -1,0 +1,965 @@
+{
+  "schema": "neoth-hosted-group-admission-summary/v1",
+  "run": 35941271455,
+  "source": "0e97dccaf522310b9bbdff1e0acf7a737f9f92b0",
+  "status": "SOURCE_ADMITTED_PARTIAL_FAILURE",
+  "executed": 951,
+  "passed": 950,
+  "failed": 1,
+  "missing": 0,
+  "sourceBindings": [
+    {
+      "path": "docs/verification/gold-wave95-96-test-matrix.json",
+      "blob": "308228e6775188f49addbf3d62281137b4c8eac5",
+      "sha256": "CC268D051863CF1291A7750254680C438664467A1C9D8665BCEEEFCAFD5C06BE"
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "blob": "a49b0e51cbc8d33d1f351352e856fc89961f02e1",
+      "sha256": "722EE0446DBAC05B3E7D4EB9D44C7174E98E6E6FFF5B633B5A30993EDBCB61F0"
+    },
+    {
+      "path": "SRC/neothd/src/channels/discord.rs",
+      "blob": "6418ff2b34d53355f480e4a3cea1e0406e45ee1a",
+      "sha256": "8528B3745A9B8E769614D5BDBE11CD2C4D0118125B00F2F1820002A574B97F77"
+    },
+    {
+      "path": "SRC/neothd/src/channels/live_delivery.rs",
+      "blob": "b66a228ed7219bf7cb574f1a8c4228bc7acc330b",
+      "sha256": "1713472D60916B7EA2C5AAC1419937626293779BB469ED11BA17B2C68D1DEAD6"
+    },
+    {
+      "path": "SRC/neothd/src/channels/send_gate.rs",
+      "blob": "51aed991914c7f0627cca4a2c6302f172163b56a",
+      "sha256": "9A72390E109AC45D149D637BDCF57CA3A82F3BE713CE016DB9CC91FBBB2B8F58"
+    },
+    {
+      "path": "SRC/neothd/src/channels/signal.rs",
+      "blob": "6b0eda4180ee52bd1efb73a254758c16b035dfd6",
+      "sha256": "823F9325F27F5CBE10001BC94D00C921972A9818423A0F20360FF0983BE5F304"
+    },
+    {
+      "path": "SRC/neothd/src/cli/agents.rs",
+      "blob": "a938fb0e98247e934f33506627791c1fcfbbaff3",
+      "sha256": "DEB11EC3C9E4105A3D536BFFC69FC683B86DF9AE2BEDF340383DCBDE5F9B3CD8"
+    },
+    {
+      "path": "SRC/neothd/src/cli/autonomy.rs",
+      "blob": "e46f0452a512497aa44b2b9b750e1e78781ae7fa",
+      "sha256": "D01C5491AE636A2709136A90158E77ADDEAC8D2DFD4E82CBCB498A626A66CAFB"
+    },
+    {
+      "path": "SRC/neothd/src/cli/backup.rs",
+      "blob": "814d1d19ef06ff104680123e73eda19cf0ac8516",
+      "sha256": "C95CE3910A8BBF66FD941DE746C65EB1313809E93F4CD868D7B140CE1D6EC720"
+    },
+    {
+      "path": "SRC/neothd/src/cli/bg_session.rs",
+      "blob": "a01dfbf0c40d1c88d118c77a420353120a3e362c",
+      "sha256": "47D01054DCC146FAA19D0A865543FA3C8EF508C5736D6123F20BDB6E8867B104"
+    },
+    {
+      "path": "SRC/neothd/src/cli/browser.rs",
+      "blob": "8a11f8ecc22ad075fbd8b6424b0890fa12f2dc0d",
+      "sha256": "A50A8EC37B4B6395A85462B7BFC6F05C6783B7B20FAD4F4F07E9A59146334DF0"
+    },
+    {
+      "path": "SRC/neothd/src/cli/buddy.rs",
+      "blob": "9dcfc58adb56765d1eb34229eedc1cb8ade29943",
+      "sha256": "5632859932629A75941926A9E7424003E2E93D569F0C0EE2E9F0E6319E8D9D8E"
+    },
+    {
+      "path": "SRC/neothd/src/cli/capabilities.rs",
+      "blob": "63bdedbb583268caac00eae95b467cd5c13e2c50",
+      "sha256": "3E2B81CEB057AAAA2C56B30869F14FD6EC90553A8558488DA8EB2FDA585F1549"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "blob": "9495aa19e0bd1b39a9781e389d891513bc782b40",
+      "sha256": "A21F69F7CF37947EA3674897FEA42BD725B77FB788F2357AD1B87DCF73869CBD"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat_turn_watchdog.rs",
+      "blob": "eb45c7a3fbe88fc2bd138a8932c76dcef649d29e",
+      "sha256": "D70BB2E64A567FE1C9DC140D3F49AF89DCC49150E6CD3AF8509CFE5AC715685F"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "blob": "66bda01ac4738484ce687adf582b571329ebeec2",
+      "sha256": "01A8C43ED074EB29F2BCD1562DD57BCA44464C260E79ECB491F2637E7EC7D414"
+    },
+    {
+      "path": "SRC/neothd/src/cli/cluster.rs",
+      "blob": "af4368637957805d5d0768828dcfd675af30564b",
+      "sha256": "E40641EE133C177F1913542E5BEDB4138EDEEA09E5E9640CBC8D0AF96216DF32"
+    },
+    {
+      "path": "SRC/neothd/src/cli/code.rs",
+      "blob": "cac1fecb22850a93317f8a1b5e7d7b946f997544",
+      "sha256": "C832CFFCED48D99DCF7F0BF3932C4A2272B69D05AD89AE1BA353520B7A247DF7"
+    },
+    {
+      "path": "SRC/neothd/src/cli/context.rs",
+      "blob": "3c8573656912cd694b5d4dc575f0273aa7e2fa62",
+      "sha256": "C574221866A8CF1A7FA45EB9FA2B96863CA0D0117587B096B34FBF2C91771891"
+    },
+    {
+      "path": "SRC/neothd/src/cli/cron.rs",
+      "blob": "7719202873f6f92d5ae24f3db6c8c2c2da7b31ab",
+      "sha256": "182C1670E7FFF62BAB7677F1B47AD5456A159981B05301278D4642E883C9014D"
+    },
+    {
+      "path": "SRC/neothd/src/cli/docgen.rs",
+      "blob": "b56f427938ee1464e6b3df210c33f1288bb34376",
+      "sha256": "63EEDCFA5868E5C0BA3E6117CBCCFE93F90052FF0DD815DC41FB5CCC6A4F7E66"
+    },
+    {
+      "path": "SRC/neothd/src/cli/doctor.rs",
+      "blob": "9b0de1cfa9fa8d11f833399e31ef1cea6c743773",
+      "sha256": "CCFD50EEC1E2C318D27555575D4C5FDD3960F9F5FBA877E7882C4ADDB14137ED"
+    },
+    {
+      "path": "SRC/neothd/src/cli/doctor/checks/capabilities.rs",
+      "blob": "c0c12d47927146f71fb2c6d218206da7898ceff4",
+      "sha256": "1E0D6B8D6285A6D0336A4F4E2F12B57F3948DF7A8BF2179658ED6D58A05EC83F"
+    },
+    {
+      "path": "SRC/neothd/src/cli/doctor/checks/context_import.rs",
+      "blob": "42fdd0e0c76cbe9e3501c1bec4bb8b7939521047",
+      "sha256": "3A1C941689D8F7B2CA4BFE4432625172CFDFC1FD4072F8AD9D1740F36A0FFE1A"
+    },
+    {
+      "path": "SRC/neothd/src/cli/doctor/checks/providers.rs",
+      "blob": "588ac07275b0db1bcb7d75ff863d57b5a0167403",
+      "sha256": "B89EE451B046E449B731E6CDF53FD6674F9115D768C58E96514A95D522A23BD7"
+    },
+    {
+      "path": "SRC/neothd/src/cli/dream.rs",
+      "blob": "08b7b961ce99bf00a9d3dc62882eb63f73f3ace9",
+      "sha256": "58D34ED4740428AF0223F67C38DF979AD69DA56948588254A9F2D4EF0F819E68"
+    },
+    {
+      "path": "SRC/neothd/src/cli/dreaming_task.rs",
+      "blob": "eb804b58d4d5b1e7ccd5f9fa3c0a9742ab0a15ad",
+      "sha256": "780E72A072123B4355E5C2D1CBA21E4D0CE56F48AC5DDBC372377CF699044FFC"
+    },
+    {
+      "path": "SRC/neothd/src/cli/feedback.rs",
+      "blob": "4b2dd425dd7aa96c58bcb589b6a7d7c0e445567a",
+      "sha256": "8DE938EC4D974B6FE491140A5850DA5BCAFDCECC67E8DFD1E6A4681D7DD140B3"
+    },
+    {
+      "path": "SRC/neothd/src/cli/fs.rs",
+      "blob": "95f59d4ac359fae5e52698b52789841efa81238e",
+      "sha256": "CA72336ACA87C8F328106EA1A3EC34266A319472A0AF65A9836A5E89608993DE"
+    },
+    {
+      "path": "SRC/neothd/src/cli/graph.rs",
+      "blob": "a160b4e44677f5ec0ee1e087726e04cbacdc77fc",
+      "sha256": "151906E8B7D87168FA7A0294219967332A1F116F14910E48A7116D4E0EFE772A"
+    },
+    {
+      "path": "SRC/neothd/src/cli/hemispheres.rs",
+      "blob": "a19e52d91f6b7c350b0219fc7b3efb14fe769d61",
+      "sha256": "CD38859430CFA0FA57E52A4110054E8325B001B5F15894E99746D3961A417E35"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init.rs",
+      "blob": "9ec89945b9c2f2b1f929541c80d6980a99ec3289",
+      "sha256": "7771F551958C61F0B624D9FAA579731AB35AA9BD88DAE765238F759C495F34C5"
+    },
+    {
+      "path": "SRC/neothd/src/cli/loop_cmd.rs",
+      "blob": "5f1a632ac1a155baf275383b06e8fd457eb2fd57",
+      "sha256": "24D7ACED5022788B9539555CB34F04931DEB144A14FCAAF808F753B31EEBF934"
+    },
+    {
+      "path": "SRC/neothd/src/cli/memory.rs",
+      "blob": "36d16239c636bb8934f9a5a89d2db47e913ffb72",
+      "sha256": "51595ECBCBB45914D85FE49A8D506CE8365C53D1395E0D978A30AC99E8CA7602"
+    },
+    {
+      "path": "SRC/neothd/src/cli/models.rs",
+      "blob": "8ce770018dd77d56f4fe018f0018cac290aff936",
+      "sha256": "F95A48BB5D8897818B31427F12615071FAA8E42D5F83934E248B91AD1A624228"
+    },
+    {
+      "path": "SRC/neothd/src/cli/n8n.rs",
+      "blob": "28a83aeea65b9106ad694f9e097b1e4cbd0e1b17",
+      "sha256": "01084B300CE89536D6E20763BD0AB096E01358539C01B4203FAB1AF3E099023F"
+    },
+    {
+      "path": "SRC/neothd/src/cli/obsidian.rs",
+      "blob": "8b9e67fdef3aab2f0eda9297a71267af61aac318",
+      "sha256": "B2D809DD5D6467C0364ADA984DF743030E6D883011E79290AF4F45D7647FF2E9"
+    },
+    {
+      "path": "SRC/neothd/src/cli/paperless.rs",
+      "blob": "d0e9845049f8376cd496f4ce3640d44e3c842754",
+      "sha256": "BC75E96AFEB3823EB9A31DFDE747D0A806BAB566CAB56D03520205C8178BE61B"
+    },
+    {
+      "path": "SRC/neothd/src/cli/parity_drift.rs",
+      "blob": "833a16295ca2eb454b76b4e0b1bf891fedd09b62",
+      "sha256": "1F73C86090A3AC0969C92AD11B10A3083AAAC039C539C2BE5B3B902422EDBDAE"
+    },
+    {
+      "path": "SRC/neothd/src/cli/profile.rs",
+      "blob": "fdf245645fe5e1389e0925078ce9ad536065083f",
+      "sha256": "67D8C75C1C72515EF5CB31007AFB3011AEA75D1EB63F5CAC7DBC7515CEB76154"
+    },
+    {
+      "path": "SRC/neothd/src/cli/recall.rs",
+      "blob": "5d879215b469480d01ce4c2fed923060e481349c",
+      "sha256": "F44295CF945B8F8D2A807358692D4AE9E93BA9235168B45512D778DF9775BCB5"
+    },
+    {
+      "path": "SRC/neothd/src/cli/reflect.rs",
+      "blob": "0b56ea1c5530069e61aab21ea300d79468000e51",
+      "sha256": "6F1D6B7510E9A6F9518E0D9B5E42C608755080C79F1F0AE8BD21E60BB50E7897"
+    },
+    {
+      "path": "SRC/neothd/src/cli/research.rs",
+      "blob": "554b734e1e48c16a44f30b4a20c789daa3017058",
+      "sha256": "FE6AB2D408EA3C31AEF8EDBF579917626ABD847F5929DB1CB14E772089619268"
+    },
+    {
+      "path": "SRC/neothd/src/cli/self_improve.rs",
+      "blob": "525f616dea7e6bfb16143b620140c0fc0d42174d",
+      "sha256": "2675C1C0D46709EBE37F6B10FFD0D29122F15973F2B48E9D83CD6DC10FD80DAB"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "blob": "f9462ea89171874879d9391ba0a23e5b57d22d69",
+      "sha256": "B34C8192D455DD4F48EBE8DEA92E1A2F646AAA98BACD275D938B163B2A4AF1C1"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_tasks.rs",
+      "blob": "80972eb0bb3a04cc7e05e3f8e4345a9073475357",
+      "sha256": "8712C58E7452C0ACCD20F21509D954F55687D6390901AB45FD07B05305C966E0"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_tests.rs",
+      "blob": "909881c621debd2c0a50d10c2c01508526eaffe1",
+      "sha256": "C7CC3D23C4256CD20F6C50494A25B3A3555453D147DD4419BA97DECAB07628E9"
+    },
+    {
+      "path": "SRC/neothd/src/cli/wal.rs",
+      "blob": "640df67445771e885f4832c6285e9144f9a18103",
+      "sha256": "E43B06063E55C89CABBAEF4FFBFA1A49A0207A0D93D3BEC9503C0AFB3FDCDCFA"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/budget_raft/carrier.rs",
+      "blob": "a9587e3c4c8e2b7a13cc14cc8ae6909923220fc6",
+      "sha256": "D12C96935AAB310C8B2771C46A9A539B29FF5D2B75AD565B4D2D3B12459D5629"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/budget_raft/membership_validator.rs",
+      "blob": "1f9a9a7f7705df385a832152910b6c042ea5becf",
+      "sha256": "852127182B82C5C1FF8958D0B779AA693542BCC311F5C57FCE5DA8A129CAF9DB"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/budget_raft/service_tests.rs",
+      "blob": "9c97e8a4444d0ae9e145bf2f3989f3e57a238bf4",
+      "sha256": "BE767C08C71650D14B3B001A406A4CE215A3CD19DB4ECDE369DB37ADC80B8F8B"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/budget_raft/store_tests.rs",
+      "blob": "a866d2fc093edc8ea643c63eda3a69e635ec773e",
+      "sha256": "923D4A8C928891B4B122784AFD3B90A3B684FCD6BBE8D22F82FFE1BD74775C70"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/budget_raft/tests.rs",
+      "blob": "7ae609b99f4fd68a9ef49d157608b954facdbf95",
+      "sha256": "00CDDD094BF10247EF6FCEB4EF9723C3B389E1677407C8D197B71D19A90FCB35"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/executor.rs",
+      "blob": "eb3afdf27e2d73d87a8ecc75a51f463cbf0e54b0",
+      "sha256": "312B947116B646E33CE2C44CC29D9AB6ECE6EE9A0B4144680B6A5AE55AB13349"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/heartbeat.rs",
+      "blob": "1b92aa89a7870d7d8a5ea7398dc550faa631c26a",
+      "sha256": "5E405E3D26C057922835D92B403C3B80A12AA1BDE8753BDFDDF07B2AFF607C38"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+      "blob": "741771209d39b3a0ab5890cf65dfa83c0e0ec85d",
+      "sha256": "12D9947EBE0E4F0BE1C21FFD9D2A9E2E31B8ED1EA9C3E738BEB7CEB55573D78B"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/membership.rs",
+      "blob": "e627d61f045c3f27c6f757106d3732d9f306cc62",
+      "sha256": "24B2449D5CEF60FEDD2219C1F7457197A403D7DF69E12853A38556ADDBDBA173"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/outbound_tests.rs",
+      "blob": "3782b322852848c01bd6b55608f4a6ddeff97a34",
+      "sha256": "74BB42DB6A98874A60A06F04D7B890A60225E4DB706D64A9E5E188123CE86D10"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/graph.rs",
+      "blob": "71cf95dbc32b2e473325055835395c9ca67bec04",
+      "sha256": "6F53C33D6755F2062D1D7BD831EB4227EC5E377BD6658AE9CB1582C1310F8C91"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/imports.rs",
+      "blob": "f977ad6aecdf9b4b83ff5562e0ff4d6743ce674c",
+      "sha256": "DED3DAB23604B991C8D0F07FEE6AAAFBD9AA571C7E895DD99E373954737D0C44"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/persist.rs",
+      "blob": "a202a03a0a5bab2d085cfa634192ff9ac127d074",
+      "sha256": "E40049B942EA64DEEC8F9B24624EE3BB8E1365AF6814A0DA28E0B9274944531A"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/recall.rs",
+      "blob": "a6206fd28f9e59090e778f092e0ee0614362e267",
+      "sha256": "2F34E099A77BE276ECF4EBC293D23E40B129225B2AD34EBAF1CC324D746C7626"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/type_hierarchy.rs",
+      "blob": "0399d1c83a88c5cb36e6206aae821cff233010fa",
+      "sha256": "4E02AFE2FA1C2DC8B10574C9B1AE0AE2BAFE72340829D7E524BE477F0604922C"
+    },
+    {
+      "path": "SRC/neothd/src/coding/service.rs",
+      "blob": "0cfaa602e16f174f90359e8ae601628e8ff8720f",
+      "sha256": "76AA9474776B5295E7245E73E1451B0AF564F8823F756E663DF14FB8412AA207"
+    },
+    {
+      "path": "SRC/neothd/src/config/automation.rs",
+      "blob": "1a8c6d4ade7e2fc768d542baf125f1b1bdad8844",
+      "sha256": "3BFA5C39DBFDB0C45FC541C615BBC6F7A098607ED3DEF2248E21B13DF232E668"
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials.rs",
+      "blob": "a79f0f6791ba11b2d2052b10c2fdc451a69a22be",
+      "sha256": "987B2BDF421C3DC95B8341FE5F67D16614263673D19EEB34A3422FC814C6AEB7"
+    },
+    {
+      "path": "SRC/neothd/src/config/embedding.rs",
+      "blob": "3d364098a633d8f820ca0e8c1622bd61d36b1782",
+      "sha256": "FF8816A992D2E3C76ADF8FD7103F0826E05C8249F1C537A910485F9E2CE08212"
+    },
+    {
+      "path": "SRC/neothd/src/config/inference.rs",
+      "blob": "ad1c6fc7c646e13d695bd65373c3309b906eae11",
+      "sha256": "069F7BB7C907E5B1A0F2D98F2ECF60C7494C218BC2118CBB9A01273352A1C707"
+    },
+    {
+      "path": "SRC/neothd/src/config/instance_paths.rs",
+      "blob": "1c923abb04a1e1a8b09f91400aac220107e3f2fb",
+      "sha256": "AC365E98B80A93E0486A573AB055E58E4179578334F7C6561B8D9CF21420ADE8"
+    },
+    {
+      "path": "SRC/neothd/src/config/keychain.rs",
+      "blob": "80d7ac67af9b33b30e219f7b754eabd3bacd2699",
+      "sha256": "D6B7FBFA92FE10C07CE84ADCFB5CE12898BDD842ECC0C3BBAAF3ABE38B6A5BB5"
+    },
+    {
+      "path": "SRC/neothd/src/config/memory.rs",
+      "blob": "43fa1864a4d9bbc42147de0175f125c9a950aae8",
+      "sha256": "7FD0882D6067852BC9BC73B20DA0D6935F3E579DEB5F8465E2E5B2FC9A1843DC"
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "blob": "fdcdb54cb81d3e56add6aa77e4d90f20be645935",
+      "sha256": "43BA25C58FD27C6934E6A27CC8F5178AF9BDEB7FAF9FB9EF3D11F4B48AB90B17"
+    },
+    {
+      "path": "SRC/neothd/src/config/reload.rs",
+      "blob": "62426beb111e70f36470c45fb816a1647f607a84",
+      "sha256": "FB7D2A102971309CAE8E0811D04DA63071061C63D632F41F2CB455886BD168FC"
+    },
+    {
+      "path": "SRC/neothd/src/config/role_policy.rs",
+      "blob": "6c8679a6e9e04a4ca943fb8fe03194a83b8a0f46",
+      "sha256": "41439AC791166CCCBBB5A38F731374B783B11FCAA9DD2075D56F65370FBF9BA0"
+    },
+    {
+      "path": "SRC/neothd/src/connectors/control_plane.rs",
+      "blob": "dd57530bf29cb762edb39d1043e3ed26a868b6d6",
+      "sha256": "06F279EC33EFFF63844E969C47EC8BA9460A21A5D447D799CB3AF08DE1AD4118"
+    },
+    {
+      "path": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
+      "blob": "64dd58f45d6921a02898e59db56880b3e92d3854",
+      "sha256": "54BD7ADBB868FCBB4CDC5A1875604851EDDC38FB6C760A587FD44605481AB228"
+    },
+    {
+      "path": "SRC/neothd/src/connectors/runtime_local_import.rs",
+      "blob": "617a0989f063ff86b1d845ca5ca5d87ce0fca40f",
+      "sha256": "5971824B23F1FE9B94D88548B6E3499DB1EC36C46317AC4FC6370F8F509FA558"
+    },
+    {
+      "path": "SRC/neothd/src/cron/runner.rs",
+      "blob": "766999adc6b54dcc9431f38dc7141e9f3d9717eb",
+      "sha256": "BD579A06E0B2A26BEA0BC998CFDA249C7F80E83EF0B3E6DC96CAEA484656A3CB"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
+      "blob": "f7e6f0f96c9e1c5709ed13dfec4f3cf410f91a44",
+      "sha256": "B20190E5BCF37C5D8742DB7FCCD9C74AB6D7772EFFB5A321DD3D4D1BBA1AD6AB"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "blob": "6725f7987a4e192c7076b63713e389bf7efaa855",
+      "sha256": "2209E8A010CAA51B7071BF6C005190B7407B8D8333E9401D121B81784FD57420"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/backup.rs",
+      "blob": "248be9de608c5a44c2efc493bfef59352b8460d3",
+      "sha256": "1432B045B974D12DFB2DD302371CA14C472E9B58664A2535C0C04CC5D260CDA6"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/capability_decay.rs",
+      "blob": "16a7925518459cce7b0f808abf2dd93c82cd624d",
+      "sha256": "462BD3BA177BBE5C92AD29B1895F3397E3311C4419016D06497E6DFCAC1E80D6"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/capability_decay/history.rs",
+      "blob": "e52be9f8a16d8c33434b2cd3a2abb301a6b45bf6",
+      "sha256": "717BDFB33D8EACB659E85D6E9198CF4A2E69C503B94042AD78B58D626B22380C"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/channel_live_registry.rs",
+      "blob": "ce19ffd9433db828b7a3310b6d6688dcbf32f496",
+      "sha256": "27F381DDB9EBD7F0A49DC5F986E312931019AE239C7BFD960387CB1F96CC6E49"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/channel_transport_evidence.rs",
+      "blob": "1f43ffc7aabbdca63a967ef7a71588466222496c",
+      "sha256": "B998B77A8CADEF7A9CE05140398F42EA3354873501E87F84746753CF536EEEA3"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/chat_runtime.rs",
+      "blob": "397489b41f6d994d67471e7676922e754d886b26",
+      "sha256": "A4A95415E3B7733EBF0600D683DA7D50D919779495F9FA2FCDBB0FE026346658"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/dream_phases.rs",
+      "blob": "afa3632a8f5f237c384f26b8f7efd8f07e740c8a",
+      "sha256": "26DB0E0E68D7613B9E466D6E9CEA565B873503BECECF8094E27072C3CFC85435"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_bridge.rs",
+      "blob": "789db2102c877dd2f1e98695014e60ad5f82e14d",
+      "sha256": "44D4C241AC248249AFC4F510AB1DBBE1928209893EEA604B5D76F04DCFB75597"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_protocol.rs",
+      "blob": "04fa716878d96662bea5e9918cc38bb1be874150",
+      "sha256": "3F00989B41414D27A87DAD964ED5A215C8D4AFAD30A381C829C8C3AEE7AFE34C"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+      "blob": "9789fbde4fa7756d9086db780c84302d4fb09571",
+      "sha256": "E874CEE904A24ACEE151A02C8CB3F0D4BFD73EAF8BEE619937F350CCA91FF51E"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/live_throughput.rs",
+      "blob": "1534036ff443175914a86ab60facd31cee8a1542",
+      "sha256": "B1D9EDD4B7436DCAAD860396A3ABBD19C3914382586FA704D6FACB70A3D25FDC"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/local_models/tests.rs",
+      "blob": "693a003fecac02f4adf2eedbe884715f67d80ea3",
+      "sha256": "945D7AA0AE5B15794C1C43FD3F71B614B572614B7B22E8461D8E551AB8079EEF"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/metering.rs",
+      "blob": "d1f3a14b439e70bc6ada71f3bc829c8464fe3589",
+      "sha256": "42CBB5DBB69C820D4BDE739E7DC5BF5A6B04FEDEBAD57BDE3DE9CE2DDF3A4ED9"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "blob": "0d7c5f8ef8a100d318985d7fb9e208a7cc945c44",
+      "sha256": "E4619A04ACA3A5EEFA3C7E77BBDC7CE1CCE23310E1813224A317675E03AF8B93"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/proactive_egress.rs",
+      "blob": "c27f2040091d7f92412d070b6c1429111e365a39",
+      "sha256": "27437DA486067CA0A041EDD5D92D32DCCC150090EE44DA56D362AD5369CC31CE"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/reflection_cron.rs",
+      "blob": "87f9e034647254870077845e4a03b4ca8ec1fbb5",
+      "sha256": "983D0F5BFBDBA432BCD82EF182BFDBE8377881AE5731306708B620805CF7EA73"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/research_runs.rs",
+      "blob": "40907f766bc7a230d249c6af6c1a0ff752fd9a59",
+      "sha256": "1162647A942B7EAF2B820481FCCA3C7DA4CB405CADE65388E3EAB32AD37F72C2"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/self_map_task.rs",
+      "blob": "b2f25ec1832c212b6fb11fd2f89af9e52ee920cb",
+      "sha256": "39BFFB2A2A0980284E8528F078659BDC38A8050B4B19C45DF6140452FF377FDA"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/vault_mirror.rs",
+      "blob": "70cd99f99c65a66c1efbd202b93bc4a42bdececb",
+      "sha256": "B5D8B4D4EEF55E88391D3170C4A8E6B78F5FEEC95B3B87873B119E050BE860C6"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/watchdog_cron.rs",
+      "blob": "5fbd13d94999f16edc3271e02805efe77d5678b7",
+      "sha256": "058943FF92376F84AA1BE7B0DFE79ACC6E81EB9CD27D931D57C815B7B2DBB429"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
+      "blob": "541d3cc708ce1f0da6cdd733ca9eae92b89bc530",
+      "sha256": "043EB3FD3141FC71B659BE51F25351404DCAFB7C4DD92BC8DDDE19D2AC34B116"
+    },
+    {
+      "path": "SRC/neothd/src/feedback/consume.rs",
+      "blob": "18fe16591e780d0230c5a4e67c10b5a011828a36",
+      "sha256": "3980D8AA508B0F7E440EF47761A963E4B16DAE4BB84E1B1AEF9E08DB7F9FBA66"
+    },
+    {
+      "path": "SRC/neothd/src/feedback/response.rs",
+      "blob": "0d06e7784266403c85f3eb7425e7d8f6d0f495c8",
+      "sha256": "07F39EFECB3D2D2CD53D6524D93DC3ABCD54456B6BC59E91E057F1D0E582D261"
+    },
+    {
+      "path": "SRC/neothd/src/graphify_publish.rs",
+      "blob": "23508cda29fd7fa0edb5db8c60541c8a6691a529",
+      "sha256": "D87615782476254B8E56C3D979AFFD8CA54C3866E091FC8806533C52A1543835"
+    },
+    {
+      "path": "SRC/neothd/src/graphify_transaction.rs",
+      "blob": "e9b3cbf2918d83fdd85c36a1d20e1a50fc447e8a",
+      "sha256": "87B0FBD7CCA9DBCB950BF2CA7B9DA37F0F74EDD66001379FB51F9DA904F839E8"
+    },
+    {
+      "path": "SRC/neothd/src/installers/n8n.rs",
+      "blob": "8efb04a22c96b8989b722d48ca4b8628eaceef83",
+      "sha256": "EE7A9088AB293BA529AA87937A35074CA9E78608C2315BF078336D1FBFE70940"
+    },
+    {
+      "path": "SRC/neothd/src/installers/obsidian_archive_bridge.rs",
+      "blob": "befdf0244a0adc0214c69ac15d915009b60e1ed0",
+      "sha256": "149A07E2039F83B44572CC63017C39C0C8F2AED62B2697F676943EE02F3104C1"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_readiness_tests.rs",
+      "blob": "0259b6e374e8b39f928b3654ec2d59fe924e4496",
+      "sha256": "3F2CE600453C6E47808C5ECFFCDC9159BDFF0ADC40CBC8F33632CB7EB239FC5C"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_staging.rs",
+      "blob": "59f74a485111731f572aaefb44dc65642794f59f",
+      "sha256": "3EB3BA602101785369056B33B571F4B12F4EBDD6D78F18DE834AE1E9D31E3A08"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless.rs",
+      "blob": "9f7f02bfb9744c579be8a07f798cace3988d7d57",
+      "sha256": "807E6FA72B96595A364F5FB2A94065960F4D4276FB728AA653F33D38C4BE77F3"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n_tests.rs",
+      "blob": "f07972acb8d6e2fb435b4ec9d0b9c4d8d0c32661",
+      "sha256": "A02C64937B98F5086E85D0D3EAB676B3697411F6DB628CF71A36418998421BA1"
+    },
+    {
+      "path": "SRC/neothd/src/loop_engine/engine.rs",
+      "blob": "690a913eceddf110ee4358569dc72aedc3461abd",
+      "sha256": "04C90D996CB2921E023A052456C5559EE9CA630AF128A7F3D4D3D568C775F50A"
+    },
+    {
+      "path": "SRC/neothd/src/mcp/codegraph_server.rs",
+      "blob": "da4d22f74a6061e1ba321100aa90731bb5f32dcd",
+      "sha256": "BAB4DA81CFAA54EAA599623009DE21297901F9DC36C74A21EDA542BC400FBD5B"
+    },
+    {
+      "path": "SRC/neothd/src/mcp/gate.rs",
+      "blob": "66f17f3c73f97c89cf6fd468e3be7a1302f1c022",
+      "sha256": "4F45B308740ABDA49F6A18E5B8E25C2270F71EC76B78BC27D2CBA7482ACC707F"
+    },
+    {
+      "path": "SRC/neothd/src/mcp/goal_judge.rs",
+      "blob": "38470147a8900908befb97a72fee847926302779",
+      "sha256": "B5C1ADCFA66367DB4517CF47CA757DA2324F2DB77709A6870706B59CC69CCD30"
+    },
+    {
+      "path": "SRC/neothd/src/media/video_dispatch.rs",
+      "blob": "b3e79f847f7dd7fb4f741d77f2352c2f94a4b4d7",
+      "sha256": "C3F5D227919BBBB1F31F3292DA9ACA257511F01D8F12238E7C71CB236255437E"
+    },
+    {
+      "path": "SRC/neothd/src/memory/consolidate.rs",
+      "blob": "e0abfa3ca22d0785e39c8785b2111bcab0033442",
+      "sha256": "404B66C896F062D1168422062FF36C5CA71BE19EE2B6ED8B636206EFC5265500"
+    },
+    {
+      "path": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "blob": "aade9ea8f82537874df774fa9227724a95cc4e9e",
+      "sha256": "9C851E06D673E764DBE28B90D30C53747920664ED951A69D136C7BAD565ED145"
+    },
+    {
+      "path": "SRC/neothd/src/memory/counterparty_consent_ceremony.rs",
+      "blob": "9443eed08ebd691c6e915379b91e6e8d9930cd6f",
+      "sha256": "B6269E9C0851C9CEC36764BC5EE20CF0D4126C1643460067A65A223F964EE9A0"
+    },
+    {
+      "path": "SRC/neothd/src/memory/counterparty_consent.rs",
+      "blob": "4fa281c25d05b5846adef6461260b680996c9ccf",
+      "sha256": "D1B25CD9A939B03498CDA28A3411DAB182A3714E7A56FC73DA630CA7BDFAACCA"
+    },
+    {
+      "path": "SRC/neothd/src/memory/decay_task.rs",
+      "blob": "39e6cd9c2277fd6966672128bffcedc0c2bf9996",
+      "sha256": "9A7CEF2775B6ED383209595C33961B49DE5E54C70D6545A08B9EFC31CE5B02A7"
+    },
+    {
+      "path": "SRC/neothd/src/memory/embeddings.rs",
+      "blob": "2060933e71211619f2201ec7c965012dbed44443",
+      "sha256": "A144AF36A4607861FDC04B25AB88926E426D8E83FBF9527DD0A21ABB161E5C83"
+    },
+    {
+      "path": "SRC/neothd/src/memory/hippocampus.rs",
+      "blob": "a67b9f4949bd6df7cd861fd125356ff7594dc998",
+      "sha256": "E73F6A5D974DCA825C6C406E20F0B449A79DF632E7DC7B75DCD8AC9ED9431BDD"
+    },
+    {
+      "path": "SRC/neothd/src/memory/indexer.rs",
+      "blob": "4726111038d2a6803f3b62586fd1704ed2718f3f",
+      "sha256": "4A95B8BD411D698E5778EF7BEF643349C87C6B4FB69C00D44A1FCB7994D39DA3"
+    },
+    {
+      "path": "SRC/neothd/src/memory/migrations/mod.rs",
+      "blob": "055a20b990c1becd442f9a1d1567b66b0d3e9082",
+      "sha256": "DC62E88D9387F4990D9D2F7DA0FB6D8DEE3769907DB2ECF279B3D9D85231B339"
+    },
+    {
+      "path": "SRC/neothd/src/memory/recall_lanes.rs",
+      "blob": "6abfe43576e0932f3322b24b3b0681a066505e8d",
+      "sha256": "B108554C5BA7E17743921794FC5B6F0C00AE9AD5DFB263EF347C616AE0EC4352"
+    },
+    {
+      "path": "SRC/neothd/src/memory/recall_presentation.rs",
+      "blob": "c4333e7018a6fa5cb2df94c0000957739d9cf955",
+      "sha256": "9D5D809110F9A9554A528D19C593905A5B52FE4F7C21F1C036247C14DE93B815"
+    },
+    {
+      "path": "SRC/neothd/src/memory/region_router.rs",
+      "blob": "c740abe66faa9e58774d6f954a6e8092c646ac25",
+      "sha256": "E6BBEB670A10336EC604F8D8CCC01E0D335CFC67AB0A44E1CC1B1A4AA67CD8C6"
+    },
+    {
+      "path": "SRC/neothd/src/memory/session_start_recall.rs",
+      "blob": "361f448554fccfb1a2961677465d66e49a196368",
+      "sha256": "79F4B8880D2777654CA7219ABE18DAEF334EE459829751B42A3601966061817A"
+    },
+    {
+      "path": "SRC/neothd/src/memory/snapshot_refresh.rs",
+      "blob": "d2a3fac050969b9962bfcf2febf649bfaa936916",
+      "sha256": "2C92FA54BABEAE8ACB1ECBD291DF8F5D085ADB0CA53A553B6A38688DBB43C59D"
+    },
+    {
+      "path": "SRC/neothd/src/memory/store.rs",
+      "blob": "594ab3acf1e99d86666bab9db5e91ae7db6a9bd7",
+      "sha256": "880EB5F7569A3F581E462C81AB56D4346C6488E07E9155A77EBEF0A9678AAF9F"
+    },
+    {
+      "path": "SRC/neothd/src/memory/transcript_store.rs",
+      "blob": "1098279854694d7f517672ae85b600da8cf7bd98",
+      "sha256": "2BDDBEF7A7E2736F8A3DD1C948F6514C3BA35132F2538444FEE956601EDECDD6"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers.rs",
+      "blob": "844b21f1d2632e123c3d7c9721e33e77a7e5b752",
+      "sha256": "87D2F03F874F3D0607951EEC68D7BD5B9A2BDFE179E11D4AFB04D154D90B4613"
+    },
+    {
+      "path": "SRC/neothd/src/os_tools/gate.rs",
+      "blob": "19e11191b494c598fd7a2eb39205c6bd1a90a19b",
+      "sha256": "80E7048F4D8F6EF92A7A0A8BE637A70614A6A6F902228AC803605D74F9A2C143"
+    },
+    {
+      "path": "SRC/neothd/src/permissions/gate.rs",
+      "blob": "62907f72a03e4b0cdef92768154656e03b1cd97c",
+      "sha256": "BEBC63E9F80BC6712AD9C0DB863DA610E95426832057EDF6227D7B8A3116EFDC"
+    },
+    {
+      "path": "SRC/neothd/src/permissions/ifc.rs",
+      "blob": "65524e12ec868cb3555a41eac90ce93f30ce045b",
+      "sha256": "7D4A2E7245A7E457D049459ED4B1FDA376F8D84970CEC564950A59286283A217"
+    },
+    {
+      "path": "SRC/neothd/src/permissions/mod.rs",
+      "blob": "35566138fc29989d27b9053966c1432f8d976c00",
+      "sha256": "FA7F2D699D62558C69C6CF6CEFF7953AFACFA628BC97657BDEB8315BEE7C636D"
+    },
+    {
+      "path": "SRC/neothd/src/permissions/policy.rs",
+      "blob": "d2a36c8eb6e6c0165b4ea60d2584d3345c8544be",
+      "sha256": "603AFED9654F6FE794C338D91114F07504262B51A3348250EEE3815E0B98B6AF"
+    },
+    {
+      "path": "SRC/neothd/src/pipeline/enriched_request.rs",
+      "blob": "d09a63168dba150c7b7654d5444e1076e94f1bb0",
+      "sha256": "DF9DEFE7B96AB0F73B0C59D6D41F182625D08C39E72B322B71AFF1E353688460"
+    },
+    {
+      "path": "SRC/neothd/src/providers/anthropic_api.rs",
+      "blob": "284e87af50505aa10e4ebe17b706c03430526170",
+      "sha256": "5E6164C61332401B529511B7378CB85F2846DB7BB68586A12B384933DCBCE06D"
+    },
+    {
+      "path": "SRC/neothd/src/providers/bge_m3_artifacts.rs",
+      "blob": "896ac99c79036ce0e5766b0e541f93ae81b74446",
+      "sha256": "4CA8303D6CAF59A60C2246552E2F24DFB3A5E9A347502A11DCF2A98D943F14AF"
+    },
+    {
+      "path": "SRC/neothd/src/providers/claude_retry.rs",
+      "blob": "ba7c5a5f8d7909db0da1a488af64c11c029d17f0",
+      "sha256": "075A1D0CB0EFC45B8ADEB05C0DE42A9946CBDA9D385B8FB44C3EACA1B984C675"
+    },
+    {
+      "path": "SRC/neothd/src/providers/cohere_api.rs",
+      "blob": "2f18335b346402c2029354ad381ad6bacbbe6e68",
+      "sha256": "E8C98D36233C60A293BB9A0CA47435588FC42B5899363B809889E68409E29206"
+    },
+    {
+      "path": "SRC/neothd/src/providers/compactor.rs",
+      "blob": "a7236b52688e2f9033387c316320d9d2265d033d",
+      "sha256": "10C257DB5AC3CA8A74D6456168C29954890CF1E0FDEB87D244D0F6750CCB394E"
+    },
+    {
+      "path": "SRC/neothd/src/providers/cost_authorization.rs",
+      "blob": "d9747b5580f37c4dc9b3acec9ca6fcfc2370c339",
+      "sha256": "D731FEB192679D796F3C0B69C935F9D03D2B779D0129E894383D19D54186EEA5"
+    },
+    {
+      "path": "SRC/neothd/src/providers/fallback.rs",
+      "blob": "4bbddb41b2f6d2a72000c12a8949bd45f166b0ab",
+      "sha256": "65D3D2E6396960EEA74474B52045441C1FEA4A0C1DE96C9267EEC1CB40D1A140"
+    },
+    {
+      "path": "SRC/neothd/src/providers/local_bge_m3.rs",
+      "blob": "c35cf133ed69d0366a53555a5dc7779103f271b9",
+      "sha256": "F67DFD97F9044E4112A7B6A0A0A245DBBEFF3F36F85B9B2552B90C15B5ECD13A"
+    },
+    {
+      "path": "SRC/neothd/src/providers/local_qwen.rs",
+      "blob": "d3c5b6c89a8b296f6ed9b701ce82e83a4147880a",
+      "sha256": "C2FB83BFD3A6CC176C89541945DE7EBC449F985C5C20D08D9A677B67DBEFAF31"
+    },
+    {
+      "path": "SRC/neothd/src/providers/mod.rs",
+      "blob": "13a6618d7e705045a0c5b769a278ea61d2c12cc8",
+      "sha256": "8D0B774A88998403E860DAAE05FDE9C74E69917EDCAF1B134AED27C9A97EEC42"
+    },
+    {
+      "path": "SRC/neothd/src/providers/openai_api.rs",
+      "blob": "31efeed5a0a2c34a526e73b0e96d90d7caa523af",
+      "sha256": "650608B1A221AB7FA533DE7D60CDA0A002A1E954CFDD3A5E79FE4CD4EE842419"
+    },
+    {
+      "path": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+      "blob": "a1a669d53e7ce6edfc5afa33b4daac5d9f18c021",
+      "sha256": "45864F9D2F9A2D6BD9FAC6FA63D898ABDFED28563F19471188E3DA2ED0433BF4"
+    },
+    {
+      "path": "SRC/neothd/src/providers/token_cap.rs",
+      "blob": "d96f85096eec4e3f3ca76db8fe6eded4b0cc178b",
+      "sha256": "B5573494E5DC8A252C31D8F631963E18C3377470C6132D17AF2EF9877CA455EE"
+    },
+    {
+      "path": "SRC/neothd/src/recall/parity_harness.rs",
+      "blob": "b302257134306bb7d143e3387a92419281753d40",
+      "sha256": "0872624C09336A340667670BC759B3089724BCC7280BB7A23F69EB0D39DE6F2A"
+    },
+    {
+      "path": "SRC/neothd/src/reflection/hygiene_store.rs",
+      "blob": "dac52bd18bad5d48a7433febdf174e45f33920ba",
+      "sha256": "BC7F3EB396EBAF867E4D27F82FB329C427C8217D218BB9F501352C61DE2139FA"
+    },
+    {
+      "path": "SRC/neothd/src/reflection/hygiene.rs",
+      "blob": "1ba93948f51702de5a4a94e668f48ccb6b53aab3",
+      "sha256": "8F892FA7418E1EDCE3532899A565BE71EC77694A05CE04D54602A7EC214134D7"
+    },
+    {
+      "path": "SRC/neothd/src/reflection/periodic.rs",
+      "blob": "df4819842fbe54205978ea2385b5710f95ed902a",
+      "sha256": "168AC0E1905D4352D234738FCB0E4A3538974B1CDB07B8F7C0532A3F03814A7F"
+    },
+    {
+      "path": "SRC/neothd/src/reflection/retention_authority.rs",
+      "blob": "c52bad9a728e72adc5f6cdeba08c62d89088143f",
+      "sha256": "38251C3C353852D4A48BA4EDCAF3DC8301AED4C4B5CDEFA3A4A7528DA0CA2597"
+    },
+    {
+      "path": "SRC/neothd/src/reflection/retention_v2_tests.rs",
+      "blob": "7d111771053bc9161a7f800099812505c0d8bd44",
+      "sha256": "2B90A61E0AA8138E41AEF8F87DB9B1F464A4AF78CA30EE0FA543D45F71B6CA63"
+    },
+    {
+      "path": "SRC/neothd/src/security/mirror_refusal_pipeline.rs",
+      "blob": "35816a2e612cea0c41cf6fff6160679bbd95da7c",
+      "sha256": "1D2AB28F94BC464D6EBFBBF3FB6150CE1AE9BEF45C7E96AE6AFD908D7C4170E8"
+    },
+    {
+      "path": "SRC/neothd/src/self_improve.rs",
+      "blob": "16a6ff91165c394bd57640866d8a735cfbc655cf",
+      "sha256": "CAAC678A2E89A4715BDF5EA3D2A5F99019F8B92E64341FBD515F0838A91BB5CD"
+    },
+    {
+      "path": "SRC/neothd/src/self_improve/passive.rs",
+      "blob": "0c57204761a2514a051b59c5937ebed952bca834",
+      "sha256": "D85859B5CF97256737B7E97EF399BBD9C63FD4048F47FBA66C3194BB9EC6B41A"
+    },
+    {
+      "path": "SRC/neothd/src/skills/installer.rs",
+      "blob": "26c15b715949c3d421def1111717ea67eb435d09",
+      "sha256": "9B6EC99ACEE33DF35ADBE1C340FA908B07D5BD4A5928D08E6CE6B0DE0127FC1D"
+    },
+    {
+      "path": "SRC/neothd/src/skills/loader.rs",
+      "blob": "2a919833c32ddc847079cd8ec95307ef2c2a2a03",
+      "sha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D"
+    },
+    {
+      "path": "SRC/neothd/src/skills/prerequisites.rs",
+      "blob": "34f4894de9efcf2da4cc5b1846105042b8b5f6c1",
+      "sha256": "B118D1E4148B48CA361DCF3B9F1A099C995943CDAA01AAAD2BF7B51BD4DFD532"
+    },
+    {
+      "path": "SRC/neothd/src/skills/registry.rs",
+      "blob": "148991e573a59069cff311d39c1591137bf80f97",
+      "sha256": "0DE02D8C0F43437CAE8864B3A779AC6160B9B66B0A398BD56D7E44D9A98B4242"
+    },
+    {
+      "path": "SRC/neothd/src/skills/resolver.rs",
+      "blob": "474a51aed38b09e7c2e53cb7e535176696f86b08",
+      "sha256": "5F6CB02C991A24FC2CBC312901D65C3F406AAACD71E1F2A9296B130A9042C8F3"
+    },
+    {
+      "path": "SRC/neothd/src/skills/store.rs",
+      "blob": "6dec414fd9e21a44c802197f06a50da1f94d9111",
+      "sha256": "A34BBFCED986B710D40CA646897ADA52B07895B9B4486C00171060ED3692B034"
+    },
+    {
+      "path": "SRC/neothd/src/sub_agents/parallel.rs",
+      "blob": "7b2ded3359d89548179dfbda47c9c86eb30f91b0",
+      "sha256": "6ED7977AAA34AA729C39209B8CFAA71054110E0002BAB230E6138C090D8DF959"
+    },
+    {
+      "path": "SRC/neothd/src/sub_agents/runtime.rs",
+      "blob": "ec74a20210d59286bb59d22e2a099117ca876e43",
+      "sha256": "2F52204A83A1921CD495F42FE1925C3FCBA1ECCF3305BB41367922AD033147B6"
+    },
+    {
+      "path": "SRC/neothd/src/tools/citation_lookup.rs",
+      "blob": "91fc4a4d2bcb5078ff2f78c67a21ccd304e75ce2",
+      "sha256": "0EAE948E8F5BBDC05346D3DB7EE3962478C105F1E3752885BDE90ABBE4E21672"
+    },
+    {
+      "path": "SRC/neothd/src/tools/deep_research.rs",
+      "blob": "ee8584eff097e8e10cb775408eaf72fc2dff42b9",
+      "sha256": "58DF521F8B8C0CFC60CE158AE4C8B41CA3F8E77DE693C803E45B903EECC49696"
+    },
+    {
+      "path": "SRC/neothd/src/tools/managed_browser.rs",
+      "blob": "775434abbd17d4e872d84c7be23f59d7498dfff1",
+      "sha256": "2F2D9A6B351D74A1A076FD8756169BDA170ADC06BEA24EF698FE821F5C8A02B7"
+    },
+    {
+      "path": "SRC/neothd/src/updater/process_containment.rs",
+      "blob": "963b2fdeff29711a02cde0542d3ba4b31d5a2a69",
+      "sha256": "E1E97135336F90E26A76F4637F1B8B686B9BC90BF97AD0B2E7BD8FA832DDD335"
+    },
+    {
+      "path": "SRC/neothd/src/wal/builder.rs",
+      "blob": "d7c028eba00369fa9c9bd45cb3f8f08105535231",
+      "sha256": "84401024A726BB5FA9824233424789973E9AEFEE4BD414B4113275C95DDE2510"
+    },
+    {
+      "path": "SRC/neothd/src/wal/dream_receipts.rs",
+      "blob": "77520d507f671b5f9688f9bd73cb57b16262a1c6",
+      "sha256": "E2E521D3E15EDD91DB3585109132450A30395FD756128A021CDC0A9BD90176F5"
+    },
+    {
+      "path": "SRC/neothd/src/wal/header.rs",
+      "blob": "657f6f266cbdeedb147497e3ee7f44ca3bbd0bdf",
+      "sha256": "E468361C7A1A3B8B18609E6093C25403BBDBC382D2ED77FDAA216F2DC7486001"
+    },
+    {
+      "path": "SRC/neothd/src/wal/redact.rs",
+      "blob": "1d4f652dbafb054605f294e83d4ed118273658c2",
+      "sha256": "B1564C3555AA338B3E99B0D5F85FF26ED67DCA1B2E37BE3800FF24E97F5D6C9B"
+    },
+    {
+      "path": "SRC/neothd/src/wal/redaction_rewrite_journal.rs",
+      "blob": "ee40f5e10f79a5a68dfee78c874c451c1b5b86f6",
+      "sha256": "F71D9603B3ECC04AE7BAA4DBF70D4FA3AFBA23F631145DD2B0066ECAA7C77284"
+    },
+    {
+      "path": "SRC/neothd/src/wal/redaction_rewrite_receipts.rs",
+      "blob": "42576e7bd7dcf5b49f3cf3544aac806fd42524f8",
+      "sha256": "9D4DACD10F90650790A7383FD13809E23EE72F0969D81A3B9C4FF7BB38F49F23"
+    },
+    {
+      "path": "SRC/neothd/src/wal/snapshot.rs",
+      "blob": "b0e93378256366ec774b0ec6b6a39c0d87fb2be2",
+      "sha256": "5D539F8342A782B7861C1742437189A3AC725D2498709317B4A7DEA2CB308363"
+    },
+    {
+      "path": "SRC/neothd/src/wal/transcript_mining_once.rs",
+      "blob": "3941f1619e96627808547e5320b31d270c33e1eb",
+      "sha256": "71F0ECC401A778EA9796514306302FCAC16C38C870214125CCBF7A1A70CB7AC4"
+    },
+    {
+      "path": "SRC/neothd/src/wal/types.rs",
+      "blob": "2ca84ccdb2eb8d5a004bd5586e34f60aebce26a3",
+      "sha256": "53083D32BA9085CFDAF084AF5E1BF442F0A381EF77440DC541334A965A1DE078"
+    },
+    {
+      "path": "SRC/neothd/src/wal/views/episode.rs",
+      "blob": "0168b53bb5d0974f1a42836291cbb6ea9b43a5ff",
+      "sha256": "A034F163F47933A9FC92B7906229AEA83CD3ABE0842CC9F471CBF27A553BCCE2"
+    },
+    {
+      "path": "SRC/neothd/src/wal/writer.rs",
+      "blob": "84e4b272843e9725b0210dcb38fe81764d0505dd",
+      "sha256": "A96BF3DF2098206E623596D1EB5B23CA949576A9289E2CA49EAD292937AD1B80"
+    },
+    {
+      "path": "SRC/neothd/src/wiki/ingest.rs",
+      "blob": "20f04b44025f0abd4c031b3af1e8931aba484ef6",
+      "sha256": "C3AAE352CFF73F0DA00B1929CD65E29666448D3C599136C1004A0E0646558962"
+    },
+    {
+      "path": "SRC/neothd/src/wizard/ipc.rs",
+      "blob": "7b5f0aa1aec563697022c2eac4d8751d0b088eda",
+      "sha256": "93E3898F16AEE3B2C96B2EC0790921291C754B97D03919A8E49D925FC686F31E"
+    }
+  ],
+  "artifacts": [
+    {
+      "id": 10785511931,
+      "sha256": "2d09aa3879464f29ef7e3e7ec3b2252c286b596ff81692107a9d1d5e5190a0f3"
+    },
+    {
+      "id": 10784773992,
+      "sha256": "a55774bb137fc8a3884effc6b89a16d602a8b22ca242b33f1b2ca758ad671f5e"
+    },
+    {
+      "id": 10784724063,
+      "sha256": "e5fe6b226bb08e5a7a00fac64dc8e5aecd35a6a8256037d0eae5a986986ad121"
+    }
+  ],
+  "failedTerminals": [
+    {
+      "test": "daemon::gui_chat_runtime::lifecycle_tests::w458_real_producer_post_hook_is_visible_to_main_and_buddy_only_after_acceptance",
+      "status": "failed"
+    }
+  ],
+  "logSha256": "65C6B3A2155DFD2750994610E962CC490314834AD1FC549F1F261F0FAA22B6D3",
+  "interpretation": "SoleW458fail bounded capture budget8 afterW577 acceptedDelta;compilepassed;W583uses unchangedBlockmax8 and Replace prior8+oneacceptedDelta, preserves all exact output assertions.",
+  "localExecutableValidationRan": false
+}

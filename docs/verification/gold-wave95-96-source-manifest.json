@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T01:16:51.4088746Z",
+  "capturedUtc": "2026-09-24T01:29:50.3607512Z",
   "validationStatus": "SOURCE_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -1282,6 +1282,16 @@
       "sha256": "9410D2CB5E5CDA245A541F1F56FEDCCABF1569B83164D28BA681C2A1E4F96964"
     },
     {
+      "path": "docs/verification/gold-wave583-group951-summary.json",
+      "bytes": 39962,
+      "sha256": "7CCAC43D08EE470DB8B9C185E114693021BF6498D1B9A634331E8E865A6C9F7F"
+    },
+    {
+      "path": "docs/verification/gold-wave584-core-reference.json",
+      "bytes": 735,
+      "sha256": "18CCBE77F857485FA6705127E245113D6292DBBEAA0F1974AA44E8983FED5BB8"
+    },
+    {
       "path": "docs/verification/managed-browser-cft154.json",
       "bytes": 2497,
       "sha256": "80443D2F6E6A6E226F1617F7F5463017071D9D21130D1FCD116470F147455337"
@@ -1418,18 +1428,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 208239,
-      "sha256": "638C42FAD4CD1AC263E76D39584E16564F6CB3E16B824BB24BA06654EF9C8EDA"
+      "bytes": 209054,
+      "sha256": "FFA0F5DA961027AEF24FAC75FDDC5FF063A044F49E1403956ACA59DB6F6E733B"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1219567,
-      "sha256": "97C6E7D51E26D8625D97C63EB7BC41C7A55E2E0AF0CE1501CB022DBF432D3C4B"
+      "bytes": 1220382,
+      "sha256": "12050AA78219F8512F997752F4AC69DBD2B243FABC7741B221A3B9CDA0123548"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1818849,
-      "sha256": "D1AE7656E83A4F2F8220D747D39AB9DA161DF2FFAE45D6A66782EB790241D416"
+      "bytes": 1819664,
+      "sha256": "6D080A4B771628CA15317B1CB8867B1CAB1D932A4B793AE5B8636FA10B81B698"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -2848,8 +2858,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "bytes": 174438,
-      "sha256": "65D0AFDB5EBCA35764A057B5BE23F54C399FFCD7A600ACDDE11F60CB8123F933"
+      "bytes": 176222,
+      "sha256": "7A2CE9B629BE8E71B9B05323E32519CC86DB10694B5D1CD78F2FC93E9A130B2D"
     },
     {
       "path": "SRC/neothd/src/daemon/live_throughput.rs",

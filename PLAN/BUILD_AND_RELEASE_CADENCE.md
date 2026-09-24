@@ -3,6 +3,17 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W583-W584 stream follow-up and core (2026-09-24):**
+Core35941268561 at0e97dcca passed slim Clippy, test-target typecheck, public CLI
+build and reference export; the reference remains byte-identical (0bd07415).
+Group95135941271455 admits950PASS/1FAIL/0missing and186bindings. W458 now fails
+inside its eight-frame capture bound afterW577 added one accepted GUI Delta.
+W583 preserves Block's maximum8 and permits exactly one additional frame for
+Replace (maximum9); every strict no-secret/body/count/order/digest assertion
+remains. Bounded diagnostics name only frame kinds. Independent review passed;
+fresh native/GUI execution is pending. P2-26a and all Road counts stay open.
+W582 imported only GitHub formatting for the W581 test helper; Preflight
+35942356921 at0462679b passes. No local executable validation.
 **W579-W581 GUI follow-up (2026-09-24):**
 GUI148 run35938022418 atc21e29b1 is admitted145PASS/3FAIL/0missing with28source
 bindings. W480 Replace lacks the accepted Delta addressed byW577. The other
