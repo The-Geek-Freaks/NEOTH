@@ -180,8 +180,7 @@ struct ExternalHttpPermit {
 }
 
 impl ExternalHttpPermit {
-    #[cfg(test)]
-    pub fn require(&self, request: &ExternalHttpRequest) -> Result<()> {
+    fn require(&self, request: &ExternalHttpRequest) -> Result<()> {
         let binding = request.binding_sha256(&self.egress_provenance_binding);
         if binding != self.permit_binding_sha256 {
             anyhow::bail!(
@@ -792,7 +791,7 @@ impl ExternalHttpAuthorizer {
         transport_matches(&transport, &request)?;
         self.execute_with_permit_verifier(
             request,
-            |_permit, _request| Ok(()),
+            ExternalHttpPermit::require,
             move |_permit| async move {
                 if let Some(pre_send) = transport.pre_send {
                     pre_send.await?;

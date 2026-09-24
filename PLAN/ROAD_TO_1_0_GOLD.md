@@ -8,6 +8,14 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W948 HTTP permit repair (2026-09-24):** Core36058966367 atf20c3c04 failed
+strict production Clippy because the sealed transport supplied a no-op permit
+verifier, leaving its binding fields unused. W946 now runs the existing exact
+request/provenance verifier before pre-send and network execution, preserving
+the independent sealed-request method/URL/body check. Root inspected the full
+lifecycle and narrow diff; no warning suppression or authority removal.
+Native1671/Group1438/Windows221 unchanged. Fresh hosted compile and behavioral
+gates remain required; C7 and managed n8n stay open. No local execution.
 **W945 C7 acceptance selection (2026-09-24):** Root checked the actual matrix:
 only ActionKind-clearance was selected from the IFC kernel. Seven existing
 lattice/release/redaction regressions are now added to Group; Windows selects

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W945 IFC coverage selected; HN exact hostedformat imported; compile/behavior pending",
+  "status": "W946 production permit binding verifier restored; static review; hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 181910,
-    "sha256": "DD837BE3478C49D39BCB6F4F8067D78889D416FC927CC8293D0B39555C21652C"
+    "bytes": 181905,
+    "sha256": "6608A645EB29378F66D796ACCDE116949C698C4CEAEE592EA0FB86D63CFF0A24"
   },
   "sourceInputs": 1028,
   "requiredNativeTests": [
@@ -1596,49 +1596,49 @@
     {
       "test": "tools::external_http::tests::gui_ready_rechecks_current_policy_and_keeps_normal_http_lifecycle",
       "sourcePath": "SRC/neothd/src/tools/external_http.rs",
-      "sourceSha256": "7E6037544D5AF0816DB750E8E16EF8D7C93A63BAC7CECF14DAB2937298909A20",
+      "sourceSha256": "C0C11C5824A0112D61E5D78E6646781E665BF8B4911654288AF8A4D512677040",
       "junitClass": "neoth"
     },
     {
       "test": "tools::external_http::tests::required_http_decision_failure_blocks_intent_and_transport",
       "sourcePath": "SRC/neothd/src/tools/external_http.rs",
-      "sourceSha256": "7E6037544D5AF0816DB750E8E16EF8D7C93A63BAC7CECF14DAB2937298909A20",
+      "sourceSha256": "C0C11C5824A0112D61E5D78E6646781E665BF8B4911654288AF8A4D512677040",
       "junitClass": "neoth"
     },
     {
       "test": "tools::external_http::tests::intent_failure_prevents_network",
       "sourcePath": "SRC/neothd/src/tools/external_http.rs",
-      "sourceSha256": "7E6037544D5AF0816DB750E8E16EF8D7C93A63BAC7CECF14DAB2937298909A20",
+      "sourceSha256": "C0C11C5824A0112D61E5D78E6646781E665BF8B4911654288AF8A4D512677040",
       "junitClass": "neoth"
     },
     {
       "test": "tools::external_http::tests::success_and_failure_close_the_same_request_binding",
       "sourcePath": "SRC/neothd/src/tools/external_http.rs",
-      "sourceSha256": "7E6037544D5AF0816DB750E8E16EF8D7C93A63BAC7CECF14DAB2937298909A20",
+      "sourceSha256": "C0C11C5824A0112D61E5D78E6646781E665BF8B4911654288AF8A4D512677040",
       "junitClass": "neoth"
     },
     {
       "test": "tools::external_http::tests::permit_is_bound_to_exact_url_and_body",
       "sourcePath": "SRC/neothd/src/tools/external_http.rs",
-      "sourceSha256": "7E6037544D5AF0816DB750E8E16EF8D7C93A63BAC7CECF14DAB2937298909A20",
+      "sourceSha256": "C0C11C5824A0112D61E5D78E6646781E665BF8B4911654288AF8A4D512677040",
       "junitClass": "neoth"
     },
     {
       "test": "tools::external_http::tests::permit_rejects_a_provenance_binding_mismatch",
       "sourcePath": "SRC/neothd/src/tools/external_http.rs",
-      "sourceSha256": "7E6037544D5AF0816DB750E8E16EF8D7C93A63BAC7CECF14DAB2937298909A20",
+      "sourceSha256": "C0C11C5824A0112D61E5D78E6646781E665BF8B4911654288AF8A4D512677040",
       "junitClass": "neoth"
     },
     {
       "test": "tools::external_http::tests::terminal_result_audit_failure_is_returned_after_transport",
       "sourcePath": "SRC/neothd/src/tools/external_http.rs",
-      "sourceSha256": "7E6037544D5AF0816DB750E8E16EF8D7C93A63BAC7CECF14DAB2937298909A20",
+      "sourceSha256": "C0C11C5824A0112D61E5D78E6646781E665BF8B4911654288AF8A4D512677040",
       "junitClass": "neoth"
     },
     {
       "test": "tools::external_http::tests::request_drift_cannot_reach_transport",
       "sourcePath": "SRC/neothd/src/tools/external_http.rs",
-      "sourceSha256": "7E6037544D5AF0816DB750E8E16EF8D7C93A63BAC7CECF14DAB2937298909A20",
+      "sourceSha256": "C0C11C5824A0112D61E5D78E6646781E665BF8B4911654288AF8A4D512677040",
       "junitClass": "neoth"
     },
     {
@@ -9894,25 +9894,25 @@
     {
       "test": "tools::external_http::tests::sealed_transport_body_drift_is_rejected_before_authorization_or_send",
       "sourcePath": "SRC/neothd/src/tools/external_http.rs",
-      "sourceSha256": "7E6037544D5AF0816DB750E8E16EF8D7C93A63BAC7CECF14DAB2937298909A20",
+      "sourceSha256": "C0C11C5824A0112D61E5D78E6646781E665BF8B4911654288AF8A4D512677040",
       "junitClass": "neoth"
     },
     {
       "test": "tools::external_http::tests::execute_transport_response_processing_failure_writes_failure_terminal",
       "sourcePath": "SRC/neothd/src/tools/external_http.rs",
-      "sourceSha256": "7E6037544D5AF0816DB750E8E16EF8D7C93A63BAC7CECF14DAB2937298909A20",
+      "sourceSha256": "C0C11C5824A0112D61E5D78E6646781E665BF8B4911654288AF8A4D512677040",
       "junitClass": "neoth"
     },
     {
       "test": "tools::external_http::tests::denied_or_intent_failed_transport_never_runs_pre_send_or_sends",
       "sourcePath": "SRC/neothd/src/tools/external_http.rs",
-      "sourceSha256": "7E6037544D5AF0816DB750E8E16EF8D7C93A63BAC7CECF14DAB2937298909A20",
+      "sourceSha256": "C0C11C5824A0112D61E5D78E6646781E665BF8B4911654288AF8A4D512677040",
       "junitClass": "neoth"
     },
     {
       "test": "tools::external_http::tests::released_execute_transport_failure_is_coarse_and_provider_neutral",
       "sourcePath": "SRC/neothd/src/tools/external_http.rs",
-      "sourceSha256": "7E6037544D5AF0816DB750E8E16EF8D7C93A63BAC7CECF14DAB2937298909A20",
+      "sourceSha256": "C0C11C5824A0112D61E5D78E6646781E665BF8B4911654288AF8A4D512677040",
       "junitClass": "neoth"
     },
     {
@@ -36995,6 +36995,38 @@
       }
     ],
     "note": "Seven existingIFCtests addedGroup,all8Windows. Hostedartifact10833083981 @f20 exactonefile formatting. Source/admission pending; no localexecutables.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave948HttpPermit": {
+    "base": "41afb5aac92fe0338614b378ea545de486754c60",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 292501,
+        "sha256": "6664090D9D283EE12F1787B06EF998AB6BC8C3EE9CAA5610D6C3B9D03163418E",
+        "blob": "d7ac3390e68c56a698d717ca2ab20ed9f870b828"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1303829,
+        "sha256": "4694E1BEB19C386C583B730B121E60A9D1430C410B7C424383BE776058C7CBFA",
+        "blob": "3ba619d05f252c469383ad6d556b46e547835235"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1913398,
+        "sha256": "3127A137B07C2DAFDCE6C4F7C4A2DEDAAFD131C1E7CFADF3FBBC80177A341023",
+        "blob": "fa6a09f1db4245e36fee0d925dd2acff6a4cbe46"
+      },
+      {
+        "path": "SRC/neothd/src/tools/external_http.rs",
+        "bytes": 113447,
+        "sha256": "C0C11C5824A0112D61E5D78E6646781E665BF8B4911654288AF8A4D512677040",
+        "blob": "68042e5239fd5a47fe06f63beb5cbcc7af8097c6"
+      }
+    ],
+    "note": "Core36058966367 strict dead_code diagnosed; real sealed transport now checks exact minted request/provenance. Root reviewed; no feature closure. native1671 Group1438 Windows221.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
