@@ -110,6 +110,12 @@ pub const ALLOWED_CLIENT_EXTENDED_SUBTYPES: &[u8] = &[
     // A direct generated-codegraph result receipt is observational context
     // evidence, never an execution authority or delivery acknowledgement.
     ExtendedSubtype::CodeMapRecallResolved as u8,
+    // ADOPT31-B7 — explicit operator acceptance applies a bounded Document
+    // candidate through the synchronous CLI, which forwards only these
+    // metadata-only post-effect receipts to a daemon-owned WAL writer.
+    ExtendedSubtype::DocumentSkillApplied as u8,
+    ExtendedSubtype::DocumentMemoryApplied as u8,
+    ExtendedSubtype::DocumentNoteApplied as u8,
 ];
 
 /// Max inbound request size (headers + body). Audit payloads are small.
@@ -592,6 +598,18 @@ mod w61_code_map_result_receipt_tests {
             validate_code_map_result_prepared_payload(EVENT_TYPE_EXTENDED, subtype, &payload(),)
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn document_route_receipts_are_explicitly_allowlisted_extended_events() {
+        for subtype in [
+            ExtendedSubtype::DocumentSkillApplied,
+            ExtendedSubtype::DocumentMemoryApplied,
+            ExtendedSubtype::DocumentNoteApplied,
+        ] {
+            assert!(ALLOWED_CLIENT_EXTENDED_SUBTYPES.contains(&(subtype as u8)));
+            assert!(is_allowed_client_event_pair(EVENT_TYPE_EXTENDED, subtype as u8));
+        }
     }
 
     #[test]

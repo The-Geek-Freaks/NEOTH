@@ -3,6 +3,27 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W848-W853 document staging batch; W852 results (2026-09-24):**
+Explicit --stage-route/--stage-target now connects exact staged preflight,
+authorized candidate plus scored review, Pending Document proposal/notification,
+and separate proactive accept to actual inactiveSkill, atomicMemory or create-only
+userVaultNote consumers. Canonical source/input/candidate/route/target bindings
+are revalidated at approval. Schema46 ledger prevents corroboration inflation;
+ON DELETE SET NULL preserves actual OMI hard-purge and replay refusal. Existing
+operator edits survive. Registered post-effect WAL is separate from the ledger;
+audit failures are explicit and retry reconciles effects. Windows unsupported
+directory sync is reported separately from real post-commit failures.
+Independent static review approved;37portable+2Unix+1Windows fixtures added.
+Native1569+Win39/Linux54/mac54;Group1335 selected. B7 stays OPEN pending hosted
+compile/behavior. B6 GUI and B8 watcher remain separate. No local execution.
+W852 Group1296@9877872e is ROOT-ADMITTED1295PASS/1FAIL with all237source/twoinput
+bindings verified; CLI docgen now passes. Last B3 fixture falsely required its
+marker at line start despite extractor line folding; corrected check preserves
+the marker, all defanged line prefixes, exact rendered embedding and text-free
+metadata. B3 remains OPEN. ROAD1072checked250open2partial unchanged.
+See docs/gold-wave848-document-staging.md and
+ docs/verification/gold-wave852-group1296.json.
+
 **W845-W847 exact hosted results and chapter receipt repair (2026-09-24):**
 Group1296run36023599487 at38230dc2 is ROOT-ADMITTED1294PASS/2FAIL after
 three ZIP digests,237fixture/twoinput bindings and all individual terminals.

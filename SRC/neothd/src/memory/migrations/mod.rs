@@ -336,7 +336,18 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "W331: durable Dream Light/REM/Repair phase journal",
         run: migration_v44_to_v45,
     },
+    Migration {
+        from: 45,
+        to: 46,
+        description: "W848: B7 document-claim applied-once ledger",
+        run: migration_v45_to_v46,
+    },
 ];
+
+pub(crate) fn migration_v45_to_v46(conn: &Connection) -> Result<()> {
+    conn.execute_batch(crate::memory::document_claims::DOCUMENT_CLAIM_SCHEMA_SQL)
+        .context("v45→v46: create B7 document-claim applied-once ledger")
+}
 
 pub(crate) fn migration_v44_to_v45(conn: &Connection) -> Result<()> {
     // A real v44 predecessor has no W331 objects. SQLite's `CREATE TABLE IF
@@ -5330,6 +5341,14 @@ mod tests {
         assert_eq!(current_version(&conn).unwrap(), 45);
     }
 
+    #[test]
+    fn v45_to_v46_creates_document_claim_ledger_and_stamps_version() {
+        let mut conn = open_with_meta(45);
+        assert_eq!(migrate(&mut conn, 45, 46).unwrap(), 46);
+        assert!(sqlite_object_exists(&conn, "b7_applied_document_claim"));
+        assert!(sqlite_object_exists(&conn, "idx_b7_applied_document_claim_fact"));
+        assert_eq!(current_version(&conn).unwrap(), 46);
+    }
     #[test]
     fn v44_to_v45_rolls_back_tier_columns_when_dream_schema_cannot_be_created() {
         let mut conn = open_with_meta(44);

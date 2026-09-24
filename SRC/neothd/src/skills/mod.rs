@@ -31,6 +31,9 @@ pub mod creator;
 /// sanitized review draft. It cannot install, activate, route, or dispatch a
 /// generated skill.
 pub mod doc_distill;
+/// ADOPT31-B7 — explicit, scored document candidates for operator-approved
+/// proposal staging.  This module has no persistence or apply capability.
+pub mod document_staging;
 pub mod generated_scan;
 pub mod installer;
 pub mod loader;

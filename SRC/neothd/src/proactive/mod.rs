@@ -56,6 +56,10 @@ use crate::channels::registry::ChannelAccountId;
 use crate::config::ChannelAccountBinding;
 
 pub mod action_staging;
+/// ADOPT31-B7 — create-only approved document-note publication.
+pub mod document_note;
+/// ADOPT31-B7 — immutable document proposal consumer and post-effect audit.
+pub mod document_staging;
 
 /// One queued proactive notification. Fields are operator-facing —
 /// the CLI's `neoth proactive list` renders each verbatim, and the

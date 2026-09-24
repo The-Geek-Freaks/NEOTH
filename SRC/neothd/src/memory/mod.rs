@@ -47,6 +47,8 @@ pub mod counterparty_consent;
 pub mod counterparty_consent_ceremony;
 pub mod ctx;
 pub mod decay_task;
+/// W848 — approved document claim batches apply exactly once per source/claim/scope.
+pub mod document_claims;
 pub mod diff;
 pub mod dimension;
 pub mod drift;

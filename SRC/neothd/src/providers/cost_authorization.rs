@@ -9072,6 +9072,14 @@ mod tests {
                 "c93b541ef3e17794424f6560676adef39ea733a8166b879194a0a0005c9a52e8",
             ),
             (
+                "skills/document_staging.rs",
+                2,
+                // The explicit document route receives the same CLI-owned
+                // CostAuthorizingProvider after its exact staged preflight
+                // and consent; neither leaf constructs a provider or retries.
+                "1742ea5d179621a905405450325a17bade214dfa8941e30442e6030d2cd68a1e",
+            ),
+            (
                 "skills/test_harness.rs",
                 2,
                 "0c2d8e9e116a587bfacdd6d702eb773e272f049b690041c051ef18e801b6c603",

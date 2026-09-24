@@ -237,6 +237,13 @@ fn skill_create_receipt(report: &crate::skills::creator::CreateReport) -> SkillC
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum DocumentStageRoute {
+    Skill,
+    Memory,
+    Wiki,
+}
+
 #[derive(Args, Debug, Clone)]
 #[command(group(
     clap::ArgGroup::new("force_target")
@@ -249,7 +256,8 @@ fn skill_create_receipt(report: &crate::skills::creator::CreateReport) -> SkillC
 ))]
 pub struct SkillsArgs {
     /// Distill an admitted document with one provider call and one scored
-    /// self-review. Prints a token/cost preflight first; never stages a skill.
+    /// self-review. Prints a token/cost preflight first. Add --stage-route and
+    /// --stage-target to propose an explicitly chosen destination for approval.
     #[arg(
         long = "distill-doc",
         value_name = "PATH",
@@ -265,6 +273,19 @@ pub struct SkillsArgs {
     /// Required acceptance threshold for the document's single scored review.
     #[arg(long, requires = "distill_doc", value_parser = clap::value_parser!(u8).range(0..=100))]
     pub min_reflexion_score: Option<u8>,
+
+    /// Propose the accepted distillation for later explicit approval. No
+    /// destination is written until `neoth proactive accept <proposal-id>`.
+    #[arg(long, value_enum, requires_all = ["distill_doc", "stage_target"])]
+    pub stage_route: Option<DocumentStageRoute>,
+
+    /// Exact destination: Skill id, Memory scope, or absolute existing Wiki vault.
+    #[arg(long, value_name = "TARGET", requires_all = ["distill_doc", "stage_route"])]
+    pub stage_target: Option<String>,
+
+    /// Wiki-only vault subdirectory (defaults to NEOTH). Must be one name.
+    #[arg(long, value_name = "NAME", requires = "stage_route")]
+    pub stage_subdir: Option<String>,
 
     /// Extract one PDF, office document, or EPUB into a sanitized operator
     /// review draft. This is read-only: it never writes, installs, activates,
@@ -847,11 +868,12 @@ pub(crate) async fn set_skill_authority_at_config_with_expectation(
 }
 
 pub async fn run_skills(args: SkillsArgs) -> Result<()> {
+    let document_staging = document_staging_selection(&args)?;
     if let Some(source) = &args.distill_doc {
         let minimum = args
             .min_reflexion_score
             .context("--min-reflexion-score is required")?;
-        return run_document_distillation(source, minimum, args.output).await;
+        return run_document_distillation(source, minimum, args.output, document_staging).await;
     }
     // ADOPT31-B1 is deliberately before skill-mutation reconciliation: a
     // document-review request must not write, install, activate, or recover a
@@ -1714,10 +1736,115 @@ fn document_preflight_for_config(
     ))
 }
 
+fn document_staging_selection(
+    args: &SkillsArgs,
+) -> Result<Option<crate::skills::document_staging::DocumentStagingRequest>> {
+    use crate::skills::document_staging::DocumentStagingRequest;
+    let (route, target) = match (args.stage_route, args.stage_target.as_ref()) {
+        (None, None) if args.stage_subdir.is_none() => return Ok(None),
+        (Some(route), Some(target)) => (route, target),
+        _ => anyhow::bail!("--stage-route and --stage-target must be supplied together"),
+    };
+    anyhow::ensure!(args.distill_doc.is_some(), "document staging requires --distill-doc");
+    anyhow::ensure!(
+        args.stage_subdir.is_none() || route == DocumentStageRoute::Wiki,
+        "--stage-subdir is only valid for the wiki route"
+    );
+    let request = match route {
+        DocumentStageRoute::Skill => DocumentStagingRequest::Skill { skill_id: target.clone() },
+        DocumentStageRoute::Memory => DocumentStagingRequest::Memory { scope: target.clone() },
+        DocumentStageRoute::Wiki => DocumentStagingRequest::Wiki {
+            vault_root: target.clone(),
+            subdir: args.stage_subdir.clone().unwrap_or_else(|| "NEOTH".to_owned()),
+        },
+    };
+    request.validate()?;
+    if let DocumentStagingRequest::Wiki { vault_root, .. } = &request {
+        let path = Path::new(vault_root);
+        anyhow::ensure!(path.is_absolute(), "wiki vault target must be absolute");
+        crate::skills::store::open_absolute_bound_directory(path, false, "document vault")?
+            .context("document vault must already exist")?;
+    }
+    Ok(Some(request))
+}
+
+enum DocumentProviderOutcome {
+    Review(crate::skills::doc_distill::DocumentDistillationOutcome),
+    Staging(crate::skills::document_staging::DocumentStagingOutcome),
+}
+
+fn stage_document_outcome(
+    home: &Path,
+    document: &crate::skills::doc_distill::DistilledDoc,
+    outcome: &crate::skills::document_staging::DocumentStagingOutcome,
+    now_unix: i64,
+) -> Result<Option<crate::proactive::action_staging::ProposedAction>> {
+    use crate::proactive::action_staging::{
+        ProposalKind, ProposalStatus, ProposedAction, make_proposal_id_content_only,
+        stage_and_enqueue,
+    };
+    use crate::skills::document_staging::{DocumentStagingRoute, decode_document_staging_draft};
+    use sha2::Digest as _;
+    if !outcome.reflexion.eligible_for_b7_staging {
+        anyhow::ensure!(
+            outcome.draft_json.is_none() && outcome.draft_sha256.is_none(),
+            "ineligible document unexpectedly carries a staging draft"
+        );
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        outcome.reflexion.verdict == crate::skills::doc_distill::DocumentReflexionVerdict::Accept
+            && outcome.reflexion.score >= outcome.reflexion.minimum_score,
+        "document staging requires an accepted scored review"
+    );
+    let draft_json = outcome.draft_json.as_ref().context("accepted document has no draft")?;
+    let draft_hash = hex::encode(sha2::Sha256::digest(draft_json.as_bytes()));
+    anyhow::ensure!(
+        outcome.draft_sha256.as_deref() == Some(draft_hash.as_str()),
+        "document staging draft digest mismatch"
+    );
+    let draft = decode_document_staging_draft(draft_json)?;
+    anyhow::ensure!(
+        draft.source_bytes_sha256 == document.provenance.source_bytes_sha256
+            && draft.sanitized_input_hash == document.provenance.sanitized_input_hash
+            && draft.reflexion_score == outcome.reflexion.score
+            && draft.minimum_reflexion_score == outcome.reflexion.minimum_score,
+        "document staging source or scored-review binding changed"
+    );
+    anyhow::ensure!(serde_json::to_string(&draft)? == *draft_json, "document draft is not canonical");
+    let route = match &draft.route {
+        DocumentStagingRoute::Skill { .. } => "skill",
+        DocumentStagingRoute::Memory { .. } => "memory",
+        DocumentStagingRoute::Wiki { .. } => "wiki",
+    };
+    let title = format!("Document distillation ({route})");
+    let proposal = ProposedAction {
+        id: make_proposal_id_content_only(ProposalKind::Document, &title, draft_json),
+        kind: ProposalKind::Document,
+        title,
+        rationale: format!(
+            "Document source SHA-256: {}. Candidate SHA-256: {}. Self-review score: {}/100 (minimum {}). Review the exact draft and destination before accepting. Approval does not activate a Skill.",
+            draft.source_bytes_sha256, draft.candidate_sha256,
+            draft.reflexion_score, draft.minimum_reflexion_score,
+        ),
+        draft_yaml: draft_json.clone(),
+        generated_ts_unix: now_unix,
+        status: ProposalStatus::Pending,
+        operator_note: String::new(),
+    };
+    let result = crate::proactive::ProactiveQueue::modify(&home.join("proactive_queue.json"), |queue| {
+        let staged = stage_and_enqueue(home, proposal, queue);
+        let changed = staged.as_ref().is_ok_and(|(_, enqueued)| *enqueued);
+        (changed, staged)
+    })??;
+    Ok(Some(result.0))
+}
+
 async fn run_document_distillation(
     path: &Path,
     minimum_score: u8,
     output: OutputFormat,
+    staging: Option<crate::skills::document_staging::DocumentStagingRequest>,
 ) -> Result<()> {
     use crate::skills::doc_distill::distill_with_reflexion;
     let document = prepare_document_review(path).await?;
@@ -1727,7 +1854,12 @@ async fn run_document_distillation(
         .context("document config has no home")?
         .to_path_buf();
     let config = FreedomConfig::load_from_path_or_default(&config_path)?;
-    let preflight = document_preflight_for_config(&document, &config)?;
+    let mut preflight = document_preflight_for_config(&document, &config)?;
+    if let Some(request) = &staging {
+        preflight = crate::skills::document_staging::staging_preflight_estimate(
+            &document, &preflight.provider, &preflight.model, request,
+        )?;
+    }
     let model = preflight.model.clone();
     let outcome = emit_document_preflight_then_run(
         &preflight,
@@ -1762,7 +1894,13 @@ async fn run_document_distillation(
                 Some(model.clone()),
                 "document_distillation",
             );
-            let result = distill_with_reflexion(&document, &wrapped, &model, minimum_score).await;
+            let result = match staging {
+                Some(request) => crate::skills::document_staging::distill_for_staging(
+                    &document, &wrapped, &model, minimum_score, request,
+                ).await.map(DocumentProviderOutcome::Staging),
+                None => distill_with_reflexion(&document, &wrapped, &model, minimum_score)
+                    .await.map(DocumentProviderOutcome::Review),
+            };
             drop(wrapped);
             drop(writer);
             let drained = completion
@@ -1774,6 +1912,40 @@ async fn run_document_distillation(
         },
     )
     .await?;
+    let outcome = match outcome {
+        DocumentProviderOutcome::Review(outcome) => outcome,
+        DocumentProviderOutcome::Staging(outcome) => {
+            let proposal = stage_document_outcome(
+                &home, &document, &outcome, crate::time::now_unix_i64(),
+            )?;
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string(
+                    &serde_json::json!({
+                        "event": "document_staging_result",
+                        "source_bytes_sha256": document.provenance.source_bytes_sha256,
+                        "reflexion": outcome.reflexion,
+                        "proposal_id": proposal.as_ref().map(|p| &p.id),
+                        "proposal_status": proposal.as_ref().map(|p| p.status.as_str()),
+                        "staged": proposal.is_some(),
+                        "effect_applied": false,
+                        "skill_activated": false,
+                    })
+                )?),
+                OutputFormat::Table => {
+                    println!("Self-review score: {} / 100.", outcome.reflexion.score);
+                    if let Some(proposal) = proposal {
+                        println!("Document proposal {} [{}].", proposal.id, proposal.status.as_str());
+                        println!("Review: neoth proactive show {}", proposal.id);
+                        println!("Approve: neoth proactive accept {}", proposal.id);
+                        println!("Reject: neoth proactive reject {}", proposal.id);
+                    } else {
+                        println!("Self-review did not accept the candidate; no proposal was staged.");
+                    }
+                }
+            }
+            return Ok(());
+        }
+    };
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
             "{}",
@@ -2418,13 +2590,22 @@ mod tests {
             );
             assert!(review["chapter"]["range"]["end_byte"].as_u64().unwrap() > 0);
             assert!(review["chapter"].get("text").is_none());
-            assert!(!serde_json::to_string(&review["chapter"])
-                .unwrap()
-                .contains(marker));
-            assert!(review["rendered_review"]
-                .as_str()
-                .unwrap()
-                .contains(&format!("| {marker}")));
+            assert!(
+                !serde_json::to_string(&review["chapter"])
+                    .unwrap()
+                    .contains(marker)
+            );
+            // Extractors may fold a PDF's source line breaks. The marker must
+            // survive inside a defanged line, not necessarily start that line.
+            let defanged_source = document.review_text();
+            assert!(defanged_source.contains(marker));
+            assert!(defanged_source.lines().all(|line| line.starts_with("| ")));
+            assert!(
+                review["rendered_review"]
+                    .as_str()
+                    .unwrap()
+                    .contains(defanged_source)
+            );
         }
 
         let small_rtf_path = root.path().join("small.rtf");
@@ -2477,6 +2658,99 @@ mod tests {
             "local_ollama",
             "fixture-model",
         )
+    }
+
+    fn document_staging_outcome_fixture(
+        document: &crate::skills::doc_distill::DistilledDoc,
+    ) -> crate::skills::document_staging::DocumentStagingOutcome {
+        use crate::skills::document_staging::{DocumentStagingDraftV1, DocumentStagingRoute};
+        use sha2::Digest as _;
+        let route = DocumentStagingRoute::Memory {
+            scope: "document-review".to_owned(),
+            claims: vec!["An admitted source.".to_owned()],
+        };
+        let candidate_sha256 = hex::encode(sha2::Sha256::digest(serde_json::to_vec(&route).unwrap()));
+        let draft = DocumentStagingDraftV1 {
+            schema_version: 1,
+            source_bytes_sha256: document.provenance.source_bytes_sha256.clone(),
+            sanitized_input_hash: document.provenance.sanitized_input_hash.clone(),
+            candidate_sha256,
+            minimum_reflexion_score: 80,
+            reflexion_score: 90,
+            route,
+        };
+        let draft_json = serde_json::to_string(&draft).unwrap();
+        let draft_sha256 = hex::encode(sha2::Sha256::digest(draft_json.as_bytes()));
+        crate::skills::document_staging::DocumentStagingOutcome {
+            reflexion: crate::skills::doc_distill::DocumentReflexionResult {
+                score: 90,
+                minimum_score: 80,
+                verdict: crate::skills::doc_distill::DocumentReflexionVerdict::Accept,
+                reasons: vec!["| Supported by the admitted source.".to_owned()],
+                eligible_for_b7_staging: true,
+            },
+            draft_json: Some(draft_json),
+            draft_sha256: Some(draft_sha256),
+        }
+    }
+
+    #[test]
+    fn document_staging_cli_requires_an_explicit_compatible_destination() {
+        fn args(extra: &[&str]) -> Result<SkillsArgs> {
+            let mut argv = vec!["neoth", "skills", "--distill-doc", "guide.md", "--min-reflexion-score", "80"];
+            argv.extend_from_slice(extra);
+            let cli = crate::cli::Cli::try_parse_from(argv)?;
+            let crate::cli::Commands::Skills(args) = cli.command else { panic!("skills command") };
+            Ok(args)
+        }
+        assert!(document_staging_selection(&args(&[]).unwrap()).unwrap().is_none());
+        assert!(args(&["--stage-route", "memory"]).is_err());
+        assert!(args(&["--stage-target", "scope"]).is_err());
+        let selected = args(&["--stage-route", "memory", "--stage-target", "document-review"]).unwrap();
+        assert!(matches!(document_staging_selection(&selected).unwrap(), Some(
+            crate::skills::document_staging::DocumentStagingRequest::Memory { scope }
+        ) if scope == "document-review"));
+        let wrong_subdir = args(&["--stage-route", "memory", "--stage-target", "scope", "--stage-subdir", "NEOTH"]).unwrap();
+        assert!(document_staging_selection(&wrong_subdir).is_err());
+        let relative = args(&["--stage-route", "wiki", "--stage-target", "relative-vault"]).unwrap();
+        assert!(document_staging_selection(&relative).is_err());
+    }
+
+    #[test]
+    fn document_staging_persists_pending_once_without_applying_effects() {
+        use crate::proactive::action_staging::{ProposalStatus, list_proposals, set_proposal_status};
+        let home = tempfile::tempdir().unwrap();
+        let document = document_fixture();
+        let outcome = document_staging_outcome_fixture(&document);
+        let first = stage_document_outcome(home.path(), &document, &outcome, 1).unwrap().unwrap();
+        let replay = stage_document_outcome(home.path(), &document, &outcome, 2).unwrap().unwrap();
+        assert_eq!(first.id, replay.id);
+        assert_eq!(first.status, ProposalStatus::Pending);
+        assert_eq!(list_proposals(home.path(), None).unwrap().len(), 1);
+        assert_eq!(crate::proactive::ProactiveQueue::load_from(&home.path().join("proactive_queue.json")).unwrap().len(), 1);
+        assert!(!home.path().join("views.db").exists());
+        assert!(!home.path().join("skills").exists());
+        assert!(!home.path().join("wal").exists());
+        set_proposal_status(home.path(), &first.id, ProposalStatus::Rejected, "not wanted").unwrap();
+        let rejected = stage_document_outcome(home.path(), &document, &outcome, 3).unwrap().unwrap();
+        assert_eq!(rejected.status, ProposalStatus::Rejected);
+        assert_eq!(list_proposals(home.path(), None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn document_staging_rejects_changed_source_and_ineligible_draft_before_persistence() {
+        let home = tempfile::tempdir().unwrap();
+        let mut document = document_fixture();
+        let mut outcome = document_staging_outcome_fixture(&document);
+        document.provenance.source_bytes_sha256 = "c".repeat(64);
+        assert!(stage_document_outcome(home.path(), &document, &outcome, 1).is_err());
+        outcome.reflexion.eligible_for_b7_staging = false;
+        assert!(stage_document_outcome(home.path(), &document, &outcome, 1).is_err());
+        outcome.draft_json = None;
+        outcome.draft_sha256 = None;
+        assert!(stage_document_outcome(home.path(), &document, &outcome, 1).unwrap().is_none());
+        assert!(!home.path().join("proposals").exists());
+        assert!(!home.path().join("proactive_queue.json").exists());
     }
 
     #[test]

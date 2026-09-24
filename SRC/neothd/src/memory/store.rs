@@ -134,7 +134,8 @@ impl std::ops::DerefMut for PrivateHistoryConnection {
 /// v44: config-authoritative embedding generations; historical vectors stay
 ///      `legacy-unknown-v0` and are never inferred from model or dimension.
 /// v45: durable Dream Light/REM/Repair run, receipt, and observation journal.
-pub const SCHEMA_VERSION: i64 = 45;
+/// v46: B7 document-claim applied-once ledger, atomically paired with ground truth.
+pub const SCHEMA_VERSION: i64 = 46;
 
 /// Current P1-08 metadata schema, split so the v36→v37 migration can rebuild
 /// the altered strict tables before the final trigger set is installed.  The
@@ -3042,6 +3043,9 @@ fn apply_schema(conn: &Connection) -> Result<()> {
 
     conn.execute_batch(crate::daemon::dream_phases::DREAM_PHASE_SCHEMA_SQL)
         .context("create W331 Dream phase journal")?;
+
+    conn.execute_batch(crate::memory::document_claims::DOCUMENT_CLAIM_SCHEMA_SQL)
+        .context("create W848 document-claim applied-once ledger")?;
 
     // Stamp schema version (idempotent).
     conn.execute(

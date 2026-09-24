@@ -202,6 +202,21 @@ impl DistilledDoc {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn document_staging_test_document() -> DistilledDoc {
+    DistilledDoc {
+        provenance: DistillationProvenance {
+            source_kind: DocumentSourceKind::PlainText,
+            source_bytes: 51,
+            source_bytes_sha256: "a".repeat(64),
+            sanitized_input_hash: "b".repeat(64),
+            normalized_unicode: false,
+            stripped_control_characters: false,
+        },
+        review_text: "| source-grounded fixture material\n".to_owned(),
+    }
+}
+
 /// B6's monetary state. Unknown provider/model pairs stay unknown: this
 /// receipt deliberately does not use the UI-only conservative price fallback.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -331,7 +346,7 @@ pub fn document_reflexion_request(
 /// Build B6's conservative reflection envelope without knowing the first
 /// provider response. Any over-cap candidate is refused before reflection, so
 /// this fixed byte payload is a real upper bound for the second prompt.
-fn bounded_reflexion_preflight_request(
+pub(crate) fn bounded_reflexion_preflight_request(
     document: &DistilledDoc,
     model: String,
 ) -> crate::providers::Request {
@@ -349,6 +364,66 @@ pub fn preflight_estimate(
 ) -> DocumentDistillationPreflight {
     let candidate = document_distillation_request(document, model.to_owned());
     let reflexion = bounded_reflexion_preflight_request(document, model.to_owned());
+    let candidate_input = crate::providers::token_cap::request_token_upper_bound(&candidate);
+    let reflexion_input = crate::providers::token_cap::request_token_upper_bound(&reflexion);
+    let total_tokens_upper_bound = u64::from(candidate_input)
+        .saturating_add(u64::from(DOCUMENT_DISTILLATION_OUTPUT_TOKENS))
+        .saturating_add(u64::from(reflexion_input))
+        .saturating_add(u64::from(DOCUMENT_REFLEXION_OUTPUT_TOKENS));
+    let price = match crate::providers::cost::lookup_price(provider, model) {
+        None => DocumentDistillationPrice::Unknown {
+            input_eur: None,
+            output_eur: None,
+            total_eur: None,
+        },
+        Some(row) => {
+            let input_eur = (f64::from(candidate_input) + f64::from(reflexion_input)) / 1_000_000.0
+                * f64::from(row.input_eur_per_mtok);
+            let output_eur =
+                f64::from(DOCUMENT_DISTILLATION_OUTPUT_TOKENS + DOCUMENT_REFLEXION_OUTPUT_TOKENS)
+                    / 1_000_000.0
+                    * f64::from(row.output_eur_per_mtok);
+            let total_eur = input_eur + output_eur;
+            if input_eur == 0.0 && output_eur == 0.0 {
+                DocumentDistillationPrice::Free {
+                    input_eur,
+                    output_eur,
+                    total_eur,
+                }
+            } else {
+                DocumentDistillationPrice::Known {
+                    input_eur,
+                    output_eur,
+                    total_eur,
+                }
+            }
+        }
+    };
+    DocumentDistillationPreflight {
+        source_bytes_sha256: document.provenance.source_bytes_sha256.clone(),
+        sanitized_input_hash: document.provenance.sanitized_input_hash.clone(),
+        provider: provider.to_owned(),
+        model: model.to_owned(),
+        candidate_input_tokens_upper_bound: candidate_input,
+        candidate_output_tokens_ceiling: DOCUMENT_DISTILLATION_OUTPUT_TOKENS,
+        reflexion_input_tokens_upper_bound: reflexion_input,
+        reflexion_output_tokens_ceiling: DOCUMENT_REFLEXION_OUTPUT_TOKENS,
+        total_tokens_upper_bound,
+        price,
+    }
+}
+
+/// Calculate the B6 receipt for the exact bounded requests a specialized
+/// document flow will dispatch.  The generic B5 builder remains unchanged;
+/// callers that add a strict candidate schema must account for its prompt.
+#[must_use]
+pub(crate) fn preflight_estimate_for_requests(
+    document: &DistilledDoc,
+    provider: &str,
+    model: &str,
+    candidate: crate::providers::Request,
+    reflexion: crate::providers::Request,
+) -> DocumentDistillationPreflight {
     let candidate_input = crate::providers::token_cap::request_token_upper_bound(&candidate);
     let reflexion_input = crate::providers::token_cap::request_token_upper_bound(&reflexion);
     let total_tokens_upper_bound = u64::from(candidate_input)
@@ -476,7 +551,7 @@ pub async fn distill_with_reflexion(
     })
 }
 
-fn require_complete_document_response(
+pub(crate) fn require_complete_document_response(
     response: &crate::providers::Completion,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
@@ -1202,7 +1277,7 @@ fn verify_stable_snapshot(
     Ok(())
 }
 
-fn defang_for_operator_review(text: &str) -> Result<String, DocDistillError> {
+pub(crate) fn defang_for_operator_review(text: &str) -> Result<String, DocDistillError> {
     let mut review = String::new();
     review
         .try_reserve_exact(MAX_DEFANGED_REVIEW_BYTES)

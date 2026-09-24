@@ -149,6 +149,15 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
         ProactiveAction::Accept { id, note } => {
             let updated = set_proposal_status(&home, &id, ProposalStatus::Approved, &note)
                 .with_context(|| format!("approve proposal {id}"))?;
+            // A Document route consumes only the durable, reloaded immutable
+            // proposal record.  The transition above records the operator's
+            // verdict first; a missing/corrupt reload reaches no consumer.
+            let updated = if updated.kind == ProposalKind::Document {
+                load_proposal(&home, &id)
+                    .context("approved document proposal disappeared or became malformed before apply")?
+            } else {
+                updated
+            };
             print_status_change(&updated);
             // KF-04: accepting a Skill proposal installs it INACTIVE so the
             // forge -> propose -> accept loop produces a reviewable package,
@@ -173,6 +182,37 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
                                 "proposal {id} is approved, but Skill adoption failed; fix the cause and re-run `neoth proactive accept {id}`"
                             )
                         });
+                    }
+                }
+            }
+            if updated.kind == ProposalKind::Document {
+                match crate::proactive::document_staging::apply_approved_document_staging(
+                    &home,
+                    &updated,
+                    crate::time::now_unix_ns_i64(),
+                ) {
+                    Ok(receipt) => match receipt {
+                        crate::proactive::document_staging::DocumentStagingApplyReceipt::Skill { .. } => {
+                            println!("  document Skill route installed inactive (pending explicit activation)");
+                        }
+                        crate::proactive::document_staging::DocumentStagingApplyReceipt::Memory {
+                            applied_count,
+                            replayed_count,
+                        } => {
+                            println!("  document Memory route applied {applied_count} claim(s), reconciled {replayed_count}");
+                        }
+                        crate::proactive::document_staging::DocumentStagingApplyReceipt::VaultNote { reconciled, namespace_durability_unsupported } => {
+                            let state = if reconciled { "reconciled existing note" } else { "published create-only note" };
+                            println!("  document Vault route {state}");
+                            if namespace_durability_unsupported {
+                                println!("  document Vault note is exactly verified; namespace durability is unsupported on this platform");
+                            }
+                        }
+                    },
+                    Err(error) => {
+                        return Err(error).context(
+                            "document proposal remains Approved; re-run accept to reconcile its route after the reported failure",
+                        );
                     }
                 }
             }
@@ -491,6 +531,70 @@ fn default_vault_path() -> PathBuf {
 mod tests {
     use super::*;
     use crate::proactive::action_staging::{ProposalKind, make_proposal_id, save_proposal};
+    use crate::skills::document_staging::{DocumentStagingDraftV1, DocumentStagingRoute};
+    use sha2::{Digest as _, Sha256};
+
+    const DOCUMENT_SOURCE_SHA256: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const DOCUMENT_SANITIZED_SHA256: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    fn staged_document(title: &str, route: DocumentStagingRoute) -> ProposedAction {
+        let candidate_sha256 = hex::encode(Sha256::digest(
+            serde_json::to_string(&route).expect("canonical route JSON").as_bytes(),
+        ));
+        let draft = DocumentStagingDraftV1 {
+            schema_version: 1,
+            source_bytes_sha256: DOCUMENT_SOURCE_SHA256.to_owned(),
+            sanitized_input_hash: DOCUMENT_SANITIZED_SHA256.to_owned(),
+            candidate_sha256,
+            minimum_reflexion_score: 80,
+            reflexion_score: 90,
+            route,
+        };
+        let draft_yaml = serde_json::to_string(&draft).expect("canonical document draft JSON");
+        ProposedAction {
+            id: crate::proactive::action_staging::make_proposal_id_content_only(
+                ProposalKind::Document,
+                title,
+                &draft_yaml,
+            ),
+            kind: ProposalKind::Document,
+            title: title.to_owned(),
+            rationale: "metadata only".to_owned(),
+            draft_yaml,
+            generated_ts_unix: 100,
+            status: ProposalStatus::Pending,
+            operator_note: String::new(),
+        }
+    }
+
+    fn accept_document(home: &std::path::Path, id: &str) -> Result<()> {
+        run_proactive(ProactiveArgs {
+            action: ProactiveAction::Accept { id: id.to_owned(), note: String::new() },
+            home: Some(home.to_path_buf()),
+        })
+    }
+
+    fn document_audit_payloads(home: &std::path::Path, subtype: crate::wal::events::ExtendedSubtype) -> Vec<serde_json::Value> {
+        let mut payloads = Vec::new();
+        let wal = home.join("wal");
+        for entry in std::fs::read_dir(wal).expect("read document audit WAL") {
+            let path = entry.expect("WAL entry").path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("wal") {
+                continue;
+            }
+            let bytes = std::fs::read(&path).expect("read document audit segment");
+            crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+                if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                    && frame.header.event_subtype == subtype as u8
+                {
+                    payloads.push(serde_json::from_slice(frame.payload)?);
+                }
+                Ok(())
+            })
+            .expect("scan document audit segment");
+        }
+        payloads
+    }
 
     fn sample(id: &str, title: &str) -> ProposedAction {
         ProposedAction {
@@ -564,6 +668,195 @@ mod tests {
         let loaded = load_proposal(home.path(), &id).unwrap();
         assert_eq!(loaded.status, ProposalStatus::Rejected);
         assert_eq!(loaded.operator_note, "not now");
+    }
+
+    #[test]
+    fn document_reject_is_a_terminal_status_only_decision() {
+        let home = tempfile::tempdir().unwrap();
+        let id = make_proposal_id(ProposalKind::Document, "Document distillation (memory)", "not-applied", 100);
+        let proposal = ProposedAction {
+            id: id.clone(),
+            kind: ProposalKind::Document,
+            title: "Document distillation (memory)".to_owned(),
+            rationale: "metadata only".to_owned(),
+            draft_yaml: "not-applied".to_owned(),
+            generated_ts_unix: 100,
+            status: ProposalStatus::Pending,
+            operator_note: String::new(),
+        };
+        save_proposal(home.path(), &proposal).unwrap();
+        run_proactive(ProactiveArgs {
+            action: ProactiveAction::Reject { id: id.clone(), note: "no".to_owned() },
+            home: Some(home.path().to_path_buf()),
+        })
+        .expect("reject document proposal");
+        assert_eq!(load_proposal(home.path(), &id).unwrap().status, ProposalStatus::Rejected);
+        assert!(!home.path().join("views.db").exists(), "reject must not invoke a document consumer");
+        assert!(!home.path().join("skills").exists(), "reject must not install a document Skill");
+    }
+
+    #[test]
+    fn malformed_document_accept_records_approval_before_route_error() {
+        let home = tempfile::tempdir().unwrap();
+        let id = make_proposal_id(ProposalKind::Document, "Document distillation (memory)", "not-a-canonical-draft", 100);
+        let proposal = ProposedAction {
+            id: id.clone(),
+            kind: ProposalKind::Document,
+            title: "Document distillation (memory)".to_owned(),
+            rationale: "metadata only".to_owned(),
+            draft_yaml: "not-a-canonical-draft".to_owned(),
+            generated_ts_unix: 100,
+            status: ProposalStatus::Pending,
+            operator_note: String::new(),
+        };
+        save_proposal(home.path(), &proposal).unwrap();
+        assert!(run_proactive(ProactiveArgs {
+            action: ProactiveAction::Accept { id: id.clone(), note: String::new() },
+            home: Some(home.path().to_path_buf()),
+        })
+        .is_err());
+        assert_eq!(load_proposal(home.path(), &id).unwrap().status, ProposalStatus::Approved);
+        assert!(!home.path().join("views.db").exists(), "invalid draft must reach no document consumer");
+    }
+
+    #[tokio::test]
+    async fn document_memory_accept_replays_ledger_without_confidence_inflation_and_audits_metadata() {
+        let home = tempfile::tempdir().unwrap();
+        let claim = "release cadence is reviewed weekly";
+        let proposal = staged_document(
+            "Document distillation (memory)",
+            DocumentStagingRoute::Memory {
+                scope: "release-review".to_owned(),
+                claims: vec![claim.to_owned()],
+            },
+        );
+        save_proposal(home.path(), &proposal).unwrap();
+
+        // This runs under Tokio deliberately: the synchronous CLI consumer
+        // must move its audit future to its dedicated thread instead of
+        // attempting a nested `block_on` on the command dispatcher runtime.
+        accept_document(home.path(), &proposal.id).expect("first document memory accept");
+        let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+        let first: (i64, f64, i64) = conn
+            .query_row(
+                "SELECT COUNT(*), MIN(confidence), MIN(confirmed_count) FROM idx_groundtruth",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(first, (1, 0.5, 0));
+        assert_eq!(
+            conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM b7_applied_document_claim", [], |row| row.get(0)).unwrap(),
+            1
+        );
+        drop(conn);
+
+        accept_document(home.path(), &proposal.id).expect("reaccept reconciles document memory");
+        let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+        let replay: (i64, f64, i64) = conn
+            .query_row(
+                "SELECT COUNT(*), MIN(confidence), MIN(confirmed_count) FROM idx_groundtruth",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(replay, first, "reaccept must not reinsert or corroborate the fact");
+        drop(conn);
+
+        let audits = document_audit_payloads(home.path(), crate::wal::events::ExtendedSubtype::DocumentMemoryApplied);
+        assert!(!audits.is_empty(), "committed memory route needs a registered audit receipt");
+        let encoded = serde_json::to_string(&audits).unwrap();
+        assert!(!encoded.contains(claim), "raw claim must never enter the WAL receipt");
+        assert!(!encoded.contains(&home.path().display().to_string()), "full home path must never enter the WAL receipt");
+        assert_eq!(audits[0]["route"], "memory");
+        assert_eq!(audits[0]["source_bytes_sha256"], DOCUMENT_SOURCE_SHA256);
+    }
+
+    #[test]
+    fn document_memory_audit_failure_reports_committed_effect_and_reaccept_reconciles() {
+        let home = tempfile::tempdir().unwrap();
+        let proposal = staged_document(
+            "Document distillation (memory)",
+            DocumentStagingRoute::Memory {
+                scope: "release-review".to_owned(),
+                claims: vec!["audit failure must not duplicate facts".to_owned()],
+            },
+        );
+        save_proposal(home.path(), &proposal).unwrap();
+        std::fs::write(home.path().join("wal"), b"occupied by failure fixture").unwrap();
+
+        let error = accept_document(home.path(), &proposal.id).expect_err("audit must fail after DB effect");
+        assert!(format!("{error:#}").contains("route effect committed"));
+        assert_eq!(load_proposal(home.path(), &proposal.id).unwrap().status, ProposalStatus::Approved);
+        let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+        assert_eq!(conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM idx_groundtruth", [], |row| row.get(0)).unwrap(), 1);
+        drop(conn);
+
+        std::fs::remove_file(home.path().join("wal")).unwrap();
+        accept_document(home.path(), &proposal.id).expect("reaccept must reconcile ledger then record audit");
+        let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+        assert_eq!(conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM idx_groundtruth", [], |row| row.get(0)).unwrap(), 1);
+    }
+
+    #[test]
+    fn document_skill_accept_is_inactive_idempotent_and_preserves_operator_edit() {
+        use crate::skills::creator::{CreateParams, build_manifest};
+
+        let home = tempfile::tempdir().unwrap();
+        let (_, manifest) = build_manifest(&CreateParams {
+            id: "document_skill_test".to_owned(),
+            description: "document-derived test skill".to_owned(),
+            keywords: vec!["document".to_owned()],
+            system_prompt: "Only assist with document tests.".to_owned(),
+        })
+        .unwrap();
+        let proposal = staged_document(
+            "Document distillation (skill)",
+            DocumentStagingRoute::Skill { skill_manifest_yaml: manifest },
+        );
+        save_proposal(home.path(), &proposal).unwrap();
+        accept_document(home.path(), &proposal.id).expect("install inactive document skill");
+        let installed = home.path().join("skills").join("document_skill_test").join("skill.yaml");
+        let first = std::fs::read_to_string(&installed).unwrap();
+        let parsed: crate::skills::schema::SkillManifest = serde_yaml::from_str(&first).unwrap();
+        assert!(!parsed.enabled);
+        accept_document(home.path(), &proposal.id).expect("exact derived Skill reaccept is idempotent");
+        assert_eq!(std::fs::read_to_string(&installed).unwrap(), first);
+        std::fs::write(&installed, "operator-owned document skill edit\n").unwrap();
+        assert!(accept_document(home.path(), &proposal.id).is_err());
+        assert_eq!(std::fs::read_to_string(&installed).unwrap(), "operator-owned document skill edit\n");
+    }
+
+    #[test]
+    fn document_vault_note_accept_reconciles_exact_bytes_and_refuses_operator_edit() {
+        let home = tempfile::tempdir().unwrap();
+        let vault = tempfile::tempdir().unwrap();
+        let proposal = staged_document(
+            "Document distillation (wiki)",
+            DocumentStagingRoute::Wiki {
+                vault_root: vault.path().display().to_string(),
+                subdir: "NEOTH".to_owned(),
+                note_markdown: "# Operator knowledge\n\nThis belongs only in the selected vault.".to_owned(),
+            },
+        );
+        save_proposal(home.path(), &proposal).unwrap();
+        accept_document(home.path(), &proposal.id).expect("publish create-only document note");
+        let note_dir = vault.path().join("NEOTH").join("Documents");
+        let first_note = std::fs::read_dir(&note_dir).unwrap().next().unwrap().unwrap().path();
+        let first = std::fs::read_to_string(&first_note).unwrap();
+        let audits = document_audit_payloads(home.path(), crate::wal::events::ExtendedSubtype::DocumentNoteApplied);
+        assert_eq!(audits.len(), 1);
+        let encoded_audit = serde_json::to_string(&audits[0]).unwrap();
+        assert!(!encoded_audit.contains(&first), "document-note body must not enter WAL");
+        assert!(!encoded_audit.contains(&first_note.display().to_string()), "document-note path must not enter WAL");
+        assert_eq!(audits[0]["route"], "vault_note");
+        assert_ne!(audits[0]["target_identity_sha256"], audits[0]["route_content_sha256"]);
+        accept_document(home.path(), &proposal.id).expect("exact document note replay reconciles");
+        assert_eq!(std::fs::read_to_string(&first_note).unwrap(), first);
+        std::fs::write(&first_note, "operator-owned note edit\n").unwrap();
+        assert!(accept_document(home.path(), &proposal.id).is_err());
+        assert_eq!(std::fs::read_to_string(&first_note).unwrap(), "operator-owned note edit\n");
+        assert!(!home.path().join("views.db").exists(), "Vault note route must not use a memory or self-wiki store");
     }
 
     #[test]

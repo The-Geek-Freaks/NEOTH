@@ -299,6 +299,15 @@ pub enum ExtendedSubtype {
     RedactionRewriteReceipt = 0x33,
     /// ADOPT31-F4 — consent/audit receipt required before one yt-dlp caption or media egress.
     VideoDownloadConsented = 0x34,
+    /// ADOPT31-B7 — a document proposal applied an already-approved Skill route.
+    /// The payload is metadata-only and excludes the candidate manifest.
+    DocumentSkillApplied = 0x35,
+    /// ADOPT31-B7 — a document proposal applied an already-approved Memory route.
+    /// The payload is metadata-only; the SQLite claim ledger is the replay authority.
+    DocumentMemoryApplied = 0x36,
+    /// ADOPT31-B7 — a document proposal applied an already-approved Vault-note route.
+    /// The payload is metadata-only and never contains the operator's note body.
+    DocumentNoteApplied = 0x37,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -405,6 +414,9 @@ impl ExtendedSubtype {
             ExtendedSubtype::DreamPhaseAudit => "dream_phase_audit",
             ExtendedSubtype::RedactionRewriteReceipt => "redaction_rewrite_receipt",
             ExtendedSubtype::VideoDownloadConsented => "video_download_consented",
+            ExtendedSubtype::DocumentSkillApplied => "document_skill_applied",
+            ExtendedSubtype::DocumentMemoryApplied => "document_memory_applied",
+            ExtendedSubtype::DocumentNoteApplied => "document_note_applied",
         }
     }
 
@@ -463,6 +475,9 @@ impl ExtendedSubtype {
             0x32 => Some(ExtendedSubtype::DreamPhaseAudit),
             0x33 => Some(ExtendedSubtype::RedactionRewriteReceipt),
             0x34 => Some(ExtendedSubtype::VideoDownloadConsented),
+            0x35 => Some(ExtendedSubtype::DocumentSkillApplied),
+            0x36 => Some(ExtendedSubtype::DocumentMemoryApplied),
+            0x37 => Some(ExtendedSubtype::DocumentNoteApplied),
             _ => None,
         }
     }
@@ -523,6 +538,9 @@ impl ExtendedSubtype {
             Self::DreamPhaseAudit,
             Self::RedactionRewriteReceipt,
             Self::VideoDownloadConsented,
+            Self::DocumentSkillApplied,
+            Self::DocumentMemoryApplied,
+            Self::DocumentNoteApplied,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -4156,6 +4174,9 @@ mod tests {
             ExtendedSubtype::DreamPhaseAudit,
             ExtendedSubtype::RedactionRewriteReceipt,
             ExtendedSubtype::VideoDownloadConsented,
+            ExtendedSubtype::DocumentSkillApplied,
+            ExtendedSubtype::DocumentMemoryApplied,
+            ExtendedSubtype::DocumentNoteApplied,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

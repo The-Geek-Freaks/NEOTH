@@ -71,6 +71,8 @@ pub enum ProposalKind {
     Hook,
     /// A scalar tweak to `freedom.yaml` (e.g. enable a feature flag).
     ConfigTweak,
+    /// ADOPT31-B7 — a bounded document candidate awaiting explicit route apply.
+    Document,
 }
 
 impl ProposalKind {
@@ -80,6 +82,7 @@ impl ProposalKind {
             ProposalKind::Skill => "skill",
             ProposalKind::Hook => "hook",
             ProposalKind::ConfigTweak => "config_tweak",
+            ProposalKind::Document => "document",
         }
     }
 }
@@ -948,6 +951,17 @@ pub fn sync_proposals_to_obsidian(
 /// `ProactiveQueue`; dedup_key uses the proposal id so the same
 /// proposal can never enqueue twice.
 pub fn build_proposal_notification(proposal: &ProposedAction) -> ProactiveItem {
+    let body = if proposal.kind == ProposalKind::Document {
+        format!(
+            "Document proposal {} is ready for review. Inspect metadata with `neoth proactive show {}`; then explicitly run `neoth proactive accept {}` or `neoth proactive reject {}`.",
+            proposal.id, proposal.id, proposal.id, proposal.id
+        )
+    } else {
+        format!(
+            "Vorschlag bereit zur Sichtung: {} — siehe Obsidian-Vault unter Proposals/{}.md",
+            proposal.title, proposal.id
+        )
+    };
     ProactiveItem {
         priority: 40,
         dedup_key: format!("ob_03_proposal:{}", proposal.id),
@@ -955,10 +969,7 @@ pub fn build_proposal_notification(proposal: &ProposedAction) -> ProactiveItem {
         account_id: None,
         account_binding: None,
         source: "ob_03".to_string(),
-        body: format!(
-            "Vorschlag bereit zur Sichtung: {} — siehe Obsidian-Vault unter Proposals/{}.md",
-            proposal.title, proposal.id
-        ),
+        body,
         scheduled_for_unix: 0,
         is_failure: false,
         expires_unix: 0, // a pending proposal stays relevant until acted on
@@ -1057,6 +1068,7 @@ mod tests {
         assert_eq!(ProposalKind::Skill.as_str(), "skill");
         assert_eq!(ProposalKind::Hook.as_str(), "hook");
         assert_eq!(ProposalKind::ConfigTweak.as_str(), "config_tweak");
+        assert_eq!(ProposalKind::Document.as_str(), "document");
         assert_eq!(ProposalStatus::Pending.as_str(), "pending");
         assert_eq!(ProposalStatus::Approved.as_str(), "approved");
         assert_eq!(ProposalStatus::Rejected.as_str(), "rejected");
