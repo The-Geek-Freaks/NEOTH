@@ -1673,6 +1673,7 @@ GOLD-ADAPT-HARNESS-05 — JSON EvalCase suite runner
 - `--preset <PRESET>` — Provider preset to use for live runs (future; no-op in headless mode)
 - `--json` — Emit only the JSON report to stdout; suppress the summary table + Markdown
 - `--out-dir <OUT_DIR>` — Write report files to this directory instead of the default eval-runs/<ts>/
+- `--rubric-config <RUBRIC_CONFIG>` — Operator freedom.yaml holding D4 offline-rubric multipliers. Required only when the suite contains explicit `rubric_labels`
 
 ## `neoth events`
 

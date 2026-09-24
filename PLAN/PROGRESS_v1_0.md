@@ -2,6 +2,13 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W774 generated CLI reference (2026-09-24):** Core235 run35991244554
+passed slim production Clippy, core test-target typecheck, CLI build and CLI
+export. Optional workspace Clippy was not requested and was skipped. Root
+verified/imported artifact10805320688 (exact235source;ZIP80bc9e39…206ca,
+CLIb2a52841…76bbae). The reference now includes --rubric-config. Group1204
+can execute the four newly selected criteria; no behavior pass is claimed yet.
+
 **W770-W773 document and workflow-cost acceptance (2026-09-24):**
 Root admitted GUI35986281164 at5e9:159executed,158PASS1FAIL,29source/input
 bindings; Windows35988664776 atc6ef:55/55PASS,15bindings. All ten D2 GUI

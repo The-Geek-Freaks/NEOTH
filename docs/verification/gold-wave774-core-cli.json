@@ -1,0 +1,111 @@
+{
+  "schema": "neoth-wave774-core235-cli-reference-evidence/v1",
+  "run": {
+    "runId": 35991244554,
+    "jobId": 107605586512,
+    "workflow": "Generate CLI reference",
+    "job": "Export exact-source CLI reference",
+    "conclusion": "success",
+    "sourceHead": "235cf4c33350955b537b1f39e5e4cf7fbe3b4ad0",
+    "sourceRef": "refs/heads/main"
+  },
+  "artifact": {
+    "id": 10805320688,
+    "name": "generated-cli-reference",
+    "apiDigest": "sha256:80bc9e39fe8a84f1c8e779fcb742006ecaee3011024dbd37a5565cad877206ca",
+    "zipDigestVerified": true,
+    "sourceHeadFile": "235cf4c33350955b537b1f39e5e4cf7fbe3b4ad0",
+    "sourceHeadVerified": true,
+    "internalSha256SumsLine": "b2a5284138e5eb8996aa8514832ac430bd6151e7ec6ac77c6d12a162f076bbae  cli-commands.md",
+    "exportedCliSha256": "b2a5284138e5eb8996aa8514832ac430bd6151e7ec6ac77c6d12a162f076bbae",
+    "internalSha256SumsVerified": true
+  },
+  "sourceAndInputBindings": {
+    "head": "235cf4c33350955b537b1f39e5e4cf7fbe3b4ad0",
+    "count": 4,
+    "mismatches": 0,
+    "entries": [
+      {
+        "path": ".github/workflows/cli-reference.yml",
+        "sha256": "7010fcb9f74183c021e459899e08bc8821aa11aa288b4190e58e57570a810824"
+      },
+      {
+        "path": "SRC/Cargo.lock",
+        "sha256": "722ee0446dbac05b3e7d4eb9d44c7174e98e6e6fff5b633b5a30993edbcb61f0"
+      },
+      {
+        "path": "SRC/Cargo.toml",
+        "sha256": "df95718cf41e64a978132f997db8fc36333890c4d10705d127b771e3a5d6fd96"
+      },
+      {
+        "path": "docs/cli-commands.md",
+        "sha256": "c8e36c7606e89ce3d3e21239c1ee6dfd76a41833737e5ff7b5d51b9ca4d94325"
+      }
+    ]
+  },
+  "hostedSteps": [
+    {
+      "name": "Set up job",
+      "conclusion": "success"
+    },
+    {
+      "name": "Checkout requested source",
+      "conclusion": "success"
+    },
+    {
+      "name": "Setup Rust",
+      "conclusion": "success"
+    },
+    {
+      "name": "Install Linux workspace-Clippy build deps",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Restore Gold smoke compiler cache",
+      "conclusion": "success"
+    },
+    {
+      "name": "Check exact-source slim-core production Clippy",
+      "conclusion": "success"
+    },
+    {
+      "name": "Type-check core test targets before native validation",
+      "conclusion": "success"
+    },
+    {
+      "name": "Check exact Linux-quality workspace Clippy",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Build current public CLI",
+      "conclusion": "success"
+    },
+    {
+      "name": "Export generated reference",
+      "conclusion": "success"
+    },
+    {
+      "name": "Upload generated reference",
+      "conclusion": "success"
+    },
+    {
+      "name": "Post Checkout requested source",
+      "conclusion": "success"
+    },
+    {
+      "name": "Complete job",
+      "conclusion": "success"
+    }
+  ],
+  "importCandidate": {
+    "path": "C:\\Users\\Shadow-PC\\CascadeProjects\\AGENTER\\work\\gold-20260906\\wave774-core235\\generated-cli-reference-235cf4c33350955b537b1f39e5e4cf7fbe3b4ad0\\cli-commands.md",
+    "sha256": "b2a5284138e5eb8996aa8514832ac430bd6151e7ec6ac77c6d12a162f076bbae",
+    "sourceSnapshotPath": "docs/cli-commands.md",
+    "sourceSnapshotSha256": "c8e36c7606e89ce3d3e21239c1ee6dfd76a41833737e5ff7b5d51b9ca4d94325",
+    "differsFromSourceSnapshot": true,
+    "trackedFilesChanged": false
+  },
+  "localExecutableValidationRan": false,
+  "rootStatus": "ROOT_VERIFIED_IMPORTED",
+  "gateBoundary": "Slim production Clippy, core test-target typecheck, CLI build and CLI export passed; optional workspace Clippy skipped."
+}

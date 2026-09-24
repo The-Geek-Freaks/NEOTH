@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W770 B1/B4/D2 ACCEPTED;W772 hosted format imported;W773 diagnostic pending GitHub",
+  "status": "Core235PASS exactCLIimported;Group1204ready;GUIdiagnosticpending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 166827,
-    "sha256": "5BE1F351229F5052857A3B42B6C1BF5D13A51B0CDB44945440B17E0BCDD093AF"
+    "bytes": 166989,
+    "sha256": "943BAACF2FE4D2F0CE122F1B2E60D7480C8150E8CC3BB249BB2C136D61E22A0C"
   },
-  "sourceInputs": 943,
+  "sourceInputs": 944,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -32249,6 +32249,44 @@
       }
     ],
     "note": "159GUI158PASS1FAIL and55WindowsPASS admitted individually; no local executables. Core235 CLI export pending beforeGroup1204.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave778Exact235CliImport": {
+    "base": "272105e8db7317147ca5b03a214285b12d39229d",
+    "sources": [
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 249873,
+        "sha256": "B2A5284138E5EB8996AA8514832AC430BD6151E7EC6AC77C6D12A162F076BBAE",
+        "blob": "4726ca01887f0b0540fb6ac804a0e7f3336083f5"
+      },
+      {
+        "path": "docs/verification/gold-wave774-core-cli.json",
+        "bytes": 3552,
+        "sha256": "9EB4D88B7564E9F39B10A5A5B7D88233680BA95AEC7E4A24F11571534AFFE10A",
+        "blob": "052ebe4a5b93b8d12651c45e0f0393dbb8a5caca"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 251887,
+        "sha256": "072331E5FE58FE54E4D9A4098AB04FA91668CB1284213508B0A2BB677D518441",
+        "blob": "6c2821dfe90fb3164c689b933374404adea12167"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1263215,
+        "sha256": "41762388E858376563EA486A666A2421D731AF8F109951B597B26D9D02339E90",
+        "blob": "03533f4f052ff680bf8839b7fd22876b58b1d41e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1866266,
+        "sha256": "505841941779B1D37F479FA0069AE499BBBACCE357964EB41E42F62F866473CA",
+        "blob": "0cd94ead5d29190eaaa39e21cd7093871bb11d7c"
+      }
+    ],
+    "note": "Root verified235 artifact10805320688; no local executable validation. WorkspaceClippy was skipped; active slim/typecheck/build/export passed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
