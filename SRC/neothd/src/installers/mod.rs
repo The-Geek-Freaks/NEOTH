@@ -51,6 +51,8 @@ pub mod ocr;
 pub mod ollama;
 pub mod omi;
 pub mod paperless;
+pub mod paperless_bootstrap;
+pub mod paperless_lifecycle;
 pub mod paperless_readiness;
 pub mod paperless_staging;
 pub mod probe;

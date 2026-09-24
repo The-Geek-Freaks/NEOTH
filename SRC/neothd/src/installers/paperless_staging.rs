@@ -234,6 +234,67 @@ fn compose_bytes() -> &'static [u8] {
     b"services:\n  webserver:\n    image: ghcr.io/paperless-ngx/paperless-ngx@sha256:5fa76604a81df6945086e0837b14b56543d137e8ce4f311cc5d9ebe907e74e79\n    env_file:\n      - ./paperless.env\n    environment:\n      PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY:?PAPERLESS_SECRET_KEY is required}\n      PAPERLESS_DBNAME: ${PAPERLESS_DB_NAME:?PAPERLESS_DB_NAME is required}\n      PAPERLESS_DBUSER: ${PAPERLESS_DB_USER:?PAPERLESS_DB_USER is required}\n      PAPERLESS_DBPASS: ${PAPERLESS_DB_PASSWORD:?PAPERLESS_DB_PASSWORD is required}\n      PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER:?PAPERLESS_ADMIN_USER is required}\n      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD:?PAPERLESS_ADMIN_PASSWORD is required}\n      PAPERLESS_REDIS: redis://broker:6379\n      PAPERLESS_DBHOST: db\n    ports:\n      - \"127.0.0.1:${PAPERLESS_BIND_PORT:?PAPERLESS_BIND_PORT is required}:8000\"\n    volumes:\n      - ./state/data:/usr/src/paperless/data\n      - ./state/media:/usr/src/paperless/media\n  broker:\n    image: registry-1.docker.io/valkey/valkey@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11\n    volumes:\n      - ./state/valkey:/data\n  db:\n    image: registry-1.docker.io/library/postgres@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae\n    env_file:\n      - ./paperless.env\n    environment:\n      POSTGRES_DB: ${PAPERLESS_DB_NAME:?PAPERLESS_DB_NAME is required}\n      POSTGRES_USER: ${PAPERLESS_DB_USER:?PAPERLESS_DB_USER is required}\n      POSTGRES_PASSWORD: ${PAPERLESS_DB_PASSWORD:?PAPERLESS_DB_PASSWORD is required}\n    volumes:\n      - ./state/postgres:/var/lib/postgresql\n"
 }
 
+#[cfg(windows)]
+pub(crate) fn expected_compose_bytes() -> &'static [u8] { compose_bytes() }
+
+/// A byte-validated, capability-bound Paperless root. It is crate-internal so
+/// lifecycle code can retain one identity across external Docker operations.
+pub(crate) struct OwnedPaperlessRoot {
+    pub(crate) parent: cap_std::fs::Dir,
+    pub(crate) root: cap_std::fs::Dir,
+    pub(crate) binding: crate::skills::store::BoundDirectoryChild,
+    pub(crate) display: std::path::PathBuf,
+    pub(crate) root_name: std::ffi::OsString,
+}
+impl OwnedPaperlessRoot {
+    pub(crate) fn still_bound(&self) -> Result<bool, PaperlessStagingError> {
+        self.binding
+            .matches_directory_child(&self.parent, &self.root_name, &self.display)
+            .map_err(|_| PaperlessStagingError::Io)
+    }
+}
+
+/// Revalidate the original namespace binding and the exact staged payload
+/// after an external operation.  Callers retain `OwnedPaperlessRoot` across
+/// awaits; this prevents a same-named replacement from becoming trusted.
+pub(crate) fn still_exactly_owned(root: &OwnedPaperlessRoot) -> Result<bool, PaperlessStagingError> {
+    if !root.still_bound()? || !requested_namespace_still_names_stage(&root.display, root.binding.identity_token()) {
+        return Ok(false);
+    }
+    match open_owned_root_at(&root.display) {
+        Ok(reopened) => Ok(reopened.binding.identity_token() == root.binding.identity_token()),
+        Err(PaperlessStagingError::UnownedOrMismatch | PaperlessStagingError::UnsafePath) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+pub(crate) fn open_owned_root_at(root: &Path) -> Result<OwnedPaperlessRoot, PaperlessStagingError> {
+    validate_existing_ancestors(root)?;
+    let parent_path = root.parent().ok_or(PaperlessStagingError::UnsafePath)?;
+    let root_name = root.file_name().ok_or(PaperlessStagingError::UnsafePath)?.to_os_string();
+    let parent = crate::skills::store::open_absolute_bound_directory(parent_path, false, "paperless")
+        .map_err(|_| PaperlessStagingError::Io)?
+        .ok_or(PaperlessStagingError::Io)?;
+    let (root_dir, binding) = crate::skills::store::open_bound_real_child_dir(&parent.dir, &root_name, root)
+        .map_err(|_| PaperlessStagingError::UnsafePath)?;
+    for (name, expected) in expected_files() {
+        let bytes = crate::skills::store::read_regular_file_bounded(&root_dir, OsStr::new(name), &root.join(name), OWNED_FILE_MAX_BYTES)
+            .map_err(|_| PaperlessStagingError::UnownedOrMismatch)?;
+        if bytes != expected { return Err(PaperlessStagingError::UnownedOrMismatch); }
+    }
+    for entry in root_dir.entries().map_err(|_| PaperlessStagingError::Io)? {
+        let name = entry.map_err(|_| PaperlessStagingError::Io)?.file_name();
+        match name.to_str() {
+            Some(MARKER | COMPOSE | ENV_EXAMPLE) => {}
+            Some("paperless.env") => { crate::skills::store::open_regular_file(&root_dir, &name, &root.join(&name)).map_err(|_| PaperlessStagingError::UnownedOrMismatch)?; }
+            Some("state") => { crate::skills::store::open_real_child_dir(&root_dir, &name, &root.join(&name)).map_err(|_| PaperlessStagingError::UnownedOrMismatch)?; }
+            _ => return Err(PaperlessStagingError::UnownedOrMismatch),
+        }
+    }
+    let owned = OwnedPaperlessRoot { parent: parent.dir, root: root_dir, binding, display: root.to_path_buf(), root_name };
+    if !owned.still_bound()? { return Err(PaperlessStagingError::UnownedOrMismatch); }
+    Ok(owned)
+}
 fn inspect_owned(root: &Path) -> Result<bool, PaperlessStagingError> {
     validate_existing_ancestors(root)?;
     let parent_path = root.parent().ok_or(PaperlessStagingError::UnsafePath)?;

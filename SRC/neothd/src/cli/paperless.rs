@@ -37,6 +37,7 @@ use crate::cli::OutputFormat;
 use crate::installers::{
     paperless_readiness::{PaperlessReadiness, probe_configured_paperless_at},
     paperless_staging::{PaperlessStagingView, prepare_at},
+    paperless_lifecycle::{PaperlessLifecycleReceipt, install_at},
 };
 use crate::paperless::{self, OcrSyncOutcome, consult::consult, quarantine};
 use crate::security::paperless_ingest::{IngestError, OcrSource, ingest_ocr_text};
@@ -67,6 +68,8 @@ pub enum PaperlessAction {
     /// Check authenticated local API readiness using stored credentials.
     /// Artifact provenance and managed installation readiness remain separate.
     Status,
+    /// Pull and start the exact prepared Paperless contract, then bind API readiness to its Compose containers.
+    Install,
     /// Ingest one OCR document through the SC-16 sanitizer + write
     /// the Obsidian note under `<vault>/<subdir>/Paperless/<id>.md`.
     Ingest {
@@ -131,11 +134,19 @@ pub async fn run_paperless_command(args: PaperlessArgs, output: OutputFormat) ->
             paperless_status_at(&crate::config::FreedomConfig::default_neoth_home()).await?;
         print!("{}", render_paperless_status(&status, output)?);
         Ok(())
+    } else if matches!(args.action, PaperlessAction::Install) {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        let (_, credentials) = crate::config::load_optional_runtime_config_pair_from_path(
+            &home.join("freedom.yaml"),
+        )
+        .map_err(|_| anyhow::anyhow!("Paperless install could not read configured credentials"))?;
+        let receipt = install_at(&home, &credentials).await.map_err(anyhow::Error::new)?;
+        print!("{}", render_paperless_lifecycle(&receipt, output)?);
+        Ok(())
     } else {
         run_paperless(args)
     }
 }
-
 fn paperless_prepare_at(
     home: &std::path::Path,
     directory: Option<&std::path::Path>,
@@ -171,6 +182,22 @@ fn render_paperless_status(status: &PaperlessReadiness, output: OutputFormat) ->
     }
 }
 
+fn render_paperless_lifecycle(
+    receipt: &PaperlessLifecycleReceipt,
+    output: OutputFormat,
+) -> Result<String> {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => Ok(format!("{}\n", serde_json::to_string(receipt)?)),
+        OutputFormat::Table => Ok(format!(
+            "Paperless install: verified\nproject: {}\nloopback port: {}\nverified images: {}\nverified containers: {}\nauthenticated API ready: {}\n",
+            receipt.project,
+            receipt.loopback_port,
+            receipt.images.len(),
+            receipt.containers.len(),
+            receipt.authenticated_api_ready,
+        )),
+    }
+}
 fn render_paperless_staging(
     staging: &PaperlessStagingView,
     output: OutputFormat,
@@ -195,6 +222,9 @@ pub fn run_paperless(args: PaperlessArgs) -> Result<()> {
         }
         PaperlessAction::Prepare { .. } => {
             anyhow::bail!("Paperless prepare requires the asynchronous CLI entry")
+        }
+        PaperlessAction::Install => {
+            anyhow::bail!("Paperless install requires the asynchronous CLI entry")
         }
         PaperlessAction::Quarantine { action } => {
             let neoth_home = neoth_home_path();

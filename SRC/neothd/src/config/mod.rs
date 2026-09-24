@@ -776,6 +776,51 @@ pub(crate) fn load_optional_runtime_config_pair_from_path(
     })
 }
 
+/// Same read-only effective-pair operation with an already-open OS store.
+/// Supplying the store lets a caller keep its final keychain compare-and-set
+/// bound to the exact store view used for the effective-token check.
+pub(crate) fn load_optional_runtime_config_pair_read_only_with_store_from_path(
+    path: &Path,
+    injected_store: Option<&dyn keychain::SecretStore>,
+) -> Result<(Option<FreedomConfig>, credentials::Credentials)> {
+    credentials::with_coherent_pair_transaction_lock(path, || {
+        if path
+            .try_exists()
+            .with_context(|| format!("check freedom.yaml path {}", path.display()))?
+        {
+            let mut config = FreedomConfig::load_public_from_path_unlocked(path)?;
+            let credentials_path = credentials::sibling_credentials_path(path);
+            let raw = credentials::Credentials::load_or_default_unlocked(&credentials_path)?;
+            let credentials = if config.secrets_backend == SecretsBackend::Keychain {
+                if let Some(store) = injected_store {
+                    anyhow::ensure!(
+                        raw.n8n_api_key.is_none(),
+                        "adopted n8n API key must reside in the configured keychain backend"
+                    );
+                    let mut effective = raw;
+                    keychain::supplement_from_store(&mut effective, store)
+                        .context("supplement credentials from supplied OS keychain")?;
+                    keychain::supplement_telegram_account_tokens(&mut effective, store)
+                        .context("supplement Telegram account credentials from supplied OS keychain")?;
+                    effective
+                } else {
+                    credentials::Credentials::supplement_effective_unlocked(raw, config.secrets_backend)?
+                }
+            } else {
+                raw
+            };
+            merge_effective_credentials(&mut config, &credentials);
+            Ok((Some(config), credentials))
+        } else {
+            let credentials_path = credentials::sibling_credentials_path(path);
+            let raw = credentials::Credentials::load_or_default_unlocked(&credentials_path)?;
+            let effective =
+                credentials::Credentials::supplement_effective_unlocked(raw, SecretsBackend::File)?;
+            Ok((None, effective))
+        }
+    })
+}
+
 pub(crate) struct RuntimeConfigDiagnosticSnapshot {
     pub config: Option<FreedomConfig>,
     pub config_error: Option<String>,

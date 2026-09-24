@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W574 Windows-managed Paperless install (2026-09-24):**
+The async `paperless install` command now pulls the three admitted OCI pins,
+selects a fixed local Linux-engine endpoint/platform, verifies image config IDs,
+and starts the retained Compose contract with `--no-build --pull never`.
+Windows holds every launch ancestor, state/mount directory and read-only
+Compose/env handle until container and authenticated API checks complete.
+Ambient interpolation overrides are removed. Missing tokens bootstrap only
+after all three container bindings, then persist through the selected file or
+Keychain backend; existing tokens remain untouched. Private receipts publish
+only after post-readiness container revalidation. Other OS launch is explicitly
+unavailable; actual Docker installation, update/rollback/uninstall and P2-20 /
+002-09 acceptance remain open. Hosted formatting, CLI export and behavior checks
+are pending; no local executable validation ran. Catalog: 1241 universal native
+plus Windows29/Linux42/macOS41; Group966; Windows41 focused selection. GUI and
+Road counts are unchanged (1045 checked /277 open /2 partial).
 **W583-W584 stream follow-up and core (2026-09-24):**
 Core35941268561 at0e97dcca passed slim Clippy, test-target typecheck, public CLI
 build and reference export; the reference remains byte-identical (0bd07415).

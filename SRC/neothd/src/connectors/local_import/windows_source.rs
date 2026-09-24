@@ -18,6 +18,18 @@ use std::{
     ptr::{null, null_mut},
 };
 
+/// A regular file retained with write/delete sharing withheld.  The bytes are
+/// captured from this same handle so an external Windows consumer can safely
+/// use its still-named path while the guard stays alive.
+pub(super) struct WindowsApprovedFile {
+    _opened: OpenedLeaf,
+    bytes: zeroize::Zeroizing<Vec<u8>>,
+}
+
+impl WindowsApprovedFile {
+    pub(super) fn bytes(&self) -> &[u8] { &self.bytes }
+}
+
 use windows_sys::Win32::{
     Foundation::{HANDLE, INVALID_HANDLE_VALUE},
     Storage::FileSystem::{
@@ -212,6 +224,21 @@ fn open_relative_leaf(
     root: &ApprovedImportRoot,
     path: &Path,
 ) -> Result<OpenedLeaf, LocalImportError> {
+    open_relative_leaf_with_share(root, path, false)
+}
+
+fn open_relative_leaf_with_readonly_file(
+    root: &ApprovedImportRoot,
+    path: &Path,
+) -> Result<OpenedLeaf, LocalImportError> {
+    open_relative_leaf_with_share(root, path, true)
+}
+
+fn open_relative_leaf_with_share(
+    root: &ApprovedImportRoot,
+    path: &Path,
+    readonly_file: bool,
+) -> Result<OpenedLeaf, LocalImportError> {
     validate_relative_selection(path)?;
     let root_handle = root
         .handle
@@ -235,7 +262,7 @@ fn open_relative_leaf(
             ancestor_ids.push(directory_snapshot(&child)?.identity);
             fences.push(child);
         } else {
-            let leaf = open_child_file(parent, name)?;
+            let leaf = if readonly_file { open_child_file_readonly(parent, name)? } else { open_child_file(parent, name)? };
             let leaf_snapshot = file_snapshot(&leaf)?;
             return Ok(OpenedLeaf {
                 leaf,
@@ -258,6 +285,9 @@ fn open_child_directory(parent: &File, name: &OsStr) -> Result<File, LocalImport
 
 fn open_child_file(parent: &File, name: &OsStr) -> Result<File, LocalImportError> {
     nt_open(name, parent.as_raw_handle() as HANDLE, false)
+}
+fn open_child_file_readonly(parent: &File, name: &OsStr) -> Result<File, LocalImportError> {
+    nt_open_with_share(name, parent.as_raw_handle() as HANDLE, false, FILE_SHARE_READ)
 }
 
 fn nt_create(name: &[u16], root: HANDLE, directory: bool) -> Result<File, LocalImportError> {
@@ -287,6 +317,10 @@ fn nt_create(name: &[u16], root: HANDLE, directory: bool) -> Result<File, LocalI
 }
 
 fn nt_open(name: &OsStr, root: HANDLE, directory: bool) -> Result<File, LocalImportError> {
+    nt_open_with_share(name, root, directory, share_mode())
+}
+
+fn nt_open_with_share(name: &OsStr, root: HANDLE, directory: bool, share: u32) -> Result<File, LocalImportError> {
     let wide: Vec<u16> = name.encode_wide().collect();
     reject_component(&wide)?;
     let mut unicode = unicode_string(&wide)?;
@@ -301,11 +335,21 @@ fn nt_open(name: &OsStr, root: HANDLE, directory: bool) -> Result<File, LocalImp
             desired_access(directory),
             &attributes,
             &mut status,
-            share_mode(),
+            share,
             open_options(directory),
         )
     };
     nt_result(result, handle)
+}
+
+pub(super) fn hold_approved_regular_file(root: &ApprovedImportRoot, path: &Path, max_bytes: usize) -> Result<WindowsApprovedFile, LocalImportError> {
+    let mut opened = open_relative_leaf_with_readonly_file(root, path)?;
+    let before = opened.leaf_snapshot;
+    let expected_len = checked_len(before.end_of_file as u64, max_bytes)?;
+    let mut bytes = zeroize::Zeroizing::new(Vec::with_capacity(expected_len));
+    opened.leaf.by_ref().take((max_bytes as u64).saturating_add(1)).read_to_end(&mut bytes).map_err(|_| LocalImportError::Unavailable)?;
+    if bytes.len() != expected_len || bytes.len() > max_bytes || file_snapshot(&opened.leaf)? != before { return Err(LocalImportError::ChangedDuringRead); }
+    Ok(WindowsApprovedFile { _opened: opened, bytes })
 }
 
 fn unicode_string(name: &[u16]) -> Result<NtUnicodeString, LocalImportError> {
@@ -517,5 +561,19 @@ mod tests {
         assert!(!valid_identity(0, &[7; 16]));
         assert!(!valid_identity(7, &[0; 16]));
         assert!(valid_identity(7, &[9; 16]));
+    }
+
+    #[test]
+    fn held_regular_file_fence_blocks_writer_and_rename() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("compose.yaml");
+        std::fs::write(&source, b"pinned-compose").unwrap();
+        let approved = open_approved_root(root.path()).unwrap();
+        let guard = hold_approved_regular_file(&approved, Path::new("compose.yaml"), 1024).unwrap();
+        assert_eq!(guard.bytes(), b"pinned-compose");
+        assert!(std::fs::OpenOptions::new().write(true).open(&source).is_err());
+        assert!(std::fs::rename(&source, root.path().join("decoy.yaml")).is_err());
+        drop(guard);
+        assert!(std::fs::OpenOptions::new().write(true).open(&source).is_ok());
     }
 }

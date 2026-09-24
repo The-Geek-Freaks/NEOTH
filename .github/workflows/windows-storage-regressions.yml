@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   regressions:
-    name: Exact storage and managed-browser regressions
+    name: Exact storage, managed-browser and Paperless regressions
     runs-on: windows-2022
     timeout-minutes: 110
     env:
@@ -94,6 +94,23 @@ jobs:
           reflection::periodic::retention_v2_tests::v2_post_note_rename_before_transition_reconciles_deterministic_destination	neothd/src/reflection/retention_v2_tests.rs
           reflection::periodic::retention_v2_tests::v2_receipt_before_committed_ordering_is_idempotent_after_restart	neothd/src/reflection/retention_v2_tests.rs
           reflection::periodic::retention_v2_tests::v2_unlink_attempted_after_partial_unlink_is_reconciled_truthfully	neothd/src/reflection/retention_v2_tests.rs
+          installers::paperless_bootstrap::tests::dotenv_parser_accepts_literal_and_basic_quoted_admin_values	neothd/src/installers/paperless_bootstrap.rs
+          installers::paperless_bootstrap::tests::dotenv_parser_rejects_ambiguous_or_duplicate_admin_values	neothd/src/installers/paperless_bootstrap.rs
+          installers::paperless_bootstrap::tests::canonical_origin_accepts_only_literal_ipv4_loopback	neothd/src/installers/paperless_bootstrap.rs
+          installers::paperless_bootstrap::tests::file_persistence_refuses_existing_token_and_preserves_url	neothd/src/installers/paperless_bootstrap.rs
+          installers::paperless_bootstrap::tests::keychain_write_follows_real_pair_publication_and_rechecks_effective_state	neothd/src/installers/paperless_bootstrap.rs
+          installers::paperless_bootstrap::tests::obtains_token_from_a_bounded_local_http_endpoint	neothd/src/installers/paperless_bootstrap.rs
+          installers::paperless_lifecycle::tests::parses_only_a_single_literal_env_port	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::exact_identifier_rejects_multiple_or_spaced_container_ids	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::compose_never_pulls_and_uses_pinned_engine_endpoint	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::receipt_matches_all_pinned_indexes_and_contains_config_proof	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::container_validation_rejects_stopped_and_mixed_bindings	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::image_verification_uses_engine_platform_not_windows_host	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::docker_command_removes_only_compose_interpolation_overrides	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::windows_guarded_dispatcher_keeps_existing_token_and_binds_full_install	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::windows_guarded_dispatcher_rejects_remote_engine_before_pull	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::windows_guarded_dispatcher_bootstraps_missing_token_after_verified_containers	neothd/src/installers/paperless_lifecycle.rs
+          connectors::local_import::windows_source::tests::held_regular_file_fence_blocks_writer_and_rename	neothd/src/connectors/local_import/windows_source.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -110,7 +127,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 24 ]]; then
+          if [[ "$expected" -ne 41 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -120,7 +137,7 @@ jobs:
             cargo test -p neoth --lib --locked --no-run > "$evidence/compile.log" 2>&1 || compile_status=$?
           else
             compile_status=64
-            printf 'selection is not the required 24 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 41 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

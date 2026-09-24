@@ -84,6 +84,11 @@ pub struct ApprovedImportRoot {
     identity: PhysicalFileId,
 }
 
+#[cfg(windows)]
+pub(crate) struct ApprovedImportFile(windows_source::WindowsApprovedFile);
+#[cfg(windows)]
+impl ApprovedImportFile { pub(crate) fn bytes(&self) -> &[u8] { self.0.bytes() } }
+
 impl fmt::Debug for ApprovedImportRoot {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("ApprovedImportRoot(<redacted-handle>)")
@@ -243,6 +248,13 @@ pub(crate) fn approve_import_root(path: &Path) -> Result<ApprovedImportRoot, Loc
     }
     #[cfg(not(target_os = "macos"))]
     open_approved_root(path)
+}
+
+/// Retain a regular-file no-write/no-delete fence under an already approved
+/// Windows root and return bytes captured from that exact handle.
+#[cfg(windows)]
+pub(crate) fn hold_approved_import_file(root: &ApprovedImportRoot, relative: &Path, max_bytes: usize) -> Result<ApprovedImportFile, LocalImportError> {
+    windows_source::hold_approved_regular_file(root, relative, max_bytes).map(ApprovedImportFile)
 }
 
 #[cfg(target_os = "macos")]
