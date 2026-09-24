@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use clap::Args;
+use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -481,8 +481,12 @@ pub fn run_suite_with_rubric(
 
 #[derive(Args, Debug, Clone)]
 pub struct EvalArgs {
+    /// D5 workflow replay is deliberately a subcommand so a replay corpus can
+    /// never be mistaken for the legacy offline EvalCase suite.
+    #[command(subcommand)]
+    pub command: Option<EvalCommand>,
     /// Path to the JSON suite file (array of EvalCase).
-    pub suite: PathBuf,
+    pub suite: Option<PathBuf>,
     /// Hard cap on the total evaluation steps (cases) the suite may run.
     /// Cases beyond this limit are not executed and receive an Error verdict.
     #[arg(long, default_value = "25")]
@@ -502,9 +506,29 @@ pub struct EvalArgs {
     pub rubric_config: Option<PathBuf>,
 }
 
+#[derive(Subcommand, Debug, Clone)]
+pub enum EvalCommand {
+    /// Import one operator-selected completed task as a bounded replay corpus.
+    Capture(crate::cli::workflow_replay::WorkflowReplayCaptureArgs),
+    /// Execute a versioned workflow replay corpus through the current chat path.
+    Run(crate::cli::workflow_replay::WorkflowReplayRunArgs),
+}
+
 /// Entry point called from the `Commands` dispatch match.
 pub async fn run_eval_cmd(args: EvalArgs) -> Result<()> {
-    let suite_path = &args.suite;
+    match args.command {
+        Some(EvalCommand::Capture(capture)) => {
+            return crate::cli::workflow_replay::run_capture_cmd(capture).await;
+        }
+        Some(EvalCommand::Run(run)) => {
+            return crate::cli::workflow_replay::run_workflow_replay_cmd(run).await;
+        }
+        None => {}
+    }
+    let suite_path = args
+        .suite
+        .as_ref()
+        .context("legacy `neoth eval` requires <suite.json>; use `neoth eval run <corpus.json>` for workflow replay")?;
     let raw = std::fs::read_to_string(suite_path)
         .with_context(|| format!("read suite file {}", suite_path.display()))?;
     let cases: Vec<EvalCase> = serde_json::from_str(&raw)
@@ -663,6 +687,81 @@ fn resolve_out_dir(args: &EvalArgs) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Parser)]
+    struct EvalParserFixture {
+        #[command(flatten)]
+        eval: EvalArgs,
+    }
+
+    #[test]
+    fn cli_preserves_legacy_eval_flags_and_routes_capture_and_run() {
+        use clap::Parser as _;
+        use crate::cli::{Cli, Commands};
+
+        let legacy = Cli::try_parse_from([
+            "neoth",
+            "eval",
+            "legacy-suite.json",
+            "--json",
+            "--max-steps",
+            "7",
+            "--preset",
+            "offline",
+        ])
+        .expect("legacy eval CLI invocation must parse");
+        let Commands::Eval(legacy) = legacy.command else {
+            panic!("legacy invocation must route to eval");
+        };
+        assert!(legacy.command.is_none());
+        assert_eq!(legacy.suite, Some(std::path::PathBuf::from("legacy-suite.json")));
+        assert!(legacy.json);
+        assert_eq!(legacy.max_steps, 7);
+        assert_eq!(legacy.preset.as_deref(), Some("offline"));
+
+        let capture = Cli::try_parse_from([
+            "neoth", "eval", "capture", "input.json", "--out", "corpus.json",
+        ])
+        .expect("workflow capture CLI invocation must parse");
+        let Commands::Eval(capture) = capture.command else {
+            panic!("capture invocation must route to eval");
+        };
+        assert!(matches!(
+            capture.command,
+            Some(EvalCommand::Capture(crate::cli::workflow_replay::WorkflowReplayCaptureArgs { input, out }))
+                if input == std::path::PathBuf::from("input.json")
+                    && out == std::path::PathBuf::from("corpus.json")
+        ));
+
+        let run = Cli::try_parse_from([
+            "neoth", "eval", "run", "corpus.json", "--out-dir", "reports", "--json",
+        ])
+        .expect("workflow run CLI invocation must parse");
+        let Commands::Eval(run) = run.command else {
+            panic!("run invocation must route to eval");
+        };
+        assert!(matches!(
+            run.command,
+            Some(EvalCommand::Run(crate::cli::workflow_replay::WorkflowReplayRunArgs { corpus, out_dir: Some(out_dir), json: true }))
+                if corpus == std::path::PathBuf::from("corpus.json")
+                    && out_dir == std::path::PathBuf::from("reports")
+        ));
+    }
+
+    #[test]
+    fn legacy_suite_parse_stays_separate_from_workflow_replay_subcommands() {
+        let legacy = EvalParserFixture::try_parse_from(["test", "legacy-suite.json", "--max-steps", "2"])
+            .expect("legacy eval suite must parse")
+            .eval;
+        assert_eq!(legacy.suite, Some(std::path::PathBuf::from("legacy-suite.json")));
+        assert!(legacy.command.is_none());
+
+        let replay = EvalParserFixture::try_parse_from(["test", "run", "replay.json", "--json"])
+            .expect("workflow replay run must parse")
+            .eval;
+        assert!(matches!(replay.command, Some(EvalCommand::Run(_))));
+        assert!(replay.suite.is_none());
+    }
 
     fn tc(id: &str, answer: &str, expect: &str) -> EvalCase {
         EvalCase {

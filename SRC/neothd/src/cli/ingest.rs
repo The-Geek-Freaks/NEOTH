@@ -22,7 +22,7 @@ use clap::Args;
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::media::{
-    Asset, AssetKind, Extraction, ExtractionError, MediaExtractor, route_to_first_match,
+    Asset, AssetKind, Extraction, ExtractionError, MediaExtractor, VideoSource, route_to_first_match,
 };
 use crate::memory::{
     ctx::{IndexReport, IndexRequest, index_document},
@@ -39,7 +39,14 @@ pub struct IngestArgs {
     /// `.wav|.mp3|.flac|.ogg|.m4a` → audio,
     /// `.mp4|.mov|.mkv|.webm` → video,
     /// `.docx|.pptx|.xlsx|.odt|.ods|.odp|.epub|.rtf` → document.
-    pub path: PathBuf,
+    #[arg(required_unless_present = "video_url", conflicts_with = "video_url")]
+    pub path: Option<PathBuf>,
+
+    /// HTTPS/HTTP video URL to ingest through the pinned, managed yt-dlp.
+    /// The URL is never persisted by this command; persisted source references
+    /// use a SHA-256 binding instead.
+    #[arg(long, value_name = "HTTPS_URL")]
+    pub video_url: Option<String>,
 
     /// Override the views.db path. Defaults to `~/.neoth/views.db`.
     #[arg(long, value_name = "PATH")]
@@ -94,27 +101,44 @@ async fn run_ingest_with_context(
     effective_config: &FreedomConfig,
     neoth_home: &Path,
 ) -> Result<()> {
-    let path = args.path.clone();
-    if !path.exists() {
-        anyhow::bail!("path does not exist: {}", path.display());
-    }
-    let kind = detect_kind(&path).ok_or_else(|| {
-        anyhow::anyhow!(
-            "could not infer asset kind from extension on {} \
-             — supported: .pdf .png .jpg .jpeg .webp .gif .wav .mp3 .flac .ogg .m4a \
-             .mp4 .mov .mkv .webm .docx .pptx .xlsx .odt .ods .odp .epub .rtf",
-            path.display()
-        )
-    })?;
+    let (path, kind, source_ref, asset) = match (&args.path, &args.video_url) {
+        (Some(path), None) => {
+            if !path.exists() {
+                anyhow::bail!("path does not exist: {}", path.display());
+            }
+            let kind = detect_kind(path).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "could not infer asset kind from extension on {} \
+                     — supported: .pdf .png .jpg .jpeg .webp .gif .wav .mp3 .flac .ogg .m4a \
+                     .mp4 .mov .mkv .webm .docx .pptx .xlsx .odt .ods .odp .epub .rtf",
+                    path.display()
+                )
+            })?;
+            let asset = Asset::Path {
+                kind,
+                mime: mime_hint(kind, path),
+                path: path.clone(),
+            };
+            (Some(path.clone()), kind, canonical_source_ref(path), Some(asset))
+        }
+        (None, Some(url)) => (
+            None,
+            AssetKind::Video,
+            crate::media::video_url::source_ref(url),
+            None,
+        ),
+        _ => anyhow::bail!("provide exactly one local path or --video-url"),
+    };
     if args.analyze_video_frames && kind != AssetKind::Video {
         anyhow::bail!("--analyze-video-frames requires a video input");
     }
 
-    let asset = Asset::Path {
-        kind,
-        mime: mime_hint(kind, &path),
-        path: path.clone(),
-    };
+    if args.analyze_video_frames && args.video_url.is_some() {
+        anyhow::bail!("--analyze-video-frames requires a local video path");
+    }
+    if args.video_url.is_some() && args.no_audit {
+        anyhow::bail!("--no-audit is incompatible with --video-url: URL egress requires a WAL receipt");
+    }
     let backends = default_backends(&effective_config.media);
 
     // Audio STT needs the caller's effective policy and a real audit writer.
@@ -129,6 +153,7 @@ async fn run_ingest_with_context(
             .is_some_and(|fallback| !fallback.is_local());
     let stt_audit = if !args.analyze_video_frames
         && matches!(kind, AssetKind::Audio | AssetKind::Video)
+        && path.is_some()
         && !args.no_audit
     {
         let wal_dir = neoth_home.join("wal");
@@ -151,20 +176,49 @@ async fn run_ingest_with_context(
     } else {
         None
     };
+    // URL ingress is always audited before egress, even when the generic
+    // post-extraction audit was disabled. This writer is also passed through to
+    // the video/STT fallback.
+    let url_audit = if args.video_url.is_some() {
+        let wal_dir = neoth_home.join("wal");
+        std::fs::create_dir_all(&wal_dir)?;
+        let segment =
+            crate::wal::writer::unique_standalone_segment_path(&wal_dir, "ingest-video-url");
+        Some(crate::wal::writer::spawn_for_home_with_completion(
+            segment,
+            neoth_home.to_path_buf(),
+        )?)
+    } else {
+        None
+    };
     let extraction_result = if args.analyze_video_frames {
-        extract_visual_video_with_context(&asset, effective_config, neoth_home, args.no_audit)
+        extract_visual_video_with_context(
+            asset.as_ref().expect("local asset required"),
+            effective_config,
+            neoth_home,
+            args.no_audit,
+        )
             .await
             .map_err(|error| ExtractionError::Backend {
                 backend: "video",
                 reason: error.to_string(),
             })
+    } else if let Some(raw_url) = args.video_url.as_ref() {
+        crate::media::video_url::extract_with_context(
+            &VideoSource::Url(raw_url.clone()),
+            effective_config,
+            neoth_home,
+            &url_audit.as_ref().expect("URL audit writer required").0,
+        )
+        .await
     } else if matches!(kind, AssetKind::Audio | AssetKind::Video) {
+        let asset = asset.as_ref().expect("local asset required");
         let config = &effective_config;
         match kind {
             AssetKind::Audio => {
                 crate::media::audio::AudioExtractor
                     .extract_with_context(
-                        &asset,
+                        asset,
                         &config.media,
                         &config.updater,
                         neoth_home,
@@ -176,7 +230,7 @@ async fn run_ingest_with_context(
             AssetKind::Video => {
                 crate::media::video::VideoExtractor
                     .extract_with_context(
-                        &asset,
+                        asset,
                         &config.media,
                         &config.updater,
                         neoth_home,
@@ -188,7 +242,7 @@ async fn run_ingest_with_context(
             _ => unreachable!("guarded by audio/video match"),
         }
     } else {
-        route_to_first_match(&backends, &asset).await
+        route_to_first_match(&backends, asset.as_ref().expect("local asset required")).await
     };
     if let Some((writer, completion)) = stt_audit {
         drop(writer);
@@ -204,12 +258,20 @@ async fn run_ingest_with_context(
             );
         }
     }
+    if let Some((writer, completion)) = url_audit {
+        drop(writer);
+        completion
+            .wait()
+            .await
+            .context("finalize required video URL audit WAL writer")?;
+    }
     let extraction = extraction_result.map_err(|e| anyhow::anyhow!("extract: {e}"))?;
 
     let mut persisted = false;
     let mut embedding_dim: Option<usize> = None;
     if !args.no_persist {
-        let (rows_written, dim) = persist_embedding_if_any(&args, &extraction, neoth_home)?;
+        let (rows_written, dim) =
+            persist_embedding_if_any(&args, &extraction, kind, &source_ref, neoth_home)?;
         persisted = rows_written;
         embedding_dim = dim;
     }
@@ -219,6 +281,7 @@ async fn run_ingest_with_context(
             &args,
             &extraction,
             kind,
+            &source_ref,
             persisted,
             embedding_dim,
             neoth_home,
@@ -242,9 +305,9 @@ async fn run_ingest_with_context(
         match store::open(&db_path) {
             Ok(mut conn) => {
                 let req = IndexRequest {
-                    label: canonical_source_ref(&path),
+                    label: source_ref.clone(),
                     content: extraction.text.clone(),
-                    file_path: Some(path.display().to_string()),
+                    file_path: path.as_ref().map(|path| path.display().to_string()),
                     content_type: "prose".to_string(),
                     source_category: Some("ingest".to_string()),
                     event_id: None,
@@ -253,7 +316,7 @@ async fn run_ingest_with_context(
                     Ok(IndexReport { chunk_count, .. }) => {
                         tracing::debug!(
                             chunks = chunk_count,
-                            path = %path.display(),
+                            source_ref = %source_ref,
                             "ingest: indexed into ctx memory store"
                         );
                         Some(chunk_count)
@@ -274,7 +337,7 @@ async fn run_ingest_with_context(
     };
 
     let report = IngestReport {
-        path: path.display().to_string(),
+        path: source_ref.clone(),
         kind: format!("{kind:?}").to_lowercase(),
         text_bytes: extraction.text.len(),
         text_preview: preview(&extraction.text, 200),
@@ -457,6 +520,8 @@ fn preview(s: &str, max: usize) -> String {
 fn persist_embedding_if_any(
     args: &IngestArgs,
     extraction: &crate::media::Extraction,
+    asset_kind: AssetKind,
+    source_ref: &str,
     neoth_home: &Path,
 ) -> Result<(bool, Option<usize>)> {
     let Some(arr) = extraction.metadata["embedding"].as_array() else {
@@ -482,11 +547,10 @@ fn persist_embedding_if_any(
         .clone()
         .unwrap_or_else(|| neoth_home.join("views.db"));
     let conn = store::open(&db_path).context("open views.db")?;
-    let source_ref = canonical_source_ref(&args.path);
     // Phase 2b only emits CLIP image embeddings today. When audio or
     // text vectors come online, the `kind` here should follow the
     // emitting extractor's hint rather than a hardcoded "image".
-    let kind = match args.path_kind_hint() {
+    let kind = match asset_kind {
         AssetKind::Image => "image",
         AssetKind::Audio => "audio_segment",
         AssetKind::Video => "video_frame",
@@ -502,7 +566,7 @@ fn persist_embedding_if_any(
         })
         .unwrap_or_else(|| clip_engine::DEFAULT_CLIP_REPO.to_string());
     let dim = embedding.len();
-    embeddings::upsert(&conn, kind, &source_ref, &model, &embedding)
+    embeddings::upsert(&conn, kind, source_ref, &model, &embedding)
         .context("persist embedding")?;
     Ok((true, Some(dim)))
 }
@@ -523,13 +587,13 @@ async fn emit_audit_events(
     args: &IngestArgs,
     extraction: &crate::media::Extraction,
     asset_kind: AssetKind,
+    source_ref: &str,
     embedding_persisted: bool,
     embedding_dim: Option<usize>,
     home: &Path,
 ) -> Result<()> {
     // Build the frame payloads up front — both the forward path (daemon live)
     // and the one-shot-writer path emit the same bytes.
-    let source_ref = canonical_source_ref(&args.path);
     let kind_str = format!("{asset_kind:?}").to_lowercase();
     let model = extraction.metadata["extractor"]
         .as_str()
@@ -709,18 +773,10 @@ pub(crate) fn default_backends(
     ]
 }
 
-trait IngestArgsExt {
-    fn path_kind_hint(&self) -> AssetKind;
-}
-impl IngestArgsExt for IngestArgs {
-    fn path_kind_hint(&self) -> AssetKind {
-        detect_kind(&self.path).unwrap_or(AssetKind::Other)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     #[test]
     fn detect_kind_returns_image_for_known_extensions() {
@@ -728,6 +784,54 @@ mod tests {
             let p = PathBuf::from(format!("x.{ext}"));
             assert_eq!(detect_kind(&p), Some(AssetKind::Image), "ext: {ext}");
         }
+    }
+
+    #[test]
+    fn cli_accepts_exactly_one_local_path_or_video_url() {
+        let cli = crate::cli::Cli::try_parse_from([
+            "neoth",
+            "ingest",
+            "--video-url",
+            "https://example.test/watch",
+        ])
+        .expect("video URL form must parse");
+        let crate::cli::Commands::Ingest(args) = cli.command else {
+            panic!("expected ingest command");
+        };
+        assert!(args.path.is_none());
+        assert_eq!(args.video_url.as_deref(), Some("https://example.test/watch"));
+        assert!(crate::cli::Cli::try_parse_from(["neoth", "ingest"]).is_err());
+        assert!(crate::cli::Cli::try_parse_from([
+            "neoth",
+            "ingest",
+            "fixture.mp4",
+            "--video-url",
+            "https://example.test/watch",
+        ])
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn no_audit_rejects_url_before_any_managed_binary_or_transport() {
+        let home = tempfile::tempdir().unwrap();
+        let error = run_ingest_with_context(
+            IngestArgs {
+                path: None,
+                video_url: Some("https://example.test/watch".into()),
+                db: None,
+                wal_segment: None,
+                no_persist: true,
+                no_audit: true,
+                no_index: true,
+                analyze_video_frames: false,
+                output: OutputFormat::Json,
+            },
+            &FreedomConfig::default(),
+            home.path(),
+        )
+        .await
+        .expect_err("URL ingress must require durable audit before transport");
+        assert!(error.to_string().contains("--no-audit is incompatible with --video-url"));
     }
 
     #[test]
@@ -855,7 +959,8 @@ mod tests {
         std::fs::write(&doc_path, make_docx_fixture()).unwrap();
 
         let args = IngestArgs {
-            path: doc_path.clone(),
+            path: Some(doc_path.clone()),
+            video_url: None,
             db: Some(db_path.clone()),
             wal_segment: Some(wal_path),
             no_persist: true,
@@ -903,7 +1008,8 @@ mod tests {
         std::fs::write(&doc_path, make_docx_fixture()).unwrap();
 
         let args = IngestArgs {
-            path: doc_path.clone(),
+            path: Some(doc_path.clone()),
+            video_url: None,
             db: Some(db_path.clone()),
             wal_segment: Some(wal_path),
             no_persist: true,

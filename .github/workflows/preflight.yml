@@ -120,6 +120,7 @@ jobs:
           python3 packaging/tests/test_release_asset_contract.py
           python3 packaging/tests/test_release_capability_contract.py
           python3 packaging/tests/test_release_gate_contract.py
+          python3 packaging/tests/test_workflow_replay_gate.py
           python3 packaging/test_bootstrap_verifier.py
           python3 .github/release-tools/test-release-isolation.py
           python3 scripts/test_lost_feature_integrity.py

@@ -222,6 +222,77 @@ jobs:
       - name: Require complete Road to 1.0 Gold
         run: python packaging/roadmap_release_gate.py --release-tag
 
+      - name: Verify optional manual workflow-replay witness
+        shell: bash
+        env:
+          NEOTH_WORKFLOW_REPLAY_RUN_ID: ${{ vars.NEOTH_WORKFLOW_REPLAY_RUN_ID }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_id="${NEOTH_WORKFLOW_REPLAY_RUN_ID:-}"
+          if [[ -z "$run_id" ]]; then
+            echo "Manual workflow replay witness not requested; no provider is run."
+            exit 0
+          fi
+          if [[ ! "$run_id" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::NEOTH_WORKFLOW_REPLAY_RUN_ID must be one positive GitHub Actions run ID."
+            exit 1
+          fi
+          metadata="$RUNNER_TEMP/workflow-replay-run.json"
+          artifacts="$RUNNER_TEMP/workflow-replay-artifacts.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$metadata"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" > "$artifacts"
+          artifact_id="$(python - "$metadata" "$artifacts" "$GITHUB_SHA" <<'PY'
+          import json
+          import re
+          import sys
+          run = json.load(open(sys.argv[1], encoding="utf-8"))
+          artifacts = json.load(open(sys.argv[2], encoding="utf-8")).get("artifacts")
+          expected_sha = sys.argv[3]
+          if not isinstance(run, dict) or not isinstance(artifacts, list):
+              raise SystemExit("invalid workflow replay Actions API response")
+          required = {
+              "head_sha": expected_sha,
+              "status": "completed",
+              "conclusion": "success",
+              "event": "workflow_dispatch",
+              "path": ".github/workflows/workflow-replay-witness.yml",
+          }
+          for field, expected in required.items():
+              if run.get(field) != expected:
+                  raise SystemExit(f"workflow replay run {field} does not match the release candidate")
+          matches = [item for item in artifacts if isinstance(item, dict)
+                     and item.get("name") == f"workflow-replay-witness-{expected_sha}"
+                     and item.get("expired") is False and isinstance(item.get("id"), int)]
+          if len(matches) != 1:
+              raise SystemExit("workflow replay run must contain exactly one unexpired exact-head witness artifact")
+          print(matches[0]["id"])
+          PY
+          )"
+          witness_zip="$RUNNER_TEMP/workflow-replay-witness.zip"
+          witness_dir="$RUNNER_TEMP/workflow-replay-witness"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$witness_zip"
+          python - "$witness_zip" "$witness_dir" <<'PY'
+          import pathlib
+          import sys
+          import zipfile
+          archive, destination = map(pathlib.Path, sys.argv[1:])
+          expected = {"workflow-replay-release-witness-v1.json"}
+          with zipfile.ZipFile(archive) as bundle:
+              names = [item.filename for item in bundle.infolist() if not item.is_dir()]
+              if set(names) != expected or len(names) != len(expected):
+                  raise SystemExit("workflow replay witness must contain exactly workflow-replay-release-witness-v1.json")
+              if any(item.file_size > 2 * 1024 * 1024 for item in bundle.infolist()):
+                  raise SystemExit("workflow replay witness member exceeds byte bound")
+              destination.mkdir()
+              for name in expected:
+                  with bundle.open(name) as source, (destination / name).open("xb") as target:
+                      target.write(source.read(2 * 1024 * 1024 + 1))
+          PY
+          python packaging/workflow_replay_gate.py \
+            --manifest "$witness_dir/workflow-replay-release-witness-v1.json" \
+            --expected-source-revision "$GITHUB_SHA"
+
       - name: Verify release key and artifact isolation contracts
         run: python .github/release-tools/test-release-isolation.py
 

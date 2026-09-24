@@ -297,6 +297,8 @@ pub enum ExtendedSubtype {
     /// W373 — authenticated terminal receipt for one physical sealed-leaf WAL
     /// rewrite. The fixed descriptor binds only operation and digest metadata.
     RedactionRewriteReceipt = 0x33,
+    /// ADOPT31-F4 — consent/audit receipt required before one yt-dlp caption or media egress.
+    VideoDownloadConsented = 0x34,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -402,6 +404,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::CounterpartyConsentRevoked => "counterparty_consent_revoked",
             ExtendedSubtype::DreamPhaseAudit => "dream_phase_audit",
             ExtendedSubtype::RedactionRewriteReceipt => "redaction_rewrite_receipt",
+            ExtendedSubtype::VideoDownloadConsented => "video_download_consented",
         }
     }
 
@@ -459,6 +462,7 @@ impl ExtendedSubtype {
             0x31 => Some(ExtendedSubtype::CounterpartyConsentRevoked),
             0x32 => Some(ExtendedSubtype::DreamPhaseAudit),
             0x33 => Some(ExtendedSubtype::RedactionRewriteReceipt),
+            0x34 => Some(ExtendedSubtype::VideoDownloadConsented),
             _ => None,
         }
     }
@@ -518,6 +522,7 @@ impl ExtendedSubtype {
             Self::CounterpartyConsentRevoked,
             Self::DreamPhaseAudit,
             Self::RedactionRewriteReceipt,
+            Self::VideoDownloadConsented,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -4149,6 +4154,8 @@ mod tests {
             ExtendedSubtype::CounterpartyConsentGrant,
             ExtendedSubtype::CounterpartyConsentRevoked,
             ExtendedSubtype::DreamPhaseAudit,
+            ExtendedSubtype::RedactionRewriteReceipt,
+            ExtendedSubtype::VideoDownloadConsented,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

@@ -1,0 +1,51 @@
+name: Manual workflow replay witness
+
+on:
+  workflow_dispatch:
+    inputs:
+      witness_json:
+        description: 'Content-free release-witness manifest generated locally by packaging/workflow_replay_gate.py --emit-manifest.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  preserve-manual-witness:
+    name: Preserve exact-head manual replay witness
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact manually selected main revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Require main and validate content-free witness
+        shell: bash
+        env:
+          WITNESS_JSON: ${{ inputs.witness_json }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
+            echo "::error::manual workflow replay witness must be dispatched on main"
+            exit 1
+          }
+          witness_dir="$RUNNER_TEMP/workflow-replay-witness"
+          mkdir -p "$witness_dir"
+          umask 077
+          printf '%s' "$WITNESS_JSON" > "$witness_dir/workflow-replay-release-witness-v1.json"
+          unset WITNESS_JSON
+          python packaging/workflow_replay_gate.py \
+            --manifest "$witness_dir/workflow-replay-release-witness-v1.json" \
+            --expected-source-revision "$GITHUB_SHA"
+
+      - name: Upload exact-head content-free replay witness
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: workflow-replay-witness-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/workflow-replay-witness/workflow-replay-release-witness-v1.json
+          if-no-files-found: error
+          retention-days: 14

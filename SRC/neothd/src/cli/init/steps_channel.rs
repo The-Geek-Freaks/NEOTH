@@ -600,35 +600,60 @@ pub(crate) async fn step6g_credential_import(
     }
 }
 
-/// W-05 (Session 25) — wizard step 6h: install-command preview.
+/// W-05 / ADOPT31-F4 — wizard step 6h: recommended tools and managed yt-dlp.
 ///
 /// Reads the detect cache produced by `step1b_detect_environment`
 /// (W-04), identifies operator-visible missing dev tools (docker,
 /// node) and renders the per-OS install argv via
 /// `wizard::install_step::FallbackChain::for_host()` +
 /// `dry_run_install_commands`. The operator copies + runs the
-/// commands manually — the wizard NEVER executes privileged
-/// installs on the operator's behalf. This keeps the wizard's
-/// surface "informational" and matches AGENTER's hard rule about
-/// not invoking package managers without explicit go.
+/// commands manually. The exceptional managed yt-dlp install is offered only
+/// after an explicit wizard confirmation; it downloads one pinned, verified
+/// upstream release without invoking a package manager.
 ///
 /// Non-interactive runs skip entirely. Operators who want to
 /// audit the chain without prompts use
 /// `neoth wizard install --dry-run` (CLI surface in W-05b).
-pub(crate) fn step6h_install_recommended(
+pub(crate) async fn step6h_install_recommended(
     args: &InitArgs,
     interactive: bool,
     neoth_dir: &std::path::Path,
-) {
-    debug!("wizard step 6h: install-command preview (W-05)");
+) -> Result<()> {
+    debug!("wizard step 6h: recommended tools and managed yt-dlp");
     if !interactive || args.non_interactive {
         debug!("skipping install-command preview in non-interactive mode");
-        return;
+        return Ok(());
+    }
+    match crate::installers::yt_dlp::check_installed(neoth_dir).await {
+        Some(version) => println!("Managed yt-dlp {version} is already installed."),
+        None => {
+            println!("\nManaged yt-dlp is required for `neoth ingest --video-url …`.");
+            #[cfg(feature = "wizard")]
+            {
+                let install = dialoguer::Confirm::with_theme(
+                    &dialoguer::theme::ColorfulTheme::default(),
+                )
+                .with_prompt("Install the pinned, SHA-256-verified yt-dlp release now?")
+                .default(false)
+                .interact()
+                .context("managed yt-dlp install prompt")?;
+                if install {
+                    let path = crate::installers::yt_dlp::install_pinned(neoth_dir)
+                        .await
+                        .context("install managed yt-dlp")?;
+                    println!("Installed verified managed yt-dlp at {}.", path.display());
+                } else {
+                    println!("Skipped managed yt-dlp installation.");
+                }
+            }
+            #[cfg(not(feature = "wizard"))]
+            println!("Managed yt-dlp installation requires the interactive wizard feature.");
+        }
     }
     let now_unix = crate::time::now_unix_secs();
     let Some(report) = crate::installers::detect::load_cache(neoth_dir, now_unix) else {
         debug!("no detect cache; W-05 step has nothing to recommend");
-        return;
+        return Ok(());
     };
 
     // Identify the missing tools operators most commonly need
@@ -647,7 +672,7 @@ pub(crate) fn step6h_install_recommended(
         .collect();
     if missing.is_empty() {
         debug!("W-05: detect cache reports every recommended tool is already present");
-        return;
+        return Ok(());
     }
 
     println!("\n[6h/9] Install-command preview (W-05).");
@@ -663,7 +688,7 @@ pub(crate) fn step6h_install_recommended(
             .interact()
         {
             Ok(b) => b,
-            Err(_) => return,
+            Err(_) => return Ok(()),
         }
     };
     #[cfg(not(feature = "wizard"))]
@@ -671,13 +696,13 @@ pub(crate) fn step6h_install_recommended(
 
     if !opted_in {
         println!("Skipped — operator declined.");
-        return;
+        return Ok(());
     }
 
     let chain = crate::wizard::install_step::FallbackChain::for_host();
     if chain.is_empty() {
         println!("(No package-manager chain known for this host — install manually.)");
-        return;
+        return Ok(());
     }
     for (pkg_id, friendly) in &missing {
         println!("• {friendly} ({pkg_id})");
@@ -687,4 +712,5 @@ pub(crate) fn step6h_install_recommended(
         }
         println!();
     }
+    Ok(())
 }

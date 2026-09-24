@@ -77,6 +77,8 @@ pub mod editor;
 pub(crate) mod elicitation;
 pub mod email;
 pub mod eval;
+/// ADOPT31-D5 — operator-curated, contained single-turn workflow replay.
+pub(crate) mod workflow_replay;
 pub mod events;
 pub mod export;
 pub mod fact_check;

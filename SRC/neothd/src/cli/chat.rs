@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
-use clap::Args;
+use clap::{Args, Parser};
 use tracing::{info, warn};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -63,6 +63,8 @@ impl ChatTurnEventSink for CliChatOutput {
                     let _ = std::io::stdout().flush();
                 }
             }
+            // This private replay evidence is consumed only by ReplaySink.
+            ChatOutput::ReplayCompletedBody { .. } => {}
             ChatOutput::ReasoningDelta {
                 sequence,
                 delta,
@@ -355,6 +357,15 @@ pub struct ChatArgs {
     pub until: Vec<String>,
 }
 
+/// Private parser wrapper used only by the replay adapter. `ChatArgs` is a
+/// flattened clap argument group and therefore is not itself a top-level
+/// parser.
+#[derive(Parser)]
+struct WorkflowReplayChatArgsParser {
+    #[command(flatten)]
+    args: ChatArgs,
+}
+
 /// Per-turn operator registries loaded from one explicit instance home.
 ///
 /// Chat and channel turns use the same loader so malformed existing MCP,
@@ -390,6 +401,31 @@ pub(crate) fn load_instance_turn_state(paths: &InstancePaths) -> Result<Instance
         tweaks,
         profile_extensions,
     })
+}
+
+/// Immutable authority supplied only by the contained D5 replay adapter.
+///
+/// The regular chat path never constructs this value. It keeps replay's
+/// conversation state in its transient home while retaining the real
+/// operator-home accounting and genuinely installed skill registry.
+#[derive(Clone, Debug)]
+pub(crate) struct ReplayTurnContext {
+    pub(crate) actual_usage_home: PathBuf,
+    pub(crate) installed_skill_home: PathBuf,
+    pub(crate) installed_skill_config: PathBuf,
+}
+
+/// Exact skill resolved from the replay's authority-bound prompt snapshot.
+/// This is report metadata only; it grants no additional capability.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ReplaySelectedSkill {
+    pub(crate) id: String,
+    pub(crate) content_sha256: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct WorkflowReplayTurnObservation {
+    pub(crate) selected_skill: Option<ReplaySelectedSkill>,
 }
 
 fn persist_chat_onboarding_complete(config_path: &std::path::Path) -> Result<()> {
@@ -2265,6 +2301,9 @@ pub(super) struct PromptBuildContext<'a> {
 pub(super) struct PromptBuildOptions {
     pub(super) slash_skill_name: Option<String>,
     pub(super) persona_override_from_tweaks: Option<String>,
+    /// D5 replay reads the current installed registry without making it part
+    /// of the contained conversation home.
+    pub(super) replay_skill_registry: Option<(PathBuf, PathBuf)>,
 }
 
 pub(super) async fn build_prompt_bundle(
@@ -2290,6 +2329,7 @@ pub(super) async fn build_prompt_bundle(
         slash_skill_name,
         // B22-TWEAKS-MODEL-01 — pre-loaded fail-loud at the chat boundary.
         persona_override_from_tweaks,
+        replay_skill_registry,
     } = options;
 
     // GOLD-R4-11 — this is the central, fail-closed Incognito prompt
@@ -2403,12 +2443,15 @@ pub(super) async fn build_prompt_bundle(
             if p.is_absolute() { p } else { cwd.join(s) }
         })
         .collect();
-    let skills_dir = home.join("skills");
+    let (skills_dir, skill_config_path) = replay_skill_registry.unwrap_or_else(|| {
+        (
+            home.join("skills"),
+            args.config.clone().unwrap_or_else(|| home.join("freedom.yaml")),
+        )
+    });
     let one_shot_reload = std::sync::Arc::new(crate::config::reload::ReloadController::new(
         config.clone(),
-        args.config
-            .clone()
-            .unwrap_or_else(|| home.join("freedom.yaml")),
+        skill_config_path,
     ));
     let one_shot_config_epoch = one_shot_reload.accepted_snapshot().epoch();
     // E-22 chat-route (Session 21, 2026-05-23): swap raw `load_all` for
@@ -3227,6 +3270,7 @@ pub(super) async fn enforce_preflight(
     prompt: String,
     provider: &dyn crate::providers::Provider,
     args: &ChatArgs,
+    replay_mode: bool,
     config: &FreedomConfig,
     writer: crate::wal::writer::WalWriterHandle,
     wal_session: Option<crate::wal::WalSessionContext>,
@@ -3819,10 +3863,11 @@ pub(super) async fn enforce_preflight(
     // Operator hooks are policy, not optional decoration. A malformed or
     // unreadable configured hook must never turn into an empty policy set and
     // let the provider call continue.
-    let hooks = if args.incognito {
+    let hooks = if args.incognito || replay_mode {
         // Hook files are operator-defined extension state.  Do not even open
-        // their directory for a private turn; an empty policy set preserves
-        // the normal provider/consent path without injecting personal policy.
+        // their directory for a private or contained replay turn; an empty
+        // policy set preserves the provider/consent path without injecting
+        // operator extension effects.
         Vec::new()
     } else {
         match crate::hooks::load_all_strict(&hook_dir).await {
@@ -5967,6 +6012,9 @@ pub(super) async fn dispatch_provider(
     skill_invocation_policy: Option<crate::skills::resolver::SkillInvocationPolicy>,
     normal_chat_role: Option<&crate::cli::chat_turn_pipeline::NormalChatRoleBinding>,
     progress: Option<&crate::cli::chat_turn_watchdog::TurnProgressHandle>,
+    /// D5 replay retains normal authorization but binds its canonical usage
+    /// accounting to the real operator home, never the transient turn home.
+    replay_usage_home: Option<&std::path::Path>,
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<DispatchOutput> {
     // Consent is revalidated by ProviderCallAuthorizer immediately before
@@ -6051,7 +6099,7 @@ pub(super) async fn dispatch_provider(
             Some(writer.clone()),
             config.tokens.max_per_request,
         )
-        .with_usage_home(home.to_path_buf())
+        .with_usage_home(replay_usage_home.unwrap_or(home).to_path_buf())
         .with_turn_effect_gate(turn_effect_gate.clone())
         .with_skill_invocation_policy(skill_invocation_policy.clone())
         .with_ephemeral_consent(ephemeral_consent.clone())
@@ -8976,6 +9024,142 @@ pub(crate) async fn run_chat_with_to(
     .await
 }
 
+/// Execute exactly one contained D5 replay turn through the normal chat
+/// preparation and prepared-turn pipeline. Provider construction and consent
+/// remain owned by the replay command at the actual operator-home boundary.
+pub(crate) async fn run_workflow_replay_turn(
+    config: FreedomConfig,
+    provider: &dyn crate::providers::Provider,
+    replay_home: PathBuf,
+    actual_usage_home: PathBuf,
+    ephemeral_consent: crate::consent::EphemeralConsent,
+    message: String,
+    skill: Option<String>,
+    output: &mut dyn ChatTurnEventSink,
+) -> Result<WorkflowReplayTurnObservation> {
+    run_workflow_replay_turn_at(
+        config,
+        provider,
+        replay_home,
+        actual_usage_home,
+        FreedomConfig::default_path(),
+        ephemeral_consent,
+        message,
+        skill,
+        output,
+    )
+    .await
+}
+
+/// Testable form of the replay adapter. Production always binds the installed
+/// skill registry to the normal default configuration path above.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_workflow_replay_turn_at(
+    config: FreedomConfig,
+    provider: &dyn crate::providers::Provider,
+    replay_home: PathBuf,
+    actual_usage_home: PathBuf,
+    installed_skill_config: PathBuf,
+    ephemeral_consent: crate::consent::EphemeralConsent,
+    message: String,
+    skill: Option<String>,
+    output: &mut dyn ChatTurnEventSink,
+) -> Result<WorkflowReplayTurnObservation> {
+    anyhow::ensure!(
+        !message.trim_start().starts_with('/'),
+        "workflow replay rejects slash-command input"
+    );
+    let replay_config = replay_home.join("freedom.yaml");
+    let mut argv = vec![
+        "workflow-replay".to_owned(),
+        "--config".to_owned(),
+        replay_config.display().to_string(),
+    ];
+    if let Some(skill) = skill {
+        argv.push("--skill".to_owned());
+        argv.push(skill);
+    }
+    argv.push("--".to_owned());
+    argv.push(message);
+    let args = WorkflowReplayChatArgsParser::try_parse_from(argv)
+        .context("construct contained workflow replay turn")?
+        .args;
+    let replay_context = ReplayTurnContext {
+        actual_usage_home: actual_usage_home.clone(),
+        installed_skill_home: actual_usage_home,
+        installed_skill_config,
+    };
+    // These UX markers are not part of task preparation and would otherwise
+    // write back through the transient config path after a successful reply.
+    let mut replay_config = config;
+    replay_config.chat_onboarding_completed = true;
+    replay_config.skills.session_catalog = false;
+    let input = prepare_chat_turn_input(
+        args,
+        replay_config,
+        provider,
+        ephemeral_consent,
+        None,
+        false,
+        None,
+        Some(replay_context),
+        crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
+        output,
+    )
+    .await?;
+    let mut prepared = match finish_chat_turn_preparation(input, output).await? {
+        chat_turn_pipeline::ChatPreparationOutcome::Ready(prepared) => prepared,
+        chat_turn_pipeline::ChatPreparationOutcome::Completed => {
+            anyhow::bail!("workflow replay rejected a local action before provider dispatch")
+        }
+    };
+    let wal_dir = replay_home.join("wal");
+    std::fs::create_dir_all(&wal_dir)
+        .with_context(|| format!("create contained workflow replay WAL directory {}", wal_dir.display()))?;
+    let segment_path = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "workflow-replay");
+    let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(
+        segment_path.clone(),
+        replay_home,
+    )
+    .context("spawn contained workflow replay WAL writer")?;
+    let result = chat_turn_pipeline::run_prepared_chat_turn(
+        &mut prepared,
+        provider,
+        &writer,
+        &segment_path,
+        output,
+    )
+    .await;
+    prepared.preparation.cancellation.close();
+    let response_feedback_home = prepared.preparation.first_tour_home.clone();
+    let response_feedback_incognito = prepared.input.incognito;
+    let response_feedback_receipt = prepared.take_feedback_eligible_agent_receipt();
+    let response_feedback_token = prepared
+        .preparation
+        .stream_control_token
+        .as_ref()
+        .map(|token| token.as_str());
+    drop(writer);
+    let drained = completion
+        .wait()
+        .await
+        .context("drain contained workflow replay WAL writer");
+    finish_cli_chat_turn_with_response_feedback(
+        result,
+        drained,
+        &mut prepared.deferred_failure_output,
+        &mut prepared.deferred_terminal,
+        output,
+        &response_feedback_home,
+        response_feedback_incognito,
+        response_feedback_token,
+        response_feedback_receipt.as_ref(),
+    )?;
+    Ok(WorkflowReplayTurnObservation {
+        selected_skill: prepared.preparation.replay_selected_skill.clone(),
+    })
+}
+
 /// Admit automatic coding only when the normal chat-priority checks pass and
 /// the operator has explicitly selected the repository that owns the work.
 /// Keeping this policy free of process state makes the chat/code boundary
@@ -9286,6 +9470,7 @@ pub(crate) async fn prepare_daemon_plain_chat_turn(
         None,
         false,
         Some(role_policy_reload),
+        None,
         cancellation,
         output,
     )
@@ -9354,6 +9539,7 @@ pub(crate) async fn prepare_daemon_gui_chat_turn(
         None,
         true,
         Some(role_policy_reload),
+        None,
         cancellation,
         output,
     )
@@ -9378,6 +9564,7 @@ struct ChatTurnPreparationInput {
     ephemeral_consent: crate::consent::EphemeralConsent,
     stream_control_token: Option<Zeroizing<String>>,
     typed_gui_controls: bool,
+    replay_context: Option<ReplayTurnContext>,
     cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
     session_canary: std::sync::Arc<crate::security::injection_tracker::CanaryToken>,
     instance_paths: InstancePaths,
@@ -9461,6 +9648,7 @@ async fn prepare_cli_chat_turn(
         stream_control_token,
         false,
         None,
+        None,
         cancellation,
         output,
     )
@@ -9483,6 +9671,7 @@ async fn prepare_chat_turn_input(
     stream_control_token: Option<Zeroizing<String>>,
     typed_gui_controls: bool,
     role_policy_reload: Option<std::sync::Arc<crate::config::reload::ReloadController>>,
+    replay_context: Option<ReplayTurnContext>,
     cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<ChatTurnPreparationInput> {
@@ -9697,6 +9886,7 @@ async fn prepare_chat_turn_input(
         ephemeral_consent,
         stream_control_token,
         typed_gui_controls,
+        replay_context,
         cancellation,
         session_canary,
         instance_paths,
@@ -9843,6 +10033,7 @@ async fn finish_chat_turn_preparation(
         ephemeral_consent,
         stream_control_token,
         typed_gui_controls,
+        replay_context,
         cancellation,
         session_canary,
         instance_paths,
@@ -9959,6 +10150,8 @@ async fn finish_chat_turn_preparation(
                 ephemeral_consent,
                 stream_control_token,
                 typed_gui_controls,
+                replay_context,
+                replay_selected_skill: None,
                 reasoning_display: args.show_reasoning,
                 cancellation,
                 session_canary,
@@ -21939,6 +22132,7 @@ template = "[REDACTED]"
             None,
             None,
             None,
+            None,
             output,
         )
         .await;
@@ -24472,6 +24666,7 @@ template = "[REDACTED]"
             PromptBuildOptions {
                 slash_skill_name: None,
                 persona_override_from_tweaks: None,
+                replay_skill_registry: None,
             },
         )
         .await;
@@ -24559,6 +24754,7 @@ template = "[REDACTED]"
                 PromptBuildOptions {
                     slash_skill_name: None,
                     persona_override_from_tweaks: None,
+                    replay_skill_registry: None,
                 },
             )
             .await
@@ -24637,6 +24833,7 @@ template = "[REDACTED]"
             PromptBuildOptions {
                 slash_skill_name: None,
                 persona_override_from_tweaks: None,
+                replay_skill_registry: None,
             },
         )
         .await
@@ -24764,7 +24961,7 @@ template = "[REDACTED]"
             "if !args.incognito\n",
             "        && !config.chat_onboarding_completed"
         )));
-        assert!(production.contains("let hooks = if args.incognito {"));
+        assert!(production.contains("let hooks = if args.incognito || replay_mode {"));
         assert!(production.contains("let mut journal = if args.incognito {"));
         assert!(
             engine_production
@@ -25274,6 +25471,7 @@ template = "[REDACTED]"
             PromptBuildOptions {
                 slash_skill_name: None,
                 persona_override_from_tweaks: None,
+                replay_skill_registry: None,
             },
         )
         .await
@@ -26033,6 +26231,7 @@ template = "[REDACTED]"
             None,
             None,
             None,
+            None,
             &mut CliChatOutput,
         )
         .await;
@@ -26183,6 +26382,7 @@ template = "[REDACTED]"
             None,
             None,
             None,
+            None,
             &mut output,
         );
 
@@ -26327,6 +26527,7 @@ template = "[REDACTED]"
             &crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
             &[],
             &crate::hooks::SessionOnceGuard::new(),
+            None,
             None,
             None,
             None,

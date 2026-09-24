@@ -96,6 +96,7 @@ pub mod tts_provider;
 /// build.
 pub mod vad;
 pub mod video;
+pub mod video_url;
 /// MM-02b — video analysis dispatch: decode → vision synth → 0xC9 audit.
 pub mod video_dispatch;
 pub mod video_frames;
@@ -105,6 +106,13 @@ pub mod video_probe;
 pub mod vision;
 
 use anyhow::Result;
+
+/// Explicit video input. URL egress is implemented only by `video_url`; local assets remain local.
+#[derive(Debug, Clone)]
+pub enum VideoSource {
+    Asset(Asset),
+    Url(String),
+}
 
 /// One typed media asset that flows through the pipeline. Either raw bytes
 /// in memory (small attachments, voice notes) or a path reference (large

@@ -592,6 +592,8 @@ impl PlainChatSink {
             // W168's typed live state is likewise private to the daemon GUI
             // stream and has no sealed plain-RPC representation.
             ChatOutput::LiveThroughputState { .. } => return Ok(()),
+            // Replay completion evidence is private to its scoring sink.
+            ChatOutput::ReplayCompletedBody { .. } => return Ok(()),
             ChatOutput::HumanStdout { text } => (DaemonPlainChatRecordKind::Stdout, text),
             ChatOutput::HumanStderr { text } => (DaemonPlainChatRecordKind::Stderr, text),
             ChatOutput::Notice {

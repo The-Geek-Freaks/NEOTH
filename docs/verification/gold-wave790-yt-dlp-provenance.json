@@ -1,0 +1,49 @@
+{
+  "schema": "neoth-yt-dlp-pinned-release-provenance/v1",
+  "upstream": "https://github.com/yt-dlp/yt-dlp",
+  "release": "2026.08.19",
+  "releaseUrl": "https://github.com/yt-dlp/yt-dlp/releases/tag/2026.08.19",
+  "retrievedUtc": "2026-09-24T12:38:50.0629009Z",
+  "evidence": "GitHub upstream release API metadata; no executable downloaded or run locally",
+  "assets": [
+    {
+      "browser_download_url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe",
+      "digest": "sha256:66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a",
+      "name": "yt-dlp.exe",
+      "size": 17840399
+    },
+    {
+      "browser_download_url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_arm64.exe",
+      "digest": "sha256:05b438997bafc3affdfda9d041353c9d73e04dc842207254b655b0887c4445b0",
+      "name": "yt-dlp_arm64.exe",
+      "size": 21159286
+    },
+    {
+      "browser_download_url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_linux",
+      "digest": "sha256:58162f9bfdc27458ea47bfcb311cf47028f17d8154a8bf7d689861d46399230a",
+      "name": "yt-dlp_linux",
+      "size": 40446224
+    },
+    {
+      "browser_download_url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_linux_aarch64",
+      "digest": "sha256:b16e4dab368a816cd05d477d698a605a6ae87ccee1c8ffd38fa21d7254141fcc",
+      "name": "yt-dlp_linux_aarch64",
+      "size": 40167448
+    },
+    {
+      "browser_download_url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_macos",
+      "digest": "sha256:0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202",
+      "name": "yt-dlp_macos",
+      "size": 37146048
+    }
+  ],
+  "platforms": [
+    "windows/x86_64",
+    "windows/aarch64",
+    "linux/x86_64",
+    "linux/aarch64",
+    "macos/x86_64",
+    "macos/aarch64"
+  ],
+  "localExecutableValidationRan": false
+}

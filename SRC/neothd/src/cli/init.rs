@@ -193,7 +193,7 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
         step6j_mobile_mcp_offer(interactive).await?;
         // GOLD-ADAPT-ODY-24
         step6k_companion_pairing_offer(interactive, &mut state).await?;
-        step6h_install_recommended(&args, interactive, &neoth_dir);
+        step6h_install_recommended(&args, interactive, &neoth_dir).await?;
         step7_autonomy(&args, interactive, &mut state)?;
         save_checkpoint_best_effort(&neoth_dir, &state);
         step7b_auto_update(&args, interactive, &mut state)?;

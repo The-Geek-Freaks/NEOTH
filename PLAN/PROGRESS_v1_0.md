@@ -2,6 +2,25 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W799/W800 video URL and real workflow replay (2026-09-24):**
+F4 now connects explicit ingest --video-url, caption-first processing and
+separately bound/audited media fallback to the existing extractor. The real
+wizard installs the digest-pinned standalone yt-dlp asset for supported
+Windows/Linux/macOS targets. Direct native probe, streamed installer limits,
+and aggregate staging supervision are source-reviewed;22tests are selected.
+D5 adds eval capture/run while preserving legacy suites. It runs the real
+prepared chat/provider path with isolated conversation/WAL/workspace and real
+operator provider-consent/cost accounting. A typed completed body and accepted
+terminal alone feed contains-v1. Reports bind actual selected skill snapshots
+and the full secret-free config digest.12tests are selected; independent
+review passes. The optional release consumer keeps raw workload data local
+and accepts only a content-free manually submitted witness on GitHub.
+Both criteria remain OPEN pending hosted compile/CLI export and behavior.
+Next lane:Group1251/native1487 plus Win38/Linux52/mac52;GUI159 unchanged.
+Road1067done255open2partial is unchanged. No local executable checks ran.
+See docs/gold-wave787-workflow-replay.md, docs/gold-wave790-video-url.md and
+ docs/gold-wave793-workflow-replay-gate.md.
+
 **W797 specialist-advisor acceptance (2026-09-24):**
 The corrected Group1217 run35997962184 at f7cc563b passed1217/1217.
 Root independently verified all three ZIP digests,231fixture-source and two

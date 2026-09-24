@@ -1686,6 +1686,8 @@ impl ChatTurnEventSink for RuntimeSink {
                     },
                 );
             }
+            // Contained replay keeps its completion body private to its scorer.
+            ChatTurnEvent::Output(ChatOutput::ReplayCompletedBody { .. }) => {}
             ChatTurnEvent::Output(ChatOutput::ReasoningDelta {
                 sequence, delta, ..
             }) => {
