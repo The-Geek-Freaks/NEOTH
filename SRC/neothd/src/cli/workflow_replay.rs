@@ -900,6 +900,7 @@ mod tests {
             skill_id,
             actual_skill_body,
         );
+        let actual_skills = actual.path().join("skills");
         let replay_skill_dir = replay.path().join("skills").join(skill_id);
         std::fs::create_dir_all(&replay_skill_dir).expect("create replay-home shadow skill");
         std::fs::write(
@@ -914,7 +915,7 @@ mod tests {
         .expect("write replay config");
 
         let registry = crate::skills::SkillRegistry::load_from_config_path(
-            actual.path().join("skills"),
+            &actual_skills,
             &actual_config,
         )
         .await

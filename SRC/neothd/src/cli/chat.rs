@@ -9232,8 +9232,8 @@ pub(crate) async fn run_workflow_replay_turn_at(
         .context("construct contained workflow replay turn")?
         .args;
     let replay_context = ReplayTurnContext {
-        actual_usage_home: actual_usage_home.clone(),
-        installed_skill_home: actual_usage_home,
+        installed_skill_home: actual_usage_home.join("skills"),
+        actual_usage_home,
         installed_skill_config,
     };
     // These UX markers are not part of task preparation and would otherwise
@@ -27901,6 +27901,20 @@ mod wave35_adapter_lifecycle_tests {
 mod attach_tests {
     use super::*;
 
+    struct D7CountingProvider(std::sync::Arc<std::sync::atomic::AtomicU32>);
+
+    #[async_trait::async_trait]
+    impl Provider for D7CountingProvider {
+        fn name(&self) -> &'static str {
+            "d7-counting-outer-provider"
+        }
+
+        async fn complete(&self, _req: Request) -> Result<crate::providers::Completion> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            anyhow::bail!("D7 pre-provider terminal must not dispatch the outer provider")
+        }
+    }
+
     #[test]
     fn admission_rejects_duplicate_and_oversized_plain_files() {
         let dir = tempfile::tempdir().unwrap();
@@ -28168,17 +28182,18 @@ mod attach_tests {
             config: Some(home.path().join("freedom.yaml")),
             ..test_chat_args_default()
         };
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
         let mut output = CliChatOutput;
         let error = run_chat_with_to(
             args,
             FreedomConfig::default(),
-            &MockProvider {
-                reply: "must not dispatch".to_owned(),
-            },
+            &D7CountingProvider(std::sync::Arc::clone(&calls)),
+
             &mut output,
         )
         .await
         .expect_err("D7 must be refused before private runtime setup");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert!(
             error
                 .to_string()
@@ -28200,30 +28215,6 @@ mod attach_tests {
                     .is_ok_and(|provider| provider.eq_ignore_ascii_case("searxng")),
             "D7 no-key fixture requires an isolated environment without a search key or SearXNG"
         );
-
-        struct CountingProvider(std::sync::Arc<std::sync::atomic::AtomicU32>);
-        #[async_trait]
-        impl Provider for CountingProvider {
-            fn name(&self) -> &'static str {
-                "d7-counting-outer-provider"
-            }
-
-            async fn complete(&self, _req: Request) -> Result<Completion> {
-                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                Ok(Completion {
-                    termination: Default::default(),
-                    text: "must not be used by the no-key research terminal".to_owned(),
-                    identity: Default::default(),
-                    model: "d7-counting-model".to_owned(),
-                    latency: Duration::from_millis(1),
-                    input_tokens: None,
-                    output_tokens: None,
-                    cache_creation_tokens: None,
-                    cache_read_tokens: None,
-                    usage_measurements: None,
-                })
-            }
-        }
 
         #[derive(Default)]
         struct RecordingSink(Vec<ChatTurnEvent>);
@@ -28247,7 +28238,7 @@ mod attach_tests {
         let error = run_chat_with_to(
             args,
             FreedomConfig::default(),
-            &CountingProvider(std::sync::Arc::clone(&calls)),
+            &D7CountingProvider(std::sync::Arc::clone(&calls)),
             &mut output,
         )
         .await

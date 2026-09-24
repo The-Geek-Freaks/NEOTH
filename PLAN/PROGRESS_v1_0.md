@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W817/W822 video acceptance and replay routing repair (2026-09-24):**
+Root admitted Group1251 at2b38:1250PASS/1FAIL with236source/twoinput bindings.
+F4's22 cases all pass; its pinned installer, wizard call, caption-first consent
+and audited fallback satisfy the original row. F4 closes independently. D5
+has11PASS/1FAIL: the production adapter passed HOME to a Skill-directory API.
+Root corrects that binding to HOME/skills while retaining the actual usage home
+and the test's original public-home argument and authority/body assertions.
+Core7bea passes production Clippy; five D7 test-helper scope errors are repaired
+with a shared counting provider. Preflight7bea passes. Hosted rerun pending.
+ROAD1324/1068checked254open2partial;256raw/255pre-tag;ADOPT42open25done;
+dashboard190open. No local executable checks. B5/B6 implementation continues.
+Evidence: docs/verification/gold-wave817-group1251.json.
+
 **W816/W818 hosted format and chapter handle repair (2026-09-24):**
 Root admitted the five-file hosted format patch from run36006059637/artifact
 10810199507 after checking archive, inner digest, source and old/new Git blobs.

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T13:40:16.9438583Z",
-  "validationStatus": "W816 hosted formatting and W818 chapter capability type repair; hosted rerun pending",
+  "capturedUtc": "2026-09-24T14:06:58.1656805Z",
+  "validationStatus": "W822 replay registry path and D7 test-scope repair;W817 F4 accepted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2778,8 +2778,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1173237,
-      "sha256": "FCE7DC6D5CFFBB2B165640B066DB545007081DADB1BF19D01A55DDECADCA2357"
+      "bytes": 1172854,
+      "sha256": "1A4863FB6CCFB89794534007B3880CCB4358430DDCB3512D08D9527A2A293FBE"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -3128,8 +3128,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/workflow_replay.rs",
-      "bytes": 34308,
-      "sha256": "70C5BCAE1C57D68320C4E76AF35BEA9A899EE2FDC49C9C90058E8D7CEB239674"
+      "bytes": 34352,
+      "sha256": "0D83E63A41AB1179343BF117000245D3E7D12F1FF572457C08DC52293A27FEBB"
     },
     {
       "path": "SRC/neothd/src/cluster/budget_raft/carrier.rs",
