@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T02:06:38.7791294Z",
-  "validationStatus": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-09-24T02:14:04.4701884Z",
+  "validationStatus": "W595 Windows37pass4fail; repairs statically reviewed; hosted execution pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1443,18 +1443,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 211890,
-      "sha256": "5F724AE33B6D47FCCFCB108A5DBC2CBF87FCB55E24C8C15F3B95F125DF1B6F2F"
+      "bytes": 212712,
+      "sha256": "3C5F05EF8DD233A631238AF1375878F42674A4A0DE071C8B94DE515732D87435"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1223218,
-      "sha256": "1A2E7CFFA5053B95D33617DE3896A0D39BEA6200B52C5E8424B7F9E783494466"
+      "bytes": 1224040,
+      "sha256": "729E9A3E0A95716F131159841AA537A6A9654558ED9A2412B74BC32441CD8CFB"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1822500,
-      "sha256": "9348E695E779CF75D90EFF9245DF6413FA0BBB4488886C03CE88157AC55E8AE0"
+      "bytes": 1823322,
+      "sha256": "09F56F8FC7E9E441251D76289F6234DD62F605F0725AB6C659392BC609968231"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -3078,8 +3078,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_bootstrap.rs",
-      "bytes": 23758,
-      "sha256": "2C4971978ADFF889D81CCD03620DA4FBBB1EAACED1D5CE1FCB033BAD852AA64C"
+      "bytes": 25107,
+      "sha256": "DB12006ECC0DE1EA2A0C54D9597404C1BBAE38D5A06B10014295D2C50EAFDEF3"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
@@ -3098,8 +3098,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_staging.rs",
-      "bytes": 28328,
-      "sha256": "C3DDCF55F61B312B7990CD4FD822F950971770ABF79FDD35270905E94BA0738C"
+      "bytes": 28348,
+      "sha256": "E5630D7A6FEF0F4FA2D3BCCD18CCE2F9C8E13E40E5BBF04F512C4E98A47FE4E3"
     },
     {
       "path": "SRC/neothd/src/installers/paperless.rs",

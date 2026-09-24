@@ -583,23 +583,48 @@ mod tests {
         let task = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut request = Vec::new();
-            loop {
-                let mut byte = [0];
-                stream.read_exact(&mut byte).await.unwrap();
-                request.push(byte[0]);
-                if request.ends_with(b"\r\n\r\n") {
-                    break;
+            tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    assert!(request.len() < 8 * 1024, "fixture request headers too large");
+                    let mut byte = [0];
+                    stream.read_exact(&mut byte).await.unwrap();
+                    request.push(byte[0]);
+                    if request.ends_with(b"\r\n\r\n") {
+                        break;
+                    }
                 }
-            }
-            assert!(
-                std::str::from_utf8(&request)
-                    .unwrap()
-                    .starts_with("POST /api/token/ HTTP/1.1")
-            );
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 23\r\n\r\n{\"token\":\"local-token\"}")
-                .await
-                .unwrap();
+                let headers = std::str::from_utf8(&request).unwrap();
+                assert!(headers.starts_with("POST /api/token/ HTTP/1.1"));
+                let content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .expect("fixture request must include Content-Length");
+                assert!(content_length <= 1024, "fixture request body too large");
+                let mut body = vec![0; content_length];
+                stream.read_exact(&mut body).await.unwrap();
+                assert_eq!(body, b"username=operator&password=password");
+
+                let response_body = b"{\"token\":\"local-token\"}";
+                stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                            response_body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                stream.write_all(response_body).await.unwrap();
+                stream.flush().await.unwrap();
+            })
+            .await
+            .expect("fixture request/response timed out");
         });
         let admin = BootstrapAdmin::from_env_bytes(
             b"PAPERLESS_ADMIN_USER=operator\nPAPERLESS_ADMIN_PASSWORD=password\n",

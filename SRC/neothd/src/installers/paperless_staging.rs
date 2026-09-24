@@ -131,12 +131,16 @@ pub fn prepare_at(root: &Path) -> Result<PaperlessStagingView, PaperlessStagingE
         .dir
         .create_dir(&stage_name)
         .map_err(|_| PaperlessStagingError::Io)?;
-    let (stage_dir, _stage_directory_binding) =
-        crate::skills::store::open_bound_real_child_dir(&parent.dir, &stage_name, &stage_display)
-            .map_err(|_| PaperlessStagingError::Io)?;
     let stage_binding =
         crate::skills::store::bind_child_object(&parent.dir, &stage_name, &stage_display)
             .map_err(|_| PaperlessStagingError::Io)?;
+    let stage_dir = crate::skills::store::open_bound_real_child_dir_for_read(
+        &parent.dir,
+        &stage_binding,
+        &stage_name,
+        &stage_display,
+    )
+    .map_err(|_| PaperlessStagingError::Io)?;
     for (name, bytes) in expected_files() {
         let file_display = stage_display.join(name);
         if crate::skills::store::atomic_write_private_child_create_new(

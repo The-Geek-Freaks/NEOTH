@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W595 Windows Paperless regression repairs (2026-09-24):**
+The hosted Windows41 run35944218754 atf1ca9b67 compiled and selected all41
+identities, with37PASS/4FAIL/0missing. Three guarded installer cases failed
+before dispatch while preparing the stage: a read handle preceded the Windows
+mutation binding. Preparation now binds first and uses the existing identity-
+checked, delete-sharing reader. The HTTP token fixture now fully consumes its
+bounded form body before replying, avoiding a premature socket close. Production
+token transport and the launch fences remain unchanged. Both fixes passed
+independent static review; fresh hosted Windows41 execution is required.
+Group966 atce8caa19 and GUI148 at1a304f03 are still running. The matching
+ce8caa19 Preflight passes. No Road closure or local executable validation.
 **W594 Paperless core and CLI reference accepted (2026-09-24):**
 Run35944853152 ata881e642 passes slim production Clippy, core test-target
 checking, public CLI build and reference export. Artifact10786119710 binds
