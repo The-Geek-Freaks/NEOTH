@@ -3,6 +3,26 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W865 document watcher publication and admitted chapter access (2026-09-24):**
+W856/W857/W861 add the default-off document discovery worker, bounded physical
+inventory with persistent fair cursor, private revision notices, daily quota,
+reload/cancellation fencing and actual proactive documents/dismiss-document
+CLI consumers. No provider, extraction, distillation, staging or sending occurs.
+Independent W859 static review is approved; hosted validation is pending.
+W863 repairs the real B7 sanitizer contract: 16 lowercase xxh3-64 input fingerprint,
+separate from 64-character source/candidate SHA256. W860's wrong audit-test
+module path is corrected in both inventories; no test was removed.
+Native1590 + Win40/Linux55/mac55; Group1357; Windows115 now selected.
+B7 remains OPEN for executable acceptance; B8 remains OPEN including GUI toggle.
+W862 Core36033068607@1599b33e passed slim Clippy, core-test typecheck and CLI
+build/export; its verified CLI reference is imported. New watcher CLI needs
+a fresh hosted export. W864 independently admits all15 B3 terminals from
+Group36033072617@1599b33e, so B3 alone closes: ROAD1324/1073done/249open/2partial,
+raw251/pre-tag250; ADOPT31 30done/37open; dashboard185open.
+The parent Group1335 run failed later; no full-group or cross-OS pass is claimed.
+Evidence: docs/verification/gold-wave862-core-cli.json,
+docs/verification/gold-wave864-b3-terminals.json and
+docs/gold-wave856-document-watcher.md. Local executable validation remains off.
 **W858 exact hosted formatting (2026-09-24):** Preflight36032584867@149821ce
 parsed the corrected fixture and produced the nine-file rustfmt receipt.
 Root verified ZIP/inner digests plus every before/after Git blob before import.

@@ -97,6 +97,47 @@ mod vault_mirror_scheduler_tests {
     }
 }
 
+#[cfg(test)]
+mod document_ingest_fleet_tests {
+    use super::{CronKey, desired_cron_keys, plan_cron_fleet_reload, spawn_doc_ingest};
+    use crate::config::FreedomConfig;
+    use std::collections::HashSet;
+
+    #[test]
+    fn document_ingest_is_absent_by_default_and_reload_disable_stops_it() {
+        let before = FreedomConfig::default();
+        assert!(
+            !desired_cron_keys(&before).contains(&CronKey::DocumentIngest),
+            "default configuration must not own a document worker"
+        );
+
+        let mut active = before.clone();
+        active.doc_ingest.enabled = true;
+        active.doc_ingest.watch_paths = vec![std::env::temp_dir()
+            .join("neoth-document-ingest-test")
+            .display()
+            .to_string()];
+        let running = desired_cron_keys(&active);
+        assert!(running.contains(&CronKey::DocumentIngest));
+
+        let desired = desired_cron_keys(&before);
+        let (to_stop, to_start) = plan_cron_fleet_reload(&running, &desired, &HashSet::new());
+        assert!(to_start.is_empty());
+        assert_eq!(to_stop, vec![CronKey::DocumentIngest]);
+    }
+
+    #[test]
+    fn disabled_document_ingest_returns_before_worker_construction() {
+        let mut config = FreedomConfig::default();
+        config.doc_ingest.watch_paths = vec!["not-an-absolute-path".to_owned()];
+        config.obsidian_vault = Some("also-not-a-live-vault".to_owned());
+        assert!(
+            spawn_doc_ingest(&config, std::path::Path::new("also-not-a-home")).is_none(),
+            "disabled gate must return before converting runtime roots or spawning the worker"
+        );
+    }
+}
+
 impl AdmittedLegacyTelegramSingleton {
     pub(crate) fn sender_id(&self) -> u64 {
         self.sender_id
@@ -154,6 +195,9 @@ pub(crate) enum CronKey {
     VaultMirror,
     MonitorCron,
     Dream,
+    /// ADOPT31-B8 — local document discovery; WAL-free because its private
+    /// state file is the durable notice authority.
+    DocumentIngest,
     #[cfg(feature = "cluster")]
     ResourceSnapshot,
 }
@@ -268,6 +312,12 @@ pub(crate) fn desired_cron_keys(cfg: &FreedomConfig) -> std::collections::HashSe
     }
     if cfg.dreaming.enabled && crate::cron::scheduler::autonomy_allows_scheduler(cfg.autonomy) {
         keys.insert(Dream);
+    }
+    // The worker repeats this exact default-off gate before constructing any
+    // runtime value.  Root resolution is intentionally deferred to the worker
+    // so desired-fleet planning stays pure and performs no filesystem I/O.
+    if cfg.doc_ingest.enabled {
+        keys.insert(DocumentIngest);
     }
     #[cfg(feature = "cluster")]
     if cfg.swarm.enabled {
@@ -674,12 +724,34 @@ pub(crate) async fn spawn_cron_for_key(
             .await;
             handle.map(|handle| CronTaskHandle::dream(handle, effect_rail))
         }
+        DocumentIngest => spawn_doc_ingest(cfg, home).into_cron_task(),
         #[cfg(feature = "cluster")]
         ResourceSnapshot => {
             crate::daemon::resource_snapshot_cron::spawn_resource_snapshot_cron(cfg.swarm, w)
                 .into_cron_task()
         }
     }
+}
+
+/// ADOPT31-B8 document-discovery spawn boundary.
+///
+/// The disabled return is deliberately the first operation: no vault path is
+/// converted, no state is opened, and no filesystem root is inspected before
+/// the operator enables the feature.  The worker owns live no-follow root
+/// resolution and rejects an active configuration whose roots cannot be used.
+pub(crate) fn spawn_doc_ingest(
+    config: &FreedomConfig,
+    home: &std::path::Path,
+) -> Option<JoinHandle<anyhow::Result<()>>> {
+    if !config.doc_ingest.enabled {
+        return None;
+    }
+    let vault_root = config.obsidian_vault.as_deref().map(std::path::PathBuf::from);
+    Some(crate::daemon::doc_ingest_cron::spawn(
+        home.to_path_buf(),
+        config.doc_ingest.clone(),
+        vault_root,
+    ))
 }
 
 /// GOLD-LF-P2-03 — reload-aware nightly dedicated Git WAL mirror.

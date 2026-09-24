@@ -4426,8 +4426,11 @@ List installed skills + probe the router with a test message
 
 _Aliases:_ `neoth skill`
 
-- `--distill-doc <PATH>` — Distill an admitted document with one provider call and one scored self-review. Prints a token/cost preflight first; never stages a skill
+- `--distill-doc <PATH>` — Distill an admitted document with one provider call and one scored self-review. Prints a token/cost preflight first. Add --stage-route and --stage-target to propose an explicitly chosen destination for approval
 - `--min-reflexion-score <MIN_REFLEXION_SCORE>` — Required acceptance threshold for the document's single scored review
+- `--stage-route <STAGE_ROUTE>` — Propose the accepted distillation for later explicit approval. No destination is written until `neoth proactive accept <proposal-id>`
+- `--stage-target <TARGET>` — Exact destination: Skill id, Memory scope, or absolute existing Wiki vault
+- `--stage-subdir <NAME>` — Wiki-only vault subdirectory (defaults to NEOTH). Must be one name
 - `--from-doc <PATH>` — Extract one PDF, office document, or EPUB into a sanitized operator review draft. This is read-only: it never writes, installs, activates, routes, or provider-dispatches a skill
 - `--from-doc-chapter <PATH>` — Review one selected range from large raw text, or from the extracted UTF-8 output of an admitted PDF, Office, or book source. Binary containers are never byte-sliced
 - `--chapter-index <INDEX>` — Zero-based chapter/segment number emitted by the bounded scanner

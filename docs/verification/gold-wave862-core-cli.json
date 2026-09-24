@@ -1,0 +1,43 @@
+{
+  "schema": "neoth-hosted-core-cli-admission/v1",
+  "sourceHead": "1599b33ecc211867691bda2e74323904a54043de",
+  "runId": 36033068607,
+  "artifactId": 10823729923,
+  "artifactSha256": "3ce5eb5122806a1360d2586034bcc95ea926ed13ef720a22e6eb9bbb825b038d",
+  "cliSha256": "aa8d852a28646ef95b8aa3df2a6dcbb971772c2bc78d56c7b36d403fe1c74e3e",
+  "steps": [
+    {
+      "name": "Install Linux workspace-Clippy build deps",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Check exact-source slim-core production Clippy",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Type-check core test targets before native validation",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Check exact Linux-quality workspace Clippy",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Build current public CLI",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Export generated reference",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "rootVerified": true,
+  "localExecutableValidationRan": false,
+  "acceptance": "Slim production Clippy, default-feature core test typecheck, CLI build and exact-source generated export PASS. No whole-workspace/native-platform or B3/B7 behavioral closure."
+}

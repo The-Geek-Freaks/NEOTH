@@ -42,6 +42,11 @@ pub struct ProactiveArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum ProactiveAction {
+    /// List discovered document revisions awaiting an operator review as JSON.
+    /// Discovery never starts extraction, a provider call, or document staging.
+    Documents,
+    /// Dismiss one discovered document revision without changing its source.
+    DismissDocument { revision_id: String },
     /// Print staged proposals.
     List {
         /// Filter: `pending` / `approved` / `rejected` / `all`.
@@ -125,6 +130,22 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
     let home = args.home.clone().unwrap_or_else(default_neoth_home);
 
     match args.action {
+        ProactiveAction::Documents => {
+            let pending = crate::daemon::doc_ingest_cron::list_pending(&home)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&document_notices_json(pending))?
+            );
+            Ok(())
+        }
+        ProactiveAction::DismissDocument { revision_id } => {
+            anyhow::ensure!(
+                crate::daemon::doc_ingest_cron::dismiss_pending(&home, &revision_id)?,
+                "pending document revision {revision_id} was not found"
+            );
+            println!("{}", serde_json::json!({"dismissed_revision_id": revision_id}));
+            Ok(())
+        }
         ProactiveAction::List { status, history } => {
             if history {
                 return print_delivery_history(&home);
@@ -295,6 +316,25 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn document_notices_json(
+    notices: Vec<crate::daemon::doc_ingest_cron::DocumentNotice>,
+) -> serde_json::Value {
+    let documents: Vec<_> = notices
+        .into_iter()
+        .map(|notice| {
+            let source_path = notice.source_path.clone();
+            serde_json::json!({
+                "document": notice,
+                "review_command": {
+                    "program": "neoth",
+                    "args": ["skills", "--from-doc", source_path],
+                },
+            })
+        })
+        .collect();
+    serde_json::json!({"schema_version": 1, "documents": documents})
 }
 
 fn print_delivery_history(home: &std::path::Path) -> Result<()> {
@@ -535,10 +575,62 @@ mod tests {
     use crate::skills::document_staging::{DocumentStagingDraftV1, DocumentStagingRoute};
     use sha2::{Digest as _, Sha256};
 
+    #[test]
+    fn document_discovery_list_without_state_does_not_create_home() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("absent-home");
+        run_proactive(ProactiveArgs {
+            action: ProactiveAction::Documents,
+            home: Some(home.clone()),
+        })
+        .unwrap();
+        assert!(!home.exists());
+    }
+
+    #[test]
+    fn document_discovery_cli_lists_real_revision_and_dismisses_without_source_effect() {
+        let home = tempfile::tempdir().unwrap();
+        let sources = tempfile::tempdir().unwrap();
+        let source = sources.path().join("operator's notes.md");
+        let body = "# Operator notes\nThis stays in the selected source file.\n";
+        std::fs::write(&source, body).unwrap();
+        let config = crate::config::DocIngestConfig {
+            enabled: true,
+            watch_paths: vec![sources.path().display().to_string()],
+            max_per_day: 3,
+        };
+        crate::daemon::doc_ingest_cron::scan_once(home.path(), &config, None, 1_000)
+            .unwrap();
+        let notices = crate::daemon::doc_ingest_cron::list_pending(home.path()).unwrap();
+        assert_eq!(notices.len(), 1);
+        let revision_id = notices[0].revision_id.clone();
+        let source_path = notices[0].source_path.clone();
+        let view = document_notices_json(notices);
+        assert_eq!(view["documents"][0]["document"]["revision_id"], revision_id);
+        assert_eq!(
+            view["documents"][0]["review_command"]["args"],
+            serde_json::json!(["skills", "--from-doc", source_path])
+        );
+        let encoded = serde_json::to_string(&view).unwrap();
+        assert!(!encoded.contains("--distill-doc"));
+        assert!(!encoded.contains("This stays in the selected source file."));
+        run_proactive(ProactiveArgs {
+            action: ProactiveAction::DismissDocument { revision_id },
+            home: Some(home.path().to_path_buf()),
+        })
+        .unwrap();
+        crate::daemon::doc_ingest_cron::scan_once(home.path(), &config, None, 1_001)
+            .unwrap();
+        assert!(crate::daemon::doc_ingest_cron::list_pending(home.path()).unwrap().is_empty());
+        assert_eq!(std::fs::read_to_string(&source).unwrap(), body);
+        assert!(!home.path().join("views.db").exists());
+        assert!(!home.path().join("wal").exists());
+    }
+
     const DOCUMENT_SOURCE_SHA256: &str =
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const DOCUMENT_SANITIZED_SHA256: &str =
-        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        "bbbbbbbbbbbbbbbb";
 
     fn staged_document(title: &str, route: DocumentStagingRoute) -> ProposedAction {
         let candidate_sha256 = hex::encode(Sha256::digest(
@@ -947,17 +1039,24 @@ mod tests {
         assert_eq!(audits.len(), 1);
         let encoded_audit = serde_json::to_string(&audits[0]).unwrap();
         assert!(
-            !encoded_audit.contains(&first),
+            !encoded_audit.contains("This belongs only in the selected vault."),
             "document-note body must not enter WAL"
         );
+        let encoded_path = serde_json::to_string(first_note.to_str().unwrap()).unwrap();
         assert!(
-            !encoded_audit.contains(&first_note.display().to_string()),
+            !encoded_audit.contains(&encoded_path),
             "document-note path must not enter WAL"
         );
         assert_eq!(audits[0]["route"], "vault_note");
-        assert_ne!(
+        assert_eq!(audits[0]["proposal_id"], proposal.id);
+        assert_eq!(audits[0]["source_bytes_sha256"], DOCUMENT_SOURCE_SHA256);
+        assert_eq!(
             audits[0]["target_identity_sha256"],
-            audits[0]["route_content_sha256"]
+            hex::encode(Sha256::digest(encoded_path.as_bytes()))
+        );
+        assert_eq!(
+            audits[0]["route_content_sha256"],
+            hex::encode(Sha256::digest(first.as_bytes()))
         );
         accept_document(home.path(), &proposal.id).expect("exact document note replay reconciles");
         assert_eq!(std::fs::read_to_string(&first_note).unwrap(), first);

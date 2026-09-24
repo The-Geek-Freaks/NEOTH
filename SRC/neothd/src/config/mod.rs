@@ -1,4 +1,5 @@
 pub mod automation;
+pub mod doc_ingest;
 pub mod embedding;
 pub mod features;
 pub mod inference;
@@ -1585,6 +1586,7 @@ use crate::cli::init::{OperatorRole, ProviderKind};
 use crate::secret::SecretString;
 
 pub use crate::analytics::babel::BabelConfig;
+pub use doc_ingest::DocIngestConfig;
 pub use automation::{
     AutoSkillExtractConfig, BgMonitorConfig, CheckinCronConfig, CompanionConfig,
     ConsolidationSweepConfig, DEFAULT_CHECKIN_CRON_INTERVAL_SECS,
@@ -2183,6 +2185,11 @@ pub struct FreedomConfig {
     /// "arxiv-learning"`). Facts surface into recall/council automatically.
     #[serde(default)]
     pub arxiv_skill_scan: ArxivSkillScanConfig,
+
+    /// ADOPT31-B8 — explicit, local-only document discovery.  The worker is
+    /// default-off and only creates metadata notices for later operator review.
+    #[serde(default)]
+    pub doc_ingest: DocIngestConfig,
 
     /// C-16 (Session 21) — operator opt-in for proactive channel
     /// messaging. When `enabled = true`, the daemon's cron + the
@@ -3474,6 +3481,9 @@ impl FreedomConfig {
         self.proactive
             .validate()
             .map_err(|error| anyhow::anyhow!("invalid proactive config: {error}"))?;
+        self.doc_ingest
+            .validate(self.obsidian_vault.is_some())
+            .map_err(|error| anyhow::anyhow!("invalid doc_ingest config: {error}"))?;
         self.vault_mirror
             .validate()
             .map_err(|error| anyhow::anyhow!("invalid vault_mirror config: {error}"))?;

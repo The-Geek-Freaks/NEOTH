@@ -125,6 +125,66 @@ jobs:
           skills::doc_distill::tests::intermediate_reparse_point_is_rejected_from_the_disk_root_walk	neothd/src/skills/doc_distill.rs
           skills::creator::tests::writer_rejects_reparse_skill_directory_without_touching_target	neothd/src/skills/creator.rs
           skills::creator::tests::writer_rejects_reparse_manifest_without_touching_target	neothd/src/skills/creator.rs
+          memory::document_claims::tests::invalid_batch_never_creates_a_ledger_or_fact_row	neothd/src/memory/document_claims.rs
+          memory::document_claims::tests::first_apply_then_same_document_replay_does_not_inflate_fact	neothd/src/memory/document_claims.rs
+          memory::document_claims::tests::different_document_corroborates_once_then_replays	neothd/src/memory/document_claims.rs
+          memory::document_claims::tests::batch_failure_rolls_back_ledger_and_fact_effects	neothd/src/memory/document_claims.rs
+          memory::document_claims::tests::caller_owned_transaction_can_roll_back_the_whole_batch	neothd/src/memory/document_claims.rs
+          memory::document_claims::tests::production_store_omi_hard_purge_keeps_tombstone_and_refuses_replay	neothd/src/memory/document_claims.rs
+          memory::document_claims::tests::reopened_database_replays_from_durable_ledger	neothd/src/memory/document_claims.rs
+          memory::migrations::tests::v45_to_v46_creates_document_claim_ledger_and_stamps_version	neothd/src/memory/migrations/mod.rs
+          skills::document_staging::tests::request_validation_rejects_unowned_or_unsafe_targets	neothd/src/skills/document_staging.rs
+          skills::document_staging::tests::staged_skill_prompt_binds_selected_id_and_schema_without_wiki_target	neothd/src/skills/document_staging.rs
+          skills::document_staging::tests::memory_claims_trim_and_deduplicate	neothd/src/skills/document_staging.rs
+          skills::document_staging::tests::wrong_route_or_unknown_envelope_field_fails_before_b5	neothd/src/skills/document_staging.rs
+          skills::document_staging::tests::matching_skill_is_retained_as_canonical_inactive_yaml	neothd/src/skills/document_staging.rs
+          skills::document_staging::tests::unsafe_skill_is_rejected_before_proposal_material_exists	neothd/src/skills/document_staging.rs
+          skills::document_staging::tests::wiki_candidate_cannot_supply_the_operator_target	neothd/src/skills/document_staging.rs
+          skills::document_staging::tests::malformed_candidate_stops_before_reflexion	neothd/src/skills/document_staging.rs
+          skills::document_staging::tests::low_score_or_reject_returns_no_draft_after_exactly_two_calls	neothd/src/skills/document_staging.rs
+          skills::document_staging::tests::eligible_skill_makes_two_calls_and_returns_a_validated_draft	neothd/src/skills/document_staging.rs
+          skills::document_staging::tests::reflexion_reasons_are_defanged_before_outcome	neothd/src/skills/document_staging.rs
+          skills::document_staging::tests::refusal_and_truncation_stop_without_a_retry	neothd/src/skills/document_staging.rs
+          skills::document_staging::tests::staged_preflight_is_at_least_the_generic_bound_and_covers_actual_request	neothd/src/skills/document_staging.rs
+          skills::document_staging::tests::draft_validation_rejects_bad_digest_and_ineligible_score	neothd/src/skills/document_staging.rs
+          proactive::document_note::tests::create_then_identical_replay_reconciles_the_same_note	neothd/src/proactive/document_note.rs
+          proactive::document_note::tests::operator_edited_note_refuses_a_replacement	neothd/src/proactive/document_note.rs
+          proactive::document_note::tests::oversize_existing_note_refuses_reconciliation	neothd/src/proactive/document_note.rs
+          proactive::document_note::tests::malformed_provenance_or_oversize_body_never_creates_a_note	neothd/src/proactive/document_note.rs
+          proactive::document_note::tests::only_unsupported_namespace_durability_is_a_live_verified_receipt_state	neothd/src/proactive/document_note.rs
+          cli::skills::tests::document_staging_cli_requires_an_explicit_compatible_destination	neothd/src/cli/skills.rs
+          cli::skills::tests::document_staging_persists_pending_once_without_applying_effects	neothd/src/cli/skills.rs
+          cli::skills::tests::document_staging_rejects_changed_source_and_ineligible_draft_before_persistence	neothd/src/cli/skills.rs
+          cli::proactive::tests::document_reject_is_a_terminal_status_only_decision	neothd/src/cli/proactive.rs
+          cli::proactive::tests::malformed_document_accept_records_approval_before_route_error	neothd/src/cli/proactive.rs
+          cli::proactive::tests::document_memory_accept_replays_ledger_without_confidence_inflation_and_audits_metadata	neothd/src/cli/proactive.rs
+          cli::proactive::tests::document_memory_audit_failure_reports_committed_effect_and_reaccept_reconciles	neothd/src/cli/proactive.rs
+          cli::proactive::tests::document_skill_accept_is_inactive_idempotent_and_preserves_operator_edit	neothd/src/cli/proactive.rs
+          cli::proactive::tests::document_vault_note_accept_reconciles_exact_bytes_and_refuses_operator_edit	neothd/src/cli/proactive.rs
+          daemon::audit_rpc::server::w61_code_map_result_receipt_tests::document_route_receipts_are_explicitly_allowlisted_extended_events	neothd/src/daemon/audit_rpc/server.rs
+          skills::document_staging::tests::sanitized_input_hash_uses_existing_xxh3_64_shape_only	neothd/src/skills/document_staging.rs
+          proactive::document_note::tests::windows_namespace_limit_does_not_masquerade_as_a_post_commit_failure	neothd/src/proactive/document_note.rs
+          daemon::doc_ingest_cron::tests::cancelled_scan_refuses_before_creating_home	neothd/src/daemon/doc_ingest_cron.rs
+          daemon::doc_ingest_cron::tests::retiring_worker_fences_late_blocking_state_publication	neothd/src/daemon/doc_ingest_cron.rs
+          daemon::doc_ingest_cron::tests::cancellation_before_commit_preserves_existing_state_bytes	neothd/src/daemon/doc_ingest_cron.rs
+          daemon::doc_ingest_cron::tests::valid_hex_digest_tampering_refuses_state_mutation	neothd/src/daemon/doc_ingest_cron.rs
+          daemon::doc_ingest_cron::tests::real_file_scan_reopens_state_and_deduplicates_revision	neothd/src/daemon/doc_ingest_cron.rs
+          daemon::doc_ingest_cron::tests::listing_a_missing_home_is_read_only	neothd/src/daemon/doc_ingest_cron.rs
+          daemon::doc_ingest_cron::tests::real_change_supersedes_pending_and_quota_defers_next_revision	neothd/src/daemon/doc_ingest_cron.rs
+          daemon::doc_ingest_cron::tests::deferred_revision_requires_current_root_snapshot_before_promotion	neothd/src/daemon/doc_ingest_cron.rs
+          daemon::doc_ingest_cron::tests::bounded_inventory_rotates_after_reopen_and_revisits_a_changed_later_file	neothd/src/daemon/doc_ingest_cron.rs
+          daemon::doc_ingest_cron::tests::byte_budget_defers_the_next_item_and_rotates_a_full_64_file_inventory	neothd/src/daemon/doc_ingest_cron.rs
+          daemon::doc_ingest_cron::tests::overlapping_roots_attribute_the_shared_file_to_the_longest_root_once	neothd/src/daemon/doc_ingest_cron.rs
+          daemon::doc_ingest_cron::tests::corrupt_state_fails_closed_without_overwrite	neothd/src/daemon/doc_ingest_cron.rs
+          daemon::doc_ingest_cron::tests::nested_unknown_state_field_fails_closed_without_overwrite	neothd/src/daemon/doc_ingest_cron.rs
+          cli::proactive::tests::document_discovery_list_without_state_does_not_create_home	neothd/src/cli/proactive.rs
+          cli::proactive::tests::document_discovery_cli_lists_real_revision_and_dismisses_without_source_effect	neothd/src/cli/proactive.rs
+          config::inline_tests::doc_ingest_config_tests::doc_ingest_defaults_preserve_backwards_compatibility	neothd/src/config/inline_tests.rs
+          config::inline_tests::doc_ingest_config_tests::enabled_doc_ingest_requires_absolute_root_or_vault_and_bounded_quota	neothd/src/config/inline_tests.rs
+          cli::serve_tasks::document_ingest_fleet_tests::document_ingest_is_absent_by_default_and_reload_disable_stops_it	neothd/src/cli/serve_tasks.rs
+          cli::serve_tasks::document_ingest_fleet_tests::disabled_document_ingest_returns_before_worker_construction	neothd/src/cli/serve_tasks.rs
+          cli::serve::document_ingest_cron_fingerprint_tests::document_ingest_fingerprint_binds_roots_quota_and_vault	neothd/src/cli/serve.rs
+          daemon::doc_ingest_cron::tests::drive_case_aliases_share_one_physical_root_inventory	neothd/src/daemon/doc_ingest_cron.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -141,7 +201,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 55 ]]; then
+          if [[ "$expected" -ne 115 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -151,7 +211,7 @@ jobs:
             cargo test -p neoth --lib --locked --no-run > "$evidence/compile.log" 2>&1 || compile_status=$?
           else
             compile_status=64
-            printf 'selection is not the required 55 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 115 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

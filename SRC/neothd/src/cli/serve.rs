@@ -3163,6 +3163,10 @@ pub(crate) fn cron_spec_fingerprint(
             cfg.provider_model.hash(&mut h);
             jh!(cfg.inference);
         }
+        DocumentIngest => {
+            jh!(cfg.doc_ingest);
+            cfg.obsidian_vault.hash(&mut h);
+        }
         EcologyCron => jh!(cfg.ecology),
         PatternCron => jh!(cfg.pattern_cron),
         ContradictionResolve => jh!(cfg.contradiction_resolve),
@@ -3413,6 +3417,47 @@ mod self_map_cron_fingerprint_tests {
                 case.name
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod document_ingest_cron_fingerprint_tests {
+    use super::cron_spec_fingerprint;
+    use crate::cli::serve_tasks::CronKey;
+    use crate::config::FreedomConfig;
+
+    #[test]
+    fn document_ingest_fingerprint_binds_roots_quota_and_vault() {
+        let mut baseline = FreedomConfig::default();
+        baseline.doc_ingest.enabled = true;
+        baseline.doc_ingest.watch_paths = vec!["/operator/documents-a".to_owned()];
+        baseline.doc_ingest.max_per_day = 3;
+        baseline.obsidian_vault = Some("/operator/vault-a".to_owned());
+        let fingerprint = cron_spec_fingerprint(CronKey::DocumentIngest, &baseline);
+
+        let mut changed_root = baseline.clone();
+        changed_root.doc_ingest.watch_paths = vec!["/operator/documents-b".to_owned()];
+        assert_ne!(
+            fingerprint,
+            cron_spec_fingerprint(CronKey::DocumentIngest, &changed_root),
+            "a root change must replace the active worker"
+        );
+
+        let mut changed_quota = baseline.clone();
+        changed_quota.doc_ingest.max_per_day = 4;
+        assert_ne!(
+            fingerprint,
+            cron_spec_fingerprint(CronKey::DocumentIngest, &changed_quota),
+            "a quota change must replace the active worker"
+        );
+
+        let mut changed_vault = baseline;
+        changed_vault.obsidian_vault = Some("/operator/vault-b".to_owned());
+        assert_ne!(
+            fingerprint,
+            cron_spec_fingerprint(CronKey::DocumentIngest, &changed_vault),
+            "the optional vault root must participate in worker replacement"
+        );
     }
 }
 

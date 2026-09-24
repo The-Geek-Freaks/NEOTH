@@ -257,7 +257,7 @@ pub fn validate_document_staging_draft(draft: &DocumentStagingDraftV1) -> Result
         "unsupported document staging draft schema"
     );
     validate_sha256("source bytes", &draft.source_bytes_sha256)?;
-    validate_sha256("sanitized input", &draft.sanitized_input_hash)?;
+    validate_sanitized_input_hash(&draft.sanitized_input_hash)?;
     validate_sha256("candidate", &draft.candidate_sha256)?;
     anyhow::ensure!(
         draft.minimum_reflexion_score <= 100,
@@ -479,6 +479,20 @@ fn validate_sha256(label: &str, value: &str) -> Result<()> {
                 .bytes()
                 .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
         "{label} SHA-256 must be lowercase hex"
+    );
+    Ok(())
+}
+
+/// `DistillationProvenance::sanitized_input_hash` is the existing ingress
+/// sanitizer's xxh3-64 raw-input fingerprint, unlike the true SHA-256 source
+/// and canonical-candidate bindings in this draft.
+fn validate_sanitized_input_hash(value: &str) -> Result<()> {
+    anyhow::ensure!(
+        value.len() == 16
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
+        "sanitized input hash must be 16 lowercase xxh3-64 hexadecimal characters"
     );
     Ok(())
 }
@@ -714,8 +728,9 @@ mod tests {
     #[tokio::test]
     async fn eligible_skill_makes_two_calls_and_returns_a_validated_draft() {
         let provider = StagingProvider::new(vec![skill_envelope(), score(80, "accept")]);
+        let document = crate::skills::doc_distill::document_staging_test_document();
         let outcome = distill_for_staging(
-            &crate::skills::doc_distill::document_staging_test_document(),
+            &document,
             &provider,
             "fixture",
             80,
@@ -726,6 +741,15 @@ mod tests {
         .await
         .unwrap();
         let draft = decode_document_staging_draft(outcome.draft_json.as_deref().unwrap()).unwrap();
+        assert_eq!(draft.sanitized_input_hash, document.provenance.sanitized_input_hash);
+        assert_eq!(draft.source_bytes_sha256, document.provenance.source_bytes_sha256);
+        assert_eq!(draft.sanitized_input_hash.len(), 16);
+        assert!(draft
+            .sanitized_input_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')));
+        assert_eq!(draft.source_bytes_sha256.len(), 64);
+        assert_eq!(draft.candidate_sha256.len(), 64);
         assert!(
             matches!(draft.route, DocumentStagingRoute::Skill { ref skill_manifest_yaml } if skill_manifest_yaml.contains("enabled: false"))
         );
@@ -820,7 +844,7 @@ mod tests {
         let mut draft = DocumentStagingDraftV1 {
             schema_version: 1,
             source_bytes_sha256: "a".repeat(64),
-            sanitized_input_hash: "b".repeat(64),
+            sanitized_input_hash: "b".repeat(16),
             candidate_sha256: route_sha256(&route).unwrap(),
             minimum_reflexion_score: 80,
             reflexion_score: 90,
@@ -830,6 +854,28 @@ mod tests {
         draft.candidate_sha256 = "c".repeat(64);
         assert!(validate_document_staging_draft(&draft).is_err());
         draft.reflexion_score = 79;
+        assert!(validate_document_staging_draft(&draft).is_err());
+    }
+
+    #[test]
+    fn sanitized_input_hash_uses_existing_xxh3_64_shape_only() {
+        let route = DocumentStagingRoute::Memory {
+            scope: "groundtruth".to_owned(),
+            claims: vec!["fact".to_owned()],
+        };
+        let mut draft = DocumentStagingDraftV1 {
+            schema_version: 1,
+            source_bytes_sha256: "a".repeat(64),
+            sanitized_input_hash: "b".repeat(16),
+            candidate_sha256: route_sha256(&route).unwrap(),
+            minimum_reflexion_score: 80,
+            reflexion_score: 80,
+            route,
+        };
+        assert!(validate_document_staging_draft(&draft).is_ok());
+        draft.sanitized_input_hash = "B".repeat(16);
+        assert!(validate_document_staging_draft(&draft).is_err());
+        draft.sanitized_input_hash = "b".repeat(15);
         assert!(validate_document_staging_draft(&draft).is_err());
     }
 }

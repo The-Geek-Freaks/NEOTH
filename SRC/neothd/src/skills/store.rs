@@ -661,6 +661,20 @@ fn child_identity_token(metadata: &cap_std::fs::Metadata) -> Result<String> {
     }
 }
 
+/// Return the platform-stable identity of an already-open real directory.
+/// Callers use this only to collapse aliases and traversal overlaps while
+/// retaining the capability handle as the authority for later child opens.
+pub(crate) fn directory_identity_token(directory: &Dir) -> Result<String> {
+    let metadata = directory
+        .dir_metadata()
+        .context("inspect open directory identity")?;
+    anyhow::ensure!(
+        metadata.is_dir() && !cap_metadata_is_link_like(&metadata),
+        "open directory identity is not a real directory"
+    );
+    child_identity_token(&metadata)
+}
+
 pub(crate) fn valid_child_identity_token(token: &str) -> bool {
     fn valid_hex(value: &str, width: usize) -> bool {
         value.len() == width

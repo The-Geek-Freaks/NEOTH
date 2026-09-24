@@ -154,6 +154,9 @@ pub struct DistillationProvenance {
     /// SHA-256 over the exact bounded byte asset passed to the extractor.
     /// It is provenance for operator review only, never an authority grant.
     pub source_bytes_sha256: String,
+    /// xxh3-64 lowercase hexadecimal fingerprint of the raw extracted text
+    /// accepted by the ingress sanitizer. This is sanitizer provenance, not a
+    /// SHA-256 source-content digest.
     pub sanitized_input_hash: String,
     pub normalized_unicode: bool,
     pub stripped_control_characters: bool,
@@ -204,17 +207,17 @@ impl DistilledDoc {
 
 #[cfg(test)]
 pub(crate) fn document_staging_test_document() -> DistilledDoc {
-    DistilledDoc {
-        provenance: DistillationProvenance {
-            source_kind: DocumentSourceKind::PlainText,
-            source_bytes: 51,
-            source_bytes_sha256: "a".repeat(64),
-            sanitized_input_hash: "b".repeat(64),
-            normalized_unicode: false,
-            stripped_control_characters: false,
+    let source = "source-grounded fixture material";
+    distill_doc(
+        Extraction {
+            text: source.to_owned(),
+            metadata: serde_json::Value::Null,
         },
-        review_text: "| source-grounded fixture material\n".to_owned(),
-    }
+        DocumentSourceKind::PlainText,
+        source.len() as u64,
+        hex::encode(Sha256::digest(source.as_bytes())),
+    )
+    .expect("document staging fixture must pass real ingress sanitization")
 }
 
 /// B6's monetary state. Unknown provider/model pairs stay unknown: this

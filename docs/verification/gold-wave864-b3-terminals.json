@@ -1,0 +1,156 @@
+{
+  "schema": "neoth-b3-independent-terminal-admission/v1",
+  "runId": 36033072617,
+  "sourceHead": "1599b33ecc211867691bda2e74323904a54043de",
+  "rootVerified": true,
+  "artifacts": [
+    {
+      "id": 10822954466,
+      "name": "w190-research-lifecycle-source-1599b33ecc211867691bda2e74323904a54043de",
+      "digest": "sha256:c283cf99332fd966c404491f7aa4e9cee6a218a354eb276f6314af50d4a30d5e"
+    },
+    {
+      "id": 10822784705,
+      "name": "w190-research-lifecycle-receipt-1599b33ecc211867691bda2e74323904a54043de",
+      "digest": "sha256:8c68f7fc54695b0f74d80219f05c7e66949fabb70d47b91697724a6cd2511de0"
+    },
+    {
+      "id": 10822709717,
+      "name": "w190-research-lifecycle-log-1599b33ecc211867691bda2e74323904a54043de",
+      "digest": "sha256:20a2e42a3a462f5ea1ea7e52273f6a98b5613622b6ede6c5cf0f1184f5a8849d"
+    }
+  ],
+  "sourceBindings": {
+    "SRC/neothd/src/cli/skills.rs": "f5353fc9834c5b8fca5abb6a8397b648d187e81faab8227bedb074e47a4f7f6c",
+    "SRC/neothd/src/skills/doc_distill.rs": "81a60515b1066cd9e19fb1b2550d4fc69059d2c4a32ec03e21c2cc5455b200d1"
+  },
+  "inputPaths": [
+    "docs/verification/gold-wave95-96-test-matrix.json",
+    "SRC/Cargo.lock"
+  ],
+  "terminalCount": 15,
+  "terminals": [
+    {
+      "test": "skills::doc_distill::tests::bounded_scanner_keeps_heading_ownership_and_complete_utf8_coverage",
+      "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
+      "sourceSha256": "81a60515b1066cd9e19fb1b2550d4fc69059d2c4a32ec03e21c2cc5455b200d1",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "test": "skills::doc_distill::tests::bounded_scanner_splits_long_unbroken_unicode_without_gaps_or_mid_scalars",
+      "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
+      "sourceSha256": "81a60515b1066cd9e19fb1b2550d4fc69059d2c4a32ec03e21c2cc5455b200d1",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "test": "skills::doc_distill::tests::bounded_scanner_refuses_early_eof_or_source_growth",
+      "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
+      "sourceSha256": "81a60515b1066cd9e19fb1b2550d4fc69059d2c4a32ec03e21c2cc5455b200d1",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "test": "skills::doc_distill::tests::bounded_scanner_rejects_oversized_source_or_dense_heading_ranges",
+      "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
+      "sourceSha256": "81a60515b1066cd9e19fb1b2550d4fc69059d2c4a32ec03e21c2cc5455b200d1",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "test": "skills::doc_distill::tests::selected_range_refuses_a_mid_scalar_utf8_boundary",
+      "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
+      "sourceSha256": "81a60515b1066cd9e19fb1b2550d4fc69059d2c4a32ec03e21c2cc5455b200d1",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "test": "skills::doc_distill::tests::large_text_snapshot_requires_threshold_and_preserves_selected_receipt",
+      "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
+      "sourceSha256": "81a60515b1066cd9e19fb1b2550d4fc69059d2c4a32ec03e21c2cc5455b200d1",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "test": "skills::doc_distill::tests::large_text_snapshot_rejects_same_length_source_mutation",
+      "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
+      "sourceSha256": "81a60515b1066cd9e19fb1b2550d4fc69059d2c4a32ec03e21c2cc5455b200d1",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "test": "skills::doc_distill::tests::binary_containers_cannot_enter_large_text_chapter_path",
+      "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
+      "sourceSha256": "81a60515b1066cd9e19fb1b2550d4fc69059d2c4a32ec03e21c2cc5455b200d1",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "test": "cli::skills::tests::large_text_chapter_cli_requires_explicit_selection_and_rejects_mutators",
+      "sourcePath": "SRC/neothd/src/cli/skills.rs",
+      "sourceSha256": "f5353fc9834c5b8fca5abb6a8397b648d187e81faab8227bedb074e47a4f7f6c",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "test": "cli::skills::tests::large_text_chapter_discovery_cli_is_read_only_and_conflicts_with_selection",
+      "sourcePath": "SRC/neothd/src/cli/skills.rs",
+      "sourceSha256": "f5353fc9834c5b8fca5abb6a8397b648d187e81faab8227bedb074e47a4f7f6c",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "test": "cli::skills::tests::connected_large_text_review_keeps_raw_text_out_of_json_receipt",
+      "sourcePath": "SRC/neothd/src/cli/skills.rs",
+      "sourceSha256": "f5353fc9834c5b8fca5abb6a8397b648d187e81faab8227bedb074e47a4f7f6c",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "test": "skills::doc_distill::tests::extracted_large_document_chapters_keep_identities_and_fit_distillation",
+      "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
+      "sourceSha256": "81a60515b1066cd9e19fb1b2550d4fc69059d2c4a32ec03e21c2cc5455b200d1",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "test": "skills::doc_distill::tests::truncated_extraction_is_refused_before_chapter_selection",
+      "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
+      "sourceSha256": "81a60515b1066cd9e19fb1b2550d4fc69059d2c4a32ec03e21c2cc5455b200d1",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "test": "cli::skills::tests::admitted_pdf_and_rtf_files_enter_large_extracted_chapter_selection",
+      "sourcePath": "SRC/neothd/src/cli/skills.rs",
+      "sourceSha256": "f5353fc9834c5b8fca5abb6a8397b648d187e81faab8227bedb074e47a4f7f6c",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "test": "cli::skills::tests::admitted_truncated_rtf_refuses_chapter_selection",
+      "sourcePath": "SRC/neothd/src/cli/skills.rs",
+      "sourceSha256": "f5353fc9834c5b8fca5abb6a8397b648d187e81faab8227bedb074e47a4f7f6c",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    }
+  ],
+  "acceptance": "B3 original chapter-access criterion supported by15 independently verified exact terminals. WholeGroup1335 remains unadmitted after later discovery abort. B7/B8 and current dirty changes remain unverified.",
+  "localExecutableValidationRan": false
+}

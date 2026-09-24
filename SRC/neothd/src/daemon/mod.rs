@@ -78,6 +78,9 @@ pub mod consolidation_sweep_cron;
 pub mod contradiction_resolve_cron;
 pub mod credentials_import_sidecar;
 pub mod detect_complete_sidecar;
+/// ADOPT31-B8 — local, default-off document discovery with no provider,
+/// distillation, staging, or proactive-queue authority.
+pub mod doc_ingest_cron;
 pub mod doctor_cron;
 /// HO-09b — profile drift-alert cron. Runs the same drift evaluation
 /// as `neoth profile drift report` on a 6h schedule + emits a
