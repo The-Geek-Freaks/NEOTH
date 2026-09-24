@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T04:29:44.8266846Z",
-  "validationStatus": "W639/W640 source-bound failures admitted; GUI mixed-session recents and Obsidian compile repairs; Windows DELETE diagnostic; hosted behavior pending",
+  "capturedUtc": "2026-09-24T04:34:11.7089136Z",
+  "validationStatus": "Plugin11/12failure source admitted; finite batching repaired; macOS180min phase evidence; hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/workflows/macos-packaged-chat.yml",
-      "bytes": 5446,
-      "sha256": "BA685208C51587A01A62D0EA89F9299C9D73BE7E586181EE0F6F1001DDFB0EAC"
+      "bytes": 6058,
+      "sha256": "FB1889426D789A32CB2974460C260B902F7378C28550B632A6A0DC168E27AF85"
     },
     {
       "path": ".github/workflows/managed-browser-provenance.yml",
@@ -1548,18 +1548,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 227997,
-      "sha256": "EA7614E6242B8C19F86FD3213BEE0D5E01A1B52CAB37502B260558F9813953D3"
+      "bytes": 228915,
+      "sha256": "B9C4EF8EC538A562F3D719D72BC1614253584A12E0E4BDD2EE3A4E1CB72137FE"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1239325,
-      "sha256": "494A8EA4E6806A6C4738BF3F614DFA9700CC741414513E403B38F97EBF0790F4"
+      "bytes": 1240243,
+      "sha256": "32777127E83023E1B3E82406E9AC21A0B3CDC00D1D5C6D074528FE6A0ACAC14E"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1838607,
-      "sha256": "99DA1FF69920567798FFCA37E6D26C63C05ED04DE85FE4948C82233CB53925D6"
+      "bytes": 1839525,
+      "sha256": "C634056187ECAF1D206FA3AE6C984652508177D2909C1B61CC26974EA97FC464"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -1783,8 +1783,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2218748,
-      "sha256": "FCF3214DA9D6A99AF3A8B9C34EEE4E06E7479CDC41DA4026912DCC02B8DE094F"
+      "bytes": 2218714,
+      "sha256": "C1798151426DC28DFBF2172AED3250D94A84A2E5D5B3B5B2BF299D5B43076125"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -2028,8 +2028,8 @@
     },
     {
       "path": "SRC/neothd/assets/obsidian_archive_bridge/src/main.ts",
-      "bytes": 21221,
-      "sha256": "76C05AEF6E2D547632FF795EC17F530A42610DC1FBEE97102939DF8AC66602BF"
+      "bytes": 21336,
+      "sha256": "D67C5275DCE46604F24E7AED9C472589B48FD75D29E4F986576F884FA2CEF366"
     },
     {
       "path": "SRC/neothd/assets/obsidian_archive_bridge/test/plugin-contract.mjs",
@@ -3928,8 +3928,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/store.rs",
-      "bytes": 259831,
-      "sha256": "9405F4B64B404042F3861A8587C65DD963F91E805CF06414923FBAF46AB7ED35"
+      "bytes": 259819,
+      "sha256": "11E880F88CBFFC871ED601F72893993B8536688D3CF1FE84B57196569445BCDD"
     },
     {
       "path": "SRC/neothd/src/slash/schema.rs",

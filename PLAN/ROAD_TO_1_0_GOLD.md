@@ -8,6 +8,19 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W645-W647 finite Obsidian batching and hosted macOS continuation (2026-09-24):**
+Plugin run35956042379 atb71ebba3 passes immutable install, TypeScript and build;
+11/12 actual bundle tests pass. The129-note test exposes overlapping per-note
+sync during initial scan (largest persisted queue2instead128). The reviewed
+repair retains the finite scan until the batch is persisted, then starts one
+sync; existing assertions stay unchanged. Its generated candidate is not imported
+while this behavior fails. Source6 and all three bundle hashes were verified.
+The exact two-file hosted formatter patch10790502239 was verified and imported.
+The macOS hosted lane now allows180min and separates unchanged actual release
+daemon/GUI builds, retaining timestamps and compiler logs per phase. Bundle
+assembly and real Main/Buddy probes remain mandatory; local BSOD hold remains.
+New hosted behavior is pending. No Road closure.
+
 **W639-W644 hosted failure admission and focused repairs (2026-09-24):**
 Root independently admitted GUI148 run35952003959 at701d5ebf:147PASS/1FAIL,
 29 source/input bindings and every ordered terminal/execution receipt. W480

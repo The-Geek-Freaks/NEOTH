@@ -170,6 +170,7 @@ export default class NeothArchiveBridge extends Plugin {
       }
     } finally {
       this.scanRunning = false;
+      if (this.settings.pending.length > 0 && this.isPairingReady()) void this.syncPending();
     }
   }
 
@@ -217,7 +218,7 @@ export default class NeothArchiveBridge extends Plugin {
       new Notice("NEOTH Archive Bridge queue is full. Sync with the local daemon before more notes are queued.");
       this.rescanNeeded = true;
       void this.requestExistingScan();
-    } else if (result === "queued") {
+    } else if (result === "queued" && !this.scanRunning) {
       void this.syncPending();
     }
     return result;

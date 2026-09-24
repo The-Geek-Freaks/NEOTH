@@ -29289,18 +29289,13 @@ pub(crate) fn sync_companion_recent_lines_from_canonical(
     overlay: &MiniOverlay,
 ) {
     use slint::{Model, ModelRc, VecModel};
-    let rows: Vec<ChatMessage> = window
-        .get_chat_live_messages()
-        .iter()
-        .collect();
+    let rows: Vec<ChatMessage> = window.get_chat_live_messages().iter().collect();
     overlay.set_recent_lines(ModelRc::new(VecModel::from(
         companion_recent_lines_from_canonical_rows(&rows),
     )));
 }
 
-fn companion_recent_lines_from_canonical_rows(
-    rows: &[ChatMessage],
-) -> Vec<slint::SharedString> {
+fn companion_recent_lines_from_canonical_rows(rows: &[ChatMessage]) -> Vec<slint::SharedString> {
     let mut lines: Vec<slint::SharedString> = rows
         .iter()
         .filter_map(|message| {

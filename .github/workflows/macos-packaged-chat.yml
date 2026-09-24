@@ -14,7 +14,7 @@ jobs:
   packaged-chat:
     name: Packaged chat ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -69,14 +69,27 @@ jobs:
           restore-keys: |
             packaged-chat-${{ matrix.arch }}-1.93-${{ hashFiles('SRC/Cargo.lock') }}-
 
-      - name: Build the actual desktop daemon and GUI
+      - name: Build the actual desktop daemon
+        id: desktop-daemon-build
+        working-directory: SRC
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/packaged-chat-evidence"
+          date -u +%FT%TZ > "$evidence/daemon-build-started.txt"
+          cargo build --release --locked -p neoth --bin neoth --bin neothd --features release-desktop 2>&1 | tee "$evidence/daemon-build.log"
+          date -u +%FT%TZ > "$evidence/daemon-build-completed.txt"
+
+      - name: Build the actual desktop GUI
         id: desktop-build
         working-directory: SRC
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --release --locked -p neoth --bin neoth --bin neothd --features release-desktop
-          cargo build --release --locked -p neothd-gui --features release-desktop
+          evidence="$RUNNER_TEMP/packaged-chat-evidence"
+          date -u +%FT%TZ > "$evidence/gui-build-started.txt"
+          cargo build --release --locked -p neothd-gui --features release-desktop 2>&1 | tee "$evidence/gui-build.log"
+          date -u +%FT%TZ > "$evidence/gui-build-completed.txt"
 
       # This lane qualifies the chat application bundle. It does not replace
       # release.yml's signed/notarized PKG/DMG and clean-machine installation.
