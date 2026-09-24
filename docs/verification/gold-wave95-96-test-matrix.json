@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W865published;W867exacthostedformat;corepending",
+  "status": "W868minimalcompilerepair;hostedpending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 177020,
-    "sha256": "81711F1BF5524536044DD40978E2AD5D4D0282E54C49FB2DB07CB79953A46DFB"
+    "bytes": 177011,
+    "sha256": "38F2F49F3A3C98D44F6865467F05E451AF41CFF45336642C6BE0EF5D49C16A6F"
   },
   "sourceInputs": 1001,
   "requiredNativeTests": [
@@ -9426,79 +9426,79 @@
     {
       "test": "daemon::doc_ingest_cron::tests::cancelled_scan_refuses_before_creating_home",
       "sourcePath": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
-      "sourceSha256": "AE69FBD96E5F78B0F6C3657D60D7E1C88CF2C3FB857B35F89D967564750423C1",
+      "sourceSha256": "BD6E016C901C1E7FCC95C192B9D4D53099442CFB5E933CA2006D729B4E3FFD39",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::doc_ingest_cron::tests::retiring_worker_fences_late_blocking_state_publication",
       "sourcePath": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
-      "sourceSha256": "AE69FBD96E5F78B0F6C3657D60D7E1C88CF2C3FB857B35F89D967564750423C1",
+      "sourceSha256": "BD6E016C901C1E7FCC95C192B9D4D53099442CFB5E933CA2006D729B4E3FFD39",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::doc_ingest_cron::tests::cancellation_before_commit_preserves_existing_state_bytes",
       "sourcePath": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
-      "sourceSha256": "AE69FBD96E5F78B0F6C3657D60D7E1C88CF2C3FB857B35F89D967564750423C1",
+      "sourceSha256": "BD6E016C901C1E7FCC95C192B9D4D53099442CFB5E933CA2006D729B4E3FFD39",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::doc_ingest_cron::tests::valid_hex_digest_tampering_refuses_state_mutation",
       "sourcePath": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
-      "sourceSha256": "AE69FBD96E5F78B0F6C3657D60D7E1C88CF2C3FB857B35F89D967564750423C1",
+      "sourceSha256": "BD6E016C901C1E7FCC95C192B9D4D53099442CFB5E933CA2006D729B4E3FFD39",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::doc_ingest_cron::tests::real_file_scan_reopens_state_and_deduplicates_revision",
       "sourcePath": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
-      "sourceSha256": "AE69FBD96E5F78B0F6C3657D60D7E1C88CF2C3FB857B35F89D967564750423C1",
+      "sourceSha256": "BD6E016C901C1E7FCC95C192B9D4D53099442CFB5E933CA2006D729B4E3FFD39",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::doc_ingest_cron::tests::listing_a_missing_home_is_read_only",
       "sourcePath": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
-      "sourceSha256": "AE69FBD96E5F78B0F6C3657D60D7E1C88CF2C3FB857B35F89D967564750423C1",
+      "sourceSha256": "BD6E016C901C1E7FCC95C192B9D4D53099442CFB5E933CA2006D729B4E3FFD39",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::doc_ingest_cron::tests::real_change_supersedes_pending_and_quota_defers_next_revision",
       "sourcePath": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
-      "sourceSha256": "AE69FBD96E5F78B0F6C3657D60D7E1C88CF2C3FB857B35F89D967564750423C1",
+      "sourceSha256": "BD6E016C901C1E7FCC95C192B9D4D53099442CFB5E933CA2006D729B4E3FFD39",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::doc_ingest_cron::tests::deferred_revision_requires_current_root_snapshot_before_promotion",
       "sourcePath": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
-      "sourceSha256": "AE69FBD96E5F78B0F6C3657D60D7E1C88CF2C3FB857B35F89D967564750423C1",
+      "sourceSha256": "BD6E016C901C1E7FCC95C192B9D4D53099442CFB5E933CA2006D729B4E3FFD39",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::doc_ingest_cron::tests::bounded_inventory_rotates_after_reopen_and_revisits_a_changed_later_file",
       "sourcePath": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
-      "sourceSha256": "AE69FBD96E5F78B0F6C3657D60D7E1C88CF2C3FB857B35F89D967564750423C1",
+      "sourceSha256": "BD6E016C901C1E7FCC95C192B9D4D53099442CFB5E933CA2006D729B4E3FFD39",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::doc_ingest_cron::tests::byte_budget_defers_the_next_item_and_rotates_a_full_64_file_inventory",
       "sourcePath": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
-      "sourceSha256": "AE69FBD96E5F78B0F6C3657D60D7E1C88CF2C3FB857B35F89D967564750423C1",
+      "sourceSha256": "BD6E016C901C1E7FCC95C192B9D4D53099442CFB5E933CA2006D729B4E3FFD39",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::doc_ingest_cron::tests::overlapping_roots_attribute_the_shared_file_to_the_longest_root_once",
       "sourcePath": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
-      "sourceSha256": "AE69FBD96E5F78B0F6C3657D60D7E1C88CF2C3FB857B35F89D967564750423C1",
+      "sourceSha256": "BD6E016C901C1E7FCC95C192B9D4D53099442CFB5E933CA2006D729B4E3FFD39",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::doc_ingest_cron::tests::corrupt_state_fails_closed_without_overwrite",
       "sourcePath": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
-      "sourceSha256": "AE69FBD96E5F78B0F6C3657D60D7E1C88CF2C3FB857B35F89D967564750423C1",
+      "sourceSha256": "BD6E016C901C1E7FCC95C192B9D4D53099442CFB5E933CA2006D729B4E3FFD39",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::doc_ingest_cron::tests::nested_unknown_state_field_fails_closed_without_overwrite",
       "sourcePath": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
-      "sourceSha256": "AE69FBD96E5F78B0F6C3657D60D7E1C88CF2C3FB857B35F89D967564750423C1",
+      "sourceSha256": "BD6E016C901C1E7FCC95C192B9D4D53099442CFB5E933CA2006D729B4E3FFD39",
       "junitClass": "neoth"
     },
     {
@@ -11426,7 +11426,7 @@
       {
         "test": "daemon::doc_ingest_cron::tests::drive_case_aliases_share_one_physical_root_inventory",
         "sourcePath": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
-        "sourceSha256": "AE69FBD96E5F78B0F6C3657D60D7E1C88CF2C3FB857B35F89D967564750423C1",
+        "sourceSha256": "BD6E016C901C1E7FCC95C192B9D4D53099442CFB5E933CA2006D729B4E3FFD39",
         "junitClass": "neoth"
       }
     ],
@@ -11758,7 +11758,7 @@
       {
         "test": "daemon::doc_ingest_cron::tests::symlinked_leaf_is_never_discovered",
         "sourcePath": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
-        "sourceSha256": "AE69FBD96E5F78B0F6C3657D60D7E1C88CF2C3FB857B35F89D967564750423C1",
+        "sourceSha256": "BD6E016C901C1E7FCC95C192B9D4D53099442CFB5E933CA2006D729B4E3FFD39",
         "junitClass": "neoth"
       }
     ],
@@ -12090,7 +12090,7 @@
       {
         "test": "daemon::doc_ingest_cron::tests::symlinked_leaf_is_never_discovered",
         "sourcePath": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
-        "sourceSha256": "AE69FBD96E5F78B0F6C3657D60D7E1C88CF2C3FB857B35F89D967564750423C1",
+        "sourceSha256": "BD6E016C901C1E7FCC95C192B9D4D53099442CFB5E933CA2006D729B4E3FFD39",
         "junitClass": "neoth"
       }
     ]
@@ -35240,6 +35240,38 @@
       }
     ],
     "note": "API/source/inner SHA and seven old/new Git blob identities verified. B7 raw production callsite fingerprint unchanged. No local formatter/compiler/runtime.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave868WatcherCompilerRepair": {
+    "base": "4d3fdc0341794796bc93434e30fcd23925320107",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 276408,
+        "sha256": "BA3787683355CBC188C55AA016657328192A7B26712A82BCBAC376D1717B556E",
+        "blob": "f4b28127d6a903305357cd75aca8318dc949e883"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1287736,
+        "sha256": "F7A532CB0F743FAC9B3B422414486298BDA6EE8B8F260D259A431A4764AEAFBB",
+        "blob": "334e53c6bce77054f0c3c1d651c9e60b93d7c3a4"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1896348,
+        "sha256": "3E2057829249082566AF1B74C714911B535DC31FF9BB490C9D7D944DF68761EA",
+        "blob": "5c65368cd3740a9232e59cc3ab0beddf53765121"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/doc_ingest_cron.rs",
+        "bytes": 48961,
+        "sha256": "BD6E016C901C1E7FCC95C192B9D4D53099442CFB5E933CA2006D729B4E3FFD39",
+        "blob": "2233402bb6fbe2808f0b6501fa0e1643a03a5fb7"
+      }
+    ],
+    "note": "Fixes the four actual Core05392007 compiler failures without changing lock/cursor/read-budget policy. C1a channel implementation proceeds independently. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -2,6 +2,15 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W868 hosted watcher compiler repair (2026-09-24):** Core36037238201 at05392007
+reported four compile errors before tests. The watcher now uses the existing
+nonblocking std File::try_lock API, retains the inventory selection key before
+an accepted-candidate binding shadows it, and computes the buffer bound before
+its mutable borrow. No dependency, lock refusal, cursor or read-budget policy
+was relaxed. Root inspected the minimal diff; a fresh hosted rerun is required.
+Preflight36037741173 at4d3fdc03 passed all static contracts. Native behavior is
+still pending. B7/B8 and counts stay unchanged. C1a's remaining channel-session
+canary parity is the next independent implementation batch.
 **W867 verified hosted formatting (2026-09-24):** W865 is published at05392007.
 Preflight36037235185 exported artifact10825133257 after rustfmt-only drift.
 Root verified the API ZIP digest, exact source, inner hashes and seven

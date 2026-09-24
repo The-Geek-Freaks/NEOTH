@@ -13,7 +13,6 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use cap_std::fs::Dir;
-use fs2::FileExt as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tokio::task::JoinHandle;
@@ -640,13 +639,14 @@ fn hash_inventory_range(
         {
             break;
         }
+        let selection_key = candidate.selection_key.clone();
         match hash_candidate(candidate, source_bytes_budget, first_seen_unix, control)? {
             HashCandidateResult::Accepted(candidate) => {
-                last_attempted = Some(candidate.selection_key.clone());
+                last_attempted = Some(selection_key);
                 candidates.push(candidate);
             }
             HashCandidateResult::Rejected => {
-                last_attempted = Some(candidate.selection_key.clone());
+                last_attempted = Some(selection_key);
             }
             HashCandidateResult::ByteBudgetDeferred => break,
         }
@@ -679,9 +679,10 @@ fn hash_candidate(
     let mut hasher = Sha256::new();
     let mut remaining = before.len();
     let mut buffer = [0u8; 64 * 1024];
+    let buffer_len = buffer.len() as u64;
     while remaining > 0 {
         control.check()?;
-        let count = file.read(&mut buffer[..remaining.min(buffer.len() as u64) as usize])?;
+        let count = file.read(&mut buffer[..remaining.min(buffer_len) as usize])?;
         if count == 0 {
             // The pre-read metadata promised more bytes. Treat a concurrent
             // truncation as this pass's rejected attempt after preserving its
@@ -751,7 +752,7 @@ fn with_locked_state<T>(
     let lock_path = home.display_path.join(LOCK_FILE);
     let (lock, lock_binding) =
         open_or_create_bound_lockfile(&home.dir, OsStr::new(LOCK_FILE), &lock_path)?;
-    lock.try_lock_exclusive()
+    lock.try_lock()
         .context("document discovery state is busy; retry the command or scan")?;
     control.check()?;
     let state = load_state(&home)?;
