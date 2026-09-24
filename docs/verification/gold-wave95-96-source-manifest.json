@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T12:13:21.4573170Z",
-  "validationStatus": "W791 actual GUI159PASS; Group1216PASS1fixtureFAIL; W792 content-invariant repair awaiting hosted rerun",
+  "capturedUtc": "2026-09-24T12:27:07.7334993Z",
+  "validationStatus": "D6 ACCEPTED13PASS Group1217allPASS; GUI159allPASS; D5F4inreview",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1742,6 +1742,11 @@
       "sha256": "D144013642630E5740AE864302FAABAFAE5DAE66F271B23FAEF4EC21EBA32889"
     },
     {
+      "path": "docs/verification/gold-wave797-specialist-advisor.json",
+      "bytes": 3793,
+      "sha256": "1A952A3F8AB5E64BF100B01621530B14ED69B08EE6FCBF9DC1B74F39D703AA8C"
+    },
+    {
       "path": "docs/verification/managed-browser-cft154.json",
       "bytes": 2497,
       "sha256": "80443D2F6E6A6E226F1617F7F5463017071D9D21130D1FCD116470F147455337"
@@ -1888,18 +1893,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 255075,
-      "sha256": "6E77E56775E990E7B0F58B4AC6046F55EBAECFC73DE649A1CB59A90F96CB9D46"
+      "bytes": 255912,
+      "sha256": "1809F775369632DB36847268B605D9151FB69FFF5668F8B2D5F1819768F7BC2C"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1266403,
-      "sha256": "A3FD9DE61D5E92070054D8F610D8717D78223B2ABDD58F8482FE1D2E4FCBEC04"
+      "bytes": 1267240,
+      "sha256": "E8A46FE34011DB39ABF0103CB2C2E19F9657CBF2083F0A9D0BB2090149DD4CE4"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1871994,
-      "sha256": "6C28549D92F70D9899F31064976F8345F7D951905DF05221843DD6634498335D"
+      "bytes": 1873030,
+      "sha256": "E6828A034DEC17DF8C3DB3BF80CF84DDFD5119ED774DFAA88D79F3D1D240C7FE"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -3553,8 +3558,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/g02_surfacing_cron.rs",
-      "bytes": 13471,
-      "sha256": "85F2D1A906E98C975DAFFD83C64257F3393157F8B29D854752FAB9FFF6E1A3D2"
+      "bytes": 13505,
+      "sha256": "3B9D8DD7A4CE75A6A3967226CB4C5031509B2451F6E903E424503D825C0C8E23"
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_bridge.rs",

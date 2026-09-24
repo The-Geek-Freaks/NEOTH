@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W797 specialist-advisor acceptance (2026-09-24):**
+The corrected Group1217 run35997962184 at f7cc563b passed1217/1217.
+Root independently verified all three ZIP digests,231fixture-source and two
+input bindings, and all actual terminals. All13 D6 tests pass, covering the
+explicit checklist, honest cost/volume evidence, the real G02 producer,
+durable cooldown/restart and malformed-input isolation. ADOPT31-D6 closes.
+The preceding f7cc Preflight requested only assertion layout; its exact shown
+formatting is incorporated without a local formatter. D5/F4 remain under
+focused source review and have not been admitted. No local executable checks.
+Road1324/1067checked/255open/2partial;257raw/256pre-tag;WS-LF38done80open.
+WS-ADOPT31 now43open24done; dashboard191open.
+Evidence: docs/verification/gold-wave797-specialist-advisor.json.
+
 **W791/W792 hosted results and queue fixture (2026-09-24):**
 Root verified six ZIP digests and every individual terminal. GUI159 at
 272105e8 passed159/159 with29source/input bindings, including W153's unchanged

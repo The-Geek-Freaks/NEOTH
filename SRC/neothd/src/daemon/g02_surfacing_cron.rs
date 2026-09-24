@@ -322,9 +322,11 @@ mod tests {
         let queue = crate::proactive::ProactiveQueue::load_from(&queue_path).unwrap();
         assert_eq!(queue.len(), 1);
         assert_eq!(queue.peek()[0].source, "g02_surfacing");
-        assert!(!queue
-            .peek()
-            .iter()
-            .any(|item| item.source == "specialist_advisor"));
+        assert!(
+            !queue
+                .peek()
+                .iter()
+                .any(|item| item.source == "specialist_advisor")
+        );
     }
 }

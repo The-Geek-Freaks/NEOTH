@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W791 actual GUI159PASS; Group1216PASS1fixtureFAIL; W792 content-invariant repair awaiting hosted rerun",
+  "status": "D6 ACCEPTED13PASS Group1217allPASS; GUI159allPASS; D5F4inreview",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 170123,
-    "sha256": "6ED2C18C65E20C8F673E120595356029A8ED16AEA557346E66C349D70619A5C7"
+    "bytes": 170273,
+    "sha256": "85EF4F0D77F982B1B1B747C5A18BE30F254B3E2BB3CC6F3A116C8D8B2562CADD"
   },
-  "sourceInputs": 962,
+  "sourceInputs": 963,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -8700,31 +8700,31 @@
     {
       "test": "daemon::g02_surfacing_cron::tests::g02_tick_no_views_db_returns_zero",
       "sourcePath": "SRC/neothd/src/daemon/g02_surfacing_cron.rs",
-      "sourceSha256": "85F2D1A906E98C975DAFFD83C64257F3393157F8B29D854752FAB9FFF6E1A3D2",
+      "sourceSha256": "3B9D8DD7A4CE75A6A3967226CB4C5031509B2451F6E903E424503D825C0C8E23",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::g02_surfacing_cron::tests::g02_tick_empty_profile_returns_zero",
       "sourcePath": "SRC/neothd/src/daemon/g02_surfacing_cron.rs",
-      "sourceSha256": "85F2D1A906E98C975DAFFD83C64257F3393157F8B29D854752FAB9FFF6E1A3D2",
+      "sourceSha256": "3B9D8DD7A4CE75A6A3967226CB4C5031509B2451F6E903E424503D825C0C8E23",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::g02_surfacing_cron::tests::g02_constants_canonical",
       "sourcePath": "SRC/neothd/src/daemon/g02_surfacing_cron.rs",
-      "sourceSha256": "85F2D1A906E98C975DAFFD83C64257F3393157F8B29D854752FAB9FFF6E1A3D2",
+      "sourceSha256": "3B9D8DD7A4CE75A6A3967226CB4C5031509B2451F6E903E424503D825C0C8E23",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::g02_surfacing_cron::tests::g02_tick_surfaces_a_fully_attested_specialist_candidate_from_local_usage",
       "sourcePath": "SRC/neothd/src/daemon/g02_surfacing_cron.rs",
-      "sourceSha256": "85F2D1A906E98C975DAFFD83C64257F3393157F8B29D854752FAB9FFF6E1A3D2",
+      "sourceSha256": "3B9D8DD7A4CE75A6A3967226CB4C5031509B2451F6E903E424503D825C0C8E23",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::g02_surfacing_cron::tests::invalid_specialist_assessment_suppresses_only_d6_output",
       "sourcePath": "SRC/neothd/src/daemon/g02_surfacing_cron.rs",
-      "sourceSha256": "85F2D1A906E98C975DAFFD83C64257F3393157F8B29D854752FAB9FFF6E1A3D2",
+      "sourceSha256": "3B9D8DD7A4CE75A6A3967226CB4C5031509B2451F6E903E424503D825C0C8E23",
       "junitClass": "neoth"
     }
   ],
@@ -32369,7 +32369,7 @@
     "localExecutableValidationRan": false
   },
   "wave775SpecialistAdvisorAcceptance": {
-    "status": "Connected local operator assessment and durable proactive advice; source reviewed; hosted pending",
+    "status": "ACCEPTED W797: all13source-bound casesPASS Group1217run35997962184 atf7cc563b",
     "requiredTests": [
       "analytics::specialist_advisor::tests::unknown_checklist_evidence_never_yields_a_specialist_candidate",
       "analytics::specialist_advisor::tests::all_explicit_checklist_evidence_and_observed_volume_yield_candidate",
@@ -32656,6 +32656,44 @@
       }
     ],
     "note": "Root verified6artifactdigests29GUIbindings231nativebindings2inputs and every terminal; no criterion closed; W792 same selector now preserves independent queue entry",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave797SpecialistAdvisorAccepted": {
+    "base": "f7cc563b6e6399d2790d23dc02babc7ca099b6cf",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave797-specialist-advisor.json",
+        "bytes": 3793,
+        "sha256": "1A952A3F8AB5E64BF100B01621530B14ED69B08EE6FCBF9DC1B74F39D703AA8C",
+        "blob": "9e62d23b1deaea99f32a7f9cb0eeb4741acc3557"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 255912,
+        "sha256": "1809F775369632DB36847268B605D9151FB69FFF5668F8B2D5F1819768F7BC2C",
+        "blob": "e1bd2a4d7b1a58504c3fa432143b05a02d195757"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1267240,
+        "sha256": "E8A46FE34011DB39ABF0103CB2C2E19F9657CBF2083F0A9D0BB2090149DD4CE4",
+        "blob": "1063d1034fd5ae449e62b1bcd05573790862a6b7"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1873030,
+        "sha256": "E6828A034DEC17DF8C3DB3BF80CF84DDFD5119ED774DFAA88D79F3D1D240C7FE",
+        "blob": "0d6bbe48ced22c4dfcacf67edffb5e9e7b0e9e12"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/g02_surfacing_cron.rs",
+        "bytes": 13505,
+        "sha256": "3B9D8DD7A4CE75A6A3967226CB4C5031509B2451F6E903E424503D825C0C8E23",
+        "blob": "16970fd8cffc495d52b93413df708293f00f0f0b"
+      }
+    ],
+    "note": "ActualGroupf7cc1217PASS verified3ZIP231fixture2inputbindings;closeD6only;exacthostedfmtassertionimport",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

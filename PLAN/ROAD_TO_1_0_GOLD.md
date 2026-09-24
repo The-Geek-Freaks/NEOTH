@@ -8,6 +8,19 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W797 specialist-advisor acceptance (2026-09-24):**
+The corrected Group1217 run35997962184 at f7cc563b passed1217/1217.
+Root independently verified all three ZIP digests,231fixture-source and two
+input bindings, and all actual terminals. All13 D6 tests pass, covering the
+explicit checklist, honest cost/volume evidence, the real G02 producer,
+durable cooldown/restart and malformed-input isolation. ADOPT31-D6 closes.
+The preceding f7cc Preflight requested only assertion layout; its exact shown
+formatting is incorporated without a local formatter. D5/F4 remain under
+focused source review and have not been admitted. No local executable checks.
+Road1324/1067checked/255open/2partial;257raw/256pre-tag;WS-LF38done80open.
+WS-ADOPT31 now43open24done; dashboard191open.
+Evidence: docs/verification/gold-wave797-specialist-advisor.json.
+
 **W791/W792 hosted results and queue fixture (2026-09-24):**
 Root verified six ZIP digests and every individual terminal. GUI159 at
 272105e8 passed159/159 with29source/input bindings, including W153's unchanged
@@ -5410,7 +5423,7 @@ already-gated release workflow itself.
 | WS-R4 Zero-friction install, GUI parity and public launch (2026-07-14) | 15 | **14** | **1** |
 | WS-LF Confirmed lost-feature recovery (2026-07-18) | 118 materialized (52 recovered source rows + 65 plan leaves + 1 inventory-integrity gate) | **80** | **38** |
 | WS-NCT Cognitive Transport + selective Buzz/Prime coordination (2026-07-27; Prime decision 2026-08-10) | 30 (`GOLD-NCT-00..27` + `GOLD-ADOPT-BUZZ-01` + `GOLD-ADOPT-PRIME-01`) | **28** | **2** |
-| WS-ADOPT31 18-source forensic adoption wave + Wayfinder/ADW/Evidence-Gated pipeline (2026-07-31) | 67 (`ADOPT31-*`; lanes A7/B12/C10/D7/E2/F4/G7/H2/**W2+I7+V5**/X2) | **44** | **23** |
+| WS-ADOPT31 18-source forensic adoption wave + Wayfinder/ADW/Evidence-Gated pipeline (2026-07-31) | 67 (`ADOPT31-*`; lanes A7/B12/C10/D7/E2/F4/G7/H2/**W2+I7+V5**/X2) | **43** | **24** |
 | WS-CC Context Connectors & People Intelligence (2026-08-13) | 13 (`GOLD-CC-00..12`) | **12** | **1** |
 | WS-ADOPT30 8-source bounded external-adoption review (2026-08-30) | 8 (`GOLD-ADAPT-ARCHIFY-01`, `GOLD-ADAPT-GN-01`, `GOLD-ADAPT-S2C-VISUAL-REVIEW-01`, `GOLD-ADAPT-TAILCAT-01`, `GOLD-ADOPT-FREELLMAPI-01`, `GOLD-ADAPT-WIKISKILL-01`, `GOLD-ADAPT-AIMEM-01`, `GOLD-ADOPT-MODULAR-01`) | **7** | **1** |
 
@@ -5418,15 +5431,15 @@ already-gated release workflow itself.
 inside their already-open parent rollups and therefore are not added a second
 time to the WS-R4 top-level total.
 
-**Current count semantics (reconciled 2026-09-24 after W783/W784 grouped and GUI-source acceptance):**
-the dashboard tracks broad/workstream rollups; its OPEN column sums to **192**
-(`1 + 6 + 14 + 80 + 28 + 44 + 12 + 7`). The release workflow uses a different
+**Current count semantics (reconciled 2026-09-24 after W797 specialist-advisor acceptance):**
+the dashboard tracks broad/workstream rollups; its OPEN column sums to **191**
+(`1 + 6 + 14 + 80 + 28 + 43 + 12 + 7`). The release workflow uses a different
 and stricter contract: `packaging/roadmap_release_gate.py` counts every Markdown
 task outside fenced code, including mandatory child contracts. The whole-file
-result is **1,324 total / 1,066 done / 256 open / 2 partial = 258 raw blockers**.
-A release tag has **257 pre-tag blockers**, because only the single
+result is **1,324 total / 1,067 done / 255 open / 2 partial = 257 raw blockers**.
+A release tag has **256 pre-tag blockers**, because only the single
 `GOLD-RELEASE-ARTIFACTS` task may remain open while that workflow creates its
-evidence. The values 192, 258 and 257 answer different questions and must not be
+evidence. The values 191, 257 and 256 answer different questions and must not be
 substituted for one another in release-readiness claims. The two partials still
 block release; notably A6 has a tested VAD primitive but no live Playback-Cancel
 consumer until A2/A7 exist. `ADOPT31-C3` retains the canonical open state.
@@ -9611,10 +9624,13 @@ to run training in-process** (Rules 1 and 8).
   current config with a fixed scorer, so a model/skill/config change is scored on the
   operator's own workload before it ships. *NEOTH:* generalise `memory/eval_harness.rs` +
   `eval/` corpus. *Consumer:* release gate, `neoth eval run`. **L**
-- [ ] **ADOPT31-D6** Specialist-candidate advisor — run the article's 9-point checklist against
+- [x] **ADOPT31-D6** Specialist-candidate advisor — run the article's 9-point checklist against
   the operator's own `usage_log` data and report which recurring workflow is worth
   specialising, with its volume, cost and verifiability. *NEOTH:*
   `analytics/specialist_advisor.rs` (new). *Consumer:* proactive surface. **M**
+  **Accepted 2026-09-24 (W797):** all13 source-bound checklist/G02/cooldown
+  and malformed-evidence cases passed in Group1217 at f7cc563b. Evidence:
+  docs/verification/gold-wave797-specialist-advisor.json.
 - [ ] **ADOPT31-D7** Route-by-verifiability — encode volume × verifiability as an explicit
   routing input (high-volume + verifiable → local specialist; verifiable + rare → frontier;
   changing facts → retrieval; unverifiable → human). *NEOTH:* `models/selector.rs` +

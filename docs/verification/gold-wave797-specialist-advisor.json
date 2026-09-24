@@ -1,0 +1,123 @@
+{
+  "schema": "neoth-wave797-specialist-advisor-admission/v1",
+  "status": "ROOT_VERIFIED_SUCCESS",
+  "run": 35997962184,
+  "source": "f7cc563b6e6399d2790d23dc02babc7ca099b6cf",
+  "executed": 1217,
+  "passed": 1217,
+  "failed": 0,
+  "fixtureSourceBindings": 231,
+  "inputBindings": 2,
+  "artifacts": [
+    {
+      "id": 10807685384,
+      "name": "w190-research-lifecycle-source-f7cc563b6e6399d2790d23dc02babc7ca099b6cf",
+      "digest": "sha256:1fa21057e0a096a8a5eb659a4fe6527f1c4927f7ada0297163b30200df497d7b"
+    },
+    {
+      "id": 10806959230,
+      "name": "w190-research-lifecycle-log-f7cc563b6e6399d2790d23dc02babc7ca099b6cf",
+      "digest": "sha256:ec34d0c8e2fb3d16e61bff4e70cac1afe2bb4ad804d016628133a478323fbfac"
+    },
+    {
+      "id": 10806929212,
+      "name": "w190-research-lifecycle-receipt-f7cc563b6e6399d2790d23dc02babc7ca099b6cf",
+      "digest": "sha256:0266378ee5ace7336c882ea71e0fcca3a6226d087c6adf58a4667f9d1141dbff"
+    }
+  ],
+  "criterion": "ADOPT31-D6",
+  "criterionResults": [
+    {
+      "ordinal": 1205,
+      "test": "analytics::specialist_advisor::tests::unknown_checklist_evidence_never_yields_a_specialist_candidate",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1206,
+      "test": "analytics::specialist_advisor::tests::all_explicit_checklist_evidence_and_observed_volume_yield_candidate",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1207,
+      "test": "analytics::specialist_advisor::tests::provider_success_is_not_inferred_as_model_quality",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1208,
+      "test": "analytics::specialist_advisor::tests::unknown_cost_stays_unknown_in_advice",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1209,
+      "test": "analytics::specialist_advisor::tests::duplicate_assessments_are_not_candidate_evidence",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1210,
+      "test": "analytics::specialist_advisor::tests::operator_assessment_file_accepts_only_closed_unique_schema_v1_rows",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1211,
+      "test": "analytics::specialist_advisor::tests::proactive_items_surface_a_confirmed_candidate",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1212,
+      "test": "analytics::specialist_advisor::tests::unclassified_usage_never_becomes_a_candidate",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1213,
+      "test": "daemon::g02_surfacing_cron::tests::g02_tick_no_views_db_returns_zero",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1214,
+      "test": "daemon::g02_surfacing_cron::tests::g02_tick_empty_profile_returns_zero",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1215,
+      "test": "daemon::g02_surfacing_cron::tests::g02_constants_canonical",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1216,
+      "test": "daemon::g02_surfacing_cron::tests::g02_tick_surfaces_a_fully_attested_specialist_candidate_from_local_usage",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1217,
+      "test": "daemon::g02_surfacing_cron::tests::invalid_specialist_assessment_suppresses_only_d6_output",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "localExecutableValidationRan": false
+}
