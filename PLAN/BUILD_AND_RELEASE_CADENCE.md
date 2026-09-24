@@ -3,6 +3,17 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W579-W581 GUI follow-up (2026-09-24):**
+GUI148 run35938022418 atc21e29b1 is admitted145PASS/3FAIL/0missing with28source
+bindings. W480 Replace lacks the accepted Delta addressed byW577. The other
+two failures are whitespace-sensitive Dream/Wizard source-contract assertions;
+W581 normalizes whitespace/trailing field commas only in those tests, keeping
+all lock, retained-readback, ordering and fail-closed checks. Production code
+is unchanged. Both P118 GUI callback cases pass again. Independent review and
+scoped diff checks pass; new GUI execution remains pending.
+W580 imports exact GitHub formatting for W577 (old/new Gitblob + ZIP/receipt
+checks), and Preflight35941526082 passes ata1e01e71. No local formatter/tests.
+Road1045checked/277open/2partial and test-selection counts remain unchanged.
 **W577 accepted stream projection (2026-09-24):**
 The sole Group951 failure is repaired in source: accepted deferred provider
 output now carries a typed body to the GUI sink while the CLI writes its

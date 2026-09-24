@@ -43275,6 +43275,10 @@ mod dream_cron_gui_tests {
     };
     use tempfile::TempDir;
 
+    fn source_contract_view(source: &str) -> String {
+        source.split_whitespace().collect::<String>().replace(",}", "}")
+    }
+
     fn receipt(enabled: bool, autonomy: &str, allows: bool) -> gui_action::DreamCronAck {
         gui_action::DreamCronAck {
             ok: true,
@@ -43464,10 +43468,10 @@ mod dream_cron_gui_tests {
             .find("// ── Companion overlay wiring")
             .unwrap()
             + start;
-        let finish = &source[start..end];
+        let finish = source_contract_view(&source[start..end]);
         assert!(finish.contains("std::thread::spawn"));
         assert!(finish.contains("wizard_daemon_session().lock"));
-        assert!(finish.contains("let Some(session) = slot.as_mut()"));
+        assert!(finish.contains("letSome(session)=slot.as_mut()"));
         assert!(!finish.contains("WizardSessionController::open_or_start"));
         assert!(source.contains("window.on_wizard_channel_changed"));
         assert!(source.contains("submit_operator_choice"));
@@ -43488,7 +43492,7 @@ mod dream_cron_gui_tests {
             .find("// ── Companion overlay wiring")
             .unwrap()
             + start;
-        let finish = &source[start..end];
+        let finish = source_contract_view(&source[start..end]);
         let revision = finish.find("DREAM_CRON_UI_REVISION.fetch_add").unwrap();
         let dream = finish
             .find("persist_wizard_dream_cron(state.dream_cron_enabled)")
@@ -43497,9 +43501,9 @@ mod dream_cron_gui_tests {
             .find("session.prepare_for_commit(config_sha256)")
             .unwrap();
         assert!(revision < dream && dream < commit);
-        assert!(finish.contains("DaemonFailure { error, dream_readback: Some(dream_readback) }"));
-        assert!(finish.contains("if let Some(readback) = dream_readback"));
-        assert!(finish.contains("apply_dream_cron_status(&w, readback)"));
+        assert!(finish.contains("DaemonFailure{error,dream_readback:Some(dream_readback)}"));
+        assert!(finish.contains("ifletSome(readback)=dream_readback"));
+        assert!(finish.contains("apply_dream_cron_status(&w,readback)"));
     }
 
     #[test]

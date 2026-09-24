@@ -4,10 +4,10 @@
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 141192,
-    "sha256": "07CF9AE262AAA2EAF2ABCCAA7BD02D60A837E3D973961CE45FCCF35343156986"
+    "bytes": 141380,
+    "sha256": "B63D2ACB93188B90A7DE0F7509466399C70B6DFE488118F24DF0E29AFB996554"
   },
-  "sourceInputs": 803,
+  "sourceInputs": 804,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -7995,8 +7995,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2212048,
-      "sha256": "03C1FB655412697E286E422887180DA96D929EB861BC67486A8A2A8196378BAC"
+      "bytes": 2212213,
+      "sha256": "4089C6FBED4DA8B47A705319733B56E23E05FC282449B96B4A06A92003483C97"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -26274,6 +26274,44 @@
       }
     ],
     "note": "Exact GitHub rustfmt patch35941221374 at0e97 verified ZIP+receiptSHA+old/new Git blobs; no behavioral change or local formatter. W577 hosted behavior running.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave581Evidence": {
+    "base": "a1e01e71161ce1a4f492b1a7b508f23624622db8",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave579-gui148-terminals.json",
+        "bytes": 44690,
+        "sha256": "9410D2CB5E5CDA245A541F1F56FEDCCABF1569B83164D28BA681C2A1E4F96964",
+        "blob": "71fcd02d5c1db34e23ba53b0a3898a49141f6781"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 208239,
+        "sha256": "638C42FAD4CD1AC263E76D39584E16564F6CB3E16B824BB24BA06654EF9C8EDA",
+        "blob": "941713df535dd6de81afdf1051af67f0706fc942"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1219567,
+        "sha256": "97C6E7D51E26D8625D97C63EB7BC41C7A55E2E0AF0CE1501CB022DBF432D3C4B",
+        "blob": "2ea088e42b95811e0c967a0257531eb0cceeee40"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1818849,
+        "sha256": "D1AE7656E83A4F2F8220D747D39AB9DA161DF2FFAE45D6A66782EB790241D416",
+        "blob": "4d605daee35c8fc780b51380ba738b2ce0a2c943"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2212213,
+        "sha256": "4089C6FBED4DA8B47A705319733B56E23E05FC282449B96B4A06A92003483C97",
+        "blob": "eb0a9482b42816b5719435d7977dec4e902f51d2"
+      }
+    ],
+    "note": "W579GUI148 admitted145PASS3FAIL with28bindings; W581 fixes only whitespace-sensitive source contracts retaining semantic assertions; W580 hostedformat admitted; P118 passes; source reviewed, behaviorpending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

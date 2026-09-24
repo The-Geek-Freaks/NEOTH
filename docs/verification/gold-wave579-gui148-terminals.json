@@ -1,0 +1,1061 @@
+{
+  "schema": "neoth-gui-source-admission/v1",
+  "run": 35938022418,
+  "source": "c21e29b1eb954c96a5456995a7f3b56acc264b8b",
+  "status": "SOURCE_ADMITTED_PARTIAL_FAILURE",
+  "executed": 148,
+  "passed": 145,
+  "failed": 3,
+  "missing": 0,
+  "artifacts": [
+    {
+      "id": 10785261158,
+      "published": "21c60787b28065ca56d2b82c65608096724b3543f8c2538d38251d6b290d4ddd",
+      "local": "21C60787B28065CA56D2B82C65608096724B3543F8C2538D38251D6B290D4DDD"
+    },
+    {
+      "id": 10785236420,
+      "published": "82f0be9667c649cfa4f46f6fdc63b35255e1698c919d26165338e2d33d4388d2",
+      "local": "82F0BE9667C649CFA4F46F6FDC63B35255E1698C919D26165338E2D33D4388D2"
+    },
+    {
+      "id": 10784564208,
+      "published": "e1d8af30e6acd9844c89fd9e52d2debab8287f72580887241e71b0228eccae75",
+      "local": "E1D8AF30E6ACD9844C89FD9E52D2DEBAB8287F72580887241E71B0228ECCAE75"
+    }
+  ],
+  "sourceBindings": [
+    {
+      "path": "docs/verification/gold-wave95-96-test-matrix.json",
+      "sha256": "F8587C0A422DD5A570E89A86AC432A39FDA1E10DB694C731D96A9A904A42A8FF",
+      "gitBlob": "b05b960f0db6a53bc10a54909a75c07761842d89"
+    },
+    {
+      "path": "docs/verification/gold-wave95-96-source-manifest.json",
+      "sha256": "EF0137665EFECF31DFAED6AC7888E5560BE5D25E0E2AD9BE5C836C3CDC0013DA",
+      "gitBlob": "16299a099564c6afbd486bcc3e0081f1893bbc1f"
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "sha256": "722EE0446DBAC05B3E7D4EB9D44C7174E98E6E6FFF5B633B5A30993EDBCB61F0",
+      "gitBlob": "a49b0e51cbc8d33d1f351352e856fc89961f02e1"
+    },
+    {
+      "path": "SRC/neothd-gui/Cargo.toml",
+      "sha256": "296EF213746C9DD31CD818112BA546F21425B870120181058152B277AEAD6261",
+      "gitBlob": "4f00623499277291ee417933c54331f392340f0e"
+    },
+    {
+      "path": ".github/workflows/gui-linux-fixtures.yml",
+      "sha256": "740FA90803CBA6E77ECA89734292EB7E28AE808CD809D59563AC9DF5BE856438",
+      "gitBlob": "1e77c27debd2fb87be89352a81d778885464623d"
+    },
+    {
+      "path": "SRC/neothd-gui/src/chat_reasoning.rs",
+      "sha256": "561D447519555E023FC0FC4A3675B26636989792BD10CD6101B29C970FFAAEA9",
+      "gitBlob": "5e6666e5e317f29bbb94a58bb9006e176b2a17ce"
+    },
+    {
+      "path": "SRC/neothd-gui/src/chat_response_feedback.rs",
+      "sha256": "D363B974B807A0F4EEBDACA0296BF8E1E8F5DB95F457599131BCEC95895F2FDA",
+      "gitBlob": "c8b45d206e4b30d630d0918ae67e60cee50db3fe"
+    },
+    {
+      "path": "SRC/neothd-gui/src/chat_stream_phase.rs",
+      "sha256": "280F37D2500FE57CFA421F978D283ED749B52E9C72250B7119035C83BCEDA8F6",
+      "gitBlob": "c768af1745df268c2e45a4599ec7f423122c1bb5"
+    },
+    {
+      "path": "SRC/neothd-gui/src/citation_gui.rs",
+      "sha256": "DAF70ECCC97106319F68524EE8B173D734C4A9338ABE572E242C0373789826AC",
+      "gitBlob": "fefbfdcaa522c08234f7bd2f0b7913c7681cd584"
+    },
+    {
+      "path": "SRC/neothd-gui/src/coding_controller.rs",
+      "sha256": "3ED2CD5BE7F325761922C7151E03CC53B6F61D5C32C49450E6C83F8E140A5336",
+      "gitBlob": "73b659d4f6a153acdfbab2beb414b745d0feaf66"
+    },
+    {
+      "path": "SRC/neothd-gui/src/gui_action/ouro_q8.rs",
+      "sha256": "8A6164EFB6434B6BA9CAADD92B5E31548BE3867E6C932433F23A97A23F125948",
+      "gitBlob": "4d34dc10a383f7f5db109441a35208c9eeefebec"
+    },
+    {
+      "path": "SRC/neothd-gui/src/gui_chat_bridge_controller.rs",
+      "sha256": "5FAE51AED73C26FD96143D1F22772543B10CF42130F057ABA4A839CE0E449AB1",
+      "gitBlob": "b132cafd6f1f2c53337c3e7537a9745bf8d61f8c"
+    },
+    {
+      "path": "SRC/neothd-gui/src/main.rs",
+      "sha256": "03C1FB655412697E286E422887180DA96D929EB861BC67486A8A2A8196378BAC",
+      "gitBlob": "3c40dd8109d9a94171136a464fec5b3dd78dd1ab"
+    },
+    {
+      "path": "SRC/neothd-gui/src/ouro_gui.rs",
+      "sha256": "8CCBED4C9249EEEF0E5C008B87FDEF3C2169315191330A9676FB3DC831B8CC3E",
+      "gitBlob": "f5bf3bbb4580dd309bac7996f7a24ca61cac2f9e"
+    },
+    {
+      "path": "SRC/neothd-gui/src/panel_logic.rs",
+      "sha256": "8482856452414A3EC61E20A069317A2F901D4D95EB57441691BD04194A5BCE1C",
+      "gitBlob": "6bcd0468e6bcc5cf0014610ef68995d13ef7d495"
+    },
+    {
+      "path": "SRC/neothd-gui/tests/gui_chat_bridge_public_api.rs",
+      "sha256": "B0B3C160376AD869FCA6BB92937CACE6261B5C5C09F4862761E214D19E923E06",
+      "gitBlob": "4819b614deae9550d2340b9a5e132e11922a0c85"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/chat.slint",
+      "sha256": "C96A4B63B1E1B0506E1A21A29CCE1F83616D194F158A1673ECA1B4346810DD2B",
+      "gitBlob": "8fcb49123283f93c16017c075928d4f211bb5759"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/citation.slint",
+      "sha256": "D50C1A0B7E87A3C03D1FE89F46CD35AEE08AEE73D00B5ED0C4D5BADADC968668",
+      "gitBlob": "e4093144ac60a950e555298eb2500592a5e0dfbd"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/main.slint",
+      "sha256": "BF507E76100283D4FB210E1599E4197230974F068538F863A6256251F192C3F1",
+      "gitBlob": "37622ca1054ae04bb35dd23bc3807f27a4570c86"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/overlay.slint",
+      "sha256": "CF1101496E4C3DA3D3D8B3A799E96313C20A18AB5E50EFAED2818CABC41A3CAE",
+      "gitBlob": "8e7b0647940925bcfb2ea9660c12b1389416270a"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/tabs.slint",
+      "sha256": "A0AF943FAA3AA9C42B2C3862502FD53781C79AF145445E2F39FA8A227ED98D32",
+      "gitBlob": "aa1b83ce8187ec5d7982462b093c2654f651281c"
+    },
+    {
+      "path": "SRC/neothd-gui/src/wizard_session_controller.rs",
+      "sha256": "BCB65A6A479AD2CFFA823B77E089857B4AD6FF39CEB360EA10C715558A927FF0",
+      "gitBlob": "3d5e41261270c1053b505817b6d1b47594066d88"
+    },
+    {
+      "path": "SRC/neothd-gui/src/chat_child_supervisor.rs",
+      "sha256": "9614E23D8D8BF435B37BBF7B2E5446AFDACDC7E6AA499E607245C3CD1E9DCB04",
+      "gitBlob": "6616090c5a203a4da3f76011f47710f8412b15c5"
+    },
+    {
+      "path": "SRC/neothd-gui/src/gui_action.rs",
+      "sha256": "3B438B538F4EC3E822D31D73F9F27164EB7CCD281B7BF108027A40F394C7AB46",
+      "gitBlob": "9ce964c9369eeddb63ec85c4945f0dfbbd2708bc"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+      "sha256": "1C6EF0676DD07A3F907504D2E974F4C2F93622ACC887D7EEB1D1B6B07DB06674",
+      "gitBlob": "c55d3eed2010813dedd6879473989f2c2d14ab63"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_bridge.rs",
+      "sha256": "44D4C241AC248249AFC4F510AB1DBBE1928209893EEA604B5D76F04DCFB75597",
+      "gitBlob": "789db2102c877dd2f1e98695014e60ad5f82e14d"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/chat_runtime.rs",
+      "sha256": "A4A95415E3B7733EBF0600D683DA7D50D919779495F9FA2FCDBB0FE026346658",
+      "gitBlob": "397489b41f6d994d67471e7676922e754d886b26"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "sha256": "EE8874B04744BC1CBC221B2786E95A16038E72A9C8B665B0B7B9EE2D94CD2265",
+      "gitBlob": "66ee2773a83cf4f1ea2a0b0e63cb6e117a34c2a5"
+    }
+  ],
+  "terminals": [
+    {
+      "sequence": 1,
+      "name": "coding_controller::tests::gui_reserved_start_reaches_real_provider_worker_with_prepared_code_map_context",
+      "terminal": "ok",
+      "logSha256": "C7C43DCE09FDCBE638AB19F8C8B0536344242A74BB31B5F327DE27EA02DEF6F4"
+    },
+    {
+      "sequence": 2,
+      "name": "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
+      "terminal": "ok",
+      "logSha256": "79F485FE4A78FF04F282EACB242D0778F9B3B7AD1DA5AC92A7419771E4C2FF45"
+    },
+    {
+      "sequence": 3,
+      "name": "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
+      "terminal": "ok",
+      "logSha256": "64CF49F99FB95D4D181601242DB4E4EB8A774CC4C4BE48AB951866735A0E620F"
+    },
+    {
+      "sequence": 4,
+      "name": "w58_gui_callback_runtime_tests::w73_buddy_cancel_joins_real_blocked_provider_without_success_repaint",
+      "terminal": "ok",
+      "logSha256": "D7C1E0BC8C80E001B87E0EFB3C5ACD02C9A15B933D3261E8E28AC5112ED580C8"
+    },
+    {
+      "sequence": 5,
+      "name": "w58_gui_callback_runtime_tests::w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it",
+      "terminal": "ok",
+      "logSha256": "6FB78E04374CE99B9327AE94DD03F52C8D112CEDACF1F7468646D9E34DAA486B"
+    },
+    {
+      "sequence": 6,
+      "name": "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
+      "terminal": "ok",
+      "logSha256": "9DC242D8D017B3F18D4072A74B316DE4675B695FBF48C2412965048614ABB253"
+    },
+    {
+      "sequence": 7,
+      "name": "panel_logic::tests::lifecycle_impact_identity_uses_the_redacted_digest_and_rejects_another_root",
+      "terminal": "ok",
+      "logSha256": "7F915FB2556B306B769A0F6B05E7D3BF9EC65BEBFEE8EB068EF12391D46B6969"
+    },
+    {
+      "sequence": 8,
+      "name": "panel_logic::tests::private_channel_builder_preserves_typed_fields_without_cli_flags",
+      "terminal": "ok",
+      "logSha256": "7D253ABCD92FD1907AD4734CA206F37B1A38937CF3AE28005B105EFCC099B80C"
+    },
+    {
+      "sequence": 9,
+      "name": "panel_logic::tests::private_channel_builder_routes_matrix_store_path_without_changing_secret_slots",
+      "terminal": "ok",
+      "logSha256": "9E75FB4F918C34D2ACFE6CAF7239C7497B7C2E7D74B8106F97AC6AEBDA9A447E"
+    },
+    {
+      "sequence": 10,
+      "name": "tests::matrix_store_path_request_uses_private_stdin_without_path_or_secret_in_argv",
+      "terminal": "ok",
+      "logSha256": "0BEF22C8309546FC0379CD434C78FE8418DAAD3BCDE4367001D86CE94CB6E44C"
+    },
+    {
+      "sequence": 11,
+      "name": "panel_logic::tests::private_channel_builder_routes_line_webhook_port_as_typed_private_stdin_state",
+      "terminal": "ok",
+      "logSha256": "B193BB49FCEF42231321612E6673E017BD9A32D90CBAFF162ADCED3D82CB1116"
+    },
+    {
+      "sequence": 12,
+      "name": "tests::line_port_request_uses_private_stdin_without_port_or_secrets_in_argv",
+      "terminal": "ok",
+      "logSha256": "D30756B8B8C50C1E28322F662AB1583205274788AC7DBEB36BADEAC0F26D8C46"
+    },
+    {
+      "sequence": 13,
+      "name": "panel_logic::tests::private_channel_builder_routes_irc_public_settings_without_weakening_account_requirement",
+      "terminal": "ok",
+      "logSha256": "CF99B8B703D1D97BE6068E09865D5C92DD805C428D44E9FB2B2B07C98966D5CD"
+    },
+    {
+      "sequence": 14,
+      "name": "tests::irc_public_settings_request_uses_private_stdin_without_settings_or_secret_in_argv",
+      "terminal": "ok",
+      "logSha256": "99F1867AB39DFB6369F20EE316AE356E90FDEDC45B1A65E9FA55A12253865B8B"
+    },
+    {
+      "sequence": 15,
+      "name": "panel_logic::tests::named_telegram_account_retirement_command_and_ack_bind_the_exact_account",
+      "terminal": "ok",
+      "logSha256": "B0D3A378D697EEF709B1ACF1B2B861DAD6BA1A52DB7881E75E3ADA2BEBA7CD8F"
+    },
+    {
+      "sequence": 16,
+      "name": "panel_logic::tests::required_sender_form_slots_map_to_private_allowed_sender_and_reject_blank",
+      "terminal": "ok",
+      "logSha256": "9497023473319668128E3D6998CE925579EA6BF0E2C433E5027B74A1C107A78C"
+    },
+    {
+      "sequence": 17,
+      "name": "panel_logic::tests::bluebubbles_chat_guid_form_slot_trims_or_clears_without_weakening_sender",
+      "terminal": "ok",
+      "logSha256": "594F259D5D21B529E332D9C6A5190B6E95248ED78EE5DD59390EF430E58187C8"
+    },
+    {
+      "sequence": 18,
+      "name": "panel_logic::tests::parse_channel_status_requires_boolean_dm_pairing_for_mapped_accounts",
+      "terminal": "ok",
+      "logSha256": "ABEAC77F8C17D59E2F05FD4FECC67582E38F172E988101576ABC2BF15FC04819"
+    },
+    {
+      "sequence": 19,
+      "name": "panel_logic::tests::named_telegram_account_dm_pairing_command_and_ack_bind_the_exact_policy",
+      "terminal": "ok",
+      "logSha256": "3C83EEA36A9782C79EB349181059936B45D2786A7A886395A8B56167E18584FE"
+    },
+    {
+      "sequence": 20,
+      "name": "gui_action::tests::skill_autonomy_receipts_are_strict_and_bind_exact_desired_config",
+      "terminal": "ok",
+      "logSha256": "65C1E75D5C344A30977F8D54C2D70053ABC28936A6E589F9A48C517B2BC7F55C"
+    },
+    {
+      "sequence": 21,
+      "name": "panel_logic::tests::parse_buddy_status_happy_path",
+      "terminal": "ok",
+      "logSha256": "F7766F1FFF541E2413470857B34036B199D1CCDF0BD9014A4048E7FA6A86F352"
+    },
+    {
+      "sequence": 22,
+      "name": "panel_logic::tests::parse_buddy_status_rejects_malformed_or_lossy_payloads",
+      "terminal": "ok",
+      "logSha256": "56B2C626B7BE12B9FD07BC8F0DF9E0F3D05C012C21B730C1CCD3FF586730C5DC"
+    },
+    {
+      "sequence": 23,
+      "name": "gui_action::tests::w142_selfimprove_accept_ack_requires_selected_current_evidence",
+      "terminal": "ok",
+      "logSha256": "672E014DC2CFCDCAF0DE96AD72BC12AE4AEB06686CBECD9A2AEA961AE4A4A1F7"
+    },
+    {
+      "sequence": 24,
+      "name": "panel_logic::tests::w142_selfimprove_review_projects_only_current_verified_evidence",
+      "terminal": "ok",
+      "logSha256": "003021B470104AC61215830EE0AA024DA1DD14D0D06D460D39E56DFBAC8398CF"
+    },
+    {
+      "sequence": 25,
+      "name": "panel_logic::tests::w142_selfimprove_review_rejects_stale_or_mismatched_quality_without_false_success",
+      "terminal": "ok",
+      "logSha256": "267E33C76BA18372A6C4B282B13F03BFBD67699C942039AFDDC549576C5BFD14"
+    },
+    {
+      "sequence": 26,
+      "name": "panel_logic::tests::w142_selfimprove_review_rejects_missing_or_unknown_quality_fields",
+      "terminal": "ok",
+      "logSha256": "37E40237159F56C30A927F144A1702FBA1F2A41F060BE2603A4D009F32C77C7F"
+    },
+    {
+      "sequence": 27,
+      "name": "panel_logic::tests::w149_buddy_quality_rejects_partial_evidence_and_keeps_unavailable_explicit",
+      "terminal": "ok",
+      "logSha256": "88D80D7DC4FDDD2F2D30B7FE9CB7A8D6A2D2BA4A819C842F97E0D87C630D3AFD"
+    },
+    {
+      "sequence": 28,
+      "name": "gui_action::ouro_q8::tests::accepts_verified_q8_even_when_configured_none",
+      "terminal": "ok",
+      "logSha256": "23CD615CA60C3C488F3016836DBDBB2C676B0D644CC9C7DC34025500848D8AFF"
+    },
+    {
+      "sequence": 29,
+      "name": "gui_action::ouro_q8::tests::accepts_typed_nonzero_failure_without_success_identity",
+      "terminal": "ok",
+      "logSha256": "170FF9570B3E643EDB1EA62F765272AC2AA17BDFB044E63CA5D802041F1FD8BE"
+    },
+    {
+      "sequence": 30,
+      "name": "gui_action::ouro_q8::tests::rejects_crossed_exit_and_verification_claims",
+      "terminal": "ok",
+      "logSha256": "6667FEC7FCA617378C34899068F308947EF15CB0B26573B73E22323E3125FDC9"
+    },
+    {
+      "sequence": 31,
+      "name": "gui_action::ouro_q8::tests::rejects_missing_nullable_key_and_unknown_fields",
+      "terminal": "ok",
+      "logSha256": "1AF431829CAF70F000DD111F1B2F36798C084B3F719A9D317FEBFC2D0152696A"
+    },
+    {
+      "sequence": 32,
+      "name": "gui_action::ouro_q8::tests::rejects_duplicate_wire_keys",
+      "terminal": "ok",
+      "logSha256": "8487152E530EF6EF4DD8B916988030647DC04A2171C21803E6DC044F4269E7FE"
+    },
+    {
+      "sequence": 33,
+      "name": "gui_action::ouro_q8::tests::rejects_wrong_loop_mode_and_context_claims",
+      "terminal": "ok",
+      "logSha256": "A90D5E26423A6DA96481BF5BC0D3B0A1A44881E032F9D3010D4C068FB2A96280"
+    },
+    {
+      "sequence": 34,
+      "name": "gui_action::ouro_q8::tests::rejects_success_data_on_typed_failure_and_normalizes_detail",
+      "terminal": "ok",
+      "logSha256": "BA867501FAEAED285BB8AECCC34B403628910DBA846394B2F346AF5DB3BBB4AD"
+    },
+    {
+      "sequence": 35,
+      "name": "gui_action::ouro_q8::tests::capture_receive_returns_while_the_reader_is_still_held",
+      "terminal": "ok",
+      "logSha256": "D73D5A51263A30CA6EC10D247407073072C69BD12FD91A6E418C5BC4DF52BC03"
+    },
+    {
+      "sequence": 36,
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_is_grant_bound_and_never_enters_visible_reply_or_preview",
+      "terminal": "ok",
+      "logSha256": "E5B85259582D9711AEA14B3D4C08AA0B85C0D68941DD1FA2C76051ECE639A442"
+    },
+    {
+      "sequence": 37,
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_is_bounded_zeroized_on_terminal_and_uses_an_independent_sequence",
+      "terminal": "ok",
+      "logSha256": "42162FC6D1AD7CFBE3D54F0BB573A8FB69557A50427C4F146183BE32E9FA09D7"
+    },
+    {
+      "sequence": 38,
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::actual_redacted_terminal_zeroizes_and_rejects_later_delta",
+      "terminal": "ok",
+      "logSha256": "EE54ADCC1C5E15890C5D661749E049D7EB04339E964431005D070342FC6940A9"
+    },
+    {
+      "sequence": 39,
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_delta_state_and_checkpoint_are_rejected_after_provider_done",
+      "terminal": "ok",
+      "logSha256": "3C52E842E91A0BB4007CA72400124B27E254B84B9572BCBCE050DCE08C2BD9B0"
+    },
+    {
+      "sequence": 40,
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_buffer_rejects_bytes_beyond_sixty_four_kib",
+      "terminal": "ok",
+      "logSha256": "0D4F9A1140D4260ACC3661A1A3E96BFBEE890806FC40ED95BCA9BBAC1A585C7F"
+    },
+    {
+      "sequence": 41,
+      "name": "chat_reasoning::tests::strict_sequence_limit_and_terminal_clear",
+      "terminal": "ok",
+      "logSha256": "92CC22C58C746AB2F2D5BF67C36E7314C1CEAB11569E2A33FFBB361161BFE97D"
+    },
+    {
+      "sequence": 42,
+      "name": "chat_reasoning::tests::duplicate_or_forged_frame_clears_the_exact_projection",
+      "terminal": "ok",
+      "logSha256": "A1E74498399EC428E41A65CCE130236CAFE93F2702BE36F7B5858BB0F647BD28"
+    },
+    {
+      "sequence": 43,
+      "name": "chat_reasoning::tests::default_off_counts_controls_without_retaining_text",
+      "terminal": "ok",
+      "logSha256": "A82F2D8EA87EE57DCF237EDA0BD0CFD0042CFD60D57440E054A027A2C9BB060F"
+    },
+    {
+      "sequence": 44,
+      "name": "gui_chat_bridge_controller::tests::reopen_none_or_error_settles_only_the_current_main_handoff",
+      "terminal": "ok",
+      "logSha256": "FDC28027A09E2DC12A03712E30AD2167FECABFFAEB4D4CEF0E9EDDCA163E0760"
+    },
+    {
+      "sequence": 45,
+      "name": "gui_crate_has_non_authorizing_reducer_fixtures_and_explicit_consent_types",
+      "terminal": "ok",
+      "logSha256": "0A55F330FA4CD9E5B12F0E8D8FDA3FA3597FB545DA5B1AB54D509B20D8BA6B2A"
+    },
+    {
+      "sequence": 46,
+      "name": "gui_action::tests::targeted_gui_mutations_cannot_regress_to_the_unchecked_probe",
+      "terminal": "ok",
+      "logSha256": "72643C5A3CEACA3E96F24F9C069CA7BA7FC32B656A71DCE1EA9C6E7DAAF810F6"
+    },
+    {
+      "sequence": 47,
+      "name": "citation_gui::tests::explicit_request_rejects_model_style_or_untrimmed_claims",
+      "terminal": "ok",
+      "logSha256": "605FEEF378F4603396D60E838768EB5944F05F2A9D2AB0F37C34EA6F95F3F00F"
+    },
+    {
+      "sequence": 48,
+      "name": "citation_gui::tests::provider_indices_are_closed",
+      "terminal": "ok",
+      "logSha256": "29C088D5883BE7F579A9781F13C2CD826D212ED27510EAC5E88D7288E01D6E83"
+    },
+    {
+      "sequence": 49,
+      "name": "citation_gui::tests::citation_child_policy_is_bounded_and_cancellation_is_shared",
+      "terminal": "ok",
+      "logSha256": "A583F2061D56BF7CA0F8C87A536C885F7218F4594D85148D4A368826A20E07EE"
+    },
+    {
+      "sequence": 50,
+      "name": "citation_gui::tests::gui_preflight_requires_the_current_request_hash_and_nonterminal_cache_state",
+      "terminal": "ok",
+      "logSha256": "E3ECAA997C96C5FE2C9A71DA34AC2B6AF70E36B978EAA2E82F329BF77C6FEFB5"
+    },
+    {
+      "sequence": 51,
+      "name": "citation_gui::tests::gui_decision_receipts_reject_unknown_or_inconsistent_proofs",
+      "terminal": "ok",
+      "logSha256": "3B5BE494335A58CFFD836C70E72894E60FFF323A323891866D0C0FF6A6395683"
+    },
+    {
+      "sequence": 52,
+      "name": "citation_gui::tests::gui_command_builders_bind_only_request_data_and_validate_ids",
+      "terminal": "ok",
+      "logSha256": "9A205A9E5E3E42983AE66CD92313AFA95918084FA93EFEE4BD5ACB2197C903EC"
+    },
+    {
+      "sequence": 53,
+      "name": "citation_gui::tests::stale_or_historical_detail_never_survives",
+      "terminal": "ok",
+      "logSha256": "D900489A4A79CD8523599014D623E31C4A25477A11E27AB48FD3FCA61D52A4C2"
+    },
+    {
+      "sequence": 54,
+      "name": "citation_gui::tests::typed_unavailable_cannot_carry_a_chip",
+      "terminal": "ok",
+      "logSha256": "D34089523BEC5C47D0448198CFF54A5A84FC5D7A7A9ACF4D4C7552B2E6BE0579"
+    },
+    {
+      "sequence": 55,
+      "name": "citation_gui::tests::current_core_bound_result_opens_only_its_own_in_app_detail",
+      "terminal": "ok",
+      "logSha256": "FD2249574189AAD3663F1B4CB277D971C6543195FE7348D609480694CD55A60C"
+    },
+    {
+      "sequence": 56,
+      "name": "citation_gui::tests::forged_display_binding_and_replayed_child_result_are_rejected",
+      "terminal": "ok",
+      "logSha256": "091CDD629240C8F7B21F09B5091E1556FDF6BF09A504D3EFE4369FFD10725622"
+    },
+    {
+      "sequence": 57,
+      "name": "chat_throughput::tests::visible_event_rate_preserves_its_actual_unit",
+      "terminal": "ok",
+      "logSha256": "B1FA0184CC734EDFBECC92D0678B80B7791D805C9349979D7D3E7FADABBFBC7F"
+    },
+    {
+      "sequence": 58,
+      "name": "chat_throughput::tests::paused_state_requires_null_rate_but_keeps_the_explicit_basis",
+      "terminal": "ok",
+      "logSha256": "853A70B62D52C1A1209542C77824AF2B0B8E7FFCBF1D6CC1243573A4DE414398"
+    },
+    {
+      "sequence": 59,
+      "name": "chat_throughput::tests::invalid_unit_and_final_usage_field_fail_closed",
+      "terminal": "ok",
+      "logSha256": "9C57E773BBB154858EE2C417FE8E4F938500054BE6DF08DC947195527DDB1992"
+    },
+    {
+      "sequence": 60,
+      "name": "chat_throughput::tests::stale_gap_and_provider_done_cannot_repaint_a_request",
+      "terminal": "ok",
+      "logSha256": "B23A3BBB05C934CC080C78B2EAF46F9A5E35B8CBE6C0B100F8A0BD4766077D3F"
+    },
+    {
+      "sequence": 61,
+      "name": "chat_throughput::tests::cancellation_is_terminal_until_the_request_is_replaced",
+      "terminal": "ok",
+      "logSha256": "2034E8E40EFD6881646E786B2FF101895D3A421309364B141671DFB6DA45A450"
+    },
+    {
+      "sequence": 62,
+      "name": "chat_recall_chips::tests::accepts_only_reduced_ready_rows_without_any_text_or_identity",
+      "terminal": "ok",
+      "logSha256": "46AD8E881B02EB76F0D8CC6993EDA1F80369D5E3DA6B0A3BBBEEA3D5FC2D63F9"
+    },
+    {
+      "sequence": 63,
+      "name": "chat_recall_chips::tests::unknown_fields_and_non_warm_scores_fail_closed",
+      "terminal": "ok",
+      "logSha256": "9E9978B9C6306A48F651EACDD2FC2538AD7F884D65EF00E9984C1AD78318BE8A"
+    },
+    {
+      "sequence": 64,
+      "name": "chat_recall_chips::tests::wrong_binding_gap_and_over_cap_cannot_publish_rows",
+      "terminal": "ok",
+      "logSha256": "3DBCB75A6143B6AC8EE5F2FFD3F41A184629D47E026C633B66DAB0D0961873DA"
+    },
+    {
+      "sequence": 65,
+      "name": "chat_recall_chips::tests::successful_boundaries_freeze_accepted_rows_but_late_frames_do_not_erase_them",
+      "terminal": "ok",
+      "logSha256": "2323A5B3FC99BAAFB52BE9CBB0D651C30D51D36D867E31F79D98843C53E8E8F2"
+    },
+    {
+      "sequence": 66,
+      "name": "chat_recall_chips::tests::final_sentinel_replacement_and_clear_remove_only_the_owned_snapshot",
+      "terminal": "ok",
+      "logSha256": "197CFB224AA5E37A183D5E261FD4B3AC17627D133F2DC52287FAD35099EBE144"
+    },
+    {
+      "sequence": 67,
+      "name": "chat_recall_chips::tests::no_recall_and_missing_are_explicit_empty_batches",
+      "terminal": "ok",
+      "logSha256": "4EDC0764BE179B1BB1D9D97C2BBB256CD0ED0D3E075A7E56FC536DB26696DBF8"
+    },
+    {
+      "sequence": 68,
+      "name": "chat_response_feedback::tests::target_becomes_actionable_only_after_done_then_exact_authenticated_frame",
+      "terminal": "ok",
+      "logSha256": "537285C84739D389D63DF59D556D4EEDBC8917A50A2978623C7048A29EA29AC6"
+    },
+    {
+      "sequence": 69,
+      "name": "chat_response_feedback::tests::malformed_forged_and_unavailable_frames_never_publish_an_id",
+      "terminal": "ok",
+      "logSha256": "94C9C82E8DED6C9FAD1B2218AB6C6412EBD5BBF586D9D4D2C6F1F00734444307"
+    },
+    {
+      "sequence": 70,
+      "name": "chat_response_feedback::tests::action_is_singleflight_and_only_exact_fresh_readback_can_repaint_it",
+      "terminal": "ok",
+      "logSha256": "04ABEE3A4505C9F0E2C3A6F1436073E66D0D54F8E68322B1F7331FFCFB07681B"
+    },
+    {
+      "sequence": 71,
+      "name": "gui_chat_bridge_controller::tests::daemon_terminal_target_reaches_the_shared_action_map_only_for_the_current_turn",
+      "terminal": "ok",
+      "logSha256": "288CE38935E2AE25744BF02A39FB79DB1FA1873378F39BC0095F1D73A24363A7"
+    },
+    {
+      "sequence": 72,
+      "name": "chat_recall_chips::tests::typed_daemon_batch_reuses_closed_validation_and_provider_done_freeze",
+      "terminal": "ok",
+      "logSha256": "A5211D85A13BD1561A5500F57A25E9A5255B47F47DE305EEC9AB6E4E1E0AB546"
+    },
+    {
+      "sequence": 73,
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::recall_batch_is_cursor_bound_and_rejected_after_provider_done_or_cancel",
+      "terminal": "ok",
+      "logSha256": "DF0B0E5BD1E41E22C649270BF44F65768DADD3295433E1018B27CCF94E69ED2F"
+    },
+    {
+      "sequence": 74,
+      "name": "chat_throughput::tests::typed_daemon_state_preserves_inner_sequence_and_terminal_fence",
+      "terminal": "ok",
+      "logSha256": "8B76A5C56C8EA1CD8C4F9C3F1DDB366CD55DD10EDC08ED805B947912CE855AA9"
+    },
+    {
+      "sequence": 75,
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::throughput_state_is_cursor_bound_and_rejected_after_provider_done_or_cancel",
+      "terminal": "ok",
+      "logSha256": "8BA583FFB5FB117EC9996BA2FC6ECFFE84F7CF712BF354D77BC1626AC175A213"
+    },
+    {
+      "sequence": 76,
+      "name": "panel_logic::tests::w184_vault_mirror_parser_rejects_forged_verified_receipt",
+      "terminal": "ok",
+      "logSha256": "DD7BB24E2440276FA0A3D7515D5ACD5B04C8A9D0A53568B353FEBCC38EF78D1D"
+    },
+    {
+      "sequence": 77,
+      "name": "panel_logic::tests::w184_vault_mirror_parser_keeps_indeterminate_repairable",
+      "terminal": "ok",
+      "logSha256": "355F75AE93EAFCDC1F99FD2026754E79E5E8DABDAE99DBE4B49DA92148281979"
+    },
+    {
+      "sequence": 78,
+      "name": "vault_mirror_gui_tests::w184_repair_reducer_requires_fresh_matching_status",
+      "terminal": "ok",
+      "logSha256": "66E0580092B17360A9DA104FF356BDA125225C6FB1DE12E66E0BD269E13177B2"
+    },
+    {
+      "sequence": 79,
+      "name": "panel_logic::tests::local_models_ready_requires_the_core_ready_variant",
+      "terminal": "ok",
+      "logSha256": "F1A9AF908A212A5D418B7D6767801A922A55D897D0573EAC06165B235A9DE614"
+    },
+    {
+      "sequence": 80,
+      "name": "panel_logic::tests::local_models_reject_unknown_readiness_schema",
+      "terminal": "ok",
+      "logSha256": "A4AC71C7A23D72F8634EDEABD9AD7A4DB3C7E0C764D33381A6614821F9DB4FD2"
+    },
+    {
+      "sequence": 81,
+      "name": "dream_cron_gui_tests::wizard_completion_is_daemon_acknowledged_and_fails_closed_on_loss",
+      "terminal": "FAILED",
+      "logSha256": "108ADC564F8B11BFF8DC4E8CE3D463E0D9E78A5413BF515FA0A34502E5639A8B"
+    },
+    {
+      "sequence": 82,
+      "name": "dream_cron_gui_tests::daemon_completion_failure_retains_existing_dream_readback_and_revision_order",
+      "terminal": "FAILED",
+      "logSha256": "4E3C841363A793A836160A2BEF1512B7D5221581BCC0E42FBFD3DD945FC4D139"
+    },
+    {
+      "sequence": 83,
+      "name": "dream_cron_gui_tests::observer_uses_a_separate_read_only_handle_without_holding_mutation_lock",
+      "terminal": "ok",
+      "logSha256": "EBC99DBF26198EBE292147BBDB46C3F34E20D5BAD2651BB524FDB2004FFB357D"
+    },
+    {
+      "sequence": 84,
+      "name": "dream_cron_gui_tests::finish_navigation_is_owned_by_verified_rust_completion",
+      "terminal": "ok",
+      "logSha256": "D9CEE6DEEBADD33A7F55D907118550DDBC33C254F9DF8758AD09DB09B277CF30"
+    },
+    {
+      "sequence": 85,
+      "name": "wizard_session_controller::tests::prepared_config_hash_is_stable_and_content_bound",
+      "terminal": "ok",
+      "logSha256": "817F0ECB2C4364EF33DD00CB083075DC90DF4E06BD44C21C5DC58C2D1C4EA099"
+    },
+    {
+      "sequence": 86,
+      "name": "wizard_session_controller::tests::binding_uses_exact_next_sequence_and_never_wraps",
+      "terminal": "ok",
+      "logSha256": "C1F7488AA9DE81A34583F92DB23C5BD09275C9736D8AD6A1DE57EADB68EA7AB9"
+    },
+    {
+      "sequence": 87,
+      "name": "chat_stream_phase::daemon_chat_presentation_tests::timeout_guidance_survives_failed_terminal_and_cannot_cross_generation",
+      "terminal": "ok",
+      "logSha256": "A3FAE92BC25717DC45EF52840703B099B1053C21C1D46F79394EA2BC57911D46"
+    },
+    {
+      "sequence": 88,
+      "name": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_unknown_fields_and_bad_row_contract",
+      "terminal": "ok",
+      "logSha256": "C26EC9F52806CE002B313446CB2541DC40B876BE32714910189E30D8DF2EB7F2"
+    },
+    {
+      "sequence": 89,
+      "name": "panel_logic::embedding_models_contract_tests::only_fresh_exact_ready_bge_snapshot_passes_buddy_gate",
+      "terminal": "ok",
+      "logSha256": "AF1F4DA8EDA22840C6EA85D7BB2FA19FC12908A254B428FD10C4B425BDA38675"
+    },
+    {
+      "sequence": 90,
+      "name": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_actions_for_unselected_or_qwen_rows",
+      "terminal": "ok",
+      "logSha256": "BA146CA39EB24A2458EDC9FF5A5A0EB93B5F5614D5C40F0CE29EFAF92127C263"
+    },
+    {
+      "sequence": 91,
+      "name": "panel_logic::embedding_models_contract_tests::buddy_gate_rejects_cache_source_even_with_ready_bge",
+      "terminal": "ok",
+      "logSha256": "F3D375D3965741CC0E816527981CEA34E15B6637DAD4155F6B6C4AD123C278D7"
+    },
+    {
+      "sequence": 92,
+      "name": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_wrong_pin_and_impossible_observation",
+      "terminal": "ok",
+      "logSha256": "6F4B66D71AC630A3D6D27A6725CB5192CF0419E98E226AF4E576B7F5F7D8BB3F"
+    },
+    {
+      "sequence": 93,
+      "name": "buddy_wiring_tests::w218_buddy_embedding_callbacks_use_instance_config_and_shared_freshness_fence",
+      "terminal": "ok",
+      "logSha256": "66EFD146820EB1328FA0CA2E0E52717FB33BE188AD4D0441B7D9E80AEF9E5341"
+    },
+    {
+      "sequence": 94,
+      "name": "panel_logic::tests::w219_provider_retry_is_strict_bounded_redacted_and_absence_compatible",
+      "terminal": "ok",
+      "logSha256": "0E02E2E50BA1FE838824AB18B9B00BCF9EF06E6C93989C8F4C584931A6DC677B"
+    },
+    {
+      "sequence": 95,
+      "name": "gui_action::task_delegate_assignment_tests::task_delegate_assignment_rejects_unknown_zero_and_mismatched_receipts",
+      "terminal": "ok",
+      "logSha256": "7FEB820AFECC25AAD591C59B857213572D7BA088E33400F262AE8BB1EC67ACAC"
+    },
+    {
+      "sequence": 96,
+      "name": "panel_logic::task_delegate_projection_tests::task_delegate_null_projects_absence_as_effective_default_deny",
+      "terminal": "ok",
+      "logSha256": "4B2E0DA27BDD21597C7F8484596C5AB582153D0FE66760E2CD037DDD74A69F1D"
+    },
+    {
+      "sequence": 97,
+      "name": "panel_logic::task_delegate_projection_tests::task_delegate_projection_rejects_mismatched_or_zero_revision_object",
+      "terminal": "ok",
+      "logSha256": "C1206E9AC8ED0551C4CB66050B98D3356C290BE7B66AB5CBA3D723A60C3D16B4"
+    },
+    {
+      "sequence": 98,
+      "name": "chat_recall_chips::tests::citations_are_closed_available_source_labels_with_positive_matching_ids",
+      "terminal": "ok",
+      "logSha256": "EB2F6F231B15CC0DBDC0986791923FC73FF33E3ABE306875A67D0C2D06D697EF"
+    },
+    {
+      "sequence": 99,
+      "name": "chat_child_supervisor::tests::staged_cgroup_final_mount_contract_allows_only_a_read_only_public_top_mount",
+      "terminal": "ok",
+      "logSha256": "E132C980926246CB9ADDF2E0AA0F54194C163B39B5495E897E3EAD87B5CC5FBC"
+    },
+    {
+      "sequence": 100,
+      "name": "dream_cron_gui_tests::mutation_requires_reload_receipt_then_matching_readback",
+      "terminal": "ok",
+      "logSha256": "8ECBBA02D6012657C732806017AEC90DCF4F822C19C3AAA8199906828EFE5186"
+    },
+    {
+      "sequence": 101,
+      "name": "dream_cron_gui_tests::mutation_rejects_acknowledged_but_mismatched_readback",
+      "terminal": "ok",
+      "logSha256": "5B9FB19F660DB866B55107774DF634573998143BA05EA048B06D8E0E05A2371A"
+    },
+    {
+      "sequence": 102,
+      "name": "dream_cron_gui_tests::settings_dream_control_is_command_only_and_never_flips_verified_state",
+      "terminal": "ok",
+      "logSha256": "34072BD655C640FBE6E4D8A8311AB46923F3D78BDA1D26B51BB6FFCBCCDD6F2B"
+    },
+    {
+      "sequence": 103,
+      "name": "dream_cron_gui_tests::only_verified_readback_publishes_visible_dream_state",
+      "terminal": "ok",
+      "logSha256": "5F2EC9E0CF0F63DF2781127AF8A4468364E38E0C6E8D9CF53D99ADEEE77D39A1"
+    },
+    {
+      "sequence": 104,
+      "name": "dream_cron_gui_tests::refresh_mutation_error_and_concurrency_keep_readback_authoritative",
+      "terminal": "ok",
+      "logSha256": "B4B62126A0F97BD0BD7F6963108CBF1B2234C255FB9EF7B0C3214E3536D08FA3"
+    },
+    {
+      "sequence": 105,
+      "name": "dream_cron_gui_tests::late_status_refresh_cannot_overwrite_the_onboarding_draft",
+      "terminal": "ok",
+      "logSha256": "A19AFC2D934230E38B65CF99C09C33616DB799A6A3D8353CFC690562E06D0BC4"
+    },
+    {
+      "sequence": 106,
+      "name": "panel_logic::tests::lf_p1_20_preview_redacts_normalizes_and_truncates_graphemes_once",
+      "terminal": "ok",
+      "logSha256": "04D2170C933B2A7BA47EF6BD7EF99F9436ACD29822957AD52D2A3367071F0AA0"
+    },
+    {
+      "sequence": 107,
+      "name": "panel_logic::tests::lf_p1_20_send_completion_delete_recomputes_to_previous_visible_message",
+      "terminal": "ok",
+      "logSha256": "13104CC86FE4AEBA3D653D8F2ABB8E6006905CC0D19D3F20EB6A390DFA07B1A9"
+    },
+    {
+      "sequence": 108,
+      "name": "panel_logic::tests::lf_p1_20_reload_and_session_switch_keep_a_b_isolated",
+      "terminal": "ok",
+      "logSha256": "36EEA770F5CBA8F11E98945A75A5E12646FE1835BE36FCCBE4E75F54A6A26E74"
+    },
+    {
+      "sequence": 109,
+      "name": "panel_logic::tests::lf_p1_20_session_label_sanitizes_legacy_titles_and_controls",
+      "terminal": "ok",
+      "logSha256": "11CDC6AE5898FC9F6C7208217CD95AF73D051A87D3017C3DFB976A611A3F4DC1"
+    },
+    {
+      "sequence": 110,
+      "name": "panel_logic::tests::lf_p1_20_session_history_propagates_corrupt_database_errors",
+      "terminal": "ok",
+      "logSha256": "355FCEB62E39781E427F4300D232D47965F92A1D0EDBADE7A6DE128CC6804D07"
+    },
+    {
+      "sequence": 111,
+      "name": "chat_subprocess_tests::lf_p1_20_send_before_channel_probe_hydrates_live_preview",
+      "terminal": "ok",
+      "logSha256": "4A3E8614E53AF2350179A26B46EFF8915EFEAC6E6FF23BA84E6EDB509F30D044"
+    },
+    {
+      "sequence": 112,
+      "name": "chat_subprocess_tests::lf_p1_20_session_load_generation_rejects_a_after_b_and_return_to_live",
+      "terminal": "ok",
+      "logSha256": "5957E8FFC7E9BC27219FA0A0CDB67CD8CA2947EC3AFAE2DB5404DCC303101185"
+    },
+    {
+      "sequence": 113,
+      "name": "chat_subprocess_tests::lf_p1_20_chat_sidebar_session_selection_is_readonly_and_fully_wired",
+      "terminal": "ok",
+      "logSha256": "24B0109F14DE563869A5A6D973453C38E756FA8C8658E59F6C51A3D01731FA95"
+    },
+    {
+      "sequence": 114,
+      "name": "gui_action::tests::cluster_configure_receipt_binds_every_submitted_field_and_path",
+      "terminal": "ok",
+      "logSha256": "C13DFDE01D8BCAD8977DAC726F541D8B274EC48FFC4F9A1E8BA6DFFDC39CFF21"
+    },
+    {
+      "sequence": 115,
+      "name": "interface_preference_tests::p122_custom_topology_survives_shared_commit_and_gui_rerun",
+      "terminal": "ok",
+      "logSha256": "865757508DD0D0B3ECF599F2C2FD23BDACE23816A485B80980C69ED8F88F33EF"
+    },
+    {
+      "sequence": 116,
+      "name": "w58_gui_callback_runtime_tests::w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt",
+      "terminal": "ok",
+      "logSha256": "6EA2BA4553A2464A109DC9F52AB5F94B2D944C4AC024DFE5AD357F17D8A3D59A"
+    },
+    {
+      "sequence": 117,
+      "name": "w58_gui_callback_runtime_tests::w121_channel_pairing_request_callbacks_require_exact_receipts_before_relisting",
+      "terminal": "ok",
+      "logSha256": "B0F3D8E3A0147B66530E885358D01C8893FA0ACD603D8A32F03057C5BBB29792"
+    },
+    {
+      "sequence": 118,
+      "name": "w58_gui_callback_runtime_tests::w122_channel_account_dm_pairing_callback_preserves_projection_until_exact_receipt",
+      "terminal": "ok",
+      "logSha256": "DC3A6049EF4242770E25E6795568633D5F40E49D414D4459599CB38597EE626B"
+    },
+    {
+      "sequence": 119,
+      "name": "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt",
+      "terminal": "ok",
+      "logSha256": "F5C611072E50829F3F5EB3B9D55DF6D888F2C0DBB129CA0BF5D1819ED1985BD6"
+    },
+    {
+      "sequence": 120,
+      "name": "w58_gui_callback_runtime_tests::w130_channel_legacy_migration_callback_preserves_legacy_projection_until_exact_receipt",
+      "terminal": "ok",
+      "logSha256": "AD4622CFDBFEC1D060762997C2438739946B3E737845BAE8F294DE31AA4E222C"
+    },
+    {
+      "sequence": 121,
+      "name": "w58_gui_callback_runtime_tests::w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback",
+      "terminal": "ok",
+      "logSha256": "A1BFC41626C959BC0BA2DAF15B87CD24623A73562044CDB712932C06C2408259"
+    },
+    {
+      "sequence": 122,
+      "name": "w58_gui_callback_runtime_tests::w142_selfimprove_accept_requires_exact_bound_receipt_and_fresh_readback",
+      "terminal": "ok",
+      "logSha256": "B4D327F1B29E2C4D94CC93BFB5B191B0F9B769B4BEF36F372710AD6C8D6FEB55"
+    },
+    {
+      "sequence": 123,
+      "name": "w58_gui_callback_runtime_tests::w149_buddy_quality_handoff_selects_the_exact_selfimprove_proposal",
+      "terminal": "ok",
+      "logSha256": "A8B0B9AFBD894BEC0666335C5B460A8B0DA405119B1F383554FCC85E36EDEF68"
+    },
+    {
+      "sequence": 124,
+      "name": "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight",
+      "terminal": "ok",
+      "logSha256": "471BD120F858AB82053899D9E0F3D888A4B69092C4EF536BD05B01B42AB13B52"
+    },
+    {
+      "sequence": 125,
+      "name": "w58_gui_callback_runtime_tests::w153_legacy_child_callbacks_project_only_transient_reasoning",
+      "terminal": "ok",
+      "logSha256": "2F70C0113E5F2CDDDE64465F047EC303A22B20A8AC1ABC56EA236A9099EAA775"
+    },
+    {
+      "sequence": 126,
+      "name": "w58_gui_callback_runtime_tests::w153_reasoning_child_controls_are_transient_and_history_excluded",
+      "terminal": "ok",
+      "logSha256": "C8E0E0029B92AE0BB69F96194E2D7540489D2DF97674E3275237B1D6F9826729"
+    },
+    {
+      "sequence": 127,
+      "name": "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts",
+      "terminal": "ok",
+      "logSha256": "A7A5E938F0BB63CB7AD05CEA8F99B439F96AFB48294BF29DD4A7A17FCA9ECCBB"
+    },
+    {
+      "sequence": 128,
+      "name": "w58_gui_callback_runtime_tests::w162_throughput_controls_are_transient_and_provider_done_fenced",
+      "terminal": "ok",
+      "logSha256": "DA74063553FCD0FD281E0F846FF81D9219FB26AD751474849B19161A76663132"
+    },
+    {
+      "sequence": 129,
+      "name": "w58_gui_callback_runtime_tests::w163_recall_chip_controls_freeze_current_response_and_clear_on_turn_change",
+      "terminal": "ok",
+      "logSha256": "E08F7AD1D8F1070B9A93037971CFACCAF66D4907842F4FA123B011FFB875C581"
+    },
+    {
+      "sequence": 130,
+      "name": "w58_gui_callback_runtime_tests::w164_response_feedback_callback_requires_post_done_target_and_verified_readback",
+      "terminal": "ok",
+      "logSha256": "6E1E13F312E2FABB3648A53406C33B77E828AAC7EABEEFFAA7D96180CAC5BFBF"
+    },
+    {
+      "sequence": 131,
+      "name": "w58_gui_callback_runtime_tests::w167_daemon_recall_chip_batch_projects_current_surface_and_fences_terminals",
+      "terminal": "ok",
+      "logSha256": "5DE77175EFC702ABEC1A8CA0F1C184D0B4C4B78EF4DCA2DDE7B8AD1C32089378"
+    },
+    {
+      "sequence": 132,
+      "name": "w58_gui_callback_runtime_tests::w168_daemon_throughput_state_projects_main_and_buddy_then_fences_boundaries",
+      "terminal": "ok",
+      "logSha256": "CA44565172A21BA8CF2D64926940A202FC3B219170EAEA0B38EAD8852693EC4D"
+    },
+    {
+      "sequence": 133,
+      "name": "w58_gui_callback_runtime_tests::w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback",
+      "terminal": "ok",
+      "logSha256": "11B2F2CAC5D2D1FF23476B11934352E9E22DFC3889CC064E2349CF9DD549F12B"
+    },
+    {
+      "sequence": 134,
+      "name": "w58_gui_callback_runtime_tests::w185_local_model_callbacks_require_typed_ack_and_fresh_readback",
+      "terminal": "ok",
+      "logSha256": "71EF2557327563C305F75FA804A213085D9514B098720751C22A7917E00DCA2D"
+    },
+    {
+      "sequence": 135,
+      "name": "wizard_session_controller::tests::private_server_controller_observer_and_mutation_progress_concurrently",
+      "terminal": "ok",
+      "logSha256": "E2A663C9BA995CE1A045CAE42DC2F42F8FD0864B8DB555A4DB17F88F2FE757F3"
+    },
+    {
+      "sequence": 136,
+      "name": "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe",
+      "terminal": "ok",
+      "logSha256": "C8EB4F53530E983019F60B2C43D829395EBC4CE58870DC1E4D1281A245EF6FD1"
+    },
+    {
+      "sequence": 137,
+      "name": "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good",
+      "terminal": "ok",
+      "logSha256": "C2AE6647FE2BF516E7430FBD903280442855A295670982688857636D0DBD374A"
+    },
+    {
+      "sequence": 138,
+      "name": "w58_gui_callback_runtime_tests::w233_task_delegate_set_owns_busy_across_edits_and_fences_stale_completion",
+      "terminal": "ok",
+      "logSha256": "4A12C706BA51D7145603F7189A317B9C5027A732F4407909507B0496440549C5"
+    },
+    {
+      "sequence": 139,
+      "name": "w58_gui_callback_runtime_tests::w233_invalid_fresh_readback_keeps_committed_receipt_and_fences_mutation",
+      "terminal": "ok",
+      "logSha256": "826F47461EFF018F32E14D5D7376B8627BD10D7BDE3E1EFCDBAC031E2B5F3B8C"
+    },
+    {
+      "sequence": 140,
+      "name": "w58_gui_callback_runtime_tests::w233_task_delegate_callback_fixture_covers_conflict_receipt_and_newer_readback",
+      "terminal": "ok",
+      "logSha256": "790CAF04959CF21F8E047DECAF3EE30F43E09C9EA1456DD922A88ECE8B48175D"
+    },
+    {
+      "sequence": 141,
+      "name": "w58_gui_callback_runtime_tests::w233_task_delegate_inspect_null_projects_effective_default_deny",
+      "terminal": "ok",
+      "logSha256": "57B82FA3F6C5A09A93C85A5DAC8CC2B144029E696CE765BD8DBA66F79549AF5F"
+    },
+    {
+      "sequence": 142,
+      "name": "chat_child_supervisor::tests::cgroup_namespace_root_mount_plan_stages_without_unmounting_inherited_mount",
+      "terminal": "ok",
+      "logSha256": "93E61EEE28E89C1D3CC060D4FF6BB08DFE0558EA189728FB03258B5F832B091D"
+    },
+    {
+      "sequence": 143,
+      "name": "chat_child_supervisor::tests::linux_manager_stop_reaps_setsid_and_double_fork_tree",
+      "terminal": "ok",
+      "logSha256": "5B6D03FA9CFAD99328DC31DB5CEBBC7A899916EC734D865982DBA1EDC518819F"
+    },
+    {
+      "sequence": 144,
+      "name": "chat_child_supervisor::tests::linux_gui_crash_kills_complete_manager_unit",
+      "terminal": "ok",
+      "logSha256": "DA05586188A50500392BAEB719A56A9371552526D5DD0B67979CC8D067349414"
+    },
+    {
+      "sequence": 145,
+      "name": "chat_child_supervisor::tests::linux_unit_snapshot_pins_manager_owned_kill_contract",
+      "terminal": "ok",
+      "logSha256": "A28F94AE1529F51F12F23F1B0F89459D78C28740819607F1E484A98CFC5F691B"
+    },
+    {
+      "sequence": 146,
+      "name": "w58_gui_callback_runtime_tests::w480_real_producer_post_provider_outcomes_replay_through_main_and_buddy",
+      "terminal": "FAILED",
+      "logSha256": "8C73931FE85E4826A251030D0BB4AAF7B23271E9A5E4017253BA0A79F27A4ACB"
+    },
+    {
+      "sequence": 147,
+      "name": "w58_gui_callback_runtime_tests::p118_gui_callbacks_cancel_real_bootstrap_without_replay",
+      "terminal": "ok",
+      "logSha256": "6D4ECC0A5B196DBE5AF2912C80E6892A649A1815B4E90A2D41FB31F12904D56C"
+    },
+    {
+      "sequence": 148,
+      "name": "w58_gui_callback_runtime_tests::p118_projection_freezes_after_hosted_bootstrap_loss_without_replay",
+      "terminal": "ok",
+      "logSha256": "DED85D536A4071FF57E35E348449DF8839326375798878AF6475A5115A612BB5"
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "interpretation": "W480 Replace lacks accepted Delta (same W577 cause). Dream81/82 fail brittle whitespace source contracts, fixed only in tests byW581. Both P118 native GUI callback cases still PASS."
+}
