@@ -1,0 +1,77 @@
+{
+  "schema": "neoth-w653-obsidian020-locked/v1",
+  "source": "afbb5ebbb0743164462611237d5bd5e59619afcb",
+  "run": 35956842325,
+  "zipReceipts": [
+    {
+      "kind": "bundle",
+      "id": 10790573440,
+      "sha256": "f65905bde5dea2633393ceb3afaebf87f3cb888c8800e10fe5a068515d1cf1e1"
+    },
+    {
+      "kind": "source",
+      "id": 10790433798,
+      "sha256": "1ef6b53abeab21ff6d63cbaece3942f1d8fa843dd29a12c531d8be1631269195"
+    },
+    {
+      "kind": "log",
+      "id": 10790657598,
+      "sha256": "dabf7cc011e326330073fffdb54b1b2a9498cf822bf5abfab90e28fc4eaee0f3"
+    }
+  ],
+  "bindings": [
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/package.json",
+      "sha256": "2fcf474fbe8cede9b3c005c195d7e82c02ecd6c71d31406d1452e819282eb211",
+      "blob": "ca82080324d796b3fa56cf2d01c806b6143fa60b"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/tsconfig.json",
+      "sha256": "b2d50b9bbe2e4dd899915e763c33842140751bfcc7102571dff398c2a81c4c0d",
+      "blob": "1f7b0f4e52e247d3dd5bc78b2d0477a4869bfadd"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/manifest.json",
+      "sha256": "aaba42de965a53568b9c7365a663d54e98861ecd87f750debea8047b4a867a7e",
+      "blob": "4a2bc9086159bd4d2b26bb54522d0089042767d6"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/src/main.ts",
+      "sha256": "d67c5275dce46604f24e7aed9c472589b48fd75d29e4f986576f884fa2cef366",
+      "blob": "24601f0471fe6ec210a9a87458f3e06d01b288f0"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/test/plugin-contract.mjs",
+      "sha256": "7b938504c844ec19e9ae0fc64dfd21d91d46c5c9039330cc4911ad7d59cd593f",
+      "blob": "30027a488589dd2bb76c600eafabee70cbc7af50"
+    },
+    {
+      "path": ".github/workflows/obsidian-bridge-artifact.yml",
+      "sha256": "49906e7fc2e530128cea0ce7d51518db3352eb6bf63336c423e76da3a8a53d80",
+      "blob": "798fa866b7bc762228af5b11fa1b0bb24c64a8f7"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/manifest.json",
+      "sha256": "aaba42de965a53568b9c7365a663d54e98861ecd87f750debea8047b4a867a7e",
+      "blob": "4a2bc9086159bd4d2b26bb54522d0089042767d6"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/package-lock.json",
+      "sha256": "bca0336cfb5a60b2eb8af1a0625fdc4fd4b63fc0603340702fa7a73d3c6d999b",
+      "blob": "087e96a0dea9320c6bc6c845f559227fadacf4d2"
+    },
+    {
+      "path": "SRC/neothd/assets/obsidian_archive_bridge/main.js",
+      "sha256": "b1dc532bc781057ba6d3a95eb2a29d559c53ffa9aed5cbeb87b0679899c9cad2",
+      "blob": "94cb428327a286caeda6031baabc1d5fc1e719da"
+    }
+  ],
+  "stageCount": 7,
+  "stagesPassed": 7,
+  "bundleTestsPassed": 12,
+  "bundleTestsFailed": 0,
+  "trackedBundleIdentical": true,
+  "mainJsSha256": "B1DC532BC781057BA6D3A95EB2A29D559C53FFA9AED5CBEB87B0679899C9CAD2",
+  "scope": "Reproducible Node22 plugin bundle and mocked local-pipe contract; native daemon pairing/installer and real Obsidian clean-machine acceptance remain separate",
+  "localExecutablesRan": false
+}

@@ -1,0 +1,99 @@
+{
+  "schema": "neoth-w651-connection-delivery-acceptance/v1",
+  "scope": "W535 twelve connection-bound delivery regressions; does not close full P1-14",
+  "admittedAgainst": "afbb5ebbb0743164462611237d5bd5e59619afcb",
+  "sourceRun": 35952811727,
+  "source": "258c0653f8af85e6f29e44e266cf785d181cbf91",
+  "originalAdmission": "work/gold-20260906/wave636-group977/ADMISSION.json",
+  "tests": [
+    {
+      "test": "daemon::channel_live_registry::tests::acquire_returns_only_matching_published_generation",
+      "terminal": "passed",
+      "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
+      "sha256": "27F381DDB9EBD7F0A49DC5F986E312931019AE239C7BFD960387CB1F96CC6E49",
+      "blob": "ce19ffd9433db828b7a3310b6d6688dcbf32f496"
+    },
+    {
+      "test": "daemon::channel_live_registry::tests::stale_publication_cannot_reanimate_replaced_adapter",
+      "terminal": "passed",
+      "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
+      "sha256": "27F381DDB9EBD7F0A49DC5F986E312931019AE239C7BFD960387CB1F96CC6E49",
+      "blob": "ce19ffd9433db828b7a3310b6d6688dcbf32f496"
+    },
+    {
+      "test": "daemon::channel_live_registry::tests::shutdown_rejects_even_a_previously_uncreated_channel_reference",
+      "terminal": "passed",
+      "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
+      "sha256": "27F381DDB9EBD7F0A49DC5F986E312931019AE239C7BFD960387CB1F96CC6E49",
+      "blob": "ce19ffd9433db828b7a3310b6d6688dcbf32f496"
+    },
+    {
+      "test": "daemon::channel_live_registry::tests::revocation_waits_for_an_acquired_lease_then_refuses_new_egress",
+      "terminal": "passed",
+      "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
+      "sha256": "27F381DDB9EBD7F0A49DC5F986E312931019AE239C7BFD960387CB1F96CC6E49",
+      "blob": "ce19ffd9433db828b7a3310b6d6688dcbf32f496"
+    },
+    {
+      "test": "daemon::channel_live_registry::tests::shutdown_waits_for_an_effect_already_inside_the_real_send_boundary",
+      "terminal": "passed",
+      "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
+      "sha256": "27F381DDB9EBD7F0A49DC5F986E312931019AE239C7BFD960387CB1F96CC6E49",
+      "blob": "ce19ffd9433db828b7a3310b6d6688dcbf32f496"
+    },
+    {
+      "test": "daemon::proactive_dispatcher::tests::connection_bound_delivery_uses_only_the_exact_live_channel_ref",
+      "terminal": "passed",
+      "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "sha256": "E4619A04ACA3A5EEFA3C7E77BBDC7CE1CCE23310E1813224A317675E03AF8B93",
+      "blob": "0d7c5f8ef8a100d318985d7fb9e208a7cc945c44"
+    },
+    {
+      "test": "daemon::proactive_dispatcher::tests::unavailable_connection_bound_handles_settle_sidecar_before_transport",
+      "terminal": "passed",
+      "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "sha256": "E4619A04ACA3A5EEFA3C7E77BBDC7CE1CCE23310E1813224A317675E03AF8B93",
+      "blob": "0d7c5f8ef8a100d318985d7fb9e208a7cc945c44"
+    },
+    {
+      "test": "daemon::proactive_dispatcher::tests::malformed_connection_bound_targets_never_acquire_or_arm_live_transport",
+      "terminal": "passed",
+      "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "sha256": "E4619A04ACA3A5EEFA3C7E77BBDC7CE1CCE23310E1813224A317675E03AF8B93",
+      "blob": "0d7c5f8ef8a100d318985d7fb9e208a7cc945c44"
+    },
+    {
+      "test": "daemon::proactive_dispatcher::tests::failed_connection_bound_adapter_never_records_delivered",
+      "terminal": "passed",
+      "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "sha256": "E4619A04ACA3A5EEFA3C7E77BBDC7CE1CCE23310E1813224A317675E03AF8B93",
+      "blob": "0d7c5f8ef8a100d318985d7fb9e208a7cc945c44"
+    },
+    {
+      "test": "daemon::proactive_dispatcher::tests::plan_delivery_connection_bound_channels_require_the_live_registry",
+      "terminal": "passed",
+      "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "sha256": "E4619A04ACA3A5EEFA3C7E77BBDC7CE1CCE23310E1813224A317675E03AF8B93",
+      "blob": "0d7c5f8ef8a100d318985d7fb9e208a7cc945c44"
+    },
+    {
+      "test": "daemon::proactive_egress::tests::v6_connection_binding_authenticates_exact_live_identity_without_raw_body",
+      "terminal": "passed",
+      "sourcePath": "SRC/neothd/src/daemon/proactive_egress.rs",
+      "sha256": "27437DA486067CA0A041EDD5D92D32DCCC150090EE44DA56D362AD5369CC31CE",
+      "blob": "c27f2040091d7f92412d070b6c1429111e365a39"
+    },
+    {
+      "test": "daemon::proactive_egress::tests::expired_v6_armed_recovery_records_crash_unknown_without_live_reacquire",
+      "terminal": "passed",
+      "sourcePath": "SRC/neothd/src/daemon/proactive_egress.rs",
+      "sha256": "27437DA486067CA0A041EDD5D92D32DCCC150090EE44DA56D362AD5369CC31CE",
+      "blob": "c27f2040091d7f92412d070b6c1429111e365a39"
+    }
+  ],
+  "distinctSources": 3,
+  "unchangedSourceCarry": true,
+  "gchatSeparateEvidence": "docs/verification/gold-wave567-gchat-terminals.json",
+  "remaining": "Full supported-channel contract and account-path coverage must be mapped independently; no new live-provider or whole-job gate is introduced here",
+  "localExecutablesRan": false
+}

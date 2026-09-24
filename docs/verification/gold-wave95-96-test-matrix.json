@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Obsidian12/12hosted bundle imported; cross-platform compile repairs; native and lockedreplay pending",
+  "status": "Obsidian0.2lockedreplay12/12all7stages; W53512/12source-carry accepted; remaining native checks pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 150584,
-    "sha256": "8699B3F65DEC66723D234F6FCF09DE84CE52F68A5694DC4E570822CE09ED07AB"
+    "bytes": 150977,
+    "sha256": "6F964CBC674FACA4CBC35E6D966FBC01F494BB53DBADE9AF3FE82C77D052284A"
   },
-  "sourceInputs": 853,
+  "sourceInputs": 855,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -25494,8 +25494,9 @@
       "daemon::proactive_egress::tests::v6_connection_binding_authenticates_exact_live_identity_without_raw_body",
       "daemon::proactive_egress::tests::expired_v6_armed_recovery_records_crash_unknown_without_live_reacquire"
     ],
-    "status": "source-reviewed hosted-pending",
-    "scope": "Opaque one-shot live permits; v6 authenticated durable identity; no resend on Armed recovery"
+    "status": "SOURCE_ADMITTED12/12Group977;currentcriterionSourcesUnchanged",
+    "scope": "Opaque one-shot live permits; v6 authenticated durable identity; no resend on Armed recovery",
+    "evidence": "docs/verification/gold-wave651-connection-delivery-acceptance.json"
   },
   "wave535ConnectionBoundEgressEvidence": {
     "base": "a53a95f426607b476b6d9ac1937e26c871b8244e",
@@ -28382,6 +28383,50 @@
       }
     ],
     "note": "Exact byte artifactB1DC532B; W477review; no local executables or Road closure",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave653ObsidianReplayAndDeliveryAcceptance": {
+    "base": "afbb5ebbb0743164462611237d5bd5e59619afcb",
+    "sources": [
+      {
+        "path": "docs/gold-wave535-connection-bound-egress.md",
+        "bytes": 3799,
+        "sha256": "97F0BD0BE325B5A86282F619F7F9F0C63D45885C4FF7500A82C10EB17D133D00",
+        "blob": "abfb81edc198063db2a30bd595e6334dae0e69bc"
+      },
+      {
+        "path": "docs/verification/gold-wave651-connection-delivery-acceptance.json",
+        "bytes": 5150,
+        "sha256": "067731558DC0DE28CD45523080E914807DA23A21F9CB9CF614C2846C8B956E4B",
+        "blob": "f82ba19b0093c511f89bfb78ce8be32105b5b72f"
+      },
+      {
+        "path": "docs/verification/gold-wave653-obsidian020-locked.json",
+        "bytes": 3060,
+        "sha256": "6947381EA656681697EC13635E6A5C5F48B99941914D5CF75E77282A66120775",
+        "blob": "ed28f7a623f9628644749dd1f67fc2b447efc932"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 230773,
+        "sha256": "8B1EAA695C24371D4A2DC398FB62B007385A4B0E43AFCC463EA53D05FAB5F225",
+        "blob": "e976cdf401ad7850aa50f70d5795e673bba1ab21"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1242101,
+        "sha256": "AB464B2236CADC1B2D286D0EFD5D37C73508D43F34609A41E3960D9A7F8DB97F",
+        "blob": "a5c5998019151750006802040df0867fad977efe"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1841383,
+        "sha256": "A7A963B008E4D2D7F0D0604D3EBAAFDE439B56182974380BD4E532EEBBF50C66",
+        "blob": "8d4f81372ad2e75df067108632e2856b61a560da"
+      }
+    ],
+    "note": "Only criterion-specific tested source carry; no fullP114orP221closure; no local executables",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

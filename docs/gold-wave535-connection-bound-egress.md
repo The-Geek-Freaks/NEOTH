@@ -51,3 +51,17 @@ The source-gate integration target uses Cargo's documented leaf-name terminal.
 This proves the focused feature-on regression, not a real Google Chat account
 or external-service qualification. Evidence:
 `docs/verification/gold-wave567-gchat-terminals.json`.
+
+## W651 source-bound regression acceptance
+
+All twelve W535 selected regressions pass in Root-admitted Group977 run
+35952811727 at258c0653. The exact current Git blobs of channel_live_registry,
+proactive_dispatcher and proactive_egress are unchanged from that run. The
+claim-bound permit, exact generation/account routing, lease withdrawal, negative
+SidecarOnly cases and Armed-to-CrashUnknown no-resend behavior have behavioral
+receipts, rather than remaining merely source-reviewed. W567 separately records
+all four feature-on GChat cases. See
+`verification/gold-wave651-connection-delivery-acceptance.json`.
+
+This accepts this component selection. Full P1-14 supported-channel/account-path
+coverage remains open; this update adds no live-provider or whole-job prerequisite.

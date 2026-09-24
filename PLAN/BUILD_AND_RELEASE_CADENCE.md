@@ -3,6 +3,18 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W651/W653 admitted delivery component and reproducible Obsidian0.2 (2026-09-24):**
+Plugin replay35956842325 atafbb5ebb passes all7 stages and12/12 bundle tests.
+Root verified three ZIPs, exact source bindings and byte equality of all three
+committed bundle files. Native daemon/installer and real Obsidian acceptance
+remain separate pending evidence.
+All12 W535 connection-bound delivery tests are source-admitted from Group977;
+the three criterion-bearing current Git blobs match the admitted source.
+The component now records behavioral acceptance rather than stale hosted-pending.
+GChatW567 remains its separate4/4feature evidence. Full P1-14 channel coverage
+remains open; no new whole-job or live-provider gate is introduced.
+No Road closure or local executable validation.
+
 **W648-W650 Obsidian0.2 generated bundle and cross-platform build repair (2026-09-24):**
 Hosted plugin35956341651 atce42784e passes typecheck/build and all12 actual
 bundle tests, including129-note finite batches, newer-ACK protection, re-pair,
