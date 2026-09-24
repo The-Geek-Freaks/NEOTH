@@ -2,6 +2,13 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W944 Hacker News consumer repair (2026-09-24):** Core413a found the two
+remaining legacy external-HTTP calls in Hacker News and a missing direct Bytes
+type dependency. W941 seals both requests with explicit15s timeout and the
+existing versioned User-Agent; response status/limits/JSON stay before terminal.
+The existing locked bytes1.11.1 gains only a direct neoth dependency edge.
+W942 independently reviewed the delta. Seven existing real HN regressions are
+now registered: native1664/Group1431/Windows213. Hosted gates pending; C7 open.
 **W936 HTTP effect boundary and W932 MCP repair (2026-09-24):** The external
 HTTP authorizer owns its sealed request and actual send. Citation validates
 body/status/record before audit success;429 is failure before cooldown,404 is

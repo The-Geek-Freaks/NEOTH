@@ -25,12 +25,13 @@
 //! substrings.
 
 use anyhow::{Context, Result};
-use futures_util::StreamExt;
 use serde::de::DeserializeOwned;
 
+use crate::providers::http_client;
 use crate::proactive::ProactiveItem;
 use crate::tools::external_http::{
-    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface,
+    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpResponse, ExternalHttpSurface,
+    ExternalHttpTransportRequest,
 };
 
 /// Public HN Firebase API base (ported verbatim from hackerpedia's `hnAPI.js`).
@@ -74,22 +75,19 @@ async fn top_stories_from_base(
     limit: usize,
 ) -> Result<Vec<HnStory>> {
     let limit = limit.min(100);
-    let client = reqwest::Client::builder()
-        .user_agent(concat!("neoth/", env!("CARGO_PKG_VERSION")))
-        .timeout(std::time::Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?;
+    let client = http_client::build_client_no_redirect()?;
     let ids_url = format!("{base}topstories.json");
-    let ids_request = ExternalHttpRequest::get(ids_url.clone(), ExternalHttpSurface::HackerNews);
+    let ids_request = ExternalHttpRequest::get(&ids_url, ExternalHttpSurface::HackerNews);
+    let ids_transport = ExternalHttpTransportRequest::new(
+        &ids_request,
+        client
+            .get(&ids_url)
+            .header("User-Agent", concat!("neoth/", env!("CARGO_PKG_VERSION")))
+            .timeout(std::time::Duration::from_secs(15)),
+    )?;
     let ids: Vec<i64> = authorizer
-        .execute(ids_request.clone(), |permit| {
-            let client = client.clone();
-            let ids_request = ids_request.clone();
-            async move {
-                permit.require(&ids_request)?;
-                let response = client.get(ids_url).send().await?;
-                response_json_limited(response, MAX_TOP_STORIES_BYTES, "HN top stories").await
-            }
+        .execute_transport(ids_request, ids_transport, |response| async move {
+            response_json_limited(response, MAX_TOP_STORIES_BYTES, "HN top stories").await
         })
         .await?;
     let mut out = Vec::with_capacity(limit);
@@ -111,34 +109,30 @@ async fn fetch_item(
     id: i64,
 ) -> Result<Option<HnStory>> {
     let item_url = format!("{base}item/{id}.json");
-    let item_request = ExternalHttpRequest::get(item_url.clone(), ExternalHttpSurface::HackerNews);
+    let item_request = ExternalHttpRequest::get(&item_url, ExternalHttpSurface::HackerNews);
+    let item_transport = ExternalHttpTransportRequest::new(
+        &item_request,
+        client
+            .get(&item_url)
+            .header("User-Agent", concat!("neoth/", env!("CARGO_PKG_VERSION")))
+            .timeout(std::time::Duration::from_secs(15)),
+    )?;
     let v: serde_json::Value = authorizer
-        .execute(item_request.clone(), |permit| {
-            let client = client.clone();
-            let item_request = item_request.clone();
-            async move {
-                permit.require(&item_request)?;
-                let response = client.get(item_url).send().await?;
-                response_json_limited(response, MAX_ITEM_BYTES, "HN item").await
-            }
+        .execute_transport(item_request, item_transport, |response| async move {
+            response_json_limited(response, MAX_ITEM_BYTES, "HN item").await
         })
         .await?;
     Ok(parse_item(&v))
 }
 
 async fn response_json_limited<T: DeserializeOwned>(
-    response: reqwest::Response,
+    mut response: ExternalHttpResponse,
     max_bytes: usize,
     context: &'static str,
 ) -> Result<T> {
-    let response = response
-        .error_for_status()
-        .with_context(|| format!("{context} HTTP status"))?;
-    // `error_for_status` rejects only 4xx/5xx. Redirects are deliberately NOT
-    // followed (`redirect::Policy::none()`), so a 3xx arrives here WITH its
-    // body — and a redirect body is not the payload we asked for. Accepting it
-    // would let an endpoint answer "302 + valid JSON" and have it processed as
-    // a successful response.
+    // Redirects are deliberately not followed. A 3xx can carry valid JSON but
+    // is still not the payload this request authorized, so every non-success
+    // status is rejected before body parsing.
     let status = response.status();
     if !status.is_success() {
         anyhow::bail!("{context} returned a non-success HTTP status {status}");
@@ -151,9 +145,7 @@ async fn response_json_limited<T: DeserializeOwned>(
     }
 
     let mut body = Vec::new();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.with_context(|| format!("read {context} response body"))?;
+    while let Some(chunk) = response.chunk().await? {
         if body.len().saturating_add(chunk.len()) > max_bytes {
             anyhow::bail!("{context} response exceeds {max_bytes}-byte limit");
         }
@@ -407,6 +399,17 @@ mod tests {
         assert_eq!(stories.len(), 1);
         assert_eq!(stories[0].id, 7);
         server.verify().await;
+        let requests = server.received_requests().await.unwrap();
+        assert!(requests.iter().all(|request| {
+            request
+                .headers
+                .get("user-agent")
+                .is_some_and(|value| {
+                    value.to_str().is_ok_and(|value| {
+                        value == concat!("neoth/", env!("CARGO_PKG_VERSION"))
+                    })
+                })
+        }));
     }
 
     #[tokio::test]

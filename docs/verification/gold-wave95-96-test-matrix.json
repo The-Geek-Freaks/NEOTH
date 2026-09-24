@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W939 exact hosted formatting and Windows190 failure evidence admitted; repaired behaviors pending",
+  "status": "W944 HackerNews sealed HTTP migration static reviewed; hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 181923,
-    "sha256": "C51AF66581D8D47673D9FD669C9549C2DDA412CE0273EDF226221E595363D7A5"
+    "bytes": 181895,
+    "sha256": "DCD04548380771B37525E18F9942EDC3EB5EB95E46D0398DA0FFAD88350E9E4E"
   },
   "sourceInputs": 1028,
   "requiredNativeTests": [
@@ -9949,6 +9949,48 @@
       "test": "mcp::dispatch_loop::tests::trusted_nonpublic_source_refuses_before_spawn_through_budget_wrapper",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
       "sourceSha256": "AC10DCAFF0946611A7632897D740807ADF2D6428A811B6E2FA7E609759660948",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "sources::hackernews::tests::fetches_top_list_and_each_concrete_item_through_authorizer",
+      "sourcePath": "SRC/neothd/src/sources/hackernews.rs",
+      "sourceSha256": "92BA0C4AEC33FC5CE1E7688FB6B7B9EF9865D6559C66A3AC248FF7CB9A006A69",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "sources::hackernews::tests::item_transport_failure_aborts_the_refresh_instead_of_returning_partial_data",
+      "sourcePath": "SRC/neothd/src/sources/hackernews.rs",
+      "sourceSha256": "92BA0C4AEC33FC5CE1E7688FB6B7B9EF9865D6559C66A3AC248FF7CB9A006A69",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "sources::hackernews::tests::fail_closed_deny_never_reaches_hn_transport",
+      "sourcePath": "SRC/neothd/src/sources/hackernews.rs",
+      "sourceSha256": "92BA0C4AEC33FC5CE1E7688FB6B7B9EF9865D6559C66A3AC248FF7CB9A006A69",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "sources::hackernews::tests::live_policy_reload_to_custom_deny_prevents_transport",
+      "sourcePath": "SRC/neothd/src/sources/hackernews.rs",
+      "sourceSha256": "92BA0C4AEC33FC5CE1E7688FB6B7B9EF9865D6559C66A3AC248FF7CB9A006A69",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "sources::hackernews::tests::redirects_are_not_followed",
+      "sourcePath": "SRC/neothd/src/sources/hackernews.rs",
+      "sourceSha256": "92BA0C4AEC33FC5CE1E7688FB6B7B9EF9865D6559C66A3AC248FF7CB9A006A69",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "sources::hackernews::tests::a_redirect_with_a_valid_json_body_is_still_refused",
+      "sourcePath": "SRC/neothd/src/sources/hackernews.rs",
+      "sourceSha256": "92BA0C4AEC33FC5CE1E7688FB6B7B9EF9865D6559C66A3AC248FF7CB9A006A69",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "sources::hackernews::tests::top_story_response_is_hard_bounded",
+      "sourcePath": "SRC/neothd/src/sources/hackernews.rs",
+      "sourceSha256": "92BA0C4AEC33FC5CE1E7688FB6B7B9EF9865D6559C66A3AC248FF7CB9A006A69",
       "junitClass": "neoth"
     }
   ],
@@ -36779,6 +36821,81 @@
       }
     ],
     "note": "Preflight36057680759 @ca8dc35b artifact10832159968 full API ZIP/inner/source/prepost blobs verified. Windows190183PASS7FAIL39bindings190actualterminals. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave941HackerNewsConsumerAcceptance": {
+    "requiredTests": [
+      "sources::hackernews::tests::fetches_top_list_and_each_concrete_item_through_authorizer",
+      "sources::hackernews::tests::item_transport_failure_aborts_the_refresh_instead_of_returning_partial_data",
+      "sources::hackernews::tests::fail_closed_deny_never_reaches_hn_transport",
+      "sources::hackernews::tests::live_policy_reload_to_custom_deny_prevents_transport",
+      "sources::hackernews::tests::redirects_are_not_followed",
+      "sources::hackernews::tests::a_redirect_with_a_valid_json_body_is_still_refused",
+      "sources::hackernews::tests::top_story_response_is_hard_bounded"
+    ],
+    "status": "HOSTED_PENDING",
+    "scope": "Both HackerNews sealed requests preserve User-Agent,15s timeout,status/body limits,failclosed/no partial refresh"
+  },
+  "wave944HackerNewsSource": {
+    "base": "413acbc4ea20d5387edca5d50f3fe6182ec1f96d",
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 23698,
+        "sha256": "F7E445B165602D99F7792641643C322178569BB7424F53BE218446F250B691D7",
+        "blob": "7b9a0a4c5a379cf387d97cce6e783401ad2c9dc1"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 37999,
+        "sha256": "8EA0259F40053E67F88CF7C7C2232B6B5C8D6F744A0B3167B3E0074748ECAC76",
+        "blob": "2a10a4997461b0513362d64910f87b732f8cd897"
+      },
+      {
+        "path": "docs/gold-wave936-http-effect-boundary.md",
+        "bytes": 2055,
+        "sha256": "5C9E92873500DC9244864DD7D5614C5FE88E84426002A118B9204D733EA9ABCA",
+        "blob": "26c7fac4121dc308160e801b23919e0d87729386"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 291363,
+        "sha256": "F044C07861F42BC7E787FB55B501FFC583187A4679453A4F637CA429ED5B6953",
+        "blob": "b4685c074ff0debcf75548ddc7c84e882955f8ad"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1302691,
+        "sha256": "734E3AC706DAA722B48167AB7B92784296B2D6F0BC043E349992D88538ED8481",
+        "blob": "94cad8afc38382c0888dcfd371018c58bd605b27"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1912260,
+        "sha256": "492C2780B062AF4CA0109DAE8028082DCC1EEC7A4362B9BE1B22A9DEF380D79E",
+        "blob": "a6ce0a77925f9d720289ff4d0edc4d5ce198f7f6"
+      },
+      {
+        "path": "SRC/Cargo.lock",
+        "bytes": 385403,
+        "sha256": "EAF75EAF1045B7736010227542DAC09D0FA0711E59F9338FEFB057F711322B56",
+        "blob": "f89a0cdee009703aeb423562fefea56dcf467ee6"
+      },
+      {
+        "path": "SRC/neothd/Cargo.toml",
+        "bytes": 46356,
+        "sha256": "31063C67DF245D078107CE93BA153C11C54C32CD60295C11D14BD9C5EFF798CC",
+        "blob": "b8f5d5e3e675d73954c209ae6f6dc7299d4939c6"
+      },
+      {
+        "path": "SRC/neothd/src/sources/hackernews.rs",
+        "bytes": 28363,
+        "sha256": "92BA0C4AEC33FC5CE1E7688FB6B7B9EF9865D6559C66A3AC248FF7CB9A006A69",
+        "blob": "d05a780e9afbfccf646e3695cdf23e607c9a8454"
+      }
+    ],
+    "note": "Core36057976232 exactE0599/E0433 repaired. Seven existing HN regressions selected; W942 static APPROVE. Direct bytes dependency only, no version resolution changed. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

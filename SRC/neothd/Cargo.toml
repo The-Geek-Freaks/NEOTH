@@ -315,6 +315,7 @@ futures      = { version = "0.3", optional = true }
 
 # Day-2 (WAL writer) -- SPEC_wire_header_v2_slim.md + SPEC_wal_lifecycle.md + SPEC_multinode_clock.md
 bitflags    = "2.6"
+bytes       = "1"
 num_enum    = "0.7"
 
 # Secret handling (Security audit P0) -- Debug/Display redacted, zero-on-drop
