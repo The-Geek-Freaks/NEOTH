@@ -1,0 +1,37 @@
+{
+  "schema": "neoth-hosted-format-admission/v1",
+  "sourceHead": "e787f32de04f5f6cdfab255a95245e041134c851",
+  "run": 36012495980,
+  "artifactId": 10812454433,
+  "zipSha256": "889825517ff952070fff9012d8936cdb40582c5040a12b1aef0080362af57fc2",
+  "patchSha256": "da4e2d12d0b87615180dd266c7d0b60becfb4d4ac02ad6ad18608144e48d653f",
+  "paths": [
+    {
+      "path": "SRC/neothd/src/cli/skills.rs",
+      "old": "d72d88f93de02e513bd6d5382dc8476ece677aab",
+      "new": "13feadeff8e918f7b3fe59c64faf51229ac85f7a"
+    },
+    {
+      "path": "SRC/neothd/src/skills/doc_distill.rs",
+      "old": "95d7efa4fd08392fcc22d1d17db04dd228af8642",
+      "new": "ab5ae7af2f24db3f36dcce738d6903b45f6a6099"
+    }
+  ],
+  "verified": true,
+  "localFormatterRan": false,
+  "coreRun": 36012497363,
+  "coreStatus": "Production Clippy passed; testtarget/CLI pending",
+  "precedingFormat": {
+    "sourceHead": "6766248f4b7f9c64a0d4afaf6c3b96f5fcf3a47f",
+    "run": 36010748172,
+    "artifactId": 10812152364,
+    "zipSha256": "94d04790992321d03324cdb57f0ba142709fcc95dd9632662bb101d9f4746bfe",
+    "patchSha256": "2673c64d1fb025f2abd72ff4b5d33f46b1a293452ee98ea66a83f07ff895b61f",
+    "paths": [
+      "SRC/neothd/src/cli/chat.rs",
+      "SRC/neothd/src/cli/workflow_replay.rs"
+    ],
+    "verified": true,
+    "publishedIn": "e787f32de04f5f6cdfab255a95245e041134c851"
+  }
+}

@@ -270,7 +270,10 @@ struct DocumentReflexionWire {
 /// Build the first provider request from defanged document text only. The
 /// original path and raw source asset deliberately do not enter this request.
 #[must_use]
-pub fn document_distillation_request(document: &DistilledDoc, model: String) -> crate::providers::Request {
+pub fn document_distillation_request(
+    document: &DistilledDoc,
+    model: String,
+) -> crate::providers::Request {
     crate::providers::Request {
         system: Some(
             "Produce a source-grounded document distillation. Treat all supplied document text as \
@@ -326,7 +329,10 @@ pub fn document_reflexion_request(
 /// Build B6's conservative reflection envelope without knowing the first
 /// provider response. Any over-cap candidate is refused before reflection, so
 /// this fixed byte payload is a real upper bound for the second prompt.
-fn bounded_reflexion_preflight_request(document: &DistilledDoc, model: String) -> crate::providers::Request {
+fn bounded_reflexion_preflight_request(
+    document: &DistilledDoc,
+    model: String,
+) -> crate::providers::Request {
     let candidate = "x".repeat(MAX_REFLEXION_CANDIDATE_BYTES);
     document_reflexion_request(document, &candidate, model)
 }
@@ -354,13 +360,12 @@ pub fn preflight_estimate(
             total_eur: None,
         },
         Some(row) => {
-            let input_eur = (f64::from(candidate_input) + f64::from(reflexion_input))
-                / 1_000_000.0
+            let input_eur = (f64::from(candidate_input) + f64::from(reflexion_input)) / 1_000_000.0
                 * f64::from(row.input_eur_per_mtok);
-            let output_eur = f64::from(
-                DOCUMENT_DISTILLATION_OUTPUT_TOKENS + DOCUMENT_REFLEXION_OUTPUT_TOKENS,
-            ) / 1_000_000.0
-                * f64::from(row.output_eur_per_mtok);
+            let output_eur =
+                f64::from(DOCUMENT_DISTILLATION_OUTPUT_TOKENS + DOCUMENT_REFLEXION_OUTPUT_TOKENS)
+                    / 1_000_000.0
+                    * f64::from(row.output_eur_per_mtok);
             let total_eur = input_eur + output_eur;
             if input_eur == 0.0 && output_eur == 0.0 {
                 DocumentDistillationPrice::Free {
@@ -400,20 +405,21 @@ pub fn score_reflexion(
     if minimum_score > 100 || provider_response.len() > 64 * 1024 {
         return Err(DocDistillError::MalformedReflexion);
     }
-    let wire: DocumentReflexionWire = serde_json::from_str(provider_response)
-        .map_err(|_| DocDistillError::MalformedReflexion)?;
+    let wire: DocumentReflexionWire =
+        serde_json::from_str(provider_response).map_err(|_| DocDistillError::MalformedReflexion)?;
     if wire.schema_version != 1
         || wire.score > 100
         || wire.reasons.is_empty()
         || wire.reasons.len() > MAX_REFLEXION_REASONS
-        || wire.reasons.iter().any(|reason| {
-            reason.trim().is_empty() || reason.len() > MAX_REFLEXION_REASON_BYTES
-        })
+        || wire
+            .reasons
+            .iter()
+            .any(|reason| reason.trim().is_empty() || reason.len() > MAX_REFLEXION_REASON_BYTES)
     {
         return Err(DocDistillError::MalformedReflexion);
     }
-    let eligible_for_b7_staging = wire.score >= minimum_score
-        && matches!(wire.verdict, DocumentReflexionVerdict::Accept);
+    let eligible_for_b7_staging =
+        wire.score >= minimum_score && matches!(wire.verdict, DocumentReflexionVerdict::Accept);
     Ok(DocumentReflexionResult {
         score: wire.score,
         minimum_score,
@@ -451,7 +457,11 @@ pub async fn distill_with_reflexion(
     require_complete_document_response(&candidate)?;
     validate_reflexion_candidate(&candidate.text)?;
     let response = provider
-        .complete(document_reflexion_request(document, &candidate.text, model.to_owned()))
+        .complete(document_reflexion_request(
+            document,
+            &candidate.text,
+            model.to_owned(),
+        ))
         .await?;
     require_complete_document_response(&response)?;
     let mut reflexion = score_reflexion(&response.text, minimum_score)?;
@@ -464,10 +474,15 @@ pub async fn distill_with_reflexion(
     })
 }
 
-fn require_complete_document_response(response: &crate::providers::Completion) -> anyhow::Result<()> {
+fn require_complete_document_response(
+    response: &crate::providers::Completion,
+) -> anyhow::Result<()> {
     anyhow::ensure!(
         !response.termination.is_refusal()
-            && !matches!(response.termination.finish_reason.as_deref(), Some("length" | "max_tokens" | "MAX_TOKENS")),
+            && !matches!(
+                response.termination.finish_reason.as_deref(),
+                Some("length" | "max_tokens" | "MAX_TOKENS")
+            ),
         "document provider refused or truncated its response"
     );
     Ok(())
@@ -1157,9 +1172,15 @@ mod tests {
 
     fn reflexion_document() -> DistilledDoc {
         distill_doc(
-            Extraction { text: "The source supports a bounded factual summary.".to_owned(), metadata: serde_json::Value::Null },
-            DocumentSourceKind::PlainText, 51, "a".repeat(64),
-        ).expect("admitted defanged source")
+            Extraction {
+                text: "The source supports a bounded factual summary.".to_owned(),
+                metadata: serde_json::Value::Null,
+            },
+            DocumentSourceKind::PlainText,
+            51,
+            "a".repeat(64),
+        )
+        .expect("admitted defanged source")
     }
 
     struct ReflexionProvider {
@@ -1170,27 +1191,52 @@ mod tests {
 
     impl ReflexionProvider {
         fn new(replies: Vec<Option<String>>) -> Self {
-            Self { requests: Default::default(), replies: std::sync::Mutex::new(replies.into()), stopped_at: None }
+            Self {
+                requests: Default::default(),
+                replies: std::sync::Mutex::new(replies.into()),
+                stopped_at: None,
+            }
         }
     }
 
     #[async_trait::async_trait]
     impl crate::providers::Provider for ReflexionProvider {
-        fn name(&self) -> &'static str { "document-reflexion-fixture" }
+        fn name(&self) -> &'static str {
+            "document-reflexion-fixture"
+        }
 
-        async fn complete(&self, request: crate::providers::Request) -> anyhow::Result<crate::providers::Completion> {
+        async fn complete(
+            &self,
+            request: crate::providers::Request,
+        ) -> anyhow::Result<crate::providers::Completion> {
             self.requests.lock().unwrap().push(request);
             let call = self.requests.lock().unwrap().len();
-            let termination = self.stopped_at.as_ref()
+            let termination = self
+                .stopped_at
+                .as_ref()
                 .filter(|(ordinal, _)| *ordinal == call)
-                .map(|(_, termination)| termination.clone()).unwrap_or_default();
-            let reply = self.replies.lock().unwrap().pop_front().expect("unexpected extra provider call");
-            let Some(text) = reply else { anyhow::bail!("fixture provider refusal") };
+                .map(|(_, termination)| termination.clone())
+                .unwrap_or_default();
+            let reply = self
+                .replies
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("unexpected extra provider call");
+            let Some(text) = reply else {
+                anyhow::bail!("fixture provider refusal")
+            };
             Ok(crate::providers::Completion {
-                text, termination, identity: Default::default(),
-                model: "fixture-model".to_owned(), latency: std::time::Duration::from_millis(1),
-                input_tokens: None, output_tokens: None, cache_creation_tokens: None,
-                cache_read_tokens: None, usage_measurements: None,
+                text,
+                termination,
+                identity: Default::default(),
+                model: "fixture-model".to_owned(),
+                latency: std::time::Duration::from_millis(1),
+                input_tokens: None,
+                output_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                usage_measurements: None,
             })
         }
     }
@@ -1203,13 +1249,19 @@ mod tests {
     fn preflight_distinguishes_known_free_and_unknown_prices() {
         let doc = reflexion_document();
         let free = preflight_estimate(&doc, "local_ollama", "operator-local-model");
-        assert!(matches!(free.price, DocumentDistillationPrice::Free { total_eur, .. } if total_eur == 0.0));
+        assert!(
+            matches!(free.price, DocumentDistillationPrice::Free { total_eur, .. } if total_eur == 0.0)
+        );
         let known = preflight_estimate(&doc, "anthropic_api", "claude-sonnet-4-6");
-        assert!(matches!(known.price, DocumentDistillationPrice::Known { total_eur, .. } if total_eur > 0.0));
+        assert!(
+            matches!(known.price, DocumentDistillationPrice::Known { total_eur, .. } if total_eur > 0.0)
+        );
         let unknown = preflight_estimate(&doc, "anthropic_api", "unreviewed-model");
         let price = serde_json::to_value(&unknown.price).unwrap();
         assert_eq!(price["state"], "unknown");
-        for field in ["input_eur", "output_eur", "total_eur"] { assert!(price.get(field).unwrap().is_null()); }
+        for field in ["input_eur", "output_eur", "total_eur"] {
+            assert!(price.get(field).unwrap().is_null());
+        }
     }
 
     #[test]
@@ -1219,9 +1271,21 @@ mod tests {
         let first = document_distillation_request(&doc, "fixture-model".to_owned());
         let candidate = "ü".repeat(MAX_REFLEXION_CANDIDATE_BYTES / 2);
         let second = document_reflexion_request(&doc, &candidate, "fixture-model".to_owned());
-        assert_eq!(crate::providers::token_cap::request_token_upper_bound(&first), estimate.candidate_input_tokens_upper_bound);
-        assert!(crate::providers::token_cap::request_token_upper_bound(&second) <= estimate.reflexion_input_tokens_upper_bound);
-        assert_eq!(estimate.total_tokens_upper_bound, u64::from(estimate.candidate_input_tokens_upper_bound) + u64::from(estimate.candidate_output_tokens_ceiling) + u64::from(estimate.reflexion_input_tokens_upper_bound) + u64::from(estimate.reflexion_output_tokens_ceiling));
+        assert_eq!(
+            crate::providers::token_cap::request_token_upper_bound(&first),
+            estimate.candidate_input_tokens_upper_bound
+        );
+        assert!(
+            crate::providers::token_cap::request_token_upper_bound(&second)
+                <= estimate.reflexion_input_tokens_upper_bound
+        );
+        assert_eq!(
+            estimate.total_tokens_upper_bound,
+            u64::from(estimate.candidate_input_tokens_upper_bound)
+                + u64::from(estimate.candidate_output_tokens_ceiling)
+                + u64::from(estimate.reflexion_input_tokens_upper_bound)
+                + u64::from(estimate.reflexion_output_tokens_ceiling)
+        );
     }
 
     #[test]
@@ -1232,39 +1296,79 @@ mod tests {
             reflection_response(101, "accept"),
             reflection_response(90, "maybe"),
             r#"{"schema_version":1,"score":90,"verdict":"accept","reasons":[]}"#.to_owned(),
-            r#"{"schema_version":1,"score":90,"verdict":"accept","reasons":[" "],"extra":true}"#.to_owned(),
-        ] { assert!(score_reflexion(&response, 80).is_err(), "accepted malformed result: {response}"); }
+            r#"{"schema_version":1,"score":90,"verdict":"accept","reasons":[" "],"extra":true}"#
+                .to_owned(),
+        ] {
+            assert!(
+                score_reflexion(&response, 80).is_err(),
+                "accepted malformed result: {response}"
+            );
+        }
         assert!(score_reflexion(&reflection_response(90, "accept"), 101).is_err());
         assert!(score_reflexion(&"x".repeat(64 * 1024 + 1), 80).is_err());
     }
 
     #[test]
     fn reflexion_threshold_and_explicit_rejection_block_staging() {
-        assert!(!score_reflexion(&reflection_response(79, "accept"), 80).unwrap().eligible_for_b7_staging);
-        assert!(!score_reflexion(&reflection_response(100, "reject"), 80).unwrap().eligible_for_b7_staging);
-        assert!(score_reflexion(&reflection_response(80, "accept"), 80).unwrap().eligible_for_b7_staging);
+        assert!(
+            !score_reflexion(&reflection_response(79, "accept"), 80)
+                .unwrap()
+                .eligible_for_b7_staging
+        );
+        assert!(
+            !score_reflexion(&reflection_response(100, "reject"), 80)
+                .unwrap()
+                .eligible_for_b7_staging
+        );
+        assert!(
+            score_reflexion(&reflection_response(80, "accept"), 80)
+                .unwrap()
+                .eligible_for_b7_staging
+        );
     }
 
     #[tokio::test]
     async fn document_pipeline_calls_candidate_then_exactly_one_reflexion() {
         let doc = reflexion_document();
-        let provider = ReflexionProvider::new(vec![Some("A factual candidate.".to_owned()), Some(reflection_response(90, "accept"))]);
-        let outcome = distill_with_reflexion(&doc, &provider, "fixture-model", 80).await.unwrap();
+        let provider = ReflexionProvider::new(vec![
+            Some("A factual candidate.".to_owned()),
+            Some(reflection_response(90, "accept")),
+        ]);
+        let outcome = distill_with_reflexion(&doc, &provider, "fixture-model", 80)
+            .await
+            .unwrap();
         assert!(outcome.reflexion.eligible_for_b7_staging);
         let requests = provider.requests.lock().unwrap();
         assert_eq!(requests.len(), 2);
-        assert_eq!(requests[0].max_output_tokens, Some(DOCUMENT_DISTILLATION_OUTPUT_TOKENS));
-        assert_eq!(requests[1].max_output_tokens, Some(DOCUMENT_REFLEXION_OUTPUT_TOKENS));
+        assert_eq!(
+            requests[0].max_output_tokens,
+            Some(DOCUMENT_DISTILLATION_OUTPUT_TOKENS)
+        );
+        assert_eq!(
+            requests[1].max_output_tokens,
+            Some(DOCUMENT_REFLEXION_OUTPUT_TOKENS)
+        );
         assert!(!requests[0].prompt.contains("A factual candidate."));
         assert!(requests[1].prompt.contains("A factual candidate."));
-        assert!(requests.iter().all(|request| request.model.as_deref() == Some("fixture-model")));
+        assert!(
+            requests
+                .iter()
+                .all(|request| request.model.as_deref() == Some("fixture-model"))
+        );
     }
 
     #[tokio::test]
     async fn document_pipeline_refuses_bad_candidates_before_reflexion() {
-        for candidate in [" ".to_owned(), "x".repeat(MAX_REFLEXION_CANDIDATE_BYTES + 1)] {
+        for candidate in [
+            " ".to_owned(),
+            "x".repeat(MAX_REFLEXION_CANDIDATE_BYTES + 1),
+        ] {
             let provider = ReflexionProvider::new(vec![Some(candidate)]);
-            assert!(distill_with_reflexion(&reflexion_document(), &provider, "fixture-model", 80).await.is_err());
+            assert!(
+                distill_with_reflexion(&reflexion_document(), &provider, "fixture-model", 80)
+                    .await
+                    .is_err()
+            );
             assert_eq!(provider.requests.lock().unwrap().len(), 1);
         }
     }
@@ -1274,11 +1378,20 @@ mod tests {
         for replies in [vec![None], vec![Some("Candidate".to_owned()), None]] {
             let expected = replies.len();
             let provider = ReflexionProvider::new(replies);
-            assert!(distill_with_reflexion(&reflexion_document(), &provider, "fixture-model", 80).await.is_err());
+            assert!(
+                distill_with_reflexion(&reflexion_document(), &provider, "fixture-model", 80)
+                    .await
+                    .is_err()
+            );
             assert_eq!(provider.requests.lock().unwrap().len(), expected);
         }
-        let provider = ReflexionProvider::new(vec![Some("Candidate".to_owned()), Some(reflection_response(50, "accept"))]);
-        let result = distill_with_reflexion(&reflexion_document(), &provider, "fixture-model", 80).await.unwrap();
+        let provider = ReflexionProvider::new(vec![
+            Some("Candidate".to_owned()),
+            Some(reflection_response(50, "accept")),
+        ]);
+        let result = distill_with_reflexion(&reflexion_document(), &provider, "fixture-model", 80)
+            .await
+            .unwrap();
         assert!(!result.reflexion.eligible_for_b7_staging);
         assert_eq!(provider.requests.lock().unwrap().len(), 2);
     }
@@ -1286,14 +1399,25 @@ mod tests {
     #[tokio::test]
     async fn document_pipeline_refuses_native_refusal_or_truncation_at_either_call() {
         let refusal = crate::providers::ProviderTermination::refused(
-            None, crate::providers::RefusalOrigin::ProviderMessage, "fixture_refusal", None,
+            None,
+            crate::providers::RefusalOrigin::ProviderMessage,
+            "fixture_refusal",
+            None,
         );
-        let truncated = crate::providers::ProviderTermination::finished(Some("max_tokens".to_owned()));
+        let truncated =
+            crate::providers::ProviderTermination::finished(Some("max_tokens".to_owned()));
         for termination in [refusal, truncated] {
             for ordinal in [1, 2] {
-                let mut provider = ReflexionProvider::new(vec![Some("Candidate".to_owned()), Some(reflection_response(100, "accept"))]);
+                let mut provider = ReflexionProvider::new(vec![
+                    Some("Candidate".to_owned()),
+                    Some(reflection_response(100, "accept")),
+                ]);
                 provider.stopped_at = Some((ordinal, termination.clone()));
-                assert!(distill_with_reflexion(&reflexion_document(), &provider, "fixture-model", 80).await.is_err());
+                assert!(
+                    distill_with_reflexion(&reflexion_document(), &provider, "fixture-model", 80)
+                        .await
+                        .is_err()
+                );
                 assert_eq!(provider.requests.lock().unwrap().len(), ordinal);
             }
         }

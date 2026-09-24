@@ -827,7 +827,9 @@ pub(crate) async fn set_skill_authority_at_config_with_expectation(
 
 pub async fn run_skills(args: SkillsArgs) -> Result<()> {
     if let Some(source) = &args.distill_doc {
-        let minimum = args.min_reflexion_score.context("--min-reflexion-score is required")?;
+        let minimum = args
+            .min_reflexion_score
+            .context("--min-reflexion-score is required")?;
         return run_document_distillation(source, minimum, args.output).await;
     }
     // ADOPT31-B1 is deliberately before skill-mutation reconciliation: a
@@ -1587,11 +1589,19 @@ fn print_document_preflight(
             );
             match &preflight.price {
                 crate::skills::doc_distill::DocumentDistillationPrice::Unknown { .. } => {
-                    println!("Price unknown for this provider/model. This estimate is not a spending authorization.");
+                    println!(
+                        "Price unknown for this provider/model. This estimate is not a spending authorization."
+                    );
                 }
-                crate::skills::doc_distill::DocumentDistillationPrice::Known { total_eur, .. }
-                | crate::skills::doc_distill::DocumentDistillationPrice::Free { total_eur, .. } => {
-                    println!("Estimated upper cost: EUR {total_eur:.6} using the reviewed price table. Actual authorization follows.");
+                crate::skills::doc_distill::DocumentDistillationPrice::Known {
+                    total_eur, ..
+                }
+                | crate::skills::doc_distill::DocumentDistillationPrice::Free {
+                    total_eur, ..
+                } => {
+                    println!(
+                        "Estimated upper cost: EUR {total_eur:.6} using the reviewed price table. Actual authorization follows."
+                    );
                 }
             }
             std::io::stdout().flush()?;
@@ -1600,13 +1610,22 @@ fn print_document_preflight(
     Ok(())
 }
 
-async fn run_document_distillation(path: &Path, minimum_score: u8, output: OutputFormat) -> Result<()> {
+async fn run_document_distillation(
+    path: &Path,
+    minimum_score: u8,
+    output: OutputFormat,
+) -> Result<()> {
     use crate::skills::doc_distill::{distill_with_reflexion, preflight_estimate};
     let document = prepare_document_review(path).await?;
     let config_path = FreedomConfig::default_path();
-    let home = config_path.parent().context("document config has no home")?.to_path_buf();
+    let home = config_path
+        .parent()
+        .context("document config has no home")?
+        .to_path_buf();
     let config = FreedomConfig::load_from_path_or_default(&config_path)?;
-    let provider_kind = config.inference.utility_provider
+    let provider_kind = config
+        .inference
+        .utility_provider
         .map(|kind| kind.to_provider_kind())
         .or(config.provider_kind)
         .context("configure a provider before document distillation")?;
@@ -1619,40 +1638,64 @@ async fn run_document_distillation(path: &Path, minimum_score: u8, output: Outpu
         |receipt| print_document_preflight(receipt, minimum_score, output),
         || async {
             let ephemeral = crate::cli::consent::ensure_all_granted_or_prompt_at(
-                &home, &config, crate::cli::consent::ConsentMutationSource::Tty,
-            ).await?;
+                &home,
+                &config,
+                crate::cli::consent::ConsentMutationSource::Tty,
+            )
+            .await?;
             let provider = crate::providers::from_config_for_utility_at(&config, &home).await?;
             let wal_dir = home.join("wal");
             std::fs::create_dir_all(&wal_dir)?;
-            let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "document-distillation");
-            let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(segment, home.clone())?;
-            let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
-                config.autonomy_policy(), Some(writer.clone()), config.tokens.max_per_request,
-            ).with_usage_home(home.clone()).with_ephemeral_consent(ephemeral);
+            let segment = crate::wal::writer::unique_standalone_segment_path(
+                &wal_dir,
+                "document-distillation",
+            );
+            let (writer, completion) =
+                crate::wal::writer::spawn_for_home_with_completion(segment, home.clone())?;
+            let authorizer =
+                crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                    config.autonomy_policy(),
+                    Some(writer.clone()),
+                    config.tokens.max_per_request,
+                )
+                .with_usage_home(home.clone())
+                .with_ephemeral_consent(ephemeral);
             let wrapped = crate::providers::cost_authorization::CostAuthorizingProvider::new(
-                provider.as_ref(), authorizer, Some(model.clone()), "document_distillation",
+                provider.as_ref(),
+                authorizer,
+                Some(model.clone()),
+                "document_distillation",
             );
             let result = distill_with_reflexion(&document, &wrapped, &model, minimum_score).await;
             drop(wrapped);
             drop(writer);
-            let drained = completion.wait().await.context("drain document-distillation audit");
+            let drained = completion
+                .wait()
+                .await
+                .context("drain document-distillation audit");
             drained?;
             result
         },
-    ).await?;
+    )
+    .await?;
     match output {
-        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string(&serde_json::json!({
-            "event": "document_distillation_result",
-            "source_bytes_sha256": document.provenance.source_bytes_sha256,
-            "result": outcome,
-            "skill_written": false,
-            "skill_activated": false,
-            "staged": false,
-        }))?),
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "event": "document_distillation_result",
+                "source_bytes_sha256": document.provenance.source_bytes_sha256,
+                "result": outcome,
+                "skill_written": false,
+                "skill_activated": false,
+                "staged": false,
+            }))?
+        ),
         OutputFormat::Table => {
             println!("{}", outcome.candidate);
-            println!("Self-review score: {} / 100; eligible for later staging: {}.",
-                outcome.reflexion.score, outcome.reflexion.eligible_for_b7_staging);
+            println!(
+                "Self-review score: {} / 100; eligible for later staging: {}.",
+                outcome.reflexion.score, outcome.reflexion.eligible_for_b7_staging
+            );
             for reason in &outcome.reflexion.reasons {
                 println!("- {reason}");
             }
@@ -1960,26 +2003,76 @@ mod tests {
     #[test]
     fn document_distillation_cli_requires_threshold_and_excludes_mutators() {
         let cli = crate::cli::Cli::try_parse_from([
-            "neoth", "skills", "--distill-doc", "guide.md", "--min-reflexion-score", "80",
-        ]).unwrap();
-        let crate::cli::Commands::Skills(args) = cli.command else { panic!("skills command") };
+            "neoth",
+            "skills",
+            "--distill-doc",
+            "guide.md",
+            "--min-reflexion-score",
+            "80",
+        ])
+        .unwrap();
+        let crate::cli::Commands::Skills(args) = cli.command else {
+            panic!("skills command")
+        };
         assert_eq!(args.distill_doc, Some(PathBuf::from("guide.md")));
         assert_eq!(args.min_reflexion_score, Some(80));
         for argv in [
             vec!["neoth", "skills", "--distill-doc", "guide.md"],
             vec!["neoth", "skills", "--min-reflexion-score", "80"],
-            vec!["neoth", "skills", "--distill-doc", "guide.md", "--min-reflexion-score", "101"],
-            vec!["neoth", "skills", "--distill-doc", "guide.md", "--min-reflexion-score", "80", "--install", "package"],
-            vec!["neoth", "skills", "--distill-doc", "guide.md", "--min-reflexion-score", "80", "--from-doc", "other.md"],
-            vec!["neoth", "skills", "--distill-doc", "guide.md", "--min-reflexion-score", "80", "--list-doc-chapters", "other.md"],
-        ] { assert!(crate::cli::Cli::try_parse_from(argv).is_err()); }
+            vec![
+                "neoth",
+                "skills",
+                "--distill-doc",
+                "guide.md",
+                "--min-reflexion-score",
+                "101",
+            ],
+            vec![
+                "neoth",
+                "skills",
+                "--distill-doc",
+                "guide.md",
+                "--min-reflexion-score",
+                "80",
+                "--install",
+                "package",
+            ],
+            vec![
+                "neoth",
+                "skills",
+                "--distill-doc",
+                "guide.md",
+                "--min-reflexion-score",
+                "80",
+                "--from-doc",
+                "other.md",
+            ],
+            vec![
+                "neoth",
+                "skills",
+                "--distill-doc",
+                "guide.md",
+                "--min-reflexion-score",
+                "80",
+                "--list-doc-chapters",
+                "other.md",
+            ],
+        ] {
+            assert!(crate::cli::Cli::try_parse_from(argv).is_err());
+        }
     }
 
     fn document_preflight_fixture() -> crate::skills::doc_distill::DocumentDistillationPreflight {
         let doc = crate::skills::doc_distill::distill_doc(
-            crate::media::Extraction { text: "An admitted source.".to_owned(), metadata: serde_json::Value::Null },
-            crate::skills::doc_distill::DocumentSourceKind::PlainText, 19, "a".repeat(64),
-        ).unwrap();
+            crate::media::Extraction {
+                text: "An admitted source.".to_owned(),
+                metadata: serde_json::Value::Null,
+            },
+            crate::skills::doc_distill::DocumentSourceKind::PlainText,
+            19,
+            "a".repeat(64),
+        )
+        .unwrap();
         crate::skills::doc_distill::preflight_estimate(&doc, "local_ollama", "fixture-model")
     }
 
@@ -1989,9 +2082,18 @@ mod tests {
         let estimate = document_preflight_fixture();
         let value = emit_document_preflight_then_run(
             &estimate,
-            |receipt| { assert!(receipt.total_tokens_upper_bound > 0); events.lock().unwrap().push("preflight"); Ok(()) },
-            || { events.lock().unwrap().push("resolve"); async { Ok(42) } },
-        ).await.unwrap();
+            |receipt| {
+                assert!(receipt.total_tokens_upper_bound > 0);
+                events.lock().unwrap().push("preflight");
+                Ok(())
+            },
+            || {
+                events.lock().unwrap().push("resolve");
+                async { Ok(42) }
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(value, 42);
         assert_eq!(*events.lock().unwrap(), vec!["preflight", "resolve"]);
     }
@@ -2002,8 +2104,12 @@ mod tests {
         let result: Result<()> = emit_document_preflight_then_run(
             &document_preflight_fixture(),
             |_| anyhow::bail!("output unavailable"),
-            || { resolved.store(true, std::sync::atomic::Ordering::SeqCst); async { Ok(()) } },
-        ).await;
+            || {
+                resolved.store(true, std::sync::atomic::Ordering::SeqCst);
+                async { Ok(()) }
+            },
+        )
+        .await;
         assert!(result.is_err());
         assert!(!resolved.load(std::sync::atomic::Ordering::SeqCst));
     }

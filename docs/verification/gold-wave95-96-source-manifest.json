@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T14:21:22.7252485Z",
-  "validationStatus": "W819 B5/B6 CLI implemented;11 tests selected;hosted and independent review pending",
+  "capturedUtc": "2026-09-24T14:30:08.1923417Z",
+  "validationStatus": "W819 productionClippyPASS;testtarget/CLI pending;W825 hostedformat admitted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -3103,8 +3103,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/skills.rs",
-      "bytes": 156179,
-      "sha256": "A0B03136BD8311EBE2CCB7EACA5D7F087BD24CCA58CDF5A95F7E3851C549B2E2"
+      "bytes": 157733,
+      "sha256": "C3BBB47E38379B8D06404E1C6E258026DAC365646A5ABCE3A86BE029EF7BF647"
     },
     {
       "path": "SRC/neothd/src/cli/status.rs",
@@ -4513,8 +4513,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/doc_distill.rs",
-      "bytes": 69028,
-      "sha256": "43A5D425B4AAC2394860D0452FACFAF470E2B46F9B43E9F91E65750FC29A6077"
+      "bytes": 70700,
+      "sha256": "48CA7AD028A49FC2290D3BF485D0D0011282A1303D3ECF531C987FC72061CE4D"
     },
     {
       "path": "SRC/neothd/src/skills/generated_scan.rs",

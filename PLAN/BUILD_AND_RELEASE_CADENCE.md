@@ -3,6 +3,13 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W825 hosted document formatting (2026-09-24):**
+Root verified and imported artifact10812454433 from Preflight36012495980:
+ZIP, inner digests, source e787f32d and both full-index before/after blobs match.
+Production Clippy36012497363 passes; testtarget/CLI/behavior remain pending.
+Counts1068checked254open2partial unchanged. No local formatter or compiler.
+Evidence: docs/verification/gold-wave825-document-hosted-format.json.
+
 **W819 explicit document distillation and scored review (2026-09-24):**
 An opt-in --distill-doc command requires a0..100 minimum score, emits/flushed
 preflight before provider resolution, then uses existing consent/cost authority
