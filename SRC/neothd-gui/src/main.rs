@@ -1236,6 +1236,7 @@ mod gui_chat_bridge_controller;
 mod gui_stream;
 mod ouro_gui;
 mod panel_logic;
+mod packaged_chat_probe;
 mod tray;
 mod trusted_probe_supervisor;
 mod wizard_logic;
@@ -1879,7 +1880,11 @@ fn main() -> Result<()> {
     init_tracing();
     info!("neothd-gui starting (R-1 Phase 3 — autonomy + channels + keys)");
 
-    let arguments: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    let mut arguments: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    // GOLD-LF-P2-26b is deliberately opt-in and must establish its isolated
+    // NEOTH_HOME before any normal configuration lookup can occur.
+    let mut packaged_chat_acceptance = packaged_chat_probe::prepare(&arguments)?;
+    packaged_chat_probe::remove_flag(&mut arguments);
     if let Some(require_tray) = runtime_probe_mode(&arguments) {
         return run_runtime_probe(require_tray);
     }
@@ -14165,6 +14170,19 @@ fn main() -> Result<()> {
         }
     };
 
+    if _daemon_gui_chat.is_none() && packaged_chat_acceptance.is_some() {
+        if let Some(acceptance) = packaged_chat_acceptance.as_ref() {
+            acceptance.fail_controller_install();
+        }
+        anyhow::bail!("packaged chat acceptance could not install the attested daemon controller");
+    }
+
+    if let (Some(acceptance), Some(installed)) =
+        (packaged_chat_acceptance.as_mut(), _daemon_gui_chat.as_ref())
+    {
+        acceptance.schedule(&window, &overlay, std::sync::Arc::clone(installed));
+    }
+
     let gui_ready_failure = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
     if gui_parent_handoff.is_some() || direct_gui_commit {
         let weak = window.as_weak();
@@ -14270,6 +14288,16 @@ fn main() -> Result<()> {
         chat_auto_nudge_budget.as_ref(),
         chat_auto_in_progress.as_ref(),
     );
+    let packaged_chat_receipt = packaged_chat_acceptance
+        .as_ref()
+        .map(packaged_chat_probe::PackagedChatAcceptance::receipt_path);
+    // The acceptance daemon is owned by this process only. Drop it after the
+    // GUI has detached its real bridge callbacks; the guard terminates/waits
+    // for the child. External package harnesses assert the no-orphan result.
+    drop(packaged_chat_acceptance);
+    if let Some(receipt) = packaged_chat_receipt {
+        packaged_chat_probe::verify_finished_receipt(&receipt)?;
+    }
     let ready_failure = gui_ready_failure
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W595 Windows37pass4fail; repairs statically reviewed; hosted execution pending",
+  "status": "W593 source implementation reviewed; hosted package runtime pending; W595 terminal evidence admitted",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 143097,
-    "sha256": "BDDDFFAD3C52C8BE570FECD50961B02E7DC1C66BA207425918145E5F9D1FE4B1"
+    "bytes": 143837,
+    "sha256": "EB0A866D24D253542B47627CDB9FF1C604E63990C3EE5AAD8ECEB31AAC31EC77"
   },
-  "sourceInputs": 813,
+  "sourceInputs": 817,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -8068,13 +8068,13 @@
     },
     {
       "path": "SRC/neothd-gui/src/gui_chat_bridge_controller.rs",
-      "bytes": 78741,
-      "sha256": "5FAE51AED73C26FD96143D1F22772543B10CF42130F057ABA4A839CE0E449AB1"
+      "bytes": 80226,
+      "sha256": "EE377EA58308E87227EB25EB7DB0E45AE91E99AC4441DF6A80B8E87B0195BEE1"
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2212252,
-      "sha256": "728CCB06DA739BA199DB72D280AFF15892756A1FFBF993B1691EE3296C793BE2"
+      "bytes": 2213628,
+      "sha256": "9FDF49207A76928FA066B59D78EA2BB2C827F2A2A8ED6792467F340F6C15B96A"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -8150,6 +8150,11 @@
       "path": "SRC/neothd/src/cli/chat.rs",
       "bytes": 1149106,
       "sha256": "01A8C43ED074EB29F2BCD1562DD57BCA44464C260E79ECB491F2637E7EC7D414"
+    },
+    {
+      "path": "SRC/neothd-gui/src/packaged_chat_probe.rs",
+      "bytes": 26821,
+      "sha256": "A61B61263761E25441CA4FBB956874AC49F6FE3A010CA4ED6B0FBB1D6D05F006"
     }
   ],
   "remoteFormatCorrection": {
@@ -26798,6 +26803,68 @@
       }
     ],
     "note": "Bind stage before Windows-compatible identity-checked reader; bounded HTTP token fixture reads full request before reply; no local execution",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave593PackagedChatAcceptance": {
+    "base": "c9d070e97fb360fdce52e9ba2142abd3fa14b5ea",
+    "sources": [
+      {
+        "path": ".github/workflows/macos-packaged-chat.yml",
+        "bytes": 5446,
+        "sha256": "9EE33F97522A4616151AE30BD833865EC8F687611C09AEF1CB375C24D0BE4297",
+        "blob": "8d67b15657b12f4a251bce50a395322e1600d9cb"
+      },
+      {
+        "path": "docs/verification/gold-wave595-windows41-terminals.json",
+        "bytes": 18937,
+        "sha256": "AB18030C6E8F7566636894F2B0C43C97A66F400B7F4BF75220D60C5E138E9F90",
+        "blob": "dc5a7357040e8720f9196e4b7c763b56365f1c8b"
+      },
+      {
+        "path": "packaging/macos/verify-packaged-chat.py",
+        "bytes": 5551,
+        "sha256": "07B2D707F738CC100C78FC7C5644B17EBA2067E64B9F67C8DDE596389A0B4CE7",
+        "blob": "e81d410fb0cde88e73df71d13d0c2e8f6753b843"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 213942,
+        "sha256": "627D5794CC380E9086712B7CC90F35ACE25833C6DC2A738B0C9645512AE6D946",
+        "blob": "e9f0633bf60b96680b785114bc77d720bae1f1ac"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1225270,
+        "sha256": "787C745BA0E7D7C0763D4090A8621AA2E73D0548767D31778881AFEE13C439DB",
+        "blob": "a42bacf62d5484c109a3d7d203ac6adf06a796fb"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1824552,
+        "sha256": "5F15D55F5E9CBA2FA77D3B71B2543DA0F93E4B1A3A299E2351FA2C06F65B5942",
+        "blob": "2f71a355e9b0930056c325dbb7b6e34f0dee74a8"
+      },
+      {
+        "path": "SRC/neothd-gui/src/gui_chat_bridge_controller.rs",
+        "bytes": 80226,
+        "sha256": "EE377EA58308E87227EB25EB7DB0E45AE91E99AC4441DF6A80B8E87B0195BEE1",
+        "blob": "abdfcdd66bcc049eadd1841daffd6c75c705204b"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2213628,
+        "sha256": "9FDF49207A76928FA066B59D78EA2BB2C827F2A2A8ED6792467F340F6C15B96A",
+        "blob": "d13f5de77fef410498a463376704cfa9891aa912"
+      },
+      {
+        "path": "SRC/neothd-gui/src/packaged_chat_probe.rs",
+        "bytes": 26821,
+        "sha256": "A61B61263761E25441CA4FBB956874AC49F6FE3A010CA4ED6B0FBB1D6D05F006",
+        "blob": "badc56593840a2fb09113691a9b5f4b3c6946490"
+      }
+    ],
+    "note": "Opt-in actual packaged sibling daemon, real Main/Buddy callbacks, streamed reattach/dedup/provider-failure/cancellation/exit-zero+cleanup; ad-hoc ARM64/x86_64 app lane, not signed release qualification; no local execution",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -3,6 +3,22 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W593 packaged macOS chat acceptance implementation (2026-09-24):**
+The opt-in packaged-chat acceptance mode now drives the production Main/Buddy
+callbacks against the sibling packaged daemon in a fresh temporary NEOTH_HOME.
+It checks streamed Buddy-to-Main handoff of the same turn/cursor, exactly one
+visible completion, request-bound provider failure and cancellation, then an
+exit-zero daemon drain and temporary-home removal. A separate process driver
+checks all required receipt facts and absence of surviving package processes.
+The manual macOS ARM64/x86_64 lane builds release-desktop binaries into an
+ad-hoc signed app bundle. This is not Developer-ID, PKG/DMG, or clean-machine
+release qualification. Static review passes; hosted formatting/build/runtime
+checks remain pending, so P2-26b remains open. Slint and visual tokens are
+unchanged; no new controls, styling, motion or UI copy require a design-lint
+claim. Runtime behavior awaits the package lane; visual/accessibility release
+criteria remain separate. Windows41 evidence W595 is independently admitted
+37PASS/4FAIL with49 hashes and11 source/input bindings; the reviewed repairs
+are published c9d070e9 and hosted recheck35946534967 is running. No local tests.
 **W595 Windows Paperless regression repairs (2026-09-24):**
 The hosted Windows41 run35944218754 atf1ca9b67 compiled and selected all41
 identities, with37PASS/4FAIL/0missing. Three guarded installer cases failed

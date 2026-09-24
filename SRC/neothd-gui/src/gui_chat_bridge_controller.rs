@@ -69,6 +69,44 @@ pub(crate) struct InstalledGuiChat {
     response_feedback_projections: crate::ChatResponseFeedbackProjections,
 }
 
+/// Content-free observation for the explicit packaged-chat acceptance probe.
+/// It deliberately exposes neither a sealed turn handle nor any capability.
+#[derive(Clone, Debug)]
+pub(crate) struct PackagedChatProbeSnapshot {
+    pub(crate) operation_id: u64,
+    pub(crate) turn_id: String,
+    pub(crate) surface: GuiChatSurface,
+    pub(crate) latest_sequence: u64,
+    pub(crate) phase: String,
+}
+
+/// Read the daemon's authoritative cursor for the turn currently owned by the
+/// real GUI callbacks. This is package-probe-only plumbing: the normal UI
+/// still receives all state through the event sink and projections.
+pub(crate) async fn packaged_probe_snapshot(
+    installed: &Arc<std::sync::Mutex<InstalledGuiChat>>,
+) -> GuiChatBridgeResult<Option<PackagedChatProbeSnapshot>> {
+    let (bridge, turn, operation) = {
+        let locked = installed.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(active) = locked.active.as_ref() else {
+            return Ok(None);
+        };
+        (
+            Arc::clone(&locked.controller.bridge),
+            Arc::clone(&active.turn),
+            active.operation,
+        )
+    };
+    let status = bridge.status(&turn).await?;
+    Ok(Some(PackagedChatProbeSnapshot {
+        operation_id: operation.id,
+        turn_id: status.turn_id.as_uuid().to_string(),
+        surface: operation.delivery_surface,
+        latest_sequence: status.latest_sequence,
+        phase: format!("{:?}", status.phase),
+    }))
+}
+
 impl InstalledGuiChat {
     fn begin_operation(&mut self, surface: GuiChatSurface) -> GuiChatOperation {
         self.next_operation_id = self.next_operation_id.saturating_add(1);
