@@ -32,6 +32,8 @@ use super::state::{
 use super::{EnqueueResult, IntegrationJobService, JobServiceError, RestartValidator};
 
 pub(crate) mod managed_runtime;
+pub(crate) mod managed_bootstrap;
+pub(crate) mod bootstrap_transport;
 
 pub const N8N_CAPABILITY_ID: &str = "n8n-instance";
 const ADAPTER_REVISION: &str = "n8n-adoption-v1";
@@ -434,6 +436,14 @@ impl RestartValidator for N8nRestartValidator {
             let Some(home) = self.freedom_path.parent() else {
                 return hold();
             };
+            // Bootstrap has a live isolated container/volume phase before a
+            // normal runtime binding exists.  It must be inspected/resumed by
+            // its custody dispatcher; ordinary recovery must never infer that
+            // this Running job owns no process merely because that binding is
+            // absent or malformed.
+            if managed_bootstrap::recovery_requires_hold(home, job) {
+                return managed_bootstrap::recovery_decision(home, job).unwrap_or_else(hold);
+            }
             let Ok(process_disposition) = managed_runtime::recover_interrupted(home, job) else {
                 return hold();
             };

@@ -664,7 +664,6 @@ pub struct ResumeEvidence {
 }
 
 impl ResumeEvidence {
-    #[cfg(test)]
     pub(in crate::integrations) fn verified(
         job_id: JobId,
         manifest_sha256: Sha256Digest,

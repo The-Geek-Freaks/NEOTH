@@ -1,0 +1,40 @@
+{
+  "schema": "neoth-windows-regression-admission/v1",
+  "rootVerified": true,
+  "run": 36064956250,
+  "source": "d67d5a5770835d7602d8cdc0c307163a617e04c1",
+  "executed": 232,
+  "passed": 232,
+  "failed": 0,
+  "missing": 0,
+  "sourceBindingCount": 50,
+  "artifacts": [
+    {
+      "id": 10836354200,
+      "zipSha256": "fd398d57a8504b05ea3f09e9423ff27c929361148ed6e1c3f65924c423f2cef8"
+    }
+  ],
+  "assetBindings": [
+    {
+      "blob": "bbf29659ec6dac4605ab4b740751d91c8f63e0fe",
+      "sha256": "162af106cb6712e88b4f80f80deb3132a3177d13cfcfa5a0a8c7c193a2988f2b",
+      "path": "SRC/neothd/assets/n8n_workflows/daily_summary.json"
+    },
+    {
+      "blob": "b7c6ac4941791fd2d0d554ecb72981ba97375cca",
+      "sha256": "77fc2e89acc11218fa8ba95b417e699a867472e808b12158b1b60aa03b703be2",
+      "path": "SRC/neothd/assets/n8n_workflows/morning_brief.json"
+    },
+    {
+      "blob": "72b21c1b9d6cf20839cb9ef0e5a4b848d1b68025",
+      "sha256": "7b5c415a53910c03acf7d49890ec1973426899fc0ee7ab91106db173c89b3165",
+      "path": "SRC/neothd/assets/n8n_workflows/weekly_stats.json"
+    }
+  ],
+  "checks": [
+    "47historical source/input bindings plus3exactasset hashes",
+    "232 actual exact test terminals and one-test summaries, log hashes",
+    "Artifact ZIP matches fresh API digest"
+  ],
+  "localExecutableValidationRan": false
+}

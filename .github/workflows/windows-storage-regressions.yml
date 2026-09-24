@@ -302,6 +302,34 @@ jobs:
           installers::n8n_workflows::tests::every_workflow_body_carries_required_fields	neothd/src/installers/n8n_workflows.rs
           installers::n8n_workflows::tests::every_workflow_body_is_valid_json	neothd/src/installers/n8n_workflows.rs
           installers::n8n_workflows::tests::every_workflow_ships_inactive	neothd/src/installers/n8n_workflows.rs
+          integrations::n8n::managed_bootstrap::tests::bootstrap_command_is_networkless_unpublished_and_secret_free	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::node_response_requires_data_envelope_and_success	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::bootstrap_password_meets_pinned_n8n_schema	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::owner_email_uses_a_valid_non_loopback_domain	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::node_client_uses_setup_email_and_login_email_or_ldap_login_id	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::generated_volume_is_accepted_by_the_final_runtime_boundary	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::injected_finalizer_records_exact_runtime_id_only_for_the_returned_ready_job	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::ready_metadata_repair_retries_each_final_custody_write_without_publishing	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::key_mint_unknown_holds_without_docker	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::foreign_custody_holds_without_docker	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::captured_bootstrap_recovery_resumes_same_job_with_inspect_only_proof	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::stopped_bootstrap_recovery_resumes_same_job_with_stopped_receipt	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::removed_bootstrap_recovery_resumes_same_job_with_exact_absence_proof	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::recovery_proof_digest_changes_with_exact_inspect_receipt	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::recovery_proof_digest_changes_with_exact_volume_receipt	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::image_network_mount_and_volume_mismatches_hold_the_lease	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::unknown_bootstrap_absence_holds_the_running_job_lease	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::removed_bootstrap_with_runtime_binding_holds_before_docker_proof	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::runtime_bound_and_ready_custody_hold_without_recovery_commands	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::cookie_requires_the_exact_n8n_auth_name	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::bootstrap_transport::tests::bounded_capture_retains_at_most_the_limit	neothd/src/integrations/n8n/bootstrap_transport.rs
+          integrations::n8n::bootstrap_transport::tests::real_runner_rejects_output_over_the_retained_cap	neothd/src/integrations/n8n/bootstrap_transport.rs
+          integrations::n8n::bootstrap_transport::tests::timeout_stops_the_child_pid_heartbeat_before_returning	neothd/src/integrations/n8n/bootstrap_transport.rs
+          integrations::n8n::bootstrap_transport::tests::cancellation_stops_the_child_pid_heartbeat_before_returning	neothd/src/integrations/n8n/bootstrap_transport.rs
+          integrations::n8n::bootstrap_transport::tests::missing_cli_is_a_coarse_spawn_failure	neothd/src/integrations/n8n/bootstrap_transport.rs
+          integrations::n8n::bootstrap_transport::tests::closed_stdin_is_a_coarse_failure_without_a_join_panic	neothd/src/integrations/n8n/bootstrap_transport.rs
+          integrations::n8n::bootstrap_transport::tests::debug_is_length_only_and_never_exposes_response_bytes	neothd/src/integrations/n8n/bootstrap_transport.rs
+          integrations::n8n::bootstrap_transport::tests::docker_host_is_compile_target_local	neothd/src/integrations/n8n/bootstrap_transport.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -318,7 +346,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 232 ]]; then
+          if [[ "$expected" -ne 260 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -328,7 +356,7 @@ jobs:
             cargo test -p neoth --lib --locked --no-run > "$evidence/compile.log" 2>&1 || compile_status=$?
           else
             compile_status=64
-            printf 'selection is not the required 232 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 260 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

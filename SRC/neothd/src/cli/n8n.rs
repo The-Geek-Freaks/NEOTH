@@ -31,8 +31,12 @@ pub enum N8nAction {
         #[arg(long, default_value_t = crate::installers::n8n::DEFAULT_N8N_PORT)]
         port: u16,
         /// Read an already-issued n8n API key from piped standard input.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "bootstrap_owner")]
         api_key_stdin: bool,
+        /// Create the first n8n owner and API key inside an unexposed,
+        /// networkless bootstrap container before publishing the runtime.
+        #[arg(long, conflicts_with = "api_key_stdin")]
+        bootstrap_owner: bool,
     },
     /// Adopt an already-running n8n API at an exact literal-loopback origin.
     Adopt {
@@ -55,7 +59,8 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
         N8nAction::Install {
             port,
             api_key_stdin,
-        } => run_install(port, api_key_stdin, output).await,
+            bootstrap_owner,
+        } => run_install(port, api_key_stdin, bootstrap_owner, output).await,
         N8nAction::Adopt {
             endpoint,
             api_key_stdin,
@@ -65,11 +70,22 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
     }
 }
 
-async fn run_install(port: u16, api_key_stdin: bool, output: OutputFormat) -> Result<()> {
-    if !api_key_stdin {
+async fn run_install(port: u16, api_key_stdin: bool, bootstrap_owner: bool, output: OutputFormat) -> Result<()> {
+    if !api_key_stdin && !bootstrap_owner {
         return Err(anyhow!(
-            "n8n install requires --api-key-stdin; n8n has no documented headless API-key bootstrap"
+            "n8n install requires exactly one of --api-key-stdin or --bootstrap-owner"
         ));
+    }
+    if bootstrap_owner {
+        let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
+        let cancellation_task = tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() { let _ = cancel_tx.send(()); }
+        });
+        let result = crate::integrations::n8n::managed_bootstrap::install_bootstrap_at(
+            &crate::config::FreedomConfig::default_neoth_home(), port, &mut cancel_rx,
+        ).await;
+        cancellation_task.abort();
+        return render_managed_install_job(&result?, output);
     }
     if std::io::stdin().is_terminal() {
         return Err(anyhow!("--api-key-stdin requires piped standard input"));
@@ -347,7 +363,8 @@ mod tests {
             crate::cli::Commands::N8n(N8nArgs {
                 action: N8nAction::Install {
                     port: 5679,
-                    api_key_stdin: true
+                    api_key_stdin: true,
+                    bootstrap_owner: false
                 }
             })
         ));
@@ -361,5 +378,23 @@ mod tests {
             ])
             .is_err()
         );
+        let bootstrap = crate::cli::Cli::try_parse_from([
+            "neoth", "n8n", "install", "--bootstrap-owner", "--port", "5679",
+        ])
+        .unwrap();
+        assert!(matches!(
+            bootstrap.command,
+            crate::cli::Commands::N8n(N8nArgs {
+                action: N8nAction::Install {
+                    port: 5679,
+                    api_key_stdin: false,
+                    bootstrap_owner: true
+                }
+            })
+        ));
+        assert!(crate::cli::Cli::try_parse_from([
+            "neoth", "n8n", "install", "--bootstrap-owner", "--api-key-stdin",
+        ])
+        .is_err());
     }
 }

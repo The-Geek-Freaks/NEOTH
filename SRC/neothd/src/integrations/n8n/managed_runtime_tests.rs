@@ -52,7 +52,7 @@ fn observed(id: String, job: &str, port: u16) -> ObservedContainer {
         job: job.into(),
         host_ip: "127.0.0.1".into(),
         host_port: port,
-        volume: VOLUME.into(),
+        volume: DEFAULT_VOLUME.into(),
         mount_destination: "/home/node/.n8n".into(),
     }
 }
@@ -402,7 +402,7 @@ fn runtime_sidecar_denies_unknown_fields() {
         container_id: Some("c".repeat(64)),
         image: N8N_OCI_REFERENCE.into(),
         host_port: 5678,
-        volume: VOLUME.into(),
+        volume: DEFAULT_VOLUME.into(),
     };
     write_binding(home.path(), &binding).unwrap();
     let mut raw: serde_json::Value =
@@ -478,7 +478,7 @@ fn bound_binding(job: &super::super::IntegrationJob, id: String) -> RuntimeBindi
         container_id: Some(id),
         image: N8N_OCI_REFERENCE.into(),
         host_port: 5678,
-        volume: VOLUME.into(),
+        volume: DEFAULT_VOLUME.into(),
     }
 }
 
@@ -596,7 +596,7 @@ async fn foreign_ready_binding_is_unchanged_and_blocks_a_second_queued_job() {
         container_id: Some("c".repeat(64)),
         image: N8N_OCI_REFERENCE.into(),
         host_port: 5678,
-        volume: VOLUME.into(),
+        volume: DEFAULT_VOLUME.into(),
     };
     write_binding(home.path(), &binding).unwrap();
     let before = std::fs::read(binding_path(home.path())).unwrap();
@@ -705,7 +705,7 @@ fn create_intent_restart_discovers_exact_owned_container_then_removes_it() {
             container_id: None,
             image: N8N_OCI_REFERENCE.into(),
             host_port: 5678,
-            volume: VOLUME.into(),
+            volume: DEFAULT_VOLUME.into(),
         },
     )
     .unwrap();
@@ -750,7 +750,7 @@ fn create_intent_restart_unknown_named_inspection_retains_custody_without_remova
             container_id: None,
             image: N8N_OCI_REFERENCE.into(),
             host_port: 5678,
-            volume: VOLUME.into(),
+            volume: DEFAULT_VOLUME.into(),
         },
     )
     .unwrap();
@@ -811,7 +811,7 @@ fn postwrite_create_intent_error_keeps_queued_job_recoverable_without_docker() {
         container_id: None,
         image: N8N_OCI_REFERENCE.into(),
         host_port: 5678,
-        volume: VOLUME.into(),
+        volume: DEFAULT_VOLUME.into(),
     };
     let outcome = persist_create_intent_with(home.path(), &intent, |path, bytes| {
         std::fs::write(path, bytes).map_err(|_| "fixture_write_failed")?;
@@ -850,7 +850,7 @@ fn queued_foreign_create_intent_stays_fail_closed_without_docker_inspection() {
         container_id: None,
         image: N8N_OCI_REFERENCE.into(),
         host_port: 5678,
-        volume: VOLUME.into(),
+        volume: DEFAULT_VOLUME.into(),
     };
     write_binding(home.path(), &foreign).unwrap();
     let state = Arc::new(Mutex::new(RunnerState {

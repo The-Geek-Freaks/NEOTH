@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "wave": "W991",
+  "scope": "Hosted disposable n8n bootstrap/import canary only. It does not admit product bootstrap, importer recovery, workflow execution, or production n8n state.",
+  "run": {
+    "id": 36067051733,
+    "conclusion": "success",
+    "sourceHead": "a7f87dc52205818ff9b3d9873f756af637c5a43f",
+    "headBranch": "main"
+  },
+  "artifact": {
+    "id": 10837176833,
+    "name": "w937-n8n-bootstrap-36067051733-1",
+    "apiZipSha256": "sha256:126ffc7194272a224fcbe3d260cb4de4621c682eb28152568608a7a279dae45d",
+    "localZipSha256": "126ffc7194272a224fcbe3d260cb4de4621c682eb28152568608a7a279dae45d",
+    "zipMatchesApiDigest": true,
+    "receiptPath": "w937-n8n-bootstrap-36067051733-1\\receipt.json"
+  },
+  "receipt": {
+    "outcome": "passed",
+    "githubSha": "a7f87dc52205818ff9b3d9873f756af637c5a43f",
+    "githubShaMatchesRun": true,
+    "scriptSha256": "7f9207e2f7f3ea670f5bc1870aab8805e4c6fa330f6507467e889ae76d48adb9",
+    "workflowSha256": "154eb175c706a81a45a3ae9a20ceed42e3ee565b692498835551f1051f56323c",
+    "scriptHistoricalSha256": "7f9207e2f7f3ea670f5bc1870aab8805e4c6fa330f6507467e889ae76d48adb9",
+    "workflowHistoricalSha256": "154eb175c706a81a45a3ae9a20ceed42e3ee565b692498835551f1051f56323c",
+    "scriptBindingMatches": true,
+    "workflowBindingMatches": true,
+    "helperTerminalTests": {
+      "count": 14,
+      "hostedSummary": [
+        "isolated-bootstrap\tVerify exact Docker absence diagnostics\t2026-09-24T22:22:35.6836152Z Ran 14 tests in 0.014s",
+        "isolated-bootstrap\tVerify exact Docker absence diagnostics\t2026-09-24T22:22:35.6836489Z OK"
+      ],
+      "passed": true
+    },
+    "lifecycleStages": [
+      "image_pulled",
+      "volume_bound",
+      "isolated_bootstrap_bound",
+      "owner_and_key_captured",
+      "bootstrap_stopped_and_absent",
+      "replacement_runtime_bound",
+      "negative_and_authenticated_probe_passed"
+    ],
+    "lifecycleMatchesExpected": true,
+    "workflowImportStages": [
+      "workflow_list_passed",
+      "workflow_morning_brief.json_created_inactive_verified",
+      "workflow_daily_summary.json_created_inactive_verified",
+      "workflow_weekly_stats.json_created_inactive_verified"
+    ],
+    "inactiveImportsMatchExpected": true,
+    "workflowAssets": {
+      "morning_brief.json": {
+        "receiptSha256": "77fc2e89acc11218fa8ba95b417e699a867472e808b12158b1b60aa03b703be2",
+        "historicalSha256": "77fc2e89acc11218fa8ba95b417e699a867472e808b12158b1b60aa03b703be2",
+        "matches": true,
+        "gitBlob": "b7c6ac4941791fd2d0d554ecb72981ba97375cca"
+      },
+      "daily_summary.json": {
+        "receiptSha256": "162af106cb6712e88b4f80f80deb3132a3177d13cfcfa5a0a8c7c193a2988f2b",
+        "historicalSha256": "162af106cb6712e88b4f80f80deb3132a3177d13cfcfa5a0a8c7c193a2988f2b",
+        "matches": true,
+        "gitBlob": "bbf29659ec6dac4605ab4b740751d91c8f63e0fe"
+      },
+      "weekly_stats.json": {
+        "receiptSha256": "7b5c415a53910c03acf7d49890ec1973426899fc0ee7ab91106db173c89b3165",
+        "historicalSha256": "7b5c415a53910c03acf7d49890ec1973426899fc0ee7ab91106db173c89b3165",
+        "matches": true,
+        "gitBlob": "72b21c1b9d6cf20839cb9ef0e5a4b848d1b68025"
+      }
+    },
+    "allWorkflowAssetBindingsMatch": true,
+    "http": {
+      "mintStatus": 200,
+      "negativeStatus": 401,
+      "positiveStatus": 200
+    }
+  },
+  "localExecutableValidationRan": false,
+  "productBootstrapValidated": false,
+  "workflowExecutionValidated": false,
+  "rootVerified": true
+}

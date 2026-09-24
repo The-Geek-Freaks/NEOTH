@@ -8,6 +8,26 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W990-W993 owner bootstrap and hosted import (2026-09-25):** Root admitted
+Windows232 at d67d5a57: all232 actual terminals passed, with50 source/input
+bindings including the three workflow assets. The corrected pinned-image
+canary36067051733 at a7f87dc5 also passed:14 helper tests, seven lifecycle
+stages, and all three inactive workflow imports with exact graph readback.
+Receipts: gold-wave990-windows232.json and gold-wave991-n8n-inactive-import.json.
+This admits image feasibility/storage, not product bootstrap or workflow execution.
+The reviewed product owner-bootstrap now exposes neoth n8n install
+--bootstrap-owner as an alternative to --api-key-stdin. One exclusive job
+owns isolated owner/key setup and the final runtime publisher. Restart requires
+actual Docker identity/volume/absence evidence; uncertain key minting stays
+held. A matching durable Ready job can repair final custody metadata without
+re-enqueue, another key, or Docker mutation; mismatched ports are rejected first.
+Twenty coordinator/recovery and eight bounded child-transport tests join the
+hosted catalogs: Native1702, Group1477, Windows260. The existing CLI test now
+also checks mutually exclusive modes and the new flag. Hosted format, compile,
+and these behavioral checks remain pending. The previous shape-only format
+patch was imported from Preflight36067018403 with exact hashes and Git blobs.
+macOS phase-split validation runs as36067433955 at a7f87dc5. C7 source-bound
+closure selection is being reconciled separately; n8n/Paperless DoD stays open.
 **W984/W987/W988 hosted continuation (2026-09-25):** Root admitted Linux
 Group1446 at e6f3d474: 1446 PASS, zero failures or missing terminals, 255 exact
 historical source/input bindings and all three artifact digests. This verifies

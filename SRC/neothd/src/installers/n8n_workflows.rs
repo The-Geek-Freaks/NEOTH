@@ -113,7 +113,9 @@ mod tests {
                 w.slug
             );
             assert!(
-                parsed.get("settings").is_some_and(|field| field.is_object()),
+                parsed
+                    .get("settings")
+                    .is_some_and(|field| field.is_object()),
                 "{} settings must be an object",
                 w.slug
             );

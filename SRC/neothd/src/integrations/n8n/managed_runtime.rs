@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) const MANAGED_CONTAINER_NAME: &str = "neoth-n8n";
 pub(crate) const MANAGED_LABEL_KEY: &str = "io.neoth.managed";
 pub(crate) const MANAGED_LABEL_VALUE: &str = "n8n";
-const VOLUME: &str = "neoth_n8n_data";
+pub(crate) const DEFAULT_VOLUME: &str = "neoth_n8n_data";
 const BINDING_FILE: &str = "n8n-managed-runtime.v2.json";
 // Match the existing adoption evidence plan so the extracted custody publisher
 // can complete this same durable job without a second exclusive job.
@@ -47,14 +47,37 @@ pub(super) fn is_managed_job(job: &IntegrationJob) -> bool {
 pub(crate) struct ManagedN8nRequest {
     port: u16,
     image: &'static str,
+    volume: String,
+    prepared_job: Option<IntegrationJob>,
 }
 impl ManagedN8nRequest {
     pub(crate) fn new(port: u16, image: &'static str) -> Result<Self, &'static str> {
         if port == 0 || image != N8N_OCI_REFERENCE || !image.contains("@sha256:") {
             Err("managed n8n requires reviewed immutable OCI and nonzero loopback port")
         } else {
-            Ok(Self { port, image })
+            Ok(Self { port, image, volume: DEFAULT_VOLUME.into(), prepared_job: None })
         }
+    }
+    /// Bootstrap owns a fresh, job-namespaced volume.  Ordinary stdin-key
+    /// installation deliberately retains the historical volume name.
+    pub(crate) fn new_with_volume(
+        port: u16,
+        image: &'static str,
+        volume: String,
+    ) -> Result<Self, &'static str> {
+        let mut request = Self::new(port, image)?;
+        if !valid_volume_name(&volume) {
+            return Err("managed n8n requires a validated named volume");
+        }
+        request.volume = volume;
+        Ok(request)
+    }
+    pub(crate) fn volume(&self) -> &str { &self.volume }
+    /// Only the bootstrap coordinator may supply a job it created before its
+    /// first Docker mutation.  The runtime consumes it exactly once.
+    pub(crate) fn with_prepared_job(mut self, job: IntegrationJob) -> Self {
+        self.prepared_job = Some(job);
+        self
     }
     pub(crate) fn endpoint(&self) -> LoopbackHttpEndpoint {
         LoopbackHttpEndpoint::parse(format!("http://127.0.0.1:{}", self.port))
@@ -74,7 +97,7 @@ impl ManagedN8nRequest {
             "-p".into(),
             format!("127.0.0.1:{}:5678", self.port),
             "-v".into(),
-            format!("{VOLUME}:/home/node/.n8n"),
+            format!("{}:/home/node/.n8n", self.volume),
             "--restart".into(),
             "unless-stopped".into(),
             self.image.into(),
@@ -213,6 +236,11 @@ fn read_binding(home: &Path) -> Result<Option<RuntimeBinding>, &'static str> {
         .map(Some)
         .map_err(|_| "n8n_runtime_binding_invalid")
 }
+/// Bootstrap records the final exact ID only after the existing runtime has
+/// persisted its own binding.  No caller gets the wider private binding.
+pub(crate) fn bound_container_id(home: &Path) -> Result<Option<String>, &'static str> {
+    Ok(read_binding(home)?.and_then(|binding| binding.container_id))
+}
 fn write_binding(home: &Path, value: &RuntimeBinding) -> Result<(), &'static str> {
     crate::util::atomic_write::atomic_write_private(
         &binding_path(home),
@@ -288,11 +316,11 @@ fn validate_existing_identity(
         || observed.managed != MANAGED_LABEL_VALUE
         || observed.host_ip != "127.0.0.1"
         || observed.host_port != request.port
-        || observed.volume != VOLUME
+        || observed.volume != request.volume
         || observed.mount_destination != "/home/node/.n8n"
         || binding.image != request.image
         || binding.host_port != request.port
-        || binding.volume != VOLUME
+        || binding.volume != request.volume
     {
         Err("n8n_preexisting_container_unowned_or_mismatch")
     } else {
@@ -314,7 +342,7 @@ impl ManagedReadiness for ProductionReadiness {
         )
     }
 }
-fn enqueue(
+pub(crate) fn enqueue_prepared(
     service: &IntegrationJobService,
     request: &ManagedN8nRequest,
 ) -> anyhow::Result<IntegrationJob> {
@@ -324,7 +352,7 @@ fn enqueue(
         request.image,
         MANAGED_CONTAINER_NAME,
         &request.port.to_string(),
-        VOLUME,
+        request.volume(),
     ]);
     let contract = JobEvidenceContract::verified(
         manifest.clone(),
@@ -332,7 +360,7 @@ fn enqueue(
             endpoint.origin(),
             MANAGED_LABEL_KEY,
             MANAGED_LABEL_VALUE,
-            VOLUME,
+            request.volume(),
         ]),
         expected_authenticated_probe_sha256(&endpoint),
         sha256_parts(&STEPS),
@@ -361,13 +389,17 @@ fn validate_binding(
     binding: &RuntimeBinding,
     job: &IntegrationJob,
 ) -> Result<ManagedN8nRequest, &'static str> {
-    let request = ManagedN8nRequest::new(binding.host_port, N8N_OCI_REFERENCE)?;
+    let request = ManagedN8nRequest::new_with_volume(
+        binding.host_port,
+        N8N_OCI_REFERENCE,
+        binding.volume.clone(),
+    )?;
     let expected = sha256_parts(&[
         "n8n-managed-runtime-v4",
         request.image,
         MANAGED_CONTAINER_NAME,
         &request.port.to_string(),
-        VOLUME,
+        request.volume(),
     ]);
     if !is_managed_job(job)
         || binding.schema_version != 2
@@ -376,7 +408,7 @@ fn validate_binding(
         || job.manifest_sha256 != expected
         || binding.container_name != MANAGED_CONTAINER_NAME
         || binding.image != request.image
-        || binding.volume != VOLUME
+        || binding.volume != request.volume
         || binding
             .container_id
             .as_ref()
@@ -390,11 +422,17 @@ fn validate_binding(
     Ok(request)
 }
 
-fn valid_container_id(id: &str) -> bool {
+pub(crate) fn valid_container_id(id: &str) -> bool {
     id.len() == 64
         && id
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+pub(crate) fn valid_volume_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
 }
 
 fn absent_digest(binding: &RuntimeBinding) -> super::Sha256Digest {
@@ -515,7 +553,7 @@ pub(in crate::integrations) async fn install_managed_at_with<
     P: N8nApiProbe + ?Sized,
 >(
     home: &Path,
-    request: ManagedN8nRequest,
+    mut request: ManagedN8nRequest,
     api_key: SecretString,
     runner: &mut R,
     readiness: &H,
@@ -523,10 +561,40 @@ pub(in crate::integrations) async fn install_managed_at_with<
     cancel: &mut tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<IntegrationJob> {
     let service = super::open_n8n_job_service(home)?;
+    install_managed_in_service_with(&service, home, request, api_key, runner, readiness, probe, cancel).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn install_managed_in_service_with<
+    R: ManagedDockerRunner,
+    H: ManagedReadiness,
+    P: N8nApiProbe + ?Sized,
+>(
+    service: &IntegrationJobService,
+    home: &Path,
+    mut request: ManagedN8nRequest,
+    api_key: SecretString,
+    runner: &mut R,
+    readiness: &H,
+    probe: &P,
+    cancel: &mut tokio::sync::oneshot::Receiver<()>,
+) -> anyhow::Result<IntegrationJob> {
     if read_binding(home).map_err(anyhow::Error::msg)?.is_some() {
         anyhow::bail!("n8n_managed_instance_already_owned");
     }
-    let queued = enqueue(&service, &request)?;
+    let queued = match request.prepared_job.take() {
+        Some(job) => {
+            let expected = enqueue_prepared(&service, &request)?;
+            // `enqueue` is idempotent by its immutable manifest.  It returns
+            // the existing row, never a second job, and lets us bind the
+            // caller-provided durable ID to the current request.
+            if expected.job_id != job.job_id || expected.manifest_sha256 != job.manifest_sha256 {
+                anyhow::bail!("n8n_managed_prepared_job_mismatch");
+            }
+            job
+        }
+        None => enqueue_prepared(&service, &request)?,
+    };
     let mut binding = RuntimeBinding {
         schema_version: 2,
         phase: RuntimePhase::CreateIntent,
@@ -536,7 +604,7 @@ pub(in crate::integrations) async fn install_managed_at_with<
         container_id: None,
         image: request.image.into(),
         host_port: request.port,
-        volume: VOLUME.into(),
+        volume: request.volume.clone(),
     };
     if persist_create_intent(home, &binding).map_err(anyhow::Error::msg)?
         == CreateIntentWrite::Uncertain
@@ -560,7 +628,15 @@ pub(in crate::integrations) async fn install_managed_at_with<
             false,
         );
     }
-    let running = service.start(&queued.job_id, queued.state_revision, STEPS[0])?;
+    // Bootstrap starts its one durable job before its first Docker mutation.
+    // Ordinary stdin-key install still transitions the freshly queued job here.
+    let running = if queued.state == super::JobState::Running {
+        queued
+    } else if queued.state == super::JobState::Queued {
+        service.start(&queued.job_id, queued.state_revision, STEPS[0])?
+    } else {
+        anyhow::bail!("n8n_managed_prepared_job_not_active");
+    };
     match runner.inspect_named().await.map_err(anyhow::Error::msg)? {
         InspectOutcome::Absent => {}
         InspectOutcome::Found(_) => {
@@ -706,6 +782,26 @@ pub(crate) async fn install_managed_at(
     cancel: &mut tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<IntegrationJob> {
     install_managed_at_with(
+        home,
+        request,
+        api_key,
+        &mut DockerManagedRunner,
+        &ProductionReadiness,
+        &HttpN8nApiProbe,
+        cancel,
+    )
+    .await
+}
+
+pub(crate) async fn install_prepared_managed_in_service(
+    service: &IntegrationJobService,
+    home: &Path,
+    request: ManagedN8nRequest,
+    api_key: SecretString,
+    cancel: &mut tokio::sync::oneshot::Receiver<()>,
+) -> anyhow::Result<IntegrationJob> {
+    install_managed_in_service_with(
+        service,
         home,
         request,
         api_key,
@@ -1070,8 +1166,9 @@ fn parse_observed_json(data: &[u8]) -> Result<ObservedContainer, &'static str> {
         .parse()
         .map_err(|_| "n8n_container_inspect_invalid")?;
     let mount = &row.mounts[0];
+    let volume = mount.name.as_deref().ok_or("n8n_container_inspect_invalid")?;
     if mount.kind != "volume"
-        || mount.name.as_deref() != Some(VOLUME)
+        || !valid_volume_name(volume)
         || mount.destination != "/home/node/.n8n"
     {
         return Err("n8n_container_inspect_invalid");
@@ -1083,7 +1180,7 @@ fn parse_observed_json(data: &[u8]) -> Result<ObservedContainer, &'static str> {
         job,
         host_ip: binding.host_ip.clone(),
         host_port,
-        volume: VOLUME.into(),
+        volume: volume.into(),
         mount_destination: mount.destination.clone(),
     })
 }
