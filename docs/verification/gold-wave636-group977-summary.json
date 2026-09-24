@@ -1,0 +1,61 @@
+{
+  "schema": "neoth-group977-summary/v1",
+  "run": 35952811727,
+  "source": {
+    "receiptHeadVerified": true,
+    "receiptRefVerified": true,
+    "head": "258c0653f8af85e6f29e44e266cf785d181cbf91",
+    "ref": "refs/heads/main"
+  },
+  "group977": {
+    "missingTerminal": 0,
+    "executed": 977,
+    "required": 977,
+    "sourceBindingCount": 191,
+    "status": "SOURCE_ADMITTED_PASS",
+    "failed": 0,
+    "selected": 977,
+    "passed": 977
+  },
+  "artifactZipSha256": {
+    "source-10788999936.zip": "188de7b3d7f74f7600da08fab10443e0f08672ca889c759ac922c66c64682ccd",
+    "receipt-10789880981.zip": "7cf69d353cac1492d091ca17334337a4761c06f98c2c28120046241e52bc0f3f",
+    "log-10790120230.zip": "6ddb87133a8ef5d4bb55d87ebb1266f5fe32d5f5d4d3f005d88a212c5178d95d"
+  },
+  "newRecallTerminals": [
+    {
+      "test": "recall::parity_anchor::tests::anchor_link_constructor_is_canonical_and_rejects_noncanonical_selection",
+      "status": "passed"
+    },
+    {
+      "test": "cli::recall_score::tests::anchor_link_create_cli_requires_explicit_inputs_and_never_overwrites_output",
+      "status": "passed"
+    },
+    {
+      "test": "recall::parity_responses::tests::response_pairs_produce_actual_four_grader_inputs_and_batch_digests",
+      "status": "passed"
+    },
+    {
+      "test": "recall::parity_responses::tests::response_pairs_reject_partial_or_mismatched_goldset_matrix",
+      "status": "passed"
+    },
+    {
+      "test": "recall::parity_responses::tests::response_pairs_distinguish_empty_observations_from_missing_unknown_and_duplicate_pairs",
+      "status": "passed"
+    },
+    {
+      "test": "cli::recall_score::tests::grader_input_bundle_preflight_is_atomic_at_the_digest_marker",
+      "status": "passed"
+    }
+  ],
+  "validation": {
+    "sourceCommitBlobSha256": true,
+    "artifactDigestEquality": true,
+    "terminalMarkersAndExactOneTestResult": true,
+    "localExecutableValidationRan": false,
+    "receiptFailureInventory": true,
+    "fixtureIdentityOrder": true
+  },
+  "admissionSha256": "c997f12ea05b831184cec60f7bd3bc0e4703cf655d70342d308420c6888b48f0",
+  "rootAdmission": "Root checked3ZIPs and reran exact977 terminal/source verifier:977PASS0FAIL0missing191bindings"
+}

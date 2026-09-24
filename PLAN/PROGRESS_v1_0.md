@@ -2,6 +2,15 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W636 complete grouped recall regression pass (2026-09-24):**
+Group977 run35952811727 at258c0653 is independently admitted977PASS/0FAIL/
+0missing with191 source/input bindings. All six new operator-anchor and actual
+four-grader-input tests pass, including explicit selection, no overwrite,
+complete response matrix, observed empty answers and marker-last publication.
+Root verified all three artifact ZIPs and reran the source/terminal verifier.
+This accepts those regression results; actual provider grading and the wider
+P1-08 acceptance remain open. No Road closure or local executable validation.
+
 **W634/W635 Windows rename-root access correction (2026-09-24):**
 Windows46 run35952002227 at701d5ebf is independently admitted42PASS/4FAIL/
 0missing:54 internal hashes,10 fixture sources,2 build inputs and46 actual

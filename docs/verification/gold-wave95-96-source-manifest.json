@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T04:00:19.4227355Z",
-  "validationStatus": "W637 exact hosted Windows rename-root formatting; Windows46 behavior running",
+  "capturedUtc": "2026-09-24T04:04:44.9036404Z",
+  "validationStatus": "W636 Group977 all977PASS191bindings; W622 native/plugin integration pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1387,6 +1387,11 @@
       "sha256": "5E4057F74DC5494F472393D8BD6ED0DB678553FDE818A7245BFCAF275D219089"
     },
     {
+      "path": "docs/verification/gold-wave636-group977-summary.json",
+      "bytes": 2196,
+      "sha256": "35A6E25DF9BE05F2545598B529F417E63A9321BE50C8557567352FA3CCAF6C56"
+    },
+    {
       "path": "docs/verification/managed-browser-cft154.json",
       "bytes": 2497,
       "sha256": "80443D2F6E6A6E226F1617F7F5463017071D9D21130D1FCD116470F147455337"
@@ -1528,18 +1533,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 224581,
-      "sha256": "D9407593EB6209FE55DC178CF71511CF1234C81B5B7B0040564D6DF79D125A3C"
+      "bytes": 225184,
+      "sha256": "3744C936C26263841B87B94BE71BB2A1D2A1EE2C318663910F0F8AED5DBC9245"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1235909,
-      "sha256": "F3B9CCE9C42491E160F4EC6E953324FFFB16FD261C55F666C12A0A2BB2F9B915"
+      "bytes": 1236512,
+      "sha256": "D75329C831C716B68F796A9184C6BE35A9CF3D6EF61EB531FE24E39B805FC14D"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1835191,
-      "sha256": "BE3E98E9231C197F038BA4F68B1C50965DC7D7789DBAD78407F0A5D07721C57B"
+      "bytes": 1835794,
+      "sha256": "AB2969F0B9A023F12AD8329ADFEE71B34EFE34DA00FA197B0A593E228CE3D643"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
