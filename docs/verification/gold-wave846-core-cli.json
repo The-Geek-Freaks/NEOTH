@@ -1,0 +1,74 @@
+{
+  "schema": "neoth-gold-core-cli-admission/v1",
+  "runId": 36022150044,
+  "sourceHead": "5f21bc065bb355c19dfbcb9d275a0b56cc0f3c52",
+  "conclusion": "success",
+  "rootVerified": true,
+  "artifact": {
+    "innerVerified": true,
+    "referenceUnchanged": false,
+    "cliSha256": "079f282dc33a1e0d6470a87a314afc541b352fba0f07794288a1e4384f45c2c1",
+    "imported": true,
+    "id": 10819450468,
+    "zipSha256": "ad8000d79b60fb774a3cfb8b82da90a7da352ededea87b989d1b73064a03bd0d",
+    "zipVerified": true,
+    "cliGitBlob": "f3a19104c08496fc91bf2a78728ae4a46a9039df",
+    "sourceVerified": true
+  },
+  "steps": [
+    {
+      "name": "Set up job",
+      "conclusion": "success"
+    },
+    {
+      "name": "Checkout requested source",
+      "conclusion": "success"
+    },
+    {
+      "name": "Setup Rust",
+      "conclusion": "success"
+    },
+    {
+      "name": "Install Linux workspace-Clippy build deps",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Restore Gold smoke compiler cache",
+      "conclusion": "success"
+    },
+    {
+      "name": "Check exact-source slim-core production Clippy",
+      "conclusion": "success"
+    },
+    {
+      "name": "Type-check core test targets before native validation",
+      "conclusion": "success"
+    },
+    {
+      "name": "Check exact Linux-quality workspace Clippy",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Build current public CLI",
+      "conclusion": "success"
+    },
+    {
+      "name": "Export generated reference",
+      "conclusion": "success"
+    },
+    {
+      "name": "Upload generated reference",
+      "conclusion": "success"
+    },
+    {
+      "name": "Post Checkout requested source",
+      "conclusion": "success"
+    },
+    {
+      "name": "Complete job",
+      "conclusion": "success"
+    }
+  ],
+  "scope": "W840 production passed slim Clippy, test-target typecheck, CLI build/export. Reference imports exactly two updated chapter help descriptions. Later source changes are admitted formatting and chapter test fixes; no full workspace or release proof.",
+  "localExecutableValidationRan": false
+}

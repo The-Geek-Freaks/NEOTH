@@ -4429,9 +4429,9 @@ _Aliases:_ `neoth skill`
 - `--distill-doc <PATH>` — Distill an admitted document with one provider call and one scored self-review. Prints a token/cost preflight first; never stages a skill
 - `--min-reflexion-score <MIN_REFLEXION_SCORE>` — Required acceptance threshold for the document's single scored review
 - `--from-doc <PATH>` — Extract one PDF, office document, or EPUB into a sanitized operator review draft. This is read-only: it never writes, installs, activates, routes, or provider-dispatches a skill
-- `--from-doc-chapter <PATH>` — Review exactly one explicitly selected chapter/segment from a large UTF-8 `.txt` or Markdown source without materializing the whole file
+- `--from-doc-chapter <PATH>` — Review one selected range from large raw text, or from the extracted UTF-8 output of an admitted PDF, Office, or book source. Binary containers are never byte-sliced
 - `--chapter-index <INDEX>` — Zero-based chapter/segment number emitted by the bounded scanner
-- `--list-doc-chapters <PATH>` — Discover the read-only chapter/segment table for a large UTF-8 text source. Use an emitted zero-based index with --from-doc-chapter
+- `--list-doc-chapters <PATH>` — Discover the read-only chapter/segment table for large raw text or extracted UTF-8 output from an admitted PDF, Office, or book source. Binary containers are never byte-sliced. Use an emitted zero-based index with --from-doc-chapter
 - `--list` — Print the table of installed skills
 - `--check-routing` — Validate catalogue-wide parent/mode alias ownership and emit every cross-owner collision. Exits non-zero when the hot-reload gate would reject the current catalogue
 - `--test <MESSAGE>` — Run the router against an arbitrary message and report the match

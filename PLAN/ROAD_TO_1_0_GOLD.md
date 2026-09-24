@@ -8,6 +8,22 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W845-W847 exact hosted results and chapter receipt repair (2026-09-24):**
+Group1296run36023599487 at38230dc2 is ROOT-ADMITTED1294PASS/2FAIL after
+three ZIP digests,237fixture/twoinput bindings and all individual terminals.
+Failures: stale CLI reference and an extracted-chapter test that incorrectly
+excluded the source marker from the intentional rendered_review field. W847
+independent review confirms the existing contract; the test now checks text-free
+chapter metadata AND a defanged operator-review marker. Production unchanged.
+Core36022150044 at5f21bc06 passes slimClippy/testtargets/CLIbuild/export; Root
+verified ZIP/source/inner SHA and imports its exact two changed help descriptions.
+B3 remains open until the corrected connected test passes. B5/D7 stay accepted.
+Claude ACK008/RESULT008 received; BulkText and same-SQLite-transaction replay
+ledger selected for B7. TASK009 asks for filesystem custody/recovery specifics.
+ROAD1072checked250open2partial;Group1296/native1532 unchanged. BSOD hold active.
+Evidence: docs/verification/gold-wave845-group1296.json and
+ docs/verification/gold-wave846-core-cli.json.
+
 **W844 chapter fixture threshold correction (2026-09-24):**
 Static tracing found that the real RTF extractor discards raw CR/LF, so the
 initial W840 fixture's repeated safe-lines could fall below the large-document

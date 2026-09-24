@@ -2418,7 +2418,13 @@ mod tests {
             );
             assert!(review["chapter"]["range"]["end_byte"].as_u64().unwrap() > 0);
             assert!(review["chapter"].get("text").is_none());
-            assert!(!review_json.contains(marker));
+            assert!(!serde_json::to_string(&review["chapter"])
+                .unwrap()
+                .contains(marker));
+            assert!(review["rendered_review"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("| {marker}")));
         }
 
         let small_rtf_path = root.path().join("small.rtf");
