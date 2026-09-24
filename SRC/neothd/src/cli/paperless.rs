@@ -35,9 +35,9 @@ use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
 use crate::installers::{
+    paperless_lifecycle::{PaperlessLifecycleReceipt, install_at},
     paperless_readiness::{PaperlessReadiness, probe_configured_paperless_at},
     paperless_staging::{PaperlessStagingView, prepare_at},
-    paperless_lifecycle::{PaperlessLifecycleReceipt, install_at},
 };
 use crate::paperless::{self, OcrSyncOutcome, consult::consult, quarantine};
 use crate::security::paperless_ingest::{IngestError, OcrSource, ingest_ocr_text};
@@ -136,11 +136,14 @@ pub async fn run_paperless_command(args: PaperlessArgs, output: OutputFormat) ->
         Ok(())
     } else if matches!(args.action, PaperlessAction::Install) {
         let home = crate::config::FreedomConfig::default_neoth_home();
-        let (_, credentials) = crate::config::load_optional_runtime_config_pair_from_path(
-            &home.join("freedom.yaml"),
-        )
-        .map_err(|_| anyhow::anyhow!("Paperless install could not read configured credentials"))?;
-        let receipt = install_at(&home, &credentials).await.map_err(anyhow::Error::new)?;
+        let (_, credentials) =
+            crate::config::load_optional_runtime_config_pair_from_path(&home.join("freedom.yaml"))
+                .map_err(|_| {
+                    anyhow::anyhow!("Paperless install could not read configured credentials")
+                })?;
+        let receipt = install_at(&home, &credentials)
+            .await
+            .map_err(anyhow::Error::new)?;
         print!("{}", render_paperless_lifecycle(&receipt, output)?);
         Ok(())
     } else {
@@ -187,7 +190,9 @@ fn render_paperless_lifecycle(
     output: OutputFormat,
 ) -> Result<String> {
     match output {
-        OutputFormat::Json | OutputFormat::Jsonl => Ok(format!("{}\n", serde_json::to_string(receipt)?)),
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            Ok(format!("{}\n", serde_json::to_string(receipt)?))
+        }
         OutputFormat::Table => Ok(format!(
             "Paperless install: verified\nproject: {}\nloopback port: {}\nverified images: {}\nverified containers: {}\nauthenticated API ready: {}\n",
             receipt.project,

@@ -4,7 +4,13 @@
 //! rendered Compose root, and the authenticated loopback API have remained
 //! bound to the same owned instance for the whole operation.
 
-use std::{collections::BTreeMap, ffi::OsStr, path::{Path, PathBuf}, process::Stdio, time::Duration};
+use std::{
+    collections::BTreeMap,
+    ffi::OsStr,
+    path::{Path, PathBuf},
+    process::Stdio,
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -12,159 +18,1269 @@ use sha2::{Digest, Sha256};
 use tokio::{io::AsyncReadExt, process::Command};
 use zeroize::Zeroizing;
 
+#[cfg(windows)]
+use crate::connectors::local_import::{
+    ApprovedImportFile, ApprovedImportRoot, approve_import_root, hold_approved_import_file,
+};
 use crate::{
-    config::{credentials::Credentials, SecretsBackend},
-    installers::{paperless_bootstrap::{self, BootstrapAdmin}, paperless_readiness::probe_configured_paperless_at, paperless_staging::{self, OwnedPaperlessRoot, PaperlessStagingStatus}},
+    config::{SecretsBackend, credentials::Credentials},
+    installers::{
+        paperless_bootstrap::{self, BootstrapAdmin},
+        paperless_readiness::probe_configured_paperless_at,
+        paperless_staging::{self, OwnedPaperlessRoot, PaperlessStagingStatus},
+    },
     secret::SecretString,
 };
-#[cfg(windows)] use crate::connectors::local_import::{approve_import_root, hold_approved_import_file, ApprovedImportFile, ApprovedImportRoot};
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
 const READINESS_DEADLINE: Duration = Duration::from_secs(45);
 const READINESS_RETRY: Duration = Duration::from_secs(1);
 const OUTPUT_LIMIT: usize = 32 * 1024;
 const ENV_LIMIT: usize = 16 * 1024;
-const PAPERLESS_INTERPOLATION_ENV: [&str; 7] = ["PAPERLESS_SECRET_KEY", "PAPERLESS_DB_NAME", "PAPERLESS_DB_USER", "PAPERLESS_DB_PASSWORD", "PAPERLESS_ADMIN_USER", "PAPERLESS_ADMIN_PASSWORD", "PAPERLESS_BIND_PORT"];
+const PAPERLESS_INTERPOLATION_ENV: [&str; 7] = [
+    "PAPERLESS_SECRET_KEY",
+    "PAPERLESS_DB_NAME",
+    "PAPERLESS_DB_USER",
+    "PAPERLESS_DB_PASSWORD",
+    "PAPERLESS_ADMIN_USER",
+    "PAPERLESS_ADMIN_PASSWORD",
+    "PAPERLESS_BIND_PORT",
+];
 const RECEIPT_NAME: &str = ".neoth-paperless-lifecycle-receipt.v1.json";
 const RECEIPT_DIR: &str = "state";
-const RECEIPT_BYTES: &str = include_str!("../../../../docs/verification/paperless-oci-v3.2.1/recursive-blob-receipt.json");
+const RECEIPT_BYTES: &str =
+    include_str!("../../../../docs/verification/paperless-oci-v3.2.1/recursive-blob-receipt.json");
 const IMAGE_INSPECT_TEMPLATE: &str = r#"{{printf "{\"Id\":%q,\"RepoDigests\":%s,\"Os\":%q,\"Architecture\":%q}" .Id (json .RepoDigests) .Os .Architecture}}"#;
 const CONTAINER_INSPECT_TEMPLATE: &str = r#"{{printf "{\"Id\":%q,\"Image\":%q,\"State\":{\"Running\":%t},\"Config\":{\"Labels\":%s},\"NetworkSettings\":{\"Ports\":%s}}" .Id .Image .State.Running (json .Config.Labels) (json .NetworkSettings.Ports)}}"#;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandOutput { pub stdout: String }
+pub struct CommandOutput {
+    pub stdout: String,
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LifecycleError { NotPrepared, UnownedOrMismatch, Credentials, Receipt, LaunchBinding, Engine(&'static str), Command(&'static str), Image(&'static str), Container(&'static str), Readiness, Bootstrap(&'static str), Io }
-impl std::fmt::Display for LifecycleError { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(match self { Self::NotPrepared => "paperless_not_prepared", Self::UnownedOrMismatch => "paperless_unowned_or_mismatch", Self::Credentials => "paperless_loopback_credentials_required", Self::Receipt => "paperless_provenance_receipt_invalid", Self::LaunchBinding => "paperless_compose_external_launch_unavailable", Self::Engine(x) | Self::Command(x) | Self::Image(x) | Self::Container(x) | Self::Bootstrap(x) => x, Self::Readiness => "paperless_authenticated_readiness_failed", Self::Io => "paperless_lifecycle_io_error" }) } }
-impl std::error::Error for LifecycleError {}
-
-#[derive(Debug, Clone, Serialize)] pub struct PaperlessLifecycleReceipt { pub schema_version: u8, pub operation: &'static str, pub contract_id: &'static str, pub project: String, pub loopback_port: u16, pub images: Vec<VerifiedImage>, pub containers: Vec<VerifiedContainer>, pub authenticated_api_ready: bool }
-#[derive(Debug, Clone, Serialize)] pub struct VerifiedImage { pub service: &'static str, pub reference: &'static str, pub repo_digest: String, pub config_id: String, pub os: String, pub architecture: String }
-#[derive(Debug, Clone, Serialize)] pub struct VerifiedContainer { pub service: &'static str, pub id: String, pub image_id: String }
-
-#[derive(Deserialize)] struct AdmissionReceipt { artifact_blob_bytes_verified: bool, selectors: Vec<Selector> }
-#[derive(Deserialize)] struct Selector { name: String, index: Index, platforms: BTreeMap<String, Platform> }
-#[derive(Deserialize)] struct Index { digest: String }
-#[derive(Deserialize)] struct Platform { config: Config }
-#[derive(Deserialize)] struct Config { digest: String }
-#[derive(Deserialize)] struct DockerImage { #[serde(rename="Id")] id: String, #[serde(rename="RepoDigests", default)] repo_digests: Vec<String>, #[serde(rename="Os")] os: String, #[serde(rename="Architecture")] architecture: String }
-#[derive(Deserialize)] struct DockerServer { #[serde(rename="Os")] os: String, #[serde(rename="Arch")] architecture: String }
-#[derive(Deserialize)] struct DockerContainer { #[serde(rename="Id")] id: String, #[serde(rename="Image")] image: String, #[serde(rename="Config")] config: ContainerConfig, #[serde(rename="State")] state: ContainerState, #[serde(rename="NetworkSettings")] network: NetworkSettings }
-#[derive(Deserialize)] struct ContainerState { #[serde(rename="Running")] running: bool }
-#[derive(Deserialize)] struct ContainerConfig { #[serde(rename="Labels", default)] labels: BTreeMap<String, String> }
-#[derive(Deserialize)] struct NetworkSettings { #[serde(rename="Ports", default)] ports: BTreeMap<String, Option<Vec<PortBinding>>> }
-#[derive(Deserialize)] struct PortBinding { #[serde(rename="HostIp")] host_ip: String, #[serde(rename="HostPort")] host_port: String }
-
-#[async_trait] pub trait ComposeExecutor: Send { async fn run(&mut self, argv: &[String], cwd: &Path) -> Result<CommandOutput, LifecycleError>; }
-pub struct DockerExecutor;
-#[async_trait] trait ReadinessVerifier: Send + Sync { async fn ready(&self, home: &Path, credentials: &Credentials) -> bool; }
-struct ConfiguredReadiness;
-#[async_trait] impl ReadinessVerifier for ConfiguredReadiness { async fn ready(&self, home: &Path, credentials: &Credentials) -> bool { probe_configured_paperless_at(home, credentials).await.authenticated_api_ready } }
-#[async_trait] impl ComposeExecutor for DockerExecutor {
-    async fn run(&mut self, argv: &[String], cwd: &Path) -> Result<CommandOutput, LifecycleError> {
-        let (program, args) = argv.split_first().ok_or(LifecycleError::Command("paperless_empty_command"))?;
-        let mut command = configured_docker_command(program, args, cwd);
-        let mut child = command.spawn().map_err(|_| LifecycleError::Command("paperless_command_spawn_failed"))?;
-        let mut stdout = child.stdout.take().ok_or(LifecycleError::Command("paperless_command_capture_failed"))?; let mut stderr = child.stderr.take().ok_or(LifecycleError::Command("paperless_command_capture_failed"))?;
-        tokio::time::timeout(COMMAND_TIMEOUT, async move { let (stdout, stderr, status) = tokio::join!(read_bounded(&mut stdout), read_bounded(&mut stderr), child.wait()); let stdout = stdout?; let _ = stderr?; if !status.map_err(|_| LifecycleError::Command("paperless_command_wait_failed"))?.success() { return Err(LifecycleError::Command("paperless_command_failed")); } String::from_utf8(stdout).map(|stdout| CommandOutput { stdout }).map_err(|_| LifecycleError::Command("paperless_command_non_utf8")) }).await.map_err(|_| LifecycleError::Command("paperless_command_timeout"))?
+pub enum LifecycleError {
+    NotPrepared,
+    UnownedOrMismatch,
+    Credentials,
+    Receipt,
+    LaunchBinding,
+    Engine(&'static str),
+    Command(&'static str),
+    Image(&'static str),
+    Container(&'static str),
+    Readiness,
+    Bootstrap(&'static str),
+    Io,
+}
+impl std::fmt::Display for LifecycleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NotPrepared => "paperless_not_prepared",
+            Self::UnownedOrMismatch => "paperless_unowned_or_mismatch",
+            Self::Credentials => "paperless_loopback_credentials_required",
+            Self::Receipt => "paperless_provenance_receipt_invalid",
+            Self::LaunchBinding => "paperless_compose_external_launch_unavailable",
+            Self::Engine(x)
+            | Self::Command(x)
+            | Self::Image(x)
+            | Self::Container(x)
+            | Self::Bootstrap(x) => x,
+            Self::Readiness => "paperless_authenticated_readiness_failed",
+            Self::Io => "paperless_lifecycle_io_error",
+        })
     }
 }
-fn configured_docker_command(program: &str, args: &[String], cwd: &Path) -> Command { let mut command = Command::new(program); command.args(args).current_dir(cwd).env_remove("DOCKER_HOST").env_remove("DOCKER_CONTEXT").env_remove("DOCKER_DEFAULT_PLATFORM"); for name in PAPERLESS_INTERPOLATION_ENV { command.env_remove(name); } command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true); command }
-async fn read_bounded<R: tokio::io::AsyncRead + Unpin>(reader: &mut R) -> Result<Vec<u8>, LifecycleError> { let mut out = Vec::new(); let mut buf = [0u8; 4096]; loop { let n = reader.read(&mut buf).await.map_err(|_| LifecycleError::Command("paperless_command_capture_failed"))?; if n == 0 { return Ok(out); } if out.len().saturating_add(n) > OUTPUT_LIMIT { return Err(LifecycleError::Command("paperless_command_output_limit")); } out.extend_from_slice(&buf[..n]); } }
+impl std::error::Error for LifecycleError {}
 
-pub async fn install_at(home: &Path, credentials: &Credentials) -> Result<PaperlessLifecycleReceipt, LifecycleError> { install_at_with(home, credentials, &mut DockerExecutor).await }
-pub async fn install_at_with<E: ComposeExecutor>(home: &Path, credentials: &Credentials, executor: &mut E) -> Result<PaperlessLifecycleReceipt, LifecycleError> { install_at_with_readiness(home, credentials, executor, &ConfiguredReadiness).await }
-async fn install_at_with_readiness<E: ComposeExecutor, R: ReadinessVerifier>(home: &Path, credentials: &Credentials, executor: &mut E, readiness: &R) -> Result<PaperlessLifecycleReceipt, LifecycleError> {
+#[derive(Debug, Clone, Serialize)]
+pub struct PaperlessLifecycleReceipt {
+    pub schema_version: u8,
+    pub operation: &'static str,
+    pub contract_id: &'static str,
+    pub project: String,
+    pub loopback_port: u16,
+    pub images: Vec<VerifiedImage>,
+    pub containers: Vec<VerifiedContainer>,
+    pub authenticated_api_ready: bool,
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct VerifiedImage {
+    pub service: &'static str,
+    pub reference: &'static str,
+    pub repo_digest: String,
+    pub config_id: String,
+    pub os: String,
+    pub architecture: String,
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct VerifiedContainer {
+    pub service: &'static str,
+    pub id: String,
+    pub image_id: String,
+}
+
+#[derive(Deserialize)]
+struct AdmissionReceipt {
+    artifact_blob_bytes_verified: bool,
+    selectors: Vec<Selector>,
+}
+#[derive(Deserialize)]
+struct Selector {
+    name: String,
+    index: Index,
+    platforms: BTreeMap<String, Platform>,
+}
+#[derive(Deserialize)]
+struct Index {
+    digest: String,
+}
+#[derive(Deserialize)]
+struct Platform {
+    config: Config,
+}
+#[derive(Deserialize)]
+struct Config {
+    digest: String,
+}
+#[derive(Deserialize)]
+struct DockerImage {
+    #[serde(rename = "Id")]
+    id: String,
+    #[serde(rename = "RepoDigests", default)]
+    repo_digests: Vec<String>,
+    #[serde(rename = "Os")]
+    os: String,
+    #[serde(rename = "Architecture")]
+    architecture: String,
+}
+#[derive(Deserialize)]
+struct DockerServer {
+    #[serde(rename = "Os")]
+    os: String,
+    #[serde(rename = "Arch")]
+    architecture: String,
+}
+#[derive(Deserialize)]
+struct DockerContainer {
+    #[serde(rename = "Id")]
+    id: String,
+    #[serde(rename = "Image")]
+    image: String,
+    #[serde(rename = "Config")]
+    config: ContainerConfig,
+    #[serde(rename = "State")]
+    state: ContainerState,
+    #[serde(rename = "NetworkSettings")]
+    network: NetworkSettings,
+}
+#[derive(Deserialize)]
+struct ContainerState {
+    #[serde(rename = "Running")]
+    running: bool,
+}
+#[derive(Deserialize)]
+struct ContainerConfig {
+    #[serde(rename = "Labels", default)]
+    labels: BTreeMap<String, String>,
+}
+#[derive(Deserialize)]
+struct NetworkSettings {
+    #[serde(rename = "Ports", default)]
+    ports: BTreeMap<String, Option<Vec<PortBinding>>>,
+}
+#[derive(Deserialize)]
+struct PortBinding {
+    #[serde(rename = "HostIp")]
+    host_ip: String,
+    #[serde(rename = "HostPort")]
+    host_port: String,
+}
+
+#[async_trait]
+pub trait ComposeExecutor: Send {
+    async fn run(&mut self, argv: &[String], cwd: &Path) -> Result<CommandOutput, LifecycleError>;
+}
+pub struct DockerExecutor;
+#[async_trait]
+trait ReadinessVerifier: Send + Sync {
+    async fn ready(&self, home: &Path, credentials: &Credentials) -> bool;
+}
+struct ConfiguredReadiness;
+#[async_trait]
+impl ReadinessVerifier for ConfiguredReadiness {
+    async fn ready(&self, home: &Path, credentials: &Credentials) -> bool {
+        probe_configured_paperless_at(home, credentials)
+            .await
+            .authenticated_api_ready
+    }
+}
+#[async_trait]
+impl ComposeExecutor for DockerExecutor {
+    async fn run(&mut self, argv: &[String], cwd: &Path) -> Result<CommandOutput, LifecycleError> {
+        let (program, args) = argv
+            .split_first()
+            .ok_or(LifecycleError::Command("paperless_empty_command"))?;
+        let mut command = configured_docker_command(program, args, cwd);
+        let mut child = command
+            .spawn()
+            .map_err(|_| LifecycleError::Command("paperless_command_spawn_failed"))?;
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or(LifecycleError::Command("paperless_command_capture_failed"))?;
+        let mut stderr = child
+            .stderr
+            .take()
+            .ok_or(LifecycleError::Command("paperless_command_capture_failed"))?;
+        tokio::time::timeout(COMMAND_TIMEOUT, async move {
+            let (stdout, stderr, status) = tokio::join!(
+                read_bounded(&mut stdout),
+                read_bounded(&mut stderr),
+                child.wait()
+            );
+            let stdout = stdout?;
+            let _ = stderr?;
+            if !status
+                .map_err(|_| LifecycleError::Command("paperless_command_wait_failed"))?
+                .success()
+            {
+                return Err(LifecycleError::Command("paperless_command_failed"));
+            }
+            String::from_utf8(stdout)
+                .map(|stdout| CommandOutput { stdout })
+                .map_err(|_| LifecycleError::Command("paperless_command_non_utf8"))
+        })
+        .await
+        .map_err(|_| LifecycleError::Command("paperless_command_timeout"))?
+    }
+}
+fn configured_docker_command(program: &str, args: &[String], cwd: &Path) -> Command {
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .current_dir(cwd)
+        .env_remove("DOCKER_HOST")
+        .env_remove("DOCKER_CONTEXT")
+        .env_remove("DOCKER_DEFAULT_PLATFORM");
+    for name in PAPERLESS_INTERPOLATION_ENV {
+        command.env_remove(name);
+    }
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    command
+}
+async fn read_bounded<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut R,
+) -> Result<Vec<u8>, LifecycleError> {
+    let mut out = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .await
+            .map_err(|_| LifecycleError::Command("paperless_command_capture_failed"))?;
+        if n == 0 {
+            return Ok(out);
+        }
+        if out.len().saturating_add(n) > OUTPUT_LIMIT {
+            return Err(LifecycleError::Command("paperless_command_output_limit"));
+        }
+        out.extend_from_slice(&buf[..n]);
+    }
+}
+
+pub async fn install_at(
+    home: &Path,
+    credentials: &Credentials,
+) -> Result<PaperlessLifecycleReceipt, LifecycleError> {
+    install_at_with(home, credentials, &mut DockerExecutor).await
+}
+pub async fn install_at_with<E: ComposeExecutor>(
+    home: &Path,
+    credentials: &Credentials,
+    executor: &mut E,
+) -> Result<PaperlessLifecycleReceipt, LifecycleError> {
+    install_at_with_readiness(home, credentials, executor, &ConfiguredReadiness).await
+}
+async fn install_at_with_readiness<E: ComposeExecutor, R: ReadinessVerifier>(
+    home: &Path,
+    credentials: &Credentials,
+    executor: &mut E,
+    readiness: &R,
+) -> Result<PaperlessLifecycleReceipt, LifecycleError> {
     let root_path = crate::config::InstancePaths::for_home(home).paperless_root;
-    match paperless_staging::inspect_at(&root_path).status { PaperlessStagingStatus::PreparedPinned | PaperlessStagingStatus::AlreadyPrepared => {}, PaperlessStagingStatus::NotPrepared => return Err(LifecycleError::NotPrepared), PaperlessStagingStatus::UnownedOrMismatch => return Err(LifecycleError::UnownedOrMismatch) }
-    let owned = paperless_staging::open_owned_root_at(&root_path).map_err(|_| LifecycleError::UnownedOrMismatch)?;
-    let binding = read_binding(&owned)?; validate_credentials_origin(credentials, &binding.origin)?;
+    match paperless_staging::inspect_at(&root_path).status {
+        PaperlessStagingStatus::PreparedPinned | PaperlessStagingStatus::AlreadyPrepared => {}
+        PaperlessStagingStatus::NotPrepared => return Err(LifecycleError::NotPrepared),
+        PaperlessStagingStatus::UnownedOrMismatch => return Err(LifecycleError::UnownedOrMismatch),
+    }
+    let owned = paperless_staging::open_owned_root_at(&root_path)
+        .map_err(|_| LifecycleError::UnownedOrMismatch)?;
+    let binding = read_binding(&owned)?;
+    validate_credentials_origin(credentials, &binding.origin)?;
     let _launch = acquire_launch_guard(&owned, &binding)?;
-    let bootstrap_backend = valid_token(credentials.paperless_token.as_ref()).is_none().then(|| configured_backend(home)).transpose()?;
-    let expected = expected_images()?; let project = project_name(&root_path); let engine = select_local_engine(executor, &owned).await?;
-    for image in &expected { ensure_stage(&owned, &binding)?; executor.run(&engine.docker("pull", &[image.reference]), &root_path).await?; ensure_stage(&owned, &binding)?; }
+    let bootstrap_backend = valid_token(credentials.paperless_token.as_ref())
+        .is_none()
+        .then(|| configured_backend(home))
+        .transpose()?;
+    let expected = expected_images()?;
+    let project = project_name(&root_path);
+    let engine = select_local_engine(executor, &owned).await?;
+    for image in &expected {
+        ensure_stage(&owned, &binding)?;
+        executor
+            .run(&engine.docker("pull", &[image.reference]), &root_path)
+            .await?;
+        ensure_stage(&owned, &binding)?;
+    }
     let mut verified = Vec::with_capacity(expected.len());
-    for image in &expected { ensure_stage(&owned, &binding)?; let result = executor.run(&engine.docker("image", &["inspect", image.reference, "--format", IMAGE_INSPECT_TEMPLATE]), &root_path).await?; ensure_stage(&owned, &binding)?; verified.push(verify_image(image, &engine.platform, &result.stdout)?); }
-    ensure_stage(&owned, &binding)?; executor.run(&engine.compose(&project, &root_path, &["up", "-d", "--no-build", "--pull", "never"]), &root_path).await?; ensure_stage(&owned, &binding)?;
+    for image in &expected {
+        ensure_stage(&owned, &binding)?;
+        let result = executor
+            .run(
+                &engine.docker(
+                    "image",
+                    &[
+                        "inspect",
+                        image.reference,
+                        "--format",
+                        IMAGE_INSPECT_TEMPLATE,
+                    ],
+                ),
+                &root_path,
+            )
+            .await?;
+        ensure_stage(&owned, &binding)?;
+        verified.push(verify_image(image, &engine.platform, &result.stdout)?);
+    }
+    ensure_stage(&owned, &binding)?;
+    executor
+        .run(
+            &engine.compose(
+                &project,
+                &root_path,
+                &["up", "-d", "--no-build", "--pull", "never"],
+            ),
+            &root_path,
+        )
+        .await?;
+    ensure_stage(&owned, &binding)?;
     let mut containers = Vec::with_capacity(verified.len());
-    for image in &verified { ensure_stage(&owned, &binding)?; let raw_id = executor.run(&engine.compose(&project, &root_path, &["ps", "-q", image.service]), &root_path).await?.stdout; let id = exact_identifier(&raw_id).ok_or(LifecycleError::Container("paperless_container_id_missing"))?; ensure_stage(&owned, &binding)?; let result = executor.run(&engine.docker("container", &["inspect", &id, "--format", CONTAINER_INSPECT_TEMPLATE]), &root_path).await?; ensure_stage(&owned, &binding)?; let observed = verify_container(image, &project, binding.port, &result.stdout)?; if observed.id != id { return Err(LifecycleError::Container("paperless_container_id_changed")); } containers.push(observed); }
-    let effective = match valid_token(credentials.paperless_token.as_ref()) { Some(token) => token.clone(), None => { let token = obtain_bootstrap_token(&owned, &binding).await?; ensure_stage(&owned, &binding)?; paperless_bootstrap::persist_bootstrap_at(home, bootstrap_backend.ok_or(LifecycleError::Bootstrap("paperless_bootstrap_config_invalid"))?, credentials.paperless_url.as_deref(), &binding.origin, &token).map_err(LifecycleError::Bootstrap)?; token } };
-    let mut readiness_credentials = credentials.clone(); readiness_credentials.paperless_url = Some(binding.origin.clone()); readiness_credentials.paperless_token = Some(effective);
+    for image in &verified {
+        ensure_stage(&owned, &binding)?;
+        let raw_id = executor
+            .run(
+                &engine.compose(&project, &root_path, &["ps", "-q", image.service]),
+                &root_path,
+            )
+            .await?
+            .stdout;
+        let id = exact_identifier(&raw_id)
+            .ok_or(LifecycleError::Container("paperless_container_id_missing"))?;
+        ensure_stage(&owned, &binding)?;
+        let result = executor
+            .run(
+                &engine.docker(
+                    "container",
+                    &["inspect", &id, "--format", CONTAINER_INSPECT_TEMPLATE],
+                ),
+                &root_path,
+            )
+            .await?;
+        ensure_stage(&owned, &binding)?;
+        let observed = verify_container(image, &project, binding.port, &result.stdout)?;
+        if observed.id != id {
+            return Err(LifecycleError::Container("paperless_container_id_changed"));
+        }
+        containers.push(observed);
+    }
+    let effective = match valid_token(credentials.paperless_token.as_ref()) {
+        Some(token) => token.clone(),
+        None => {
+            let token = obtain_bootstrap_token(&owned, &binding).await?;
+            ensure_stage(&owned, &binding)?;
+            paperless_bootstrap::persist_bootstrap_at(
+                home,
+                bootstrap_backend.ok_or(LifecycleError::Bootstrap(
+                    "paperless_bootstrap_config_invalid",
+                ))?,
+                credentials.paperless_url.as_deref(),
+                &binding.origin,
+                &token,
+            )
+            .map_err(LifecycleError::Bootstrap)?;
+            token
+        }
+    };
+    let mut readiness_credentials = credentials.clone();
+    readiness_credentials.paperless_url = Some(binding.origin.clone());
+    readiness_credentials.paperless_token = Some(effective);
     wait_for_readiness(home, &readiness_credentials, readiness, &owned, &binding).await?;
-    for container in &containers { ensure_stage(&owned, &binding)?; let result = executor.run(&engine.docker("container", &["inspect", &container.id, "--format", CONTAINER_INSPECT_TEMPLATE]), &root_path).await?; ensure_stage(&owned, &binding)?; let image = verified.iter().find(|image| image.service == container.service).ok_or(LifecycleError::Container("paperless_container_service_missing"))?; let observed = verify_container(image, &project, binding.port, &result.stdout)?; if observed.id != container.id { return Err(LifecycleError::Container("paperless_container_id_changed")); } }
-    ensure_stage(&owned, &binding)?; let receipt = PaperlessLifecycleReceipt { schema_version: 1, operation: "install", contract_id: paperless_staging::OCI_CONTRACT_ID, project, loopback_port: binding.port, images: verified, containers, authenticated_api_ready: true }; write_receipt(&owned, &receipt)?; Ok(receipt)
+    for container in &containers {
+        ensure_stage(&owned, &binding)?;
+        let result = executor
+            .run(
+                &engine.docker(
+                    "container",
+                    &[
+                        "inspect",
+                        &container.id,
+                        "--format",
+                        CONTAINER_INSPECT_TEMPLATE,
+                    ],
+                ),
+                &root_path,
+            )
+            .await?;
+        ensure_stage(&owned, &binding)?;
+        let image = verified
+            .iter()
+            .find(|image| image.service == container.service)
+            .ok_or(LifecycleError::Container(
+                "paperless_container_service_missing",
+            ))?;
+        let observed = verify_container(image, &project, binding.port, &result.stdout)?;
+        if observed.id != container.id {
+            return Err(LifecycleError::Container("paperless_container_id_changed"));
+        }
+    }
+    ensure_stage(&owned, &binding)?;
+    let receipt = PaperlessLifecycleReceipt {
+        schema_version: 1,
+        operation: "install",
+        contract_id: paperless_staging::OCI_CONTRACT_ID,
+        project,
+        loopback_port: binding.port,
+        images: verified,
+        containers,
+        authenticated_api_ready: true,
+    };
+    write_receipt(&owned, &receipt)?;
+    Ok(receipt)
 }
 
-struct Engine { endpoint: String, platform: String }
-impl Engine { fn prefix(&self) -> Vec<String> { vec!["docker".to_owned(), "--host".to_owned(), self.endpoint.clone()] } fn docker(&self, first: &str, rest: &[&str]) -> Vec<String> { self.prefix().into_iter().chain(std::iter::once(first.to_owned())).chain(rest.iter().map(|part| (*part).to_owned())).collect() } fn compose(&self, project: &str, root: &Path, tail: &[&str]) -> Vec<String> { let env = root.join("paperless.env").display().to_string(); let compose = root.join("compose.yaml").display().to_string(); self.docker("compose", &["--project-name", project, "--env-file", &env, "-f", &compose]).into_iter().chain(tail.iter().map(|part| (*part).to_owned())).collect() } }
-async fn select_local_engine<E: ComposeExecutor>(executor: &mut E, root: &OwnedPaperlessRoot) -> Result<Engine, LifecycleError> {
-    if std::env::var_os("DOCKER_HOST").is_some() { return Err(LifecycleError::Engine("paperless_docker_host_override_rejected")); }
-    ensure_bound(root)?; let context = exact_identifier(&executor.run(&["docker".into(), "context".into(), "show".into()], &root.display).await?.stdout).ok_or(LifecycleError::Engine("paperless_docker_context_invalid"))?; ensure_bound(root)?;
-    let endpoint = executor.run(&["docker".into(), "context".into(), "inspect".into(), context.clone(), "--format".into(), "{{json .Endpoints.docker.Host}}".into()], &root.display).await?.stdout; ensure_bound(root)?;
-    let endpoint: String = serde_json::from_str(endpoint.trim()).map_err(|_| LifecycleError::Engine("paperless_docker_context_endpoint_invalid"))?; if !local_docker_endpoint(&endpoint) { return Err(LifecycleError::Engine("paperless_remote_docker_context_rejected")); }
-    let engine = Engine { endpoint, platform: String::new() }; let raw = executor.run(&engine.docker("version", &["--format", "{{json .Server}}"]), &root.display).await?.stdout; ensure_bound(root)?;
-    let server: DockerServer = serde_json::from_str(raw.trim()).map_err(|_| LifecycleError::Engine("paperless_docker_engine_invalid"))?; if server.os != "linux" || !matches!(server.architecture.as_str(), "amd64" | "arm64") { return Err(LifecycleError::Engine("paperless_docker_engine_platform_rejected")); } Ok(Engine { platform: format!("{}/{}", server.os, server.architecture), ..engine })
+struct Engine {
+    endpoint: String,
+    platform: String,
 }
-
-struct EnvBinding { port: u16, origin: String, env: Zeroizing<Vec<u8>> }
-fn read_binding(root: &OwnedPaperlessRoot) -> Result<EnvBinding, LifecycleError> { ensure_bound(root)?; let env = Zeroizing::new(crate::skills::store::read_regular_file_bounded(&root.root, OsStr::new("paperless.env"), &root.display.join("paperless.env"), ENV_LIMIT).map_err(|_| LifecycleError::UnownedOrMismatch)?); let port = dotenv_port(env.as_slice())?; Ok(EnvBinding { port, origin: format!("http://127.0.0.1:{port}"), env }) }
-fn dotenv_port(env: &[u8]) -> Result<u16, LifecycleError> { let text = std::str::from_utf8(env).map_err(|_| LifecycleError::Credentials)?; let mut port = None; for raw in text.lines() { let line = raw.trim(); if line.is_empty() || line.starts_with('#') { continue; } let (name, value) = line.split_once('=').ok_or(LifecycleError::Credentials)?; if name.trim() == "PAPERLESS_BIND_PORT" { if port.is_some() { return Err(LifecycleError::Credentials); } let value = value.trim(); if !value.bytes().all(|byte| byte.is_ascii_digit()) { return Err(LifecycleError::Credentials); } port = value.parse::<u16>().ok().filter(|port| *port != 0); } } port.ok_or(LifecycleError::Credentials) }
-fn ensure_stage(root: &OwnedPaperlessRoot, expected: &EnvBinding) -> Result<(), LifecycleError> { let observed = read_binding(root)?; if observed.port == expected.port && observed.env.as_slice() == expected.env.as_slice() { Ok(()) } else { Err(LifecycleError::UnownedOrMismatch) } }
-fn validate_credentials_origin(credentials: &Credentials, origin: &str) -> Result<(), LifecycleError> { match credentials.paperless_url.as_deref() { None => Ok(()), Some(value) if value == origin => Ok(()), _ => Err(LifecycleError::Credentials) } }
-fn valid_token(token: Option<&SecretString>) -> Option<&SecretString> { token.filter(|token| !token.expose_secret().is_empty() && token.expose_secret().len() <= 4096) }
-fn configured_backend(home: &Path) -> Result<SecretsBackend, LifecycleError> { crate::config::load_optional_runtime_config_pair_from_path(&home.join("freedom.yaml")).map(|(config, _)| config.map(|config| config.secrets_backend).unwrap_or(SecretsBackend::File)).map_err(|_| LifecycleError::Bootstrap("paperless_bootstrap_config_invalid")) }
-async fn wait_for_readiness<R: ReadinessVerifier>(home: &Path, credentials: &Credentials, readiness: &R, root: &OwnedPaperlessRoot, binding: &EnvBinding) -> Result<(), LifecycleError> { let deadline = tokio::time::Instant::now() + READINESS_DEADLINE; loop { ensure_stage(root, binding)?; if readiness.ready(home, credentials).await { ensure_stage(root, binding)?; return Ok(()); } ensure_stage(root, binding)?; let now = tokio::time::Instant::now(); if now >= deadline { return Err(LifecycleError::Readiness); } tokio::time::sleep_until(std::cmp::min(deadline, now + READINESS_RETRY)).await; } }
-async fn obtain_bootstrap_token(root: &OwnedPaperlessRoot, binding: &EnvBinding) -> Result<SecretString, LifecycleError> { let deadline = tokio::time::Instant::now() + READINESS_DEADLINE; loop { ensure_stage(root, binding)?; let admin = BootstrapAdmin::from_env_bytes(binding.env.as_slice()).map_err(LifecycleError::Bootstrap)?; match paperless_bootstrap::obtain_token(&binding.origin, &admin).await { Ok(token) => { ensure_stage(root, binding)?; return Ok(token); }, Err("paperless_bootstrap_transport" | "paperless_bootstrap_timeout") if tokio::time::Instant::now() < deadline => { ensure_stage(root, binding)?; tokio::time::sleep_until(std::cmp::min(deadline, tokio::time::Instant::now() + READINESS_RETRY)).await; }, Err(error) => return Err(LifecycleError::Bootstrap(error)), } } }
-fn exact_identifier(raw: &str) -> Option<String> { let value = raw.strip_suffix('\n').unwrap_or(raw); (!value.is_empty() && value.len() <= 128 && !value.chars().any(char::is_whitespace)).then(|| value.to_owned()) }
-fn project_name(root: &Path) -> String { let digest = Sha256::digest(root.as_os_str().to_string_lossy().as_bytes()); format!("neoth-paperless-{}", hex::encode(digest)[..12].to_owned()) }
-struct ExpectedImage { service: &'static str, reference: &'static str, repo_digest: &'static str, configs: BTreeMap<String, String> }
-fn expected_images() -> Result<Vec<ExpectedImage>, LifecycleError> { let receipt: AdmissionReceipt = serde_json::from_str(RECEIPT_BYTES).map_err(|_| LifecycleError::Receipt)?; if !receipt.artifact_blob_bytes_verified { return Err(LifecycleError::Receipt); } [("paperless", "webserver", paperless_staging::PAPERLESS_IMAGE), ("valkey", "broker", paperless_staging::VALKEY_IMAGE), ("postgres", "db", paperless_staging::POSTGRES_IMAGE)].into_iter().map(|(name, service, reference)| { let selector = receipt.selectors.iter().find(|selector| selector.name == name && reference.ends_with(&selector.index.digest)).ok_or(LifecycleError::Receipt)?; let configs = selector.platforms.iter().map(|(platform, detail)| (platform.clone(), detail.config.digest.clone())).collect(); Ok(ExpectedImage { service, reference, repo_digest: reference, configs }) }).collect() }
-fn verify_image(expected: &ExpectedImage, target_platform: &str, raw: &str) -> Result<VerifiedImage, LifecycleError> { let actual: DockerImage = serde_json::from_str(raw).map_err(|_| LifecycleError::Image("paperless_image_inspect_invalid"))?; if !actual.repo_digests.iter().any(|digest| digest == expected.repo_digest) { return Err(LifecycleError::Image("paperless_image_repo_digest_mismatch")); } let platform = format!("{}/{}", actual.os, actual.architecture); if platform != target_platform { return Err(LifecycleError::Image("paperless_image_engine_platform_mismatch")); } let config = expected.configs.get(&platform).ok_or(LifecycleError::Image("paperless_image_platform_unadmitted"))?; if actual.id != *config { return Err(LifecycleError::Image("paperless_image_config_id_mismatch")); } Ok(VerifiedImage { service: expected.service, reference: expected.reference, repo_digest: expected.repo_digest.to_owned(), config_id: actual.id, os: actual.os, architecture: actual.architecture }) }
-fn verify_container(image: &VerifiedImage, project: &str, port: u16, raw: &str) -> Result<VerifiedContainer, LifecycleError> { let actual: DockerContainer = serde_json::from_str(raw).map_err(|_| LifecycleError::Container("paperless_container_inspect_invalid"))?; if exact_identifier(&actual.id).as_deref() != Some(actual.id.as_str()) || !actual.state.running || actual.image != image.config_id { return Err(LifecycleError::Container("paperless_container_image_mismatch")); } if actual.config.labels.get("com.docker.compose.project") != Some(&project.to_owned()) || actual.config.labels.get("com.docker.compose.service") != Some(&image.service.to_owned()) { return Err(LifecycleError::Container("paperless_container_compose_labels_mismatch")); } if image.service == "webserver" && !actual.network.ports.get("8000/tcp").and_then(|binding| binding.as_ref()).is_some_and(|bindings| bindings.len() == 1 && bindings[0].host_ip == "127.0.0.1" && bindings[0].host_port == port.to_string()) { return Err(LifecycleError::Container("paperless_loopback_port_mismatch")); } Ok(VerifiedContainer { service: image.service, id: actual.id, image_id: actual.image }) }
-fn local_docker_endpoint(endpoint: &str) -> bool { endpoint.starts_with("npipe:////./pipe/") || endpoint.starts_with("unix:///") && !endpoint.contains("..") && !endpoint.contains('\\') }
-#[cfg(windows)] struct WindowsLaunchGuard { _root: ApprovedImportRoot, _state: ApprovedImportRoot, _data: ApprovedImportRoot, _media: ApprovedImportRoot, _valkey: ApprovedImportRoot, _postgres: ApprovedImportRoot, _compose: ApprovedImportFile, _env: ApprovedImportFile }
-#[cfg(windows)] fn acquire_launch_guard(root: &OwnedPaperlessRoot, binding: &EnvBinding) -> Result<WindowsLaunchGuard, LifecycleError> {
+impl Engine {
+    fn prefix(&self) -> Vec<String> {
+        vec![
+            "docker".to_owned(),
+            "--host".to_owned(),
+            self.endpoint.clone(),
+        ]
+    }
+    fn docker(&self, first: &str, rest: &[&str]) -> Vec<String> {
+        self.prefix()
+            .into_iter()
+            .chain(std::iter::once(first.to_owned()))
+            .chain(rest.iter().map(|part| (*part).to_owned()))
+            .collect()
+    }
+    fn compose(&self, project: &str, root: &Path, tail: &[&str]) -> Vec<String> {
+        let env = root.join("paperless.env").display().to_string();
+        let compose = root.join("compose.yaml").display().to_string();
+        self.docker(
+            "compose",
+            &[
+                "--project-name",
+                project,
+                "--env-file",
+                &env,
+                "-f",
+                &compose,
+            ],
+        )
+        .into_iter()
+        .chain(tail.iter().map(|part| (*part).to_owned()))
+        .collect()
+    }
+}
+async fn select_local_engine<E: ComposeExecutor>(
+    executor: &mut E,
+    root: &OwnedPaperlessRoot,
+) -> Result<Engine, LifecycleError> {
+    if std::env::var_os("DOCKER_HOST").is_some() {
+        return Err(LifecycleError::Engine(
+            "paperless_docker_host_override_rejected",
+        ));
+    }
     ensure_bound(root)?;
-    for name in ["state", "data", "media", "valkey", "postgres"] { let parent = if name == "state" { &root.root } else { let state = crate::skills::store::open_or_create_private_child_dir(&root.root, OsStr::new("state"), &root.display.join("state")).map_err(|_| LifecycleError::LaunchBinding)?; state.create_dir(name).or_else(|error| if error.kind() == std::io::ErrorKind::AlreadyExists { Ok(()) } else { Err(error) }).map_err(|_| LifecycleError::LaunchBinding)?; continue; }; parent.create_dir(name).or_else(|error| if error.kind() == std::io::ErrorKind::AlreadyExists { Ok(()) } else { Err(error) }).map_err(|_| LifecycleError::LaunchBinding)?; }
-    let root_guard = approve_import_root(&root.display).map_err(|_| LifecycleError::LaunchBinding)?; let compose = hold_approved_import_file(&root_guard, Path::new("compose.yaml"), ENV_LIMIT).map_err(|_| LifecycleError::LaunchBinding)?; let env = hold_approved_import_file(&root_guard, Path::new("paperless.env"), ENV_LIMIT).map_err(|_| LifecycleError::LaunchBinding)?;
-    if compose.bytes() != paperless_staging::expected_compose_bytes() || env.bytes() != binding.env.as_slice() { return Err(LifecycleError::LaunchBinding); }
-    let state_path = root.display.join("state"); let state = approve_import_root(&state_path).map_err(|_| LifecycleError::LaunchBinding)?; let data = approve_import_root(&state_path.join("data")).map_err(|_| LifecycleError::LaunchBinding)?; let media = approve_import_root(&state_path.join("media")).map_err(|_| LifecycleError::LaunchBinding)?; let valkey = approve_import_root(&state_path.join("valkey")).map_err(|_| LifecycleError::LaunchBinding)?; let postgres = approve_import_root(&state_path.join("postgres")).map_err(|_| LifecycleError::LaunchBinding)?; ensure_stage(root, binding)?; Ok(WindowsLaunchGuard { _root: root_guard, _state: state, _data: data, _media: media, _valkey: valkey, _postgres: postgres, _compose: compose, _env: env })
+    let context = exact_identifier(
+        &executor
+            .run(
+                &["docker".into(), "context".into(), "show".into()],
+                &root.display,
+            )
+            .await?
+            .stdout,
+    )
+    .ok_or(LifecycleError::Engine("paperless_docker_context_invalid"))?;
+    ensure_bound(root)?;
+    let endpoint = executor
+        .run(
+            &[
+                "docker".into(),
+                "context".into(),
+                "inspect".into(),
+                context.clone(),
+                "--format".into(),
+                "{{json .Endpoints.docker.Host}}".into(),
+            ],
+            &root.display,
+        )
+        .await?
+        .stdout;
+    ensure_bound(root)?;
+    let endpoint: String = serde_json::from_str(endpoint.trim())
+        .map_err(|_| LifecycleError::Engine("paperless_docker_context_endpoint_invalid"))?;
+    if !local_docker_endpoint(&endpoint) {
+        return Err(LifecycleError::Engine(
+            "paperless_remote_docker_context_rejected",
+        ));
+    }
+    let engine = Engine {
+        endpoint,
+        platform: String::new(),
+    };
+    let raw = executor
+        .run(
+            &engine.docker("version", &["--format", "{{json .Server}}"]),
+            &root.display,
+        )
+        .await?
+        .stdout;
+    ensure_bound(root)?;
+    let server: DockerServer = serde_json::from_str(raw.trim())
+        .map_err(|_| LifecycleError::Engine("paperless_docker_engine_invalid"))?;
+    if server.os != "linux" || !matches!(server.architecture.as_str(), "amd64" | "arm64") {
+        return Err(LifecycleError::Engine(
+            "paperless_docker_engine_platform_rejected",
+        ));
+    }
+    Ok(Engine {
+        platform: format!("{}/{}", server.os, server.architecture),
+        ..engine
+    })
 }
-#[cfg(not(windows))] fn acquire_launch_guard(_root: &OwnedPaperlessRoot, _binding: &EnvBinding) -> Result<(), LifecycleError> { Err(LifecycleError::LaunchBinding) }
-fn ensure_bound(root: &OwnedPaperlessRoot) -> Result<(), LifecycleError> { if paperless_staging::still_exactly_owned(root).map_err(|_| LifecycleError::Io)? { Ok(()) } else { Err(LifecycleError::UnownedOrMismatch) } }
-fn write_receipt(root: &OwnedPaperlessRoot, receipt: &PaperlessLifecycleReceipt) -> Result<(), LifecycleError> { ensure_bound(root)?; let state_display = root.display.join(RECEIPT_DIR); let state = crate::skills::store::open_real_child_dir(&root.root, OsStr::new(RECEIPT_DIR), &state_display).map_err(|_| LifecycleError::Io)?; let bytes = serde_json::to_vec(receipt).map_err(|_| LifecycleError::Io)?; crate::skills::store::atomic_write_private_child(&state, OsStr::new(RECEIPT_NAME), &state_display.join(RECEIPT_NAME), &bytes).map_err(|_| LifecycleError::Io)?; ensure_bound(root) }
-pub fn lifecycle_receipt_path(home: &Path) -> PathBuf { crate::config::InstancePaths::for_home(home).paperless_root.join(RECEIPT_DIR).join(RECEIPT_NAME) }
 
-#[cfg(test)] mod tests {
+struct EnvBinding {
+    port: u16,
+    origin: String,
+    env: Zeroizing<Vec<u8>>,
+}
+fn read_binding(root: &OwnedPaperlessRoot) -> Result<EnvBinding, LifecycleError> {
+    ensure_bound(root)?;
+    let env = Zeroizing::new(
+        crate::skills::store::read_regular_file_bounded(
+            &root.root,
+            OsStr::new("paperless.env"),
+            &root.display.join("paperless.env"),
+            ENV_LIMIT,
+        )
+        .map_err(|_| LifecycleError::UnownedOrMismatch)?,
+    );
+    let port = dotenv_port(env.as_slice())?;
+    Ok(EnvBinding {
+        port,
+        origin: format!("http://127.0.0.1:{port}"),
+        env,
+    })
+}
+fn dotenv_port(env: &[u8]) -> Result<u16, LifecycleError> {
+    let text = std::str::from_utf8(env).map_err(|_| LifecycleError::Credentials)?;
+    let mut port = None;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (name, value) = line.split_once('=').ok_or(LifecycleError::Credentials)?;
+        if name.trim() == "PAPERLESS_BIND_PORT" {
+            if port.is_some() {
+                return Err(LifecycleError::Credentials);
+            }
+            let value = value.trim();
+            if !value.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(LifecycleError::Credentials);
+            }
+            port = value.parse::<u16>().ok().filter(|port| *port != 0);
+        }
+    }
+    port.ok_or(LifecycleError::Credentials)
+}
+fn ensure_stage(root: &OwnedPaperlessRoot, expected: &EnvBinding) -> Result<(), LifecycleError> {
+    let observed = read_binding(root)?;
+    if observed.port == expected.port && observed.env.as_slice() == expected.env.as_slice() {
+        Ok(())
+    } else {
+        Err(LifecycleError::UnownedOrMismatch)
+    }
+}
+fn validate_credentials_origin(
+    credentials: &Credentials,
+    origin: &str,
+) -> Result<(), LifecycleError> {
+    match credentials.paperless_url.as_deref() {
+        None => Ok(()),
+        Some(value) if value == origin => Ok(()),
+        _ => Err(LifecycleError::Credentials),
+    }
+}
+fn valid_token(token: Option<&SecretString>) -> Option<&SecretString> {
+    token.filter(|token| !token.expose_secret().is_empty() && token.expose_secret().len() <= 4096)
+}
+fn configured_backend(home: &Path) -> Result<SecretsBackend, LifecycleError> {
+    crate::config::load_optional_runtime_config_pair_from_path(&home.join("freedom.yaml"))
+        .map(|(config, _)| {
+            config
+                .map(|config| config.secrets_backend)
+                .unwrap_or(SecretsBackend::File)
+        })
+        .map_err(|_| LifecycleError::Bootstrap("paperless_bootstrap_config_invalid"))
+}
+async fn wait_for_readiness<R: ReadinessVerifier>(
+    home: &Path,
+    credentials: &Credentials,
+    readiness: &R,
+    root: &OwnedPaperlessRoot,
+    binding: &EnvBinding,
+) -> Result<(), LifecycleError> {
+    let deadline = tokio::time::Instant::now() + READINESS_DEADLINE;
+    loop {
+        ensure_stage(root, binding)?;
+        if readiness.ready(home, credentials).await {
+            ensure_stage(root, binding)?;
+            return Ok(());
+        }
+        ensure_stage(root, binding)?;
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Err(LifecycleError::Readiness);
+        }
+        tokio::time::sleep_until(std::cmp::min(deadline, now + READINESS_RETRY)).await;
+    }
+}
+async fn obtain_bootstrap_token(
+    root: &OwnedPaperlessRoot,
+    binding: &EnvBinding,
+) -> Result<SecretString, LifecycleError> {
+    let deadline = tokio::time::Instant::now() + READINESS_DEADLINE;
+    loop {
+        ensure_stage(root, binding)?;
+        let admin = BootstrapAdmin::from_env_bytes(binding.env.as_slice())
+            .map_err(LifecycleError::Bootstrap)?;
+        match paperless_bootstrap::obtain_token(&binding.origin, &admin).await {
+            Ok(token) => {
+                ensure_stage(root, binding)?;
+                return Ok(token);
+            }
+            Err("paperless_bootstrap_transport" | "paperless_bootstrap_timeout")
+                if tokio::time::Instant::now() < deadline =>
+            {
+                ensure_stage(root, binding)?;
+                tokio::time::sleep_until(std::cmp::min(
+                    deadline,
+                    tokio::time::Instant::now() + READINESS_RETRY,
+                ))
+                .await;
+            }
+            Err(error) => return Err(LifecycleError::Bootstrap(error)),
+        }
+    }
+}
+fn exact_identifier(raw: &str) -> Option<String> {
+    let value = raw.strip_suffix('\n').unwrap_or(raw);
+    (!value.is_empty() && value.len() <= 128 && !value.chars().any(char::is_whitespace))
+        .then(|| value.to_owned())
+}
+fn project_name(root: &Path) -> String {
+    let digest = Sha256::digest(root.as_os_str().to_string_lossy().as_bytes());
+    format!("neoth-paperless-{}", hex::encode(digest)[..12].to_owned())
+}
+struct ExpectedImage {
+    service: &'static str,
+    reference: &'static str,
+    repo_digest: &'static str,
+    configs: BTreeMap<String, String>,
+}
+fn expected_images() -> Result<Vec<ExpectedImage>, LifecycleError> {
+    let receipt: AdmissionReceipt =
+        serde_json::from_str(RECEIPT_BYTES).map_err(|_| LifecycleError::Receipt)?;
+    if !receipt.artifact_blob_bytes_verified {
+        return Err(LifecycleError::Receipt);
+    }
+    [
+        ("paperless", "webserver", paperless_staging::PAPERLESS_IMAGE),
+        ("valkey", "broker", paperless_staging::VALKEY_IMAGE),
+        ("postgres", "db", paperless_staging::POSTGRES_IMAGE),
+    ]
+    .into_iter()
+    .map(|(name, service, reference)| {
+        let selector = receipt
+            .selectors
+            .iter()
+            .find(|selector| selector.name == name && reference.ends_with(&selector.index.digest))
+            .ok_or(LifecycleError::Receipt)?;
+        let configs = selector
+            .platforms
+            .iter()
+            .map(|(platform, detail)| (platform.clone(), detail.config.digest.clone()))
+            .collect();
+        Ok(ExpectedImage {
+            service,
+            reference,
+            repo_digest: reference,
+            configs,
+        })
+    })
+    .collect()
+}
+fn verify_image(
+    expected: &ExpectedImage,
+    target_platform: &str,
+    raw: &str,
+) -> Result<VerifiedImage, LifecycleError> {
+    let actual: DockerImage = serde_json::from_str(raw)
+        .map_err(|_| LifecycleError::Image("paperless_image_inspect_invalid"))?;
+    if !actual
+        .repo_digests
+        .iter()
+        .any(|digest| digest == expected.repo_digest)
+    {
+        return Err(LifecycleError::Image(
+            "paperless_image_repo_digest_mismatch",
+        ));
+    }
+    let platform = format!("{}/{}", actual.os, actual.architecture);
+    if platform != target_platform {
+        return Err(LifecycleError::Image(
+            "paperless_image_engine_platform_mismatch",
+        ));
+    }
+    let config = expected
+        .configs
+        .get(&platform)
+        .ok_or(LifecycleError::Image("paperless_image_platform_unadmitted"))?;
+    if actual.id != *config {
+        return Err(LifecycleError::Image("paperless_image_config_id_mismatch"));
+    }
+    Ok(VerifiedImage {
+        service: expected.service,
+        reference: expected.reference,
+        repo_digest: expected.repo_digest.to_owned(),
+        config_id: actual.id,
+        os: actual.os,
+        architecture: actual.architecture,
+    })
+}
+fn verify_container(
+    image: &VerifiedImage,
+    project: &str,
+    port: u16,
+    raw: &str,
+) -> Result<VerifiedContainer, LifecycleError> {
+    let actual: DockerContainer = serde_json::from_str(raw)
+        .map_err(|_| LifecycleError::Container("paperless_container_inspect_invalid"))?;
+    if exact_identifier(&actual.id).as_deref() != Some(actual.id.as_str())
+        || !actual.state.running
+        || actual.image != image.config_id
+    {
+        return Err(LifecycleError::Container(
+            "paperless_container_image_mismatch",
+        ));
+    }
+    if actual.config.labels.get("com.docker.compose.project") != Some(&project.to_owned())
+        || actual.config.labels.get("com.docker.compose.service") != Some(&image.service.to_owned())
+    {
+        return Err(LifecycleError::Container(
+            "paperless_container_compose_labels_mismatch",
+        ));
+    }
+    if image.service == "webserver"
+        && !actual
+            .network
+            .ports
+            .get("8000/tcp")
+            .and_then(|binding| binding.as_ref())
+            .is_some_and(|bindings| {
+                bindings.len() == 1
+                    && bindings[0].host_ip == "127.0.0.1"
+                    && bindings[0].host_port == port.to_string()
+            })
+    {
+        return Err(LifecycleError::Container(
+            "paperless_loopback_port_mismatch",
+        ));
+    }
+    Ok(VerifiedContainer {
+        service: image.service,
+        id: actual.id,
+        image_id: actual.image,
+    })
+}
+fn local_docker_endpoint(endpoint: &str) -> bool {
+    endpoint.starts_with("npipe:////./pipe/")
+        || endpoint.starts_with("unix:///") && !endpoint.contains("..") && !endpoint.contains('\\')
+}
+#[cfg(windows)]
+struct WindowsLaunchGuard {
+    _root: ApprovedImportRoot,
+    _state: ApprovedImportRoot,
+    _data: ApprovedImportRoot,
+    _media: ApprovedImportRoot,
+    _valkey: ApprovedImportRoot,
+    _postgres: ApprovedImportRoot,
+    _compose: ApprovedImportFile,
+    _env: ApprovedImportFile,
+}
+#[cfg(windows)]
+fn acquire_launch_guard(
+    root: &OwnedPaperlessRoot,
+    binding: &EnvBinding,
+) -> Result<WindowsLaunchGuard, LifecycleError> {
+    ensure_bound(root)?;
+    for name in ["state", "data", "media", "valkey", "postgres"] {
+        let parent = if name == "state" {
+            &root.root
+        } else {
+            let state = crate::skills::store::open_or_create_private_child_dir(
+                &root.root,
+                OsStr::new("state"),
+                &root.display.join("state"),
+            )
+            .map_err(|_| LifecycleError::LaunchBinding)?;
+            state
+                .create_dir(name)
+                .or_else(|error| {
+                    if error.kind() == std::io::ErrorKind::AlreadyExists {
+                        Ok(())
+                    } else {
+                        Err(error)
+                    }
+                })
+                .map_err(|_| LifecycleError::LaunchBinding)?;
+            continue;
+        };
+        parent
+            .create_dir(name)
+            .or_else(|error| {
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            })
+            .map_err(|_| LifecycleError::LaunchBinding)?;
+    }
+    let root_guard =
+        approve_import_root(&root.display).map_err(|_| LifecycleError::LaunchBinding)?;
+    let compose = hold_approved_import_file(&root_guard, Path::new("compose.yaml"), ENV_LIMIT)
+        .map_err(|_| LifecycleError::LaunchBinding)?;
+    let env = hold_approved_import_file(&root_guard, Path::new("paperless.env"), ENV_LIMIT)
+        .map_err(|_| LifecycleError::LaunchBinding)?;
+    if compose.bytes() != paperless_staging::expected_compose_bytes()
+        || env.bytes() != binding.env.as_slice()
+    {
+        return Err(LifecycleError::LaunchBinding);
+    }
+    let state_path = root.display.join("state");
+    let state = approve_import_root(&state_path).map_err(|_| LifecycleError::LaunchBinding)?;
+    let data =
+        approve_import_root(&state_path.join("data")).map_err(|_| LifecycleError::LaunchBinding)?;
+    let media = approve_import_root(&state_path.join("media"))
+        .map_err(|_| LifecycleError::LaunchBinding)?;
+    let valkey = approve_import_root(&state_path.join("valkey"))
+        .map_err(|_| LifecycleError::LaunchBinding)?;
+    let postgres = approve_import_root(&state_path.join("postgres"))
+        .map_err(|_| LifecycleError::LaunchBinding)?;
+    ensure_stage(root, binding)?;
+    Ok(WindowsLaunchGuard {
+        _root: root_guard,
+        _state: state,
+        _data: data,
+        _media: media,
+        _valkey: valkey,
+        _postgres: postgres,
+        _compose: compose,
+        _env: env,
+    })
+}
+#[cfg(not(windows))]
+fn acquire_launch_guard(
+    _root: &OwnedPaperlessRoot,
+    _binding: &EnvBinding,
+) -> Result<(), LifecycleError> {
+    Err(LifecycleError::LaunchBinding)
+}
+fn ensure_bound(root: &OwnedPaperlessRoot) -> Result<(), LifecycleError> {
+    if paperless_staging::still_exactly_owned(root).map_err(|_| LifecycleError::Io)? {
+        Ok(())
+    } else {
+        Err(LifecycleError::UnownedOrMismatch)
+    }
+}
+fn write_receipt(
+    root: &OwnedPaperlessRoot,
+    receipt: &PaperlessLifecycleReceipt,
+) -> Result<(), LifecycleError> {
+    ensure_bound(root)?;
+    let state_display = root.display.join(RECEIPT_DIR);
+    let state = crate::skills::store::open_real_child_dir(
+        &root.root,
+        OsStr::new(RECEIPT_DIR),
+        &state_display,
+    )
+    .map_err(|_| LifecycleError::Io)?;
+    let bytes = serde_json::to_vec(receipt).map_err(|_| LifecycleError::Io)?;
+    crate::skills::store::atomic_write_private_child(
+        &state,
+        OsStr::new(RECEIPT_NAME),
+        &state_display.join(RECEIPT_NAME),
+        &bytes,
+    )
+    .map_err(|_| LifecycleError::Io)?;
+    ensure_bound(root)
+}
+pub fn lifecycle_receipt_path(home: &Path) -> PathBuf {
+    crate::config::InstancePaths::for_home(home)
+        .paperless_root
+        .join(RECEIPT_DIR)
+        .join(RECEIPT_NAME)
+}
+
+#[cfg(test)]
+mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    #[test] fn parses_only_a_single_literal_env_port() { assert_eq!(dotenv_port(b"PAPERLESS_BIND_PORT=18000\n").unwrap(), 18000); assert!(dotenv_port(b"PAPERLESS_BIND_PORT=18000\nPAPERLESS_BIND_PORT=18001\n").is_err()); assert!(dotenv_port(b"PAPERLESS_BIND_PORT=${PORT}\n").is_err()); }
-    #[test] fn exact_identifier_rejects_multiple_or_spaced_container_ids() { assert_eq!(exact_identifier("container-id\n").as_deref(), Some("container-id")); assert!(exact_identifier("one\ntwo\n").is_none()); assert!(exact_identifier("one two").is_none()); }
-    #[test] fn compose_never_pulls_and_uses_pinned_engine_endpoint() { let engine = Engine { endpoint: "npipe:////./pipe/docker_engine".into(), platform: "linux/amd64".into() }; let command = engine.compose("neoth-paperless-test", Path::new("/tmp/owned-paperless"), &["up", "-d", "--no-build", "--pull", "never"]); assert!(command.windows(2).any(|pair| pair[0] == "--host" && pair[1] == "npipe:////./pipe/docker_engine")); assert!(command.windows(2).any(|pair| pair[0] == "--pull" && pair[1] == "never")); }
-    #[test] fn receipt_matches_all_pinned_indexes_and_contains_config_proof() { let images = expected_images().unwrap(); assert_eq!(images.len(), 3); assert!(images.iter().all(|image| !image.configs.is_empty())); }
-    #[test] fn container_validation_rejects_stopped_and_mixed_bindings() { let image = VerifiedImage { service: "webserver", reference: "x", repo_digest: "x".into(), config_id: "sha256:config".into(), os: "linux".into(), architecture: "amd64".into() }; let stopped = r#"{"Id":"id","Image":"sha256:config","State":{"Running":false},"Config":{"Labels":{"com.docker.compose.project":"project","com.docker.compose.service":"webserver"}},"NetworkSettings":{"Ports":{"8000/tcp":[{"HostIp":"127.0.0.1","HostPort":"18000"}]}}}"#; let mixed = r#"{"Id":"id","Image":"sha256:config","State":{"Running":true},"Config":{"Labels":{"com.docker.compose.project":"project","com.docker.compose.service":"webserver"}},"NetworkSettings":{"Ports":{"8000/tcp":[{"HostIp":"127.0.0.1","HostPort":"18000"},{"HostIp":"0.0.0.0","HostPort":"18000"}]}}}"#; assert!(verify_container(&image, "project", 18000, stopped).is_err()); assert!(verify_container(&image, "project", 18000, mixed).is_err()); }
-    #[test] fn image_verification_uses_engine_platform_not_windows_host() { let image = expected_images().unwrap().into_iter().next().unwrap(); let config = image.configs.get("linux/amd64").unwrap(); let raw = format!(r#"{{"Id":"{config}","RepoDigests":["{}"],"Os":"linux","Architecture":"amd64"}}"#, image.repo_digest); assert!(verify_image(&image, "linux/amd64", &raw).is_ok()); assert!(matches!(verify_image(&image, "linux/arm64", &raw), Err(LifecycleError::Image("paperless_image_engine_platform_mismatch")))); }
-    #[test] fn docker_command_removes_only_compose_interpolation_overrides() { let command = configured_docker_command("docker", &["compose".into()], Path::new("C:/paperless")); let removed: std::collections::BTreeSet<_> = command.as_std().get_envs().filter_map(|(name, value)| value.is_none().then(|| name.to_string_lossy().into_owned())).collect(); for name in ["DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_DEFAULT_PLATFORM"].into_iter().chain(PAPERLESS_INTERPOLATION_ENV) { assert!(removed.contains(name)); } assert!(!removed.contains("PATH")); }
+    #[test]
+    fn parses_only_a_single_literal_env_port() {
+        assert_eq!(dotenv_port(b"PAPERLESS_BIND_PORT=18000\n").unwrap(), 18000);
+        assert!(dotenv_port(b"PAPERLESS_BIND_PORT=18000\nPAPERLESS_BIND_PORT=18001\n").is_err());
+        assert!(dotenv_port(b"PAPERLESS_BIND_PORT=${PORT}\n").is_err());
+    }
+    #[test]
+    fn exact_identifier_rejects_multiple_or_spaced_container_ids() {
+        assert_eq!(
+            exact_identifier("container-id\n").as_deref(),
+            Some("container-id")
+        );
+        assert!(exact_identifier("one\ntwo\n").is_none());
+        assert!(exact_identifier("one two").is_none());
+    }
+    #[test]
+    fn compose_never_pulls_and_uses_pinned_engine_endpoint() {
+        let engine = Engine {
+            endpoint: "npipe:////./pipe/docker_engine".into(),
+            platform: "linux/amd64".into(),
+        };
+        let command = engine.compose(
+            "neoth-paperless-test",
+            Path::new("/tmp/owned-paperless"),
+            &["up", "-d", "--no-build", "--pull", "never"],
+        );
+        assert!(
+            command
+                .windows(2)
+                .any(|pair| pair[0] == "--host" && pair[1] == "npipe:////./pipe/docker_engine")
+        );
+        assert!(
+            command
+                .windows(2)
+                .any(|pair| pair[0] == "--pull" && pair[1] == "never")
+        );
+    }
+    #[test]
+    fn receipt_matches_all_pinned_indexes_and_contains_config_proof() {
+        let images = expected_images().unwrap();
+        assert_eq!(images.len(), 3);
+        assert!(images.iter().all(|image| !image.configs.is_empty()));
+    }
+    #[test]
+    fn container_validation_rejects_stopped_and_mixed_bindings() {
+        let image = VerifiedImage {
+            service: "webserver",
+            reference: "x",
+            repo_digest: "x".into(),
+            config_id: "sha256:config".into(),
+            os: "linux".into(),
+            architecture: "amd64".into(),
+        };
+        let stopped = r#"{"Id":"id","Image":"sha256:config","State":{"Running":false},"Config":{"Labels":{"com.docker.compose.project":"project","com.docker.compose.service":"webserver"}},"NetworkSettings":{"Ports":{"8000/tcp":[{"HostIp":"127.0.0.1","HostPort":"18000"}]}}}"#;
+        let mixed = r#"{"Id":"id","Image":"sha256:config","State":{"Running":true},"Config":{"Labels":{"com.docker.compose.project":"project","com.docker.compose.service":"webserver"}},"NetworkSettings":{"Ports":{"8000/tcp":[{"HostIp":"127.0.0.1","HostPort":"18000"},{"HostIp":"0.0.0.0","HostPort":"18000"}]}}}"#;
+        assert!(verify_container(&image, "project", 18000, stopped).is_err());
+        assert!(verify_container(&image, "project", 18000, mixed).is_err());
+    }
+    #[test]
+    fn image_verification_uses_engine_platform_not_windows_host() {
+        let image = expected_images().unwrap().into_iter().next().unwrap();
+        let config = image.configs.get("linux/amd64").unwrap();
+        let raw = format!(
+            r#"{{"Id":"{config}","RepoDigests":["{}"],"Os":"linux","Architecture":"amd64"}}"#,
+            image.repo_digest
+        );
+        assert!(verify_image(&image, "linux/amd64", &raw).is_ok());
+        assert!(matches!(
+            verify_image(&image, "linux/arm64", &raw),
+            Err(LifecycleError::Image(
+                "paperless_image_engine_platform_mismatch"
+            ))
+        ));
+    }
+    #[test]
+    fn docker_command_removes_only_compose_interpolation_overrides() {
+        let command =
+            configured_docker_command("docker", &["compose".into()], Path::new("C:/paperless"));
+        let removed: std::collections::BTreeSet<_> = command
+            .as_std()
+            .get_envs()
+            .filter_map(|(name, value)| {
+                value.is_none().then(|| name.to_string_lossy().into_owned())
+            })
+            .collect();
+        for name in ["DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_DEFAULT_PLATFORM"]
+            .into_iter()
+            .chain(PAPERLESS_INTERPOLATION_ENV)
+        {
+            assert!(removed.contains(name));
+        }
+        assert!(!removed.contains("PATH"));
+    }
 
-    #[derive(Default)] struct FakeExecutor { commands: Vec<Vec<String>>, remote: bool, container_inspects: Option<std::sync::Arc<AtomicUsize>> }
-    #[async_trait] impl ComposeExecutor for FakeExecutor {
-        async fn run(&mut self, argv: &[String], cwd: &Path) -> Result<CommandOutput, LifecycleError> {
+    #[derive(Default)]
+    struct FakeExecutor {
+        commands: Vec<Vec<String>>,
+        remote: bool,
+        container_inspects: Option<std::sync::Arc<AtomicUsize>>,
+    }
+    #[async_trait]
+    impl ComposeExecutor for FakeExecutor {
+        async fn run(
+            &mut self,
+            argv: &[String],
+            cwd: &Path,
+        ) -> Result<CommandOutput, LifecycleError> {
             self.commands.push(argv.to_vec());
-            if argv.windows(2).any(|pair| pair[0] == "context" && pair[1] == "show") { return Ok(CommandOutput { stdout: "desktop-linux\n".into() }); }
-            if argv.windows(2).any(|pair| pair[0] == "context" && pair[1] == "inspect") { return Ok(CommandOutput { stdout: if self.remote { "\"tcp://remote.example:2376\"".into() } else { "\"npipe:////./pipe/docker_engine\"".into() } }); }
-            if argv.iter().any(|part| part == "version") { return Ok(CommandOutput { stdout: r#"{"Os":"linux","Arch":"amd64"}"#.into() }); }
-            if argv.iter().any(|part| part == "image") { let reference = argv.iter().skip_while(|part| *part != "inspect").nth(1).ok_or(LifecycleError::Command("fake_image"))?; let image = expected_images()?.into_iter().find(|image| image.reference == reference).ok_or(LifecycleError::Receipt)?; let config = image.configs.get("linux/amd64").ok_or(LifecycleError::Receipt)?; return Ok(CommandOutput { stdout: format!(r#"{{"Id":"{config}","RepoDigests":["{}"],"Os":"linux","Architecture":"amd64"}}"#, image.repo_digest) }); }
-            if argv.iter().any(|part| part == "ps") { let service = argv.last().ok_or(LifecycleError::Command("fake_ps"))?; return Ok(CommandOutput { stdout: format!("{service}-container\n") }); }
-            if argv.iter().any(|part| part == "container") { if let Some(inspects) = &self.container_inspects { inspects.fetch_add(1, Ordering::SeqCst); } let id = argv.iter().skip_while(|part| *part != "inspect").nth(1).ok_or(LifecycleError::Command("fake_container"))?; let service = id.strip_suffix("-container").ok_or(LifecycleError::Container("fake_container"))?; let image = expected_images()?.into_iter().find(|image| image.service == service).ok_or(LifecycleError::Receipt)?; let config = image.configs.get("linux/amd64").ok_or(LifecycleError::Receipt)?; let port = dotenv_port(&std::fs::read(cwd.join("paperless.env")).map_err(|_| LifecycleError::Io)?)?; let ports = if service == "webserver" { format!(r#"{{"8000/tcp":[{{"HostIp":"127.0.0.1","HostPort":"{port}"}}]}}"#) } else { "{}".into() }; return Ok(CommandOutput { stdout: format!(r#"{{"Id":"{id}","Image":"{config}","State":{{"Running":true}},"Config":{{"Labels":{{"com.docker.compose.project":"{}","com.docker.compose.service":"{service}"}}}},"NetworkSettings":{{"Ports":{ports}}}}}"#, project_name(cwd)) }); }
-            Ok(CommandOutput { stdout: String::new() })
+            if argv
+                .windows(2)
+                .any(|pair| pair[0] == "context" && pair[1] == "show")
+            {
+                return Ok(CommandOutput {
+                    stdout: "desktop-linux\n".into(),
+                });
+            }
+            if argv
+                .windows(2)
+                .any(|pair| pair[0] == "context" && pair[1] == "inspect")
+            {
+                return Ok(CommandOutput {
+                    stdout: if self.remote {
+                        "\"tcp://remote.example:2376\"".into()
+                    } else {
+                        "\"npipe:////./pipe/docker_engine\"".into()
+                    },
+                });
+            }
+            if argv.iter().any(|part| part == "version") {
+                return Ok(CommandOutput {
+                    stdout: r#"{"Os":"linux","Arch":"amd64"}"#.into(),
+                });
+            }
+            if argv.iter().any(|part| part == "image") {
+                let reference = argv
+                    .iter()
+                    .skip_while(|part| *part != "inspect")
+                    .nth(1)
+                    .ok_or(LifecycleError::Command("fake_image"))?;
+                let image = expected_images()?
+                    .into_iter()
+                    .find(|image| image.reference == reference)
+                    .ok_or(LifecycleError::Receipt)?;
+                let config = image
+                    .configs
+                    .get("linux/amd64")
+                    .ok_or(LifecycleError::Receipt)?;
+                return Ok(CommandOutput {
+                    stdout: format!(
+                        r#"{{"Id":"{config}","RepoDigests":["{}"],"Os":"linux","Architecture":"amd64"}}"#,
+                        image.repo_digest
+                    ),
+                });
+            }
+            if argv.iter().any(|part| part == "ps") {
+                let service = argv.last().ok_or(LifecycleError::Command("fake_ps"))?;
+                return Ok(CommandOutput {
+                    stdout: format!("{service}-container\n"),
+                });
+            }
+            if argv.iter().any(|part| part == "container") {
+                if let Some(inspects) = &self.container_inspects {
+                    inspects.fetch_add(1, Ordering::SeqCst);
+                }
+                let id = argv
+                    .iter()
+                    .skip_while(|part| *part != "inspect")
+                    .nth(1)
+                    .ok_or(LifecycleError::Command("fake_container"))?;
+                let service = id
+                    .strip_suffix("-container")
+                    .ok_or(LifecycleError::Container("fake_container"))?;
+                let image = expected_images()?
+                    .into_iter()
+                    .find(|image| image.service == service)
+                    .ok_or(LifecycleError::Receipt)?;
+                let config = image
+                    .configs
+                    .get("linux/amd64")
+                    .ok_or(LifecycleError::Receipt)?;
+                let port = dotenv_port(
+                    &std::fs::read(cwd.join("paperless.env")).map_err(|_| LifecycleError::Io)?,
+                )?;
+                let ports = if service == "webserver" {
+                    format!(r#"{{"8000/tcp":[{{"HostIp":"127.0.0.1","HostPort":"{port}"}}]}}"#)
+                } else {
+                    "{}".into()
+                };
+                return Ok(CommandOutput {
+                    stdout: format!(
+                        r#"{{"Id":"{id}","Image":"{config}","State":{{"Running":true}},"Config":{{"Labels":{{"com.docker.compose.project":"{}","com.docker.compose.service":"{service}"}}}},"NetworkSettings":{{"Ports":{ports}}}}}"#,
+                        project_name(cwd)
+                    ),
+                });
+            }
+            Ok(CommandOutput {
+                stdout: String::new(),
+            })
         }
     }
     struct EventuallyReady(AtomicUsize);
-    #[async_trait] impl ReadinessVerifier for EventuallyReady { async fn ready(&self, _home: &Path, _credentials: &Credentials) -> bool { self.0.fetch_add(1, Ordering::SeqCst) >= 1 } }
-    fn staged_home() -> (tempfile::TempDir, Credentials) { let home = tempfile::tempdir().unwrap(); let root = home.path().join("paperless"); paperless_staging::prepare_at(&root).unwrap(); std::fs::write(root.join("paperless.env"), b"PAPERLESS_BIND_PORT=18000\nPAPERLESS_ADMIN_USER=operator\nPAPERLESS_ADMIN_PASSWORD=secret\n").unwrap(); std::fs::create_dir(root.join("state")).unwrap(); let mut credentials = Credentials::default(); credentials.paperless_url = Some("http://127.0.0.1:18000".into()); credentials.paperless_token = Some(SecretString::from("existing-token")); (home, credentials) }
-    #[cfg(not(windows))] #[tokio::test] async fn dispatcher_refuses_before_pull_when_compose_cannot_use_retained_capabilities() { let (home, credentials) = staged_home(); let mut executor = FakeExecutor::default(); let ready = EventuallyReady(AtomicUsize::new(0)); let error = install_at_with_readiness(home.path(), &credentials, &mut executor, &ready).await.unwrap_err(); assert_eq!(error, LifecycleError::LaunchBinding); assert!(executor.commands.is_empty()); assert!(!lifecycle_receipt_path(home.path()).exists()); }
-    #[cfg(not(windows))] #[tokio::test] async fn launch_binding_gate_prevents_remote_engine_selection_and_receipt() { let (home, credentials) = staged_home(); let mut executor = FakeExecutor { remote: true, ..Default::default() }; let ready = EventuallyReady(AtomicUsize::new(0)); let error = install_at_with_readiness(home.path(), &credentials, &mut executor, &ready).await.unwrap_err(); assert_eq!(error, LifecycleError::LaunchBinding); assert!(executor.commands.is_empty()); assert!(!lifecycle_receipt_path(home.path()).exists()); }
-    #[cfg(windows)] #[tokio::test] async fn windows_guarded_dispatcher_keeps_existing_token_and_binds_full_install() { let (home, credentials) = staged_home(); let mut executor = FakeExecutor::default(); let ready = EventuallyReady(AtomicUsize::new(0)); let receipt = install_at_with_readiness(home.path(), &credentials, &mut executor, &ready).await.unwrap(); assert_eq!(receipt.images.len(), 3); assert_eq!(receipt.containers.len(), 3); assert!(lifecycle_receipt_path(home.path()).is_file()); assert!(executor.commands.iter().any(|command| command.iter().any(|part| part == "pull"))); }
-    #[cfg(windows)] #[tokio::test] async fn windows_guarded_dispatcher_rejects_remote_engine_before_pull() { let (home, credentials) = staged_home(); let mut executor = FakeExecutor { remote: true, ..Default::default() }; let ready = EventuallyReady(AtomicUsize::new(0)); let error = install_at_with_readiness(home.path(), &credentials, &mut executor, &ready).await.unwrap_err(); assert!(matches!(error, LifecycleError::Engine("paperless_remote_docker_context_rejected"))); assert!(!executor.commands.iter().any(|command| command.iter().any(|part| part == "pull"))); assert!(!lifecycle_receipt_path(home.path()).exists()); }
-    #[cfg(windows)] #[tokio::test] async fn windows_guarded_dispatcher_bootstraps_missing_token_after_verified_containers() { use tokio::io::{AsyncReadExt, AsyncWriteExt}; use tokio::net::TcpListener; let listener = TcpListener::bind("127.0.0.1:0").await.unwrap(); let port = listener.local_addr().unwrap().port(); let inspections = std::sync::Arc::new(AtomicUsize::new(0)); let server_inspections = inspections.clone(); let task = tokio::spawn(async move { tokio::time::timeout(Duration::from_secs(2), async { let (mut stream, _) = listener.accept().await.unwrap(); let mut request = Vec::new(); let header_end = loop { let mut chunk = [0; 512]; let count = stream.read(&mut chunk).await.unwrap(); assert!(count > 0); request.extend_from_slice(&chunk[..count]); if let Some(end) = request.windows(4).position(|window| window == b"\r\n\r\n") { break end + 4; } }; let headers = std::str::from_utf8(&request[..header_end]).unwrap(); let length = headers.lines().find_map(|line| line.strip_prefix("content-length:").or_else(|| line.strip_prefix("Content-Length:")).and_then(|value| value.trim().parse::<usize>().ok())).unwrap(); while request.len().saturating_sub(header_end) < length { let mut chunk = [0; 512]; let count = stream.read(&mut chunk).await.unwrap(); assert!(count > 0); request.extend_from_slice(&chunk[..count]); } assert!(std::str::from_utf8(&request[header_end..]).unwrap().contains("username=operator")); assert_eq!(server_inspections.load(Ordering::SeqCst), 3); let body = br#"{"token":"boot-token"}"#; let header = format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n", body.len()); stream.write_all(header.as_bytes()).await.unwrap(); stream.write_all(body).await.unwrap(); }).await.unwrap(); }); let home = tempfile::tempdir().unwrap(); let root = home.path().join("paperless"); paperless_staging::prepare_at(&root).unwrap(); std::fs::write(root.join("paperless.env"), format!("PAPERLESS_BIND_PORT={port}\nPAPERLESS_ADMIN_USER=operator\nPAPERLESS_ADMIN_PASSWORD=secret\n")).unwrap(); std::fs::create_dir(root.join("state")).unwrap(); let mut credentials = Credentials::default(); credentials.paperless_url = Some(format!("http://127.0.0.1:{port}")); let mut executor = FakeExecutor { container_inspects: Some(inspections), ..Default::default() }; let ready = EventuallyReady(AtomicUsize::new(0)); let receipt = install_at_with_readiness(home.path(), &credentials, &mut executor, &ready).await.unwrap(); task.await.unwrap(); assert!(receipt.authenticated_api_ready); let persisted = Credentials::load_or_default(&home.path().join("credentials.yaml")).unwrap(); assert_eq!(persisted.paperless_token.unwrap().expose_secret(), "boot-token"); }
+    #[async_trait]
+    impl ReadinessVerifier for EventuallyReady {
+        async fn ready(&self, _home: &Path, _credentials: &Credentials) -> bool {
+            self.0.fetch_add(1, Ordering::SeqCst) >= 1
+        }
+    }
+    fn staged_home() -> (tempfile::TempDir, Credentials) {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join("paperless");
+        paperless_staging::prepare_at(&root).unwrap();
+        std::fs::write(root.join("paperless.env"), b"PAPERLESS_BIND_PORT=18000\nPAPERLESS_ADMIN_USER=operator\nPAPERLESS_ADMIN_PASSWORD=secret\n").unwrap();
+        std::fs::create_dir(root.join("state")).unwrap();
+        let mut credentials = Credentials::default();
+        credentials.paperless_url = Some("http://127.0.0.1:18000".into());
+        credentials.paperless_token = Some(SecretString::from("existing-token"));
+        (home, credentials)
+    }
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn dispatcher_refuses_before_pull_when_compose_cannot_use_retained_capabilities() {
+        let (home, credentials) = staged_home();
+        let mut executor = FakeExecutor::default();
+        let ready = EventuallyReady(AtomicUsize::new(0));
+        let error = install_at_with_readiness(home.path(), &credentials, &mut executor, &ready)
+            .await
+            .unwrap_err();
+        assert_eq!(error, LifecycleError::LaunchBinding);
+        assert!(executor.commands.is_empty());
+        assert!(!lifecycle_receipt_path(home.path()).exists());
+    }
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn launch_binding_gate_prevents_remote_engine_selection_and_receipt() {
+        let (home, credentials) = staged_home();
+        let mut executor = FakeExecutor {
+            remote: true,
+            ..Default::default()
+        };
+        let ready = EventuallyReady(AtomicUsize::new(0));
+        let error = install_at_with_readiness(home.path(), &credentials, &mut executor, &ready)
+            .await
+            .unwrap_err();
+        assert_eq!(error, LifecycleError::LaunchBinding);
+        assert!(executor.commands.is_empty());
+        assert!(!lifecycle_receipt_path(home.path()).exists());
+    }
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_guarded_dispatcher_keeps_existing_token_and_binds_full_install() {
+        let (home, credentials) = staged_home();
+        let mut executor = FakeExecutor::default();
+        let ready = EventuallyReady(AtomicUsize::new(0));
+        let receipt = install_at_with_readiness(home.path(), &credentials, &mut executor, &ready)
+            .await
+            .unwrap();
+        assert_eq!(receipt.images.len(), 3);
+        assert_eq!(receipt.containers.len(), 3);
+        assert!(lifecycle_receipt_path(home.path()).is_file());
+        assert!(
+            executor
+                .commands
+                .iter()
+                .any(|command| command.iter().any(|part| part == "pull"))
+        );
+    }
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_guarded_dispatcher_rejects_remote_engine_before_pull() {
+        let (home, credentials) = staged_home();
+        let mut executor = FakeExecutor {
+            remote: true,
+            ..Default::default()
+        };
+        let ready = EventuallyReady(AtomicUsize::new(0));
+        let error = install_at_with_readiness(home.path(), &credentials, &mut executor, &ready)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            LifecycleError::Engine("paperless_remote_docker_context_rejected")
+        ));
+        assert!(
+            !executor
+                .commands
+                .iter()
+                .any(|command| command.iter().any(|part| part == "pull"))
+        );
+        assert!(!lifecycle_receipt_path(home.path()).exists());
+    }
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_guarded_dispatcher_bootstraps_missing_token_after_verified_containers() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let inspections = std::sync::Arc::new(AtomicUsize::new(0));
+        let server_inspections = inspections.clone();
+        let task = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_secs(2), async { let (mut stream, _) = listener.accept().await.unwrap(); let mut request = Vec::new(); let header_end = loop { let mut chunk = [0; 512]; let count = stream.read(&mut chunk).await.unwrap(); assert!(count > 0); request.extend_from_slice(&chunk[..count]); if let Some(end) = request.windows(4).position(|window| window == b"\r\n\r\n") { break end + 4; } }; let headers = std::str::from_utf8(&request[..header_end]).unwrap(); let length = headers.lines().find_map(|line| line.strip_prefix("content-length:").or_else(|| line.strip_prefix("Content-Length:")).and_then(|value| value.trim().parse::<usize>().ok())).unwrap(); while request.len().saturating_sub(header_end) < length { let mut chunk = [0; 512]; let count = stream.read(&mut chunk).await.unwrap(); assert!(count > 0); request.extend_from_slice(&chunk[..count]); } assert!(std::str::from_utf8(&request[header_end..]).unwrap().contains("username=operator")); assert_eq!(server_inspections.load(Ordering::SeqCst), 3); let body = br#"{"token":"boot-token"}"#; let header = format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n", body.len()); stream.write_all(header.as_bytes()).await.unwrap(); stream.write_all(body).await.unwrap(); }).await.unwrap();
+        });
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join("paperless");
+        paperless_staging::prepare_at(&root).unwrap();
+        std::fs::write(root.join("paperless.env"), format!("PAPERLESS_BIND_PORT={port}\nPAPERLESS_ADMIN_USER=operator\nPAPERLESS_ADMIN_PASSWORD=secret\n")).unwrap();
+        std::fs::create_dir(root.join("state")).unwrap();
+        let mut credentials = Credentials::default();
+        credentials.paperless_url = Some(format!("http://127.0.0.1:{port}"));
+        let mut executor = FakeExecutor {
+            container_inspects: Some(inspections),
+            ..Default::default()
+        };
+        let ready = EventuallyReady(AtomicUsize::new(0));
+        let receipt = install_at_with_readiness(home.path(), &credentials, &mut executor, &ready)
+            .await
+            .unwrap();
+        task.await.unwrap();
+        assert!(receipt.authenticated_api_ready);
+        let persisted =
+            Credentials::load_or_default(&home.path().join("credentials.yaml")).unwrap();
+        assert_eq!(
+            persisted.paperless_token.unwrap().expose_secret(),
+            "boot-token"
+        );
+    }
 }

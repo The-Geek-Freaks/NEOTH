@@ -87,7 +87,11 @@ pub struct ApprovedImportRoot {
 #[cfg(windows)]
 pub(crate) struct ApprovedImportFile(windows_source::WindowsApprovedFile);
 #[cfg(windows)]
-impl ApprovedImportFile { pub(crate) fn bytes(&self) -> &[u8] { self.0.bytes() } }
+impl ApprovedImportFile {
+    pub(crate) fn bytes(&self) -> &[u8] {
+        self.0.bytes()
+    }
+}
 
 impl fmt::Debug for ApprovedImportRoot {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -253,7 +257,11 @@ pub(crate) fn approve_import_root(path: &Path) -> Result<ApprovedImportRoot, Loc
 /// Retain a regular-file no-write/no-delete fence under an already approved
 /// Windows root and return bytes captured from that exact handle.
 #[cfg(windows)]
-pub(crate) fn hold_approved_import_file(root: &ApprovedImportRoot, relative: &Path, max_bytes: usize) -> Result<ApprovedImportFile, LocalImportError> {
+pub(crate) fn hold_approved_import_file(
+    root: &ApprovedImportRoot,
+    relative: &Path,
+    max_bytes: usize,
+) -> Result<ApprovedImportFile, LocalImportError> {
     windows_source::hold_approved_regular_file(root, relative, max_bytes).map(ApprovedImportFile)
 }
 

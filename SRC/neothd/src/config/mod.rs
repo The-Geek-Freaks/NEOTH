@@ -800,11 +800,15 @@ pub(crate) fn load_optional_runtime_config_pair_read_only_with_store_from_path(
                     let mut effective = raw;
                     keychain::supplement_from_store(&mut effective, store)
                         .context("supplement credentials from supplied OS keychain")?;
-                    keychain::supplement_telegram_account_tokens(&mut effective, store)
-                        .context("supplement Telegram account credentials from supplied OS keychain")?;
+                    keychain::supplement_telegram_account_tokens(&mut effective, store).context(
+                        "supplement Telegram account credentials from supplied OS keychain",
+                    )?;
                     effective
                 } else {
-                    credentials::Credentials::supplement_effective_unlocked(raw, config.secrets_backend)?
+                    credentials::Credentials::supplement_effective_unlocked(
+                        raw,
+                        config.secrets_backend,
+                    )?
                 }
             } else {
                 raw

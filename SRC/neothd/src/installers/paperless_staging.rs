@@ -235,7 +235,9 @@ fn compose_bytes() -> &'static [u8] {
 }
 
 #[cfg(windows)]
-pub(crate) fn expected_compose_bytes() -> &'static [u8] { compose_bytes() }
+pub(crate) fn expected_compose_bytes() -> &'static [u8] {
+    compose_bytes()
+}
 
 /// A byte-validated, capability-bound Paperless root. It is crate-internal so
 /// lifecycle code can retain one identity across external Docker operations.
@@ -257,13 +259,19 @@ impl OwnedPaperlessRoot {
 /// Revalidate the original namespace binding and the exact staged payload
 /// after an external operation.  Callers retain `OwnedPaperlessRoot` across
 /// awaits; this prevents a same-named replacement from becoming trusted.
-pub(crate) fn still_exactly_owned(root: &OwnedPaperlessRoot) -> Result<bool, PaperlessStagingError> {
-    if !root.still_bound()? || !requested_namespace_still_names_stage(&root.display, root.binding.identity_token()) {
+pub(crate) fn still_exactly_owned(
+    root: &OwnedPaperlessRoot,
+) -> Result<bool, PaperlessStagingError> {
+    if !root.still_bound()?
+        || !requested_namespace_still_names_stage(&root.display, root.binding.identity_token())
+    {
         return Ok(false);
     }
     match open_owned_root_at(&root.display) {
         Ok(reopened) => Ok(reopened.binding.identity_token() == root.binding.identity_token()),
-        Err(PaperlessStagingError::UnownedOrMismatch | PaperlessStagingError::UnsafePath) => Ok(false),
+        Err(PaperlessStagingError::UnownedOrMismatch | PaperlessStagingError::UnsafePath) => {
+            Ok(false)
+        }
         Err(error) => Err(error),
     }
 }
@@ -271,28 +279,54 @@ pub(crate) fn still_exactly_owned(root: &OwnedPaperlessRoot) -> Result<bool, Pap
 pub(crate) fn open_owned_root_at(root: &Path) -> Result<OwnedPaperlessRoot, PaperlessStagingError> {
     validate_existing_ancestors(root)?;
     let parent_path = root.parent().ok_or(PaperlessStagingError::UnsafePath)?;
-    let root_name = root.file_name().ok_or(PaperlessStagingError::UnsafePath)?.to_os_string();
-    let parent = crate::skills::store::open_absolute_bound_directory(parent_path, false, "paperless")
-        .map_err(|_| PaperlessStagingError::Io)?
-        .ok_or(PaperlessStagingError::Io)?;
-    let (root_dir, binding) = crate::skills::store::open_bound_real_child_dir(&parent.dir, &root_name, root)
-        .map_err(|_| PaperlessStagingError::UnsafePath)?;
+    let root_name = root
+        .file_name()
+        .ok_or(PaperlessStagingError::UnsafePath)?
+        .to_os_string();
+    let parent =
+        crate::skills::store::open_absolute_bound_directory(parent_path, false, "paperless")
+            .map_err(|_| PaperlessStagingError::Io)?
+            .ok_or(PaperlessStagingError::Io)?;
+    let (root_dir, binding) =
+        crate::skills::store::open_bound_real_child_dir(&parent.dir, &root_name, root)
+            .map_err(|_| PaperlessStagingError::UnsafePath)?;
     for (name, expected) in expected_files() {
-        let bytes = crate::skills::store::read_regular_file_bounded(&root_dir, OsStr::new(name), &root.join(name), OWNED_FILE_MAX_BYTES)
-            .map_err(|_| PaperlessStagingError::UnownedOrMismatch)?;
-        if bytes != expected { return Err(PaperlessStagingError::UnownedOrMismatch); }
+        let bytes = crate::skills::store::read_regular_file_bounded(
+            &root_dir,
+            OsStr::new(name),
+            &root.join(name),
+            OWNED_FILE_MAX_BYTES,
+        )
+        .map_err(|_| PaperlessStagingError::UnownedOrMismatch)?;
+        if bytes != expected {
+            return Err(PaperlessStagingError::UnownedOrMismatch);
+        }
     }
     for entry in root_dir.entries().map_err(|_| PaperlessStagingError::Io)? {
         let name = entry.map_err(|_| PaperlessStagingError::Io)?.file_name();
         match name.to_str() {
             Some(MARKER | COMPOSE | ENV_EXAMPLE) => {}
-            Some("paperless.env") => { crate::skills::store::open_regular_file(&root_dir, &name, &root.join(&name)).map_err(|_| PaperlessStagingError::UnownedOrMismatch)?; }
-            Some("state") => { crate::skills::store::open_real_child_dir(&root_dir, &name, &root.join(&name)).map_err(|_| PaperlessStagingError::UnownedOrMismatch)?; }
+            Some("paperless.env") => {
+                crate::skills::store::open_regular_file(&root_dir, &name, &root.join(&name))
+                    .map_err(|_| PaperlessStagingError::UnownedOrMismatch)?;
+            }
+            Some("state") => {
+                crate::skills::store::open_real_child_dir(&root_dir, &name, &root.join(&name))
+                    .map_err(|_| PaperlessStagingError::UnownedOrMismatch)?;
+            }
             _ => return Err(PaperlessStagingError::UnownedOrMismatch),
         }
     }
-    let owned = OwnedPaperlessRoot { parent: parent.dir, root: root_dir, binding, display: root.to_path_buf(), root_name };
-    if !owned.still_bound()? { return Err(PaperlessStagingError::UnownedOrMismatch); }
+    let owned = OwnedPaperlessRoot {
+        parent: parent.dir,
+        root: root_dir,
+        binding,
+        display: root.to_path_buf(),
+        root_name,
+    };
+    if !owned.still_bound()? {
+        return Err(PaperlessStagingError::UnownedOrMismatch);
+    }
     Ok(owned)
 }
 fn inspect_owned(root: &Path) -> Result<bool, PaperlessStagingError> {

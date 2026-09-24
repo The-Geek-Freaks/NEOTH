@@ -10,7 +10,7 @@ use serde::Deserialize;
 use zeroize::Zeroizing;
 
 use crate::{
-    config::{credentials::Credentials, FreedomConfig, SecretsBackend},
+    config::{FreedomConfig, SecretsBackend, credentials::Credentials},
     secret::SecretString,
 };
 
@@ -47,10 +47,10 @@ impl BootstrapAdmin {
                 .ok_or("paperless_bootstrap_env_invalid")?;
             let name = name.trim();
             if name.is_empty()
-                || !name
-                    .bytes()
-                    .enumerate()
-                    .all(|(index, byte)| byte == b'_' || byte.is_ascii_alphanumeric() && (index > 0 || !byte.is_ascii_digit()))
+                || !name.bytes().enumerate().all(|(index, byte)| {
+                    byte == b'_'
+                        || byte.is_ascii_alphanumeric() && (index > 0 || !byte.is_ascii_digit())
+                })
             {
                 return Err("paperless_bootstrap_env_invalid");
             }
@@ -302,8 +302,8 @@ fn persist_keychain_token_after_url(
     origin: &str,
     token: &SecretString,
 ) -> Result<(), &'static str> {
-    let store = crate::config::keychain::open_store()
-        .map_err(|_| "paperless_bootstrap_keychain")?;
+    let store =
+        crate::config::keychain::open_store().map_err(|_| "paperless_bootstrap_keychain")?;
     persist_keychain_token_after_url_with_store(freedom_path, origin, token, store.as_ref())
 }
 
@@ -320,11 +320,12 @@ fn persist_keychain_token_after_url_with_store(
         // This is a same-home re-entrant coherent reader. It reloads the
         // effective pair after the URL publication, including an operator's
         // file override and the OS-store supplement, before this final set.
-        let (_, effective) = crate::config::load_optional_runtime_config_pair_read_only_with_store_from_path(
-            freedom_path,
-            Some(store),
-        )
-        .map_err(|_| anyhow::anyhow!("paperless_bootstrap_persist"))?;
+        let (_, effective) =
+            crate::config::load_optional_runtime_config_pair_read_only_with_store_from_path(
+                freedom_path,
+                Some(store),
+            )
+            .map_err(|_| anyhow::anyhow!("paperless_bootstrap_persist"))?;
         if effective.paperless_url.as_deref() != Some(origin) {
             return Err(anyhow::anyhow!("paperless_bootstrap_url_changed"));
         }
@@ -372,7 +373,10 @@ fn canonical_bootstrap_origin(origin: &str) -> Result<String, &'static str> {
     {
         return Err("paperless_bootstrap_origin_invalid");
     }
-    Ok(format!("http://127.0.0.1:{}", url.port().unwrap_or_default()))
+    Ok(format!(
+        "http://127.0.0.1:{}",
+        url.port().unwrap_or_default()
+    ))
 }
 
 #[cfg(test)]
@@ -424,12 +428,12 @@ mod tests {
         assert!(canonical_bootstrap_origin("http://localhost:18000").is_err());
         assert!(canonical_bootstrap_origin("http://127.0.0.1:0").is_err());
         assert!(canonical_bootstrap_origin("http://127.0.0.1:18000/base").is_err());
-        assert!(is_json_content_type(Some(&header::HeaderValue::from_static(
-            "text/plain"
-        ))) == false);
-        assert!(is_json_content_type(Some(&header::HeaderValue::from_static(
-            "application/problem+json; charset=utf-8"
-        ))));
+        assert!(
+            is_json_content_type(Some(&header::HeaderValue::from_static("text/plain"))) == false
+        );
+        assert!(is_json_content_type(Some(
+            &header::HeaderValue::from_static("application/problem+json; charset=utf-8")
+        )));
     }
 
     #[test]
@@ -444,9 +448,16 @@ mod tests {
             &token,
         )
         .unwrap();
-        let credentials = Credentials::load_or_default(&home.path().join("credentials.yaml")).unwrap();
-        assert_eq!(credentials.paperless_url.as_deref(), Some("http://127.0.0.1:18000"));
-        assert_eq!(credentials.paperless_token.unwrap().expose_secret(), "new-token");
+        let credentials =
+            Credentials::load_or_default(&home.path().join("credentials.yaml")).unwrap();
+        assert_eq!(
+            credentials.paperless_url.as_deref(),
+            Some("http://127.0.0.1:18000")
+        );
+        assert_eq!(
+            credentials.paperless_token.unwrap().expose_secret(),
+            "new-token"
+        );
         assert_eq!(
             persist_bootstrap_at(
                 home.path(),
@@ -499,7 +510,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            store.get("paperless_token").unwrap().unwrap().expose_secret(),
+            store
+                .get("paperless_token")
+                .unwrap()
+                .unwrap()
+                .expose_secret(),
             "issued-token"
         );
         assert_eq!(
@@ -576,7 +591,11 @@ mod tests {
                     break;
                 }
             }
-            assert!(std::str::from_utf8(&request).unwrap().starts_with("POST /api/token/ HTTP/1.1"));
+            assert!(
+                std::str::from_utf8(&request)
+                    .unwrap()
+                    .starts_with("POST /api/token/ HTTP/1.1")
+            );
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 23\r\n\r\n{\"token\":\"local-token\"}")
                 .await

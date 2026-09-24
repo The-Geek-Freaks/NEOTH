@@ -27,7 +27,9 @@ pub(super) struct WindowsApprovedFile {
 }
 
 impl WindowsApprovedFile {
-    pub(super) fn bytes(&self) -> &[u8] { &self.bytes }
+    pub(super) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
 }
 
 use windows_sys::Win32::{
@@ -262,7 +264,11 @@ fn open_relative_leaf_with_share(
             ancestor_ids.push(directory_snapshot(&child)?.identity);
             fences.push(child);
         } else {
-            let leaf = if readonly_file { open_child_file_readonly(parent, name)? } else { open_child_file(parent, name)? };
+            let leaf = if readonly_file {
+                open_child_file_readonly(parent, name)?
+            } else {
+                open_child_file(parent, name)?
+            };
             let leaf_snapshot = file_snapshot(&leaf)?;
             return Ok(OpenedLeaf {
                 leaf,
@@ -287,7 +293,12 @@ fn open_child_file(parent: &File, name: &OsStr) -> Result<File, LocalImportError
     nt_open(name, parent.as_raw_handle() as HANDLE, false)
 }
 fn open_child_file_readonly(parent: &File, name: &OsStr) -> Result<File, LocalImportError> {
-    nt_open_with_share(name, parent.as_raw_handle() as HANDLE, false, FILE_SHARE_READ)
+    nt_open_with_share(
+        name,
+        parent.as_raw_handle() as HANDLE,
+        false,
+        FILE_SHARE_READ,
+    )
 }
 
 fn nt_create(name: &[u16], root: HANDLE, directory: bool) -> Result<File, LocalImportError> {
@@ -320,7 +331,12 @@ fn nt_open(name: &OsStr, root: HANDLE, directory: bool) -> Result<File, LocalImp
     nt_open_with_share(name, root, directory, share_mode())
 }
 
-fn nt_open_with_share(name: &OsStr, root: HANDLE, directory: bool, share: u32) -> Result<File, LocalImportError> {
+fn nt_open_with_share(
+    name: &OsStr,
+    root: HANDLE,
+    directory: bool,
+    share: u32,
+) -> Result<File, LocalImportError> {
     let wide: Vec<u16> = name.encode_wide().collect();
     reject_component(&wide)?;
     let mut unicode = unicode_string(&wide)?;
@@ -342,14 +358,31 @@ fn nt_open_with_share(name: &OsStr, root: HANDLE, directory: bool, share: u32) -
     nt_result(result, handle)
 }
 
-pub(super) fn hold_approved_regular_file(root: &ApprovedImportRoot, path: &Path, max_bytes: usize) -> Result<WindowsApprovedFile, LocalImportError> {
+pub(super) fn hold_approved_regular_file(
+    root: &ApprovedImportRoot,
+    path: &Path,
+    max_bytes: usize,
+) -> Result<WindowsApprovedFile, LocalImportError> {
     let mut opened = open_relative_leaf_with_readonly_file(root, path)?;
     let before = opened.leaf_snapshot;
     let expected_len = checked_len(before.end_of_file as u64, max_bytes)?;
     let mut bytes = zeroize::Zeroizing::new(Vec::with_capacity(expected_len));
-    opened.leaf.by_ref().take((max_bytes as u64).saturating_add(1)).read_to_end(&mut bytes).map_err(|_| LocalImportError::Unavailable)?;
-    if bytes.len() != expected_len || bytes.len() > max_bytes || file_snapshot(&opened.leaf)? != before { return Err(LocalImportError::ChangedDuringRead); }
-    Ok(WindowsApprovedFile { _opened: opened, bytes })
+    opened
+        .leaf
+        .by_ref()
+        .take((max_bytes as u64).saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|_| LocalImportError::Unavailable)?;
+    if bytes.len() != expected_len
+        || bytes.len() > max_bytes
+        || file_snapshot(&opened.leaf)? != before
+    {
+        return Err(LocalImportError::ChangedDuringRead);
+    }
+    Ok(WindowsApprovedFile {
+        _opened: opened,
+        bytes,
+    })
 }
 
 fn unicode_string(name: &[u16]) -> Result<NtUnicodeString, LocalImportError> {
@@ -571,9 +604,19 @@ mod tests {
         let approved = open_approved_root(root.path()).unwrap();
         let guard = hold_approved_regular_file(&approved, Path::new("compose.yaml"), 1024).unwrap();
         assert_eq!(guard.bytes(), b"pinned-compose");
-        assert!(std::fs::OpenOptions::new().write(true).open(&source).is_err());
+        assert!(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&source)
+                .is_err()
+        );
         assert!(std::fs::rename(&source, root.path().join("decoy.yaml")).is_err());
         drop(guard);
-        assert!(std::fs::OpenOptions::new().write(true).open(&source).is_ok());
+        assert!(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&source)
+                .is_ok()
+        );
     }
 }
