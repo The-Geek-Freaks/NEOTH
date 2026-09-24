@@ -2,6 +2,25 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W731-W736 OpenClaw Slack import and queue admission (2026-09-24):**
+The CLI selects one schema-backed OpenClaw Slack account and requires an
+explicit target account and allowed member. Only direct bot/app tokens from
+an accounts-only Slack container are accepted; unsupported source policy is
+rejected. Existing prepare/auth.test/team-bound CAS/reload logic is shared;
+the complete source set is rechecked after probe and before commit. Nine new
+custody/CLI tests plus six existing Telegram and two H1 catalogue tests bring
+native1392/Group1119 (three custody tests run in the separate package lane).
+Independent source review passes; executable validation remains pending.
+105f47f8 Core passed all four gates. Root admitted Group1104:1100PASS4FAIL,
+207source bindings plus two inputs. All five WebChat rejoin tests pass. W735
+repairs the production Telegram-only queue gate that blocked three Slack cases,
+with one new crossed-channel regression; its independent review passes.
+The fourth failure is the stale CLI reference. The exact105f export is imported;
+the new import-command export precedes the next Group.
+macOS package35983808777 runs at105f47f8. H1 is still open until its two narrow
+catalogue tests pass. Road1324/1046checked/276open/2partial; no local runtime.
+See docs/gold-wave734-openclaw-slack-import.md.
+
 **W726/W728 hosted format and fixture compilation repair (2026-09-24):**
 Root imported the exact ten-file formatter artifact for2871b03a after ZIP,
 checksum and old/new blob verification. Group1104 run35981343867 stopped at

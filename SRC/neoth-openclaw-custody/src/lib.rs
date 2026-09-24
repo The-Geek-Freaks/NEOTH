@@ -255,6 +255,31 @@ pub struct SelectedTelegramAccount {
     token: OpenClawSecret,
 }
 
+/// One explicitly selected OpenClaw Slack account whose two direct tokens may
+/// cross into the authenticated NEOTH Slack-account candidate path. This
+/// opaque value never serializes the source tokens or exposes the merged
+/// OpenClaw document.
+pub struct SelectedSlackAccount {
+    source_account_label: String,
+    source_set: SourceSetBinding,
+    bot_token: OpenClawSecret,
+    app_token: OpenClawSecret,
+}
+
+impl SelectedSlackAccount {
+    pub fn source_account_label(&self) -> &str {
+        &self.source_account_label
+    }
+
+    pub fn source_set(&self) -> &SourceSetBinding {
+        &self.source_set
+    }
+
+    pub fn into_tokens(self) -> (OpenClawSecret, OpenClawSecret) {
+        (self.bot_token, self.app_token)
+    }
+}
+
 impl SelectedTelegramAccount {
     pub fn source_account_label(&self) -> &str {
         &self.source_account_label
@@ -291,6 +316,13 @@ impl LoadedOpenClawDocument {
         source_account_label: &str,
     ) -> Result<SelectedTelegramAccount> {
         select_from_merged(&self.merged, source_account_label, self.source_set.clone())
+    }
+
+    pub fn select_slack_account(
+        &self,
+        source_account_label: &str,
+    ) -> Result<SelectedSlackAccount> {
+        select_slack_from_merged(&self.merged, source_account_label, self.source_set.clone())
     }
 }
 
@@ -520,6 +552,17 @@ pub fn select_telegram_account(
     load_openclaw_document(config, inventory_sha256)?.select_telegram_account(source_account_label)
 }
 
+/// Select one exact OpenClaw Slack account for the account-scoped migration
+/// path. Only the two direct account tokens are admitted; broad/default Slack
+/// state, references and extra settings need an explicit separate adoption.
+pub fn select_slack_account(
+    config: &Path,
+    source_account_label: &str,
+    inventory_sha256: &str,
+) -> Result<SelectedSlackAccount> {
+    load_openclaw_document(config, inventory_sha256)?.select_slack_account(source_account_label)
+}
+
 fn select_from_merged(
     merged: &Value,
     source_account_label: &str,
@@ -570,6 +613,65 @@ fn select_from_merged(
         source_token_path: format!("channels.telegram.accounts.{source_account_label}.botToken"),
         source_set,
         token: OpenClawSecret(Zeroizing::new(token.to_owned())),
+    })
+}
+
+fn select_slack_from_merged(
+    merged: &Value,
+    source_account_label: &str,
+    source_set: SourceSetBinding,
+) -> Result<SelectedSlackAccount> {
+    anyhow::ensure!(
+        !source_account_label.trim().is_empty(),
+        "OpenClaw Slack source account label is empty"
+    );
+    let channels = merged
+        .get("channels")
+        .and_then(Value::as_object)
+        .context("OpenClaw channels must be an object")?;
+    let slack = channels
+        .get("slack")
+        .and_then(Value::as_object)
+        .context("OpenClaw channels.slack must be an object")?;
+    anyhow::ensure!(
+        slack.len() == 1 && slack.contains_key("accounts"),
+        "OpenClaw channels.slack must contain only accounts for account selection"
+    );
+    let accounts = slack
+        .get("accounts")
+        .and_then(Value::as_object)
+        .context("OpenClaw channels.slack.accounts must be an object")?;
+    let selected = accounts
+        .get(source_account_label)
+        .and_then(Value::as_object)
+        .with_context(|| {
+            format!("OpenClaw channels.slack.accounts.{source_account_label} must be an object")
+        })?;
+    anyhow::ensure!(
+        selected.len() == 2 && selected.contains_key("botToken") && selected.contains_key("appToken"),
+        "selected OpenClaw Slack account must contain only botToken and appToken"
+    );
+    let bot_token = selected
+        .get("botToken")
+        .and_then(Value::as_str)
+        .context("selected OpenClaw Slack botToken must be a direct string")?;
+    let app_token = selected
+        .get("appToken")
+        .and_then(Value::as_str)
+        .context("selected OpenClaw Slack appToken must be a direct string")?;
+    anyhow::ensure!(
+        !bot_token.trim().is_empty(),
+        "selected OpenClaw Slack botToken is blank"
+    );
+    anyhow::ensure!(
+        !app_token.trim().is_empty(),
+        "selected OpenClaw Slack appToken is blank"
+    );
+    Ok(SelectedSlackAccount {
+        source_account_label: source_account_label.to_owned(),
+        source_set,
+        bot_token: OpenClawSecret(Zeroizing::new(bot_token.to_owned())),
+        app_token: OpenClawSecret(Zeroizing::new(app_token.to_owned())),
     })
 }
 
@@ -2151,6 +2253,159 @@ mod tests {
         );
         assert!(!format!("{:?}", selected.source_set()).contains(secret));
         assert_eq!(selected.into_token().with_exposed(str::to_owned), secret);
+    }
+
+    #[test]
+    fn selected_slack_account_is_exact_and_never_serializes_its_tokens() {
+        let temp = tempdir().unwrap();
+        let bot_token = "selected-slack-bot-token-must-not-render";
+        let app_token = "selected-slack-app-token-must-not-render";
+        let path = write_config(
+            temp.path(),
+            &format!(
+                "{{ channels: {{ slack: {{ accounts: {{ work: {{ botToken: '{bot_token}', appToken: '{app_token}' }}, other: {{ botToken: 'other-bot-token', appToken: 'other-app-token' }} }} }} }} }}"
+            ),
+        );
+
+        let selected =
+            select_slack_account(&path, "work", &canonical_known_channel_inventory_sha256())
+                .unwrap();
+        assert_eq!(selected.source_account_label(), "work");
+        let source_set = format!("{:?}", selected.source_set());
+        assert!(!source_set.contains(bot_token));
+        assert!(!source_set.contains(app_token));
+        let (selected_bot_token, selected_app_token) = selected.into_tokens();
+        assert_eq!(selected_bot_token.with_exposed(str::to_owned), bot_token);
+        assert_eq!(selected_app_token.with_exposed(str::to_owned), app_token);
+    }
+
+    #[test]
+    fn selected_slack_account_rejects_broad_or_ambiguous_shapes_without_tokens_in_error() {
+        let bot_token = "slack-selection-bot-token-must-not-render";
+        let app_token = "slack-selection-app-token-must-not-render";
+        let cases = [
+            (
+                "outer token",
+                format!(
+                    "{{ channels: {{ slack: {{ botToken: '{bot_token}', accounts: {{ work: {{ botToken: '{bot_token}', appToken: '{app_token}' }} }} }} }} }}"
+                ),
+                "work",
+            ),
+            (
+                "default account",
+                format!(
+                    "{{ channels: {{ slack: {{ defaultAccount: 'work', accounts: {{ work: {{ botToken: '{bot_token}', appToken: '{app_token}' }} }} }} }} }}"
+                ),
+                "work",
+            ),
+            (
+                "allow-from policy",
+                format!(
+                    "{{ channels: {{ slack: {{ allowFrom: ['U123'], accounts: {{ work: {{ botToken: '{bot_token}', appToken: '{app_token}' }} }} }} }} }}"
+                ),
+                "work",
+            ),
+            (
+                "group policy",
+                format!(
+                    "{{ channels: {{ slack: {{ groupPolicy: 'open', accounts: {{ work: {{ botToken: '{bot_token}', appToken: '{app_token}' }} }} }} }} }}"
+                ),
+                "work",
+            ),
+            (
+                "mode policy",
+                format!(
+                    "{{ channels: {{ slack: {{ mode: 'socket', accounts: {{ work: {{ botToken: '{bot_token}', appToken: '{app_token}' }} }} }} }} }}"
+                ),
+                "work",
+            ),
+            (
+                "unknown sibling",
+                format!(
+                    "{{ channels: {{ slack: {{ unknownSettings: {{ inherit: true }}, accounts: {{ work: {{ botToken: '{bot_token}', appToken: '{app_token}' }} }} }} }} }}"
+                ),
+                "work",
+            ),
+            (
+                "extra field",
+                format!(
+                    "{{ channels: {{ slack: {{ accounts: {{ work: {{ botToken: '{bot_token}', appToken: '{app_token}', enabled: true }} }} }} }} }}"
+                ),
+                "work",
+            ),
+            (
+                "missing app token",
+                format!(
+                    "{{ channels: {{ slack: {{ accounts: {{ work: {{ botToken: '{bot_token}' }} }} }} }} }}"
+                ),
+                "work",
+            ),
+            (
+                "secret reference",
+                format!(
+                    "{{ channels: {{ slack: {{ accounts: {{ work: {{ botToken: {{ source: 'env', provider: 'default', id: 'SLACK_BOT_TOKEN' }}, appToken: '{app_token}' }} }} }} }} }}"
+                ),
+                "work",
+            ),
+            (
+                "unknown account",
+                format!(
+                    "{{ channels: {{ slack: {{ accounts: {{ work: {{ botToken: '{bot_token}', appToken: '{app_token}' }} }} }} }} }}"
+                ),
+                "missing",
+            ),
+        ];
+
+        for (case, body, source_account_label) in cases {
+            let temp = tempdir().unwrap();
+            let path = write_config(temp.path(), &body);
+            let error = match select_slack_account(
+                &path,
+                source_account_label,
+                &canonical_known_channel_inventory_sha256(),
+            ) {
+                Ok(_) => panic!("{case} must fail"),
+                Err(error) => error,
+            };
+            let rendered = format!("{error:#}");
+            assert!(!rendered.contains(bot_token), "{case}: bot token leaked");
+            assert!(!rendered.contains(app_token), "{case}: app token leaked");
+        }
+    }
+
+    #[test]
+    fn selected_slack_account_keeps_the_exact_loaded_source_set() {
+        let temp = tempdir().unwrap();
+        let included = temp.path().join("slack.json5");
+        std::fs::write(
+            &included,
+            "{ slack: { accounts: { work: { botToken: 'original-bot-token', appToken: 'original-app-token' } } } }",
+        )
+        .unwrap();
+        let path = write_config(
+            temp.path(),
+            "{ channels: { $include: './slack.json5' } }",
+        );
+
+        let loaded =
+            load_openclaw_document(&path, &canonical_known_channel_inventory_sha256()).unwrap();
+        let expected_source_set_sha256 = loaded.source_set().source_set_sha256.clone();
+        let selected = loaded.select_slack_account("work").unwrap();
+        assert_eq!(
+            selected.source_set().source_set_sha256,
+            expected_source_set_sha256
+        );
+
+        std::fs::write(
+            &included,
+            "{ slack: { accounts: { work: { botToken: 'changed-bot-token', appToken: 'changed-app-token' } } } }",
+        )
+        .unwrap();
+        let current = inspect_openclaw_config(&path).unwrap();
+        assert_ne!(
+            selected.source_set().source_set_sha256,
+            current.source_set_sha256
+        );
     }
 
     #[test]

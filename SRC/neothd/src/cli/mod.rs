@@ -1224,6 +1224,17 @@ pub enum ChannelAction {
         #[arg(long)]
         telegram_user_id: u64,
     },
+    /// Import one explicitly selected OpenClaw Slack account into one explicit NEOTH account.
+    ImportOpenclawSlack {
+        #[arg(long)]
+        config: std::path::PathBuf,
+        #[arg(long)]
+        source_account: String,
+        #[arg(long)]
+        account: crate::channels::registry::ChannelAccountId,
+        #[arg(long)]
+        allowed_user_id: String,
+    },
     /// Add or replace one explicitly named Telegram account without inferring a default.
     #[command(subcommand)]
     Account(ChannelAccountAction),
@@ -2196,6 +2207,21 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 )
                 .await?;
             }
+            ChannelAction::ImportOpenclawSlack {
+                config,
+                source_account,
+                account,
+                allowed_user_id,
+            } => {
+                channel::run_import_openclaw_slack(
+                    &config,
+                    &source_account,
+                    account,
+                    allowed_user_id,
+                    &global_output,
+                )
+                .await?;
+            }
             ChannelAction::Account(ChannelAccountAction::Add {
                 channel: ch,
                 account,
@@ -2840,6 +2866,86 @@ mod default_invocation_tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn openclaw_slack_import_has_explicit_source_target_and_member_without_token_input() {
+        let parsed = Cli::try_parse_from([
+            "neoth",
+            "channel",
+            "import-openclaw-slack",
+            "--config",
+            "C:/private/openclaw.json",
+            "--source-account",
+            "work",
+            "--account",
+            "ops_a",
+            "--allowed-user-id",
+            "U123OPERATOR",
+        ])
+        .unwrap();
+        assert!(matches!(
+            parsed.command,
+            Commands::Channel {
+                action: ChannelAction::ImportOpenclawSlack {
+                    source_account,
+                    account,
+                    allowed_user_id,
+                    ..
+                }
+            } if source_account == "work" && account.as_str() == "ops_a" && allowed_user_id == "U123OPERATOR"
+        ));
+
+        for forbidden in ["--token", "--bot-token", "--app-token", "--stdin"] {
+            assert!(
+                Cli::try_parse_from([
+                    "neoth",
+                    "channel",
+                    "import-openclaw-slack",
+                    "--config",
+                    "openclaw.json",
+                    "--source-account",
+                    "work",
+                    "--account",
+                    "ops_a",
+                    "--allowed-user-id",
+                    "U123OPERATOR",
+                    forbidden,
+                    "slack-token-sentinel",
+                ])
+                .is_err(),
+                "{forbidden} must never become an import input path"
+            );
+        }
+        for missing in ["--config", "--source-account", "--account", "--allowed-user-id"] {
+            let args = [
+                "neoth",
+                "channel",
+                "import-openclaw-slack",
+                "--config",
+                "openclaw.json",
+                "--source-account",
+                "work",
+                "--account",
+                "ops_a",
+                "--allowed-user-id",
+                "U123OPERATOR",
+            ];
+            let filtered: Vec<&str> = args
+                .iter()
+                .copied()
+                .enumerate()
+                .filter_map(|(index, value)| {
+                    let preceding = index.checked_sub(1).and_then(|prior| args.get(prior));
+                    if value == missing || preceding == Some(&missing) {
+                        None
+                    } else {
+                        Some(value)
+                    }
+                })
+                .collect();
+            assert!(Cli::try_parse_from(filtered).is_err(), "{missing} is required");
+        }
     }
 
     #[test]

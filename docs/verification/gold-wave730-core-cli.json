@@ -1,0 +1,21 @@
+{
+  "schema": "neoth-core-cli-admission/v1",
+  "wave": 730,
+  "run": 35982584665,
+  "source": "105f47f85255f824a3fa756c0a2d0629cfd17ad5",
+  "status": "ROOT_VERIFIED_SUCCESS",
+  "hostedSteps": [
+    "slim-core Clippy",
+    "core test-target typecheck",
+    "public CLI build",
+    "reference export"
+  ],
+  "artifact": 10801765380,
+  "artifactZipSha256": "cfa1784bf65306b2be08f1e410eb6626bc6476415b966e0efb89f060dc4e127b",
+  "referenceSha256": "415B29C80127C75E03C68C0E6859B8C1D6D17DBBACF9E104B7F349E05EFBD8B7",
+  "referenceBytes": 249454,
+  "trackedReference": "docs/cli-commands.md",
+  "productImportApplied": true,
+  "note": "Imports WebChat resume reference from105f. New W732 import command requires its own subsequent generated reference before Group rerun.",
+  "localExecutableValidationRan": false
+}

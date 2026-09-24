@@ -1,0 +1,158 @@
+{
+  "schema": "neoth-gold-grouped-admission/v1",
+  "wave": 730,
+  "run": 35982587796,
+  "source": "105f47f85255f824a3fa756c0a2d0629cfd17ad5",
+  "sourceRef": "refs/heads/main",
+  "status": "ROOT_VERIFIED_SOURCE_BOUND_PARTIAL_FAILURE",
+  "selected": 1104,
+  "executed": 1104,
+  "passed": 1100,
+  "failed": 4,
+  "missing": 0,
+  "fixtureSourceBindings": 207,
+  "inputBindings": [
+    {
+      "path": "docs/verification/gold-wave95-96-test-matrix.json",
+      "blob": "8d946333c97d1e110c55e2aff71f176b94ea6bbc",
+      "sha256": "429f27a89b15f2fdac764109a4b9c43c6cc83669b3ca28ad991144940a1913ec",
+      "expected": "429f27a89b15f2fdac764109a4b9c43c6cc83669b3ca28ad991144940a1913ec",
+      "snapshot": null,
+      "fixtureCount": 0
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "blob": "a49b0e51cbc8d33d1f351352e856fc89961f02e1",
+      "sha256": "722ee0446dbac05b3e7d4eb9d44c7174e98e6e6fff5b633b5a30993edbcb61f0",
+      "expected": "722ee0446dbac05b3e7d4eb9d44c7174e98e6e6fff5b633b5a30993edbcb61f0",
+      "snapshot": null,
+      "fixtureCount": 0
+    }
+  ],
+  "artifacts": [
+    {
+      "id": 10801221925,
+      "name": "w190-research-lifecycle-log-105f47f85255f824a3fa756c0a2d0629cfd17ad5",
+      "digest": "sha256:f02c756acb5e11e133042d3b55a1d84bdd82213406f8e98f852a264df6f25428"
+    },
+    {
+      "id": 10800874144,
+      "name": "w190-research-lifecycle-source-105f47f85255f824a3fa756c0a2d0629cfd17ad5",
+      "digest": "sha256:9107a20a6b44fdb606e92cabacfd879862cab1e8ca5211bcbf248e7fb053c041"
+    },
+    {
+      "id": 10800744908,
+      "name": "w190-research-lifecycle-receipt-105f47f85255f824a3fa756c0a2d0629cfd17ad5",
+      "digest": "sha256:c4f65988dfbc23f1a8b307a1e84dba78162b1302dd3d7f65d25d2b41f4a9d298"
+    }
+  ],
+  "rootVerificationSha256": "D057BAB8755B6D844BF343DFDD5C7EA442CADE8DE098AA66E00020CA4CCA3FD5",
+  "verifiedZipEntries": 12,
+  "targetedResults": [
+    {
+      "ordinal": 1091,
+      "test": "daemon::gui_chat_protocol::tests::surface_account_is_closed_by_surface_and_bound_into_preflight_digest",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1092,
+      "test": "daemon::gui_chat_runtime::webchat_provenance_tests::durable_webchat_provenance_rejects_wrong_origin_incognito_legacy_and_mixed_rows",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1093,
+      "test": "daemon::gui_chat_runtime::webchat_provenance_tests::durable_webchat_provenance_streams_historical_rows_and_rejects_overlong_records",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1094,
+      "test": "daemon::gui_chat_runtime::w458_test_support::real_start_persists_only_non_incognito_webchat_default_provenance",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1095,
+      "test": "daemon::webchat::tests::resume_requires_durable_webchat_default_provenance_and_restarts_without_old_requests",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1096,
+      "test": "channels::slack_api::tests::conversations_open_body_only_admits_returned_channel_id",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1097,
+      "test": "channels::slack::tests::proactive_dm_constructor_keeps_only_immutable_member_authority",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1098,
+      "test": "channels::slack::tests::proactive_dm_opens_exact_member_then_posts_only_returned_im",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1099,
+      "test": "channels::slack::tests::proactive_dm_resolver_error_or_malformed_id_never_posts",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1100,
+      "test": "channels::slack::tests::proactive_dm_post_failure_is_one_open_and_one_post_without_retry",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "ordinal": 1101,
+      "test": "daemon::proactive_egress::tests::slack_v5_binding_admits_only_its_member_without_global_destination",
+      "terminalStatus": "failed",
+      "passed": 0,
+      "failed": 1
+    },
+    {
+      "ordinal": 1102,
+      "test": "daemon::proactive_egress::tests::slack_v5_binding_drift_settles_before_factory_and_cannot_resend",
+      "terminalStatus": "failed",
+      "passed": 0,
+      "failed": 1
+    },
+    {
+      "ordinal": 1103,
+      "test": "daemon::proactive_egress::tests::slack_v5_terminal_transport_error_is_not_reopened_on_second_invocation",
+      "terminalStatus": "failed",
+      "passed": 0,
+      "failed": 1
+    },
+    {
+      "ordinal": 1104,
+      "test": "daemon::proactive_egress::tests::account_bound_executor_factories_reject_cross_channel_bindings",
+      "terminalStatus": "passed",
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "failures": [
+    "cli::docgen::tests::cli_commands_md_is_up_to_date",
+    "daemon::proactive_egress::tests::slack_v5_binding_admits_only_its_member_without_global_destination",
+    "daemon::proactive_egress::tests::slack_v5_binding_drift_settles_before_factory_and_cannot_resend",
+    "daemon::proactive_egress::tests::slack_v5_terminal_transport_error_is_not_reopened_on_second_invocation"
+  ],
+  "localExecutableValidationRan": false
+}

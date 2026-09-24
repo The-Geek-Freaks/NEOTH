@@ -2574,6 +2574,33 @@ pub async fn run_import_openclaw_telegram(
     .await
 }
 
+/// Import exactly one schema-backed OpenClaw Slack account into one explicit
+/// named NEOTH Slack account. The OpenClaw source supplies only the two bearer
+/// tokens; the allowed member remains an explicit operator policy input.
+pub async fn run_import_openclaw_slack(
+    config: &std::path::Path,
+    source_account: &str,
+    account_id: ChannelAccountId,
+    allowed_user_id: String,
+    output: &OutputFormat,
+) -> Result<()> {
+    run_import_openclaw_slack_at_with_probe(
+        &FreedomConfig::default_neoth_home(),
+        config,
+        source_account,
+        account_id,
+        allowed_user_id,
+        output,
+        |binding| async move {
+            probe_slack_account_binding_with(binding, |token| async move {
+                crate::channels::slack_api::auth_test(&token).await
+            })
+            .await
+        },
+    )
+    .await
+}
+
 /// Source selection happens before the candidate is prepared.  Its complete
 /// source-set binding is synchronously re-read after the probe and before the
 /// exact prepared CAS commit, so no source change can be mistaken for the
@@ -2624,6 +2651,61 @@ where
     )
     .await?;
     print_openclaw_import_saved(
+        output,
+        &source_label,
+        &source_binding.source_set_sha256,
+        &saved_account,
+    );
+    Ok(())
+}
+
+/// The Slack sibling of the Telegram OpenClaw import. Source selection is
+/// repeated after the exact candidate auth.test and before the prepared Slack
+/// CAS commit, so a changed main or included source cannot be committed.
+async fn run_import_openclaw_slack_at_with_probe<F, Fut>(
+    home: &std::path::Path,
+    config: &std::path::Path,
+    source_account: &str,
+    account_id: ChannelAccountId,
+    allowed_user_id: String,
+    output: &OutputFormat,
+    probe: F,
+) -> Result<()>
+where
+    F: FnOnce(SlackProbeBinding) -> Fut,
+    Fut: std::future::Future<Output = Result<SlackProbeOutcome>>,
+{
+    anyhow::ensure!(
+        !allowed_user_id.trim().is_empty(),
+        "Slack allowed user ID must not be blank"
+    );
+    let inventory = neoth_openclaw_custody::canonical_known_channel_inventory_sha256();
+    let selected =
+        neoth_openclaw_custody::select_slack_account(config, source_account, &inventory)?;
+    let source_label = selected.source_account_label().to_owned();
+    let source_binding = selected.source_set().clone();
+    let (bot_token, app_token) = selected.into_tokens();
+    let fields = SlackAccountAddFields {
+        account_id,
+        allowed_user_id: Some(allowed_user_id),
+        bot_token: bot_token.with_exposed(|token| SecretString::from(token)),
+        app_token: app_token.with_exposed(|token| SecretString::from(token)),
+    };
+    let (saved_account, _probe_result) = run_slack_account_prepare_probe_commit_reload(
+        home,
+        fields,
+        probe,
+        || {
+            let current = neoth_openclaw_custody::inspect_source_set(config, &inventory)?;
+            anyhow::ensure!(
+                current == source_binding,
+                "OpenClaw source changed while candidate was being probed; no account state was saved"
+            );
+            Ok(())
+        },
+    )
+    .await?;
+    print_openclaw_slack_import_saved(
         output,
         &source_label,
         &source_binding.source_set_sha256,
@@ -3126,6 +3208,27 @@ where
     F: FnOnce(SlackProbeBinding) -> Fut,
     Fut: std::future::Future<Output = Result<SlackProbeOutcome>>,
 {
+    let (account_id, _probe_result) =
+        run_slack_account_prepare_probe_commit_reload(home, fields, probe, || Ok(())).await?;
+    print_slack_account_saved(output, &account_id);
+    Ok(())
+}
+
+/// Shared transaction boundary for ordinary Slack account add and explicit
+/// OpenClaw import. It preserves the existing prepare -> auth.test ->
+/// team-bound CAS commit -> reload sequence, with a no-write pre-commit guard
+/// for source-custody revalidation.
+async fn run_slack_account_prepare_probe_commit_reload<F, Fut, C>(
+    home: &std::path::Path,
+    fields: SlackAccountAddFields,
+    probe: F,
+    pre_commit: C,
+) -> Result<(ChannelAccountId, SlackProbeOutcome)>
+where
+    F: FnOnce(SlackProbeBinding) -> Fut,
+    Fut: std::future::Future<Output = Result<SlackProbeOutcome>>,
+    C: FnOnce() -> Result<()>,
+{
     let freedom_path = home.join("freedom.yaml");
     let credentials_path = home.join("credentials.yaml");
     let prepared = match fields.allowed_user_id {
@@ -3158,13 +3261,18 @@ where
         result.report.status == "ok",
         "candidate Slack account auth.test failed; no account state was saved"
     );
-    let verified_team_id = result.verified_team_id.context(
+    let verified_team_id = result.verified_team_id.as_deref().context(
         "candidate Slack account auth.test returned no canonical team ID; no account state was saved",
     )?;
-    Credentials::commit_prepared_slack_account_upsert_at(prepared, &verified_team_id)?;
+    pre_commit()?;
+    Credentials::commit_prepared_slack_account_upsert_at(prepared, verified_team_id)?;
     crate::cli::reload::request_reload_at(home).context(
         "Slack account storage committed, but the live-reload request failed; run `neoth reload`",
     )?;
+    Ok((account_id, result))
+}
+
+fn print_slack_account_saved(output: &OutputFormat, account_id: &ChannelAccountId) {
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
             "{}",
@@ -3175,7 +3283,6 @@ where
             account_id.as_str()
         ),
     }
-    Ok(())
 }
 
 async fn run_telegram_account_add_at_with_probe<F, Fut>(
@@ -3282,6 +3389,39 @@ fn openclaw_import_saved_json(
         "account": account_id.as_str(),
         "source_set_sha256": source_set_sha256,
         "probed": true,
+        "saved": true,
+    })
+}
+
+fn print_openclaw_slack_import_saved(
+    output: &OutputFormat,
+    source_account: &str,
+    source_set_sha256: &str,
+    account_id: &ChannelAccountId,
+) {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            openclaw_slack_import_saved_json(source_account, source_set_sha256, account_id)
+        ),
+        OutputFormat::Table => println!(
+            "OpenClaw source account `{source_account}` imported into slack/{} (source set {source_set_sha256}; auth.test; saved)",
+            account_id.as_str()
+        ),
+    }
+}
+
+fn openclaw_slack_import_saved_json(
+    source_account: &str,
+    source_set_sha256: &str,
+    account_id: &ChannelAccountId,
+) -> serde_json::Value {
+    serde_json::json!({
+        "source_account": source_account,
+        "channel": "slack",
+        "account": account_id.as_str(),
+        "source_set_sha256": source_set_sha256,
+        "auth_test": true,
         "saved": true,
     })
 }
@@ -7408,6 +7548,24 @@ mod tests {
         .unwrap();
     }
 
+    fn write_openclaw_slack_source(path: &std::path::Path, work_bot: &str, work_app: &str) {
+        std::fs::write(
+            path,
+            serde_json::json!({
+                "channels": {
+                    "slack": {
+                        "accounts": {
+                            "work": { "botToken": work_bot, "appToken": work_app },
+                            "other": { "botToken": "xoxb-other", "appToken": "xapp-other" },
+                        }
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+    }
+
     fn accepted_import_probe(binding: TelegramProbeBinding) -> Result<ChannelTestResult> {
         Ok(ChannelTestResult {
             channel: "telegram".into(),
@@ -7594,6 +7752,238 @@ mod tests {
         assert!(!rendered.contains(&sentinel));
         assert!(rendered.contains("source_set_sha256"));
         assert!(rendered.contains("probed"));
+        assert!(rendered.contains("saved"));
+    }
+
+    #[tokio::test]
+    async fn openclaw_slack_import_commits_exact_tokens_member_team_and_target() {
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let source_dir = tempfile::tempdir().unwrap();
+        let source = source_dir.path().join("openclaw.json");
+        write_openclaw_slack_source(&source, "xoxb-work-secret", "xapp-work-secret");
+
+        run_import_openclaw_slack_at_with_probe(
+            home.path(),
+            &source,
+            "work",
+            ChannelAccountId::new("ops_a").unwrap(),
+            "U123OPERATOR".into(),
+            &OutputFormat::Json,
+            |binding| async move {
+                assert_eq!(binding.channel_ref.account_id.as_str(), "ops_a");
+                assert_eq!(binding.bot_token.expose(), "xoxb-work-secret");
+                Ok(SlackProbeOutcome {
+                    report: ChannelTestResult {
+                        channel: "slack".into(),
+                        account: Some(ChannelAccountId::new("ops_a").unwrap()),
+                        status: "ok".into(),
+                        detail: "accepted".into(),
+                    },
+                    verified_team_id: Some("TWORK123".into()),
+                })
+            },
+        )
+        .await
+        .unwrap();
+
+        let pair = crate::config::load_runtime_config_pair_from_path(&home.path().join("freedom.yaml"))
+            .unwrap();
+        let accounts = pair.authenticated_slack_accounts().unwrap();
+        assert_eq!(accounts.len(), 1);
+        let account = accounts
+            .into_iter()
+            .find(|account| account.channel_ref().account_id.as_str() == "ops_a")
+            .unwrap();
+        assert_eq!(account.allowed_user_id(), "U123OPERATOR");
+        assert_eq!(account.team_id(), Some("TWORK123"));
+        assert_eq!(account.bot_token().expose(), "xoxb-work-secret");
+        assert_eq!(account.app_token().expose(), "xapp-work-secret");
+        assert!(home
+            .path()
+            .join(crate::config::reload::RELOAD_SENTINEL_NAME)
+            .exists());
+    }
+
+    #[tokio::test]
+    async fn openclaw_slack_import_source_change_or_no_team_has_zero_neoth_effect() {
+        for scenario in 0..4 {
+            let home = tempfile::tempdir().unwrap();
+            write_default_freedom(home.path());
+            let source_dir = tempfile::tempdir().unwrap();
+            let source = source_dir.path().join("openclaw.json");
+            write_openclaw_slack_source(&source, "xoxb-work-secret", "xapp-work-secret");
+            let freedom = home.path().join("freedom.yaml");
+            let credentials = home.path().join("credentials.yaml");
+            let before_freedom = std::fs::read(&freedom).unwrap();
+            let before_credentials = std::fs::read(&credentials).ok();
+            let source_for_probe = source.clone();
+
+            let error = run_import_openclaw_slack_at_with_probe(
+                home.path(),
+                &source,
+                "work",
+                ChannelAccountId::new("ops_a").unwrap(),
+                "U123OPERATOR".into(),
+                &OutputFormat::Json,
+                move |_binding| async move {
+                    if scenario == 1 {
+                        write_openclaw_slack_source(
+                            &source_for_probe,
+                            "xoxb-changed-secret",
+                            "xapp-changed-secret",
+                        );
+                    }
+                    Ok(SlackProbeOutcome {
+                        report: ChannelTestResult {
+                            channel: "slack".into(),
+                            account: Some(ChannelAccountId::new("ops_a").unwrap()),
+                            status: if scenario == 2 { "fail" } else { "ok" }.into(),
+                            detail: "accepted".into(),
+                        },
+                        verified_team_id: match scenario {
+                            0 | 2 => None,
+                            1 => Some("TWORK123".into()),
+                            3 => Some("workspace".into()),
+                            _ => unreachable!(),
+                        },
+                    })
+                },
+            )
+            .await
+            .unwrap_err();
+            let rendered = format!("{error:#}");
+            let expected = match scenario {
+                0 => "returned no canonical team ID",
+                1 => "OpenClaw source changed while candidate was being probed",
+                2 => "candidate Slack account auth.test failed",
+                3 => "verified Slack team_id is invalid",
+                _ => unreachable!(),
+            };
+            assert!(rendered.contains(expected), "unexpected error: {rendered}");
+            assert!(!rendered.contains("xoxb-work-secret"));
+            assert!(!rendered.contains("xapp-work-secret"));
+            assert_eq!(std::fs::read(&freedom).unwrap(), before_freedom);
+            assert_eq!(std::fs::read(&credentials).ok(), before_credentials);
+            assert!(!home
+                .path()
+                .join(crate::config::reload::RELOAD_SENTINEL_NAME)
+                .exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn openclaw_slack_import_included_source_change_has_zero_neoth_effect() {
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let source_dir = tempfile::tempdir().unwrap();
+        let source = source_dir.path().join("openclaw.json");
+        let included = source_dir.path().join("slack.json5");
+        std::fs::write(
+            &source,
+            "{ channels: { $include: './slack.json5' } }",
+        )
+        .unwrap();
+        std::fs::write(
+            &included,
+            "{ slack: { accounts: { work: { botToken: 'xoxb-work-secret', appToken: 'xapp-work-secret' } } } }",
+        )
+        .unwrap();
+        let freedom = home.path().join("freedom.yaml");
+        let credentials = home.path().join("credentials.yaml");
+        let before_freedom = std::fs::read(&freedom).unwrap();
+        let before_credentials = std::fs::read(&credentials).ok();
+        let included_for_probe = included.clone();
+
+        let error = run_import_openclaw_slack_at_with_probe(
+            home.path(),
+            &source,
+            "work",
+            ChannelAccountId::new("ops_a").unwrap(),
+            "U123OPERATOR".into(),
+            &OutputFormat::Json,
+            move |_binding| async move {
+                std::fs::write(
+                    &included_for_probe,
+                    "{ slack: { accounts: { work: { botToken: 'xoxb-changed-secret', appToken: 'xapp-changed-secret' } } } }",
+                )
+                .unwrap();
+                Ok(SlackProbeOutcome {
+                    report: ChannelTestResult {
+                        channel: "slack".into(),
+                        account: Some(ChannelAccountId::new("ops_a").unwrap()),
+                        status: "ok".into(),
+                        detail: "accepted".into(),
+                    },
+                    verified_team_id: Some("TWORK123".into()),
+                })
+            },
+        )
+        .await
+        .unwrap_err();
+
+        let rendered = format!("{error:#}");
+        assert!(
+            rendered.contains("OpenClaw source changed while candidate was being probed"),
+            "unexpected error: {rendered}"
+        );
+        assert!(!rendered.contains("xoxb-work-secret"));
+        assert!(!rendered.contains("xapp-work-secret"));
+        assert_eq!(std::fs::read(&freedom).unwrap(), before_freedom);
+        assert_eq!(std::fs::read(&credentials).ok(), before_credentials);
+        assert!(!home
+            .path()
+            .join(crate::config::reload::RELOAD_SENTINEL_NAME)
+            .exists());
+    }
+
+    #[tokio::test]
+    async fn openclaw_slack_import_rejects_unknown_source_before_probe_or_neoth_write() {
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let source_dir = tempfile::tempdir().unwrap();
+        let source = source_dir.path().join("openclaw.json");
+        write_openclaw_slack_source(&source, "xoxb-work-secret", "xapp-work-secret");
+        let freedom = home.path().join("freedom.yaml");
+        let credentials = home.path().join("credentials.yaml");
+        let before_freedom = std::fs::read(&freedom).unwrap();
+        let before_credentials = std::fs::read(&credentials).ok();
+
+        let error = run_import_openclaw_slack_at_with_probe(
+            home.path(),
+            &source,
+            "missing",
+            ChannelAccountId::new("ops_a").unwrap(),
+            "U123OPERATOR".into(),
+            &OutputFormat::Json,
+            |_binding| async { unreachable!("source must be refused before probe") },
+        )
+        .await
+        .unwrap_err();
+
+        let rendered = format!("{error:#}");
+        assert!(!rendered.contains("xoxb-work-secret"));
+        assert!(!rendered.contains("xapp-work-secret"));
+        assert_eq!(std::fs::read(&freedom).unwrap(), before_freedom);
+        assert_eq!(std::fs::read(&credentials).ok(), before_credentials);
+        assert!(!home
+            .path()
+            .join(crate::config::reload::RELOAD_SENTINEL_NAME)
+            .exists());
+    }
+
+    #[test]
+    fn openclaw_slack_import_output_is_secret_free() {
+        let rendered = openclaw_slack_import_saved_json(
+            "work",
+            "source-set-digest",
+            &ChannelAccountId::new("ops_a").unwrap(),
+        )
+        .to_string();
+        for forbidden in ["xoxb-work-secret", "xapp-work-secret", "U123OPERATOR"] {
+            assert!(!rendered.contains(forbidden));
+        }
+        assert!(rendered.contains("auth_test"));
         assert!(rendered.contains("saved"));
     }
 

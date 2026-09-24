@@ -1125,6 +1125,8 @@ Preview a one-time v2 pairing QR/URL; NEOTH ships no phone client yet. The serve
 
 Open a fresh, one-time loopback WebChat handoff from a running daemon
 
+- `--resume <RESUME>` — Resume a prior durably-proven non-incognito WebChat session
+
 ## `neoth completions`
 
 Emit a shell-completion script. `neoth completions zsh > _neoth`, `neoth completions bash > /etc/bash_completion.d/neoth`, etc

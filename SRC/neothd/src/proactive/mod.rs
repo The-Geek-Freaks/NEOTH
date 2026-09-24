@@ -187,9 +187,11 @@ impl ProactiveItem {
                 return Err(ProactiveItemInvalidity::AccountBindingMismatch);
             }
             (Some(_), Some(binding))
-                if binding.channel_ref().channel_id
-                    != crate::channels::registry::ChannelId::Telegram
-                    || self.channel != "telegram" =>
+                if !matches!(
+                    (binding.channel_ref().channel_id, self.channel.as_str()),
+                    (crate::channels::registry::ChannelId::Telegram, "telegram")
+                        | (crate::channels::registry::ChannelId::Slack, "slack")
+                ) =>
             {
                 return Err(ProactiveItemInvalidity::AccountBindingChannelMismatch);
             }
@@ -1143,6 +1145,44 @@ mod tests {
             "account_id": "account-a",
             "account_binding": {
                 "channel_ref": {"channel_id": "telegram", "account_id": "account-a"},
+                "incarnation": "018f3d1e-2c50-7000-8000-000000000001"
+            },
+            "source": "test",
+            "body": "private body",
+            "scheduled_for_unix": 0,
+            "is_failure": false,
+            "expires_unix": 0
+        });
+        let value = serde_json::json!({
+            "items": [malformed], "drained_at": [], "config": {"max_per_day": 3},
+            "settled_egress_intents": [], "item_generations": {}
+        });
+        crate::util::atomic_write::atomic_write_private(
+            &path,
+            &serde_json::to_vec(&value).unwrap(),
+        )
+        .unwrap();
+        ProactiveQueue::modify(&path, |_| (false, ())).unwrap();
+        let queue = ProactiveQueue::load_from(&path).unwrap();
+        assert!(queue.peek().is_empty());
+        assert_eq!(queue.quarantined_items.len(), 1);
+        assert_eq!(
+            queue.quarantined_items[0].reason,
+            ProactiveItemInvalidity::AccountBindingChannelMismatch
+        );
+    }
+
+    #[test]
+    fn slack_incarnation_binding_cannot_cross_to_telegram_before_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("proactive_queue.json");
+        let malformed = serde_json::json!({
+            "priority": 50,
+            "dedup_key": "malformed-slack-bound-channel",
+            "channel": "telegram",
+            "account_id": "account-a",
+            "account_binding": {
+                "channel_ref": {"channel_id": "slack", "account_id": "account-a"},
                 "incarnation": "018f3d1e-2c50-7000-8000-000000000001"
             },
             "source": "test",
