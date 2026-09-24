@@ -101,25 +101,6 @@ impl N8nProbeError {
             Self::Transport => "n8n_probe_transport",
         }
     }
-
-    pub fn redacted_message(self) -> &'static str {
-        match self {
-            Self::Unauthorized => {
-                "The n8n API key was rejected by the configured loopback instance."
-            }
-            Self::Timeout => {
-                "The configured loopback n8n API did not respond before the bounded timeout."
-            }
-            Self::Redirect => {
-                "The configured loopback n8n API returned a redirect, which adoption rejects."
-            }
-            Self::ResponseTooLarge => "The n8n API response exceeded the adoption body limit.",
-            Self::InvalidResponse => {
-                "The configured endpoint did not return the documented n8n workflows response."
-            }
-            Self::Transport => "The configured loopback n8n API could not be reached.",
-        }
-    }
 }
 
 #[async_trait]

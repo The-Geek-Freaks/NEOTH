@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Exact hosted six-file n8n formatting admitted; executable behavior pending",
+  "status": "Two strict hosted diagnostics repaired; fresh compile pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 179956,
-    "sha256": "C55A293E242AC83F1E171744739A7C412C7C2104957912C52B9C50E608F1E021"
+    "bytes": 179943,
+    "sha256": "6D88C4DA3E72E953F26CC7BA13C44AF0F65C96DDD9E0E4D9F7AF375894754CB5"
   },
   "sourceInputs": 1017,
   "requiredNativeTests": [
@@ -9816,25 +9816,25 @@
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::stopped_container_uses_host_config_port_binding_for_exact_identity",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "DD9B32007718FCB440C230B42B37A8ED4DA5C1C58DF6795F604B215BEEBCC439",
+      "sourceSha256": "6BF992488829DB8BF228730EA7291BD058260A299BE3D5D95C790253E19F1F56",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::running_network_binding_must_match_durable_host_config",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "DD9B32007718FCB440C230B42B37A8ED4DA5C1C58DF6795F604B215BEEBCC439",
+      "sourceSha256": "6BF992488829DB8BF228730EA7291BD058260A299BE3D5D95C790253E19F1F56",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::extra_host_port_is_rejected_before_ownership_is_granted",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "DD9B32007718FCB440C230B42B37A8ED4DA5C1C58DF6795F604B215BEEBCC439",
+      "sourceSha256": "6BF992488829DB8BF228730EA7291BD058260A299BE3D5D95C790253E19F1F56",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::extra_mount_is_rejected_before_ownership_is_granted",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "DD9B32007718FCB440C230B42B37A8ED4DA5C1C58DF6795F604B215BEEBCC439",
+      "sourceSha256": "6BF992488829DB8BF228730EA7291BD058260A299BE3D5D95C790253E19F1F56",
       "junitClass": "neoth"
     },
     {
@@ -36185,6 +36185,44 @@
       }
     ],
     "note": "Sourcef3e9f264 ZIP10831143192 verified;6old/new blobs verified. C7 WIP excluded.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave915N8nCompileRepair": {
+    "base": "8d3817cd8ce73fbd9761b6304550b3c2d6ec7b33",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 287690,
+        "sha256": "38748AD6F26BF73E06F673A256C11EE1D5EF5DBB911D896D582EC7B1FA4F46B9",
+        "blob": "dec0a73f324a94880017b53548138190747878b8"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1299018,
+        "sha256": "1CBBC2E5D7573A257FDE32274769A638C27D890C0CD16A9AE7BAA5B93358929C",
+        "blob": "4a85fefc05e9554ed5e0fa81dcbebc505bd55b15"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1907987,
+        "sha256": "D3ADA685ACA331D628F991885851A216C8EF8B89DDF0D4C99EE1E79A7CF7BD7F",
+        "blob": "9c14e6489e4ae0fbea85aff1ca5a0727f48025b7"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n.rs",
+        "bytes": 35750,
+        "sha256": "8DE52C2C9C78C2E28AA8A73ACC9841BFAF0A931D8BB7034B1AE346C1D4ACF5A0",
+        "blob": "9ea75dcc08f09ebe9bf6dfa1fd012cb6a41a2f77"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+        "bytes": 42041,
+        "sha256": "6BF992488829DB8BF228730EA7291BD058260A299BE3D5D95C790253E19F1F56",
+        "blob": "04417b2cf449a59d4485936b9485796242d00938"
+      }
+    ],
+    "note": "Core36052480246 private_bounds and dead_code; no warning suppression, no local execution. W911/W914 WIP excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

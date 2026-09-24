@@ -503,7 +503,7 @@ fn cancellation_observed(cancel: &mut tokio::sync::oneshot::Receiver<()>) -> boo
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn install_managed_at_with<
+pub(in crate::integrations) async fn install_managed_at_with<
     R: ManagedDockerRunner,
     H: ManagedReadiness,
     P: N8nApiProbe + ?Sized,

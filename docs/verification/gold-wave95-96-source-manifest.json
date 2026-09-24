@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T20:05:49.1687834Z",
-  "validationStatus": "Exact hosted six-file n8n formatting admitted; executable behavior pending",
+  "capturedUtc": "2026-09-24T20:09:59.7673684Z",
+  "validationStatus": "Two strict hosted diagnostics repaired; fresh compile pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2093,18 +2093,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 287058,
-      "sha256": "4522E64F62811CBD80DA628FBD9CD851DC21D6C96CE62DDD837EF588CB66E74F"
+      "bytes": 287690,
+      "sha256": "38748AD6F26BF73E06F673A256C11EE1D5EF5DBB911D896D582EC7B1FA4F46B9"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1298386,
-      "sha256": "13CE1DBC32BC8650758512AFC6C857FE20F007ECB00A4F6AB8C2E7B82FD878F4"
+      "bytes": 1299018,
+      "sha256": "1CBBC2E5D7573A257FDE32274769A638C27D890C0CD16A9AE7BAA5B93358929C"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1907355,
-      "sha256": "41E0E82EDEE022F7C0FC55F90F01F971171DEA74124FF451707DE24CAA8803BB"
+      "bytes": 1907987,
+      "sha256": "D3ADA685ACA331D628F991885851A216C8EF8B89DDF0D4C99EE1E79A7CF7BD7F"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4068,8 +4068,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n.rs",
-      "bytes": 36587,
-      "sha256": "8B0BC02C408A92C32481D8C41131868C7FFCA7C258E7F1CD831B06A3BC805E73"
+      "bytes": 35750,
+      "sha256": "8DE52C2C9C78C2E28AA8A73ACC9841BFAF0A931D8BB7034B1AE346C1D4ACF5A0"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_runtime_tests.rs",
@@ -4078,8 +4078,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "bytes": 42024,
-      "sha256": "DD9B32007718FCB440C230B42B37A8ED4DA5C1C58DF6795F604B215BEEBCC439"
+      "bytes": 42041,
+      "sha256": "6BF992488829DB8BF228730EA7291BD058260A299BE3D5D95C790253E19F1F56"
     },
     {
       "path": "SRC/neothd/src/integrations/state.rs",

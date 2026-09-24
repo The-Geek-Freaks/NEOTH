@@ -8,6 +8,14 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W913/W915 hosted n8n follow-up (2026-09-24):** Root admitted exact hosted
+six-file Rust formatting atf3e9f264 (ZIP10831143192, old/new Git blobs verified)
+and published8d3817cd; its Preflight36052777903 passes. Core36052480246 stopped
+before tests on two strict production diagnostics: private_bounds on the injected
+managed installer and a dead probe-message helper. W915 narrows the helper to
+integrations visibility and removes the unused method, preserving all guards.
+The repaired source requires a fresh GitHub compile; no behavioral pass or Road
+closure is inferred. Group1383/Windows142 on0448daf4 continue independently.
 **W908/W910 managed n8n publication (2026-09-24):** Core36049730518 at4aae1d0f
 passed strict slim Clippy, default-core test-target typecheck, CLI build and
 reference export; Root verified the API ZIP digest, inner hashes and exact
