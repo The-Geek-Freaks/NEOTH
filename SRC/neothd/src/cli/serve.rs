@@ -1623,7 +1623,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     );
                 let retry_latched = pending
                     .as_ref()
-                    .is_some_and(|(_, _, _, _, _, _, retry)| *retry);
+                    .is_some_and(|(_, _, _, _, _, _, _, retry)| *retry);
                 let retry_failed = (explicit_retry || retry_latched) && !failed_channels.is_empty();
                 if credentials_valid && fresh_fingerprints == known_fingerprints && !retry_failed {
                     pending = None;
@@ -1641,7 +1641,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 let same_candidate =
                     pending
                         .as_ref()
-                        .is_some_and(|(_, fingerprints, _, _, _, _, retry)| {
+                        .is_some_and(|(_, fingerprints, _, _, _, _, _, retry)| {
                             *fingerprints == fresh_fingerprints && *retry == retry_failed
                         });
                 if !same_candidate {
@@ -1659,7 +1659,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 }
                 if pending
                     .as_ref()
-                    .is_some_and(|(since, _, _, _, _, _, _)| since.elapsed() < RELOAD_DEBOUNCE)
+                    .is_some_and(|(since, _, _, _, _, _, _, _)| since.elapsed() < RELOAD_DEBOUNCE)
                 {
                     continue;
                 }

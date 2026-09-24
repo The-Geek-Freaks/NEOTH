@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "P2-26a accepted; twelve-file exact hosted format imported; Slack/native/windows behavior pending",
+  "status": "Core exposed3 borrowed reload tuple arity errors; corrected source awaiting hosted validation",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 153184,
-    "sha256": "0708DBC1415D8506902D607457DE1C628C6194438D12838966B4B27ADA1E5160"
+    "bytes": 153181,
+    "sha256": "E58B7A9A9309133AAAF48C897FEB4DA2A49588AB836432748786861089AE8F92"
   },
   "sourceInputs": 867,
   "requiredNativeTests": [
@@ -29292,6 +29292,38 @@
       }
     ],
     "note": "Imported exact hosted rustfmt patch10792663078 from9cde5c0c; old/new blobs verified.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave678ReloadTuple": {
+    "base": "c328dbff8913d3066c5e50ed240d269e9f13b78e",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 235712,
+        "sha256": "171DEAE386A1F528421E8A226A8B7D3DE8F6744781A1D7C10FA5AC005F10EAC7",
+        "blob": "eeb9978d9b045a24d15705492c5419deaffb9470"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1247040,
+        "sha256": "3ADED11ABAF0DDD4ECE596EBC7AD9D16F2991F99CBE51E637F27DBF7360CF98B",
+        "blob": "d952a603dc5159f7622f30f7f8ef4b83a310c521"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1846847,
+        "sha256": "E5FEE756360E1CC20638ADA52E2D40CC2A45D7249111EA0EA8E88009A3F9F1E5",
+        "blob": "039c0d65ae8f7adcd5e03ce8d2dd681ef73653fc"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve.rs",
+        "bytes": 176733,
+        "sha256": "3B49BBCFC77AD56406271ABD6055EF976ADC8120A4C070FFD64BC5FC9936DA8A",
+        "blob": "98a0dd8f155608489d3ebab15c05e30168c4bb4a"
+      }
+    ],
+    "note": "35962545321 c328dbff actual E0308 three destructures expected7 but candidate8; exact3field fixes.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

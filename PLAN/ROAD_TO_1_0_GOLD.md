@@ -8,6 +8,12 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W678 hosted reload tuple correction (2026-09-24):** Core35962545321 reports
+three E0308 errors: Slack added an eighth reload-candidate tuple element while
+three borrowed destructures still expected seven. All three now retain the
+new field position; retry and debounce semantics stay unchanged. Hosted
+compilation/behavior pending; no Road closure or local executable checks.
+
 **W677 hosted formatting (2026-09-24):** Preflight35962290710 parses the repaired
 source and supplies a twelve-file rustfmt patch. ZIP, source receipt, patch
 checksum and every old/new Gitblob verified; imported byte-exact. Core/Group1042/
