@@ -9361,9 +9361,7 @@ pub(crate) async fn prepare_daemon_gui_chat_turn(
     // The daemon runtime passes this only from the session sealed into its
     // admitted GUI turn. Bind it before banner and WAL/transcript preparation;
     // incognito retains its generated private identity and no history join.
-    if !incognito
-        && let Some(session_id) = admitted_session_id
-    {
+    if !incognito && let Some(session_id) = admitted_session_id {
         anyhow::ensure!(
             !session_id.is_empty(),
             "admitted GUI chat session identity is empty"

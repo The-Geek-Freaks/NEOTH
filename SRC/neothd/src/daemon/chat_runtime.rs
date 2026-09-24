@@ -976,11 +976,9 @@ mod tests {
         .expect("complete incognito GUI turn without transcript persistence");
 
         let transcript_path = home.path().join("views.db");
-        let session_a_rows = crate::memory::transcript_store::read_session_turns_at(
-            &transcript_path,
-            session_a,
-        )
-        .expect("read actual transcript for admitted browser session A");
+        let session_a_rows =
+            crate::memory::transcript_store::read_session_turns_at(&transcript_path, session_a)
+                .expect("read actual transcript for admitted browser session A");
         assert_eq!(
             session_a_rows
                 .iter()
@@ -992,11 +990,9 @@ mod tests {
             ],
             "the real producer writes both transcript rows under session A"
         );
-        let session_b_rows = crate::memory::transcript_store::read_session_turns_at(
-            &transcript_path,
-            session_b,
-        )
-        .expect("read actual transcript for admitted browser session B");
+        let session_b_rows =
+            crate::memory::transcript_store::read_session_turns_at(&transcript_path, session_b)
+                .expect("read actual transcript for admitted browser session B");
         assert_eq!(
             session_b_rows
                 .iter()
@@ -1019,8 +1015,7 @@ mod tests {
         );
         let transcript_db = rusqlite::Connection::open_with_flags(
             &transcript_path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
-                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
         .expect("open actual transcript database read-only");
         let raw_turn_count: i64 = transcript_db

@@ -184,7 +184,10 @@ fn webchat_status_probe_child_process_checks_live_listener() {
                 status.state,
                 crate::daemon::webchat::WebChatRuntimeReadiness::Ready
             );
-            assert_eq!(status.endpoint.as_deref(), Some("http://127.0.0.1:9745/webchat"));
+            assert_eq!(
+                status.endpoint.as_deref(),
+                Some("http://127.0.0.1:9745/webchat")
+            );
         }
         "listener_not_ready" => {
             let status = observed.expect("unready listener must answer authenticated status RPC");
@@ -194,7 +197,10 @@ fn webchat_status_probe_child_process_checks_live_listener() {
             );
             assert_eq!(status.endpoint, None);
         }
-        "absent" => assert!(observed.is_err(), "absent WebChat state must return RPC failure"),
+        "absent" => assert!(
+            observed.is_err(),
+            "absent WebChat state must return RPC failure"
+        ),
         other => panic!("unexpected WebChat status probe expectation: {other}"),
     }
 }
@@ -256,7 +262,7 @@ async fn webchat_runtime_status_round_trips_live_listener_states() {
     listener.abort();
     let _ = listener.await;
     drop(writer);
-    wal_join.await.unwrap().unwrap();
+    wal_join.await.unwrap();
 
     let absent_home = tempdir().unwrap();
     let absent_segment = canonical_test_wal(absent_home.path(), "webchat-runtime-absent");
@@ -282,14 +288,13 @@ async fn webchat_runtime_status_round_trips_live_listener_states() {
         bind_and_serve(absent_home.path(), &absent_nonce, absent_state)
             .await
             .unwrap();
-    let _absent_owner =
-        publish_test_endpoint(absent_home.path(), &absent_endpoint, &absent_nonce);
+    let _absent_owner = publish_test_endpoint(absent_home.path(), &absent_endpoint, &absent_nonce);
     probe_webchat_status_from_oneshot_child(absent_home.path(), "absent");
 
     absent_listener.abort();
     let _ = absent_listener.await;
     drop(absent_writer);
-    absent_wal_join.await.unwrap().unwrap();
+    absent_wal_join.await.unwrap();
 }
 
 async fn raw_post(addr: &AuditEndpointV2, token: Option<&str>, body: &str) -> u16 {

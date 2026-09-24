@@ -1,0 +1,52 @@
+{
+  "schema": "neoth-w708-group1081/v1",
+  "run": 35972374505,
+  "source": "3ed5622b2127e01c0de8ddcfa5dc484f016fed11",
+  "status": "COMPILE_BLOCKED",
+  "selected": 1081,
+  "executed": 0,
+  "passed": 0,
+  "failed": 0,
+  "missing": 0,
+  "artifactDigests": [
+    {
+      "id": 10797110382,
+      "name": "w190-research-lifecycle-receipt-3ed5622b2127e01c0de8ddcfa5dc484f016fed11",
+      "digest": "sha256:4073e8e1b6670cd7ac475cf3d221331b6fb038e5195176e922ec0a3b5b28394f",
+      "local": "4073e8e1b6670cd7ac475cf3d221331b6fb038e5195176e922ec0a3b5b28394f"
+    },
+    {
+      "id": 10797100388,
+      "name": "w190-research-lifecycle-source-3ed5622b2127e01c0de8ddcfa5dc484f016fed11",
+      "digest": "sha256:c9148e77dc5e38faa8ed05c63c39e03dae3dbc63265caf2664f979246222a32b",
+      "local": "c9148e77dc5e38faa8ed05c63c39e03dae3dbc63265caf2664f979246222a32b"
+    },
+    {
+      "id": 10796054149,
+      "name": "w190-research-lifecycle-log-3ed5622b2127e01c0de8ddcfa5dc484f016fed11",
+      "digest": "sha256:3f9bcaf068db2dde2a6df7897528ac084615b8d22fe5db757aa5d95c0972e5be",
+      "local": "3f9bcaf068db2dde2a6df7897528ac084615b8d22fe5db757aa5d95c0972e5be"
+    }
+  ],
+  "compileErrors": [
+    {
+      "code": "E0599",
+      "message": "no method named unwrap found for unit type ()",
+      "path": "neothd/src/daemon/audit_rpc/tests.rs",
+      "lines": [
+        259,
+        292
+      ]
+    }
+  ],
+  "note": "Receipt has no executed-count because compilation failed before fixtures ran; failed-fixtures inventory is empty.",
+  "localExecutablesRan": false,
+  "rootVerified": [
+    "three ZIP digests",
+    "source receipt",
+    "actual E0599 diagnostics",
+    "no execution counter"
+  ],
+  "notStarted": 1081,
+  "repair": "Remove second unwrap at the two new spawn_for_home JoinHandle<()> awaits; preserve child/listener assertions. Execution pending on GitHub."
+}

@@ -114,8 +114,15 @@ impl gui::GuiChatRuntime for RecordingRuntime {
         request: gui::GuiChatAttachExchangeRequest,
     ) -> gui::GuiChatResult<gui::GuiChatAttachExchangeResponse> {
         self.record(format!("exchange_attach:{}", request.session_id));
-        assert_eq!(request.grant.0, "same-session-grant", "WebChat must derive status authority from the stored same-session grant");
-        *self.expected_status_capability.lock().expect("recording runtime capability mutex poisoned") = Some("attach-capability".into());
+        assert_eq!(
+            request.grant.0, "same-session-grant",
+            "WebChat must derive status authority from the stored same-session grant"
+        );
+        *self
+            .expected_status_capability
+            .lock()
+            .expect("recording runtime capability mutex poisoned") =
+            Some("attach-capability".into());
         Ok(gui::GuiChatAttachExchangeResponse {
             schema_version: gui::GUI_CHAT_V1_SCHEMA_VERSION,
             expected_boot_id: "w690-boot".into(),
@@ -164,7 +171,10 @@ impl gui::GuiChatRuntime for RecordingRuntime {
     ) -> gui::GuiChatResult<gui::GuiChatStatusResponse> {
         self.record(format!("status:{}", request.session_id));
         assert_eq!(
-            self.expected_status_capability.lock().expect("recording runtime capability mutex poisoned").as_deref(),
+            self.expected_status_capability
+                .lock()
+                .expect("recording runtime capability mutex poisoned")
+                .as_deref(),
             Some(request.attach_capability.0.as_str()),
             "status must receive only the capability minted by exchange_attach"
         );
@@ -690,7 +700,13 @@ async fn session_reentry_checks_runtime_terminal_state_and_keeps_incognito_repla
         .await
         .expect("completed session re-entry");
     assert_eq!(completed.status(), reqwest::StatusCode::OK);
-    assert!(completed.json::<serde_json::Value>().await.expect("completed session json")["active_request_id"].is_null());
+    assert!(
+        completed
+            .json::<serde_json::Value>()
+            .await
+            .expect("completed session json")["active_request_id"]
+            .is_null()
+    );
     let hidden = client
         .get(format!("{base}/api/v1/webchat/session"))
         .header("Cookie", &other)
@@ -698,7 +714,13 @@ async fn session_reentry_checks_runtime_terminal_state_and_keeps_incognito_repla
         .await
         .expect("foreign session re-entry");
     assert_eq!(hidden.status(), reqwest::StatusCode::OK);
-    assert!(hidden.json::<serde_json::Value>().await.expect("foreign session json")["active_request_id"].is_null());
+    assert!(
+        hidden
+            .json::<serde_json::Value>()
+            .await
+            .expect("foreign session json")["active_request_id"]
+            .is_null()
+    );
 
     runtime.set_status_terminal(None);
     let running_request = start_owned_request(&client, &base, &owner).await;
@@ -714,7 +736,9 @@ async fn session_reentry_checks_runtime_terminal_state_and_keeps_incognito_repla
         .await
         .expect("running session json");
     assert_eq!(
-        running["active_request_id"].as_str().expect("running active request"),
+        running["active_request_id"]
+            .as_str()
+            .expect("running active request"),
         running_request.to_string()
     );
     assert!(
@@ -722,8 +746,14 @@ async fn session_reentry_checks_runtime_terminal_state_and_keeps_incognito_repla
         "the session projection never exposes attach authority"
     );
     assert!(
-        runtime.calls().iter().any(|call| call.starts_with("exchange_attach:"))
-            && runtime.calls().iter().any(|call| call.starts_with("status:")),
+        runtime
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("exchange_attach:"))
+            && runtime
+                .calls()
+                .iter()
+                .any(|call| call.starts_with("status:")),
         "re-entry must exchange the server-held grant before status"
     );
     let incognito_request = start_owned_request_with_incognito(&client, &base, &owner, true).await;
@@ -753,7 +783,15 @@ async fn session_reentry_checks_runtime_terminal_state_and_keeps_incognito_repla
         .await
         .expect("incognito transcript projection");
     assert_eq!(transcript.status(), reqwest::StatusCode::OK);
-    assert!(transcript.json::<serde_json::Value>().await.expect("incognito transcript json")["turns"].as_array().expect("turn array").is_empty());
+    assert!(
+        transcript
+            .json::<serde_json::Value>()
+            .await
+            .expect("incognito transcript json")["turns"]
+            .as_array()
+            .expect("turn array")
+            .is_empty()
+    );
     let attach = post(
         &client,
         &base,
@@ -763,7 +801,13 @@ async fn session_reentry_checks_runtime_terminal_state_and_keeps_incognito_repla
     )
     .await;
     assert_eq!(attach.status(), reqwest::StatusCode::OK);
-    assert!(runtime.calls().iter().any(|call| call.starts_with("replay:")), "incognito reconnect must use runtime replay");
+    assert!(
+        runtime
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("replay:")),
+        "incognito reconnect must use runtime replay"
+    );
     let foreign_attach = post(
         &client,
         &base,
@@ -773,7 +817,15 @@ async fn session_reentry_checks_runtime_terminal_state_and_keeps_incognito_repla
     )
     .await;
     assert_eq!(foreign_attach.status(), reqwest::StatusCode::FORBIDDEN);
-    assert_eq!(error_code(&foreign_attach.json().await.expect("foreign incognito attach error json")), "forbidden");
+    assert_eq!(
+        error_code(
+            &foreign_attach
+                .json()
+                .await
+                .expect("foreign incognito attach error json")
+        ),
+        "forbidden"
+    );
     stop(shutdown, server).await;
 }
 

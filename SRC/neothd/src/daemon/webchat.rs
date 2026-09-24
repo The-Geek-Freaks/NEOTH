@@ -217,9 +217,15 @@ impl WebChatState {
     /// Secret-free snapshot of actual listener authority; never mints a handoff.
     pub(crate) fn runtime_status(&self) -> WebChatRuntimeStatus {
         if self.listener_ready.load(Ordering::Acquire) {
-            WebChatRuntimeStatus { state: WebChatRuntimeReadiness::Ready, endpoint: Some(format!("http://127.0.0.1:{}/webchat", self.port)) }
+            WebChatRuntimeStatus {
+                state: WebChatRuntimeReadiness::Ready,
+                endpoint: Some(format!("http://127.0.0.1:{}/webchat", self.port)),
+            }
         } else {
-            WebChatRuntimeStatus { state: WebChatRuntimeReadiness::ListenerNotReady, endpoint: None }
+            WebChatRuntimeStatus {
+                state: WebChatRuntimeReadiness::ListenerNotReady,
+                endpoint: None,
+            }
         }
     }
     pub(crate) async fn mint_handoff(&self) -> Result<WebChatHandoffResponse, &'static str> {
@@ -371,30 +377,40 @@ async fn route(
                         (stored.started.clone(), stored.terminal, stored.incognito)
                     };
                     let Some(started) = started else { continue };
-                    if stored_terminal { continue; }
+                    if stored_terminal {
+                        continue;
+                    }
                     // `start` deliberately withholds a usable origin capability.
                     // Derive a fresh server-side attach capability from the stored
                     // same-session grant; it is never exposed by this status route.
-                    let exchange = state.runtime.exchange_attach(gui::GuiChatAttachExchangeRequest {
-                        schema_version: gui::GUI_CHAT_V1_SCHEMA_VERSION,
-                        expected_boot_id: state.boot_id.to_string(),
-                        turn_id: started.turn_id.clone(),
-                        session_id: session.session_id.clone(),
-                        desired_surface: gui::GuiChatSurface::WebChat,
-                        grant: started.same_session_attach_grant.grant,
-                    }).await?;
-                    let runtime_status = state.runtime.status(gui::GuiChatStatusRequest {
-                        schema_version: gui::GUI_CHAT_V1_SCHEMA_VERSION,
-                        expected_boot_id: state.boot_id.to_string(),
-                        turn_id: started.turn_id.clone(),
-                        session_id: session.session_id.clone(),
-                        attach_capability: exchange.attach_capability,
-                    }).await?;
+                    let exchange = state
+                        .runtime
+                        .exchange_attach(gui::GuiChatAttachExchangeRequest {
+                            schema_version: gui::GUI_CHAT_V1_SCHEMA_VERSION,
+                            expected_boot_id: state.boot_id.to_string(),
+                            turn_id: started.turn_id.clone(),
+                            session_id: session.session_id.clone(),
+                            desired_surface: gui::GuiChatSurface::WebChat,
+                            grant: started.same_session_attach_grant.grant,
+                        })
+                        .await?;
+                    let runtime_status = state
+                        .runtime
+                        .status(gui::GuiChatStatusRequest {
+                            schema_version: gui::GUI_CHAT_V1_SCHEMA_VERSION,
+                            expected_boot_id: state.boot_id.to_string(),
+                            turn_id: started.turn_id.clone(),
+                            session_id: session.session_id.clone(),
+                            attach_capability: exchange.attach_capability,
+                        })
+                        .await?;
                     if runtime_status.terminal.is_some() && !incognito {
                         entry.lock().await.terminal = true;
                         continue;
                     }
-                    if active.is_none_or(|current| id > current) { active = Some(id); }
+                    if active.is_none_or(|current| id > current) {
+                        active = Some(id);
+                    }
                 }
                 Ok(json(
                     StatusCode::OK,

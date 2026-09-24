@@ -1,0 +1,104 @@
+{
+  "schema": "neoth-gold-hosted-format-admission/v1",
+  "wave": 707,
+  "run": 35972375977,
+  "source": "3ed5622b2127e01c0de8ddcfa5dc484f016fed11",
+  "artifact": 10796557968,
+  "artifactZipSha256": "56aeb717de0b29893e5a298bd8cc35eea4cc777f0913004b136c5cf0cedac869",
+  "patchSha256": "99b4034752126c574c1b957291b31da5e1f7051869fc450630517524c8227475",
+  "status": "ROOT_VERIFIED_IMPORTED",
+  "rootVerified": [
+    "ZIP digest",
+    "internal checksums",
+    "source receipt",
+    "nine same-path patch headers",
+    "nine old source/worktree blobs",
+    "git apply --check",
+    "nine resulting blobs"
+  ],
+  "paths": [
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "patchRightPath": "SRC/neothd/src/cli/chat.rs",
+      "oldBlob": "0ea50e85917ad4f39964e9847777ca66c446679d",
+      "expectedNewBlob": "2a403f1f08bd9cf36058371a9eb58631d4d49bd9",
+      "sourceBlob": "0ea50e85917ad4f39964e9847777ca66c446679d",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/computer_use.rs",
+      "patchRightPath": "SRC/neothd/src/cli/computer_use.rs",
+      "oldBlob": "78559682354223b7ea2fc174e0734965bd66f4eb",
+      "expectedNewBlob": "0445c4090967565a54781440deccbbaae3a30633",
+      "sourceBlob": "78559682354223b7ea2fc174e0734965bd66f4eb",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/status.rs",
+      "patchRightPath": "SRC/neothd/src/cli/status.rs",
+      "oldBlob": "1a874b5d268ed516072ae6f7e40cd5e87cc9e2d1",
+      "expectedNewBlob": "af77ed5da85aa706770ed1283424201fc8b3c33e",
+      "sourceBlob": "1a874b5d268ed516072ae6f7e40cd5e87cc9e2d1",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+      "patchRightPath": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+      "oldBlob": "47b545422467f08794c11c644cdb5f00f06b2d61",
+      "expectedNewBlob": "480054b5dcdaccf53aea26a81a902ed81081331c",
+      "sourceBlob": "47b545422467f08794c11c644cdb5f00f06b2d61",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "patchRightPath": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "oldBlob": "c5d6a8b3140aab808735535b529f6f605f890591",
+      "expectedNewBlob": "bef2659786c005f602ce2c2bced055e54d4a2330",
+      "sourceBlob": "c5d6a8b3140aab808735535b529f6f605f890591",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/chat_runtime.rs",
+      "patchRightPath": "SRC/neothd/src/daemon/chat_runtime.rs",
+      "oldBlob": "50484ba48cce6655ee6f14c1090e35c73dea3d83",
+      "expectedNewBlob": "d2f307b667b5292abea501e46149fa683ed1d0d0",
+      "sourceBlob": "50484ba48cce6655ee6f14c1090e35c73dea3d83",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+      "patchRightPath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+      "oldBlob": "f99c816625f82be61d5045cf5c873f8f09b22dec",
+      "expectedNewBlob": "e27e00f8469b9deceb4c0591991b560e448b164b",
+      "sourceBlob": "f99c816625f82be61d5045cf5c873f8f09b22dec",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/webchat.rs",
+      "patchRightPath": "SRC/neothd/src/daemon/webchat.rs",
+      "oldBlob": "81ee7f716aa9c54256c465239c347295c71e9d68",
+      "expectedNewBlob": "e4c0dc70c66e39d95e092a718e22f3e245b3bbc4",
+      "sourceBlob": "81ee7f716aa9c54256c465239c347295c71e9d68",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    },
+    {
+      "path": "SRC/neothd/src/daemon/webchat/tests.rs",
+      "patchRightPath": "SRC/neothd/src/daemon/webchat/tests.rs",
+      "oldBlob": "ce06d345a9a6b315d1d4e076cd5c02da8c9c908e",
+      "expectedNewBlob": "b7799055ef2eb78901c0c9df29f254a0b7044ec4",
+      "sourceBlob": "ce06d345a9a6b315d1d4e076cd5c02da8c9c908e",
+      "oldBlobMatchesSource": true,
+      "samePatchPath": true
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "roadClosure": false
+}

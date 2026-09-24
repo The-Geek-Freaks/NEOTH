@@ -3,6 +3,15 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W707/W708 hosted formatting and WebChat fixture compile repair (2026-09-24):**
+Root verified and imported nine exact formatter rewrites from Preflight35972375977
+at3ed5622b, including ZIP, inner checksums and old/new Gitblobs. Group1081
+run35972374505 stopped before any test: two E0599 errors in the new real-listener
+fixture called unwrap twice on a JoinHandle<()> result. Both awaits now match
+spawn_for_home's actual return type; all listener/child assertions remain intact.
+No tests passed or failed in that run;1081 were not started. Hosted rerun pending.
+Road remains1324/1046checked/276open/2partial;WS-LF38done80open. No local executables.
+See docs/verification/gold-wave707-hosted-format.json and gold-wave708-group1081-compile-repair.json.
 **W700-W706 WebChat custody/readiness and CUA compatibility (2026-09-24):**
 The sealed browser session now reaches chat preparation before hindsight, WAL,
 recall and actual transcript writes. Real-producer regression covers separate

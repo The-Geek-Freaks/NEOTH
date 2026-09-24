@@ -203,7 +203,9 @@ fn classify_advertised_tools(
         .filter(|(_, group)| allowed.iter().any(|tool| group.contains(&tool.as_str())))
         .filter(|(_, group)| {
             !group.iter().any(|tool| {
-                allowed.iter().any(|allowed_tool| allowed_tool.as_str() == *tool)
+                allowed
+                    .iter()
+                    .any(|allowed_tool| allowed_tool.as_str() == *tool)
                     && advertised
                         .iter()
                         .any(|advertised_tool| advertised_tool.as_str() == *tool)
@@ -217,7 +219,9 @@ fn classify_advertised_tools(
             let capability_is_missing = cu::COMPUTER_USE_CAPABILITY_GROUPS
                 .iter()
                 .find(|(_, group)| group.contains(&tool.as_str()))
-                .is_some_and(|(capability, _)| missing_capabilities.contains(&capability.to_string()));
+                .is_some_and(|(capability, _)| {
+                    missing_capabilities.contains(&capability.to_string())
+                });
             !capability_is_missing
         })
         .cloned()
@@ -227,7 +231,12 @@ fn classify_advertised_tools(
         .filter(|tool| !allowed.contains(tool))
         .cloned()
         .collect();
-    (missing, missing_capabilities, compatibility_aliases_absent, extra)
+    (
+        missing,
+        missing_capabilities,
+        compatibility_aliases_absent,
+        extra,
+    )
 }
 
 fn effective_allowed_for_doctor(
@@ -264,8 +273,12 @@ async fn doctor(output: OutputFormat) -> Result<()> {
         .iter()
         .find(|server| server.id == cu::CUA_DRIVER_SERVER_ID)
         .cloned();
-    let configured_allowed = configured.as_ref().and_then(|server| server.allow_tools.clone());
-    let probe_command = configured.as_ref().map_or("cua-driver", |server| server.command.as_str());
+    let configured_allowed = configured
+        .as_ref()
+        .and_then(|server| server.allow_tools.clone());
+    let probe_command = configured
+        .as_ref()
+        .map_or("cua-driver", |server| server.command.as_str());
 
     // The runtime proof: spawn cua-driver, do the MCP initialize handshake, and
     // read its real `tools/list`. An explicit configured command may be an
@@ -316,8 +329,14 @@ async fn doctor(output: OutputFormat) -> Result<()> {
     }
 
     println!("NEOTH computer-use doctor (cua-driver)");
-    println!("  PATH driver installed: {}", if installed { "yes" } else { "NO" });
-    println!("  PATH driver version: {}", version.as_deref().unwrap_or("—"));
+    println!(
+        "  PATH driver installed: {}",
+        if installed { "yes" } else { "NO" }
+    );
+    println!(
+        "  PATH driver version: {}",
+        version.as_deref().unwrap_or("—")
+    );
     println!("  probe command: {probe_command}");
     match &advertised {
         Some(adv) => println!("  advertised: {} tools — {}", adv.len(), adv.join(", ")),
@@ -337,12 +356,18 @@ async fn doctor(output: OutputFormat) -> Result<()> {
     match &configured {
         Some(server) => println!(
             "  configured: saved {} allowlist{} (trust_all_tools: {}; policy: {})",
-            if server.allow_tools.is_some() { "pinned" } else { "un-pinned" },
+            if server.allow_tools.is_some() {
+                "pinned"
+            } else {
+                "un-pinned"
+            },
             if server.enabled { "" } else { ", disabled" },
             server.trust_all_tools,
             comparison_allowlist_source,
         ),
-        None => println!("  configured: no saved cua-driver entry; comparing recommended allowlist only"),
+        None => println!(
+            "  configured: no saved cua-driver entry; comparing recommended allowlist only"
+        ),
     }
     if !missing_capabilities.is_empty() {
         println!(
@@ -363,7 +388,9 @@ async fn doctor(output: OutputFormat) -> Result<()> {
         );
     }
     if advertised.is_some() && missing_capabilities.is_empty() && extra.is_empty() {
-        println!("  ✓ all required capabilities are advertised; compatibility aliases may be absent.");
+        println!(
+            "  ✓ all required capabilities are advertised; compatibility aliases may be absent."
+        );
     }
     Ok(())
 }
@@ -399,7 +426,9 @@ mod tests {
         customized.enabled = false;
         customized.command = "operator-cua-driver".to_string();
         customized.args = vec!["custom-mcp".to_string()];
-        customized.env.insert("CUA_PROFILE".to_string(), "private".to_string());
+        customized
+            .env
+            .insert("CUA_PROFILE".to_string(), "private".to_string());
         customized.allow_tools = Some(vec!["click".to_string()]);
         let before = customized.clone();
         assert_eq!(
@@ -439,18 +468,26 @@ mod tests {
             .map(|tool| tool.to_string())
             .collect::<Vec<_>>();
         let (_, missing_capabilities, aliases, extra) = classify_advertised_tools(&union, &legacy);
-        assert!(missing_capabilities.is_empty(), "legacy names cover every group");
+        assert!(
+            missing_capabilities.is_empty(),
+            "legacy names cover every group"
+        );
         assert!(aliases.contains(&"type_text".to_string()));
         assert!(extra.is_empty());
 
         let (_, missing_capabilities, aliases, extra) = classify_advertised_tools(&union, &current);
-        assert!(missing_capabilities.is_empty(), "current names cover every group");
+        assert!(
+            missing_capabilities.is_empty(),
+            "current names cover every group"
+        );
         assert!(aliases.contains(&"screenshot".to_string()));
         assert!(extra.is_empty());
 
         let no_screen = current
             .iter()
-            .filter(|tool| tool.as_str() != "get_desktop_state" && tool.as_str() != "get_window_state")
+            .filter(|tool| {
+                tool.as_str() != "get_desktop_state" && tool.as_str() != "get_window_state"
+            })
             .cloned()
             .collect::<Vec<_>>();
         let (_, missing_capabilities, _, _) = classify_advertised_tools(&union, &no_screen);
@@ -515,7 +552,10 @@ mod tests {
             "set_window_frame",
             "parse_visual_regions",
         ] {
-            assert!(extra.contains(&denied.to_string()), "must remain denied: {denied}");
+            assert!(
+                extra.contains(&denied.to_string()),
+                "must remain denied: {denied}"
+            );
         }
     }
 
@@ -535,6 +575,9 @@ mod tests {
         assert_eq!(policy, "configured_trusted_catalogue");
         assert_eq!(allowed, advertised);
         let (_, _, _, extra) = classify_advertised_tools(&allowed, &advertised);
-        assert!(extra.is_empty(), "trusted catalogue must not be shown as blocked");
+        assert!(
+            extra.is_empty(),
+            "trusted catalogue must not be shown as blocked"
+        );
     }
 }

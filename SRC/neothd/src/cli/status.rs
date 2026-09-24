@@ -171,15 +171,18 @@ struct WebChatStatus {
     endpoint: Option<String>,
 }
 
-async fn webchat_status(
-    home: &std::path::Path,
-    config: Option<&FreedomConfig>,
-) -> WebChatStatus {
+async fn webchat_status(home: &std::path::Path, config: Option<&FreedomConfig>) -> WebChatStatus {
     let Some(config) = config else {
-        return WebChatStatus { state: "configuration_unknown", endpoint: None };
+        return WebChatStatus {
+            state: "configuration_unknown",
+            endpoint: None,
+        };
     };
     if !config.companion.enabled {
-        return WebChatStatus { state: "disabled", endpoint: None };
+        return WebChatStatus {
+            state: "disabled",
+            endpoint: None,
+        };
     }
     match crate::daemon::audit_rpc::webchat_runtime_status(home).await {
         Ok(status) => match status.state {
@@ -192,7 +195,10 @@ async fn webchat_status(
                 endpoint: None,
             },
         },
-        Err(_) => WebChatStatus { state: "daemon_unreachable", endpoint: None },
+        Err(_) => WebChatStatus {
+            state: "daemon_unreachable",
+            endpoint: None,
+        },
     }
 }
 
