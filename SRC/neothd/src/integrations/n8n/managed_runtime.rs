@@ -413,6 +413,7 @@ fn terminal_after_absence(
     binding: &RuntimeBinding,
     code: &'static str,
     cancelling: bool,
+    custody_may_exist: bool,
 ) -> anyhow::Result<IntegrationJob> {
     validate_binding(binding, job).map_err(anyhow::Error::msg)?;
     if binding.phase != RuntimePhase::AbsentVerified {
@@ -424,12 +425,8 @@ fn terminal_after_absence(
     if cancelling && !current.cancel_requested {
         current = service.request_cancel(&current.job_id, current.state_revision)?;
     }
-    crate::config::credentials::Credentials::rollback_n8n_adoption_at(
-        &home.join("freedom.yaml"),
-        &home.join("credentials.yaml"),
-        current.job_id.as_str(),
-    )
-    .map_err(|_| anyhow::anyhow!("adoption_cleanup_failed"))?;
+    super::rollback_adoption_if_prepared(home, &current.job_id, custody_may_exist)
+        .map_err(|_| anyhow::anyhow!("adoption_cleanup_failed"))?;
     let terminal = if current.state == super::JobState::Cancelled {
         current
     } else if current.cancel_requested {
@@ -461,6 +458,7 @@ async fn cleanup_and_fail<R: ManagedDockerRunner>(
     home: &Path,
     id: &str,
     code: &'static str,
+    custody_may_exist: bool,
 ) -> anyhow::Result<IntegrationJob> {
     let mut current = service
         .get(&job.job_id)?
@@ -492,7 +490,15 @@ async fn cleanup_and_fail<R: ManagedDockerRunner>(
     }
     binding.phase = RuntimePhase::AbsentVerified;
     write_binding(home, &binding).map_err(anyhow::Error::msg)?;
-    terminal_after_absence(service, &current, home, &binding, code, cancelling)
+    terminal_after_absence(
+        service,
+        &current,
+        home,
+        &binding,
+        code,
+        cancelling,
+        custody_may_exist,
+    )
 }
 
 fn cancellation_observed(cancel: &mut tokio::sync::oneshot::Receiver<()>) -> bool {
@@ -551,6 +557,7 @@ pub(in crate::integrations) async fn install_managed_at_with<
             &binding,
             "n8n_managed_cancelled",
             true,
+            false,
         );
     }
     let running = service.start(&queued.job_id, queued.state_revision, STEPS[0])?;
@@ -566,6 +573,7 @@ pub(in crate::integrations) async fn install_managed_at_with<
                 home,
                 &binding,
                 "n8n_preexisting_container_unowned_or_mismatch",
+                false,
                 false,
             );
         }
@@ -594,6 +602,7 @@ pub(in crate::integrations) async fn install_managed_at_with<
                 &binding,
                 "n8n_managed_container_create_failed",
                 false,
+                false,
             );
         }
         _ => anyhow::bail!("n8n_managed_container_identity_ambiguous"),
@@ -614,13 +623,23 @@ pub(in crate::integrations) async fn install_managed_at_with<
                 home,
                 &id,
                 "n8n_managed_cancelled",
+                false,
             )
             .await;
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
         let healthy = tokio::select! {
             biased;
-            _ = &mut *cancel => return cleanup_and_fail(&service, &running, runner, home, &id, "n8n_managed_cancelled").await,
+            _ = &mut *cancel => return cleanup_and_fail(
+                &service,
+                &running,
+                runner,
+                home,
+                &id,
+                "n8n_managed_cancelled",
+                false,
+            )
+            .await,
             result = tokio::time::timeout(remaining, readiness.health(request.port)) => result.unwrap_or(false),
         };
         if healthy {
@@ -634,6 +653,7 @@ pub(in crate::integrations) async fn install_managed_at_with<
                 home,
                 &id,
                 "n8n_loopback_health_timeout",
+                false,
             )
             .await;
         }
@@ -663,6 +683,7 @@ pub(in crate::integrations) async fn install_managed_at_with<
                 } else {
                     error.code
                 },
+                error.custody_may_exist,
             )
             .await;
         }

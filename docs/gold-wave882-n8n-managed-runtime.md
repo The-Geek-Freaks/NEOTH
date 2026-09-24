@@ -51,3 +51,10 @@ Docker call. CLI completion is successful only for Ready.
 W906 and W910 independent static reviews approved the source. Hosted selection
 contains25 new tests plus23 existing adoption/custody regressions; these are
 registered, not yet executed for this change.
+## W935 cleanup witness follow-up
+
+Hosted Group1408 at c6527a5b executed all fixtures, with 1400 passes and eight failures: stale generated CLI documentation plus seven n8n precommit/cancellation failures. Windows190 independently reproduces the same seven n8n failures (183 passes). The CLI reference was already repaired from the exact hosted export in 75053225.
+
+The shared publisher now reports whether credential preparation may have started. Cleanup treats a missing exact sidecar as a no-op only before the first prepare invocation. Prepare errors and every later error/cancel carry a conservative custody witness, so missing or replaced post-prepare custody still fails closed. Managed cleanup retains exact container absence verification and its durable tombstone before terminalization. A new regression removes genuinely prepared custody and requires refusal.
+
+W931 independently reviewed this patch. The seven original failures and the new missing-custody regression still need an exact-source GitHub rerun. No local executable validation ran.

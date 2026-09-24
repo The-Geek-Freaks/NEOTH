@@ -3,6 +3,14 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W935 n8n cleanup repair (2026-09-24):** Group1408 atc652 is Root-verified
+1400PASS/8FAIL/0missing with251source/input bindings and3API ZIP digests.
+Seven failures share a pre-prepare cleanup error; Windows190 independently
+records183PASS/7FAIL for the same n8n cases. The publisher now carries an
+explicit prepare-attempt witness: absent custody is allowed only before
+prepare, while post-prepare ambiguity remains fail-closed. W931 static review
+approved; one new missing-custody regression registered. Hosted rerun pending;
+no roadmap closure. Current catalog: native1647/Group1414/Windows196.
 **W927 MCP provenance implementation (2026-09-24):** Authenticated named
 Telegram/Slack accounts can declare IFC source labels; opaque provenance is
 bound to account/incarnation and a fresh inbound-turn nonce. Preflight owns it;

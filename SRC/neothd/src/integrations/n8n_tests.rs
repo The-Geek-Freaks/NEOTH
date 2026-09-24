@@ -100,6 +100,31 @@ async fn adoption_requires_unauthenticated_rejection_then_persists_and_reports_r
     );
 }
 
+#[test]
+fn missing_custody_after_prepare_remains_fail_closed() {
+    let home = tempfile::tempdir().unwrap();
+    initialize_home(home.path());
+    let job_id = JobId::new();
+    let prepared = crate::config::credentials::Credentials::prepare_n8n_adoption_at(
+        &home.path().join("freedom.yaml"),
+        &home.path().join("credentials.yaml"),
+        job_id.as_str(),
+        crate::config::N8nInstanceConfig {
+            endpoint: LoopbackHttpEndpoint::parse("http://127.0.0.1:5678").unwrap(),
+            api_version: None,
+        },
+        SecretString::from("test-n8n-key"),
+    )
+    .unwrap();
+    drop(prepared);
+    std::fs::remove_file(
+        home.path()
+            .join(format!(".n8n-adoption-{}.custody.yaml", job_id.as_str())),
+    )
+    .unwrap();
+
+    assert!(rollback_adoption_if_prepared(home.path(), &job_id, true).is_err());
+}
 #[tokio::test]
 async fn precommit_unauthorized_fails_durably_without_config_or_credential_write() {
     let home = tempfile::tempdir().unwrap();

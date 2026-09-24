@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context;
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
@@ -597,11 +598,24 @@ pub(crate) async fn adopt_at_with_cancel(
                 } else {
                     service.request_cancel(&current.job_id, current.state_revision)?
                 };
-                cancel_if_requested(&service, &requested, home)?.ok_or_else(|| {
+                cancel_if_requested(
+                    &service,
+                    &requested,
+                    home,
+                    error.custody_may_exist,
+                )?
+                .ok_or_else(|| {
                     anyhow::anyhow!("n8n cancellation acknowledgement was not produced")
                 })
             } else {
-                rollback_and_fail(&service, &current, home, error.code).await
+                rollback_and_fail(
+                    &service,
+                    &current,
+                    home,
+                    error.code,
+                    error.custody_may_exist,
+                )
+                .await
             }
         }
     }
@@ -613,6 +627,7 @@ pub(crate) async fn adopt_at_with_cancel(
 pub(super) struct AdoptionPublishError {
     pub(super) code: &'static str,
     pub(super) cancelled: bool,
+    pub(super) custody_may_exist: bool,
 }
 
 impl AdoptionPublishError {
@@ -620,13 +635,19 @@ impl AdoptionPublishError {
         Self {
             code,
             cancelled: false,
+            custody_may_exist: false,
         }
     }
     fn cancelled() -> Self {
         Self {
             code: "n8n_adoption_cancelled",
             cancelled: true,
+            custody_may_exist: false,
         }
+    }
+    fn after_prepare(mut self) -> Self {
+        self.custody_may_exist = true;
+        self
     }
 }
 
@@ -717,17 +738,18 @@ pub(super) async fn publish_adoption_in_job_with_cancel<P: N8nApiProbe + ?Sized>
         },
         api_key,
     )
-    .map_err(|_| AdoptionPublishError::failed("adoption_prepare_failed"))?;
+    .map_err(|_| AdoptionPublishError::failed("adoption_prepare_failed").after_prepare())?;
     let configuring = service
         .begin_configuration(
             &validating.job_id,
             validating.state_revision,
             N8N_ADOPTION_STEPS[2],
         )
-        .map_err(|_| AdoptionPublishError::failed("adoption_prepare_failed"))?;
-    check_publish_cancel(service, &configuring, cancel_rx)?;
+        .map_err(|_| AdoptionPublishError::failed("adoption_prepare_failed").after_prepare())?;
+    check_publish_cancel(service, &configuring, cancel_rx)
+        .map_err(AdoptionPublishError::after_prepare)?;
     crate::config::credentials::Credentials::commit_prepared_n8n_adoption_at(prepared)
-        .map_err(|_| AdoptionPublishError::failed("adoption_publish_failed"))?;
+        .map_err(|_| AdoptionPublishError::failed("adoption_publish_failed").after_prepare())?;
     let configuring = checkpoint(
         service,
         &configuring,
@@ -735,31 +757,33 @@ pub(super) async fn publish_adoption_in_job_with_cancel<P: N8nApiProbe + ?Sized>
         N8N_ADOPTION_STEPS[2],
         "n8n-binding-published",
     )
-    .map_err(|_| AdoptionPublishError::failed("adoption_cleanup_failed"))?;
-    check_publish_cancel(service, &configuring, cancel_rx)?;
+    .map_err(|_| AdoptionPublishError::failed("adoption_cleanup_failed").after_prepare())?;
+    check_publish_cancel(service, &configuring, cancel_rx)
+        .map_err(AdoptionPublishError::after_prepare)?;
     let (stored, stored_key) =
         crate::config::credentials::Credentials::read_n8n_adoption_binding_at(
             &home.join("freedom.yaml"),
             &home.join("credentials.yaml"),
         )
-        .map_err(|_| AdoptionPublishError::failed("adoption_cleanup_failed"))?;
+        .map_err(|_| AdoptionPublishError::failed("adoption_cleanup_failed").after_prepare())?;
     // The probe receipt binds the origin. Compare the persisted secret too:
     // changing a key must not be hidden behind an otherwise healthy endpoint.
     if stored.endpoint != endpoint
         || Sha256::digest(stored_key.expose().as_bytes()) != expected_key_digest
     {
-        return Err(AdoptionPublishError::failed("n8n_postcommit_probe_failed"));
+        return Err(AdoptionPublishError::failed("n8n_postcommit_probe_failed").after_prepare());
     }
     let postcommit = tokio::select! {
         biased;
-        _ = &mut *cancel_rx => return Err(AdoptionPublishError::cancelled()),
+        _ = &mut *cancel_rx => return Err(AdoptionPublishError::cancelled().after_prepare()),
         result = probe.authenticated_probe(&stored.endpoint, &stored_key) => result,
     }
-    .map_err(|_| AdoptionPublishError::failed("n8n_postcommit_probe_failed"))?;
+    .map_err(|_| AdoptionPublishError::failed("n8n_postcommit_probe_failed").after_prepare())?;
     if postcommit.authenticated_probe_sha256() != precommit.authenticated_probe_sha256() {
-        return Err(AdoptionPublishError::failed("n8n_postcommit_probe_failed"));
+        return Err(AdoptionPublishError::failed("n8n_postcommit_probe_failed").after_prepare());
     }
-    check_publish_cancel(service, &configuring, cancel_rx)?;
+    check_publish_cancel(service, &configuring, cancel_rx)
+        .map_err(AdoptionPublishError::after_prepare)?;
     let configuring = checkpoint(
         service,
         &configuring,
@@ -767,12 +791,13 @@ pub(super) async fn publish_adoption_in_job_with_cancel<P: N8nApiProbe + ?Sized>
         N8N_ADOPTION_STEPS[3],
         "n8n-postcommit-probed",
     )
-    .map_err(|_| AdoptionPublishError::failed("adoption_cleanup_failed"))?;
-    check_publish_cancel(service, &configuring, cancel_rx)?;
+    .map_err(|_| AdoptionPublishError::failed("adoption_cleanup_failed").after_prepare())?;
+    check_publish_cancel(service, &configuring, cancel_rx)
+        .map_err(AdoptionPublishError::after_prepare)?;
     let contract = configuring
         .evidence_contract
         .as_ref()
-        .ok_or_else(|| AdoptionPublishError::failed("adoption_contract_missing"))?;
+        .ok_or_else(|| AdoptionPublishError::failed("adoption_contract_missing").after_prepare())?;
     let ready = ReadyEvidence::verified(
         configuring.job_id.clone(),
         configuring.manifest_sha256.clone(),
@@ -783,7 +808,7 @@ pub(super) async fn publish_adoption_in_job_with_cancel<P: N8nApiProbe + ?Sized>
     );
     service
         .mark_ready(&configuring.job_id, configuring.state_revision, ready)
-        .map_err(|_| AdoptionPublishError::failed("adoption_cleanup_failed"))
+        .map_err(|_| AdoptionPublishError::failed("adoption_cleanup_failed").after_prepare())
 }
 
 pub(crate) fn status_at(
@@ -850,17 +875,47 @@ fn checkpoint(
     )
 }
 
+/// Compensate a binding only when this job has durably prepared custody. The
+/// precommit probes run before preparation, so a missing exact sidecar proves
+/// this job has not published config or credential state to roll back.
+pub(super) fn rollback_adoption_if_prepared(
+    home: &Path,
+    job_id: &JobId,
+    custody_may_exist: bool,
+) -> anyhow::Result<bool> {
+    let custody = home.join(format!(
+        ".n8n-adoption-{}.custody.yaml",
+        job_id.as_str()
+    ));
+    match std::fs::symlink_metadata(&custody) {
+        Ok(metadata) if metadata.file_type().is_file() => {
+            crate::config::credentials::Credentials::rollback_n8n_adoption_at(
+                &home.join("freedom.yaml"),
+                &home.join("credentials.yaml"),
+                job_id.as_str(),
+            )?;
+            Ok(true)
+        }
+        Ok(_) => anyhow::bail!("n8n adoption custody path is not a regular file"),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound && !custody_may_exist =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error).with_context(|| {
+            format!("inspect n8n adoption custody {}", custody.display())
+        }),
+    }
+}
+
 async fn rollback_and_fail(
     service: &IntegrationJobService,
     job: &IntegrationJob,
     home: &Path,
     requested_code: &str,
+    custody_may_exist: bool,
 ) -> anyhow::Result<IntegrationJob> {
-    let rollback = crate::config::credentials::Credentials::rollback_n8n_adoption_at(
-        &home.join("freedom.yaml"),
-        &home.join("credentials.yaml"),
-        job.job_id.as_str(),
-    );
+    let rollback = rollback_adoption_if_prepared(home, &job.job_id, custody_may_exist);
     let (code, message) = if rollback.is_ok() {
         (
             requested_code,
@@ -887,6 +942,7 @@ fn cancel_if_requested(
     service: &IntegrationJobService,
     known: &IntegrationJob,
     home: &Path,
+    custody_may_exist: bool,
 ) -> anyhow::Result<Option<IntegrationJob>> {
     let Some(job) = service.get(&known.job_id)? else {
         return Ok(None);
@@ -894,11 +950,7 @@ fn cancel_if_requested(
     if !job.cancel_requested {
         return Ok(None);
     }
-    let rollback = crate::config::credentials::Credentials::rollback_n8n_adoption_at(
-        &home.join("freedom.yaml"),
-        &home.join("credentials.yaml"),
-        job.job_id.as_str(),
-    );
+    let rollback = rollback_adoption_if_prepared(home, &job.job_id, custody_may_exist);
     if rollback.is_err() {
         return Ok(Some(
             service.fail(

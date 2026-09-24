@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T20:39:45.9953778Z",
-  "validationStatus": "W929 exact hosted MCP formatting imported; compile and behavior pending",
+  "capturedUtc": "2026-09-24T20:48:12.4515844Z",
+  "validationStatus": "W935 n8n pre-prepare cleanup repair reviewed; hosted rerun pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -108,8 +108,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 23542,
-      "sha256": "9F6540D7643B46E4D2C3038C79FB9B29014D5C5815CEDEC65B43C36A2546B285"
+      "bytes": 23587,
+      "sha256": "CA6B9A05B3B58C30208393909C78D61100498FD417D51C99C20041771EB45160"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -128,8 +128,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 35589,
-      "sha256": "D4D288A717ED93C95EB0CE8F0D61264FFF1AAA1B6E2D68B224A53408E95CF879"
+      "bytes": 35712,
+      "sha256": "773618D836A1E92EE56CA8458C7E907C996EA596FF3F0DE84FC3AF7C9E414E45"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -1208,8 +1208,8 @@
     },
     {
       "path": "docs/gold-wave882-n8n-managed-runtime.md",
-      "bytes": 3097,
-      "sha256": "C7710646D010BA45B7C07B4FF69BAA22ECA49056742B5FE97A22324719DF8836"
+      "bytes": 4154,
+      "sha256": "BC4139AA002E59EBBD931B869C28E723F4F2EC8641542ED7DB244EC456ABB9B4"
     },
     {
       "path": "docs/gold-wave927-mcp-provenance.md",
@@ -1962,6 +1962,11 @@
       "sha256": "8A9CB93362240B0328C2869FF5E8BF44098DC5379EFF35C7BC5370676204A672"
     },
     {
+      "path": "docs/verification/gold-wave925-group1408.json",
+      "bytes": 260428,
+      "sha256": "EF0FAE9FFDE464BED8F2407AC1482A57D2622D1D7EA6B7868A0A66E7AACEB20B"
+    },
+    {
       "path": "docs/verification/managed-browser-cft154.json",
       "bytes": 2497,
       "sha256": "80443D2F6E6A6E226F1617F7F5463017071D9D21130D1FCD116470F147455337"
@@ -2118,18 +2123,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 289598,
-      "sha256": "4AECA75AD7AF8D6110FE0343CAEAAA997E8F81475D7249927E15C1FE22125579"
+      "bytes": 290196,
+      "sha256": "8DDC6CEC64C39BAA2B4BA516B4EC5FDA061298A64D28FB83E6DF753AD8B9BAC0"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1300926,
-      "sha256": "9BD3D901A8CA975E0C515435DDEB9F187E0AF670B4DFFF18388C65AF0743879D"
+      "bytes": 1301524,
+      "sha256": "BD1A0C052A92750F4C5BAC884281B03612747F573FDF06E7A9D40A6CF0359C61"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1910495,
-      "sha256": "7FF421A97EF45DDE7C492D88F7BC3103FF7E9CD5E619F10FE11319A3915D366F"
+      "bytes": 1911093,
+      "sha256": "47D37AA2AF06358C17A2FAC1983A0E2F3D0405CD407C8C4F94F3859486EF3217"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4088,13 +4093,13 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n_tests.rs",
-      "bytes": 11629,
-      "sha256": "A02C64937B98F5086E85D0D3EAB676B3697411F6DB628CF71A36418998421BA1"
+      "bytes": 12488,
+      "sha256": "58D5AC9FF221AF2A649A21AABCD50C9A1027820EA0817D310C4996D3F4E6AE30"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n.rs",
-      "bytes": 35750,
-      "sha256": "8DE52C2C9C78C2E28AA8A73ACC9841BFAF0A931D8BB7034B1AE346C1D4ACF5A0"
+      "bytes": 37746,
+      "sha256": "D3AF814A37898649D4B8A0BEA8D8B539F294B9F4DBE97C6E7A11063C0AF4E9CB"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_runtime_tests.rs",
@@ -4103,8 +4108,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "bytes": 42041,
-      "sha256": "6BF992488829DB8BF228730EA7291BD058260A299BE3D5D95C790253E19F1F56"
+      "bytes": 42381,
+      "sha256": "966D412FDDA84E337EECF05D3890D7D76C709DF7734E236E634B3DC3038FDD0E"
     },
     {
       "path": "SRC/neothd/src/integrations/state.rs",

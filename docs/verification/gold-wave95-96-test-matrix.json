@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W929 exact hosted MCP formatting imported; compile and behavior pending",
+  "status": "W935 n8n pre-prepare cleanup repair reviewed; hosted rerun pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 180851,
-    "sha256": "6C59E72CBA2DC3E6048EB6AFAB3FE3769E35361C1E6884ABA759678CDEFAF41B"
+    "bytes": 181028,
+    "sha256": "DD092CFAB0E11416832059FEF302F4A6FEDD0B561BBDC321C0DF6FB04CDEBA70"
   },
-  "sourceInputs": 1022,
+  "sourceInputs": 1023,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -3732,61 +3732,61 @@
     {
       "test": "integrations::n8n::tests::parses_documented_workflows_shape_without_invented_identity_fields",
       "sourcePath": "SRC/neothd/src/integrations/n8n_tests.rs",
-      "sourceSha256": "A02C64937B98F5086E85D0D3EAB676B3697411F6DB628CF71A36418998421BA1",
+      "sourceSha256": "58D5AC9FF221AF2A649A21AABCD50C9A1027820EA0817D310C4996D3F4E6AE30",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::tests::rejects_non_documented_or_unbounded_workflows_shapes",
       "sourcePath": "SRC/neothd/src/integrations/n8n_tests.rs",
-      "sourceSha256": "A02C64937B98F5086E85D0D3EAB676B3697411F6DB628CF71A36418998421BA1",
+      "sourceSha256": "58D5AC9FF221AF2A649A21AABCD50C9A1027820EA0817D310C4996D3F4E6AE30",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::tests::descriptor_and_step_plan_are_stable_and_local_only",
       "sourcePath": "SRC/neothd/src/integrations/n8n_tests.rs",
-      "sourceSha256": "A02C64937B98F5086E85D0D3EAB676B3697411F6DB628CF71A36418998421BA1",
+      "sourceSha256": "58D5AC9FF221AF2A649A21AABCD50C9A1027820EA0817D310C4996D3F4E6AE30",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::tests::generic_200_workflows_envelope_without_key_rejection_is_not_adoption_evidence",
       "sourcePath": "SRC/neothd/src/integrations/n8n_tests.rs",
-      "sourceSha256": "A02C64937B98F5086E85D0D3EAB676B3697411F6DB628CF71A36418998421BA1",
+      "sourceSha256": "58D5AC9FF221AF2A649A21AABCD50C9A1027820EA0817D310C4996D3F4E6AE30",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::tests::adoption_requires_unauthenticated_rejection_then_persists_and_reports_ready_without_key",
       "sourcePath": "SRC/neothd/src/integrations/n8n_tests.rs",
-      "sourceSha256": "A02C64937B98F5086E85D0D3EAB676B3697411F6DB628CF71A36418998421BA1",
+      "sourceSha256": "58D5AC9FF221AF2A649A21AABCD50C9A1027820EA0817D310C4996D3F4E6AE30",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::tests::precommit_unauthorized_fails_durably_without_config_or_credential_write",
       "sourcePath": "SRC/neothd/src/integrations/n8n_tests.rs",
-      "sourceSha256": "A02C64937B98F5086E85D0D3EAB676B3697411F6DB628CF71A36418998421BA1",
+      "sourceSha256": "58D5AC9FF221AF2A649A21AABCD50C9A1027820EA0817D310C4996D3F4E6AE30",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::tests::postcommit_failure_restores_exact_preimage_and_never_reaches_ready",
       "sourcePath": "SRC/neothd/src/integrations/n8n_tests.rs",
-      "sourceSha256": "A02C64937B98F5086E85D0D3EAB676B3697411F6DB628CF71A36418998421BA1",
+      "sourceSha256": "58D5AC9FF221AF2A649A21AABCD50C9A1027820EA0817D310C4996D3F4E6AE30",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::tests::injected_cancellation_is_durable_and_never_publishes_a_binding",
       "sourcePath": "SRC/neothd/src/integrations/n8n_tests.rs",
-      "sourceSha256": "A02C64937B98F5086E85D0D3EAB676B3697411F6DB628CF71A36418998421BA1",
+      "sourceSha256": "58D5AC9FF221AF2A649A21AABCD50C9A1027820EA0817D310C4996D3F4E6AE30",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::tests::active_hanging_precommit_probe_is_cancelled_without_publishing",
       "sourcePath": "SRC/neothd/src/integrations/n8n_tests.rs",
-      "sourceSha256": "A02C64937B98F5086E85D0D3EAB676B3697411F6DB628CF71A36418998421BA1",
+      "sourceSha256": "58D5AC9FF221AF2A649A21AABCD50C9A1027820EA0817D310C4996D3F4E6AE30",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::tests::active_hanging_negative_control_is_cancelled_without_publishing",
       "sourcePath": "SRC/neothd/src/integrations/n8n_tests.rs",
-      "sourceSha256": "A02C64937B98F5086E85D0D3EAB676B3697411F6DB628CF71A36418998421BA1",
+      "sourceSha256": "58D5AC9FF221AF2A649A21AABCD50C9A1027820EA0817D310C4996D3F4E6AE30",
       "junitClass": "neoth"
     },
     {
@@ -3804,19 +3804,19 @@
     {
       "test": "integrations::n8n::tests::missing_input_is_a_terminal_required_input_job_without_config_mutation",
       "sourcePath": "SRC/neothd/src/integrations/n8n_tests.rs",
-      "sourceSha256": "A02C64937B98F5086E85D0D3EAB676B3697411F6DB628CF71A36418998421BA1",
+      "sourceSha256": "58D5AC9FF221AF2A649A21AABCD50C9A1027820EA0817D310C4996D3F4E6AE30",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::tests::restart_of_unowned_active_job_is_terminal_and_releases_the_capability_lock",
       "sourcePath": "SRC/neothd/src/integrations/n8n_tests.rs",
-      "sourceSha256": "A02C64937B98F5086E85D0D3EAB676B3697411F6DB628CF71A36418998421BA1",
+      "sourceSha256": "58D5AC9FF221AF2A649A21AABCD50C9A1027820EA0817D310C4996D3F4E6AE30",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::tests::read_only_status_of_absent_state_creates_no_config_or_job_database",
       "sourcePath": "SRC/neothd/src/integrations/n8n_tests.rs",
-      "sourceSha256": "A02C64937B98F5086E85D0D3EAB676B3697411F6DB628CF71A36418998421BA1",
+      "sourceSha256": "58D5AC9FF221AF2A649A21AABCD50C9A1027820EA0817D310C4996D3F4E6AE30",
       "junitClass": "neoth"
     },
     {
@@ -9816,25 +9816,25 @@
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::stopped_container_uses_host_config_port_binding_for_exact_identity",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "6BF992488829DB8BF228730EA7291BD058260A299BE3D5D95C790253E19F1F56",
+      "sourceSha256": "966D412FDDA84E337EECF05D3890D7D76C709DF7734E236E634B3DC3038FDD0E",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::running_network_binding_must_match_durable_host_config",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "6BF992488829DB8BF228730EA7291BD058260A299BE3D5D95C790253E19F1F56",
+      "sourceSha256": "966D412FDDA84E337EECF05D3890D7D76C709DF7734E236E634B3DC3038FDD0E",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::extra_host_port_is_rejected_before_ownership_is_granted",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "6BF992488829DB8BF228730EA7291BD058260A299BE3D5D95C790253E19F1F56",
+      "sourceSha256": "966D412FDDA84E337EECF05D3890D7D76C709DF7734E236E634B3DC3038FDD0E",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::extra_mount_is_rejected_before_ownership_is_granted",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "6BF992488829DB8BF228730EA7291BD058260A299BE3D5D95C790253E19F1F56",
+      "sourceSha256": "966D412FDDA84E337EECF05D3890D7D76C709DF7734E236E634B3DC3038FDD0E",
       "junitClass": "neoth"
     },
     {
@@ -9883,6 +9883,12 @@
       "test": "mcp::gate::tests::trusted_public_provenance_reaches_tools_call_only_in_its_bound_turn",
       "sourcePath": "SRC/neothd/src/mcp/gate.rs",
       "sourceSha256": "EA9CCA87A177FC22FAC080999F56A8BE2C42FAB726A412BDB8624D584E71677D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::tests::missing_custody_after_prepare_remains_fail_closed",
+      "sourcePath": "SRC/neothd/src/integrations/n8n_tests.rs",
+      "sourceSha256": "58D5AC9FF221AF2A649A21AABCD50C9A1027820EA0817D310C4996D3F4E6AE30",
       "junitClass": "neoth"
     }
   ],
@@ -36449,6 +36455,81 @@
       }
     ],
     "note": "Preflight36056345906 @bfee1901 artifact10832876372 API ZIP/inner hashes plus four old/new Git blobs verified. No local formatter/compiler/test.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave935N8nCleanupWitness": {
+    "requiredTests": [
+      "integrations::n8n::tests::missing_custody_after_prepare_remains_fail_closed"
+    ],
+    "status": "HOSTED_PENDING",
+    "scope": "Missing exact custody may be a no-op only with a pre-prepare witness; after prepare must fail closed"
+  },
+  "wave935N8nCleanupSource": {
+    "base": "4386ed9fe16632626bbb480bd882a8cd6ff2afb7",
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 23587,
+        "sha256": "CA6B9A05B3B58C30208393909C78D61100498FD417D51C99C20041771EB45160",
+        "blob": "1f6801ae3ded8f4a4957cc3f6ae4bd41cd156183"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 35712,
+        "sha256": "773618D836A1E92EE56CA8458C7E907C996EA596FF3F0DE84FC3AF7C9E414E45",
+        "blob": "3dc9d37f07a5736011939124fe817828c3c9cb56"
+      },
+      {
+        "path": "docs/gold-wave882-n8n-managed-runtime.md",
+        "bytes": 4154,
+        "sha256": "BC4139AA002E59EBBD931B869C28E723F4F2EC8641542ED7DB244EC456ABB9B4",
+        "blob": "ea05d1798d7c282b1757aba65d72d8b77965f341"
+      },
+      {
+        "path": "docs/verification/gold-wave925-group1408.json",
+        "bytes": 260428,
+        "sha256": "EF0FAE9FFDE464BED8F2407AC1482A57D2622D1D7EA6B7868A0A66E7AACEB20B",
+        "blob": "7f5cd6b201f225ba1da11a439b084554e9dede3e"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 290196,
+        "sha256": "8DDC6CEC64C39BAA2B4BA516B4EC5FDA061298A64D28FB83E6DF753AD8B9BAC0",
+        "blob": "4fbbde806c06ec99aa2921e27729851c8759fff9"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1301524,
+        "sha256": "BD1A0C052A92750F4C5BAC884281B03612747F573FDF06E7A9D40A6CF0359C61",
+        "blob": "e6e46b0aaaf379bebba62929a74ed256ec393fc7"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1911093,
+        "sha256": "47D37AA2AF06358C17A2FAC1983A0E2F3D0405CD407C8C4F94F3859486EF3217",
+        "blob": "fca5d9d0982a3219e06fe31229c958c7dcd7effa"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n_tests.rs",
+        "bytes": 12488,
+        "sha256": "58D5AC9FF221AF2A649A21AABCD50C9A1027820EA0817D310C4996D3F4E6AE30",
+        "blob": "342267fa5683a53899b0876a065fa4436b54005d"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n.rs",
+        "bytes": 37746,
+        "sha256": "D3AF814A37898649D4B8A0BEA8D8B539F294B9F4DBE97C6E7A11063C0AF4E9CB",
+        "blob": "c96fe382a985dc991d2958548e174b20bf37f8ad"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+        "bytes": 42381,
+        "sha256": "966D412FDDA84E337EECF05D3890D7D76C709DF7734E236E634B3DC3038FDD0E",
+        "blob": "299b940202fff94b91a9a4eab13a963a708e0362"
+      }
+    ],
+    "note": "Root verified Group1408 failure251bindings1400PASS8FAIL. W926 explicit prepare-attempt witness repairs seven cleanup/cancel paths; W931 static APPROVE. One new regression. HTTP and MCP repair WIP excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
