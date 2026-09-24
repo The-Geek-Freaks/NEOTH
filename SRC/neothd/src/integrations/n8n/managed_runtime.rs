@@ -596,7 +596,7 @@ async fn install_managed_in_service_with<
     }
     let queued = match request.prepared_job.take() {
         Some(job) => {
-            let expected = enqueue_prepared(&service, &request)?;
+            let expected = enqueue_prepared(service, &request)?;
             // `enqueue` is idempotent by its immutable manifest.  It returns
             // the existing row, never a second job, and lets us bind the
             // caller-provided durable ID to the current request.
@@ -605,7 +605,7 @@ async fn install_managed_in_service_with<
             }
             job
         }
-        None => enqueue_prepared(&service, &request)?,
+        None => enqueue_prepared(service, &request)?,
     };
     let mut binding = RuntimeBinding {
         schema_version: 2,
@@ -631,7 +631,7 @@ async fn install_managed_in_service_with<
         binding.phase = RuntimePhase::AbsentVerified;
         write_binding(home, &binding).map_err(anyhow::Error::msg)?;
         return terminal_after_absence(
-            &service,
+            service,
             &queued,
             home,
             &binding,
@@ -656,7 +656,7 @@ async fn install_managed_in_service_with<
             binding.phase = RuntimePhase::AbsentVerified;
             write_binding(home, &binding).map_err(anyhow::Error::msg)?;
             return terminal_after_absence(
-                &service,
+                service,
                 &running,
                 home,
                 &binding,
@@ -684,7 +684,7 @@ async fn install_managed_in_service_with<
             binding.phase = RuntimePhase::AbsentVerified;
             write_binding(home, &binding).map_err(anyhow::Error::msg)?;
             return terminal_after_absence(
-                &service,
+                service,
                 &running,
                 home,
                 &binding,
@@ -705,7 +705,7 @@ async fn install_managed_in_service_with<
     loop {
         if cancellation_observed(cancel) {
             return cleanup_and_fail(
-                &service,
+                service,
                 &running,
                 runner,
                 home,
@@ -719,7 +719,7 @@ async fn install_managed_in_service_with<
         let healthy = tokio::select! {
             biased;
             _ = &mut *cancel => return cleanup_and_fail(
-                &service,
+                service,
                 &running,
                 runner,
                 home,
@@ -735,7 +735,7 @@ async fn install_managed_in_service_with<
         }
         if Instant::now() >= deadline {
             return cleanup_and_fail(
-                &service,
+                service,
                 &running,
                 runner,
                 home,
@@ -748,7 +748,7 @@ async fn install_managed_in_service_with<
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let ready_job = match super::publish_adoption_in_job_with_cancel(
-        &service,
+        service,
         &running,
         home,
         request.endpoint(),
@@ -761,7 +761,7 @@ async fn install_managed_in_service_with<
         Ok(ready) => ready,
         Err(error) => {
             return cleanup_and_fail(
-                &service,
+                service,
                 &running,
                 runner,
                 home,

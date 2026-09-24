@@ -8,6 +8,13 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1001/W1002 bootstrap lint cleanup (2026-09-25):** Core36068868085 at
+01994fb9 resolved the prior six type/import errors and found eleven strict
+warnings. Completed stdin futures are now explicitly taken and dropped before
+cleanup; the shared-service runtime calls no longer add a redundant reference.
+The two-file hosted format patch was admitted with API ZIP, inner hashes,
+source and pre/postimage bindings. Fresh Core validation is pending. No warning
+suppression, local execution, or change to the accepted C7 criterion.
 **W996/W997 hosted format and bootstrap compile repair (2026-09-25):** The
 five-file rustfmt patch from Preflight36067967778 at56045de0 was admitted with
 API ZIP digest, inner hashes, source-head and each old/new Git blob verified.

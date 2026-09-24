@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T22:39:47.1265139Z",
-  "validationStatus": "W994IFC accepted; W996hostedformat imported; bootstrap core repairs await hosted validation",
+  "capturedUtc": "2026-09-24T22:46:39.3151370Z",
+  "validationStatus": "Exact hostedformat imported;11bootstrap warnings corrected;Core pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2218,13 +2218,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1315406,
-      "sha256": "A1C11C3C7774DC52D3BBECF89837EB91AEBB57775773795BFD3C47122621FF14"
+      "bytes": 1315934,
+      "sha256": "0B19B2C0428C328D0C02693FDCB8ABCEEDF7BFD240F06874D6BE4D687CBC0EA9"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1925347,
-      "sha256": "339CB3DAFA101E4CA226BF51F3D2DD996D138AA75A71E249486FEF3112BF98D8"
+      "bytes": 1925875,
+      "sha256": "973D2A11AB1FDC86D300A4FBA9C95B41C18C179FFF35751E34F3EFFC79D8353D"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4218,13 +4218,13 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/bootstrap_transport.rs",
-      "bytes": 19738,
-      "sha256": "E8BD2892A95347FD15BC7CE24563B1078CD611C2D91800F76E5505FBC1867841"
+      "bytes": 19766,
+      "sha256": "BCD54C78E6F5135D6BCC3A2C2A1AAE310702A61382406DF84A2DFB3288CE2404"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs",
-      "bytes": 63706,
-      "sha256": "4DCCF86B3944D130E425FEB79D258D32C648BD03E3DC3FE92763A2134525E3B8"
+      "bytes": 63698,
+      "sha256": "FB0ED0FAE2454B5D94C71CAE7AF3BBF756E055ED86813168FB0D1D1F7EC0E446"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_runtime_tests.rs",
@@ -4233,8 +4233,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "bytes": 46270,
-      "sha256": "8C2CFD98474865E8C5E4D43798E610EEE8A8AD6DAC823CF8130E636E822D7084"
+      "bytes": 46260,
+      "sha256": "09589B9C6879610D2653D21D9206A97E5218BED9DDC0B976211F4286E2D19913"
     },
     {
       "path": "SRC/neothd/src/integrations/state.rs",

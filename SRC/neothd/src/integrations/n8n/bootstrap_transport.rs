@@ -196,7 +196,8 @@ impl BootstrapDockerRunner for LocalBootstrapDockerRunner {
                 } else {
                     result
                 }
-            }) as std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send>>
+            })
+                as std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send>>
         });
         let deadline = tokio::time::sleep(self.timeout);
         tokio::pin!(deadline);
@@ -223,7 +224,7 @@ impl BootstrapDockerRunner for LocalBootstrapDockerRunner {
                     }
                 },
                 write = poll_stdin(&mut stdin_write), if stdin_write.is_some() => {
-                    stdin_write = None;
+                    drop(stdin_write.take());
                     if write.is_err() {
                         kill_and_reap(&mut child).await;
                         abort_captures(&mut captures).await;
@@ -244,7 +245,7 @@ impl BootstrapDockerRunner for LocalBootstrapDockerRunner {
                     return Err(BootstrapCommandFailure::TimedOut);
                 }
                 write = poll_stdin(&mut stdin_write) => {
-                    stdin_write = None;
+                    drop(stdin_write.take());
                     if write.is_err() {
                         abort_captures(&mut captures).await;
                         return Err(BootstrapCommandFailure::Stdin);

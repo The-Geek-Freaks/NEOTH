@@ -15,10 +15,8 @@ use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
 use crate::{
-    config::keychain::SecretStore,
-    installers::n8n::N8N_OCI_REFERENCE,
-    integrations::state::ResumeEvidence,
-    secret::SecretString,
+    config::keychain::SecretStore, installers::n8n::N8N_OCI_REFERENCE,
+    integrations::state::ResumeEvidence, secret::SecretString,
 };
 
 use super::bootstrap_transport::{BootstrapDockerRunner, LocalBootstrapDockerRunner};
