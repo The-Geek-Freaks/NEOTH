@@ -1,0 +1,41 @@
+{
+  "schema": "neoth-hosted-group-admission/v1",
+  "wave": 984,
+  "rootVerified": true,
+  "run": 36064384885,
+  "source": "e6f3d47433f493c6c83e0d7d0d5b6c44567b8571",
+  "executed": 1446,
+  "passed": 1446,
+  "failed": 0,
+  "missing": 0,
+  "sourceBindingCount": 255,
+  "logSha256": "AA4E76F649872B63DE9EDF3BD8794E776CA204522B3FAC15A1054309E5966B54",
+  "artifacts": [
+    {
+      "id": 10836266778,
+      "name": "w190-research-lifecycle-receipt-e6f3d47433f493c6c83e0d7d0d5b6c44567b8571",
+      "zipSha256": "8befce5b9731f87a5f4097b6c85fe7f7580db73619c2588a090ea93236f60d91"
+    },
+    {
+      "id": 10836251732,
+      "name": "w190-research-lifecycle-log-e6f3d47433f493c6c83e0d7d0d5b6c44567b8571",
+      "zipSha256": "12983ddf32505e947503dbd9e79533d7963164f5f02768c40c1f1cabdbf78ffc"
+    },
+    {
+      "id": 10836142074,
+      "name": "w190-research-lifecycle-source-e6f3d47433f493c6c83e0d7d0d5b6c44567b8571",
+      "zipSha256": "1b9ef9a27de6d9795ddfd14217e60687fba789a272fb66d8eb720ec1997e2718"
+    }
+  ],
+  "checks": [
+    "Fresh artifact API ZIP digests",
+    "255 historical Git source/input hashes",
+    "1446 exact ordered discovery/run/actual terminals and one-test summaries"
+  ],
+  "limits": [
+    "Historical e6f source",
+    "Windows C7 acceptance still pending",
+    "Unpublished bootstrap excluded"
+  ],
+  "localExecutableValidationRan": false
+}

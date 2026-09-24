@@ -53,7 +53,7 @@ class WorkflowPayloadTests(unittest.TestCase):
     def test_mapper_strips_output_only_fields_but_requires_inactive_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "workflow.json"
-            path.write_text('{"name":"x","active":false,"nodes":[{}],"connections":{},"settings":{},"tags":[]}', encoding="utf-8")
+            path.write_text('{"name":"x","active":false,"nodes":[{}],"connections":{},"settings":{},"tags":[],"description":"picker metadata"}', encoding="utf-8")
             self.assertEqual(canary.workflow_payload(path), {"name": "x", "nodes": [{}], "connections": {}, "settings": {}})
 
     def test_mapper_rejects_missing_settings(self) -> None:
@@ -92,6 +92,7 @@ class WorkflowImportTests(unittest.TestCase):
             if method == "POST":
                 self.assertNotIn("active", payload)
                 self.assertNotIn("tags", payload)
+                self.assertNotIn("description", payload)
                 self.assertIsInstance(payload["settings"], dict)
                 identifier = f"fixture/{len(created)}?encoded"
                 created[canary.quote(identifier, safe="")] = {**payload, "id": identifier, "active": False}
@@ -122,7 +123,7 @@ class WorkflowImportTests(unittest.TestCase):
     def test_readback_requires_actual_submitted_graph_and_settings(self) -> None:
         original = canary.workflow_payload(self.repository / "SRC/neothd/assets/n8n_workflows/morning_brief.json")
         original["settings"] = {"timezone": "Europe/Berlin"}
-        for field in ("nodes", "connections", "extra_connection", "settings", "description"):
+        for field in ("nodes", "connections", "extra_connection", "settings", "name"):
             with self.subTest(field=field):
                 readback = copy.deepcopy({**original, "id": "owned", "active": False})
                 if field == "nodes":
@@ -134,7 +135,7 @@ class WorkflowImportTests(unittest.TestCase):
                 elif field == "settings":
                     readback["settings"]["timezone"] = "UTC"
                 else:
-                    readback["description"] = "different workflow"
+                    readback["name"] = "different workflow"
                 receipt = {}
                 with patch.object(canary, "workflow_payload", return_value=original), patch.object(
                     canary, "workflow_request", side_effect=[

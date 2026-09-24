@@ -2,6 +2,22 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W984/W987/W988 hosted continuation (2026-09-25):** Root admitted Linux
+Group1446 at e6f3d474: 1446 PASS, zero failures or missing terminals, 255 exact
+historical source/input bindings and all three artifact digests. This verifies
+the six repaired Citation/MCP fixtures. Core36064386954 at the same source is
+successful; its generated CLI reference matches the historical Git blob and
+inner checksum. Windows232 at d67d5a57 is still running; C7 remains open.
+The n8n image run36065892428 at4b0f2956 passed login, key minting, replacement
+readiness and authentication, but failed its first workflow create. Root verified the pinned strict create DTO rejects description. The mapper
+now excludes that update-only field and its regression checks the real assets.
+The canary also records coarse status and preserves the exact failed asset stage;
+it does not retry unknown creates. No complete import or execution is claimed.
+The reviewed macOS workflow now separates daemon and GUI jobs, each bounded
+at360minutes. Same-run/attempt/architecture/source artifacts and binary hashes
+bind the retained daemons used by the package; cache misses are nonfatal.
+Hosted macOS validation is pending. Claude RESULT023 was read; TASK024 resolves
+recipient configuration and exact archive-node/mount contracts before wiring.
 **W975/W980 inactive workflow image gate (2026-09-25):** The main-only n8n
 image canary now reads and hashes the three checked-in bootstrap assets, maps
 only public write fields and creates each once without activation. Exact-ID

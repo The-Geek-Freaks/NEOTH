@@ -309,7 +309,8 @@ def workflow_payload(path: Path) -> dict:
     payload = {key: value[key] for key in WORKFLOW_FIELDS if key in value}
     if payload.get("active") is not False or not isinstance(payload.get("name"), str) or not isinstance(payload.get("nodes"), list) or not payload["nodes"] or not isinstance(payload.get("connections"), dict) or not isinstance(payload.get("settings"), dict):
         raise CanaryFailure("workflow_payload_invalid")
-    return {key: value for key, value in payload.items() if key not in {"active", "tags"}}
+    # The pinned public create DTO accepts description only on update.
+    return {key: value for key, value in payload.items() if key not in {"active", "tags", "description"}}
 
 
 def workflow_request(port: int, raw_key: str, method: str, path: str, payload: dict | None = None) -> tuple[int, dict | None]:
@@ -362,10 +363,15 @@ def import_workflows(repository: Path, port: int, raw_key: str, receipt: dict) -
         try:
             status, created = workflow_request(port, raw_key, "POST", "/api/v1/workflows", payload)
         except (OSError, http.client.HTTPException, CanaryFailure) as error:
+            receipt["workflow_create_observation"] = "transport_or_bounded_response_failure"
             receipt["unknown_effect_stage"] = f"workflow_create_{name}"
             raise UnknownEffect("workflow_create_unknown") from error
+        receipt["workflow_create_status"] = status
         created_value = created.get("data", created) if isinstance(created, dict) else None
         if status not in (200, 201) or not isinstance(created_value, dict) or not isinstance(created_value.get("id"), str) or not created_value["id"]:
+            receipt["workflow_create_observation"] = (
+                "non_success_status" if status not in (200, 201) else "missing_exact_id"
+            )
             receipt["unknown_effect_stage"] = f"workflow_create_{name}"
             raise UnknownEffect("workflow_create_unknown")
         workflow_id = created_value["id"]
@@ -545,7 +551,7 @@ def main() -> int:
         receipt["outcome"] = "passed"
         exit_code = 0
     except UnknownEffect as error:
-        receipt["unknown_effect_stage"] = str(error)
+        receipt.setdefault("unknown_effect_stage", str(error))
     except CanaryFailure as error:
         receipt["failure_stage"] = str(error)
     except Exception:

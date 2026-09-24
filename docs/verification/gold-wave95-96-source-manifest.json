@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T22:08:15.1764007Z",
-  "validationStatus": "W975/W980 inactive-create canary source-reviewed; hosted execution pending; W977 historical Windows failure admitted",
+  "capturedUtc": "2026-09-24T22:20:06.8146029Z",
+  "validationStatus": "Source reviewed; hosted n8n create repair and macOS validation pending; historical Linux Group1446 accepted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/workflows/macos-packaged-chat.yml",
-      "bytes": 6627,
-      "sha256": "36C5AE5D362B01C2380ABE94192B2CCA7B54B732113561F7323AEC1A94DDD249"
+      "bytes": 11735,
+      "sha256": "49345EFAAA3B1658041E22FD37468F0C114280D5C6834275B7F265F98E31E35E"
     },
     {
       "path": ".github/workflows/managed-browser-provenance.yml",
@@ -2022,6 +2022,16 @@
       "sha256": "7192576671D2787051917E8C7A449720BE632CEBFA3BBAB4FFB4C9C90A8E58B1"
     },
     {
+      "path": "docs/verification/gold-wave984-group1446.json",
+      "bytes": 1357,
+      "sha256": "81AE76B853801093A0064AD7974180AC338A1F67C3DCE0FA7FBB7CA1FED5987A"
+    },
+    {
+      "path": "docs/verification/gold-wave987-core-cli.json",
+      "bytes": 1361,
+      "sha256": "8FFC6A27C189236C7410981A2028DB1434A17880966C6DA94163EACB985D527B"
+    },
+    {
       "path": "docs/verification/managed-browser-cft154.json",
       "bytes": 2497,
       "sha256": "80443D2F6E6A6E226F1617F7F5463017071D9D21130D1FCD116470F147455337"
@@ -2108,8 +2118,8 @@
     },
     {
       "path": "packaging/n8n_bootstrap_canary.py",
-      "bytes": 31872,
-      "sha256": "3F1AE0514FC15BC90EEE4B3F4A594EA20C5BDF36C35A95E098B01BEF9ED8A08C"
+      "bytes": 32270,
+      "sha256": "7F9207E2F7F3EA670F5BC1870AAB8805E4C6FA330F6507467E889AE76D48ADB9"
     },
     {
       "path": "packaging/rust-license-snapshots.json",
@@ -2133,8 +2143,8 @@
     },
     {
       "path": "packaging/tests/test_n8n_bootstrap_canary.py",
-      "bytes": 10355,
-      "sha256": "56B890EFB8529B425C3E50E752E46782AE6BF78033D4E1810E3B5FDCF29DBA82"
+      "bytes": 10430,
+      "sha256": "7BD189FE4602B25DCE3D1D7CE818CCFD5534762F90D44E7972B1CFDEB4C2966C"
     },
     {
       "path": "packaging/tests/test_preview_windows_workflow_contract.py",
@@ -2193,13 +2203,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1311324,
-      "sha256": "D811F1F549024ED92E98B6645866AF9DA3510383E0982F8FBD3D1D67FC5057D4"
+      "bytes": 1312633,
+      "sha256": "506F959348CF003540DC84A9BA9E7AB55944DF125B2554D6E67190F40DC61936"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1920893,
-      "sha256": "C5C8169D82218F29F1B798DA128C8EA32DF4A83B3D22C38BC61A4DC1E417842F"
+      "bytes": 1922202,
+      "sha256": "A7317451AA380A3519CDA51C0D6C1A5767325F277ACEA7C163DB61CF361498CF"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

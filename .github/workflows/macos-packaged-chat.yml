@@ -11,8 +11,120 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  daemon-build:
+    name: Desktop daemon ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    env:
+      CARGO_BUILD_JOBS: 1
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_RELEASE_DEBUG: 0
+      CARGO_TERM_COLOR: never
+    steps:
+      - name: Checkout exact main source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Require main and record source inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          evidence="$RUNNER_TEMP/packaged-chat-evidence"
+          mkdir -p "$evidence"
+          git rev-parse HEAD > "$evidence/source-head.txt"
+          printf '%s\n' "$GITHUB_REF" > "$evidence/source-ref.txt"
+          git ls-files -z SRC packaging/macos .github/workflows/macos-packaged-chat.yml \
+            | xargs -0 shasum -a 256 > "$evidence/source-inputs.sha256"
+
+      - name: Setup Rust 1.93
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.93.0'
+
+      - name: Restore daemon Cargo checkpoint
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: packaged-chat-${{ matrix.arch }}-1.93-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-daemon
+          restore-keys: |
+            packaged-chat-${{ matrix.arch }}-1.93-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}-
+            packaged-chat-${{ matrix.arch }}-1.93-${{ hashFiles('SRC/Cargo.lock') }}-
+
+      - name: Build the actual desktop daemon
+        working-directory: SRC
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/packaged-chat-evidence"
+          date -u +%FT%TZ > "$evidence/daemon-build-started.txt"
+          cargo build --release --locked -p neoth --bin neoth --bin neothd --features release-desktop 2>&1 | tee "$evidence/daemon-build.log"
+          date -u +%FT%TZ > "$evidence/daemon-build-completed.txt"
+
+      - name: Prepare exact daemon transfer
+        shell: bash
+        run: |
+          set -euo pipefail
+          transfer="$RUNNER_TEMP/packaged-chat-daemon-transfer"
+          evidence="$RUNNER_TEMP/packaged-chat-evidence"
+          mkdir -p "$transfer"
+          install -m 0755 SRC/target/release/neoth "$transfer/neoth"
+          install -m 0755 SRC/target/release/neothd "$transfer/neothd"
+          cp "$evidence/source-head.txt" "$transfer/source-head.txt"
+          cp "$evidence/source-ref.txt" "$transfer/source-ref.txt"
+          cp "$evidence/source-inputs.sha256" "$transfer/source-inputs.sha256"
+          (
+            cd "$transfer"
+            shasum -a 256 neoth neothd > daemon-binaries.sha256
+            shasum -a 256 -c daemon-binaries.sha256
+          )
+          cp "$transfer/daemon-binaries.sha256" "$evidence/daemon-binaries.sha256"
+
+      - name: Upload exact daemon transfer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: packaged-macos-daemon-${{ matrix.arch }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/packaged-chat-daemon-transfer/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Save completed daemon Cargo checkpoint
+        if: ${{ success() }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: packaged-chat-${{ matrix.arch }}-1.93-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-daemon
+
+      - name: Upload daemon source and build evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: packaged-macos-daemon-evidence-${{ matrix.arch }}-${{ github.sha }}
+          path: ${{ runner.temp }}/packaged-chat-evidence/
+          if-no-files-found: error
+          retention-days: 14
+
   packaged-chat:
     name: Packaged chat ${{ matrix.arch }}
+    needs: daemon-build
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
     strategy:
@@ -57,7 +169,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Restore release desktop Cargo cache
+      - name: Restore same-run Cargo checkpoint
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
@@ -65,32 +177,35 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             SRC/target/
-          key: packaged-chat-${{ matrix.arch }}-1.93-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            packaged-chat-${{ matrix.arch }}-1.93-${{ hashFiles('SRC/Cargo.lock') }}-
+          key: packaged-chat-${{ matrix.arch }}-1.93-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-daemon
+          fail-on-cache-miss: false
 
-      - name: Build the actual desktop daemon
-        id: desktop-daemon-build
-        working-directory: SRC
+      - name: Download and verify exact same-run daemon transfer
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: packaged-macos-daemon-${{ matrix.arch }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/packaged-chat-daemon-transfer
+
+      - name: Bind retained daemon binaries to the checked-out source
         shell: bash
         run: |
           set -euo pipefail
           evidence="$RUNNER_TEMP/packaged-chat-evidence"
-          date -u +%FT%TZ > "$evidence/daemon-build-started.txt"
-          cargo build --release --locked -p neoth --bin neoth --bin neothd --features release-desktop 2>&1 | tee "$evidence/daemon-build.log"
-          date -u +%FT%TZ > "$evidence/daemon-build-completed.txt"
-
-      # Retain the completed daemon build even if the later GUI/package phase
-      # fails or reaches the job limit. Cargo still validates current inputs.
-      - name: Save completed desktop daemon Cargo checkpoint
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            SRC/target/
-          key: packaged-chat-${{ matrix.arch }}-1.93-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}-daemon
+          transfer="$RUNNER_TEMP/packaged-chat-daemon-transfer"
+          test "$(cat "$transfer/source-head.txt")" = "$GITHUB_SHA"
+          test "$(cat "$transfer/source-ref.txt")" = "$GITHUB_REF"
+          cmp "$transfer/source-inputs.sha256" "$evidence/source-inputs.sha256"
+          (
+            cd "$transfer"
+            shasum -a 256 -c daemon-binaries.sha256
+          )
+          retained="$RUNNER_TEMP/retained-daemon-binaries"
+          mkdir -p "$retained"
+          install -m 0755 "$transfer/neoth" "$retained/neoth"
+          install -m 0755 "$transfer/neothd" "$retained/neothd"
+          cp "$transfer/daemon-binaries.sha256" "$evidence/daemon-binaries.sha256"
+          cp "$transfer/source-head.txt" "$evidence/daemon-source-head.txt"
+          cp "$transfer/source-ref.txt" "$evidence/daemon-source-ref.txt"
 
       - name: Build the actual desktop GUI
         id: desktop-build
@@ -110,10 +225,11 @@ jobs:
         run: |
           set -euo pipefail
           app="$RUNNER_TEMP/packaged-chat-app/NEOTH.app"
+          retained="$RUNNER_TEMP/retained-daemon-binaries"
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-          for binary in neoth neothd neothd-gui; do
-            install -m 0755 "SRC/target/release/$binary" "$app/Contents/MacOS/$binary"
-          done
+          install -m 0755 "$retained/neoth" "$app/Contents/MacOS/neoth"
+          install -m 0755 "$retained/neothd" "$app/Contents/MacOS/neothd"
+          install -m 0755 SRC/target/release/neothd-gui "$app/Contents/MacOS/neothd-gui"
           APP="$app" python - <<'PY'
           import os
           from pathlib import Path
@@ -143,7 +259,7 @@ jobs:
             --evidence "$RUNNER_TEMP/packaged-chat-evidence/runtime" \
             --source "$GITHUB_SHA"
 
-      - name: Save completed release desktop Cargo cache
+      - name: Save completed GUI Cargo checkpoint
         if: ${{ always() && !cancelled() && steps.desktop-build.outcome == 'success' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
@@ -152,7 +268,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             SRC/target/
-          key: packaged-chat-${{ matrix.arch }}-1.93-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}
+          key: packaged-chat-${{ matrix.arch }}-1.93-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-gui
 
       - name: Upload source, package and external process evidence
         if: always()
