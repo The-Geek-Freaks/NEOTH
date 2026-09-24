@@ -8,6 +8,19 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W614/W617 operator-anchor creation and Windows atomic diagnosis (2026-09-24):**
+The new `recall-parity-harness anchor-link-create` consumes explicit operator
+labels and exactly20 sorted query/candidate selections after signature/current
+custody validation. It revalidates the canonical link and creates a new output
+file in a bound existing parent without overwriting. Two universal regressions
+cover canonical construction, duplicate/unknown-field rejection and no-overwrite.
+The public runbook and methodology now document this missing operator step.
+Independent review approves the source and corrected test ownership; hosted
+formatting, compilation and behavior are pending. Catalog:1248 universal native
+and Group973. W617 exposes only test-side atomic operation/ErrorKind/OS-code
+for the three Windows Paperless failures; production sharing, fences and error
+propagation remain unchanged. Group971 is running at the preceding published
+source. No Road closure, live grading or local executable validation.
 **W615-W616 Windows diagnosis and hosted CLI export (2026-09-24):**
 Core run35948530640 at33e8a9a3 passes slim production Clippy, core test-target
 checking and public CLI build/export. The generated reference is imported

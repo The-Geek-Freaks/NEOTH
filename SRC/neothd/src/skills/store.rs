@@ -26,7 +26,49 @@ use cap_std::fs::{Dir, File, OpenOptions};
 thread_local! {
     static TEST_DELETE_WORK_BEFORE_FAILURE: std::cell::Cell<Option<usize>> =
         const { std::cell::Cell::new(None) };
+    static LAST_PRIVATE_ATOMIC_IO_DIAGNOSTIC_FOR_TEST: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
 }
+
+/// Test-only, secret-free failure location for a private atomic write.
+///
+/// This deliberately reports only a fixed operation label, `ErrorKind`, and
+/// the optional OS error code. It never records a path, child name, or bytes.
+#[cfg(test)]
+pub(crate) fn last_private_atomic_io_diagnostic_for_test() -> Option<String> {
+    LAST_PRIVATE_ATOMIC_IO_DIAGNOSTIC_FOR_TEST.with(|slot| slot.borrow().clone())
+}
+
+#[cfg(test)]
+fn clear_private_atomic_io_diagnostic_for_test() {
+    LAST_PRIVATE_ATOMIC_IO_DIAGNOSTIC_FOR_TEST.with(|slot| *slot.borrow_mut() = None);
+}
+
+#[cfg(test)]
+fn record_private_atomic_io_diagnostic_for_test(
+    stage: &'static str,
+    error: &anyhow::Error,
+) {
+    let detail = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+        .map(|error| {
+            format!(
+                "atomic_kind={:?};atomic_raw={:?}",
+                error.kind(),
+                error.raw_os_error()
+            )
+        })
+        .unwrap_or_else(|| "atomic_kind=unavailable;atomic_raw=unavailable".to_owned());
+    LAST_PRIVATE_ATOMIC_IO_DIAGNOSTIC_FOR_TEST.with(|slot| {
+        if slot.borrow().is_none() {
+            *slot.borrow_mut() = Some(format!("atomic_stage={stage};{detail}"));
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn record_private_atomic_io_diagnostic_for_test(_: &'static str, _: &anyhow::Error) {}
 
 #[cfg(all(test, unix))]
 thread_local! {
@@ -3287,6 +3329,8 @@ fn atomic_write_private_child_reported_core(
     bytes: &[u8],
     replace_existing: bool,
 ) -> Result<PrivateChildReportedCommit> {
+    #[cfg(test)]
+    clear_private_atomic_io_diagnostic_for_test();
     validate_child_name(name)?;
     match parent.symlink_metadata(name) {
         Ok(_metadata) if !replace_existing => {
@@ -3348,6 +3392,8 @@ fn atomic_write_private_child_reported_core(
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => {
+                let error = anyhow::Error::new(error);
+                record_private_atomic_io_diagnostic_for_test("create", &error);
                 return Err(error).with_context(|| {
                     format!(
                         "create capability-bound atomic stage for {}",
@@ -3361,13 +3407,24 @@ fn atomic_write_private_child_reported_core(
     let mut stage = stage.context("private atomic stage handle is unexpectedly absent")?;
     let mut committed = false;
     let result = (|| -> Result<PrivateChildReportedCommit> {
-        stage.write_all(bytes).with_context(|| {
-            format!("write private atomic stage for {}", display_path.display())
-        })?;
+        if let Err(error) = stage.write_all(bytes) {
+            let error = anyhow::Error::new(error);
+            record_private_atomic_io_diagnostic_for_test("write", &error);
+            return Err(error).with_context(|| {
+                format!("write private atomic stage for {}", display_path.display())
+            });
+        }
         #[cfg(windows)]
-        let synced_stage = stage
-            .sync_all()
-            .with_context(|| format!("sync private atomic stage for {}", display_path.display()))?;
+        let synced_stage = match stage.sync_all() {
+            Ok(synced) => synced,
+            Err(error) => {
+                let error = anyhow::Error::new(error);
+                record_private_atomic_io_diagnostic_for_test("sync", &error);
+                return Err(error).with_context(|| {
+                    format!("sync private atomic stage for {}", display_path.display())
+                });
+            }
+        };
         #[cfg(not(windows))]
         stage
             .sync_all()
@@ -3431,7 +3488,9 @@ fn atomic_write_private_child_reported_core(
                 .unwrap_or(display_path)
                 .join(&stage_name);
             #[cfg(windows)]
-            let cleanup = stage.cleanup(&stage_display);
+            let cleanup = stage.cleanup(&stage_display).inspect_err(|error| {
+                record_private_atomic_io_diagnostic_for_test("cleanup", &error);
+            });
             #[cfg(not(windows))]
             let cleanup =
                 remove_named_file_if_same_open_object(parent, &stage_name, &stage, &stage_display);
@@ -3770,6 +3829,7 @@ mod windows_private_atomic_stage {
                 .custom_flags(FILE_FLAG_WRITE_THROUGH);
             let file = parent.open_with(name, &options)?;
             if protect_private_dacl_enabled && let Err(error) = protect_private_dacl(&file) {
+                super::record_private_atomic_io_diagnostic_for_test("protect_dacl", &error);
                 let stage_display = display_path.parent().unwrap_or(display_path).join(name);
                 let cleanup = super::windows_mark_delete(&file, &stage_display);
                 return Err(std::io::Error::other(match cleanup {
@@ -3831,37 +3891,53 @@ mod windows_private_atomic_stage {
                 // Preserve the already-bound destination capability while using
                 // FileRenameInformationEx: its POSIX semantics can replace a
                 // DELETE-sharing bound target without a close/reopen race.
-                super::windows_rename_open_handle_ex(
+                if let Err(error) = super::windows_rename_open_handle_ex(
                     &self.stage.file,
                     parent,
                     target_name,
                     replace_existing,
                     display_path,
-                )?;
+                ) {
+                    super::record_private_atomic_io_diagnostic_for_test("rename", &error);
+                    return Err(error);
+                }
             } else {
-                super::windows_rename_open_handle(
+                if let Err(error) = super::windows_rename_open_handle(
                     &self.stage.file,
                     parent,
                     target_name,
                     replace_existing,
                     display_path,
-                )?;
+                ) {
+                    super::record_private_atomic_io_diagnostic_for_test("rename", &error);
+                    return Err(error);
+                }
             }
             on_commit();
             #[cfg(test)]
             run_after_rename_for_test();
             #[cfg(test)]
-            super::inject_private_child_post_commit_validation_failure(display_path)?;
-            anyhow::ensure!(
-                super::named_regular_file_matches_open_object(
-                    parent,
-                    target_name,
-                    &self.stage.file,
-                    display_path,
-                )?,
-                "committed private atomic target is not the exact open stage object: {}",
-                display_path.display()
-            );
+            super::inject_private_child_post_commit_validation_failure(display_path)
+                .inspect_err(|error| {
+                    super::record_private_atomic_io_diagnostic_for_test("identity", &error);
+                })?;
+            let matches = super::named_regular_file_matches_open_object(
+                parent,
+                target_name,
+                &self.stage.file,
+                display_path,
+            )
+            .inspect_err(|error| {
+                super::record_private_atomic_io_diagnostic_for_test("identity", &error);
+            })?;
+            if !matches {
+                let diagnostic = anyhow::anyhow!("private atomic identity mismatch");
+                super::record_private_atomic_io_diagnostic_for_test("identity", &diagnostic);
+                anyhow::bail!(
+                    "committed private atomic target is not the exact open stage object: {}",
+                    display_path.display()
+                );
+            }
             Ok(match self.stage.volume {
                 VolumeQualification::QualifiedLocalNtfs => {
                     RenameCommit::Qualified(QualifiedLocalNtfsRenameCommit {

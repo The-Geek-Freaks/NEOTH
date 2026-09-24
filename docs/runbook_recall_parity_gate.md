@@ -27,6 +27,34 @@ runbook is the operator procedure; the deterministic scoring is shipped in
   fail-closes the exact goldset-bound grade matrix; it never silently scores a
   subset or a widened corpus.
 
+## Create the operator-anchor link
+
+After preparing the actual twenty-query operator labels and exporting candidate
+evidence, write `anchor-selection.json` as an array of exactly 20 objects with
+only `query_id` and `candidate_id`. Sort it strictly by query ID; cover every
+anchor query once and select distinct IDs from the signed candidate bundle.
+The IDs identify actual operator choices and are not inferred by the command.
+
+```powershell
+neoth recall-parity-harness anchor-link-create `
+  --grader-config C:\eval\graders.json `
+  --goldset C:\eval\goldset.jsonl `
+  --evidence-dir C:\eval\candidate-evidence `
+  --expected-evidence-receipt-pubkey $ExpectedEvidencePublicKey `
+  --operator-anchor C:\eval\operator-anchor.jsonl `
+  --selection C:\eval\anchor-selection.json `
+  --output C:\eval\operator-anchor-link.json
+```
+
+For `authenticated_local_transcript_bound_v1` evidence, also supply
+`--local-evidence-home C:\path\to\neoth-home`; the current source custody must
+still be valid. The output's parent must already exist, and the output file
+must be absent. A relative output name uses the current working directory.
+Pass the resulting file to the existing `anchor-ingest --operator-anchor-link`
+option. This operation validates evidence and explicit labels; it does not
+grade, contact a provider, or establish a parity PASS. W614 hosted validation is
+pending.
+
 ## What is the operator's live work (not in the binary)
 
 - Extracting the 100-query goldset from the live Jarvis `recall.sh`.

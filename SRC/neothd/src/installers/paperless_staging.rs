@@ -83,8 +83,11 @@ fn record_prepare_io_diagnostic_for_test(stage: &'static str, error: &anyhow::Er
         .find_map(|cause| cause.downcast_ref::<io::Error>())
         .map(|error| format!("kind={:?};raw={:?}", error.kind(), error.raw_os_error()))
         .unwrap_or_else(|| "kind=unavailable;raw=unavailable".to_owned());
+    let atomic_detail = crate::skills::store::last_private_atomic_io_diagnostic_for_test()
+        .map(|diagnostic| format!(";{diagnostic}"))
+        .unwrap_or_default();
     LAST_PREPARE_IO_DIAGNOSTIC_FOR_TEST.with(|slot| {
-        *slot.borrow_mut() = Some(format!("stage={stage};{detail}"));
+        *slot.borrow_mut() = Some(format!("stage={stage};{detail}{atomic_detail}"));
     });
 }
 

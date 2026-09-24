@@ -10,7 +10,7 @@
 //! 100% offline: it scores grade FILES — no live legacy-AI, no LLM, no grading
 //! here (the grading is the operator's run; the file format is the contract).
 
-use std::{collections::BTreeSet, path::PathBuf};
+use std::{collections::BTreeSet, ffi::OsStr, path::{Path, PathBuf}};
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
@@ -26,7 +26,8 @@ use crate::recall::{
         CandidateEvidenceUseContext, export_local_candidates, list_local_candidates,
     },
     parity_anchor::{
-        MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES, load_operator_anchor_bytes,
+        MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES, create_operator_anchor_evidence_link,
+        load_operator_anchor_bytes,
         summarize_operator_anchor,
     },
     parity_batch_plan::{
@@ -181,6 +182,26 @@ pub enum RecallParityHarnessOperation {
         goldset: PathBuf,
         #[arg(long = "operator-anchor", value_name = "PATH")]
         operator_anchor: PathBuf,
+    },
+    /// Seal an explicit twenty-query operator mapping into the canonical link
+    /// required by `anchor-ingest`. This creates no run or label artifact.
+    AnchorLinkCreate {
+        #[arg(long, value_name = "PATH")]
+        grader_config: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        goldset: PathBuf,
+        #[arg(long = "evidence-dir", value_name = "DIR")]
+        evidence_dir: PathBuf,
+        #[arg(long = "expected-evidence-receipt-pubkey", value_name = "BASE64")]
+        expected_evidence_receipt_pubkey: String,
+        #[arg(long = "operator-anchor", value_name = "PATH")]
+        operator_anchor: PathBuf,
+        /// JSON array of sorted `{query_id,candidate_id}` selections.
+        #[arg(long = "selection", value_name = "PATH")]
+        selection: PathBuf,
+        /// New output file for the canonical operator-anchor link.
+        #[arg(long = "output", value_name = "PATH")]
+        output: PathBuf,
     },
     /// Verify a bounded imported transcript/WAL candidate-evidence bundle and
     /// render only its redacted provenance receipt. Candidates remain in the
@@ -398,6 +419,11 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
             goldset,
             ..
         }
+        | RecallParityHarnessOperation::AnchorLinkCreate {
+            grader_config,
+            goldset,
+            ..
+        }
         | RecallParityHarnessOperation::AnchorIngest {
             grader_config,
             goldset,
@@ -570,6 +596,44 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                 &config,
             )?;
             render_harness_json(&summarize_operator_anchor(&anchor, &anchor_bytes), &output)?;
+        }
+        RecallParityHarnessOperation::AnchorLinkCreate {
+            evidence_dir,
+            expected_evidence_receipt_pubkey,
+            operator_anchor,
+            selection,
+            output: link_output,
+            ..
+        } => {
+            let candidate_evidence = load_candidate_evidence_with_context(
+                &evidence_dir,
+                &expected_evidence_receipt_pubkey,
+                &context,
+            )?;
+            let anchor_bytes = read_offline_input(
+                &operator_anchor,
+                crate::recall::goldset::MAX_GRADES_BYTES,
+                "operator anchor labels",
+            )?;
+            let anchor = load_operator_anchor_bytes(
+                &anchor_bytes,
+                "harness --operator-anchor",
+                &entries,
+                &config,
+            )?;
+            let selection_bytes = read_offline_input(
+                &selection,
+                MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES as u64,
+                "operator anchor selection",
+            )?;
+            let link = create_operator_anchor_evidence_link(
+                &selection_bytes,
+                &anchor_bytes,
+                &anchor,
+                &candidate_evidence,
+            )?;
+            write_new_operator_anchor_link(&link_output, &link.canonical_bytes()?)?;
+            render_harness_json(&link, &output)?;
         }
         RecallParityHarnessOperation::AnchorIngest {
             run_dir,
@@ -771,6 +835,31 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
         }
     }
     Ok(())
+}
+
+fn write_new_operator_anchor_link(output: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = output
+        .parent()
+        .context("operator anchor link output has no parent directory")?;
+    let name = output
+        .file_name()
+        .context("operator anchor link output has no regular file name")?;
+    if name == OsStr::new(".") || name == OsStr::new("..") {
+        anyhow::bail!("operator anchor link output has no regular file name");
+    }
+    let parent = crate::skills::store::open_absolute_bound_directory(
+        parent,
+        false,
+        "operator anchor link output parent",
+    )?
+    .context("operator anchor link output parent does not exist")?;
+    crate::skills::store::atomic_write_private_child_create_new(
+        &parent.dir,
+        name,
+        &parent.display_path.join(name),
+        bytes,
+    )
+    .context("create new operator anchor link output")
 }
 
 fn render_harness_json<T: serde::Serialize>(value: &T, output: &OutputFormat) -> Result<()> {
@@ -1281,6 +1370,43 @@ mod tests {
             .is_err(),
             "local export must never infer source selections"
         );
+    }
+
+    #[test]
+    fn anchor_link_create_cli_requires_explicit_inputs_and_never_overwrites_output() {
+        let cli = Cli::try_parse_from([
+            "neoth",
+            "recall-parity-harness",
+            "anchor-link-create",
+            "--grader-config",
+            "graders.json",
+            "--goldset",
+            "goldset.jsonl",
+            "--evidence-dir",
+            "evidence",
+            "--expected-evidence-receipt-pubkey",
+            "key",
+            "--operator-anchor",
+            "labels.jsonl",
+            "--selection",
+            "selection.json",
+            "--output",
+            "link.json",
+        ])
+        .unwrap();
+        let Commands::RecallParityHarness(args) = cli.command else {
+            panic!("expected harness");
+        };
+        assert!(matches!(
+            args.operation,
+            RecallParityHarnessOperation::AnchorLinkCreate { .. }
+        ));
+        let output_dir = tempfile::tempdir().unwrap();
+        let output = output_dir.path().join("operator-anchor-link.json");
+        write_new_operator_anchor_link(&output, b"canonical link").unwrap();
+        assert_eq!(std::fs::read(&output).unwrap(), b"canonical link");
+        assert!(write_new_operator_anchor_link(&output, b"replacement").is_err());
+        assert_eq!(std::fs::read(&output).unwrap(), b"canonical link");
     }
 
     #[tokio::test]

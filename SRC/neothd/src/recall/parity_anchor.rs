@@ -99,6 +99,12 @@ pub struct OperatorAnchorEvidenceLink {
     pub links: Vec<OperatorAnchorCandidateLink>,
 }
 
+impl OperatorAnchorEvidenceLink {
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
+        serde_json::to_vec(self).context("serialize canonical operator anchor evidence link")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedOperatorAnchorEvidenceLink {
     link: OperatorAnchorEvidenceLink,
@@ -234,6 +240,63 @@ pub fn load_operator_anchor_evidence_link_bytes(
         candidate_evidence.receipt_sha256(),
         &candidate_ids,
     )
+}
+
+/// Create the only operator-facing bridge between already validated manual
+/// labels and signed candidate evidence. The selection input contains no raw
+/// source text and becomes a canonical, independently revalidated link.
+pub fn create_operator_anchor_evidence_link(
+    selection_bytes: &[u8],
+    anchor_bytes: &[u8],
+    anchor: &ValidatedOperatorAnchor,
+    candidate_evidence: &ValidatedCandidateEvidence,
+) -> Result<OperatorAnchorEvidenceLink> {
+    let candidate_ids = candidate_evidence
+        .candidates()
+        .iter()
+        .map(|candidate| candidate.candidate_id.clone())
+        .collect::<Vec<_>>();
+    create_operator_anchor_evidence_link_with_provenance(
+        selection_bytes,
+        anchor_bytes,
+        anchor,
+        candidate_evidence.manifest_sha256(),
+        candidate_evidence.receipt_sha256(),
+        &candidate_ids,
+    )
+}
+
+fn create_operator_anchor_evidence_link_with_provenance(
+    selection_bytes: &[u8],
+    anchor_bytes: &[u8],
+    anchor: &ValidatedOperatorAnchor,
+    candidate_manifest_sha256: &str,
+    candidate_receipt_sha256: &str,
+    candidate_ids: &[String],
+) -> Result<OperatorAnchorEvidenceLink> {
+    if selection_bytes.len() > MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES {
+        anyhow::bail!("operator anchor selection exceeds the bounded byte limit");
+    }
+    let links: Vec<OperatorAnchorCandidateLink> = serde_json::from_slice(selection_bytes)
+        .map_err(|_| anyhow::anyhow!("parse operator anchor selection vector"))?;
+    let link = OperatorAnchorEvidenceLink {
+        schema_version: OPERATOR_ANCHOR_EVIDENCE_LINK_SCHEMA_VERSION,
+        purpose: OPERATOR_ANCHOR_EVIDENCE_LINK_PURPOSE.into(),
+        candidate_manifest_sha256: candidate_manifest_sha256.to_owned(),
+        candidate_receipt_sha256: candidate_receipt_sha256.to_owned(),
+        operator_anchor_sha256: sha256_bytes(anchor_bytes),
+        links,
+    };
+    let bytes = link.canonical_bytes()?;
+    load_operator_anchor_evidence_link_with_provenance(
+        &bytes,
+        anchor_bytes,
+        anchor,
+        candidate_manifest_sha256,
+        candidate_receipt_sha256,
+        candidate_ids,
+    )?;
+    Ok(link)
 }
 
 /// Same strict link validation for metadata re-opened from immutable run
@@ -550,6 +613,88 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn anchor_link_constructor_is_canonical_and_rejects_noncanonical_selection() {
+        let goldset = goldset();
+        let config = GraderConfigFile {
+            schema_version: 1,
+            graders: vec![
+                GraderConfig {
+                    grader_id: "shared".into(),
+                    provider: GraderProvider::Anthropic,
+                    model_id: "shared".into(),
+                    family: GraderFamily::AnthropicOpenaiGoogle,
+                },
+                GraderConfig {
+                    grader_id: "external".into(),
+                    provider: GraderProvider::Mistral,
+                    model_id: "external".into(),
+                    family: GraderFamily::IndependentExternal,
+                },
+            ],
+        }
+        .into_validated()
+        .unwrap();
+        let anchor_bytes = anchor_bytes();
+        let anchor = load_operator_anchor_bytes(&anchor_bytes, "fixture", &goldset, &config).unwrap();
+        let candidate_ids = (0..OPERATOR_ANCHOR_QUERY_COUNT)
+            .map(|index| format!("candidate-{index:03}"))
+            .collect::<Vec<_>>();
+        let selection = (0..OPERATOR_ANCHOR_QUERY_COUNT)
+            .map(|index| OperatorAnchorCandidateLink {
+                query_id: format!("q{index:03}"),
+                candidate_id: format!("candidate-{index:03}"),
+            })
+            .collect::<Vec<_>>();
+        let selection_bytes = serde_json::to_vec(&selection).unwrap();
+        let manifest_sha = "a".repeat(64);
+        let receipt_sha = "b".repeat(64);
+        let link = create_operator_anchor_evidence_link_with_provenance(
+            &selection_bytes,
+            &anchor_bytes,
+            &anchor,
+            &manifest_sha,
+            &receipt_sha,
+            &candidate_ids,
+        )
+        .unwrap();
+        let canonical = link.canonical_bytes().unwrap();
+        load_operator_anchor_evidence_link_with_provenance(
+            &canonical,
+            &anchor_bytes,
+            &anchor,
+            &manifest_sha,
+            &receipt_sha,
+            &candidate_ids,
+        )
+        .unwrap();
+        let mut duplicate = selection.clone();
+        duplicate[1].query_id = duplicate[0].query_id.clone();
+        assert!(create_operator_anchor_evidence_link_with_provenance(
+            &serde_json::to_vec(&duplicate).unwrap(),
+            &anchor_bytes,
+            &anchor,
+            &manifest_sha,
+            &receipt_sha,
+            &candidate_ids,
+        )
+        .is_err());
+        let mut unknown_field = serde_json::to_value(&selection).unwrap();
+        unknown_field.as_array_mut().unwrap()[0]
+            .as_object_mut()
+            .unwrap()
+            .insert("unexpected".into(), serde_json::Value::Bool(true));
+        assert!(create_operator_anchor_evidence_link_with_provenance(
+            &serde_json::to_vec(&unknown_field).unwrap(),
+            &anchor_bytes,
+            &anchor,
+            &manifest_sha,
+            &receipt_sha,
+            &candidate_ids,
+        )
+        .is_err());
     }
 
     #[test]

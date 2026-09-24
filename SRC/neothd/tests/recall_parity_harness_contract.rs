@@ -165,6 +165,8 @@ fn candidate_evidence_is_capability_bound_redacted_and_requires_operator_labels(
         );
     }
     assert!(CLI.contains("CandidateEvidenceValidate"));
+    assert!(CLI.contains("AnchorLinkCreate"));
+    assert!(CLI.contains("write_new_operator_anchor_link"));
     assert!(CLI.contains("long = \"evidence-dir\""));
     assert!(CLI.contains("long = \"expected-evidence-receipt-pubkey\""));
 }

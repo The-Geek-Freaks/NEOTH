@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T03:01:37.2844334Z",
-  "validationStatus": "W615 Windows38/41;W616 core and CLI PASS; Group971 pending",
+  "capturedUtc": "2026-09-24T03:05:20.8642377Z",
+  "validationStatus": "W614 anchor-link and W617 atomic diagnosis reviewed; hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -108,8 +108,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 21253,
-      "sha256": "1F3DC578CB2EEBCA8991056AA5C4718C41294C70381B0E1B32A47EADEFCFB0BC"
+      "bytes": 21301,
+      "sha256": "5CB0C21B0D02C136573587ECDD71709ABDD60971F65EF67FE9B9BE2349886D79"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -1092,6 +1092,11 @@
       "sha256": "2E800A053D2C74DAD9D8AA8904F75D5ABDFD437C6CC4FBA64DF0087742AA519F"
     },
     {
+      "path": "docs/runbook_recall_parity_gate.md",
+      "bytes": 9007,
+      "sha256": "F84AB0365A39E7CAE15AAF1D10EC277D3D7E765819476CB4E2B63D7C1C9E6026"
+    },
+    {
       "path": "docs/training-set-export.md",
       "bytes": 2904,
       "sha256": "2697D4D7EDF26A0615929372BFB2FA5EBD35BA04245030262506A30BFAA7BFE1"
@@ -1498,18 +1503,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 219551,
-      "sha256": "0DB425CB7B055326F4A00AE96084B086239DBF77CEC83A1604819DB169227C60"
+      "bytes": 220565,
+      "sha256": "F4FA321ADFD504B15DCB7481ECC6A866D36A301B50B95F929ABD9B2210A38F97"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1230879,
-      "sha256": "B7CFDD72C6BF98D8850DE39CE7DFA66F64EC5D70EC8B0FBDCEE32EBCC0E03ACD"
+      "bytes": 1231893,
+      "sha256": "9184F1B8A7187F18A486119945BAA29B866FD558DED9ACE1EA7C7AEEA8EB1BE1"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1830161,
-      "sha256": "E26EFD5FD71AC1A4E4C67FCC736A57DDB28500C56D867886404B459015AE2879"
+      "bytes": 1831175,
+      "sha256": "D1E0E2DC89836BB60454640126103DD4EA0B05AD0A9A52E401E14E96D483BB4E"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -1518,8 +1523,8 @@
     },
     {
       "path": "PLAN/SPEC_recall_parity_methodology.md",
-      "bytes": 25244,
-      "sha256": "A9B2FAC273C65F070FAE4C998316B90750F38288C6BB0DEA93DFB963115D49BB"
+      "bytes": 26349,
+      "sha256": "C2B37DE764CF6F2345A80E4B8E9C508085E4FD1ABECD41C772492BA82F23A046"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -2428,8 +2433,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/recall_score.rs",
-      "bytes": 51754,
-      "sha256": "27A3CCE46A4A06916743A7462FB6DDDB695BA71A8BD08661713CC78BB37E3E58"
+      "bytes": 56549,
+      "sha256": "0B3A38753907CCD2AA0965DEAF45F1126342FBE947680D8351FF537F3CFDE980"
     },
     {
       "path": "SRC/neothd/src/cli/recall.rs",
@@ -3173,8 +3178,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_staging.rs",
-      "bytes": 29661,
-      "sha256": "D484000D5669CE8A629E4843E08163255F923CDEEF3D04E76A06F261849EF270"
+      "bytes": 29849,
+      "sha256": "4D55594C013CCA612B41A95EEC9A0A4F88A6C79DF99EAA18EEF47CC28AEE1831"
     },
     {
       "path": "SRC/neothd/src/installers/paperless.rs",
@@ -3663,8 +3668,8 @@
     },
     {
       "path": "SRC/neothd/src/recall/parity_anchor.rs",
-      "bytes": 24374,
-      "sha256": "5115795CF36D906AEDC67A34D41EA5884B5EFBDD7A1112F14C821016AF230028"
+      "bytes": 29788,
+      "sha256": "2CB17DD897519DC427A1F4D51B895B4C045CBC4B405080825C8C0C7DD0F77B9D"
     },
     {
       "path": "SRC/neothd/src/recall/parity_batch_plan.rs",
@@ -3818,8 +3823,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/store.rs",
-      "bytes": 250986,
-      "sha256": "A34BBFCED986B710D40CA646897ADA52B07895B9B4486C00171060ED3692B034"
+      "bytes": 254231,
+      "sha256": "900D047260903DAC213E7648D081436188852C60C0B1CE35CEF077E0968C55D1"
     },
     {
       "path": "SRC/neothd/src/slash/schema.rs",
@@ -4130,6 +4135,11 @@
       "path": "SRC/neothd/tests/provider_response_bounds_source_gate.rs",
       "bytes": 16770,
       "sha256": "E9BB9011DC7527BB148E82403FFF8BAEE1F8418165F434019C9BF5490C833661"
+    },
+    {
+      "path": "SRC/neothd/tests/recall_parity_harness_contract.rs",
+      "bytes": 18964,
+      "sha256": "BFF8CA22424B07B9BE9A70C1C5C5D6BFCC4303D4CBB35F8C1E3AD26381799B23"
     },
     {
       "path": "SRC/neothd/tests/transcript_mining_provenance_contract.rs",

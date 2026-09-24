@@ -1,7 +1,7 @@
 # SPEC -- Recall-Parity Methodology — NEOTH v1.1
 
 **Version:** 1.1
-**Last-Updated:** 2026-09-23
+**Last-Updated:** 2026-09-24
 **Implementation-Status:** PARTIAL — the deterministic scorer and P1-07
 versioned roster/coverage component are implemented. P1-07 was accepted on
 2026-09-13 after 36 focused configuration/matrix tests against `1f2860cd`; see
@@ -73,6 +73,24 @@ evidence, and methodology acceptance still govern whether this methodology can
 be accepted.
 
 ---
+
+## Explicit operator-anchor link creation — W614
+
+`neoth recall-parity-harness anchor-link-create` prepares the canonical link
+consumed by the existing `anchor-ingest` command. It requires the grader roster,
+goldset, complete operator-anchor labels, signed candidate bundle, its expected
+receipt public key, and an explicit selection file. The selection is a JSON
+array of exactly 20 closed `{query_id,candidate_id}` objects, strictly sorted by
+query ID. It must cover every anchor query exactly once and select distinct,
+known candidates. The command revalidates the generated link before writing.
+
+For authenticated local transcript evidence, `--local-evidence-home` remains
+required and the current custody checks apply before publication. `--output`
+names a new file under an existing directory; relative paths resolve against
+the working directory and existing files are never replaced. No labels,
+provider responses, run state or gate decision are generated. This source
+slice is independently reviewed; hosted execution remains pending.
+See `docs/runbook_recall_parity_gate.md` for the command.
 
 ## Read-only resume checkpoint — W276
 
