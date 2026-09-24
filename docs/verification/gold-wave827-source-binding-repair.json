@@ -1,0 +1,59 @@
+{
+  "schema": "neoth-source-binding-repair/v1",
+  "sourceHead": "bd81ffde364b63737ec8158f79e3814c9458caea",
+  "failedRun": 36014123642,
+  "failedStep": "Bind required research and Skill tests to source identities",
+  "error": "Grouped native source SHA-256 mismatch: SRC/neothd/src/skills/doc_distill.rs",
+  "executedBehaviorTests": 0,
+  "cause": "Seven platform-specific fixture records retained the pre-format source hash. The matrix also bound CRLF working-copy manifest bytes rather than the committed LF bytes.",
+  "sourcePath": "SRC/neothd/src/skills/doc_distill.rs",
+  "committedSourceBlob": "ab5ae7af2f24db3f36dcce738d6903b45f6a6099",
+  "committedSourceSha256": "48CA7AD028A49FC2290D3BF485D0D0011282A1303D3ECF531C987FC72061CE4D",
+  "affectedRecords": [
+    {
+      "platform": "Windows",
+      "test": "skills::doc_distill::tests::review_handle_rejects_later_writer_and_deleter",
+      "oldSha256": "42270E60ADC969F939C4B4C994B45A85F9C8D566039A0100F8E29296A674413E"
+    },
+    {
+      "platform": "Windows",
+      "test": "skills::doc_distill::tests::final_reparse_point_is_rejected_before_document_bytes_are_admitted",
+      "oldSha256": "42270E60ADC969F939C4B4C994B45A85F9C8D566039A0100F8E29296A674413E"
+    },
+    {
+      "platform": "Windows",
+      "test": "skills::doc_distill::tests::intermediate_reparse_point_is_rejected_from_the_disk_root_walk",
+      "oldSha256": "42270E60ADC969F939C4B4C994B45A85F9C8D566039A0100F8E29296A674413E"
+    },
+    {
+      "platform": "Linux",
+      "test": "skills::doc_distill::tests::final_symlink_is_rejected_by_capability_bound_snapshot_open",
+      "oldSha256": "42270E60ADC969F939C4B4C994B45A85F9C8D566039A0100F8E29296A674413E"
+    },
+    {
+      "platform": "Linux",
+      "test": "skills::doc_distill::tests::intermediate_symlink_is_rejected_by_capability_bound_directory_walk",
+      "oldSha256": "42270E60ADC969F939C4B4C994B45A85F9C8D566039A0100F8E29296A674413E"
+    },
+    {
+      "platform": "macOS",
+      "test": "skills::doc_distill::tests::final_symlink_is_rejected_by_capability_bound_snapshot_open",
+      "oldSha256": "42270E60ADC969F939C4B4C994B45A85F9C8D566039A0100F8E29296A674413E"
+    },
+    {
+      "platform": "macOS",
+      "test": "skills::doc_distill::tests::intermediate_symlink_is_rejected_by_capability_bound_directory_walk",
+      "oldSha256": "42270E60ADC969F939C4B4C994B45A85F9C8D566039A0100F8E29296A674413E"
+    }
+  ],
+  "priorManifest": {
+    "committedBytes": 173100,
+    "recordedSha256": "917752F52144FFBB70171AACB1BCA6FED2D3E647D884A8538B52B92334685E89",
+    "recordedBytes": 178004,
+    "committedSha256": "765A49DB7ED6DB3C11D54B97697D111A636E846FD723C4A90997660EF088D7C3"
+  },
+  "repair": "Use existing Rebind-StagedGold.ps1 for all platform records and byte-verified staged Git blobs; serialize both inventories as UTF-8 LF.",
+  "productSourceChanged": false,
+  "localExecutableValidationRan": false,
+  "hostedRerun": "pending"
+}

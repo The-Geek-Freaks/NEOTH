@@ -8,6 +8,16 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W827 grouped source binding repair (2026-09-24):**
+Group1285 run36014123642 atbd81ffde stopped before compilation or fixtures:
+seven platform-specific document tests still referenced the pre-format source
+hash. The matrix also held CRLF working-copy manifest bytes rather than the
+committed LF bytes. Root rebound those records and the manifest using verified
+Git blobs and the existing staged-source helper. No product behavior changed;
+no test result or roadmap criterion closes from this repair. Preflightbd81
+passes. Hosted Group1285 rerun is next; counts1068checked254open2partial remain.
+Evidence: docs/verification/gold-wave827-source-binding-repair.json.
+
 **W826 document hosted core and CLI reference (2026-09-24):**
 Core36012497363 ate787f32d passes production Clippy, all core test-target
 compilation, CLI build and export. Root verified artifact10814041199 ZIP, source
