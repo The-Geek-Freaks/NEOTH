@@ -533,16 +533,23 @@ Add or replace one named Telegram account after a read-only getMe probe
 - `--telegram-user-id <TELEGRAM_USER_ID>`
 - `--token <TOKEN>`
 
+#### `neoth channel account add-slack`
+
+Add or replace one named Slack account after `auth.test` validates its exact bot token. Stdin must be `{"schema_version":1,"channel":"slack","account":"…","bot_token":"…","app_token":"…"}`; token values are never accepted on argv
+
+- `--account <ACCOUNT>`
+- `--allowed-user-id <ALLOWED_USER_ID>`
+
 #### `neoth channel account remove`
 
-Retire exactly one configured Telegram account.  `--account` is mandatory; even a literal configured `default` is never inferred
+Retire exactly one configured Telegram or Slack account.  `--account` is mandatory; even a literal configured `default` is never inferred
 
 - `<CHANNEL>`
 - `--account <ACCOUNT>`
 
 #### `neoth channel account set-credentials` _(hidden)_
 
-Read the named Telegram account token and policy from a strict private stdin envelope
+Rotate credentials for one named Telegram or Slack account from its strict private stdin envelope. Slack preserves its policy inside the locked storage candidate; tokens are never accepted on argv
 
 - `<CHANNEL>`
 - `--account <ACCOUNT>`
@@ -598,9 +605,9 @@ List configured channels
 
 ### `neoth channel migrate-legacy`
 
-Move the admitted legacy Telegram singleton into one named inbound account. This does not enable account-aware outbound routing
+Move the admitted legacy Telegram or Slack singleton into one named account. This does not enable account-aware outbound routing
 
-- `<CHANNEL>` — Must be the canonical channel id `telegram`
+- `<CHANNEL>` — Must be the canonical channel id `telegram` or `slack`
 - `--account <ACCOUNT>` — Validated account id that receives the legacy inbound binding
 
 ### `neoth channel pairing`
@@ -643,10 +650,10 @@ Read one strict, bounded channel credential envelope from stdin
 
 ### `neoth channel test`
 
-Run a read-only live probe; Telegram account maps require --account
+Run a read-only live probe; Telegram and Slack account maps require --account
 
 - `<CHANNEL>`
-- `--account <ACCOUNT>` — Exact configured Telegram account to probe. Never inferred from a map
+- `--account <ACCOUNT>` — Exact configured Telegram or Slack account to probe. Never inferred from a map
 
 ## `neoth chat`
 

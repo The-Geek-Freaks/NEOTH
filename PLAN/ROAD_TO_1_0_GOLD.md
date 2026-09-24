@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W684-W686 routing repair and hosted acceptance (2026-09-24):**
+Persisted account-only Slack items retain their physical channel and settle as
+configuration errors before Telegram authority; active public or credential
+Slack maps block damaged legacy scalar egress. Two focused regressions extend
+portable native1330/Group1060. Independent static review passed; new tests pending.
+Windows5035964379685 at796d34ed is Root-admitted50PASS0FAIL0missing:58hashes,
+11sourcebindings,2inputs and all50 exact terminals verified. Paperless38-40 and
+retained-DELETE namespace49-50 pass. Actual managed Docker remains separate.
+Core35964376655 passes slimClippy, testtypecheck and CLIbuild/export; generated
+CLI58079e3e is imported byte-exact before grouped dispatch. W683 carries four
+schema2 routing passes without closing an incomplete account-wide criterion.
+Road remains1324/1046checked/276open/2partial;WS-LF38done80open. No local executables.
+See docs/gold-wave686-routing-and-hosted-acceptance.md and W685/W686 receipts.
+
 **W681 hosted lifecycle formatting (2026-09-24):** Imported the exact three-file
 formatter patch from Preflight35964352196 at796d34ed. ZIP, patch checksum, source
 receipt and all old/new Gitblobs match. Core and Windows50 continue their original

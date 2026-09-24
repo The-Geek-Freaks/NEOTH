@@ -233,6 +233,12 @@ pub(crate) fn plan_delivery(
             },
             _ => DeliveryRoute::SidecarOnly,
         },
+        "slack"
+            if !config.channel_accounts.slack.is_empty()
+                || credentials.slack_account_map_active() =>
+        {
+            DeliveryRoute::SidecarOnly
+        }
         "slack" => match (
             credentials.slack_bot_token.as_ref(),
             credentials.slack_app_token.as_ref(),
@@ -1123,10 +1129,11 @@ pub(crate) async fn run_proactive_delivery_tick_with_accepted(
             }
         };
         let target_channel = match if item.account_id.is_some() {
-            // A sealed mapped Telegram binding fixes the physical channel as
-            // well as the account generation. Mutable routing must not turn
-            // queued A authority into a different adapter class.
-            Ok("telegram".to_string())
+            // A persisted account fixes its physical channel as well as its
+            // account identity. Mutable routing must not reinterpret a
+            // historic Slack account as Telegram before the account-only
+            // compatibility guard rejects it.
+            canonical_target_channel(None, &item.channel)
         } else {
             canonical_target_channel(selected_channel, &item.channel)
         } {
@@ -1847,6 +1854,58 @@ mod tests {
                 .unwrap()
                 .outcome(),
             crate::daemon::proactive_egress::ProactiveEgressOutcome::SidecarOnly
+        );
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn slack_account_only_item_preserves_slack_target_and_never_becomes_telegram() {
+        let tmp = TempDir::new().unwrap();
+        let queue_path = tmp.path().join("proactive_queue.json");
+        let mut queued = item("slack-account-only", 100, 0);
+        queued.channel = "slack".to_string();
+        queued.account_id = Some(
+            crate::channels::registry::ChannelAccountId::new("work")
+                .expect("test account id is canonical"),
+        );
+        let mut queue = ProactiveQueue::new();
+        assert!(queue.enqueue(queued).unwrap());
+        queue.save_to(&queue_path).unwrap();
+
+        let wal_dir = tmp.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("000001.wal");
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
+                .unwrap();
+        ready.wait().await.unwrap();
+        let mut config = FreedomConfig::default();
+        config.autonomy = AutonomyLevel::Standard;
+        config.proactive.enabled = true;
+
+        assert_eq!(
+            run_proactive_delivery_tick(
+                tmp.path(),
+                &segment,
+                &config,
+                &Credentials::default(),
+                &writer,
+                1_700_000_000,
+                empty_live_channels(),
+            )
+            .await
+            .unwrap(),
+            0
+        );
+        assert!(ProactiveQueue::load_from(&queue_path).unwrap().is_empty());
+        let history = crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].target_channel(), "slack");
+        assert_eq!(
+            history[0].outcome(),
+            crate::daemon::proactive_egress::ProactiveEgressOutcome::AdapterConfigurationError,
+            "Slack account-only records stop before the Telegram authority or transport path"
         );
         drop(writer);
         join.await.unwrap().unwrap();
@@ -3132,6 +3191,53 @@ channel_accounts:
             plan_delivery("slack", AutonomyLevel::Full, &cfg, &rt, &creds_bot_only),
             DeliveryRoute::SidecarOnly,
             "slack requires BOTH bot + app tokens"
+        );
+    }
+
+    #[test]
+    fn plan_delivery_slack_account_maps_are_sidecar_only_without_account_selection() {
+        let mut routing = default_rt();
+        routing.destinations.slack_channel_id = Some("C0B0QV5434G".to_string());
+        let legacy = Credentials {
+            slack_bot_token: Some(crate::secret::SecretString::from("xoxb-legacy")),
+            slack_app_token: Some(crate::secret::SecretString::from("xapp-legacy")),
+            ..Default::default()
+        };
+        let account = crate::channels::registry::ChannelAccountId::new("work").unwrap();
+
+        let mut public_map = cfg_with_telegram(AutonomyLevel::Full);
+        public_map.channel_accounts.slack.insert(
+            account.clone(),
+            crate::config::SlackAccountConfig {
+                allowed_user_id: "U123WORK".to_string(),
+                incarnation: None,
+            },
+        );
+        assert_eq!(
+            plan_delivery("slack", AutonomyLevel::Full, &public_map, &routing, &legacy),
+            DeliveryRoute::SidecarOnly,
+            "a public Slack map must block damaged legacy scalar egress"
+        );
+
+        let mut secret_map = legacy.clone();
+        secret_map.channel_accounts.slack.insert(
+            account.clone(),
+            crate::config::credentials::SlackAccountCredentials {
+                bot_token: Some(crate::secret::SecretString::from("xoxb-work")),
+                app_token: Some(crate::secret::SecretString::from("xapp-work")),
+            },
+        );
+        let legacy_config = cfg_with_telegram(AutonomyLevel::Full);
+        assert_eq!(
+            plan_delivery("slack", AutonomyLevel::Full, &legacy_config, &routing, &secret_map),
+            DeliveryRoute::SidecarOnly,
+            "a secret Slack map must block damaged legacy scalar egress"
+        );
+
+        assert_eq!(
+            plan_delivery("slack", AutonomyLevel::Full, &public_map, &routing, &secret_map),
+            DeliveryRoute::SidecarOnly,
+            "a complete Slack map must not select a legacy proactive route"
         );
     }
 

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Three-file hosted lifecycle formatting imported; Core/CLI export and Windows behavior pending",
+  "status": "Slack authority repairs source-reviewed hosted-pending; Windows50 and Core796 admitted; CLI regenerated",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 153900,
-    "sha256": "537EA8239B4006D31BD2181056752603FC2323819027042C9BAA698BF43AFBE4"
+    "bytes": 154474,
+    "sha256": "ABEF14E48C907EE22AAC0F7C5318097F0063B9DE7D56D2CD1EDC698FE3A6A871"
   },
-  "sourceInputs": 871,
+  "sourceInputs": 874,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -588,31 +588,31 @@
     {
       "test": "daemon::proactive_dispatcher::tests::connection_bound_delivery_uses_only_the_exact_live_channel_ref",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "F6167FECF8471D7A53B826F37C45639A52BCE715B42533041E5389B51F4E722D",
+      "sourceSha256": "3AE82F4F697C00FBBD2890AA9A516D78A15404BA9289DE561ACE139B9FBE57D7",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::unavailable_connection_bound_handles_settle_sidecar_before_transport",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "F6167FECF8471D7A53B826F37C45639A52BCE715B42533041E5389B51F4E722D",
+      "sourceSha256": "3AE82F4F697C00FBBD2890AA9A516D78A15404BA9289DE561ACE139B9FBE57D7",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::malformed_connection_bound_targets_never_acquire_or_arm_live_transport",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "F6167FECF8471D7A53B826F37C45639A52BCE715B42533041E5389B51F4E722D",
+      "sourceSha256": "3AE82F4F697C00FBBD2890AA9A516D78A15404BA9289DE561ACE139B9FBE57D7",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::failed_connection_bound_adapter_never_records_delivered",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "F6167FECF8471D7A53B826F37C45639A52BCE715B42533041E5389B51F4E722D",
+      "sourceSha256": "3AE82F4F697C00FBBD2890AA9A516D78A15404BA9289DE561ACE139B9FBE57D7",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::plan_delivery_connection_bound_channels_require_the_live_registry",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "F6167FECF8471D7A53B826F37C45639A52BCE715B42533041E5389B51F4E722D",
+      "sourceSha256": "3AE82F4F697C00FBBD2890AA9A516D78A15404BA9289DE561ACE139B9FBE57D7",
       "junitClass": "neoth"
     },
     {
@@ -7740,37 +7740,37 @@
     {
       "test": "daemon::proactive_dispatcher::tests::delivery_tick_invalid_routing_leaves_queue_untouched",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "F6167FECF8471D7A53B826F37C45639A52BCE715B42533041E5389B51F4E722D",
+      "sourceSha256": "3AE82F4F697C00FBBD2890AA9A516D78A15404BA9289DE561ACE139B9FBE57D7",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::disabled_delivery_tick_ignores_invalid_routing_and_preserves_queue",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "F6167FECF8471D7A53B826F37C45639A52BCE715B42533041E5389B51F4E722D",
+      "sourceSha256": "3AE82F4F697C00FBBD2890AA9A516D78A15404BA9289DE561ACE139B9FBE57D7",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::explicit_queued_account_keeps_its_original_channel_when_routing_changes",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "F6167FECF8471D7A53B826F37C45639A52BCE715B42533041E5389B51F4E722D",
+      "sourceSha256": "3AE82F4F697C00FBBD2890AA9A516D78A15404BA9289DE561ACE139B9FBE57D7",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::invalid_adapter_configuration_settles_only_that_item_and_does_not_starve_tick",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "F6167FECF8471D7A53B826F37C45639A52BCE715B42533041E5389B51F4E722D",
+      "sourceSha256": "3AE82F4F697C00FBBD2890AA9A516D78A15404BA9289DE561ACE139B9FBE57D7",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::oversized_legacy_route_rejects_before_queue_mutation",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "F6167FECF8471D7A53B826F37C45639A52BCE715B42533041E5389B51F4E722D",
+      "sourceSha256": "3AE82F4F697C00FBBD2890AA9A516D78A15404BA9289DE561ACE139B9FBE57D7",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::unbound_item_with_bound_route_settles_before_planning_or_transport",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "F6167FECF8471D7A53B826F37C45639A52BCE715B42533041E5389B51F4E722D",
+      "sourceSha256": "3AE82F4F697C00FBBD2890AA9A516D78A15404BA9289DE561ACE139B9FBE57D7",
       "junitClass": "neoth"
     },
     {
@@ -7975,6 +7975,18 @@
       "test": "channels::registry::tests::registry_is_unique_complete_and_aliases_round_trip_to_canonical_ids",
       "sourcePath": "SRC/neothd/src/channels/registry.rs",
       "sourceSha256": "962DACDC9AAF7F0DAF42A1AC99D67646DC5C806C7C295921AE71C7D689B8F506",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::proactive_dispatcher::tests::slack_account_only_item_preserves_slack_target_and_never_becomes_telegram",
+      "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "sourceSha256": "3AE82F4F697C00FBBD2890AA9A516D78A15404BA9289DE561ACE139B9FBE57D7",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::proactive_dispatcher::tests::plan_delivery_slack_account_maps_are_sidecar_only_without_account_selection",
+      "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "sourceSha256": "3AE82F4F697C00FBBD2890AA9A516D78A15404BA9289DE561ACE139B9FBE57D7",
       "junitClass": "neoth"
     }
   ],
@@ -29566,6 +29578,76 @@
       }
     ],
     "note": "Exact hosted formatter artifact10793298929 source796d34ed; three old/newblobs verified; no localformatter.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave684SlackAuthorityRepairAcceptance": {
+    "status": "source-reviewed hosted-pending",
+    "requiredTests": [
+      "daemon::proactive_dispatcher::tests::slack_account_only_item_preserves_slack_target_and_never_becomes_telegram",
+      "daemon::proactive_dispatcher::tests::plan_delivery_slack_account_maps_are_sidecar_only_without_account_selection"
+    ],
+    "scope": "Retain persisted physical channel for account-only items and refuse legacy Slack egress under either map half"
+  },
+  "wave686RoutingAndHostedPublication": {
+    "base": "5d5c8bc65f0ece524868ccdd457308bd92701b9b",
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 21631,
+        "sha256": "06C96FFEF80EFF75EA348B74CE7B27BA616F45C75F2A01D1280F86612754E542",
+        "blob": "a173d0e02df590296062ba555a111482bf00f29e"
+      },
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 249265,
+        "sha256": "58079E3EE0C6ACFF052FDB7706A8A36591CD9ACC9DDFA75496AF769E48145108",
+        "blob": "6f4ba413ab694436df9640b3dff4a4c5d8de236f"
+      },
+      {
+        "path": "docs/gold-wave686-routing-and-hosted-acceptance.md",
+        "bytes": 2654,
+        "sha256": "407063922D7896CFEF45DF009FE3278EA37A268FB019ABCCB703947A0206782C",
+        "blob": "3be350c8ca44eaf91dddc83706c961978f1324fa"
+      },
+      {
+        "path": "docs/verification/gold-wave685-windows50-terminals.json",
+        "bytes": 17448,
+        "sha256": "ECDADD2D22F46E53B056359AA79E1B78D7B5305883A70677358F9C3D94D24A5A",
+        "blob": "fdf07aab526a3cc10522d54a9dbf4e377ad07e9b"
+      },
+      {
+        "path": "docs/verification/gold-wave686-core-cli-reference.json",
+        "bytes": 687,
+        "sha256": "18318D07714B3CA066C8357449FFDBFB0C23E1D204106D31BEA71B55A0382B63",
+        "blob": "ae143a8700d0bc367032a588b2bd9ddf96fb2441"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 238421,
+        "sha256": "F7FD48F7ADE682655EE481390BFF91F9C2CD47C1AB40F099393650FC5B746CEF",
+        "blob": "d65b6eb6b1b5d54e9ac8b0e0a2e2a876a1301ad9"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1249749,
+        "sha256": "221AB1FDA3365DE17206D7C410C5FD30009B12334A5758CE0F962C2B3E013C0D",
+        "blob": "0c6988663c4f51f98c53354042896d3301cd45f8"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1849556,
+        "sha256": "8C7063E2196201D75D02EBD1C5FB2C8765D66E0C5AFCE79F5D25CE84DA7CB431",
+        "blob": "0a1b8f0fef952f67a97730e6bd638ac0c71cdedc"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+        "bytes": 135618,
+        "sha256": "3AE82F4F697C00FBBD2890AA9A516D78A15404BA9289DE561ACE139B9FBE57D7",
+        "blob": "de9607adc2048dd9c3668fbcc1895fedcd495a58"
+      }
+    ],
+    "note": "Root admitted Windows50 exact terminals and source796 CLI export; W6842newregressions; Group1060 native1330; no Road closure or local executable checks",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
