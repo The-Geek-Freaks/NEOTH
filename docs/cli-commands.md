@@ -2919,6 +2919,13 @@ Adopt an already-running n8n API at an exact literal-loopback origin
 - `--endpoint <ENDPOINT>`
 - `--api-key-stdin`
 
+### `neoth n8n install`
+
+Start the pinned, NEOTH-owned Docker n8n runtime and prove its API key
+
+- `--port <PORT>` — Literal loopback host port; the container is always bound to 127.0.0.1
+- `--api-key-stdin` — Read an already-issued n8n API key from piped standard input
+
 ### `neoth n8n status`
 
 Read durable adoption status. This does not make a live HTTP request

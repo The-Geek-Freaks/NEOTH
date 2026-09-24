@@ -1,0 +1,34 @@
+{
+  "schema": "neoth-hosted-core-cli-admission/v1",
+  "sourceHead": "c6527a5b22473cca99167c271da31cae4cc54135",
+  "runId": 36053242368,
+  "artifactId": 10831553105,
+  "artifactSha256": "2a9ee9f0aa1363d70df2fb73dcedf10a8984a4d35d5936dbbbd692dffb31d2ff",
+  "cliSha256": "c01214f78e0bb769d131710dafad42e48eded8a1c2c829579dab699c3cb3f262",
+  "rootVerified": true,
+  "generatedReferenceImported": true,
+  "steps": [
+    {
+      "name": "Check exact-source slim-core production Clippy",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Type-check core test targets before native validation",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Build current public CLI",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Export generated reference",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "acceptance": "All4core gatesPASS; exact source/API ZIP/inner hashes verified. Generated n8n install CLI reference imported. Managed n8n behavior still pending Group1408/Windows190; C7 WIP not covered."
+}

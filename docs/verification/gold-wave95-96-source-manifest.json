@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-24T20:09:59.7673684Z",
-  "validationStatus": "Two strict hosted diagnostics repaired; fresh compile pending",
+  "capturedUtc": "2026-09-24T20:34:55.8467960Z",
+  "validationStatus": "W922 C1a accepted against hosted Linux and Windows; C7 uncommitted; n8n behavior 8fail repair pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -168,8 +168,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 252456,
-      "sha256": "330311454996805216FE541380FB5D15064C67064DEC26B549831F67B8BC329D"
+      "bytes": 252732,
+      "sha256": "C01214F78E0BB769D131710DAFAD42E48EDED8A1C2C829579DAB699C3CB3F262"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -1932,9 +1932,29 @@
       "sha256": "F33F57531E5284D9E1DA9D34CA00BDC95FE57556549F5929E7E38EC15A80B8C7"
     },
     {
+      "path": "docs/verification/gold-wave912-windows142.json",
+      "bytes": 56781,
+      "sha256": "46ABA88AF937E6EAB63E6EDEB39A320CE007B23322681F446E025C0AA973D611"
+    },
+    {
       "path": "docs/verification/gold-wave913-hosted-format.json",
       "bytes": 1631,
       "sha256": "79DCDA51B730EF5191855B8FFA0737FEA08277C177EEBFA66422E2B5CCEC5E2C"
+    },
+    {
+      "path": "docs/verification/gold-wave916-group1383.json",
+      "bytes": 300930,
+      "sha256": "E00A05E0E28D2E15A7034B6553239AFB22A5ACFEFFBD9B489FAC94CA85983007"
+    },
+    {
+      "path": "docs/verification/gold-wave921-core-cli.json",
+      "bytes": 1172,
+      "sha256": "9A5AAFE90C74F1F4E2495A1E3F9217DC157B526B0E80809115FAF39C6F465895"
+    },
+    {
+      "path": "docs/verification/gold-wave922-c1a-acceptance.json",
+      "bytes": 4188,
+      "sha256": "8A9CB93362240B0328C2869FF5E8BF44098DC5379EFF35C7BC5370676204A672"
     },
     {
       "path": "docs/verification/managed-browser-cft154.json",
@@ -2093,18 +2113,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 287690,
-      "sha256": "38748AD6F26BF73E06F673A256C11EE1D5EF5DBB911D896D582EC7B1FA4F46B9"
+      "bytes": 289062,
+      "sha256": "3130F55800E88EBC4AF97B5D7B57A32CB5C9ABA551AA9C993CA8AC0562CC0C56"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1299018,
-      "sha256": "1CBBC2E5D7573A257FDE32274769A638C27D890C0CD16A9AE7BAA5B93358929C"
+      "bytes": 1300390,
+      "sha256": "3A1AF9EA91AAB923006BAED90331F8528CA5D2A7131D05AD9FC616464F0EEF12"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1907987,
-      "sha256": "D3ADA685ACA331D628F991885851A216C8EF8B89DDF0D4C99EE1E79A7CF7BD7F"
+      "bytes": 1909959,
+      "sha256": "EB30D0053378A30F464BE96860D160536ABC752C38C7128F4228BE67D5A0523D"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

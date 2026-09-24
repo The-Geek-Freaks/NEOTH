@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Two strict hosted diagnostics repaired; fresh compile pending",
+  "status": "W922 C1a accepted against hosted Linux and Windows; C7 uncommitted; n8n behavior 8fail repair pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 179943,
-    "sha256": "6D88C4DA3E72E953F26CC7BA13C44AF0F65C96DDD9E0E4D9F7AF375894754CB5"
+    "bytes": 180711,
+    "sha256": "FAEE5908F592935B273FE4E0143DFB057244305873FEFD009519924FA8DEDE97"
   },
-  "sourceInputs": 1017,
+  "sourceInputs": 1021,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -36223,6 +36223,62 @@
       }
     ],
     "note": "Core36052480246 private_bounds and dead_code; no warning suppression, no local execution. W911/W914 WIP excluded.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave922C1aAcceptance": {
+    "base": "c6527a5b22473cca99167c271da31cae4cc54135",
+    "sources": [
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 252732,
+        "sha256": "C01214F78E0BB769D131710DAFAD42E48EDED8A1C2C829579DAB699C3CB3F262",
+        "blob": "67ba5ce6ed8bbca8f71881436e234ce2e6f7520b"
+      },
+      {
+        "path": "docs/verification/gold-wave912-windows142.json",
+        "bytes": 56781,
+        "sha256": "46ABA88AF937E6EAB63E6EDEB39A320CE007B23322681F446E025C0AA973D611",
+        "blob": "ebeaf7e3464035b15c88af3eabefe684d51200c6"
+      },
+      {
+        "path": "docs/verification/gold-wave916-group1383.json",
+        "bytes": 300930,
+        "sha256": "E00A05E0E28D2E15A7034B6553239AFB22A5ACFEFFBD9B489FAC94CA85983007",
+        "blob": "26d11ea4e7ab6c267477fd9ad3aef2be4f616465"
+      },
+      {
+        "path": "docs/verification/gold-wave921-core-cli.json",
+        "bytes": 1172,
+        "sha256": "9A5AAFE90C74F1F4E2495A1E3F9217DC157B526B0E80809115FAF39C6F465895",
+        "blob": "56cf3951d6e6f4de6c02f14916b5aea83bfa893b"
+      },
+      {
+        "path": "docs/verification/gold-wave922-c1a-acceptance.json",
+        "bytes": 4188,
+        "sha256": "8A9CB93362240B0328C2869FF5E8BF44098DC5379EFF35C7BC5370676204A672",
+        "blob": "c65cad5baf0749c6d90f72e76f5030400fa432ad"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 289062,
+        "sha256": "3130F55800E88EBC4AF97B5D7B57A32CB5C9ABA551AA9C993CA8AC0562CC0C56",
+        "blob": "ed31af70391165048b1bd550bccd8ce9bda37292"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1300390,
+        "sha256": "3A1AF9EA91AAB923006BAED90331F8528CA5D2A7131D05AD9FC616464F0EEF12",
+        "blob": "4a7cdd28e968d0af6d3d646e433388bc779b0bbc"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1909959,
+        "sha256": "EB30D0053378A30F464BE96860D160536ABC752C38C7128F4228BE67D5A0523D",
+        "blob": "7e0ec51d29a7f9efaa61e584e36797a6eac24e71"
+      }
+    ],
+    "note": "26C1a both platforms; 1383Linux and142Windows allPASS at0448; c652 Core4gatesPASS; hosted CLI reference repairs Group1408 docgen input, seven cleanup/cancel failures assigned W926. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

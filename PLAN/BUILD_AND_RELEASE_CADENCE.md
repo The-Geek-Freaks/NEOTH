@@ -3,6 +3,24 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W912/W916/W921/W922 accepted evidence (2026-09-24):** Root admits all1383
+Group fixtures and all142 Windows fixtures at0448daf4:0fail/0missing,248Linux
+and31Windows historical source/input bindings,4API ZIP digests, every named
+terminal and every Windows log hash verified. The exact26 C1a tests pass on
+both platforms; all five published canary feature blobs still match, so
+ADOPT31-C1a closes. Current C7 WIP is explicitly outside this admission.
+Core36053242368 atc6527a5b passes all4gates; its source/hash-bound generated
+CLI reference adds n8n install and is imported (W921). Managed n8n25newbehavior
+cases remain unadmitted: Group1408run36054091216 failed the stale CLI-reference
+fixture and seven n8n cleanup/cancellation cases (1400PASS/8FAIL). This exact
+hosted CLI import repairs docgen; W926 repairs the n8n cleanup cause separately.
+Windows190run36054094753 is still running.
+Road1324/1075done/247open/2partial; raw249/pre-tag248. ADOPT31's67 numbered
+rollups recount to37done/28unchecked/2partial (=30OPEN); the old31/36 split was
+stale accounting, not six new feature completions. C1a is a mandatory child;
+dashboard178OPEN. Evidence: gold-wave912-windows142.json, gold-wave916-group1383.json,
+gold-wave921-core-cli.json and gold-wave922-c1a-acceptance.json in docs/verification.
+No local executable validation ran. W911/W914 remain under separate review.
 **W913/W915 hosted n8n follow-up (2026-09-24):** Root admitted exact hosted
 six-file Rust formatting atf3e9f264 (ZIP10831143192, old/new Git blobs verified)
 and published8d3817cd; its Preflight36052777903 passes. Core36052480246 stopped

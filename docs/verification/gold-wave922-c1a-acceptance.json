@@ -1,0 +1,71 @@
+{
+  "schema": "neoth-gold-criterion-acceptance/v1",
+  "criterion": "ADOPT31-C1a",
+  "source": "0448daf4d2356857254c928ef075dd4b55192d87",
+  "groupRun": 36051891177,
+  "windowsRun": 36051895109,
+  "groupPassed": 26,
+  "windowsPassed": 26,
+  "tests": [
+    "cli::chat::tests::chat_canary_renders_only_from_the_typed_system_bundle",
+    "cli::chat::tests::chat_canary_preserves_identity_order_and_shifts_mcp_slot",
+    "cli::chat::tests::chat_session_canary_is_shared_by_two_typed_provider_turns",
+    "cli::chat::tests::chat_canary_is_retained_or_the_final_budget_boundary_fails_closed",
+    "cli::chat::tests::chat_canary_output_observation_is_clean_or_digest_only",
+    "cli::chat::tests::chat_canary_detects_a_leak_introduced_by_final_replacement",
+    "cli::chat::tests::stream_canary_prefix_is_not_emitted_before_the_next_chunk_completes_it",
+    "cli::chat::tests::guarded_channel_stream_quarantines_a_split_canary_before_live_delivery",
+    "cli::chat::tests::stream_canary_clean_end_flushes_only_the_verified_suffix",
+    "cli::chat::tests::stream_canary_unicode_whitespace_prefix_is_bounded_and_terminal",
+    "cli::chat::tests::stream_canary_ascii_whitespace_prefix_never_reaches_a_sink_before_error",
+    "cli::chat::tests::stream_canary_utf8_boundary_preserves_clean_text",
+    "cli::chat::tests::stream_canary_huge_clean_chunk_is_linear_and_never_grows_pending",
+    "cli::chat::tests::guarded_provider_error_never_returns_post_mint_request_or_canary_content",
+    "cli::chat::tests::guarded_provider_preserves_only_sanitized_quota_control_data",
+    "cli::chat::tests::mcp_intermediate_provider_leaf_is_quarantined_before_driver_consumes_it",
+    "cli::chat::tests::loop_round_provider_leaf_is_quarantined_before_round_state_updates",
+    "cli::chat::tests::guarded_raw_loop_provider_reaches_clean_transport_without_nested_authorization",
+    "cli::chat::tests::council_nonfinal_leaf_is_quarantined_before_debate_aggregation",
+    "cli::chat::tests::council_post_mint_provider_error_is_opaque_before_debate_orchestration",
+    "cli::serve_pipeline::tests::channel_canary_registry_reuses_per_conversation_and_evicts_at_capacity",
+    "cli::serve_pipeline::tests::pipeline_handler_quarantines_a_real_finalized_canary_before_receipts_archive_wal_and_egress",
+    "security::refusal_abliterated::tests::local_shadow_canary_leak_is_opaque_and_never_reaches_cloud_continuation",
+    "skills::teacher::tests::teacher_leaf_canary_leak_is_opaque_before_correction_persistence",
+    "cli::bg_session::tests::detached_canary_is_not_persisted_but_is_bound_before_dispatch",
+    "cli::bg_session::tests::post_mint_background_failures_never_surface_provider_or_canary_content"
+  ],
+  "publishedFeatureBindings": [
+    {
+      "path": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "blob": "bca6412e5f89b20dfc5217703b8f2f40d756e787",
+      "sha256": "059467AE310A1F89C62775B38B4A7780572233D2269B398300D4EBAC6035E970"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "blob": "30e5c511767c180e84fa9e2c14997797d7ae4b80",
+      "sha256": "549ECFA36383CBCBD2484281C76263EFF3950A389D3C4D562CB7FDF14374DC97"
+    },
+    {
+      "path": "SRC/neothd/src/security/refusal_abliterated.rs",
+      "blob": "629efcfc9cabdc53536354de7d02b8c658bedb2a",
+      "sha256": "8332E8726B04BFBC6685DDFBC4EC40CDC5D7752B3C4A0FECBFA841DB82DDDD1B"
+    },
+    {
+      "path": "SRC/neothd/src/skills/teacher.rs",
+      "blob": "77135bbfca472b5755ae76591a4bfee9f1613f99",
+      "sha256": "D58139B4F20FAAE47609EC93CA1ACB3470D763FDE41D8F6D8E5D690695D69B6A"
+    },
+    {
+      "path": "SRC/neothd/src/cli/bg_session.rs",
+      "blob": "a01dfbf0c40d1c88d118c77a420353120a3e362c",
+      "sha256": "47D01054DCC146FAA19D0A865543FA3C8EF508C5736D6123F20BDB6E8867B104"
+    }
+  ],
+  "reviews": [
+    "work/gold-20260906/wave894-canary-document-acceptance/REVIEW.md",
+    "work/gold-20260906/wave902-canary-repair-review/REVIEW.md"
+  ],
+  "rootVerified": true,
+  "localExecutableValidationRan": false,
+  "limits": "Original C1a Required-A/typed-final consistency/session-only retention/outbound guard scope. Published feature blobs unchanged at c6527a5b. Uncommitted C7 changes not admitted. Full release remains open."
+}
