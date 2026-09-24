@@ -184,6 +184,7 @@ jobs:
               "wave570PaperlessContractAcceptance": 2,
               "wave574PaperlessInstallAcceptance": 15,
               "wave599SuppliedStoreAcceptance": 1,
+              "wave600ObsidianUpdateAcceptance": 4,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():
@@ -195,8 +196,8 @@ jobs:
                   raise SystemExit(f"{wave_name} requiredTests must contain exactly {expected} identities")
               required_names.extend(names)
           expected_count = sum(expected_wave_counts.values())
-          if expected_count != 967:
-              raise SystemExit(f"Grouped required test catalog must contain exactly 967 identities (got {expected_count})")
+          if expected_count != 971:
+              raise SystemExit(f"Grouped required test catalog must contain exactly 971 identities (got {expected_count})")
           if not all(isinstance(name, str) and name for name in required_names):
               raise SystemExit("Grouped requiredTests contains an invalid identity")
           if len(required_names) != expected_count or len(set(required_names)) != expected_count:
@@ -265,8 +266,8 @@ jobs:
           : > "$log"
           : > "$evidence_root/receipt/failed-fixtures.txt"
           expected_count="$(wc -l < "$evidence_root/source/fixture-names.txt" | tr -d '[:space:]')"
-          [[ "$expected_count" == "967" ]] || {
-            echo "Grouped fixture catalog must contain exactly 967 identities (got $expected_count)" >&2
+          [[ "$expected_count" == "971" ]] || {
+            echo "Grouped fixture catalog must contain exactly 971 identities (got $expected_count)" >&2
             exit 1
           }
           artifact_log="$evidence_root/log/neoth-lib-test-artifacts.jsonl"

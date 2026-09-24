@@ -10,7 +10,7 @@ const source = fs.readFileSync(path.join(root, "src", "main.ts"), "utf8");
 
 test("manifest pins the loadable Obsidian plugin identity", () => {
   assert.equal(manifest.id, "neoth-archive-bridge");
-  assert.equal(manifest.version, "0.1.0");
+  assert.equal(manifest.version, "0.1.1");
   assert.equal(manifest.minAppVersion, "1.5.0");
   assert.equal(manifest.isDesktopOnly, false);
 });

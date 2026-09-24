@@ -174,6 +174,11 @@ pub enum BridgeAction {
         #[arg(long, value_name = "PATH")]
         vault: PathBuf,
     },
+    /// Update only an exact authenticated predecessor artifact.
+    Update {
+        #[arg(long, value_name = "PATH")]
+        vault: PathBuf,
+    },
     /// Restore only known bridge payload files after ownership validation.
     Repair {
         #[arg(long, value_name = "PATH")]
@@ -231,6 +236,9 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
                 }
                 BridgeAction::Install { vault } => {
                     crate::installers::obsidian_archive_bridge::install(&vault)
+                }
+                BridgeAction::Update { vault } => {
+                    crate::installers::obsidian_archive_bridge::update(&vault)
                 }
                 BridgeAction::Repair { vault } => {
                     crate::installers::obsidian_archive_bridge::repair(&vault)
@@ -2793,7 +2801,7 @@ mod tests {
     #[test]
     fn bridge_clap_parses_each_action_with_a_trailing_vault_option() {
         let vault = PathBuf::from("C:/NEOTH test/vault");
-        for action in ["status", "install", "repair", "uninstall"] {
+        for action in ["status", "install", "update", "repair", "uninstall"] {
             let parsed = Cli::try_parse_from([
                 "neoth",
                 "obsidian",
@@ -2818,6 +2826,9 @@ mod tests {
                     assert_eq!(actual, vault);
                 }
                 BridgeAction::Install { vault: actual } if action == "install" => {
+                    assert_eq!(actual, vault);
+                }
+                BridgeAction::Update { vault: actual } if action == "update" => {
                     assert_eq!(actual, vault);
                 }
                 BridgeAction::Repair { vault: actual } if action == "repair" => {
@@ -2854,6 +2865,11 @@ mod tests {
         std::fs::write(&settings, b"{\"operator\":true}").unwrap();
 
         run_obsidian(run(BridgeAction::Status {
+            vault: vault.clone(),
+        }))
+        .await
+        .unwrap();
+        run_obsidian(run(BridgeAction::Update {
             vault: vault.clone(),
         }))
         .await

@@ -157,9 +157,7 @@ pub(crate) fn with_current_freedom_config_authority_locked<T>(
     path: &Path,
     action: impl FnOnce(&FreedomConfig) -> Result<T>,
 ) -> Result<T> {
-    with_current_freedom_config_authority_locked_with_store(path, None, |config, _| {
-        action(config)
-    })
+    with_current_freedom_config_authority_locked_with_store(path, None, |config, _| action(config))
 }
 
 /// Like [`with_current_freedom_config_authority_locked`], but uses an already

@@ -34,6 +34,8 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
     static BEFORE_INSPECTION_REBIND_FOR_TEST: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
+    static LAST_PREPARE_IO_DIAGNOSTIC_FOR_TEST: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
@@ -62,6 +64,35 @@ fn run_before_inspection_rebind_for_test() {
             hook();
         }
     });
+}
+
+#[cfg(test)]
+pub(crate) fn last_prepare_io_diagnostic_for_test() -> Option<String> {
+    LAST_PREPARE_IO_DIAGNOSTIC_FOR_TEST.with(|slot| slot.borrow().clone())
+}
+
+#[cfg(test)]
+fn clear_prepare_io_diagnostic_for_test() {
+    LAST_PREPARE_IO_DIAGNOSTIC_FOR_TEST.with(|slot| *slot.borrow_mut() = None);
+}
+
+#[cfg(test)]
+fn record_prepare_io_diagnostic_for_test(stage: &'static str, error: &anyhow::Error) {
+    let detail = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<io::Error>())
+        .map(|error| format!("kind={:?};raw={:?}", error.kind(), error.raw_os_error()))
+        .unwrap_or_else(|| "kind=unavailable;raw=unavailable".to_owned());
+    LAST_PREPARE_IO_DIAGNOSTIC_FOR_TEST.with(|slot| {
+        *slot.borrow_mut() = Some(format!("stage={stage};{detail}"));
+    });
+}
+
+fn prepare_io(stage: &'static str, error: anyhow::Error) -> PaperlessStagingError {
+    #[cfg(test)]
+    record_prepare_io_diagnostic_for_test(stage, &error);
+    let _ = (stage, error);
+    PaperlessStagingError::Io
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -108,6 +139,8 @@ pub fn inspect_at(root: &Path) -> PaperlessStagingView {
 }
 
 pub fn prepare_at(root: &Path) -> Result<PaperlessStagingView, PaperlessStagingError> {
+    #[cfg(test)]
+    clear_prepare_io_diagnostic_for_test();
     validate_existing_ancestors(root)?;
     match inspect_owned(root) {
         Ok(true) => return Ok(view(PaperlessStagingStatus::AlreadyPrepared)),
@@ -123,33 +156,32 @@ pub fn prepare_at(root: &Path) -> Result<PaperlessStagingView, PaperlessStagingE
     ) {
         Ok(Some(parent)) => parent,
         Ok(None) => return Err(PaperlessStagingError::Io),
-        Err(_) => return Err(PaperlessStagingError::Io),
+        Err(error) => return Err(prepare_io("open_parent", error)),
     };
     let stage_name = staging_child_name(root_name);
     let stage_display = parent.physical_display_path.join(&stage_name);
     parent
         .dir
         .create_dir(&stage_name)
-        .map_err(|_| PaperlessStagingError::Io)?;
+        .map_err(|error| prepare_io("create_stage", error.into()))?;
     let stage_binding =
         crate::skills::store::bind_child_object(&parent.dir, &stage_name, &stage_display)
-            .map_err(|_| PaperlessStagingError::Io)?;
+            .map_err(|error| prepare_io("bind_stage", error))?;
     let stage_dir = crate::skills::store::open_bound_real_child_dir_for_read(
         &parent.dir,
         &stage_binding,
         &stage_name,
         &stage_display,
     )
-    .map_err(|_| PaperlessStagingError::Io)?;
+    .map_err(|error| prepare_io("open_stage", error))?;
     for (name, bytes) in expected_files() {
         let file_display = stage_display.join(name);
-        if crate::skills::store::atomic_write_private_child_create_new(
+        if let Err(error) = crate::skills::store::atomic_write_private_child_create_new(
             &stage_dir,
             OsStr::new(name),
             &file_display,
             bytes,
         )
-        .is_err()
         {
             let _ = crate::skills::store::remove_bound_real_directory_tree(
                 &parent.dir,
@@ -157,7 +189,7 @@ pub fn prepare_at(root: &Path) -> Result<PaperlessStagingView, PaperlessStagingE
                 &stage_display,
                 stage_binding.identity_token(),
             );
-            return Err(PaperlessStagingError::Io);
+            return Err(prepare_io("write_owned_file", error));
         }
     }
     #[cfg(test)]
@@ -344,7 +376,7 @@ fn inspect_owned(root: &Path) -> Result<bool, PaperlessStagingError> {
     ) {
         Ok(Some(parent)) => parent,
         Ok(None) => return Ok(false),
-        Err(_) => return Err(PaperlessStagingError::Io),
+        Err(error) => return Err(prepare_io("inspect_open_parent", error)),
     };
     let (root_dir, root_binding) =
         match crate::skills::store::open_bound_real_child_dir(&parent.dir, root_name, root) {
@@ -411,7 +443,7 @@ fn validate_existing_ancestors(root: &Path) -> Result<(), PaperlessStagingError>
             Ok(metadata) if metadata.is_dir() && !unsafe_metadata(&metadata) => {}
             Ok(_) => return Err(PaperlessStagingError::UnsafePath),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(_) => return Err(PaperlessStagingError::Io),
+            Err(error) => return Err(prepare_io("validate_ancestor", error.into())),
         }
     }
     Ok(())

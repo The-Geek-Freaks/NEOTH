@@ -3,6 +3,22 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W600 Obsidian update and W604 Windows diagnostics (2026-09-24):**
+The offline `obsidian bridge update` now accepts the exact retained0.1.0
+predecessor and transitions its known payload to0.1.1. Vault notes, data.json
+and unknown additions survive. Four new regressions cover exact/idempotent
+update, tampered predecessor refusal, panic before marker publication with
+predecessor recovery, and competing payload replacement. Review passed; the
+0.1.1 generated main.js, CLI reference and hosted native checks remain pending.
+Current main.js is deliberately the old generated artifact until the hosted
+export is imported; no release or pairing/sync completion is claimed.
+W604 Windows41 atc9d070e9 is admitted38PASS/3FAIL/0missing,49 hashes and11
+source/input bindings. HTTP bootstrap passes; all three remaining failures
+are preparation Io without a concrete syscall. Test-only stage/ErrorKind/OS-
+code diagnostics now expose that failure without paths or secrets, preserving
+product behavior and all fences. W606 imports the exact one-file hosted
+config formatting patch. Catalog:1246 universal native, Group971; GUI148 and
+Road1045checked/277open/2partial unchanged. No local executable validation.
 **W599 supplied-store repair and W601/W603 GUI diagnosis (2026-09-24):**
 Paperless final token persistence now loads effective credentials under the
 canonical config authority using its already-open supplied keychain store.

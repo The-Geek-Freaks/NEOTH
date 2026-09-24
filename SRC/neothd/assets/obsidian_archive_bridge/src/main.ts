@@ -1,7 +1,7 @@
 import { Notice, Plugin, TFile } from "obsidian";
 
 const PLUGIN_ID = "neoth-archive-bridge";
-const PLUGIN_VERSION = "0.1.0";
+const PLUGIN_VERSION = "0.1.1";
 const DISABLED_STATUS = "NEOTH Archive Bridge: not paired (sync disabled)";
 
 /**

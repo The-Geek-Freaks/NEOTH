@@ -1167,10 +1167,18 @@ mod tests {
             self.0.fetch_add(1, Ordering::SeqCst) >= 1
         }
     }
+    fn prepare_staging_or_panic(root: &Path) {
+        paperless_staging::prepare_at(root).unwrap_or_else(|error| {
+            panic!(
+                "paperless staging failed: {error:?}; diagnostic={:?}",
+                paperless_staging::last_prepare_io_diagnostic_for_test()
+            )
+        });
+    }
     fn staged_home() -> (tempfile::TempDir, Credentials) {
         let home = tempfile::tempdir().unwrap();
         let root = home.path().join("paperless");
-        paperless_staging::prepare_at(&root).unwrap();
+        prepare_staging_or_panic(&root);
         std::fs::write(root.join("paperless.env"), b"PAPERLESS_BIND_PORT=18000\nPAPERLESS_ADMIN_USER=operator\nPAPERLESS_ADMIN_PASSWORD=secret\n").unwrap();
         std::fs::create_dir(root.join("state")).unwrap();
         let mut credentials = Credentials::default();
@@ -1264,7 +1272,7 @@ mod tests {
         });
         let home = tempfile::tempdir().unwrap();
         let root = home.path().join("paperless");
-        paperless_staging::prepare_at(&root).unwrap();
+        prepare_staging_or_panic(&root);
         std::fs::write(root.join("paperless.env"), format!("PAPERLESS_BIND_PORT={port}\nPAPERLESS_ADMIN_USER=operator\nPAPERLESS_ADMIN_PASSWORD=secret\n")).unwrap();
         std::fs::create_dir(root.join("state")).unwrap();
         let mut credentials = Credentials::default();
