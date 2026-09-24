@@ -85,12 +85,28 @@ query ID. It must cover every anchor query exactly once and select distinct,
 known candidates. The command revalidates the generated link before writing.
 
 For authenticated local transcript evidence, `--local-evidence-home` remains
-required and the current custody checks apply before publication. `--output`
+required and the current custody checks apply before publication. `--link-output`
 names a new file under an existing directory; relative paths resolve against
 the working directory and existing files are never replaced. No labels,
 provider responses, run state or gate decision are generated. This source
 slice is independently reviewed; hosted execution remains pending.
 See `docs/runbook_recall_parity_gate.md` for the command.
+
+## Offline response preparation — W618
+
+`responses-prepare` accepts an operator-exported response matrix, the exact
+goldset file and an explicit rubric. It validates complete coverage of the
+100 queries by both `neoth` and `reference`, preserving observed empty answers
+for the CRITICAL-divergence evaluation. Its `goldset_sha256` is the hash of the
+exact supplied file bytes, identical to the harness manifest's identity.
+
+For exactly four validated graders it creates deterministic input documents
+containing actual queries, answers and rubric, and the existing compatible
+`FourGraderInputDigestFile`. All five targets must be absent; create-new writes
+publish the digest marker only after the four inputs. The command does not
+attest a live provider, execute a shadow run, submit grades or grant gate
+authority. Source review is complete; hosted runtime validation remains pending.
+The public runbook specifies the response schema and CLI usage.
 
 ## Read-only resume checkpoint — W276
 

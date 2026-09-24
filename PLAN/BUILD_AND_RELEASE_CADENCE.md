@@ -3,6 +3,25 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W618/W620/W623 actual grader inputs and admitted regressions (2026-09-24):**
+Group971 run35949861050 ate1faeccf is independently admitted971PASS/0FAIL/
+0missing with188 source bindings; all four pinned Obsidian update/recovery
+cases pass. The Windows lane now adds those same four cases (45 selected) to
+exercise their actual Windows filesystem composition after the current41 run.
+GUI148 run35947837413 atd6d76425 is independently admitted147PASS/1FAIL,
+148 exact terminals and29 distinct source/input bindings. W480 now diagnoses
+settled Main rows incorrectly marked complete for a blocked capture; its strict
+acceptance remains open while the projection path is traced.
+W618 adds offline `responses-prepare`: actual complete100-query/two-system
+answers and explicit rubric produce four canonical grader inputs and the
+existing digest marker. It binds the exact goldset bytes, preserves observed
+empty answers, refuses duplicate/missing/unknown pairs and publishes the marker
+last without overwriting. Four new behavioral regressions are independently
+reviewed; hosted validation is pending. W621 fixes `--link-output` so global
+`--output json` retains its original meaning. Catalog1252 native/Group977.
+W614 core235 passes Clippy/test-target check/CLI build; its old generated CLI
+surface is superseded by this correction and the next exact export. W619
+hosted formatting44cb passes Preflight. No Road closure or local execution.
 **W614/W617 operator-anchor creation and Windows atomic diagnosis (2026-09-24):**
 The new `recall-parity-harness anchor-link-create` consumes explicit operator
 labels and exactly20 sorted query/candidate selections after signature/current

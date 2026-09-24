@@ -43,7 +43,7 @@ neoth recall-parity-harness anchor-link-create `
   --expected-evidence-receipt-pubkey $ExpectedEvidencePublicKey `
   --operator-anchor C:\eval\operator-anchor.jsonl `
   --selection C:\eval\anchor-selection.json `
-  --output C:\eval\operator-anchor-link.json
+  --link-output C:\eval\operator-anchor-link.json
 ```
 
 For `authenticated_local_transcript_bound_v1` evidence, also supply
@@ -54,6 +54,48 @@ Pass the resulting file to the existing `anchor-ingest --operator-anchor-link`
 option. This operation validates evidence and explicit labels; it does not
 grade, contact a provider, or establish a parity PASS. W614 hosted validation is
 pending.
+
+## Prepare the actual answers for four graders
+
+`responses-prepare` turns an explicit offline answer export and rubric into
+four actual grader input files plus the digest file consumed by `batch-plan`.
+The answer export is a closed JSON object with this shape:
+
+```json
+{
+  "schema_version": 1,
+  "purpose": "neoth-recall-parity-response-pairs/v1",
+  "goldset_sha256": "SHA-256 of the exact goldset.jsonl file bytes",
+  "responses": [
+    {"query_id": "q000", "system": "neoth", "response": "actual observed answer"},
+    {"query_id": "q000", "system": "reference", "response": "actual observed answer"}
+  ]
+}
+```
+
+The example shows two rows; the complete file must contain exactly 200 rows:
+one `neoth` and one `reference` observation for each of the 100 goldset queries.
+An observed empty answer remains an empty string for grading. Missing, duplicate
+and unknown query/system pairs are errors. Supply the actual grading prompt
+and five-dimension rubric in `grading-prompt.md`.
+
+```powershell
+neoth recall-parity-harness responses-prepare `
+  --grader-config C:\eval\graders.json `
+  --goldset C:\eval\goldset.jsonl `
+  --responses C:\eval\responses.json `
+  --rubric C:\eval\grading-prompt.md `
+  --bundle-dir C:\eval\grader-inputs
+```
+
+The bundle directory must already exist and all five generated filenames must
+be absent. Four `grader-input-<grader_id>.json` files contain the actual rubric,
+queries and answers. The command writes `four-grader-input-digests.json` last;
+use it as the existing `batch-plan --batch-input-digests` input. A failure before this
+marker leaves an incomplete bundle that must not be submitted. Keep those files
+for inspection and retry into a fresh directory. The generated hashes establish
+byte identity, not proof of live provider origin. This command performs no
+grading or provider calls; W618 hosted validation is pending.
 
 ## What is the operator's live work (not in the binary)
 

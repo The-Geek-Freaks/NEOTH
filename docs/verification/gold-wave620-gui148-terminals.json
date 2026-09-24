@@ -1,0 +1,1090 @@
+{
+  "schema": "neoth-gui148-terminals/v1",
+  "run": 35947837413,
+  "source": "d6d764258224ae943db7c3a6a48fe2a7871fd095",
+  "rootAdmission": {
+    "verifiedUtc": "2026-09-24T03:21:58.2220391Z",
+    "zipDigests": 3,
+    "sourceBindings": 29,
+    "exactReceipts": 148,
+    "terminalLogs": 148,
+    "status": "SOURCE_ADMITTED_147PASS_1FAIL",
+    "note": "Index144 parent-owned child produces a second running1test marker; exact parent identity and one success terminal verified",
+    "localExecutableValidationRan": false
+  },
+  "counts": {
+    "selected": 148,
+    "started": 148,
+    "executed": 148,
+    "completed": 148,
+    "passed": 147,
+    "failed": 1,
+    "unstarted": 0,
+    "sourceBindings": 24
+  },
+  "artifactZips": {
+    "log": {
+      "id": 10788064005,
+      "name": "w228-linux-gui-fixtures-log-d6d764258224ae943db7c3a6a48fe2a7871fd095",
+      "sha256": "6510242149DC5550F347F4AC891EFB42FA9CE132F4CF672CB6352213A100B622"
+    },
+    "receipt": {
+      "id": 10788358103,
+      "name": "w228-linux-gui-fixtures-receipt-d6d764258224ae943db7c3a6a48fe2a7871fd095",
+      "sha256": "38DFC3B4D6BECF24794CB9D48BAEA4415E3BBA0BCCD6B9D2767F9E1FA5BE095D"
+    },
+    "source": {
+      "id": 10788582511,
+      "name": "w228-linux-gui-fixtures-source-d6d764258224ae943db7c3a6a48fe2a7871fd095",
+      "sha256": "87CE59372D948755583F6C3C8A2B3AA039406119A16D4B665D17DC8A77DC85A3"
+    }
+  },
+  "failureSummaries": [
+    {
+      "sequence": 146,
+      "test": "w",
+      "location": "neothd-gui/src/main.rs:47949:9",
+      "message": "timed out waiting for W153 W480 captured producer settlement; main_in_flight=false; live_rows=[operator:complete,assistant:complete]",
+      "exitCode": 101,
+      "durationSeconds": 8.96
+    }
+  ],
+  "terminals": [
+    {
+      "sequence": 1,
+      "test": "coding_controller::tests::gui_reserved_start_reaches_real_provider_worker_with_prepared_code_map_context",
+      "status": "passed",
+      "logSha256": "CDCAC6C19C7E9493C91E87781F117D24591B271BCD70343C38FD65998BEC95F3",
+      "receiptSha256": "AF9AC2147DF1955F1E75721E30365ACF3A633E391255C904C7A9F39E91F46F11"
+    },
+    {
+      "sequence": 2,
+      "test": "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
+      "status": "passed",
+      "logSha256": "49EB6A2114619B810D76CB2828B5D49478972ABAB5701800F36030B19D402D9A",
+      "receiptSha256": "940AE3CC5CBE65A14EC7FB6D1DCFFD8B033375C4E2EEBDDEDF97AEB8A9E4D43D"
+    },
+    {
+      "sequence": 3,
+      "test": "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
+      "status": "passed",
+      "logSha256": "945A7B9E688E054536A1AD4847A2D581C59C13424C93E4282DB0144CAE72F6F4",
+      "receiptSha256": "D826E1FC2DEA52AD5B4B2FFC7C275F9548A75FEB72665376A3CEE341870B7A51"
+    },
+    {
+      "sequence": 4,
+      "test": "w58_gui_callback_runtime_tests::w73_buddy_cancel_joins_real_blocked_provider_without_success_repaint",
+      "status": "passed",
+      "logSha256": "784E3CC8D01D9477854F15933432F7E580F64F15C5A6427A4360C322B05A011B",
+      "receiptSha256": "1D97378923699BFDC641542C9B274F8881D356D93BD2D7A08AD93980BC6ECF71"
+    },
+    {
+      "sequence": 5,
+      "test": "w58_gui_callback_runtime_tests::w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it",
+      "status": "passed",
+      "logSha256": "67FAC9E476E9306FE63BA65D33E0E5DF0B7881EF3D4AA2373D952C7F830D66CA",
+      "receiptSha256": "2784E8A7A12B04DE5DE473394749FB054BF208AFCCC409EEBEF135A9B18E1F41"
+    },
+    {
+      "sequence": 6,
+      "test": "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
+      "status": "passed",
+      "logSha256": "774877D023BA882AB882FBFD8564A98648603AB5D0440DC9F26D3B8DD0223FD6",
+      "receiptSha256": "03CAA04AF438D4B81DAF07888C69880101BD862934BF3C95471AD1019932B760"
+    },
+    {
+      "sequence": 7,
+      "test": "panel_logic::tests::lifecycle_impact_identity_uses_the_redacted_digest_and_rejects_another_root",
+      "status": "passed",
+      "logSha256": "0C04B1F1D7AFA32F4CB20BF1BD36F7029EF1BCAE3B73243333433F6BC0E8333A",
+      "receiptSha256": "E1A30A7B34D84D8B95C073F71CBCB3520BA64A08A9B0D5814B0D02D8157D41B9"
+    },
+    {
+      "sequence": 8,
+      "test": "panel_logic::tests::private_channel_builder_preserves_typed_fields_without_cli_flags",
+      "status": "passed",
+      "logSha256": "4AE48DDA30B0D86655A4F7E5F343299047792001ECA0647061D22866D887FE8C",
+      "receiptSha256": "CF8E1352C4F584C2A0C271C5084000FF377D15C229B954A24174EE35066E5168"
+    },
+    {
+      "sequence": 9,
+      "test": "panel_logic::tests::private_channel_builder_routes_matrix_store_path_without_changing_secret_slots",
+      "status": "passed",
+      "logSha256": "A2316403E3E448AF48E5ABB72D81DA73B52CF708B1D6CE33D277E1634217BD5B",
+      "receiptSha256": "599CBE9CBD9DA32CB39AF096DE58096C3AE48F9C14BC2CB20293E69A026508A2"
+    },
+    {
+      "sequence": 10,
+      "test": "tests::matrix_store_path_request_uses_private_stdin_without_path_or_secret_in_argv",
+      "status": "passed",
+      "logSha256": "1E833ABCDEA67B56244306F7355D06E09D6E21EF3C59B28CBDC746F2A73F1261",
+      "receiptSha256": "9D6D1940E5E4399699DD225F34AF5EB7051572F22FEC55AB4BB2520FD14CCA0B"
+    },
+    {
+      "sequence": 11,
+      "test": "panel_logic::tests::private_channel_builder_routes_line_webhook_port_as_typed_private_stdin_state",
+      "status": "passed",
+      "logSha256": "80603A3A37B9CDB1EFFDBE1420571750EF4A45A3245357B01DF64E2EF9345AD4",
+      "receiptSha256": "A5686019CC8D667A48AC8CB8D7497955CCBD2E3F29FFB0DEE10B8F424145E7F3"
+    },
+    {
+      "sequence": 12,
+      "test": "tests::line_port_request_uses_private_stdin_without_port_or_secrets_in_argv",
+      "status": "passed",
+      "logSha256": "A9E05DBBBFC929143555BD2E484FC316FB218DD459B2F08AF7029097CD67D540",
+      "receiptSha256": "9C1ED9943D49E9B8BA8C617210D029540327FC01AEB1AC5298D0B3DD897AF503"
+    },
+    {
+      "sequence": 13,
+      "test": "panel_logic::tests::private_channel_builder_routes_irc_public_settings_without_weakening_account_requirement",
+      "status": "passed",
+      "logSha256": "18A8567C33EB54A4A337BD3CBFDACE664FF6F23FE3993D82857F10ACCD75771A",
+      "receiptSha256": "191353E7F297E0A134930B9AEAA697118C3D42A62F02CFD7E72FB3CFD6DA9BB3"
+    },
+    {
+      "sequence": 14,
+      "test": "tests::irc_public_settings_request_uses_private_stdin_without_settings_or_secret_in_argv",
+      "status": "passed",
+      "logSha256": "88FD99534AADCD3FCC85F1B3EE0BD34F091FB8B633D92C3827CAAA500EE6D0AE",
+      "receiptSha256": "DE26F6A4912F1D16BE6238721ABF9D0A4CFC5E45E2CB147443546F1F83097BA9"
+    },
+    {
+      "sequence": 15,
+      "test": "panel_logic::tests::named_telegram_account_retirement_command_and_ack_bind_the_exact_account",
+      "status": "passed",
+      "logSha256": "227840849FDC8509C82582DBEC0E7CC279999668B2E8D0F4471C0A9E7F6F9CA3",
+      "receiptSha256": "9447A4A1E511CC0E23AEF16037188D7ED9799EDEC2FBEF54B4B23F429F0843AF"
+    },
+    {
+      "sequence": 16,
+      "test": "panel_logic::tests::required_sender_form_slots_map_to_private_allowed_sender_and_reject_blank",
+      "status": "passed",
+      "logSha256": "ADC81EAA07D06293735EFAAE4F563F5CFBFAF7013EFD192E00597B943D7CA27D",
+      "receiptSha256": "F3D2DE75514DCBF872B077DD29AF2F3A63CAFE8AA5C1BA6A69AA218C6CE86926"
+    },
+    {
+      "sequence": 17,
+      "test": "panel_logic::tests::bluebubbles_chat_guid_form_slot_trims_or_clears_without_weakening_sender",
+      "status": "passed",
+      "logSha256": "B4C6A04C9F7F863EA98E497512D90C5F86AB76EE9945B0A66068C1503AA059E7",
+      "receiptSha256": "0A96F055862F0352EF379326CFC98578A69CE426D82A8E534B0721B4BEC95E4B"
+    },
+    {
+      "sequence": 18,
+      "test": "panel_logic::tests::parse_channel_status_requires_boolean_dm_pairing_for_mapped_accounts",
+      "status": "passed",
+      "logSha256": "9E90E7FEB8370C6EF570B6CDF91561C2CDD8C820DD89BD5001AB000F8CEFC91A",
+      "receiptSha256": "D3899AD5E8D2A819906E4EA701CFE79AFFAEECCA41A2B2462D6907BAF70A21D4"
+    },
+    {
+      "sequence": 19,
+      "test": "panel_logic::tests::named_telegram_account_dm_pairing_command_and_ack_bind_the_exact_policy",
+      "status": "passed",
+      "logSha256": "8BC10BC67E9F5526E756898469DF68C9C2C7DF5C3B72EDF8852137827E68C60C",
+      "receiptSha256": "38E9551C0C2B9B02473164CA288174066187C6732302B036B6FFAA9E98B5D5BB"
+    },
+    {
+      "sequence": 20,
+      "test": "gui_action::tests::skill_autonomy_receipts_are_strict_and_bind_exact_desired_config",
+      "status": "passed",
+      "logSha256": "6C039ABDB2B2617157EB43D08DC519C5B4AC42E9F54752BEC25C95359B5C3BFC",
+      "receiptSha256": "2E661D5C2E78F0489EB0DFBA9054D1F7C945F974C2DB029F8759F3613D465E94"
+    },
+    {
+      "sequence": 21,
+      "test": "panel_logic::tests::parse_buddy_status_happy_path",
+      "status": "passed",
+      "logSha256": "5C3119A2EC2C1513E7DB53A6BC647CECD5296DC748764F2DAC6E4509EC3CEA4B",
+      "receiptSha256": "FF1DC2DC075DCCBE1664B3EA9BE5A0C91994C88D5F3BDB32FC18C320CDA5D1E5"
+    },
+    {
+      "sequence": 22,
+      "test": "panel_logic::tests::parse_buddy_status_rejects_malformed_or_lossy_payloads",
+      "status": "passed",
+      "logSha256": "417BBD3C84211C4FA16A24E77FDBE72122AE32829BC41DB252CC893BA69FA729",
+      "receiptSha256": "9B42662A0D5921695613D3CD85E056AB7EC6530FDFB04800187FB1D36AB5B75F"
+    },
+    {
+      "sequence": 23,
+      "test": "gui_action::tests::w142_selfimprove_accept_ack_requires_selected_current_evidence",
+      "status": "passed",
+      "logSha256": "A84EEE5BC0FAB420D25E85081FD38A70FDBFB4DB127A172B7C366BD1CEF71423",
+      "receiptSha256": "A22A16FA1179A79A8BBB8F6FAD8018DDC0B4D9823000AC2AD587EBD6C66F7A59"
+    },
+    {
+      "sequence": 24,
+      "test": "panel_logic::tests::w142_selfimprove_review_projects_only_current_verified_evidence",
+      "status": "passed",
+      "logSha256": "672B2DB25358BF367304F600FF0118B100B3527FAA611F66627B8C07577FFC70",
+      "receiptSha256": "3A324AAD9E3A243CB52030ABE188FDE696341B9FD7DD5545BB0DB4B501F704F2"
+    },
+    {
+      "sequence": 25,
+      "test": "panel_logic::tests::w142_selfimprove_review_rejects_stale_or_mismatched_quality_without_false_success",
+      "status": "passed",
+      "logSha256": "E0DB15BAD1F84FD8D0C531B7489947B34BC763D33F9511F66EC04FBD11B0BA89",
+      "receiptSha256": "A6B62C1E079778E870E52940633BEAABF4487D19E004B43F34F2982178DAA4FF"
+    },
+    {
+      "sequence": 26,
+      "test": "panel_logic::tests::w142_selfimprove_review_rejects_missing_or_unknown_quality_fields",
+      "status": "passed",
+      "logSha256": "9A744211424272D2B304FB552DC5A1432AA9212B4BDFF00218B8DA316EADCCE3",
+      "receiptSha256": "CA4BEE622F5552A1968D26E802B3004C6D33C33DE52F0157527ED5C64ABC463B"
+    },
+    {
+      "sequence": 27,
+      "test": "panel_logic::tests::w149_buddy_quality_rejects_partial_evidence_and_keeps_unavailable_explicit",
+      "status": "passed",
+      "logSha256": "9BC060E78E172A3008B6A1CD262203329DFE8D379EFEB7BBB4C394221DACE2F8",
+      "receiptSha256": "8B6747BE66BDA55554460C46F49ED50085D628FB8AA173857BFA75FBCFC8D569"
+    },
+    {
+      "sequence": 28,
+      "test": "gui_action::ouro_q8::tests::accepts_verified_q8_even_when_configured_none",
+      "status": "passed",
+      "logSha256": "5EC0643261ABBDE55D1805FA05226EA842B7CDC65D7C16C5196DBAF6E7E0BCE6",
+      "receiptSha256": "3D82F9D6E4C0D6AEB5C1943E57AFB58FDED480BB0E2213AC28100952B34F73D2"
+    },
+    {
+      "sequence": 29,
+      "test": "gui_action::ouro_q8::tests::accepts_typed_nonzero_failure_without_success_identity",
+      "status": "passed",
+      "logSha256": "B914DDBE7A545BFFE8CE2A7D1A4AD8BB25AA66043C94E732E0918B122F1E642E",
+      "receiptSha256": "36C0A627C09C795A6CDED59254FCC592446200E052E29D988F6076D89B34BF08"
+    },
+    {
+      "sequence": 30,
+      "test": "gui_action::ouro_q8::tests::rejects_crossed_exit_and_verification_claims",
+      "status": "passed",
+      "logSha256": "7E863A42D5F6BCE9C1ABEC1A4A0A0C94C4D5E6CA4F2DBAEF14198B95927E158D",
+      "receiptSha256": "FE48536001E2AD6F2D61D9EBD3C1CAD7F88C63F3F0C9C7576A9AC0B1E8CFDD66"
+    },
+    {
+      "sequence": 31,
+      "test": "gui_action::ouro_q8::tests::rejects_missing_nullable_key_and_unknown_fields",
+      "status": "passed",
+      "logSha256": "03A1873CD3E936D15FC5B21962F25E554BAE7691D2E120DF7725775F3619BBE4",
+      "receiptSha256": "362091B64978C2778AB9B51CA33D2C6DCCE0833C6ADEBBF486C16C617A03AFBA"
+    },
+    {
+      "sequence": 32,
+      "test": "gui_action::ouro_q8::tests::rejects_duplicate_wire_keys",
+      "status": "passed",
+      "logSha256": "AC695EE9FBEDA21B6631BB581CD412916ABA15581B6742D3924D92AC749D8D26",
+      "receiptSha256": "8D0BB1D4EECC54C19CD8BF5C509E0446732B54AFFF2DD05CB14F4ECC2204D34B"
+    },
+    {
+      "sequence": 33,
+      "test": "gui_action::ouro_q8::tests::rejects_wrong_loop_mode_and_context_claims",
+      "status": "passed",
+      "logSha256": "3F81E29562C3A11233C0C29BDECCA5EE0A44A9444680DAAA19885C0DAB917AC0",
+      "receiptSha256": "FF0F2988022DB4EBFBE875DED9A5F5C24A28059C2D717039CA8B58638FA61667"
+    },
+    {
+      "sequence": 34,
+      "test": "gui_action::ouro_q8::tests::rejects_success_data_on_typed_failure_and_normalizes_detail",
+      "status": "passed",
+      "logSha256": "79D5F9CAF6E1B99F7B7E1BE2611E107B6D545525D8DA634420A162C2F79A73C9",
+      "receiptSha256": "DDABD958C91192CBDB344430BAF01C01026070024A171EAF890665FD7D828812"
+    },
+    {
+      "sequence": 35,
+      "test": "gui_action::ouro_q8::tests::capture_receive_returns_while_the_reader_is_still_held",
+      "status": "passed",
+      "logSha256": "0FAD8825A42978E4DF1C7434915BB0E55F7B3E132DC028951F15385030E5B10D",
+      "receiptSha256": "890B715F74A6B7127912774CBBFF4E42EBDA2C660602406552EA71275986F67A"
+    },
+    {
+      "sequence": 36,
+      "test": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_is_grant_bound_and_never_enters_visible_reply_or_preview",
+      "status": "passed",
+      "logSha256": "8DBE97AD76F400D8D4D1FF216A70C408DF30E0F13FC99CCEB8186C6D08D97981",
+      "receiptSha256": "A07AABD1DB129C3AE993B61577C3DABF1551B2933CE0D82A070A07DCBE6DE534"
+    },
+    {
+      "sequence": 37,
+      "test": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_is_bounded_zeroized_on_terminal_and_uses_an_independent_sequence",
+      "status": "passed",
+      "logSha256": "ACB36C5385A5EDC141C2AAE13313E632451728144E80EBDB1FC0EA3E1BC4270A",
+      "receiptSha256": "37125EF4AB56CAA3D77CEE34A5331870F1241754507FB182E952A294E4B2FF3B"
+    },
+    {
+      "sequence": 38,
+      "test": "chat_stream_phase::daemon_chat_presentation_tests::actual_redacted_terminal_zeroizes_and_rejects_later_delta",
+      "status": "passed",
+      "logSha256": "133F307CC17C75C6115DFC9279A09B010705F9C30C9F3E285A85F7B392EA4AF4",
+      "receiptSha256": "A7A575C8E88E55913DAF3F419EA93BBE2A80BAB3C18CC017B2B78DD74E2C5715"
+    },
+    {
+      "sequence": 39,
+      "test": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_delta_state_and_checkpoint_are_rejected_after_provider_done",
+      "status": "passed",
+      "logSha256": "50AEEB108F5208B92DDAABB2F5F2CC005961420AEBF54E75A03537780D94D582",
+      "receiptSha256": "46DA0781FFBDDBB5233B76762E411239258420D4BD2F0314DE9CDE12588DB8F1"
+    },
+    {
+      "sequence": 40,
+      "test": "chat_stream_phase::daemon_chat_presentation_tests::reasoning_buffer_rejects_bytes_beyond_sixty_four_kib",
+      "status": "passed",
+      "logSha256": "5147D47E6FBC9AD3134B436E287F46028886635736F48B49C41BC8E79301679C",
+      "receiptSha256": "222AF1F2E9E353BFBBB80D7FC3BB4B6CE39B42941696508390D056A5BA888258"
+    },
+    {
+      "sequence": 41,
+      "test": "chat_reasoning::tests::strict_sequence_limit_and_terminal_clear",
+      "status": "passed",
+      "logSha256": "90CCB4CCEFD1E79F85F427ABD79AB41E183F5875DB3C596EDEA7406F09E6EB6F",
+      "receiptSha256": "7E2F58A1D5A67434342AE97BE7E785411B10FED1FFB7813EE5AB8D15A882E950"
+    },
+    {
+      "sequence": 42,
+      "test": "chat_reasoning::tests::duplicate_or_forged_frame_clears_the_exact_projection",
+      "status": "passed",
+      "logSha256": "993BF12333DA9C4F1BAA4811DAA67EF7CC09166AFCE140DF3C78BB4914212D14",
+      "receiptSha256": "3D056516313CA4B41C5CA6EACC35904397ADDCA03FD70DBB85561B820B47B68B"
+    },
+    {
+      "sequence": 43,
+      "test": "chat_reasoning::tests::default_off_counts_controls_without_retaining_text",
+      "status": "passed",
+      "logSha256": "921D339BEF496F006E99E5AA659F3A45EAEEF62E302AF5FA74E6D993D21ABCE8",
+      "receiptSha256": "6AF62FD756425A9ADA9214760F8D375F6CC6AD14C42CBDD723499BDDE02D068D"
+    },
+    {
+      "sequence": 44,
+      "test": "gui_chat_bridge_controller::tests::reopen_none_or_error_settles_only_the_current_main_handoff",
+      "status": "passed",
+      "logSha256": "1A74FE678CCB2E8F2AC86A68E04B66898EAEFA48FCC626C044BE2F47027B808C",
+      "receiptSha256": "014A81D7EA8A4ABB8A1E5D07A9286C340B320EEFA0E506828EB503431DA9409E"
+    },
+    {
+      "sequence": 45,
+      "test": "gui_crate_has_non_authorizing_reducer_fixtures_and_explicit_consent_types",
+      "status": "passed",
+      "logSha256": "6F5FF54B35FF279762C54699C1935C9F3D7F62E804DA40AB4C3D110D8B2C6E91",
+      "receiptSha256": "9E3A716BEB24ED708A054D79E591518E347028673C278DCA16B5AE43C5690972"
+    },
+    {
+      "sequence": 46,
+      "test": "gui_action::tests::targeted_gui_mutations_cannot_regress_to_the_unchecked_probe",
+      "status": "passed",
+      "logSha256": "E3DB6ECABF941F199CD5493E79DC50A83A0231A6E0EE55EDE4ABB6724AF731D5",
+      "receiptSha256": "AA70EAC618D5D15EF7C19D4898CE1BF1597F643AF472164F51FB58D11B9D5D53"
+    },
+    {
+      "sequence": 47,
+      "test": "citation_gui::tests::explicit_request_rejects_model_style_or_untrimmed_claims",
+      "status": "passed",
+      "logSha256": "90ADCD40B996FC3A539D9908668E649DABFE983648F073872961E443C341766E",
+      "receiptSha256": "0CE97E4C06E6CA4DA8F35790C077982A3006006D3D453FAE7268A7F7B5A5CDC3"
+    },
+    {
+      "sequence": 48,
+      "test": "citation_gui::tests::provider_indices_are_closed",
+      "status": "passed",
+      "logSha256": "43F98FD944097066DED82EB50D241C0537488FBBBDC72C59805FFDC100EB58AE",
+      "receiptSha256": "69A4FE09AA4CFA7BB45078C4945935020E28054B6A177434B0A3E228C349FF12"
+    },
+    {
+      "sequence": 49,
+      "test": "citation_gui::tests::citation_child_policy_is_bounded_and_cancellation_is_shared",
+      "status": "passed",
+      "logSha256": "B539F6CE802B8B6FA7044671F723275BDBBD934652CC5F8D27AEAE37C8671106",
+      "receiptSha256": "9EF4ADE3A32F403A5D1AE4F5119DF1B1D6170F11484FBCAE7934885AD1150E34"
+    },
+    {
+      "sequence": 50,
+      "test": "citation_gui::tests::gui_preflight_requires_the_current_request_hash_and_nonterminal_cache_state",
+      "status": "passed",
+      "logSha256": "A2CC8550FAC79A80ACAB59CCB480E24C30F5F68FD9123FE58269FC8E8BEC2D99",
+      "receiptSha256": "2ACE5878F9B655D0C9D95984D1EE789BAD12BA192BD17C09386982FD4501B040"
+    },
+    {
+      "sequence": 51,
+      "test": "citation_gui::tests::gui_decision_receipts_reject_unknown_or_inconsistent_proofs",
+      "status": "passed",
+      "logSha256": "64CB22DA548264E1BF53EF62C12C8CD1D1C119E1C6C4A321A81E40A504A8F3D8",
+      "receiptSha256": "B8F8AEC61CB83BFE2F64906F68A160D7BE46634DCBCBEB73947182C13F9DE7B2"
+    },
+    {
+      "sequence": 52,
+      "test": "citation_gui::tests::gui_command_builders_bind_only_request_data_and_validate_ids",
+      "status": "passed",
+      "logSha256": "D18931CA908A6BDC4C703B42AF5AACEC72F292B5B5F09B96BCD82D21E46D13C4",
+      "receiptSha256": "9A128AFEDF70EF3B5671DA2C43AA99332DD6F33EDA4860A9EEA1E0E61FE4C48F"
+    },
+    {
+      "sequence": 53,
+      "test": "citation_gui::tests::stale_or_historical_detail_never_survives",
+      "status": "passed",
+      "logSha256": "B3EB141DE7240C25368C7BBE3557704F12C2B376ADBD62C02295B6AD415D9E52",
+      "receiptSha256": "1D825F2B3E380860DA0BD7A24A9378AAD6BF27A4BFBB20EC44029F8CF61218EE"
+    },
+    {
+      "sequence": 54,
+      "test": "citation_gui::tests::typed_unavailable_cannot_carry_a_chip",
+      "status": "passed",
+      "logSha256": "6E677B7DC5C0884EA437BC47965BFB56A2D5D2C1D0E03F928D4AD55439075167",
+      "receiptSha256": "09B0002974CD6D386DF289F9B50891527F834D6FE56C350EF6C52675BCD7E080"
+    },
+    {
+      "sequence": 55,
+      "test": "citation_gui::tests::current_core_bound_result_opens_only_its_own_in_app_detail",
+      "status": "passed",
+      "logSha256": "B65C0871AE1846DCE68EBAECD2DEA748185797504776CFFE2AD7B21466E7F234",
+      "receiptSha256": "615CF359AA9D1797E4C6C4328203F1D61CD2CCBA49A2160B0AB1C875C74DBE38"
+    },
+    {
+      "sequence": 56,
+      "test": "citation_gui::tests::forged_display_binding_and_replayed_child_result_are_rejected",
+      "status": "passed",
+      "logSha256": "7CA82166D33FDE8A0479FFC4C9E3A359AEF8F9A33D6ADE6B0E65D92D94A83A2B",
+      "receiptSha256": "B3201AF473CFFC1EE4868EFFB1A45F121AC069ECC4CB42AFBE7E43A9F733B651"
+    },
+    {
+      "sequence": 57,
+      "test": "chat_throughput::tests::visible_event_rate_preserves_its_actual_unit",
+      "status": "passed",
+      "logSha256": "A711D268B286B78F85C45B12DF8BB54088945D8CFC1717F3B8E5BC8B706CCD76",
+      "receiptSha256": "4FD111ECA1F315CEE84117B6330F82483180AD129749F370AFF2DFBF744A3943"
+    },
+    {
+      "sequence": 58,
+      "test": "chat_throughput::tests::paused_state_requires_null_rate_but_keeps_the_explicit_basis",
+      "status": "passed",
+      "logSha256": "66E89197F10E65E6AF84C43986ADCB0716F9DF4A33322D0E552B7EC43599499F",
+      "receiptSha256": "E936875C053359C0C0EA6FF1A9D7ADF679F3ACFC2E7A6DE3B87D55E02850B065"
+    },
+    {
+      "sequence": 59,
+      "test": "chat_throughput::tests::invalid_unit_and_final_usage_field_fail_closed",
+      "status": "passed",
+      "logSha256": "9E3AD9ABF699E0C321F457C07B64DCDF7F8005171787B0231A449D48729D80D1",
+      "receiptSha256": "13A755B0DE5B5C4C38991460672EC725DD10C85698ADB1556E83EB718C298C53"
+    },
+    {
+      "sequence": 60,
+      "test": "chat_throughput::tests::stale_gap_and_provider_done_cannot_repaint_a_request",
+      "status": "passed",
+      "logSha256": "A06E6038CC3B07C4F7E32309BA2DC915458F6501668DEF84AA11F9C89B2EF814",
+      "receiptSha256": "312ECF0719BD92777F6A1F6514A368D40933031187ED9625A47D0F3FB0E7E7ED"
+    },
+    {
+      "sequence": 61,
+      "test": "chat_throughput::tests::cancellation_is_terminal_until_the_request_is_replaced",
+      "status": "passed",
+      "logSha256": "3F5B06E1F443B634B56619E39E64A22A32B8AEDBFDCFE7C7D81F02BFB2B7054B",
+      "receiptSha256": "E505ECB80DC4FFF75DD7F3E4CE61853116076245317F6502CC78F480EA1EE0E9"
+    },
+    {
+      "sequence": 62,
+      "test": "chat_recall_chips::tests::accepts_only_reduced_ready_rows_without_any_text_or_identity",
+      "status": "passed",
+      "logSha256": "E03C03D99A863FD733E2748D64A0D16F6A9AE74A59AE63465DD27E466F4BF2F1",
+      "receiptSha256": "DD60AA90FCF741F26C7AA39AE8D7C904CF177CA18A2C65F5E2CCED30CB7BD82D"
+    },
+    {
+      "sequence": 63,
+      "test": "chat_recall_chips::tests::unknown_fields_and_non_warm_scores_fail_closed",
+      "status": "passed",
+      "logSha256": "5B99DAE58418A9C7648413C7638A852E67B7B02E8034F38D816D9F8199154DC1",
+      "receiptSha256": "D1C71A9D5B6BA32F959AEDE7E4B7E5E4F1E90D8608ED29EB2F5EDA26D435AB65"
+    },
+    {
+      "sequence": 64,
+      "test": "chat_recall_chips::tests::wrong_binding_gap_and_over_cap_cannot_publish_rows",
+      "status": "passed",
+      "logSha256": "6D770E9B74BB68B39339BCE1E1A7758CB659E1AC95F7223B88600CED83F66D85",
+      "receiptSha256": "53D56510FFB3C0BDC378A66AE952901E89851EF7F5665ED094A069DE0D0B11CE"
+    },
+    {
+      "sequence": 65,
+      "test": "chat_recall_chips::tests::successful_boundaries_freeze_accepted_rows_but_late_frames_do_not_erase_them",
+      "status": "passed",
+      "logSha256": "14A767A3AA61933F56DC7E3EE422B359A9DB615B942CADF2887577F21A0842FA",
+      "receiptSha256": "B30062E1416F03A59C830357606DD2C09677DEF44FA18E15D47556742713620A"
+    },
+    {
+      "sequence": 66,
+      "test": "chat_recall_chips::tests::final_sentinel_replacement_and_clear_remove_only_the_owned_snapshot",
+      "status": "passed",
+      "logSha256": "20CD84A82DE78104FDC72608ED687BB44CD8CA98EAA16CC038D6002FF3F414E6",
+      "receiptSha256": "EF9FCF5E14E981B82432378BF970BD090CAFCA3912318EBA0EFFD559D9E9158C"
+    },
+    {
+      "sequence": 67,
+      "test": "chat_recall_chips::tests::no_recall_and_missing_are_explicit_empty_batches",
+      "status": "passed",
+      "logSha256": "EB0F5193A3895432C429ECECBEB7B94FD5DA7C0D0E3BF3C1C9192908DA7A0F78",
+      "receiptSha256": "F77FED6D4ECE2CA94B40A361EEC181CA6412DBD8AF18346FB06C87385F7F9DDC"
+    },
+    {
+      "sequence": 68,
+      "test": "chat_response_feedback::tests::target_becomes_actionable_only_after_done_then_exact_authenticated_frame",
+      "status": "passed",
+      "logSha256": "FEE826CEBAC76C61440809D609EB2AF448A36B2A4188C459AC7DBE2E745EC2C5",
+      "receiptSha256": "DA1D7FD56A67858E5CDA496546B19875A794D55E0202BEF77FEFD256250B58A5"
+    },
+    {
+      "sequence": 69,
+      "test": "chat_response_feedback::tests::malformed_forged_and_unavailable_frames_never_publish_an_id",
+      "status": "passed",
+      "logSha256": "82F85B517D106DB3B6828976D20E1272BAB51E26D88A7583456F44FA3B446C7D",
+      "receiptSha256": "6F02BE84C7E04FAEF6CE5911C086D9EF9C449F348EAC8E527A4DFB2E07116EBE"
+    },
+    {
+      "sequence": 70,
+      "test": "chat_response_feedback::tests::action_is_singleflight_and_only_exact_fresh_readback_can_repaint_it",
+      "status": "passed",
+      "logSha256": "709012466AA8FDB382477787B2C56D81CA9DBEB45FE2A4E3C698E4FC55D939D2",
+      "receiptSha256": "6E67AE971D3D5AACE512A3D7C85E441EC73634B2791854AF5E880693D46208A6"
+    },
+    {
+      "sequence": 71,
+      "test": "gui_chat_bridge_controller::tests::daemon_terminal_target_reaches_the_shared_action_map_only_for_the_current_turn",
+      "status": "passed",
+      "logSha256": "2C8BE1D6FAD959B8AB5B0AE7ACE03539766CB6161D28AFC3048B74291CF292DC",
+      "receiptSha256": "0A7AEC3C8E90874C2A03B1CEDB530B10886C099DBF04B1344C9BD2E6765D959D"
+    },
+    {
+      "sequence": 72,
+      "test": "chat_recall_chips::tests::typed_daemon_batch_reuses_closed_validation_and_provider_done_freeze",
+      "status": "passed",
+      "logSha256": "B68F4519756539D5C3C4CE9DBC332645BC0B051D67EE1ABF981639A7BE831D81",
+      "receiptSha256": "2801837F39039FAC944AEE2D8892037D8F8295EC4767834D02D712309F258DF0"
+    },
+    {
+      "sequence": 73,
+      "test": "chat_stream_phase::daemon_chat_presentation_tests::recall_batch_is_cursor_bound_and_rejected_after_provider_done_or_cancel",
+      "status": "passed",
+      "logSha256": "36877D3054E5EA6D59BC0D760C86C61A3016C3596C90B733236EF8A63BC9FA79",
+      "receiptSha256": "FA8A5E8D334B3FC2F887D2329886BF7263BD7B35C4281B631B3C9268A73B2276"
+    },
+    {
+      "sequence": 74,
+      "test": "chat_throughput::tests::typed_daemon_state_preserves_inner_sequence_and_terminal_fence",
+      "status": "passed",
+      "logSha256": "33512751A1D11A35168063B264575334E2862217A8CE39061D13FC71DF1CEDDD",
+      "receiptSha256": "A5AE9E5C77FCDC2103F33DB6717C5CD55598275E12DCB523AC9357376C8082C3"
+    },
+    {
+      "sequence": 75,
+      "test": "chat_stream_phase::daemon_chat_presentation_tests::throughput_state_is_cursor_bound_and_rejected_after_provider_done_or_cancel",
+      "status": "passed",
+      "logSha256": "130719987987E6EAF559B8887C63694FC366F01D968320B92571F98B39B8C0AE",
+      "receiptSha256": "B4AE152141B252301DF1A4456B24EC231B9E881B23DAF62C82EF0252F12F004A"
+    },
+    {
+      "sequence": 76,
+      "test": "panel_logic::tests::w184_vault_mirror_parser_rejects_forged_verified_receipt",
+      "status": "passed",
+      "logSha256": "E07807228BDE8AA25D0C89A2C64934356D8E8FC4E80DB97A4E47FAF0F8E12069",
+      "receiptSha256": "BFAB9B2C1361330231E02651824DF027C5B9078A6794281B57E4B8EB5C919BC2"
+    },
+    {
+      "sequence": 77,
+      "test": "panel_logic::tests::w184_vault_mirror_parser_keeps_indeterminate_repairable",
+      "status": "passed",
+      "logSha256": "4B995BC2C726FC4A2C2043BFF9AE8BF850730654A5EDE2C1CE520F456CE05021",
+      "receiptSha256": "372F1F9BD61C87F4F314C4705B433C7921C761318C67DB246808ADE235CADB4F"
+    },
+    {
+      "sequence": 78,
+      "test": "vault_mirror_gui_tests::w184_repair_reducer_requires_fresh_matching_status",
+      "status": "passed",
+      "logSha256": "08D897F8B2181DC0FB5F224CBD0CC88831640C747641657BC0317D529C62DA36",
+      "receiptSha256": "B18C3DDAEC6A230CB5E5FAFF2E4C7C058B6F8315011902555DA1A3888B7D9A5D"
+    },
+    {
+      "sequence": 79,
+      "test": "panel_logic::tests::local_models_ready_requires_the_core_ready_variant",
+      "status": "passed",
+      "logSha256": "725ED6F3A726054BE9A8A06D0C9043916F45EA38BD3A1DD0BE9E29D1F92B68EC",
+      "receiptSha256": "9DE3A7B7F59161512DF97E318BBF68731B598B040630EE1F2B5F57E0758FDD13"
+    },
+    {
+      "sequence": 80,
+      "test": "panel_logic::tests::local_models_reject_unknown_readiness_schema",
+      "status": "passed",
+      "logSha256": "ACC9FD1D8D408D9B9A73A8EFA5383815099BC16F1DF41062E47D0A7898FE69C1",
+      "receiptSha256": "BA4A6A022B06FDC22DF613D13E8A7C89E7C8C1415BEF9E2E365AF6946A878BA1"
+    },
+    {
+      "sequence": 81,
+      "test": "dream_cron_gui_tests::wizard_completion_is_daemon_acknowledged_and_fails_closed_on_loss",
+      "status": "passed",
+      "logSha256": "DBCB734A64FEC982B87405A765D7ED0FFCDE53162D8C202798801FA2E3634D3B",
+      "receiptSha256": "D05D5805B75541EBE7416AF79640350DAA690A4EBBE900C39F83F54A6779A2F7"
+    },
+    {
+      "sequence": 82,
+      "test": "dream_cron_gui_tests::daemon_completion_failure_retains_existing_dream_readback_and_revision_order",
+      "status": "passed",
+      "logSha256": "34D5E59915A3A7748AB7817BEBE88EFDF05D58069AE3CB190794C027B40E4D73",
+      "receiptSha256": "7E5DF66F64B274EDA4A0393A8DCA46DD3C02094D47428C043CD09C7D63421E34"
+    },
+    {
+      "sequence": 83,
+      "test": "dream_cron_gui_tests::observer_uses_a_separate_read_only_handle_without_holding_mutation_lock",
+      "status": "passed",
+      "logSha256": "8D984E3D914CE049C41E37F537D5F20E85182D04BEBC11DC7D3F2B8D8200035E",
+      "receiptSha256": "ECD7533B5AAF0B5B4BAAC41C27AD068AB27C9FD6F48323D866EA691317E5A1CA"
+    },
+    {
+      "sequence": 84,
+      "test": "dream_cron_gui_tests::finish_navigation_is_owned_by_verified_rust_completion",
+      "status": "passed",
+      "logSha256": "BEB759F81A52DD4A0EE895E8B49230607543AF2DCA5AC564ED2FA1FAAA9C339D",
+      "receiptSha256": "E8AA35E4AABC44C8D31D52078CA1179A88CDB4081D68D68CBBB4D4D34105831C"
+    },
+    {
+      "sequence": 85,
+      "test": "wizard_session_controller::tests::prepared_config_hash_is_stable_and_content_bound",
+      "status": "passed",
+      "logSha256": "0F317BE51A19E18020C4241D6A5956E4123448C5207C785168B9D550E42BBB82",
+      "receiptSha256": "F951E349FEA37BC57A7581B63FD7FA2541FC077250ABC9D1678A89BD4662473E"
+    },
+    {
+      "sequence": 86,
+      "test": "wizard_session_controller::tests::binding_uses_exact_next_sequence_and_never_wraps",
+      "status": "passed",
+      "logSha256": "E166068F767AF88CC6F778D717E0663C4B6978DE66F19330927D33844116F58D",
+      "receiptSha256": "72AEF09DA4A763F107B1FAA24D0E4DAD7F3BCC6E7A29165310D31041AD6A1A84"
+    },
+    {
+      "sequence": 87,
+      "test": "chat_stream_phase::daemon_chat_presentation_tests::timeout_guidance_survives_failed_terminal_and_cannot_cross_generation",
+      "status": "passed",
+      "logSha256": "856231CFC32501A6EF5ECD52159EB686D9DC82C8C33C7AED00EBC9F04AD49F70",
+      "receiptSha256": "42717B8B0F6B725DA748CD608EFA2FE56F98B824488091413ADFE9A98E09B5AA"
+    },
+    {
+      "sequence": 88,
+      "test": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_unknown_fields_and_bad_row_contract",
+      "status": "passed",
+      "logSha256": "3659EE78D202095D61496665F386BABE4069FC01DE35AB43DF767D8C62B7BFD0",
+      "receiptSha256": "386E720BE0D08EE98EBEA09D846DECC5FECFA5460CC66E61B6D24A59586ADD20"
+    },
+    {
+      "sequence": 89,
+      "test": "panel_logic::embedding_models_contract_tests::only_fresh_exact_ready_bge_snapshot_passes_buddy_gate",
+      "status": "passed",
+      "logSha256": "10728A1A0644645704D45E5EDC004D2A335471A9B697F4330531E18959450BC5",
+      "receiptSha256": "294017EF8034613680EE1014E5E87F845541774CC1E17E8B759B3BC032024F14"
+    },
+    {
+      "sequence": 90,
+      "test": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_actions_for_unselected_or_qwen_rows",
+      "status": "passed",
+      "logSha256": "054379E30214A4BA3F3C274E5E42D74EAA4B3D42EA2113AEEA9E40EC752C7CA7",
+      "receiptSha256": "4484466887BEAD1759AA6B65726CEC0BE7156D5FB36C7EBD001C86677B15FD9A"
+    },
+    {
+      "sequence": 91,
+      "test": "panel_logic::embedding_models_contract_tests::buddy_gate_rejects_cache_source_even_with_ready_bge",
+      "status": "passed",
+      "logSha256": "C5BA94B49E48D7510ACE4C2AA811D9AB4F96747F6CAC3A38484A4F95D79BA016",
+      "receiptSha256": "71E6F5A39E818D25E64D2DDF3740BB3E8EB9C46B33B5E994F2765679A067DAD2"
+    },
+    {
+      "sequence": 92,
+      "test": "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_wrong_pin_and_impossible_observation",
+      "status": "passed",
+      "logSha256": "5ECBF6C3F3A01CFDBCDC98A07726DA0902704237C7A765A12BD09AF28BCB5AE9",
+      "receiptSha256": "C310B22475B8DFBE9F138162FFA94150B943572BDEBCCB091BA7C10D51566EF5"
+    },
+    {
+      "sequence": 93,
+      "test": "buddy_wiring_tests::w218_buddy_embedding_callbacks_use_instance_config_and_shared_freshness_fence",
+      "status": "passed",
+      "logSha256": "F3B1B848CE0968DFF736E5DC7FA9541A023DD1E241A4C6FA069432A8B3E44550",
+      "receiptSha256": "0F0AE9F0FA0BFBD22CC690C0AC8AE7ABDAB64BB2E202ED85555854B733A08757"
+    },
+    {
+      "sequence": 94,
+      "test": "panel_logic::tests::w219_provider_retry_is_strict_bounded_redacted_and_absence_compatible",
+      "status": "passed",
+      "logSha256": "9D338B60F63024E062BB00B5892041A1E0CF75DE542CE4FD2B4C21F7F594F596",
+      "receiptSha256": "B070CB50C00FFFBC7EEC7D5FFEE4CBE411CF55D468180DCC5314E4050592E1DC"
+    },
+    {
+      "sequence": 95,
+      "test": "gui_action::task_delegate_assignment_tests::task_delegate_assignment_rejects_unknown_zero_and_mismatched_receipts",
+      "status": "passed",
+      "logSha256": "0566D97BC98F6B1D6271E34DA4060E6C963703FEB017D205170F1A3C0BBB6D2F",
+      "receiptSha256": "9D52EC7D4F7632182F9A3EC1C321AC3D5CFE2A125285C7A2C5526ECC6CC369B3"
+    },
+    {
+      "sequence": 96,
+      "test": "panel_logic::task_delegate_projection_tests::task_delegate_null_projects_absence_as_effective_default_deny",
+      "status": "passed",
+      "logSha256": "284FB764145AF9DD6154694C9B51B6F1C23DB3F040FF7CFBE620D148BA4128A8",
+      "receiptSha256": "3FFD91A802E30130D7AFFF95AA55D26D5919823C3086F88FD256D2DFFE95901D"
+    },
+    {
+      "sequence": 97,
+      "test": "panel_logic::task_delegate_projection_tests::task_delegate_projection_rejects_mismatched_or_zero_revision_object",
+      "status": "passed",
+      "logSha256": "F208E310281F9E783E61872842EA80D9B8BCFA23900B45F46C02E184A6BAC1E0",
+      "receiptSha256": "098FD4EB77A2E34B555CC0295910470B0E6885D8A8309434FBB687D99B0E2EE0"
+    },
+    {
+      "sequence": 98,
+      "test": "chat_recall_chips::tests::citations_are_closed_available_source_labels_with_positive_matching_ids",
+      "status": "passed",
+      "logSha256": "11A944436C92296A95A21B0ECC7D5B07645E92599AB5CC94B108B6942732BB60",
+      "receiptSha256": "A4822E6621E6020B8E823C26D4673DF613E545CED015CA62653E78B663C9F71A"
+    },
+    {
+      "sequence": 99,
+      "test": "chat_child_supervisor::tests::staged_cgroup_final_mount_contract_allows_only_a_read_only_public_top_mount",
+      "status": "passed",
+      "logSha256": "F14F4AE2C658B8292C7C430F2E97A69D72E3568C4E67E8C1107EB6B217A02CFD",
+      "receiptSha256": "5FBBE34F082F93EBE9453E31E599EE8D873B7DF34D635AC455485B108F737419"
+    },
+    {
+      "sequence": 100,
+      "test": "dream_cron_gui_tests::mutation_requires_reload_receipt_then_matching_readback",
+      "status": "passed",
+      "logSha256": "163CAA2D8BBB1A699F72990CCCD8D56687336CF0376956B79379CE981C477A0C",
+      "receiptSha256": "03569F55EC10D471FD0DBCC3EE4C076FDF7C3D519B20CA0B1FD51B1BFEA11470"
+    },
+    {
+      "sequence": 101,
+      "test": "dream_cron_gui_tests::mutation_rejects_acknowledged_but_mismatched_readback",
+      "status": "passed",
+      "logSha256": "5D438499A17126414B96CD2E6154AE858718A87782BFA0AF9070D0E9DA70DBF8",
+      "receiptSha256": "C7E1A3FEFD2D57BD6A9CBC968A956205C962A37F41E865E065CAD5836EC3D500"
+    },
+    {
+      "sequence": 102,
+      "test": "dream_cron_gui_tests::settings_dream_control_is_command_only_and_never_flips_verified_state",
+      "status": "passed",
+      "logSha256": "2C95520E53C85F48CE256B6461564C725D149BAE203101E485D0B010AB98ABE9",
+      "receiptSha256": "20369597BB9F490810479F47844F8455503EF4A9BE46D01728760EB096BE9F61"
+    },
+    {
+      "sequence": 103,
+      "test": "dream_cron_gui_tests::only_verified_readback_publishes_visible_dream_state",
+      "status": "passed",
+      "logSha256": "BBB8E94DBF7D90F7F6C23F1BEFC854FBDACE52AA3AA9F5979E18F27CCD6D2A88",
+      "receiptSha256": "7648BC30AF56A828D1B70BCF0BBF8C85E74424020A396D396970DDF9A52DC543"
+    },
+    {
+      "sequence": 104,
+      "test": "dream_cron_gui_tests::refresh_mutation_error_and_concurrency_keep_readback_authoritative",
+      "status": "passed",
+      "logSha256": "2452CD333B835BE23030ADFF52D452507455525F2E2FEF1825DE729F6C339E4A",
+      "receiptSha256": "973BE9C7F11D843802239E46A1AD396622D5259DBA7A1D3B7DF7A792754ADEDD"
+    },
+    {
+      "sequence": 105,
+      "test": "dream_cron_gui_tests::late_status_refresh_cannot_overwrite_the_onboarding_draft",
+      "status": "passed",
+      "logSha256": "107B95E2D7D6209583EF50447F7B9CB64AE8968B05F9EB94D21B2BCC0006E7C8",
+      "receiptSha256": "27905F8618388B20EB5A3C5796343E54B2473259D6E9C31E3528B42665ECC1AA"
+    },
+    {
+      "sequence": 106,
+      "test": "panel_logic::tests::lf_p1_20_preview_redacts_normalizes_and_truncates_graphemes_once",
+      "status": "passed",
+      "logSha256": "9449BF0202AA008AF7C778A6E9405F54224B307452225005BE4BA81CB0D32869",
+      "receiptSha256": "B13A2B5DB3AF9A2AD2BABD540DCD7624C04DF3100EA631D5E1891C0FCE7200D1"
+    },
+    {
+      "sequence": 107,
+      "test": "panel_logic::tests::lf_p1_20_send_completion_delete_recomputes_to_previous_visible_message",
+      "status": "passed",
+      "logSha256": "5BF6CF9F61C9E93CBA01CD7CE8090EECA1802547D5DE025B54FA6FCB7D0BDA59",
+      "receiptSha256": "9F2F3FDAAC20993187ADCF6533259666E81CD58F71F54282413E176AC121EE38"
+    },
+    {
+      "sequence": 108,
+      "test": "panel_logic::tests::lf_p1_20_reload_and_session_switch_keep_a_b_isolated",
+      "status": "passed",
+      "logSha256": "9195838217E3ABEC8C608C3652CEB8D541AE70BF86E7090B92045513D023B40F",
+      "receiptSha256": "2D9F6D7A4C05E133DF258929C78F27133CD10327401D9090F900503F46F57572"
+    },
+    {
+      "sequence": 109,
+      "test": "panel_logic::tests::lf_p1_20_session_label_sanitizes_legacy_titles_and_controls",
+      "status": "passed",
+      "logSha256": "8A536BA427A899F11BAFA38E95A763CD845395F1E15766327EFAA0AF74622B73",
+      "receiptSha256": "B79EA8DC0C0729B1D76D0C42DB108C82DE3157EE593BA3FFA8DC3D33BFB134B8"
+    },
+    {
+      "sequence": 110,
+      "test": "panel_logic::tests::lf_p1_20_session_history_propagates_corrupt_database_errors",
+      "status": "passed",
+      "logSha256": "693D73CC33C28B77052EE6CF48F42AEF8DFA53A1A9D780269FDDD924ABA75001",
+      "receiptSha256": "85953D401DFAC2CF4733197C1A96CEBFA4BF24A1D4431F3D4EE8075C5C4573C0"
+    },
+    {
+      "sequence": 111,
+      "test": "chat_subprocess_tests::lf_p1_20_send_before_channel_probe_hydrates_live_preview",
+      "status": "passed",
+      "logSha256": "AD010DCB2417F779AF4517A3BEF5648052144E4FECCDFA91B4234F16C6A45E6A",
+      "receiptSha256": "975FC0B48C4D256AC9C3F323A3EFE3F21A0D2713F95B20BBFA81BB7998042520"
+    },
+    {
+      "sequence": 112,
+      "test": "chat_subprocess_tests::lf_p1_20_session_load_generation_rejects_a_after_b_and_return_to_live",
+      "status": "passed",
+      "logSha256": "88D90496083C0A2F5EF5FDBF63B1785DEDDD3450FA47873680AB986E6FAB4179",
+      "receiptSha256": "027490B365DFC07D3F25EDFCE83EA5B7CA290F073171532C3F0062F290D8115D"
+    },
+    {
+      "sequence": 113,
+      "test": "chat_subprocess_tests::lf_p1_20_chat_sidebar_session_selection_is_readonly_and_fully_wired",
+      "status": "passed",
+      "logSha256": "81363D5252F63FA80D2F8292836BDD9D0E4F9750BCD857114848F013357BDAF0",
+      "receiptSha256": "97E03E41CB99D29EB64DB04B43D20E952980896E8436D8CAFA0B3E2DCE1A2B57"
+    },
+    {
+      "sequence": 114,
+      "test": "gui_action::tests::cluster_configure_receipt_binds_every_submitted_field_and_path",
+      "status": "passed",
+      "logSha256": "2F4FCDD66663211C9404835AD837DE412ADD49D327632C72A97C42388E39BCE1",
+      "receiptSha256": "8A52C8DEF841802D8312A2F6869E6EECB6C120AE5952702399C9CA4616FB82CF"
+    },
+    {
+      "sequence": 115,
+      "test": "interface_preference_tests::p122_custom_topology_survives_shared_commit_and_gui_rerun",
+      "status": "passed",
+      "logSha256": "B329DBEAEBD965D9C4DE526ABB2F1CC924303A249CEAD2C4CDD3882736E1141B",
+      "receiptSha256": "93D359534CC8C6AB6D4BE91A122F95B55E0B1FBB059C519754964296C354E11D"
+    },
+    {
+      "sequence": 116,
+      "test": "w58_gui_callback_runtime_tests::w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt",
+      "status": "passed",
+      "logSha256": "89F0B479D77715D7E8429A941E14BE55A4CC77D337B3A3A1015BEA8CD809D63D",
+      "receiptSha256": "80D46C496CA5DE18B5AE72B72AA3E801407920D6E072C7B5AB3DB6DFFF2E2DA1"
+    },
+    {
+      "sequence": 117,
+      "test": "w58_gui_callback_runtime_tests::w121_channel_pairing_request_callbacks_require_exact_receipts_before_relisting",
+      "status": "passed",
+      "logSha256": "9274BF19276EB629EAE21A48E010E9391352E29B0CAD48F158692E68E5F7168E",
+      "receiptSha256": "883548AFFF59B0AA490286F8AD6AE2704821B6938B6384ACFBA4F0A14E85187C"
+    },
+    {
+      "sequence": 118,
+      "test": "w58_gui_callback_runtime_tests::w122_channel_account_dm_pairing_callback_preserves_projection_until_exact_receipt",
+      "status": "passed",
+      "logSha256": "42BEFE375A55EB1EBC26BBB38D73AC8B41D8AE74394CC9D8ACD5ED8921E45878",
+      "receiptSha256": "72D4C64412913EEC273798748D8649FEF30C549A2BDAC1E1532562828C7C59A0"
+    },
+    {
+      "sequence": 119,
+      "test": "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt",
+      "status": "passed",
+      "logSha256": "E1B14B34EEC2566FCF91D196595199A9210A53D5B2FC2C93859BE954CC243124",
+      "receiptSha256": "FB9A7C2C3EB2B63E616EEE509E745C532C5DE4B1D04B4391508B5DF52A989734"
+    },
+    {
+      "sequence": 120,
+      "test": "w58_gui_callback_runtime_tests::w130_channel_legacy_migration_callback_preserves_legacy_projection_until_exact_receipt",
+      "status": "passed",
+      "logSha256": "E455EE33F8A455BB84D21DF0F9AFCDE8D134A6757AFB44507BE07E530849E8B0",
+      "receiptSha256": "8A822881B326242675780CF136072071AC6029075B0D6A451170E1792925CDAB"
+    },
+    {
+      "sequence": 121,
+      "test": "w58_gui_callback_runtime_tests::w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback",
+      "status": "passed",
+      "logSha256": "EA2377FAC3D90FF8BF8074411573BF6D96CB7E8058D449558B24AFD1730F894A",
+      "receiptSha256": "7287B822970DF5A239848152EEB2D30D060D1BE43CAB76723989E2D163BB214B"
+    },
+    {
+      "sequence": 122,
+      "test": "w58_gui_callback_runtime_tests::w142_selfimprove_accept_requires_exact_bound_receipt_and_fresh_readback",
+      "status": "passed",
+      "logSha256": "4F0F24D4F81E3898DAC9B05B06B549F907F318B3EECCE02D8F1269739FD13CE0",
+      "receiptSha256": "39F75042A4F2916D3958D7A6EF576732C44F7820E476BCC4ADD6B92D5AC688F7"
+    },
+    {
+      "sequence": 123,
+      "test": "w58_gui_callback_runtime_tests::w149_buddy_quality_handoff_selects_the_exact_selfimprove_proposal",
+      "status": "passed",
+      "logSha256": "57C2C63489349C21B7296ECB10BC68DC858A98C0CC26053061A2190AA1C46CAE",
+      "receiptSha256": "1CA42B758A5B9DDFACCE53EA3E34DD0DB20E8F82EC78E7A66786B91569F7578D"
+    },
+    {
+      "sequence": 124,
+      "test": "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight",
+      "status": "passed",
+      "logSha256": "7F1C87489B86D3B115BEDA85C00A435CE1A72783F43BAD1BE8B216BEB06B4844",
+      "receiptSha256": "6E4D9DEFC06056D07E56ECAAF0347E2EA610CD7D0610A7E2F39E6C4E0F726FB1"
+    },
+    {
+      "sequence": 125,
+      "test": "w58_gui_callback_runtime_tests::w153_legacy_child_callbacks_project_only_transient_reasoning",
+      "status": "passed",
+      "logSha256": "FCD9B54ED1BBFF86CE821B0732E7828ABD6028586759D1EC4FB1F9AF63B74E50",
+      "receiptSha256": "194736580107A5DEB3C1BA2256264071A447050276ACDCA55389F05A25FB5719"
+    },
+    {
+      "sequence": 126,
+      "test": "w58_gui_callback_runtime_tests::w153_reasoning_child_controls_are_transient_and_history_excluded",
+      "status": "passed",
+      "logSha256": "4FDAE0A759AFF08319F58628F7C8AF849BDA7373AD5FB069339DE7CBAD4358F0",
+      "receiptSha256": "8ACD2BBF0A44E868D857E6B278E88EB8CE2AD1465531C67FC0BD5A9120D642AA"
+    },
+    {
+      "sequence": 127,
+      "test": "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts",
+      "status": "passed",
+      "logSha256": "6494F540571506D4757EE39280E8CBBC89689550EAB301F756968640DE8AB5EE",
+      "receiptSha256": "CBFF9A2D170622A0F86581C193A08289BF056BB5FA05CDD3E2C003935C25CBEF"
+    },
+    {
+      "sequence": 128,
+      "test": "w58_gui_callback_runtime_tests::w162_throughput_controls_are_transient_and_provider_done_fenced",
+      "status": "passed",
+      "logSha256": "D2DF6CD418E8B5FDE6A528D1168FC85E82ACE5462188497E79A3B7F33AF4EACE",
+      "receiptSha256": "62073A0FCDC69685FE95320E00CAC2F03D35C8DFA8ED57096AFF942EF84F15B3"
+    },
+    {
+      "sequence": 129,
+      "test": "w58_gui_callback_runtime_tests::w163_recall_chip_controls_freeze_current_response_and_clear_on_turn_change",
+      "status": "passed",
+      "logSha256": "1B885C6A39ABCDD860C8ACEB0DA54632E1E7509535A61C3A4F0CB1F7DCA63483",
+      "receiptSha256": "07F7D38632147100C5018A00B397BBED03AB0BF2B888D6C73113EBEC3A4FD3DF"
+    },
+    {
+      "sequence": 130,
+      "test": "w58_gui_callback_runtime_tests::w164_response_feedback_callback_requires_post_done_target_and_verified_readback",
+      "status": "passed",
+      "logSha256": "C34303A2BB1A2BEF6B4B019C3F99673BA83F193CD22DB3581FCE8B4E2D5E0081",
+      "receiptSha256": "2AABD14B2EEDE119B2D4477F3F3879E344F6807002064C9A18C831C061FD85F2"
+    },
+    {
+      "sequence": 131,
+      "test": "w58_gui_callback_runtime_tests::w167_daemon_recall_chip_batch_projects_current_surface_and_fences_terminals",
+      "status": "passed",
+      "logSha256": "A037ACC82D360AF54DB7FEE2285208AA34B950137C1F5B76118D6540418D1B2C",
+      "receiptSha256": "DDBAFC867EBB03923BA6A65FCC2909DB06918D70EB9F0CF210CCC368E9ABC389"
+    },
+    {
+      "sequence": 132,
+      "test": "w58_gui_callback_runtime_tests::w168_daemon_throughput_state_projects_main_and_buddy_then_fences_boundaries",
+      "status": "passed",
+      "logSha256": "8EFCFF14B44CEFFF367F98DE553A738ECA77EF31994DBE51863F195A7BEA5724",
+      "receiptSha256": "367CD667D28FEDEB061A07D6BB3A30C241A1D016139FEB212396F96D15443A57"
+    },
+    {
+      "sequence": 133,
+      "test": "w58_gui_callback_runtime_tests::w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback",
+      "status": "passed",
+      "logSha256": "7DC32933AB95906B61512C834D7BC40F03AD66A1A43C2745F2340C1C3E8EC87D",
+      "receiptSha256": "023F37C6975CEDAB7AF03DE1A1FA228128FB59B5FD893D139039CC8F6776B782"
+    },
+    {
+      "sequence": 134,
+      "test": "w58_gui_callback_runtime_tests::w185_local_model_callbacks_require_typed_ack_and_fresh_readback",
+      "status": "passed",
+      "logSha256": "91DEBC946EC88A3B347317DE4B9D3B1DFB9EAE97FC3328E2E5D3EDCC3BEEF0E5",
+      "receiptSha256": "BC04589634FB2DEB229947ECDED93040AF0A33B5C71A3E8EBC30DC1D735A3E11"
+    },
+    {
+      "sequence": 135,
+      "test": "wizard_session_controller::tests::private_server_controller_observer_and_mutation_progress_concurrently",
+      "status": "passed",
+      "logSha256": "787F44C0A5A5B7CBFBAA16821A6A17AA1E49C620E96C5553AF4574F1847ABCC6",
+      "receiptSha256": "1AD0FFFB0CDF228677F3D0F60AEA68103B62E30E71F019F7FC440CCFFB9FD6D9"
+    },
+    {
+      "sequence": 136,
+      "test": "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe",
+      "status": "passed",
+      "logSha256": "B05EC538CE67EED47D64000BF43AAAB5CC3DDBA5812F28ED20ED89FD7CDE367D",
+      "receiptSha256": "7DA2FD4884548575FCA99F986DDF9A43E2DACDA3F202D826E82EA641D8F2D1FA"
+    },
+    {
+      "sequence": 137,
+      "test": "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good",
+      "status": "passed",
+      "logSha256": "3517BE9492451EC9FDA7BBA8A63F10EEDAF65EDBCEE30C9A389346E33F74D9A8",
+      "receiptSha256": "80C431686664E7C42E6E2AFF85E8A82F2B854F5F7A7B6C394F6446888E4E5074"
+    },
+    {
+      "sequence": 138,
+      "test": "w58_gui_callback_runtime_tests::w233_task_delegate_set_owns_busy_across_edits_and_fences_stale_completion",
+      "status": "passed",
+      "logSha256": "8CEE05125870A56BDFA15182BB22DD27686D89740498DF7CEC163615D92FA198",
+      "receiptSha256": "0A386EBBE69C454B6F8B2E7EEE50AA6B47EC615DDCF32F9068CC8EA92DE18FCC"
+    },
+    {
+      "sequence": 139,
+      "test": "w58_gui_callback_runtime_tests::w233_invalid_fresh_readback_keeps_committed_receipt_and_fences_mutation",
+      "status": "passed",
+      "logSha256": "F45370F522B052C5C4F81DCE0302E035A1EBE858D9ED7361D2BCAC82C44115C5",
+      "receiptSha256": "42046F00FC6133C3D619FE40D4DAE7720F0893F065B84702E18C4D656A3ACBA8"
+    },
+    {
+      "sequence": 140,
+      "test": "w58_gui_callback_runtime_tests::w233_task_delegate_callback_fixture_covers_conflict_receipt_and_newer_readback",
+      "status": "passed",
+      "logSha256": "CD12E2E23C76AF02AC226A6DB70372B6557ED13B2725EDD3AF588D4FEBCCB5F9",
+      "receiptSha256": "CE4C9AF1D2FAEE987EA31B91A46EB5876970F1C5C6E97D272B08C6BA8841CC40"
+    },
+    {
+      "sequence": 141,
+      "test": "w58_gui_callback_runtime_tests::w233_task_delegate_inspect_null_projects_effective_default_deny",
+      "status": "passed",
+      "logSha256": "7BB5A4C653819277396912FB7D6380D27C39928A1D7DAAD9AAF519391B51E454",
+      "receiptSha256": "7580743CD1283E065093ACE86D4BE14CEE3E2773CEC5C5EF072797C894E53C19"
+    },
+    {
+      "sequence": 142,
+      "test": "chat_child_supervisor::tests::cgroup_namespace_root_mount_plan_stages_without_unmounting_inherited_mount",
+      "status": "passed",
+      "logSha256": "B7F064178F1B1B6BE3E24B2BB15F2C8294E9D17C3D124AC902E9038842BA602B",
+      "receiptSha256": "37D3234BB8DCB997CB919E16B67DCA86D6B73B26274BDCE76ECC6C0C20300890"
+    },
+    {
+      "sequence": 143,
+      "test": "chat_child_supervisor::tests::linux_manager_stop_reaps_setsid_and_double_fork_tree",
+      "status": "passed",
+      "logSha256": "BD2CBC2557DFF015E05D7E3C66D0C33EDBE2937507395E109FB05817E7E306A2",
+      "receiptSha256": "B406DEACEB391053125A46B0FBA2375F668F6DD526B84F4DD6B8A6E5F4735BA4"
+    },
+    {
+      "sequence": 144,
+      "test": "chat_child_supervisor::tests::linux_gui_crash_kills_complete_manager_unit",
+      "status": "passed",
+      "logSha256": "1A8D0ED8B00619973E9A1DC6E958384A792921C9CDE59BBD7E9AF6C195193F79",
+      "receiptSha256": "83E977FD64DAF3407DAF0DE2A3BD0BDFA18F77FEB3A986E96180ED7D5A121755"
+    },
+    {
+      "sequence": 145,
+      "test": "chat_child_supervisor::tests::linux_unit_snapshot_pins_manager_owned_kill_contract",
+      "status": "passed",
+      "logSha256": "601E874DCC027A2BD4D16B851272C046600DE2BCEC86CF2029CF50F66790F2EE",
+      "receiptSha256": "8BF338AF5080DA15E6E4BC38B3CCE11C3A9B66534EF0746DC2DE80E23421D23E"
+    },
+    {
+      "sequence": 146,
+      "test": "w58_gui_callback_runtime_tests::w480_real_producer_post_provider_outcomes_replay_through_main_and_buddy",
+      "status": "failed",
+      "logSha256": "22ED56FA8505AF0035427E9AA1A79AB70C3F4FBF3AD8221F7146857A42955A26",
+      "receiptSha256": "F0E018D63DC29D691BA12E01CAE0CF28A9BA732A785AFE2BBFEA3D272CF5D852"
+    },
+    {
+      "sequence": 147,
+      "test": "w58_gui_callback_runtime_tests::p118_gui_callbacks_cancel_real_bootstrap_without_replay",
+      "status": "passed",
+      "logSha256": "86DE5642A62D0730D8CE7150BE9E37AE5B862765FF49CEB96A4DEBD2785EAA37",
+      "receiptSha256": "6420D3D9A61094BCD202ECA630488C0C05AA050FDBC6DAFA2B218CC5FBAB90DE"
+    },
+    {
+      "sequence": 148,
+      "test": "w58_gui_callback_runtime_tests::p118_projection_freezes_after_hosted_bootstrap_loss_without_replay",
+      "status": "passed",
+      "logSha256": "C316B43C0EC72A220C6889432788AA48ADF7834D182D670D3E565FE5A906FD00",
+      "receiptSha256": "3EFFB52DB518A7BAA646E444340237E60C93C19D70B33FE8F8024BF333F2398A"
+    }
+  ]
+}

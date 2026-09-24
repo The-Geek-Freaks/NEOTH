@@ -26,6 +26,8 @@ pub mod parity_candidate_evidence;
 pub mod parity_harness;
 /// GOLD-LF-P1-08 — signed external provenance for accepted offline grade imports.
 pub mod parity_import_receipt;
+/// GOLD-LF-P1-08 — canonical offline two-system response inputs for graders.
+pub mod parity_responses;
 pub mod parity_run;
 /// Round-3 v0.4 QU-11 / ARS-6 — multi-session pipeline recovery via
 /// the `MODE_CHECKPOINT` WAL frame. Operator-facing entry point is

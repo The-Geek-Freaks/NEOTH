@@ -1,0 +1,70 @@
+{
+  "schema": "neoth-group971-summary/v1",
+  "run": 35949861050,
+  "source": {
+    "head": "e1faeccf5a59b1f5926d45c81b96b593a6cc8227",
+    "ref": "refs/heads/main",
+    "receiptHeadVerified": true,
+    "receiptRefVerified": true
+  },
+  "group971": {
+    "required": 971,
+    "selected": 971,
+    "executed": 971,
+    "passed": 971,
+    "failed": 0,
+    "missingTerminal": 0,
+    "status": "SOURCE_ADMITTED_PASS",
+    "sourceBindingCount": 188
+  },
+  "artifacts": [
+    {
+      "id": 10788766011,
+      "name": "w190-research-lifecycle-log-e1faeccf5a59b1f5926d45c81b96b593a6cc8227",
+      "apiDigest": "sha256:2b9e8b21f771aa7c97845a29dda0e41d67092e2d8fd885e202e4c57635f2cb0e",
+      "localZipSha256": "2b9e8b21f771aa7c97845a29dda0e41d67092e2d8fd885e202e4c57635f2cb0e",
+      "verified": true
+    },
+    {
+      "id": 10788546620,
+      "name": "w190-research-lifecycle-source-e1faeccf5a59b1f5926d45c81b96b593a6cc8227",
+      "apiDigest": "sha256:673fada0db5e6903a2fdc724c6c5c251fe5e51c0219824c8cc8ae0b588373011",
+      "localZipSha256": "673fada0db5e6903a2fdc724c6c5c251fe5e51c0219824c8cc8ae0b588373011",
+      "verified": true
+    },
+    {
+      "id": 10788491800,
+      "name": "w190-research-lifecycle-receipt-e1faeccf5a59b1f5926d45c81b96b593a6cc8227",
+      "apiDigest": "sha256:305bdac37df19e081c0ca8375fc9d298a1470b2fb4ec121683bdd4baf83d9fc6",
+      "localZipSha256": "305bdac37df19e081c0ca8375fc9d298a1470b2fb4ec121683bdd4baf83d9fc6",
+      "verified": true
+    }
+  ],
+  "obsidianUpdateTerminals": [
+    {
+      "test": "installers::obsidian_archive_bridge::tests::update_exact_predecessor_preserves_settings_extensions_and_vault",
+      "status": "passed"
+    },
+    {
+      "test": "installers::obsidian_archive_bridge::tests::update_rejects_tampered_predecessor_without_mutating_any_file",
+      "status": "passed"
+    },
+    {
+      "test": "installers::obsidian_archive_bridge::tests::repair_resumes_panic_interrupted_predecessor_update_without_losing_additions",
+      "status": "passed"
+    },
+    {
+      "test": "installers::obsidian_archive_bridge::tests::repair_recovers_concurrent_payload_replacement_during_update",
+      "status": "passed"
+    }
+  ],
+  "validation": {
+    "artifactDigestEquality": true,
+    "fixtureIdentityOrder": true,
+    "terminalMarkersAndExactOneTestResult": true,
+    "receiptFailureInventory": true,
+    "sourceCommitBlobSha256": true,
+    "localExecutableValidationRan": false
+  },
+  "rootAdmission": "Root checked3ZIPs and reran exact971 terminal/source verifier:971PASS0FAIL0missing188bindings"
+}

@@ -40,6 +40,7 @@ use crate::recall::{
         MAX_CANDIDATE_RECORD_BYTES, load_candidate_evidence_with_context,
         summarize_candidate_evidence,
     },
+    parity_responses::{MAX_RESPONSE_PAIR_BYTES, MAX_RUBRIC_BYTES, PreparedGraderInputs, prepare_grader_inputs},
     parity_harness::{
         build_attested_parity_gate_report_with_context, build_report_with_context,
         ingest_attested_four_grader_batch_results_with_context, ingest_offline_grades_with_context,
@@ -203,8 +204,8 @@ pub enum RecallParityHarnessOperation {
         #[arg(long = "selection", value_name = "PATH")]
         selection: PathBuf,
         /// New output file for the canonical operator-anchor link.
-        #[arg(long = "output", value_name = "PATH")]
-        output: PathBuf,
+        #[arg(long = "link-output", value_name = "PATH")]
+        link_output: PathBuf,
     },
     /// Verify a bounded imported transcript/WAL candidate-evidence bundle and
     /// render only its redacted provenance receipt. Candidates remain in the
@@ -235,6 +236,21 @@ pub enum RecallParityHarnessOperation {
         operator_anchor: PathBuf,
         #[arg(long = "operator-anchor-link", value_name = "PATH")]
         operator_anchor_link: PathBuf,
+    },
+    /// Prepare canonical actual two-system response inputs for all four
+    /// configured graders. This is offline file preparation only.
+    ResponsesPrepare {
+        #[arg(long, value_name = "PATH")]
+        grader_config: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        goldset: PathBuf,
+        #[arg(long = "responses", value_name = "PATH")]
+        responses: PathBuf,
+        #[arg(long = "rubric", value_name = "PATH")]
+        rubric: PathBuf,
+        /// Existing directory receiving only new generated input files.
+        #[arg(long = "bundle-dir", value_name = "DIR")]
+        bundle_dir: PathBuf,
     },
     /// Persist an offline-only execution plan for exactly four validated
     /// graders. It exports hashes, never prompts, credentials, or provider work.
@@ -432,6 +448,11 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
             goldset,
             ..
         }
+        | RecallParityHarnessOperation::ResponsesPrepare {
+            grader_config,
+            goldset,
+            ..
+        }
         | RecallParityHarnessOperation::BatchPlan {
             grader_config,
             goldset,
@@ -605,7 +626,7 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
             expected_evidence_receipt_pubkey,
             operator_anchor,
             selection,
-            output: link_output,
+            link_output,
             ..
         } => {
             let candidate_evidence = load_candidate_evidence_with_context(
@@ -694,6 +715,32 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                 &context,
             )?;
             render_harness_json(&plan.export()?, &output)?;
+        }
+        RecallParityHarnessOperation::ResponsesPrepare {
+            responses,
+            rubric,
+            bundle_dir,
+            ..
+        } => {
+            let response_bytes = read_offline_input(
+                &responses,
+                MAX_RESPONSE_PAIR_BYTES as u64,
+                "two-system response pairs",
+            )?;
+            let rubric_bytes = read_offline_input(
+                &rubric,
+                MAX_RUBRIC_BYTES as u64,
+                "four-grader rubric",
+            )?;
+            let prepared = prepare_grader_inputs(
+                &response_bytes,
+                &rubric_bytes,
+                &entries,
+                &goldset_bytes,
+                &config,
+            )?;
+            write_new_grader_inputs(&bundle_dir, &prepared)?;
+            render_harness_json(&prepared.digests, &output)?;
         }
         RecallParityHarnessOperation::BatchResultsVerify {
             run_dir,
@@ -863,6 +910,51 @@ fn write_new_operator_anchor_link(output: &Path, bytes: &[u8]) -> Result<()> {
         bytes,
     )
     .context("create new operator anchor link output")
+}
+
+fn write_new_grader_inputs(output_dir: &Path, prepared: &PreparedGraderInputs) -> Result<()> {
+    let directory = crate::skills::store::open_absolute_bound_directory(
+        output_dir,
+        false,
+        "grader input output directory",
+    )?
+    .context("grader input output directory does not exist")?;
+    let mut names = prepared
+        .inputs
+        .iter()
+        .map(|(grader_id, _)| format!("grader-input-{grader_id}.json"))
+        .collect::<Vec<_>>();
+    names.push("four-grader-input-digests.json".into());
+    for name in &names {
+        match directory.dir.open(name) {
+            Ok(_) => anyhow::bail!("grader input bundle target already exists: {name}"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("inspect grader input bundle target {name}"));
+            }
+        }
+    }
+    for (grader_id, bytes) in &prepared.inputs {
+        let name = format!("grader-input-{grader_id}.json");
+        crate::skills::store::atomic_write_private_child_create_new(
+            &directory.dir,
+            OsStr::new(&name),
+            &directory.display_path.join(&name),
+            bytes,
+        )
+        .with_context(|| format!("create new grader input for {grader_id}"))?;
+    }
+    let digest_bytes = serde_json::to_vec(&prepared.digests)
+        .context("serialize generated four-grader input digests")?;
+    let digest_name = OsStr::new("four-grader-input-digests.json");
+    crate::skills::store::atomic_write_private_child_create_new(
+        &directory.dir,
+        digest_name,
+        &directory.display_path.join(digest_name),
+        &digest_bytes,
+    )
+    .context("publish generated four-grader input digest marker")
 }
 
 fn render_harness_json<T: serde::Serialize>(value: &T, output: &OutputFormat) -> Result<()> {
@@ -1394,9 +1486,12 @@ mod tests {
             "--selection",
             "selection.json",
             "--output",
+            "json",
+            "--link-output",
             "link.json",
         ])
         .unwrap();
+        assert!(matches!(cli.output, OutputFormat::Json));
         let Commands::RecallParityHarness(args) = cli.command else {
             panic!("expected harness");
         };
@@ -1410,6 +1505,42 @@ mod tests {
         assert_eq!(std::fs::read(&output).unwrap(), b"canonical link");
         assert!(write_new_operator_anchor_link(&output, b"replacement").is_err());
         assert_eq!(std::fs::read(&output).unwrap(), b"canonical link");
+    }
+
+    #[test]
+    fn grader_input_bundle_preflight_is_atomic_at_the_digest_marker() {
+        use sha2::Digest as _;
+
+        let input_bytes = [
+            ("a".to_owned(), b"input-a".to_vec()),
+            ("b".to_owned(), b"input-b".to_vec()),
+            ("c".to_owned(), b"input-c".to_vec()),
+            ("d".to_owned(), b"input-d".to_vec()),
+        ];
+        let prepared = PreparedGraderInputs {
+            inputs: input_bytes.to_vec(),
+            digests: crate::recall::parity_batch_plan::FourGraderInputDigestFile {
+                schema_version: 1,
+                purpose: crate::recall::parity_batch_plan::FOUR_GRADER_BATCH_INPUT_PURPOSE.into(),
+                inputs: input_bytes.iter().map(|(grader_id, bytes)| crate::recall::parity_batch_plan::FourGraderInputDigest {
+                    grader_id: grader_id.clone(),
+                    prompt_sha256: hex::encode(sha2::Sha256::digest(b"rubric")),
+                    input_sha256: hex::encode(sha2::Sha256::digest(bytes)),
+                }).collect(),
+            },
+        };
+        let blocked = tempfile::tempdir().unwrap();
+        std::fs::write(blocked.path().join("four-grader-input-digests.json"), b"occupied").unwrap();
+        assert!(write_new_grader_inputs(blocked.path(), &prepared).is_err());
+        assert!(prepared.inputs.iter().all(|(grader_id, _)| !blocked.path().join(format!("grader-input-{grader_id}.json")).exists()));
+        let output = tempfile::tempdir().unwrap();
+        write_new_grader_inputs(output.path(), &prepared).unwrap();
+        let digests: crate::recall::parity_batch_plan::FourGraderInputDigestFile = serde_json::from_slice(&std::fs::read(output.path().join("four-grader-input-digests.json")).unwrap()).unwrap();
+        for ((grader_id, bytes), digest) in prepared.inputs.iter().zip(&digests.inputs) {
+            assert_eq!(grader_id, &digest.grader_id);
+            assert_eq!(hex::encode(sha2::Sha256::digest(bytes)), digest.input_sha256);
+            assert_eq!(std::fs::read(output.path().join(format!("grader-input-{grader_id}.json"))).unwrap(), *bytes);
+        }
     }
 
     #[tokio::test]

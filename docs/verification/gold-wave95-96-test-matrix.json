@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W614/W617 exact hosted formatting imported; behavior pending",
+  "status": "W618 reviewed;Group971PASS;GUI147/148;Windows45next;hosted response checks pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 146267,
-    "sha256": "A58A3B182923D8314EE6D54AB8CBAEB788B51CD4BF4F39818AAC9AC1E61F8399"
+    "bytes": 147005,
+    "sha256": "90AA67DFD207D36EDC400A045B7DFF9E11CCAEE0701E046C04E43A9477FC1B04"
   },
-  "sourceInputs": 830,
+  "sourceInputs": 834,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -7494,7 +7494,31 @@
     {
       "test": "cli::recall_score::tests::anchor_link_create_cli_requires_explicit_inputs_and_never_overwrites_output",
       "sourcePath": "SRC/neothd/src/cli/recall_score.rs",
-      "sourceSha256": "0F7367B7E5B3E50EB45CE8F88831EF59AAB8BA8DDD38BFD156303C2AFFFF0137",
+      "sourceSha256": "5401FC5BA8DDEDB37151EC38D6A68267ADD7DA89774F7BE99439436F99A25D53",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "recall::parity_responses::tests::response_pairs_produce_actual_four_grader_inputs_and_batch_digests",
+      "sourcePath": "SRC/neothd/src/recall/parity_responses.rs",
+      "sourceSha256": "C5D1E25A786721BA8212BD91BB51F1102A569C8F1091BEEE63563C61FF066077",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "recall::parity_responses::tests::response_pairs_reject_partial_or_mismatched_goldset_matrix",
+      "sourcePath": "SRC/neothd/src/recall/parity_responses.rs",
+      "sourceSha256": "C5D1E25A786721BA8212BD91BB51F1102A569C8F1091BEEE63563C61FF066077",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "recall::parity_responses::tests::response_pairs_distinguish_empty_observations_from_missing_unknown_and_duplicate_pairs",
+      "sourcePath": "SRC/neothd/src/recall/parity_responses.rs",
+      "sourceSha256": "C5D1E25A786721BA8212BD91BB51F1102A569C8F1091BEEE63563C61FF066077",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::recall_score::tests::grader_input_bundle_preflight_is_atomic_at_the_digest_marker",
+      "sourcePath": "SRC/neothd/src/cli/recall_score.rs",
+      "sourceSha256": "5401FC5BA8DDEDB37151EC38D6A68267ADD7DA89774F7BE99439436F99A25D53",
       "junitClass": "neoth"
     }
   ],
@@ -26996,7 +27020,7 @@
     "requiredTests": [
       "installers::paperless_bootstrap::tests::keychain_phase_two_uses_its_supplied_store_and_never_writes_after_read_failure"
     ],
-    "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+    "status": "SOURCE_ADMITTED_PASS_GROUP967_AND_971",
     "scope": "Same supplied store under canonical config authority; read failure leaves token absent"
   },
   "wave605KeychainRepairGuiDiagnostics": {
@@ -27062,8 +27086,10 @@
       "installers::obsidian_archive_bridge::tests::repair_resumes_panic_interrupted_predecessor_update_without_losing_additions",
       "installers::obsidian_archive_bridge::tests::repair_recovers_concurrent_payload_replacement_during_update"
     ],
-    "status": "SOURCE_REVIEWED_ARTIFACT_AND_HOSTED_PENDING",
-    "scope": "Exact retained0.1.0 to0.1.1 offline update; preserves vault/settings/additions; real pre-marker interruption and competing payload recovery. Pairing/sync disabled"
+    "status": "SOURCE_ADMITTED_4PASS_GROUP971",
+    "scope": "Exact retained0.1.0 to0.1.1 offline update; preserves vault/settings/additions; real pre-marker interruption and competing payload recovery. Pairing/sync disabled",
+    "run": 35949861050,
+    "source": "e1faeccf5a59b1f5926d45c81b96b593a6cc8227"
   },
   "wave607ObsidianUpdateWindowsDiagnostics": {
     "base": "d6d764258224ae943db7c3a6a48fe2a7871fd095",
@@ -27418,6 +27444,96 @@
       }
     ],
     "note": "Three old/new Gitblobs and receipt verified; no local formatter",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave618ResponseInputsAcceptance": {
+    "requiredTests": [
+      "recall::parity_responses::tests::response_pairs_produce_actual_four_grader_inputs_and_batch_digests",
+      "recall::parity_responses::tests::response_pairs_reject_partial_or_mismatched_goldset_matrix",
+      "recall::parity_responses::tests::response_pairs_distinguish_empty_observations_from_missing_unknown_and_duplicate_pairs",
+      "cli::recall_score::tests::grader_input_bundle_preflight_is_atomic_at_the_digest_marker"
+    ],
+    "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+    "scope": "Complete actual goldset-by-two-system responses and rubric generate four canonical grader inputs plus compatible digest marker; empty observations preserved; no provider calls"
+  },
+  "wave625ResponseInputs": {
+    "base": "44cb98a059151ea2dd7d88307ab14e0a16e563b1",
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 21353,
+        "sha256": "A2CFF7E4FB3948AF42CF43FB625F4FF6FFF960CAC2ACA2E79E91A83534BD92E5",
+        "blob": "367862ce23f4c83b89fba529ccccc7ea7e40a220"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 14490,
+        "sha256": "66C5DE7C081F3C6E71507CF80A79EBC4EA39CE8DDF379684A5FEE11D2FD38D3B",
+        "blob": "77a8121925442e882b1122f312b6fd7138c92de9"
+      },
+      {
+        "path": "docs/runbook_recall_parity_gate.md",
+        "bytes": 10875,
+        "sha256": "3BC6541A760197ACF18224513FBE12CBE113A93F07FFBD9A0CD49F7E5392AE2E",
+        "blob": "90d57244ba4085aec5df7fcae1bce811f118886f"
+      },
+      {
+        "path": "docs/verification/gold-wave620-gui148-terminals.json",
+        "bytes": 53104,
+        "sha256": "73C4F786A2262D143B607688C3F0BFD0F8F5BF22AC62EBCC416B57A201158379",
+        "blob": "1f9f0f907f4a2aea60767fc701e97abab67b8212"
+      },
+      {
+        "path": "docs/verification/gold-wave623-group971-summary.json",
+        "bytes": 2546,
+        "sha256": "DE2B1717AD24D2AA9305B96D414F4386B1B306214409B6F95511B9C79565866E",
+        "blob": "bafc272e0f17e70b75d9023d275b99a5f6b59bcc"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 222000,
+        "sha256": "A31AAEFB5B89A777EB41C3A1849BAC884588443B60D9BFCAD87562C55F367077",
+        "blob": "a243b71e02f8d685d57d49307b29a29f4f26a760"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1233328,
+        "sha256": "77782AA26A44AA370A657E59BBABB60CE6A4BCC127D7474F05828941D4C59482",
+        "blob": "a009cfdd9347807ff01fdcbd0bf419275c7dbb6c"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1832610,
+        "sha256": "F17FE4BBA509ED6BDBD9228E3BC04CEDDD93CA9E3CE96CEB87EF57453B254428",
+        "blob": "2bba542893ffe38fb8c76fb268ed49213b2618ef"
+      },
+      {
+        "path": "PLAN/SPEC_recall_parity_methodology.md",
+        "bytes": 27306,
+        "sha256": "15B164AC071FE52BA137FCB4C5A53E268231C4ADF3088DD0CDAB795F0213D600",
+        "blob": "09ca87cd8401583db79562a4d77667fb8bd68a36"
+      },
+      {
+        "path": "SRC/neothd/src/cli/recall_score.rs",
+        "bytes": 62310,
+        "sha256": "5401FC5BA8DDEDB37151EC38D6A68267ADD7DA89774F7BE99439436F99A25D53",
+        "blob": "f8e3f868656fe9c9181f03b6dd9744635944014b"
+      },
+      {
+        "path": "SRC/neothd/src/recall/mod.rs",
+        "bytes": 1812,
+        "sha256": "6C19B7D37F01E1416E6CD130E91C0A4ECF98481EB7059F1658C8F2667BE1FC62",
+        "blob": "60917822819d41a6071252f29500ab6e8116c249"
+      },
+      {
+        "path": "SRC/neothd/src/recall/parity_responses.rs",
+        "bytes": 11969,
+        "sha256": "C5D1E25A786721BA8212BD91BB51F1102A569C8F1091BEEE63563C61FF066077",
+        "blob": "2f130e4778784992eb4868180776bf83981e0159"
+      }
+    ],
+    "note": "Publish complete offline grader inputs and unique CLI flag; retain exact native and GUI outcomes; no Road closure",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
