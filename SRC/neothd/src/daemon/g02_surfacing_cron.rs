@@ -124,7 +124,8 @@ fn run_specialist_advisor_tick(home: &std::path::Path, now_unix: i64) -> Result<
         Err(error) => {
             let queue_path = home.join("proactive_queue.json");
             let _ = ProactiveQueue::modify(&queue_path, |queue| {
-                let result = queue.reconcile_specialist_advisor(now_unix, ADVISOR_WINDOW_SECS, Vec::new());
+                let result =
+                    queue.reconcile_specialist_advisor(now_unix, ADVISOR_WINDOW_SECS, Vec::new());
                 (result.is_ok(), result)
             });
             return Err(error);
@@ -252,20 +253,23 @@ mod tests {
         .unwrap();
 
         assert_eq!(run_g02_surfacing_tick(home.path(), now).unwrap(), 1);
-        let queue = crate::proactive::ProactiveQueue::load_from(
-            &home.path().join("proactive_queue.json"),
-        )
-        .unwrap();
+        let queue =
+            crate::proactive::ProactiveQueue::load_from(&home.path().join("proactive_queue.json"))
+                .unwrap();
         assert_eq!(queue.len(), 1);
         let queue_json = std::fs::read_to_string(home.path().join("proactive_queue.json")).unwrap();
         assert!(queue_json.contains("specialist-advisor:candidate:chat_turn"));
-        let mut queue = crate::proactive::ProactiveQueue::load_from(
-            &home.path().join("proactive_queue.json"),
-        )
-        .unwrap();
+        let mut queue =
+            crate::proactive::ProactiveQueue::load_from(&home.path().join("proactive_queue.json"))
+                .unwrap();
         assert_eq!(queue.drain(now, 1).len(), 1);
-        queue.save_to(&home.path().join("proactive_queue.json")).unwrap();
-        assert_eq!(run_g02_surfacing_tick(home.path(), now + 86_400).unwrap(), 0);
+        queue
+            .save_to(&home.path().join("proactive_queue.json"))
+            .unwrap();
+        assert_eq!(
+            run_g02_surfacing_tick(home.path(), now + 86_400).unwrap(),
+            0
+        );
         for _ in 0..100 {
             append(
                 home.path(),
@@ -294,7 +298,10 @@ mod tests {
     fn invalid_specialist_assessment_suppresses_only_d6_output() {
         let home = TempDir::new().unwrap();
         std::fs::write(home.path().join("specialist_assessments.json"), "not json").unwrap();
-        assert_eq!(run_g02_surfacing_tick(home.path(), 1_700_000_000).unwrap(), 0);
+        assert_eq!(
+            run_g02_surfacing_tick(home.path(), 1_700_000_000).unwrap(),
+            0
+        );
         assert!(!home.path().join("proactive_queue.json").exists());
     }
 }

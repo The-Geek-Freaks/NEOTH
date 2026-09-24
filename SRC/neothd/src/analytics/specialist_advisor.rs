@@ -102,8 +102,8 @@ pub fn load_operator_assessments(home: &Path) -> Result<Vec<WorkflowAssessment>,
         ));
     }
     use std::io::Read;
-    let file = std::fs::File::open(&path)
-        .map_err(|error| format!("open {}: {error}", path.display()))?;
+    let file =
+        std::fs::File::open(&path).map_err(|error| format!("open {}: {error}", path.display()))?;
     let mut raw = Vec::new();
     file.take(MAX_ASSESSMENT_FILE_BYTES + 1)
         .read_to_end(&mut raw)
@@ -114,8 +114,8 @@ pub fn load_operator_assessments(home: &Path) -> Result<Vec<WorkflowAssessment>,
             path.display()
         ));
     }
-    let file: AssessmentFile =
-        serde_json::from_slice(&raw).map_err(|error| format!("parse {}: {error}", path.display()))?;
+    let file: AssessmentFile = serde_json::from_slice(&raw)
+        .map_err(|error| format!("parse {}: {error}", path.display()))?;
     if file.schema_version != ASSESSMENT_SCHEMA_VERSION {
         return Err(format!(
             "{} has unsupported schema_version {}; expected {ASSESSMENT_SCHEMA_VERSION}",
@@ -283,14 +283,38 @@ fn assessment_evidence(
         ];
     };
     [
-        (ChecklistCriterion::OutcomeCheckable, assessment.outcome_checkable),
-        (ChecklistCriterion::ExpertAgreement, assessment.expert_agreement),
-        (ChecklistCriterion::ModelSucceedsSometimes, assessment.model_succeeds_sometimes),
-        (ChecklistCriterion::NotLuckyGuess, assessment.not_lucky_guess),
-        (ChecklistCriterion::MultiStepCommitted, assessment.multi_step_committed),
-        (ChecklistCriterion::OwnToolsAndSchemas, assessment.owns_tools_and_schemas),
-        (ChecklistCriterion::AsymmetricErrorCosts, assessment.asymmetric_error_costs),
-        (ChecklistCriterion::DataStaysLocal, assessment.data_stays_local),
+        (
+            ChecklistCriterion::OutcomeCheckable,
+            assessment.outcome_checkable,
+        ),
+        (
+            ChecklistCriterion::ExpertAgreement,
+            assessment.expert_agreement,
+        ),
+        (
+            ChecklistCriterion::ModelSucceedsSometimes,
+            assessment.model_succeeds_sometimes,
+        ),
+        (
+            ChecklistCriterion::NotLuckyGuess,
+            assessment.not_lucky_guess,
+        ),
+        (
+            ChecklistCriterion::MultiStepCommitted,
+            assessment.multi_step_committed,
+        ),
+        (
+            ChecklistCriterion::OwnToolsAndSchemas,
+            assessment.owns_tools_and_schemas,
+        ),
+        (
+            ChecklistCriterion::AsymmetricErrorCosts,
+            assessment.asymmetric_error_costs,
+        ),
+        (
+            ChecklistCriterion::DataStaysLocal,
+            assessment.data_stays_local,
+        ),
     ]
 }
 
@@ -410,9 +434,11 @@ mod tests {
         let advice = &report.workflows[0];
         assert_eq!(advice.verdict, SpecialistVerdict::InsufficientEvidence);
         assert_eq!(advice.missing_criteria.len(), 8);
-        assert!(advice
-            .missing_criteria
-            .contains(&ChecklistCriterion::OutcomeCheckable));
+        assert!(
+            advice
+                .missing_criteria
+                .contains(&ChecklistCriterion::OutcomeCheckable)
+        );
     }
 
     #[test]
@@ -432,9 +458,11 @@ mod tests {
             report.workflows[0].verdict,
             SpecialistVerdict::InsufficientEvidence
         );
-        assert!(report.workflows[0]
-            .missing_criteria
-            .contains(&ChecklistCriterion::ModelSucceedsSometimes));
+        assert!(
+            report.workflows[0]
+                .missing_criteria
+                .contains(&ChecklistCriterion::ModelSucceedsSometimes)
+        );
     }
 
     #[test]
@@ -448,7 +476,11 @@ mod tests {
     #[test]
     fn duplicate_assessments_are_not_candidate_evidence() {
         let assessment = confirmed_assessment();
-        let report = analyze(&rollup(100, 0, 1.0, 0), 100, &[assessment.clone(), assessment]);
+        let report = analyze(
+            &rollup(100, 0, 1.0, 0),
+            100,
+            &[assessment.clone(), assessment],
+        );
         assert_eq!(
             report.workflows[0].verdict,
             SpecialistVerdict::InsufficientEvidence
@@ -496,7 +528,10 @@ mod tests {
         value["assessments"][0]["extra"] = true.into();
         invalid.push(value);
         let mut value = valid.clone();
-        value["assessments"][0].as_object_mut().unwrap().remove("expert_agreement");
+        value["assessments"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("expert_agreement");
         invalid.push(value);
         let mut value = valid.clone();
         let duplicate = value["assessments"][0].clone();

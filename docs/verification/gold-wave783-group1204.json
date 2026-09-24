@@ -1,0 +1,97 @@
+{
+  "schema": "neoth-grouped-hosted-admission/v1",
+  "run": 35993120246,
+  "source": "4ed780a6d575e04cb0e44106a4aa78fa37ac2fd8",
+  "status": "ROOT_VERIFIED_SUCCESS",
+  "executed": 1204,
+  "passed": 1204,
+  "failed": 0,
+  "fixtureSourceBindings": 229,
+  "inputBindings": 2,
+  "artifacts": [
+    {
+      "digest": "sha256:939f629a039cfae3b87b2df1f5812886045b9654917a51d3e429643ff364890b",
+      "name": "w190-research-lifecycle-receipt-4ed780a6d575e04cb0e44106a4aa78fa37ac2fd8",
+      "id": 10805785664
+    },
+    {
+      "digest": "sha256:433b43d611ceb5a32489dfbfcdc8ca15112f35dcec81643cbc10459ac7ab4706",
+      "name": "w190-research-lifecycle-source-4ed780a6d575e04cb0e44106a4aa78fa37ac2fd8",
+      "id": 10805750921
+    },
+    {
+      "digest": "sha256:3ded895af928530ba58344a2db0a64b482036821508e7b9ef57ddf2118176064",
+      "name": "w190-research-lifecycle-log-4ed780a6d575e04cb0e44106a4aa78fa37ac2fd8",
+      "id": 10805561849
+    }
+  ],
+  "criterionSelections": [
+    {
+      "selection": "wave759WorkerContractAcceptance",
+      "passed": 11,
+      "tests": [
+        "coding::dispatcher::tests::invalid_worker_contract_never_stores_or_applies_in_direct_or_apply_modes",
+        "coding::dispatcher::tests::dispatch_preserves_a_coherent_test_only_outcome",
+        "coding::task_executor::tests::sequential_executor_never_counts_contract_violations_completed",
+        "coding::task_executor::tests::parallel_executor_never_counts_contract_violations_completed",
+        "coding::worker::tests::worker_contract_accepts_normal_patch_and_test_only_outcomes",
+        "coding::worker::tests::worker_contract_rejects_claimed_or_malformed_test_receipts",
+        "coding::worker::tests::worker_contract_rejects_controls_and_oversized_result_surfaces",
+        "coding::worker::tests::worker_contract_materializes_only_exact_task_bound_patch_bytes",
+        "coding::worker::tests::worker_contract_refuses_a_preexisting_artifact_leaf_without_overwriting_it",
+        "coding::worker::tests::worker_contract_binds_the_exact_dispatch_task_and_worker",
+        "coding::worker::tests::worker_contract_rejects_symlinked_artifact_directory"
+      ]
+    },
+    {
+      "selection": "wave761FabricCatalogueAcceptance",
+      "passed": 5,
+      "tests": [
+        "skills::bundled::tests::every_bundled_skill_parses_as_valid_manifest",
+        "skills::bundled::tests::bundled_count_matches_assets_directory",
+        "skills::bundled::tests::all_bundled_parent_and_mode_aliases_have_one_normalized_owner",
+        "skills::bundled::tests::default_bundled_catalogue_routes_every_owned_trigger",
+        "skills::bundled::tests::full_auto_bundled_catalogue_routes_every_multiword_trigger"
+      ]
+    },
+    {
+      "selection": "wave765TrainingExportAcceptance",
+      "passed": 8,
+      "tests": [
+        "daemon::train_export::tests::formats_redaction_and_wire_records_are_closed_and_content_free",
+        "daemon::train_export::tests::bound_feedback_export_counts_every_label_and_redacts_both_formats",
+        "daemon::train_export::tests::malformed_teacher_manifest_is_ambiguous_and_never_becomes_training_text",
+        "daemon::train_export::tests::teacher_correction_never_binds_to_multiple_accepted_originals",
+        "daemon::train_export::tests::publication_is_idempotent_and_refuses_an_incomplete_pair",
+        "feedback::response::tests::training_export_reader_is_read_only_for_absent_projection",
+        "cli::export::tests::training_set_cli_is_explicit",
+        "daemon::chat_runtime::tests::w177_daemon_gui_feedback_receipt_exports_only_redacted_accepted_pair"
+      ]
+    },
+    {
+      "selection": "wave766OfflineRubricAcceptance",
+      "passed": 9,
+      "tests": [
+        "council::quality_score::tests::offline_rubric_classifies_explicit_labels_and_preserves_asymmetry",
+        "config::inference::tests::offline_rubric_config_defaults_neutral_and_rejects_invalid_multipliers",
+        "cli::eval::tests::offline_rubric_aggregates_explicit_binary_labels_into_json_and_markdown",
+        "cli::eval::tests::offline_rubric_rejects_ambiguous_verifier_and_excludes_step_capped_case",
+        "cli::eval::tests::offline_rubric_verdict_follows_label_agreement_not_detector_weight",
+        "cli::eval::tests::suite_counts_pass_fail_correctly",
+        "cli::eval::tests::max_steps_hard_cap_stops_suite",
+        "cli::eval::tests::report_json_round_trips",
+        "cli::eval::tests::case_passes_with_no_verifier_smoke_test"
+      ]
+    }
+  ],
+  "closedCriteria": [
+    "ADOPT31-C10",
+    "ADOPT31-B9",
+    "ADOPT31-D1",
+    "ADOPT31-D4",
+    "ADOPT31-G6"
+  ],
+  "g6Scope": "Existing gui_copy_lint embedded enabled/tool-free asset and owned trigger routes accepted by whole-bundled parse/count/ownership/default/fullauto routing tests; no rendered GUI or model-quality claim",
+  "g6AssetBlob": "fe3e95767f7af77d95d034bafae5fd7793f58be3",
+  "localExecutableValidationRan": false
+}

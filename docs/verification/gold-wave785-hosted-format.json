@@ -1,0 +1,70 @@
+{
+  "schema": "neoth-wave785-hosted-rustfmt-custody/v1",
+  "run": {
+    "runId": 35994501450,
+    "sourceHead": "a01c9608e26370c3d1e681b0645751e027214dd2",
+    "artifactId": 10805756541
+  },
+  "artifact": {
+    "apiZipDigest": "sha256:79498d938b40aa50722d9f0d1114561d01cd89fb9d0b6a030c87cb6f7fd58c42",
+    "apiZipDigestVerified": true,
+    "sourceHeadFile": "a01c9608e26370c3d1e681b0645751e027214dd2",
+    "sourceHeadVerified": true,
+    "patchSha256": "10477d4a91aaf68449cae14150bc585d79ec1094a533ce148af0d6421934dd57",
+    "internalSha256SumsLine": "10477d4a91aaf68449cae14150bc585d79ec1094a533ce148af0d6421934dd57  rustfmt.patch",
+    "internalSha256SumsVerified": true
+  },
+  "patch": {
+    "declaredPathCount": 3,
+    "expectedD6RustOnlyPathCount": 4,
+    "pathCountMatchesExpected": false,
+    "entries": [
+      {
+        "path": "SRC/neothd/src/analytics/specialist_advisor.rs",
+        "oldBlob": "9b9a6748b295c69b3cfbee7ec0c6f90951acab01",
+        "newBlob": "97611a6c927a5f9625f909a9eb96ed4e72af3a11",
+        "headBlob": "9b9a6748b295c69b3cfbee7ec0c6f90951acab01",
+        "indexBlob": "9b9a6748b295c69b3cfbee7ec0c6f90951acab01",
+        "worktreeBlob": "9b9a6748b295c69b3cfbee7ec0c6f90951acab01",
+        "oldHeadMatches": true,
+        "indexMatchesOld": true,
+        "worktreeMatchesOld": true,
+        "newBlobDeclaredInPatch": true
+      },
+      {
+        "path": "SRC/neothd/src/daemon/g02_surfacing_cron.rs",
+        "oldBlob": "e843503b74e7e2e66c4c0193850cfab66bf75de9",
+        "newBlob": "43a7654faba8ea761ae65b775da54b7313cd3a21",
+        "headBlob": "e843503b74e7e2e66c4c0193850cfab66bf75de9",
+        "indexBlob": "e843503b74e7e2e66c4c0193850cfab66bf75de9",
+        "worktreeBlob": "e843503b74e7e2e66c4c0193850cfab66bf75de9",
+        "oldHeadMatches": true,
+        "indexMatchesOld": true,
+        "worktreeMatchesOld": true,
+        "newBlobDeclaredInPatch": true
+      },
+      {
+        "path": "SRC/neothd/src/proactive/mod.rs",
+        "oldBlob": "5037e3c09b0c93a9f5baff0a206be2c089289696",
+        "newBlob": "4b097b4363a1a8957e667cae1ff694e65a56531e",
+        "headBlob": "5037e3c09b0c93a9f5baff0a206be2c089289696",
+        "indexBlob": "5037e3c09b0c93a9f5baff0a206be2c089289696",
+        "worktreeBlob": "5037e3c09b0c93a9f5baff0a206be2c089289696",
+        "oldHeadMatches": true,
+        "indexMatchesOld": true,
+        "worktreeMatchesOld": true,
+        "newBlobDeclaredInPatch": true
+      }
+    ],
+    "readOnlyGitApplyCheck": "passed",
+    "applied": true
+  },
+  "worktreeCandidate": {
+    "head": "a01c9608e26370c3d1e681b0645751e027214dd2",
+    "allOldBlobsMatchHead": true,
+    "allOldBlobsMatchIndex": true,
+    "allOldBlobsMatchWorktree": true
+  },
+  "localExecutableValidationRan": false,
+  "rootStatus": "ROOT_VERIFIED_IMPORTED_EXACT_THREE_PATHS"
+}

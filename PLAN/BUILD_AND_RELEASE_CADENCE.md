@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W783/W784 grouped and GUI-source acceptance (2026-09-24):**
+Root verified all three Group1204 artifact digests,229fixture-source plus two
+input bindings and1204/1204actualPASS at4ed780a6. C10's11, B9's5, D1's8 and
+D4's9 selected tests pass. G6's embedded gui_copy_lint and owned triggers are
+covered by the same whole-bundled parse/count/ownership/router tests; no live
+model-quality or rendered-GUI claim is added. Those five criteria close.
+G2/G5 close on the successful hosted token/motion self-tests and production
+source scan at a01c9608. The named GUI gate wrapper now invokes those checks.
+Preflight's separate Rustfmt failure is being repaired from its exact artifact.
+D6 source is published but remains open pending its13 hosted test results.
+Road1324/1066checked/256open/2partial;258raw/257pre-tag;WS-LF38done80open.
+Receipts: gold-wave783-group1204.json and gold-wave784-gui-lint.json.
+
 **W775/W779-W782 specialist advice and design-document batch (2026-09-24):**
 D6 now consumes the real 30-day usage rollup and a strictly bounded local
 schema-v1 operator assessment. Unknown facts, provider completion and the

@@ -561,21 +561,33 @@ impl ProactiveQueue {
         cooldown_secs: i64,
         desired: Vec<ProactiveItem>,
     ) -> Result<usize> {
-        self.specialist_advisor_cooldowns.retain(|_, until| *until > now_unix);
-        let desired_keys = desired.iter().map(|item| item.dedup_key.as_str()).collect::<BTreeSet<_>>();
-        self.items.retain(|item| item.source != "specialist_advisor" || desired_keys.contains(item.dedup_key.as_str()));
-        let active = self.items.iter().map(|item| item.dedup_key.as_str()).collect::<BTreeSet<_>>();
-        self.item_generations.retain(|key, _| active.contains(key.as_str()));
+        self.specialist_advisor_cooldowns
+            .retain(|_, until| *until > now_unix);
+        let desired_keys = desired
+            .iter()
+            .map(|item| item.dedup_key.as_str())
+            .collect::<BTreeSet<_>>();
+        self.items.retain(|item| {
+            item.source != "specialist_advisor" || desired_keys.contains(item.dedup_key.as_str())
+        });
+        let active = self
+            .items
+            .iter()
+            .map(|item| item.dedup_key.as_str())
+            .collect::<BTreeSet<_>>();
+        self.item_generations
+            .retain(|key, _| active.contains(key.as_str()));
         let mut inserted = 0;
         for item in desired {
-            if self.specialist_advisor_cooldowns.contains_key(&item.dedup_key) {
+            if self
+                .specialist_advisor_cooldowns
+                .contains_key(&item.dedup_key)
+            {
                 continue;
             }
             if self.enqueue(item.clone())? {
-                self.specialist_advisor_cooldowns.insert(
-                    item.dedup_key,
-                    now_unix.saturating_add(cooldown_secs),
-                );
+                self.specialist_advisor_cooldowns
+                    .insert(item.dedup_key, now_unix.saturating_add(cooldown_secs));
                 inserted += 1;
             }
         }

@@ -1,0 +1,42 @@
+{
+  "schema": "neoth-gui-source-lint-admission/v1",
+  "run": 35994501450,
+  "source": "a01c9608e26370c3d1e681b0645751e027214dd2",
+  "step": "GUI token and motion source contracts",
+  "stepConclusion": "success",
+  "selfTestExit": 0,
+  "sourceLint": "PASS",
+  "fixtureCount": 21,
+  "fixtures": [
+    "allowed",
+    "bad_color",
+    "bad_font",
+    "bad_font_size",
+    "bad_radius",
+    "bad_multiline",
+    "bad_nested",
+    "bad_inline_comment_delimiter",
+    "bad_block_comment_delimiter",
+    "bad_nested_block_comment_delimiter",
+    "bad_allowlist_tail",
+    "motion_allowed",
+    "motion_bad_bounce_spring",
+    "motion_bad_layout",
+    "motion_bad_marquee",
+    "motion_bad_pulse_guard",
+    "motion_valid_pulse_guard",
+    "motion_bad_outer_pulse_branch",
+    "motion_comment_string_decoys",
+    "motion_changed_allowlisted_expression",
+    "motion_unbound_allowlist"
+  ],
+  "closedCriteria": [
+    "ADOPT31-G2",
+    "ADOPT31-G5"
+  ],
+  "wrapper": "SRC/_gate_gui_check.bat invokes checked lint fixtures and source gate beforeCargo",
+  "scope": "Source token/motion rules only;no Slintchange/render/a11y/runtime proof",
+  "overallJob": "failure only knownRustfmt;exact artifact import pending",
+  "logSha256": "50C2A00429F55236970A79BEBA7680D76FFB90795794E0650C6093910E7AE8EC",
+  "localExecutableValidationRan": false
+}
