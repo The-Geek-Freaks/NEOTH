@@ -486,7 +486,10 @@ pub struct SlackAccountCredentials {
 #[serde(default)]
 pub struct ChannelAccountCredentials {
     pub telegram: BTreeMap<crate::channels::registry::ChannelAccountId, TelegramAccountCredentials>,
-    #[serde(default, deserialize_with = "deserialize_unique_slack_account_credentials")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_unique_slack_account_credentials"
+    )]
     pub slack: BTreeMap<crate::channels::registry::ChannelAccountId, SlackAccountCredentials>,
 }
 

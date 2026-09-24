@@ -337,8 +337,7 @@ impl OwnedPaperlessRoot {
 pub(crate) fn still_exactly_owned(
     root: &OwnedPaperlessRoot,
 ) -> Result<bool, PaperlessStagingError> {
-    if !root.still_bound()?
-        || !requested_namespace_still_names_stage(&root.display, &root.binding)
+    if !root.still_bound()? || !requested_namespace_still_names_stage(&root.display, &root.binding)
     {
         return Ok(false);
     }

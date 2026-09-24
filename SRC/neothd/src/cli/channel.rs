@@ -183,7 +183,13 @@ fn channel_statuses_for_pair(pair: &crate::config::RuntimeConfigPair) -> Vec<Cha
 }
 
 fn slack_account_status(probe: &SlackAccountProbe) -> ChannelAccountStatus {
-    ChannelAccountStatus { channel_ref: probe.channel_ref.clone(), status: probe.status, detail: probe.detail.clone(), dm_pairing: false, runtime: None }
+    ChannelAccountStatus {
+        channel_ref: probe.channel_ref.clone(),
+        status: probe.status,
+        detail: probe.detail.clone(),
+        dm_pairing: false,
+        runtime: None,
+    }
 }
 
 fn channel_account_status(probe: &TelegramAccountProbe) -> ChannelAccountStatus {
@@ -322,7 +328,9 @@ where
 {
     let mut rows = channel_statuses_for_pair(pair);
     let current_tags = current_account_runtime_tags(pair);
-    if current_tags.is_empty() { return rows; }
+    if current_tags.is_empty() {
+        return rows;
+    }
     if let Some(observations) = read(&current_tags) {
         merge_runtime_health(&mut rows, &observations);
     }
@@ -337,22 +345,32 @@ fn current_account_runtime_tags(
 ) -> BTreeMap<ChannelRef, BindingTag> {
     let mut tags = BTreeMap::new();
     if telegram_account_map_active(pair)
-        && let Ok(accounts) = pair.authenticated_telegram_accounts() {
-            tags.extend(accounts
-            .iter()
-            .filter(|account| !account.is_legacy_singleton())
-            .map(|account| {
-                (
-                    account.channel_ref().clone(),
-                    BindingTag::from_authenticated_telegram_account(account),
-                )
-            })
-            );
+        && let Ok(accounts) = pair.authenticated_telegram_accounts()
+    {
+        tags.extend(
+            accounts
+                .iter()
+                .filter(|account| !account.is_legacy_singleton())
+                .map(|account| {
+                    (
+                        account.channel_ref().clone(),
+                        BindingTag::from_authenticated_telegram_account(account),
+                    )
+                }),
+        );
     }
     if let Ok(accounts) = pair.authenticated_slack_accounts() {
-        tags.extend(accounts.iter().filter(|account| !account.is_legacy_singleton()).map(|account| (
-            account.channel_ref().clone(), BindingTag::from_authenticated_slack_account(account),
-        )));
+        tags.extend(
+            accounts
+                .iter()
+                .filter(|account| !account.is_legacy_singleton())
+                .map(|account| {
+                    (
+                        account.channel_ref().clone(),
+                        BindingTag::from_authenticated_slack_account(account),
+                    )
+                }),
+        );
     }
     tags
 }
@@ -5782,14 +5800,21 @@ mod tests {
         };
         for name in ["work", "personal"] {
             let id = ChannelAccountId::new(name).unwrap();
-            pair.config.channel_accounts.slack.insert(id.clone(), crate::config::SlackAccountConfig {
-                allowed_user_id: "U123PRIVATE".into(), incarnation: None,
-            });
+            pair.config.channel_accounts.slack.insert(
+                id.clone(),
+                crate::config::SlackAccountConfig {
+                    allowed_user_id: "U123PRIVATE".into(),
+                    incarnation: None,
+                },
+            );
             let secrets = crate::config::credentials::SlackAccountCredentials {
                 bot_token: Some(SecretString::from(format!("bot-secret-{name}"))),
                 app_token: Some(SecretString::from(format!("app-secret-{name}"))),
             };
-            pair.raw_credentials.channel_accounts.slack.insert(id.clone(), secrets.clone());
+            pair.raw_credentials
+                .channel_accounts
+                .slack
+                .insert(id.clone(), secrets.clone());
             pair.credentials.channel_accounts.slack.insert(id, secrets);
         }
         pair
@@ -5801,36 +5826,57 @@ mod tests {
         let before = current_account_runtime_tags(&pair);
         assert_eq!(before.len(), 2);
         let work = ChannelRef::new(ChannelId::Slack, ChannelAccountId::new("work").unwrap());
-        let personal = ChannelRef::new(ChannelId::Slack, ChannelAccountId::new("personal").unwrap());
+        let personal =
+            ChannelRef::new(ChannelId::Slack, ChannelAccountId::new("personal").unwrap());
         let rows = channel_statuses_with_runtime(&pair, |tags| {
             assert!(tags == &before);
-            Some(BTreeMap::from([(work.clone(), AccountRuntimeState::Running),
-                (personal.clone(), AccountRuntimeState::ConfiguredNotStarted)]))
+            Some(BTreeMap::from([
+                (work.clone(), AccountRuntimeState::Running),
+                (personal.clone(), AccountRuntimeState::ConfiguredNotStarted),
+            ]))
         });
         let row = rows.iter().find(|row| row.name == "slack").unwrap();
         assert_eq!(row.status, ProbeStatus::Ok);
         assert_eq!(row.accounts.len(), 2);
         assert_eq!(row.accounts[0].channel_ref, personal);
-        assert_eq!(row.accounts[0].runtime.as_deref(), Some("configured_not_started"));
+        assert_eq!(
+            row.accounts[0].runtime.as_deref(),
+            Some("configured_not_started")
+        );
         assert_eq!(row.accounts[1].channel_ref, work);
         assert_eq!(row.accounts[1].runtime.as_deref(), Some("running"));
         let encoded = serde_json::to_string(row).unwrap();
         for forbidden in ["bot-secret-", "app-secret-", "U123PRIVATE"] {
             assert!(!encoded.contains(forbidden));
         }
-        pair.credentials.channel_accounts.slack.get_mut(&work.account_id).unwrap().app_token = Some(SecretString::from("rotated-app"));
+        pair.credentials
+            .channel_accounts
+            .slack
+            .get_mut(&work.account_id)
+            .unwrap()
+            .app_token = Some(SecretString::from("rotated-app"));
         pair.raw_credentials = pair.credentials.clone();
         let after = current_account_runtime_tags(&pair);
-        assert!(before[&work] != after[&work], "old runtime evidence cannot match rotated credentials");
-        assert!(before[&personal] == after[&personal], "unrelated account remains the same generation");
+        assert!(
+            before[&work] != after[&work],
+            "old runtime evidence cannot match rotated credentials"
+        );
+        assert!(
+            before[&personal] == after[&personal],
+            "unrelated account remains the same generation"
+        );
     }
 
     #[test]
     fn slack_status_rejects_orphan_policy_or_credentials_without_usable_rows() {
         for remove_policy in [false, true] {
             let mut pair = slack_status_pair();
-            if remove_policy { pair.config.channel_accounts.slack.clear(); }
-            else { pair.credentials.channel_accounts.slack.clear(); pair.raw_credentials.channel_accounts.slack.clear(); }
+            if remove_policy {
+                pair.config.channel_accounts.slack.clear();
+            } else {
+                pair.credentials.channel_accounts.slack.clear();
+                pair.raw_credentials.channel_accounts.slack.clear();
+            }
             let rows = channel_statuses_for_pair(&pair);
             let row = rows.iter().find(|row| row.name == "slack").unwrap();
             assert_eq!(row.status, ProbeStatus::Error);

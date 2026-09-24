@@ -1,0 +1,71 @@
+{
+  "schema": "neoth-w677-hosted-format/v1",
+  "run": 35962290710,
+  "source": "9cde5c0c22c1a5bb0c2e24c8bc906b5021cb9b29",
+  "artifact": 10792663078,
+  "zipSha256": "F34CF3DDF6CB7F08BB69E8C7934770E5499F48DCC211A566B6E4E1CBAE6B8D45",
+  "patchSha256": "AA3C7E8F772BD09F1401DC28CA0F5E98ADBE6A0BAE9143C7EC597DD1DA0EA64B",
+  "blobs": [
+    {
+      "path": "SRC/neothd/src/channels/live_delivery.rs",
+      "old": "5cf11d4eaa2b09626c93d6a25a48060129f3501c",
+      "new": "d439efa7bec7a7501e06f79713766d03b205c052"
+    },
+    {
+      "path": "SRC/neothd/src/channels/probe.rs",
+      "old": "5f6517c1a7c99c8e582d95f43c6da52545d745c4",
+      "new": "50047845140720d2c9470c980ce87b0431af590e"
+    },
+    {
+      "path": "SRC/neothd/src/channels/send_gate.rs",
+      "old": "01d4c8a3be475d9d295026903b0e8268f7af9efb",
+      "new": "0d46c4c093a387d8fb3c8a2d24e64735640b50e4"
+    },
+    {
+      "path": "SRC/neothd/src/cli/channel.rs",
+      "old": "e8ef285bb644143b6214982a09faeb0936247995",
+      "new": "42b29635380fe1bc17febe121717c42f57d0bea3"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve.rs",
+      "old": "ec2eafd11d6dfde3f08c7790e5327eac71a3164e",
+      "new": "bc68aa954bc07c7ff23d6627683607983c814758"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "old": "9a573d3bc8f472d72954060dfc0fa7c6dd2e2824",
+      "new": "b7a1588cec8c858bfc0ec993d0c3a15de6466532"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_tasks.rs",
+      "old": "8c33ab13722ef69cb238d06c7cdcef567bde7c91",
+      "new": "de603f2ed217f3903d9d07d533b493c245b65a31"
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials.rs",
+      "old": "a63d97b979babf105313f7d74186fe7b090411f2",
+      "new": "1ef983545a586f39388e67dd375d0e87344d8ea5"
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "old": "2ece143b9e4270ea5325d1b14c13e69ce88a5b9c",
+      "new": "e18e24e876e11f9103cd3c7c3f140e9b246ce231"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/channel_runtime_health.rs",
+      "old": "0c99a17fd7225288ac1d0849a72416415fdcbbaf",
+      "new": "161753ed68456490abf1c7533e5b1fb3ff5d5ab2"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/obsidian_archive_bridge_ipc.rs",
+      "old": "efb2681cc5e10135675980165b51bf6ddbd938b0",
+      "new": "d04ac6f1746b0244ebadf947b3a04f28dd1fadad"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_staging.rs",
+      "old": "dc58c56f999c85c315ef4f6c820aaa828bd4c366",
+      "new": "0f8a5868f234315ea354b4eda9aa43054375c14e"
+    }
+  ],
+  "localFormatterRan": false
+}

@@ -123,8 +123,7 @@ pub(crate) struct AuthenticatedInboundBinding {
     /// Present only when the nonlegacy Slack map startup handed over its
     /// sealed account provenance. This is deliberately distinct from the
     /// Telegram capability so the payload channel cannot be relabelled.
-    mapped_slack_live_egress:
-        Option<crate::cli::serve_tasks::MappedSlackLiveEgressProvenance>,
+    mapped_slack_live_egress: Option<crate::cli::serve_tasks::MappedSlackLiveEgressProvenance>,
     legacy_live_egress: Option<crate::cli::serve_tasks::LegacyLiveEgressProvenance>,
 }
 
@@ -8484,9 +8483,13 @@ mod tests {
         };
         for name in ["work", "personal"] {
             let id = crate::channels::registry::ChannelAccountId::new(name).unwrap();
-            pair.config.channel_accounts.slack.insert(id.clone(), crate::config::SlackAccountConfig {
-                allowed_user_id: "U123ABC".into(), incarnation: None,
-            });
+            pair.config.channel_accounts.slack.insert(
+                id.clone(),
+                crate::config::SlackAccountConfig {
+                    allowed_user_id: "U123ABC".into(),
+                    incarnation: None,
+                },
+            );
             let secrets = crate::config::credentials::SlackAccountCredentials {
                 bot_token: Some(crate::secret::SecretString::from("xoxb-test")),
                 app_token: Some(crate::secret::SecretString::from("xapp-test")),
@@ -8494,9 +8497,15 @@ mod tests {
             pair.credentials.channel_accounts.slack.insert(id, secrets);
         }
         pair.raw_credentials = pair.credentials.clone();
-        let bindings = crate::cli::serve_tasks::slack_account_bundles(&pair).unwrap()
-            .iter().map(|bundle| AuthenticatedInboundBinding::for_mapped_slack(
-                bundle.mapped_live_egress_provenance().unwrap())).collect::<Vec<_>>();
+        let bindings = crate::cli::serve_tasks::slack_account_bundles(&pair)
+            .unwrap()
+            .iter()
+            .map(|bundle| {
+                AuthenticatedInboundBinding::for_mapped_slack(
+                    bundle.mapped_live_egress_provenance().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
         let a = &bindings[0];
         let b = &bindings[1];
         let mut msg = inbound(Some("same transport message"), None);
@@ -8506,13 +8515,27 @@ mod tests {
         msg.human_uuid = Some("forged-human-identity".into());
         let admitted = admit_bound_inbound(a, msg.clone()).unwrap();
         assert!(admitted.human_uuid.is_none());
-        assert_ne!(scoped_sender_hash_of(a, &msg.sender_id), scoped_sender_hash_of(b, &msg.sender_id));
-        assert_ne!(canonical_admitted_channel_wal_identity(a, &admitted).unwrap(),
-            canonical_admitted_channel_wal_identity(b, &admitted).unwrap());
-        assert_ne!(crate::permissions::lease::channel_lease_subject(&a.channel_ref, &msg.sender_id),
-            crate::permissions::lease::channel_lease_subject(&b.channel_ref, &msg.sender_id));
-        assert_ne!(channel_media_source_ref(a, &admitted), channel_media_source_ref(b, &admitted));
-        assert!(a.account_binding.as_ref().is_some_and(|bound| bound.channel_ref() == &a.channel_ref));
+        assert_ne!(
+            scoped_sender_hash_of(a, &msg.sender_id),
+            scoped_sender_hash_of(b, &msg.sender_id)
+        );
+        assert_ne!(
+            canonical_admitted_channel_wal_identity(a, &admitted).unwrap(),
+            canonical_admitted_channel_wal_identity(b, &admitted).unwrap()
+        );
+        assert_ne!(
+            crate::permissions::lease::channel_lease_subject(&a.channel_ref, &msg.sender_id),
+            crate::permissions::lease::channel_lease_subject(&b.channel_ref, &msg.sender_id)
+        );
+        assert_ne!(
+            channel_media_source_ref(a, &admitted),
+            channel_media_source_ref(b, &admitted)
+        );
+        assert!(
+            a.account_binding
+                .as_ref()
+                .is_some_and(|bound| bound.channel_ref() == &a.channel_ref)
+        );
         assert!(a.legacy_singleton_alias_claim().is_none());
         msg.channel = ChannelId::Telegram;
         assert!(admit_bound_inbound(a, msg).is_none());

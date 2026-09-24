@@ -202,7 +202,10 @@ fn recover_owned_stale_socket_with_probe(
     probe: impl FnOnce(&Path) -> Result<bool>,
 ) -> Result<()> {
     use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
-    if !socket.try_exists().context("inspect Obsidian bridge socket presence")? {
+    if !socket
+        .try_exists()
+        .context("inspect Obsidian bridge socket presence")?
+    {
         return Ok(());
     }
     ensure!(
@@ -501,6 +504,9 @@ mod tests {
             (before.dev(), before.ino())
         );
         drop(custody);
-        assert!(socket.exists(), "custody cleanup must retain the live socket leaf");
+        assert!(
+            socket.exists(),
+            "custody cleanup must retain the live socket leaf"
+        );
     }
 }

@@ -5636,9 +5636,7 @@ impl TelegramAccountBundle {
 impl SlackAccountBundle {
     /// The only production factory for mapped Slack live-delivery proof.
     /// Legacy scalar Slack deliberately remains on the closed legacy path.
-    pub(crate) fn mapped_live_egress_provenance(
-        &self,
-    ) -> Option<MappedSlackLiveEgressProvenance> {
+    pub(crate) fn mapped_live_egress_provenance(&self) -> Option<MappedSlackLiveEgressProvenance> {
         (!self.legacy_singleton && self.channel_ref.channel_id == ChannelKind::Slack)
             .then(|| self.account_binding.clone())
             .flatten()
@@ -6052,10 +6050,7 @@ pub(crate) fn changed_channel_credentials(
         .collect()
 }
 
-fn hash_framed_slack_fingerprint_field(
-    hasher: &mut xxhash_rust::xxh3::Xxh3,
-    value: &[u8],
-) {
+fn hash_framed_slack_fingerprint_field(hasher: &mut xxhash_rust::xxh3::Xxh3, value: &[u8]) {
     use std::hash::Hasher as _;
 
     hasher.write_u64(value.len() as u64);
@@ -6152,13 +6147,7 @@ pub(crate) fn channel_account_fingerprints(
     telegram_accounts: &[TelegramAccountBundle],
     neoth_home: &std::path::Path,
 ) -> std::collections::HashMap<ChannelRef, u64> {
-    channel_account_fingerprints_with_slack(
-        config,
-        credentials,
-        telegram_accounts,
-        &[],
-        neoth_home,
-    )
+    channel_account_fingerprints_with_slack(config, credentials, telegram_accounts, &[], neoth_home)
 }
 
 pub(crate) fn changed_channel_accounts(
@@ -6421,9 +6410,9 @@ pub(crate) async fn spawn_channel_adapters(
                             )
                         } else {
                             AuthenticatedInboundBinding::for_mapped_slack(
-                                account
-                                    .mapped_live_egress_provenance()
-                                    .expect("nonlegacy Slack account must yield mapped live provenance"),
+                                account.mapped_live_egress_provenance().expect(
+                                    "nonlegacy Slack account must yield mapped live provenance",
+                                ),
                             )
                         },
                         provider.clone(),
@@ -11608,10 +11597,7 @@ mod channel_reconcile_tests {
     }
 
     fn slack_account(account: &str) -> ChannelRef {
-        ChannelRef::new(
-            ChannelKind::Slack,
-            ChannelAccountId::new(account).unwrap(),
-        )
+        ChannelRef::new(ChannelKind::Slack, ChannelAccountId::new(account).unwrap())
     }
 
     fn add_slack_account(
@@ -11727,7 +11713,8 @@ mod channel_reconcile_tests {
             home.path(),
         );
         assert_eq!(changed_channel_accounts(&before, &after), vec![account_a]);
-        let tags = runtime_health_binding_tags(&[], &runtime.authenticated_slack_accounts().unwrap());
+        let tags =
+            runtime_health_binding_tags(&[], &runtime.authenticated_slack_accounts().unwrap());
         assert!(tags.contains_key(&account_b));
     }
 
@@ -11769,14 +11756,10 @@ mod channel_reconcile_tests {
             vec![account.clone()]
         );
 
-        let left_tags = runtime_health_binding_tags(
-            &[],
-            &left.authenticated_slack_accounts().unwrap(),
-        );
-        let right_tags = runtime_health_binding_tags(
-            &[],
-            &right.authenticated_slack_accounts().unwrap(),
-        );
+        let left_tags =
+            runtime_health_binding_tags(&[], &left.authenticated_slack_accounts().unwrap());
+        let right_tags =
+            runtime_health_binding_tags(&[], &right.authenticated_slack_accounts().unwrap());
         assert_ne!(left_tags[&account], right_tags[&account]);
     }
 

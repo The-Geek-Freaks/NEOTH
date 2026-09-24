@@ -59,9 +59,7 @@ impl BindingTag {
     /// Hash one validated Slack account without exposing either capability
     /// secret. The Slack-specific domain separates this equality tag from an
     /// otherwise coincident Telegram account tuple.
-    pub(crate) fn from_authenticated_slack_account(
-        account: &AuthenticatedSlackAccount,
-    ) -> Self {
+    pub(crate) fn from_authenticated_slack_account(account: &AuthenticatedSlackAccount) -> Self {
         let mut digest = Sha256::new();
         digest.update(SLACK_BINDING_TAG_DOMAIN);
         update_framed_slack_field(

@@ -1225,9 +1225,11 @@ mod tests {
             "private-slack-chat".into(),
             ChannelKind::Slack,
             fast_config(),
-            LiveEgressProvenance::mapped_slack(bundle
-                .mapped_live_egress_provenance()
-                .expect("mapped Slack runtime bundle mints a live capability")),
+            LiveEgressProvenance::mapped_slack(
+                bundle
+                    .mapped_live_egress_provenance()
+                    .expect("mapped Slack runtime bundle mints a live capability"),
+            ),
         )
         .expect("matching mapped Slack factory accepts its capability");
         let (home, writer, join) = authenticated_home_writer().await;
@@ -1253,7 +1255,8 @@ mod tests {
             } else if frame.header.event_subtype
                 == crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8
             {
-                terminal = Some(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+                terminal =
+                    Some(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
             }
             cursor += frame.header.total_len as usize;
         }

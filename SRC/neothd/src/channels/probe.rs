@@ -96,7 +96,9 @@ pub(crate) fn slack_account_probes(
     let accounts = pair.authenticated_slack_accounts()?;
     Ok(accounts
         .into_iter()
-        .filter(|account| !account.is_legacy_singleton() && account.channel_ref().channel_id == ChannelId::Slack)
+        .filter(|account| {
+            !account.is_legacy_singleton() && account.channel_ref().channel_id == ChannelId::Slack
+        })
         .map(|account| SlackAccountProbe {
             channel_ref: account.channel_ref().clone(),
             status: ProbeStatus::Ok,
@@ -665,12 +667,28 @@ mod tests {
     use crate::config::{TelegramAccountConfig, TelegramDmPairingConfig};
 
     fn slack_pair(entries: &[&str]) -> crate::config::RuntimeConfigPair {
-        let mut pair = crate::config::RuntimeConfigPair { config: crate::config::FreedomConfig::default(), raw_credentials: Credentials::default(), credentials: Credentials::default() };
+        let mut pair = crate::config::RuntimeConfigPair {
+            config: crate::config::FreedomConfig::default(),
+            raw_credentials: Credentials::default(),
+            credentials: Credentials::default(),
+        };
         for id in entries {
             let id = ChannelAccountId::new(*id).unwrap();
-            pair.config.channel_accounts.slack.insert(id.clone(), crate::config::SlackAccountConfig { allowed_user_id: "U123".into(), incarnation: None });
-            let secrets = crate::config::credentials::SlackAccountCredentials { bot_token: Some(crate::secret::SecretString::from(format!("bot-{id}"))), app_token: Some(crate::secret::SecretString::from(format!("app-{id}"))) };
-            pair.raw_credentials.channel_accounts.slack.insert(id.clone(), secrets.clone());
+            pair.config.channel_accounts.slack.insert(
+                id.clone(),
+                crate::config::SlackAccountConfig {
+                    allowed_user_id: "U123".into(),
+                    incarnation: None,
+                },
+            );
+            let secrets = crate::config::credentials::SlackAccountCredentials {
+                bot_token: Some(crate::secret::SecretString::from(format!("bot-{id}"))),
+                app_token: Some(crate::secret::SecretString::from(format!("app-{id}"))),
+            };
+            pair.raw_credentials
+                .channel_accounts
+                .slack
+                .insert(id.clone(), secrets.clone());
             pair.credentials.channel_accounts.slack.insert(id, secrets);
         }
         pair
@@ -679,9 +697,16 @@ mod tests {
     #[test]
     fn slack_account_projection_is_sorted_and_secret_free() {
         let rows = slack_account_probes(&slack_pair(&["ops_b", "ops_a"])).unwrap();
-        assert_eq!(rows.iter().map(|row| row.channel_ref.account_id.as_str()).collect::<Vec<_>>(), vec!["ops_a", "ops_b"]);
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.channel_ref.account_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ops_a", "ops_b"]
+        );
         let encoded = serde_json::to_string(&rows).unwrap();
-        for forbidden in ["bot-ops_a", "app-ops_a", "bot-ops_b", "app-ops_b", "U123"] { assert!(!encoded.contains(forbidden)); }
+        for forbidden in ["bot-ops_a", "app-ops_a", "bot-ops_b", "app-ops_b", "U123"] {
+            assert!(!encoded.contains(forbidden));
+        }
     }
 
     #[test]

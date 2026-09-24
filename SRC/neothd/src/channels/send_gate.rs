@@ -884,11 +884,9 @@ mod intent_tests {
         let wal = home.path().join("wal");
         std::fs::create_dir_all(&wal).expect("create mapped Slack evidence WAL");
         let segment = wal.join("000001.wal");
-        let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
-            segment.clone(),
-            home.path().to_path_buf(),
-        )
-        .expect("spawn mapped Slack evidence WAL writer");
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), home.path().to_path_buf())
+                .expect("spawn mapped Slack evidence WAL writer");
         ready
             .wait()
             .await
@@ -970,7 +968,9 @@ mod intent_tests {
         drop(writer);
         join.await.unwrap().unwrap();
 
-        let bytes = tokio::fs::read(segment).await.expect("read mapped Slack WAL");
+        let bytes = tokio::fs::read(segment)
+            .await
+            .expect("read mapped Slack WAL");
         let mut cursor = SEGMENT_HEADER_LEN;
         let mut intents = Vec::new();
         let mut terminals = Vec::new();
@@ -990,11 +990,17 @@ mod intent_tests {
             .iter()
             .map(|payload| {
                 assert_eq!(payload["channel"], "slack");
-                assert_eq!(payload["account_binding"]["channel_ref"], payload["channel_ref"]);
+                assert_eq!(
+                    payload["account_binding"]["channel_ref"],
+                    payload["channel_ref"]
+                );
                 assert!(payload["account_binding"]["incarnation"].is_string());
                 let rendered = payload.to_string();
                 assert!(!rendered.contains("private-"));
-                payload["channel_ref"]["account_id"].as_str().unwrap().to_owned()
+                payload["channel_ref"]["account_id"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
             })
             .collect::<Vec<_>>();
         accounts.sort();
@@ -1007,8 +1013,15 @@ mod intent_tests {
             .iter()
             .map(|payload| payload["intent_id"].as_str().unwrap().to_owned())
             .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(terminal_ids.len(), 2, "each account keeps its own terminal custody");
-        assert_eq!(terminal_ids, intent_ids, "terminals pair only to their own mapped intents");
+        assert_eq!(
+            terminal_ids.len(),
+            2,
+            "each account keeps its own terminal custody"
+        );
+        assert_eq!(
+            terminal_ids, intent_ids,
+            "terminals pair only to their own mapped intents"
+        );
     }
 
     #[tokio::test]

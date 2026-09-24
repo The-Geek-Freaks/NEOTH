@@ -3,6 +3,11 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W677 hosted formatting (2026-09-24):** Preflight35962290710 parses the repaired
+source and supplies a twelve-file rustfmt patch. ZIP, source receipt, patch
+checksum and every old/new Gitblob verified; imported byte-exact. Core/Group1042/
+Windows50 will rerun this source. Road counts unchanged; no local formatter.
+
 **W674 hosted syntax correction (2026-09-24):** Preflight35962137807 at5e36a39b
 found one extra closing brace in the new Slack startup block. The exact single
 delimiter is removed; hosted format and native behavior are still pending.
