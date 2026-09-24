@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W764Group1171RootPASS;5criteria+C9accepted;D4implementedreviewPASS hostedpending",
+  "status": "W770 B1/B4/D2 ACCEPTED;W772 hosted format imported;W773 diagnostic pending GitHub",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 166460,
-    "sha256": "987A75E56600D8F1AE9F1D22A33336140FC95A93A8D9A4C5B7B26320F276DCEA"
+    "bytes": 166827,
+    "sha256": "5BE1F351229F5052857A3B42B6C1BF5D13A51B0CDB44945440B17E0BCDD093AF"
   },
-  "sourceInputs": 941,
+  "sourceInputs": 943,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -4710,7 +4710,7 @@
     {
       "test": "config::inference::tests::absent_role_policy_preserves_legacy_role_routing",
       "sourcePath": "SRC/neothd/src/config/inference.rs",
-      "sourceSha256": "454731320C628F41BEC2774D97B0B42E30950C5B97163C098AF89FEBE25A0EF7",
+      "sourceSha256": "EA7AE5024F206BC24255AF13B291B1361871FF75E19A402F68B05AE36A70E8DD",
       "junitClass": "neoth"
     },
     {
@@ -8598,55 +8598,55 @@
     {
       "test": "council::quality_score::tests::offline_rubric_classifies_explicit_labels_and_preserves_asymmetry",
       "sourcePath": "SRC/neothd/src/council/quality_score.rs",
-      "sourceSha256": "9D553EC018A3C6E503BF74AF9EDC34D4F7A2F5570AC59CF6747C62DD8FC2DF50",
+      "sourceSha256": "B2F54BBA7A9463E97F59A693F4F349C958A727FCE17A952CEDEAD0DAD5523477",
       "junitClass": "neoth"
     },
     {
       "test": "config::inference::tests::offline_rubric_config_defaults_neutral_and_rejects_invalid_multipliers",
       "sourcePath": "SRC/neothd/src/config/inference.rs",
-      "sourceSha256": "454731320C628F41BEC2774D97B0B42E30950C5B97163C098AF89FEBE25A0EF7",
+      "sourceSha256": "EA7AE5024F206BC24255AF13B291B1361871FF75E19A402F68B05AE36A70E8DD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::eval::tests::offline_rubric_aggregates_explicit_binary_labels_into_json_and_markdown",
       "sourcePath": "SRC/neothd/src/cli/eval.rs",
-      "sourceSha256": "A4F595B49E93674A4B6C4AD6C73CE61C5590B461C0888523D5F1DECE001C1578",
+      "sourceSha256": "648D19F378480C49033AAE7BC4FFBFF228451E02C2B8D3FA1D4685354622B5CA",
       "junitClass": "neoth"
     },
     {
       "test": "cli::eval::tests::offline_rubric_rejects_ambiguous_verifier_and_excludes_step_capped_case",
       "sourcePath": "SRC/neothd/src/cli/eval.rs",
-      "sourceSha256": "A4F595B49E93674A4B6C4AD6C73CE61C5590B461C0888523D5F1DECE001C1578",
+      "sourceSha256": "648D19F378480C49033AAE7BC4FFBFF228451E02C2B8D3FA1D4685354622B5CA",
       "junitClass": "neoth"
     },
     {
       "test": "cli::eval::tests::offline_rubric_verdict_follows_label_agreement_not_detector_weight",
       "sourcePath": "SRC/neothd/src/cli/eval.rs",
-      "sourceSha256": "A4F595B49E93674A4B6C4AD6C73CE61C5590B461C0888523D5F1DECE001C1578",
+      "sourceSha256": "648D19F378480C49033AAE7BC4FFBFF228451E02C2B8D3FA1D4685354622B5CA",
       "junitClass": "neoth"
     },
     {
       "test": "cli::eval::tests::suite_counts_pass_fail_correctly",
       "sourcePath": "SRC/neothd/src/cli/eval.rs",
-      "sourceSha256": "A4F595B49E93674A4B6C4AD6C73CE61C5590B461C0888523D5F1DECE001C1578",
+      "sourceSha256": "648D19F378480C49033AAE7BC4FFBFF228451E02C2B8D3FA1D4685354622B5CA",
       "junitClass": "neoth"
     },
     {
       "test": "cli::eval::tests::max_steps_hard_cap_stops_suite",
       "sourcePath": "SRC/neothd/src/cli/eval.rs",
-      "sourceSha256": "A4F595B49E93674A4B6C4AD6C73CE61C5590B461C0888523D5F1DECE001C1578",
+      "sourceSha256": "648D19F378480C49033AAE7BC4FFBFF228451E02C2B8D3FA1D4685354622B5CA",
       "junitClass": "neoth"
     },
     {
       "test": "cli::eval::tests::report_json_round_trips",
       "sourcePath": "SRC/neothd/src/cli/eval.rs",
-      "sourceSha256": "A4F595B49E93674A4B6C4AD6C73CE61C5590B461C0888523D5F1DECE001C1578",
+      "sourceSha256": "648D19F378480C49033AAE7BC4FFBFF228451E02C2B8D3FA1D4685354622B5CA",
       "junitClass": "neoth"
     },
     {
       "test": "cli::eval::tests::case_passes_with_no_verifier_smoke_test",
       "sourcePath": "SRC/neothd/src/cli/eval.rs",
-      "sourceSha256": "A4F595B49E93674A4B6C4AD6C73CE61C5590B461C0888523D5F1DECE001C1578",
+      "sourceSha256": "648D19F378480C49033AAE7BC4FFBFF228451E02C2B8D3FA1D4685354622B5CA",
       "junitClass": "neoth"
     }
   ],
@@ -9278,8 +9278,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2218714,
-      "sha256": "C1798151426DC28DFBF2172AED3250D94A84A2E5D5B3B5B2BF299D5B43076125"
+      "bytes": 2221678,
+      "sha256": "EA97F9526307A0763954D0A39643CFBBE6EB61ABF9591135208C291DA8FBE1F5"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -32187,6 +32187,68 @@
       }
     ],
     "note": "Actual offline asymmetric error rubric; Group1204 adds C10/B9/D1/D4 exact consumers; C9 source-pinned commentcrosswalk; no local executable checks",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave777CrossPlatformAcceptance": {
+    "base": "235cf4c33350955b537b1f39e5e4cf7fbe3b4ad0",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave770-gui-windows.json",
+        "bytes": 6171,
+        "sha256": "EF3120BFECCE8FDACC53E51B8FFA2195DCC3579A991983A17EC7296FA04554DB",
+        "blob": "93d2190007365fcd8e087ae5f49d80da13bdc07c"
+      },
+      {
+        "path": "docs/verification/gold-wave772-hosted-format.json",
+        "bytes": 1194,
+        "sha256": "71D9B3A11DAC03BE7CE1F7653FF574AE6FB3A8B0A2DBBC280A9A9943CD58CC45",
+        "blob": "95f1132803f6951a563241cac4b473ce22fe39b3"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 251434,
+        "sha256": "B33772E5BD922131EEF51CD931F6A3F6D01F83624212FA3519CF030045BC5E2D",
+        "blob": "bb48e5b2c9aacd6b3afc2cb1a4d4351ab97b161e"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1262762,
+        "sha256": "CA002A0B2FE145160A3867E6ECDE83701EE840A82EF54C24C7311CB90983D16C",
+        "blob": "7f620a1109671da76790e15c17e5d5edd44fb434"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1865813,
+        "sha256": "EFE65616FFBCD15E8DD26DDDF282F79A690A74598544A7FCA337EDF3AB1581DB",
+        "blob": "a0e1da3ab4a8ee4deb330053bb82351420b51617"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2221678,
+        "sha256": "EA97F9526307A0763954D0A39643CFBBE6EB61ABF9591135208C291DA8FBE1F5",
+        "blob": "ab8799c9c15f2d64d7e45e94a6d65b2d5a02e986"
+      },
+      {
+        "path": "SRC/neothd/src/cli/eval.rs",
+        "bytes": 41957,
+        "sha256": "648D19F378480C49033AAE7BC4FFBFF228451E02C2B8D3FA1D4685354622B5CA",
+        "blob": "12bf8fb264791025c9f10ea686df5c4b4159cb97"
+      },
+      {
+        "path": "SRC/neothd/src/config/inference.rs",
+        "bytes": 97236,
+        "sha256": "EA7AE5024F206BC24255AF13B291B1361871FF75E19A402F68B05AE36A70E8DD",
+        "blob": "fdf3161084c1854a9c08d8cd223ec5ee3e144e4f"
+      },
+      {
+        "path": "SRC/neothd/src/council/quality_score.rs",
+        "bytes": 39206,
+        "sha256": "B2F54BBA7A9463E97F59A693F4F349C958A727FCE17A952CEDEAD0DAD5523477",
+        "blob": "7616f8804511e70ebf011f3b8f814c9e52f39ac7"
+      }
+    ],
+    "note": "159GUI158PASS1FAIL and55WindowsPASS admitted individually; no local executables. Core235 CLI export pending beforeGroup1204.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

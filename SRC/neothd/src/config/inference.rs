@@ -27,8 +27,8 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
 use serde::de::Error as _;
+use serde::{Deserialize, Serialize};
 
 use crate::secret::SecretString;
 
@@ -795,9 +795,15 @@ where
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OfflineRubricConfig {
-    #[serde(default = "default_offline_rubric_multiplier", deserialize_with = "deserialize_offline_rubric_multiplier")]
+    #[serde(
+        default = "default_offline_rubric_multiplier",
+        deserialize_with = "deserialize_offline_rubric_multiplier"
+    )]
     pub false_alarm_multiplier: f64,
-    #[serde(default = "default_offline_rubric_multiplier", deserialize_with = "deserialize_offline_rubric_multiplier")]
+    #[serde(
+        default = "default_offline_rubric_multiplier",
+        deserialize_with = "deserialize_offline_rubric_multiplier"
+    )]
     pub missed_violation_multiplier: f64,
 }
 
@@ -2325,7 +2331,10 @@ trigger:
             let yaml = format!(
                 "offline_rubric:\n  false_alarm_multiplier: {invalid}\n  missed_violation_multiplier: 1.0\n"
             );
-            assert!(serde_yaml::from_str::<CouncilConfig>(&yaml).is_err(), "{invalid} must fail");
+            assert!(
+                serde_yaml::from_str::<CouncilConfig>(&yaml).is_err(),
+                "{invalid} must fail"
+            );
         }
     }
 }

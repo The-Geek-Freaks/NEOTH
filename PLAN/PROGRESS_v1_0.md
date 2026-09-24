@@ -2,6 +2,18 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-24
 
+**W770-W773 document and workflow-cost acceptance (2026-09-24):**
+Root admitted GUI35986281164 at5e9:159executed,158PASS1FAIL,29source/input
+bindings; Windows35988664776 atc6ef:55/55PASS,15bindings. All ten D2 GUI
+checks and all five new Windows document/creator checks pass. Together with
+Group1171, the original B1/B4/D2 criteria close independently of W153's missing
+reply failure. Its authenticated feedback target is valid; no speculative
+removal is retained. W773 adds safe terminal categories for a hosted rerun.
+W772 imports the exact three-file235 hosted formatter output; CodeQL235 passes.
+Road1324/1056checked/266open/2partial;268raw/267pre-tag;WS-LF38done80open.
+Core235 CLI export precedes Group1204. No local executable validation.
+Evidence: docs/verification/gold-wave770-gui-windows.json and gold-wave772-hosted-format.json.
+
 **W757-W767 offline rubric and focused acceptance (2026-09-24):**
 The real offline evaluator consumes explicit expected/observed labels and
 operator-configured false-alarm/missed-violation multipliers. Final verdicts

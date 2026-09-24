@@ -322,12 +322,7 @@ fn truncate(s: &str, max: usize) -> &str {
 /// [`CaseOutcome::Error`] verdict with a "max_steps cap reached" reason.
 /// Pass [`u32::MAX`] to allow all cases to run without limit.
 pub fn run_suite(suite_path: &str, cases: &[EvalCase], max_steps: u32) -> EvalReport {
-    run_suite_with_rubric(
-        suite_path,
-        cases,
-        max_steps,
-        None,
-    )
+    run_suite_with_rubric(suite_path, cases, max_steps, None)
 }
 
 /// Run a suite with the D4 rubric enabled only when explicit case labels and
@@ -349,7 +344,9 @@ pub fn run_suite_with_rubric(
             let setup_error = if rubric_config.is_none() {
                 Some("labelled offline rubric case requires an OfflineRubricConfig".to_owned())
             } else {
-                validate_rubric_case(case).err().map(|error| error.to_string())
+                validate_rubric_case(case)
+                    .err()
+                    .map(|error| error.to_string())
             };
             if let Some(error) = setup_error {
                 results.push(CaseResult {
@@ -519,12 +516,18 @@ pub async fn run_eval_cmd(args: EvalArgs) -> Result<()> {
 
     let rubric_config = if cases.iter().any(|case| case.rubric_labels.is_some()) {
         validate_rubric_cases(&cases)?;
-        let config_path = args.rubric_config.as_ref().context(
-            "labelled offline rubric suites require --rubric-config <freedom.yaml>",
-        )?;
+        let config_path = args
+            .rubric_config
+            .as_ref()
+            .context("labelled offline rubric suites require --rubric-config <freedom.yaml>")?;
         Some(
             crate::config::FreedomConfig::load_from_path(config_path)
-                .with_context(|| format!("load offline rubric configuration {}", config_path.display()))?
+                .with_context(|| {
+                    format!(
+                        "load offline rubric configuration {}",
+                        config_path.display()
+                    )
+                })?
                 .council
                 .offline_rubric,
         )
@@ -537,7 +540,8 @@ pub async fn run_eval_cmd(args: EvalArgs) -> Result<()> {
     };
 
     let suite_label = suite_path.to_string_lossy().to_string();
-    let report = run_suite_with_rubric(&suite_label, &cases, args.max_steps, rubric_config.as_ref());
+    let report =
+        run_suite_with_rubric(&suite_label, &cases, args.max_steps, rubric_config.as_ref());
 
     // ── JSON-only mode ─────────────────────────────────────────────────────
     if args.json {
@@ -627,7 +631,10 @@ fn validate_rubric_cases(cases: &[EvalCase]) -> Result<()> {
 }
 
 fn validate_rubric_case(case: &EvalCase) -> Result<()> {
-    match (case.expect_contains.is_some(), case.verify_command.is_some()) {
+    match (
+        case.expect_contains.is_some(),
+        case.verify_command.is_some(),
+    ) {
         (true, false) | (false, true) => Ok(()),
         (false, false) => anyhow::bail!(
             "rubric case `{}` must provide exactly one deterministic verifier",
@@ -765,8 +772,16 @@ mod tests {
             expected: crate::council::quality_score::RubricLabel::Clear,
             observed: crate::council::quality_score::RubricLabel::Clear,
         });
-        let report = run_suite_with_rubric("rubric.json", &[false_alarm, missed, correct], u32::MAX, Some(&config));
-        let rubric = report.offline_rubric.as_ref().expect("rubric report enabled");
+        let report = run_suite_with_rubric(
+            "rubric.json",
+            &[false_alarm, missed, correct],
+            u32::MAX,
+            Some(&config),
+        );
+        let rubric = report
+            .offline_rubric
+            .as_ref()
+            .expect("rubric report enabled");
         assert_eq!(rubric.evaluated_binary_decisions, 3);
         assert_eq!(rubric.classified, 2);
         assert_eq!(rubric.false_alarms, 1);
@@ -797,7 +812,10 @@ mod tests {
             Some(&crate::config::inference::OfflineRubricConfig::default()),
         );
         assert_eq!(ambiguous_report.errored, 1);
-        assert_eq!(ambiguous_report.cases[0].steps, 0, "ambiguous verifier must not execute");
+        assert_eq!(
+            ambiguous_report.cases[0].steps, 0,
+            "ambiguous verifier must not execute"
+        );
 
         let mut capped = tc("capped", "has expected", "expected");
         capped.rubric_labels = Some(crate::council::quality_score::RubricLabels {
@@ -812,7 +830,10 @@ mod tests {
         );
         let rubric = report.offline_rubric.as_ref().unwrap();
         assert_eq!(rubric.evaluated_binary_decisions, 0);
-        assert_eq!(rubric.classified, 0, "unexecuted cases must not get invented labels");
+        assert_eq!(
+            rubric.classified, 0,
+            "unexecuted cases must not get invented labels"
+        );
         assert_eq!(rubric.weighted_cost, 0.0);
         assert_eq!(rubric.unclassified_errors, 1);
     }
@@ -828,15 +849,17 @@ mod tests {
             false_alarm_multiplier: 0.0,
             missed_violation_multiplier: 0.0,
         };
-        let missed_report = run_suite_with_rubric(
-            "missed.json",
-            &[missed],
-            u32::MAX,
-            Some(&zero_weights),
-        );
+        let missed_report =
+            run_suite_with_rubric("missed.json", &[missed], u32::MAX, Some(&zero_weights));
         assert_eq!(missed_report.failed, 1);
-        assert!(!missed_report.all_passed(), "zero error cost cannot make a missed violation pass");
-        assert_eq!(missed_report.offline_rubric.as_ref().unwrap().weighted_cost, 0.0);
+        assert!(
+            !missed_report.all_passed(),
+            "zero error cost cannot make a missed violation pass"
+        );
+        assert_eq!(
+            missed_report.offline_rubric.as_ref().unwrap().weighted_cost,
+            0.0
+        );
 
         let mut true_positive = tc("true-positive", "answer omits target", "required");
         true_positive.rubric_labels = Some(crate::council::quality_score::RubricLabels {
@@ -858,7 +881,10 @@ mod tests {
             observed: crate::council::quality_score::RubricLabel::Clear,
         });
         let unconfigured_report = run_suite("unconfigured.json", &[unconfigured], u32::MAX);
-        assert_eq!(unconfigured_report.errored, 1, "public runner must not ignore labels without config");
+        assert_eq!(
+            unconfigured_report.errored, 1,
+            "public runner must not ignore labels without config"
+        );
     }
 
     // ── Report serialisation ──────────────────────────────────────────────

@@ -48094,6 +48094,65 @@ exit 0
         });
     }
 
+    #[cfg(not(windows))]
+    fn w153_safe_terminal_rows(window: &MainWindow) -> String {
+        window
+            .get_chat_live_messages()
+            .iter()
+            .map(|row| {
+                let branch = if row.role.as_str() != "error" {
+                    if row.text.contains("W153 visible reply") {
+                        "expected-reply"
+                    } else if row.role.as_str() == "assistant"
+                        && (row.text.is_empty() || row.text.as_str() == "…")
+                    {
+                        "assistant-placeholder"
+                    } else {
+                        "non-error"
+                    }
+                } else if row
+                    .text
+                    .contains("invalid or duplicate authenticated control frames")
+                {
+                    "invalid-authenticated-control"
+                } else if row.text.contains("invalid UTF-8") {
+                    "invalid-utf8"
+                } else if row.text.contains("Chat subprocess could not start") {
+                    "child-spawn-failed"
+                } else if row.text.contains("private chat launch stdin unavailable") {
+                    "child-stdin-unavailable"
+                } else if row.text.contains("stream stderr unavailable") {
+                    "child-stderr-unavailable"
+                } else if row.text.contains("stream stdout unavailable") {
+                    "child-stdout-unavailable"
+                } else if row.text.contains("chat supervision state already owns") {
+                    "child-supervision-conflict"
+                } else if row.text.contains("could not commit private chat launch") {
+                    "launch-envelope-write-failed"
+                } else if row.text.contains("Provider returned an empty reply") {
+                    "empty-provider-reply"
+                } else if row.text.contains("Stream ended before completion") {
+                    "truncated-stream"
+                } else if row.text.contains("cancelled before provider launch") {
+                    "cancelled-before-launch"
+                } else if row
+                    .text
+                    .contains("completion marker belonged to a stale or cancelled request")
+                {
+                    "stale-completion"
+                } else if row.text.contains("subprocess exited") {
+                    "nonzero-exit-after-completion"
+                } else if row.text.contains("stream read error") {
+                    "stream-read-error"
+                } else {
+                    "unclassified-error"
+                };
+                format!("{}:{}:{branch}", row.role, row.stream_phase)
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
     #[cfg(all(target_os = "macos", feature = "macos-native-gui-test"))]
     fn w274_assert_macos_legacy_child_refusal(window: &MainWindow, fixture: &TempDir, label: &str) {
         w153_pump_until(window, label, |window| {
@@ -48418,7 +48477,10 @@ exit 0
                     window
                         .get_chat_live_messages()
                         .iter()
-                        .any(|row| row.text.contains("W153 visible reply"))
+                        .any(|row| row.text.contains("W153 visible reply")),
+                    "W153 successful child reply missing; surface={surface:?}; display={display}; \
+                     terminal_rows=[{}]",
+                    w153_safe_terminal_rows(&window)
                 );
                 assert!(window.get_chat_reasoning_text().is_empty());
                 assert!(!window.get_chat_reasoning_active());

@@ -1026,7 +1026,10 @@ Steps to reproduce:
         .expect("mismatched labels classify deterministically");
         assert_eq!(missed, RubricErrorClass::MissedViolation);
         assert_eq!(rubric_error_cost(missed, &config), 7.0);
-        assert!(rubric_error_cost(missed, &config) > rubric_error_cost(RubricErrorClass::FalseAlarm, &config));
+        assert!(
+            rubric_error_cost(missed, &config)
+                > rubric_error_cost(RubricErrorClass::FalseAlarm, &config)
+        );
         assert_eq!(
             classify_rubric_labels(RubricLabels {
                 expected: RubricLabel::Clear,

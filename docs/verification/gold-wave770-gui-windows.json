@@ -1,0 +1,173 @@
+{
+  "schema": "neoth-gold-cross-platform-criterion-admission/v1",
+  "status": "ROOT_VERIFIED",
+  "gui": {
+    "runId": 35986281164,
+    "jobId": 107589593914,
+    "workflow": "W228 exact Linux GUI fixtures / Rust 1.91",
+    "sourceHead": "5e9a9fd574e4df1520cf5b474694435a472c3486",
+    "conclusion": "failure",
+    "artifacts": [
+      {
+        "id": 10804615353,
+        "name": "w228-linux-gui-fixtures-log-5e9a9fd574e4df1520cf5b474694435a472c3486",
+        "digest": "sha256:eba779966e1f1faf9a2d352255b7295a10ee0cc622d9eced31d7274fec139323",
+        "verified": true
+      },
+      {
+        "id": 10804156918,
+        "name": "w228-linux-gui-fixtures-receipt-5e9a9fd574e4df1520cf5b474694435a472c3486",
+        "digest": "sha256:459482d6b6656b91d9b4afed43682d349d3612ac048223cff1e122aa92eefbb1",
+        "verified": true
+      },
+      {
+        "id": 10803978341,
+        "name": "w228-linux-gui-fixtures-source-5e9a9fd574e4df1520cf5b474694435a472c3486",
+        "digest": "sha256:927aabc0972484cb99f0bc6b362f1795275a0a3af72bb59c3989d3ce0e9f5933",
+        "verified": true
+      }
+    ],
+    "terminals": {
+      "expected": 159,
+      "started": 159,
+      "completed": 159,
+      "executed": 159,
+      "passed": 158,
+      "failed": 1,
+      "unstarted": 0,
+      "coverageComplete": true
+    },
+    "failedSelector": {
+      "test": "w58_gui_callback_runtime_tests::w153_legacy_child_callbacks_project_only_transient_reasoning",
+      "log": "test-136.log",
+      "panicLocation": "neothd-gui/src/main.rs:48417:17",
+      "failedAssertion": "window.get_chat_live_messages().iter().any(|row| row.text.contains(\"W153 visible reply\"))",
+      "exitCode": 101
+    },
+    "d2WorkflowCostTests": [
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_is_typed_bounded_and_truthful_about_unpriced_cost",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_accepts_backend_optional_other_as_null",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_keeps_legacy_distinct_from_bad_schema_one",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_rejects_overcap_unknown_row_fields_and_invalid_relations",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_rejects_cross_row_unpriced_overflow",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_rejects_top_level_fanout_mismatch_and_numeric_abuse",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_accepts_only_proven_f64_regrouping_drift",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_rejects_unbounded_cost_error_budget",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_usage_rollup_rejects_payload_above_one_mib_before_decoding",
+        "terminalStatus": "passed"
+      },
+      {
+        "test": "panel_logic::tests::workflow_week_truth_keeps_legacy_invalid_and_unpriced_states_visible",
+        "terminalStatus": "passed"
+      }
+    ],
+    "sourceAndInputBindings": {
+      "count": 29,
+      "mismatches": 0
+    }
+  },
+  "windows": {
+    "runId": 35988664776,
+    "jobId": 107597249887,
+    "workflow": "Exact storage, managed-browser and Paperless regressions",
+    "sourceHead": "c6ef7c3ebaed6c84906dd8a9bb8ae7294de9f168",
+    "conclusion": "success",
+    "artifacts": [
+      {
+        "id": 10803889255,
+        "name": "windows-storage-regressions-c6ef7c3ebaed6c84906dd8a9bb8ae7294de9f168",
+        "digest": "sha256:d36fc277db5f962d3ca1e4a00c1027a899ca25b15a2dc4b1d494b423e5938eae",
+        "verified": true
+      }
+    ],
+    "terminals": {
+      "expected": 55,
+      "selected": 55,
+      "executed": 55,
+      "passed": 55,
+      "failed": 0,
+      "missing": 0
+    },
+    "documentAdmissionAndCreatorReparseTests": [
+      {
+        "ordinal": 51,
+        "terminalStatus": "passed",
+        "test": "skills::doc_distill::tests::review_handle_rejects_later_writer_and_deleter",
+        "sourcePath": "neothd/src/skills/doc_distill.rs"
+      },
+      {
+        "ordinal": 52,
+        "terminalStatus": "passed",
+        "test": "skills::doc_distill::tests::final_reparse_point_is_rejected_before_document_bytes_are_admitted",
+        "sourcePath": "neothd/src/skills/doc_distill.rs"
+      },
+      {
+        "ordinal": 53,
+        "terminalStatus": "passed",
+        "test": "skills::doc_distill::tests::intermediate_reparse_point_is_rejected_from_the_disk_root_walk",
+        "sourcePath": "neothd/src/skills/doc_distill.rs"
+      },
+      {
+        "ordinal": 54,
+        "terminalStatus": "passed",
+        "test": "skills::creator::tests::writer_rejects_reparse_skill_directory_without_touching_target",
+        "sourcePath": "neothd/src/skills/creator.rs"
+      },
+      {
+        "ordinal": 55,
+        "terminalStatus": "passed",
+        "test": "skills::creator::tests::writer_rejects_reparse_manifest_without_touching_target",
+        "sourcePath": "neothd/src/skills/creator.rs"
+      }
+    ],
+    "sourceAndInputBindings": {
+      "count": 15,
+      "mismatches": 0
+    }
+  },
+  "nativeReceipt": "docs/verification/gold-wave764-group1171.json",
+  "closedCriteria": [
+    "ADOPT31-B1",
+    "ADOPT31-B4",
+    "ADOPT31-D2"
+  ],
+  "remainingGuiFailure": {
+    "test": "w58_gui_callback_runtime_tests::w153_legacy_child_callbacks_project_only_transient_reasoning",
+    "log": "test-136.log",
+    "panicLocation": "neothd-gui/src/main.rs:48417:17",
+    "failedAssertion": "window.get_chat_live_messages().iter().any(|row| row.text.contains(\"W153 visible reply\"))",
+    "exitCode": 101
+  },
+  "rootVerification": [
+    "Four ZIP digests match recorded GitHub digests",
+    "Source snapshots SHA256 and Git blobs match each recorded source head",
+    "159 GUI individual terminals read:158PASS1FAIL; all10 D2 PASS",
+    "55 Windows named test terminals PASS"
+  ],
+  "localExecutableValidationRan": false
+}
