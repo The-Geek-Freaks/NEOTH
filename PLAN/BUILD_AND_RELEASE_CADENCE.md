@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1239 weekly hosted formatting and Core614 admission (2026-09-25):**
+Root imported all four exact b780b09d hosted formatter postimages after API/ZIP,
+inner receipt, historical preimage and final Git blob verification. No semantic
+change or local formatter ran. Core614 run36095012655 completed successfully:
+slim Clippy, test type-check, public CLI build/export and Linux workspace Clippy.
+Its verified generated CLI is byte-identical to the committed reference. The
+artifact has no separate helper/Cargo binding receipt; no broader claim is made.
+Claude039 confirmed the repaired rollover against the actual source hashes;
+its long-horizon retention observation is already an explicit documented limit,
+not permission to erase receipts independently. Group1706/Windows478b780 run,
+Core309 runs and Coreb780 is pending. New weekly runtime acceptance remains open.
+Counts unchanged:Native1919/Group1706/Windows478; ROAD1077done/245open/2partial.
+
 **W1236 canonical weekly archive and restart reconciliation (2026-09-25):**
 The real weekly cron now freezes one immutable intent before archive/queue effects,
 atomically appends its producer-keyed WeeklyReflection while preserving legacy

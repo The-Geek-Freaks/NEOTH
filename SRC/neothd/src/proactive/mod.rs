@@ -171,7 +171,11 @@ fn is_canonical_weekly_reflection_key(value: &str) -> bool {
 }
 
 fn is_canonical_weekly_reflection_producer_key(value: &str) -> bool {
-    value.len() == 64 && value.as_bytes().iter().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+    value.len() == 64
+        && value
+            .as_bytes()
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
 }
 
 fn validate_weekly_reflection_admission(item: &ProactiveItem, producer_key: &str) -> Result<()> {
@@ -1790,19 +1794,26 @@ mod tests {
         let item = weekly_item("2026-W21", 7);
         let producer_key = weekly_producer_key();
         let mut queue = ProactiveQueue::new();
-        assert!(queue
-            .enqueue_weekly_reflection_once(&item, &producer_key)
-            .unwrap());
+        assert!(
+            queue
+                .enqueue_weekly_reflection_once(&item, &producer_key)
+                .unwrap()
+        );
         queue.save_to(&path).unwrap();
         assert_eq!(queue.drain(7, 1), vec![item.clone()]);
         queue.save_to(&path).unwrap();
 
         let mut reloaded = ProactiveQueue::load_from(&path).unwrap();
         assert!(reloaded.peek().is_empty());
-        assert!(!reloaded
-            .enqueue_weekly_reflection_once(&item, &producer_key)
-            .unwrap());
-        assert!(reloaded.peek().is_empty(), "drained receipt must not requeue");
+        assert!(
+            !reloaded
+                .enqueue_weekly_reflection_once(&item, &producer_key)
+                .unwrap()
+        );
+        assert!(
+            reloaded.peek().is_empty(),
+            "drained receipt must not requeue"
+        );
     }
 
     #[test]
@@ -1810,16 +1821,22 @@ mod tests {
         let item = weekly_item("2026-W27", 14);
         let producer_key = weekly_producer_key();
         let mut queue = ProactiveQueue::new();
-        assert!(!queue
-            .weekly_reflection_receipt_matches(&item, &producer_key)
-            .unwrap());
-        assert!(queue
-            .enqueue_weekly_reflection_once(&item, &producer_key)
-            .unwrap());
+        assert!(
+            !queue
+                .weekly_reflection_receipt_matches(&item, &producer_key)
+                .unwrap()
+        );
+        assert!(
+            queue
+                .enqueue_weekly_reflection_once(&item, &producer_key)
+                .unwrap()
+        );
         let before = serde_json::to_vec(&queue).unwrap();
-        assert!(queue
-            .weekly_reflection_receipt_matches(&item, &producer_key)
-            .unwrap());
+        assert!(
+            queue
+                .weekly_reflection_receipt_matches(&item, &producer_key)
+                .unwrap()
+        );
         assert_eq!(
             queue.weekly_reflection_receipt(&item.dedup_key),
             Some(producer_key.as_str())
@@ -1828,9 +1845,11 @@ mod tests {
 
         let mut conflicting = item.clone();
         conflicting.scheduled_for_unix += 1;
-        assert!(queue
-            .weekly_reflection_receipt_matches(&conflicting, &producer_key)
-            .is_err());
+        assert!(
+            queue
+                .weekly_reflection_receipt_matches(&conflicting, &producer_key)
+                .is_err()
+        );
     }
 
     #[test]
@@ -1870,9 +1889,11 @@ mod tests {
         routed.priority = 99;
         queue.enqueue(routed.clone()).unwrap();
 
-        assert!(!queue
-            .enqueue_weekly_reflection_once(&item, &producer_key)
-            .unwrap());
+        assert!(
+            !queue
+                .enqueue_weekly_reflection_once(&item, &producer_key)
+                .unwrap()
+        );
         assert_eq!(queue.peek(), &[routed]);
         assert_eq!(
             queue.weekly_reflection_receipts.get(&item.dedup_key),
@@ -1912,19 +1933,25 @@ mod tests {
         let item = weekly_item("2026-W24", 10);
         let producer_key = weekly_producer_key();
         let mut queue = ProactiveQueue::new();
-        assert!(queue
-            .enqueue_weekly_reflection_once(&item, &producer_key)
-            .unwrap());
+        assert!(
+            queue
+                .enqueue_weekly_reflection_once(&item, &producer_key)
+                .unwrap()
+        );
         let conflicting_producer = "b".repeat(64);
-        assert!(queue
-            .enqueue_weekly_reflection_once(&item, &conflicting_producer)
-            .is_err());
+        assert!(
+            queue
+                .enqueue_weekly_reflection_once(&item, &conflicting_producer)
+                .is_err()
+        );
 
         let mut conflicting_item = item.clone();
         conflicting_item.body.push_str(" changed");
-        assert!(queue
-            .enqueue_weekly_reflection_once(&conflicting_item, &producer_key)
-            .is_err());
+        assert!(
+            queue
+                .enqueue_weekly_reflection_once(&conflicting_item, &producer_key)
+                .is_err()
+        );
     }
 
     #[test]
@@ -1967,9 +1994,11 @@ mod tests {
             );
         }
         let incoming = weekly_item("0099-W01", 12);
-        assert!(queue
-            .enqueue_weekly_reflection_once(&incoming, &producer_key)
-            .is_err());
+        assert!(
+            queue
+                .enqueue_weekly_reflection_once(&incoming, &producer_key)
+                .is_err()
+        );
         assert_eq!(
             queue.weekly_reflection_receipts.len(),
             MAX_WEEKLY_REFLECTION_RECEIPTS,

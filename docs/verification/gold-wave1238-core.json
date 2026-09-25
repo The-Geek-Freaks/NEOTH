@@ -1,0 +1,47 @@
+{
+  "schema": "neoth-hosted-core-root-admission/v1",
+  "run": 36095012655,
+  "source": "614e2273f2a272e75e2c5a4135f5c65580188c0e",
+  "conclusion": "success",
+  "verifiedSteps": [
+    {
+      "name": "Check exact-source slim-core production Clippy",
+      "conclusion": "success",
+      "started_at": "2026-09-25T05:00:02Z",
+      "completed_at": "2026-09-25T05:02:35Z"
+    },
+    {
+      "name": "Type-check core test targets before native validation",
+      "conclusion": "success",
+      "started_at": "2026-09-25T05:02:35Z",
+      "completed_at": "2026-09-25T05:07:29Z"
+    },
+    {
+      "name": "Build current public CLI",
+      "conclusion": "success",
+      "started_at": "2026-09-25T05:07:29Z",
+      "completed_at": "2026-09-25T05:11:47Z"
+    },
+    {
+      "name": "Export generated reference",
+      "conclusion": "success",
+      "started_at": "2026-09-25T05:11:47Z",
+      "completed_at": "2026-09-25T05:11:47Z"
+    },
+    {
+      "name": "Check exact Linux-quality workspace Clippy",
+      "conclusion": "success",
+      "started_at": "2026-09-25T05:11:48Z",
+      "completed_at": "2026-09-25T05:40:08Z"
+    }
+  ],
+  "artifact": {
+    "matchesCurrentCommittedCli": true,
+    "zipSha256": "03FD880AFE1F0D5A9B8FCBB5F464E576FF78475244D4A2BAD56CA1901E5F4FF8",
+    "apiDigest": "sha256:03fd880afe1f0d5a9b8fcbb5f464e576ff78475244d4a2bad56ca1901e5f4ff8",
+    "cliSha256": "B7EF122A5D336BDC35570DF1632724FBD5F1461FF1914FD7B4292AB187335050",
+    "id": 10846769892
+  },
+  "scope": "Exact historical614 slim Clippy,test type-check,public CLI build/export and Linux workspace Clippy. CLI bytes already committed, no import. Artifact has no separate helper/Cargo source binding receipt. Does not establish new weekly batch/release.",
+  "localExecutableValidationRan": false
+}

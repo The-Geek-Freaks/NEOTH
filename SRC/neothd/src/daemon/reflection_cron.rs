@@ -94,7 +94,6 @@ fn read_bounded_state_file(
         }
         Err(error) => Err(format!("read {label} {}: {error:#}", path.display())),
     }
-
 }
 
 // ── GOLD-ADAPT-OH-07: SubconsciousTickState ──────────────────────────────────
@@ -278,10 +277,10 @@ pub fn run_reflection_tick_once(
     min_window_secs: u64,
 ) -> Result<bool, String> {
     use crate::proactive::ProactiveQueue;
-    use crate::reflection::{build_reflection_item, top_topics_last_7_days};
     use crate::reflection::weekly_archive::{
-        open_weekly_archive_session, WeeklyArchiveAppendOutcome, WeeklyArchiveCandidate,
+        WeeklyArchiveAppendOutcome, WeeklyArchiveCandidate, open_weekly_archive_session,
     };
+    use crate::reflection::{build_reflection_item, top_topics_last_7_days};
 
     let iso_week_tag = iso_week_tag_from_unix(now_unix);
     // One retained archive guard serializes rollover recovery through archive,
@@ -377,17 +376,20 @@ pub fn run_reflection_tick_once(
     let archive_outcome = archive
         .append_once(&intent)
         .map_err(|error| format!("append weekly reflection archive: {error:#}"))?;
-    if matches!(archive_outcome, WeeklyArchiveAppendOutcome::ArchivedDurabilityUnknown) {
+    if matches!(
+        archive_outcome,
+        WeeklyArchiveAppendOutcome::ArchivedDurabilityUnknown
+    ) {
         return Err(
             "weekly reflection archive publication durability is unknown; retry must rescan the established intent".to_string(),
         );
     }
     let item = intent.to_proactive_item(intent.generated_ts_unix);
-    let enqueued = ProactiveQueue::modify(&queue_path, |queue| match queue
-        .enqueue_weekly_reflection_once(&item, &intent.producer_key)
-    {
-        Ok(inserted) => (inserted, Ok(inserted)),
-        Err(error) => (false, Err(error)),
+    let enqueued = ProactiveQueue::modify(&queue_path, |queue| {
+        match queue.enqueue_weekly_reflection_once(&item, &intent.producer_key) {
+            Ok(inserted) => (inserted, Ok(inserted)),
+            Err(error) => (false, Err(error)),
+        }
     })
     .map_err(|error| format!("weekly reflection queue reconcile failed: {error:#}"))?
     .map_err(|error| format!("weekly reflection queue conflict: {error:#}"))?;
@@ -411,8 +413,7 @@ pub fn run_reflection_tick_once(
     // operator reads staged observations via `neoth proactive intelligence`.
     if let Some(obs) = current_topics.as_ref().and_then(|topics| {
         crate::reflection::build_reflection_observation(&iso_week_tag, topics, now_unix)
-    })
-        && let Err(e) = crate::reflection::append_staged_observation(home, &obs)
+    }) && let Err(e) = crate::reflection::append_staged_observation(home, &obs)
     {
         warn!(
             error = %e,

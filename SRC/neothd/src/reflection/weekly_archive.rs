@@ -16,9 +16,9 @@ use sha2::{Digest, Sha256};
 
 use crate::proactive::ProactiveItem;
 use crate::skills::store::{
-    atomic_write_private_child_create_new_reported, atomic_write_private_child_reported,
-    open_absolute_bound_directory, open_or_create_bound_lockfile, open_or_create_private_child_dir,
-    read_regular_file_bounded, BoundChildObject, PrivateChildCommit,
+    BoundChildObject, PrivateChildCommit, atomic_write_private_child_create_new_reported,
+    atomic_write_private_child_reported, open_absolute_bound_directory,
+    open_or_create_bound_lockfile, open_or_create_private_child_dir, read_regular_file_bounded,
 };
 
 use super::WeeklyReflection;
@@ -91,7 +91,10 @@ pub(crate) fn open_weekly_archive_session(
     home: &Path,
     iso_week_tag: &str,
 ) -> Result<WeeklyArchiveSession> {
-    anyhow::ensure!(home.is_absolute(), "weekly archive home must be an explicit absolute path");
+    anyhow::ensure!(
+        home.is_absolute(),
+        "weekly archive home must be an explicit absolute path"
+    );
     validate_iso_week_tag(iso_week_tag)?;
     let process_lock = WEEKLY_ARCHIVE_PROCESS_LOCK
         .lock()
@@ -105,17 +108,11 @@ pub(crate) fn open_weekly_archive_session(
         &reflections_display,
     )?;
     let intents_display = reflections_display.join(INTENTS_DIR);
-    let intents = open_or_create_private_child_dir(
-        &reflections,
-        OsStr::new(INTENTS_DIR),
-        &intents_display,
-    )?;
+    let intents =
+        open_or_create_private_child_dir(&reflections, OsStr::new(INTENTS_DIR), &intents_display)?;
     let lock_display = reflections_display.join(ARCHIVE_LOCK_FILE);
-    let (lock_file, lock_binding) = open_or_create_bound_lockfile(
-        &reflections,
-        OsStr::new(ARCHIVE_LOCK_FILE),
-        &lock_display,
-    )?;
+    let (lock_file, lock_binding) =
+        open_or_create_bound_lockfile(&reflections, OsStr::new(ARCHIVE_LOCK_FILE), &lock_display)?;
     lock_file.lock().context("lock weekly archive session")?;
     Ok(WeeklyArchiveSession {
         process_lock: Some(process_lock),
@@ -158,7 +155,11 @@ impl WeeklyArchiveSession {
         self.ensure_lock()?;
         let mut aggregate_bytes = 0usize;
         let mut intents = Vec::new();
-        for entry in self.intents.entries().context("enumerate weekly archive intents")? {
+        for entry in self
+            .intents
+            .entries()
+            .context("enumerate weekly archive intents")?
+        {
             let entry = entry.context("read weekly archive intent directory entry")?;
             let name = entry.file_name();
             let Some(week) = owned_week_from_intent_leaf(&name)? else {
@@ -169,13 +170,8 @@ impl WeeklyArchiveSession {
                 "weekly archive intent inventory exceeds the {MAX_INTENT_INVENTORY_RECORDS}-record limit"
             );
             let display = self.intents_display.join(&name);
-            let bytes = read_regular_file_bounded(
-                &self.intents,
-                &name,
-                &display,
-                MAX_INTENT_BYTES,
-            )
-            .context("read owned weekly archive intent fail closed")?;
+            let bytes = read_regular_file_bounded(&self.intents, &name, &display, MAX_INTENT_BYTES)
+                .context("read owned weekly archive intent fail closed")?;
             aggregate_bytes = aggregate_bytes
                 .checked_add(bytes.len())
                 .context("weekly archive intent inventory byte count overflow")?;
@@ -257,7 +253,9 @@ impl WeeklyArchiveSession {
                 tracing::warn!(%reason, intent = %display.display(), "weekly archive intent published with unknown durability");
                 // The canonical intent may already be live. Do not hand an
                 // unconfirmed in-memory candidate to the queue/archive path.
-                Err(anyhow::anyhow!("weekly archive intent publication durability is unknown; recover by reloading the intent"))
+                Err(anyhow::anyhow!(
+                    "weekly archive intent publication durability is unknown; recover by reloading the intent"
+                ))
             }
             Err(error) => {
                 let error = anyhow::Error::new(error);
@@ -265,8 +263,9 @@ impl WeeklyArchiveSession {
                     self.load_existing_intent()?
                         .context("weekly archive intent appeared but could not be read")
                 } else {
-                    Err(error)
-                        .context("weekly archive intent was not published before the reported failure")
+                    Err(error).context(
+                        "weekly archive intent was not published before the reported failure",
+                    )
                 }
             }
         }
@@ -302,7 +301,8 @@ impl WeeklyArchiveSession {
             "weekly archive has reached the {MAX_ARCHIVE_RECORDS}-record limit"
         );
         let mut replacement = existing;
-        let record = serde_json::to_vec(&expected).context("serialize canonical weekly reflection")?;
+        let record =
+            serde_json::to_vec(&expected).context("serialize canonical weekly reflection")?;
         anyhow::ensure!(
             record.len() <= MAX_ARCHIVE_LINE_BYTES,
             "canonical weekly reflection exceeds per-line archive budget"
@@ -326,7 +326,9 @@ impl WeeklyArchiveSession {
             &display,
             &replacement,
         )? {
-            PrivateChildCommit::PublishedAndSynced => Ok(WeeklyArchiveAppendOutcome::ArchivedAndSynced),
+            PrivateChildCommit::PublishedAndSynced => {
+                Ok(WeeklyArchiveAppendOutcome::ArchivedAndSynced)
+            }
             PrivateChildCommit::PublishedDurabilityUnknown(reason) => {
                 tracing::warn!(%reason, archive = %display.display(), "weekly archive publication durability is unknown");
                 Ok(WeeklyArchiveAppendOutcome::ArchivedDurabilityUnknown)
@@ -502,7 +504,10 @@ fn validate_candidate(candidate: &WeeklyArchiveCandidate) -> Result<()> {
             .checked_add(topic.len())
             .context("weekly archive topic length overflow")?;
     }
-    anyhow::ensure!(topic_total <= MAX_BODY_BYTES, "weekly archive topics exceed aggregate budget");
+    anyhow::ensure!(
+        topic_total <= MAX_BODY_BYTES,
+        "weekly archive topics exceed aggregate budget"
+    );
     anyhow::ensure!(
         !candidate.body.is_empty() && candidate.body.len() <= MAX_BODY_BYTES,
         "weekly archive body exceeds its bounded schema"
@@ -520,8 +525,12 @@ fn validate_iso_week_tag(iso_week_tag: &str) -> Result<()> {
             && bytes[6..].iter().all(u8::is_ascii_digit),
         "weekly archive tag must be canonical YYYY-Www: {iso_week_tag:?}"
     );
-    let year = iso_week_tag[..4].parse::<i32>().context("parse weekly archive ISO year")?;
-    let week = iso_week_tag[6..].parse::<u32>().context("parse weekly archive ISO week")?;
+    let year = iso_week_tag[..4]
+        .parse::<i32>()
+        .context("parse weekly archive ISO year")?;
+    let week = iso_week_tag[6..]
+        .parse::<u32>()
+        .context("parse weekly archive ISO week")?;
     anyhow::ensure!(
         chrono::NaiveDate::from_isoywd_opt(year, week, chrono::Weekday::Mon).is_some(),
         "weekly archive tag is not a real ISO week: {iso_week_tag:?}"
@@ -551,7 +560,11 @@ struct ArchiveScan {
     already_archived: bool,
 }
 
-fn scan_archive(bytes: &[u8], expected_week: &str, expected: &WeeklyReflection) -> Result<ArchiveScan> {
+fn scan_archive(
+    bytes: &[u8],
+    expected_week: &str,
+    expected: &WeeklyReflection,
+) -> Result<ArchiveScan> {
     if bytes.is_empty() {
         return Ok(ArchiveScan {
             record_count: 0,
@@ -566,7 +579,9 @@ fn scan_archive(bytes: &[u8], expected_week: &str, expected: &WeeklyReflection) 
     let mut producer_keys = HashSet::new();
     let mut found = false;
     for (index, raw) in body.split_inclusive('\n').enumerate() {
-        let line = raw.strip_suffix('\n').expect("split_inclusive retains delimiter");
+        let line = raw
+            .strip_suffix('\n')
+            .expect("split_inclusive retains delimiter");
         let line = line.strip_suffix('\r').unwrap_or(line);
         anyhow::ensure!(
             !line.is_empty() && line.len() <= MAX_ARCHIVE_LINE_BYTES,
@@ -585,14 +600,21 @@ fn scan_archive(bytes: &[u8], expected_week: &str, expected: &WeeklyReflection) 
             index + 1
         );
         if let Some(key) = reflection.producer_key.as_deref() {
-            anyhow::ensure!(valid_producer_key(key), "weekly archive line {} has invalid producer key", index + 1);
+            anyhow::ensure!(
+                valid_producer_key(key),
+                "weekly archive line {} has invalid producer key",
+                index + 1
+            );
             anyhow::ensure!(
                 producer_keys.insert(key.to_owned()),
                 "weekly archive contains duplicate producer key at line {}",
                 index + 1
             );
             anyhow::ensure!(
-                key == expected.producer_key.as_deref().expect("canonical producer key"),
+                key == expected
+                    .producer_key
+                    .as_deref()
+                    .expect("canonical producer key"),
                 "weekly archive contains an incompatible producer-keyed record"
             );
             anyhow::ensure!(
@@ -609,7 +631,10 @@ fn scan_archive(bytes: &[u8], expected_week: &str, expected: &WeeklyReflection) 
 }
 
 fn valid_producer_key(key: &str) -> bool {
-    key.len() == PRODUCER_KEY_HEX_LEN && key.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    key.len() == PRODUCER_KEY_HEX_LEN
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 fn error_is_not_found(error: &anyhow::Error) -> bool {
@@ -648,7 +673,8 @@ mod tests {
     fn write_owned_intent(home: &Path, week: &str, candidate: WeeklyArchiveCandidate) {
         let intent = WeeklyArchiveIntent::from_candidate(week, candidate).unwrap();
         std::fs::write(
-            home.join("reflections/weekly-intents").join(intent_leaf_for(week)),
+            home.join("reflections/weekly-intents")
+                .join(intent_leaf_for(week)),
             serialize_intent(&intent).unwrap(),
         )
         .unwrap();
@@ -660,14 +686,28 @@ mod tests {
         let mut session = open_weekly_archive_session(home.path(), "2026-W21").unwrap();
         let intent = session.load_or_create_intent(candidate()).unwrap();
         let legacy = WeeklyReflection {
-            iso_week_tag: "2026-W21".into(), generated_ts_unix: 1, topics: vec!["old".into()],
-            body: "old".into(), tags: vec![], producer_key: None,
+            iso_week_tag: "2026-W21".into(),
+            generated_ts_unix: 1,
+            topics: vec!["old".into()],
+            body: "old".into(),
+            tags: vec![],
+            producer_key: None,
         };
         let archive = home.path().join("reflections/2026-W21.jsonl");
-        std::fs::write(&archive, format!("{}\n", serde_json::to_string(&legacy).unwrap())).unwrap();
+        std::fs::write(
+            &archive,
+            format!("{}\n", serde_json::to_string(&legacy).unwrap()),
+        )
+        .unwrap();
 
-        assert_eq!(session.append_once(&intent).unwrap(), WeeklyArchiveAppendOutcome::ArchivedAndSynced);
-        assert_eq!(session.append_once(&intent).unwrap(), WeeklyArchiveAppendOutcome::AlreadyArchived);
+        assert_eq!(
+            session.append_once(&intent).unwrap(),
+            WeeklyArchiveAppendOutcome::ArchivedAndSynced
+        );
+        assert_eq!(
+            session.append_once(&intent).unwrap(),
+            WeeklyArchiveAppendOutcome::AlreadyArchived
+        );
         let records = std::fs::read_to_string(archive).unwrap();
         assert!(records.starts_with(&serde_json::to_string(&legacy).unwrap()));
         assert_eq!(records.lines().count(), 2);
@@ -682,7 +722,10 @@ mod tests {
         let mut retry = open_weekly_archive_session(home.path(), "2026-W21").unwrap();
         let recovered = retry.load_existing_intent().unwrap().unwrap();
         assert_eq!(recovered, intent);
-        let changed = WeeklyArchiveCandidate { body: "changed".into(), ..candidate() };
+        let changed = WeeklyArchiveCandidate {
+            body: "changed".into(),
+            ..candidate()
+        };
         assert_eq!(retry.load_or_create_intent(changed).unwrap(), intent);
     }
 
@@ -706,10 +749,22 @@ mod tests {
         let archive = home.path().join("reflections/2026-W21.jsonl");
         let mut wrong = intent.to_reflection();
         wrong.iso_week_tag = "2026-W22".into();
-        std::fs::write(&archive, format!("{}\n", serde_json::to_string(&wrong).unwrap())).unwrap();
+        std::fs::write(
+            &archive,
+            format!("{}\n", serde_json::to_string(&wrong).unwrap()),
+        )
+        .unwrap();
         assert!(session.append_once(&intent).is_err());
         let exact = intent.to_reflection();
-        std::fs::write(&archive, format!("{}\n{}\n", serde_json::to_string(&exact).unwrap(), serde_json::to_string(&exact).unwrap())).unwrap();
+        std::fs::write(
+            &archive,
+            format!(
+                "{}\n{}\n",
+                serde_json::to_string(&exact).unwrap(),
+                serde_json::to_string(&exact).unwrap()
+            ),
+        )
+        .unwrap();
         assert!(session.append_once(&intent).is_err());
     }
 
@@ -719,8 +774,12 @@ mod tests {
         let mut session = open_weekly_archive_session(home.path(), "2026-W21").unwrap();
         let intent = session.load_or_create_intent(candidate()).unwrap();
         let legacy = WeeklyReflection {
-            iso_week_tag: "2026-W21".into(), generated_ts_unix: 1, topics: vec!["old".into()],
-            body: "old".into(), tags: vec![], producer_key: None,
+            iso_week_tag: "2026-W21".into(),
+            generated_ts_unix: 1,
+            topics: vec!["old".into()],
+            body: "old".into(),
+            tags: vec![],
+            producer_key: None,
         };
         let line = format!("{}\n", serde_json::to_string(&legacy).unwrap());
         let archive = home.path().join("reflections/2026-W21.jsonl");
@@ -732,7 +791,10 @@ mod tests {
         let canonical = serde_json::to_string(&intent.to_reflection()).unwrap();
         let replayable = format!("{}{}\n", line.repeat(MAX_ARCHIVE_RECORDS - 1), canonical);
         std::fs::write(&archive, replayable).unwrap();
-        assert_eq!(session.append_once(&intent).unwrap(), WeeklyArchiveAppendOutcome::AlreadyArchived);
+        assert_eq!(
+            session.append_once(&intent).unwrap(),
+            WeeklyArchiveAppendOutcome::AlreadyArchived
+        );
     }
 
     #[test]
@@ -750,7 +812,10 @@ mod tests {
             session.append_once(&intent).unwrap(),
             WeeklyArchiveAppendOutcome::ArchivedDurabilityUnknown
         );
-        assert_eq!(session.append_once(&intent).unwrap(), WeeklyArchiveAppendOutcome::AlreadyArchived);
+        assert_eq!(
+            session.append_once(&intent).unwrap(),
+            WeeklyArchiveAppendOutcome::AlreadyArchived
+        );
     }
 
     #[cfg(unix)]
@@ -781,7 +846,10 @@ mod tests {
         assert!(open_weekly_archive_session(home.path(), "2026-W54").is_err());
         assert!(open_weekly_archive_session(home.path(), "+2026-W21").is_err());
         let mut session = open_weekly_archive_session(home.path(), "2026-W21").unwrap();
-        let too_large = WeeklyArchiveCandidate { body: "x".repeat(MAX_BODY_BYTES + 1), ..candidate() };
+        let too_large = WeeklyArchiveCandidate {
+            body: "x".repeat(MAX_BODY_BYTES + 1),
+            ..candidate()
+        };
         assert!(session.load_or_create_intent(too_large).is_err());
     }
 
@@ -792,7 +860,12 @@ mod tests {
         write_owned_intent(home.path(), "2026-W20", candidate());
         write_owned_intent(home.path(), "2026-W21", candidate());
         write_owned_intent(home.path(), "2026-W22", candidate());
-        std::fs::write(home.path().join("reflections/weekly-intents/operator-note.json"), b"foreign").unwrap();
+        std::fs::write(
+            home.path()
+                .join("reflections/weekly-intents/operator-note.json"),
+            b"foreign",
+        )
+        .unwrap();
         let mut session = open_weekly_archive_session(home.path(), "2026-W21").unwrap();
 
         let weeks = session
@@ -818,12 +891,24 @@ mod tests {
         let intents = home.path().join("reflections/weekly-intents");
         std::fs::write(intents.join("2026-W20.json"), b"{bad json}").unwrap();
         let mut session = open_weekly_archive_session(home.path(), "2026-W21").unwrap();
-        assert!(session.list_established_intents_through("2026-W21").is_err());
+        assert!(
+            session
+                .list_established_intents_through("2026-W21")
+                .is_err()
+        );
         drop(session);
 
-        std::fs::write(intents.join("2026-W20.json"), vec![b'x'; MAX_INTENT_BYTES + 1]).unwrap();
+        std::fs::write(
+            intents.join("2026-W20.json"),
+            vec![b'x'; MAX_INTENT_BYTES + 1],
+        )
+        .unwrap();
         let mut session = open_weekly_archive_session(home.path(), "2026-W21").unwrap();
-        assert!(session.list_established_intents_through("2026-W21").is_err());
+        assert!(
+            session
+                .list_established_intents_through("2026-W21")
+                .is_err()
+        );
     }
 
     #[test]
@@ -855,7 +940,11 @@ mod tests {
             }
         }
         let mut session = open_weekly_archive_session(home.path(), "2032-W52").unwrap();
-        assert!(session.list_established_intents_through("2032-W52").is_err());
+        assert!(
+            session
+                .list_established_intents_through("2032-W52")
+                .is_err()
+        );
     }
 
     #[cfg(unix)]
@@ -872,7 +961,11 @@ mod tests {
         )
         .unwrap();
         let mut session = open_weekly_archive_session(home.path(), "2026-W21").unwrap();
-        assert!(session.list_established_intents_through("2026-W21").is_err());
+        assert!(
+            session
+                .list_established_intents_through("2026-W21")
+                .is_err()
+        );
         assert_eq!(std::fs::read_to_string(sentinel).unwrap(), "keep");
     }
 }

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use super::*;
 use crate::proactive::ProactiveQueue;
 use crate::reflection::weekly_archive::{
-    open_weekly_archive_session, WeeklyArchiveCandidate, WeeklyArchiveIntent,
+    WeeklyArchiveCandidate, WeeklyArchiveIntent, open_weekly_archive_session,
 };
 
 const MONDAY: i64 = 1_700_438_400; // 2023-11-20T00:00:00Z
@@ -26,7 +26,10 @@ impl TestHome {
             use std::os::unix::fs::DirBuilderExt as _;
 
             let path = root.path().join("private-home");
-            std::fs::DirBuilder::new().mode(0o700).create(&path).unwrap();
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&path)
+                .unwrap();
             path
         };
         #[cfg(windows)]
@@ -54,7 +57,9 @@ fn queue_path(home: &Path) -> PathBuf {
 }
 
 fn intent_path(home: &Path, week: &str) -> PathBuf {
-    home.join("reflections").join("weekly-intents").join(format!("{week}.json"))
+    home.join("reflections")
+        .join("weekly-intents")
+        .join(format!("{week}.json"))
 }
 
 fn archive_path(home: &Path, week: &str) -> PathBuf {
@@ -77,15 +82,17 @@ fn insert_topic(home: &Path, now_unix: i64, event_id: i64, text: &str) {
     .unwrap();
 }
 
-fn create_intent_only(home: &Path, week: &str, generated_ts_unix: i64, topic: &str) -> WeeklyArchiveIntent {
+fn create_intent_only(
+    home: &Path,
+    week: &str,
+    generated_ts_unix: i64,
+    topic: &str,
+) -> WeeklyArchiveIntent {
     let mut session = open_weekly_archive_session(home, week).unwrap();
-    let body = crate::reflection::build_reflection_item(
-        week,
-        &[topic.to_owned()],
-        generated_ts_unix,
-    )
-    .unwrap()
-    .body;
+    let body =
+        crate::reflection::build_reflection_item(week, &[topic.to_owned()], generated_ts_unix)
+            .unwrap()
+            .body;
     session
         .load_or_create_intent(WeeklyArchiveCandidate {
             generated_ts_unix,
@@ -96,13 +103,21 @@ fn create_intent_only(home: &Path, week: &str, generated_ts_unix: i64, topic: &s
 }
 
 fn queue_items(home: &Path) -> Vec<crate::proactive::ProactiveItem> {
-    ProactiveQueue::load_from(&queue_path(home)).unwrap().peek().to_vec()
+    ProactiveQueue::load_from(&queue_path(home))
+        .unwrap()
+        .peek()
+        .to_vec()
 }
 
 #[test]
 fn weekly_first_tick_archives_queues_and_persists_state() {
     let home = TestHome::new();
-    insert_topic(home.path(), MONDAY, 1, "kubernetes kubernetes rollout planning");
+    insert_topic(
+        home.path(),
+        MONDAY,
+        1,
+        "kubernetes kubernetes rollout planning",
+    );
     let week = iso_week_tag_from_unix(MONDAY);
 
     assert!(run_reflection_tick_once(home.path(), MONDAY, 0).unwrap());
@@ -113,7 +128,10 @@ fn weekly_first_tick_archives_queues_and_persists_state() {
     let queue = queue_items(home.path());
     assert_eq!(queue.len(), 1);
     assert_eq!(queue[0].dedup_key, format!("reflection:weekly:{week}"));
-    assert_eq!(load_tick_state(home.path()).unwrap().last_emitted_unix, MONDAY);
+    assert_eq!(
+        load_tick_state(home.path()).unwrap().last_emitted_unix,
+        MONDAY
+    );
 }
 
 #[test]
@@ -126,22 +144,31 @@ fn weekly_intent_only_retry_succeeds_without_database() {
     assert!(run_reflection_tick_once(home.path(), MONDAY, 86_400).unwrap());
 
     assert!(archive_path(home.path(), &week).exists());
-    assert_eq!(queue_items(home.path()), vec![frozen.to_proactive_item(MONDAY)]);
-    assert_eq!(load_tick_state(home.path()).unwrap().last_emitted_unix, MONDAY);
+    assert_eq!(
+        queue_items(home.path()),
+        vec![frozen.to_proactive_item(MONDAY)]
+    );
+    assert_eq!(
+        load_tick_state(home.path()).unwrap().last_emitted_unix,
+        MONDAY
+    );
 }
 
 #[test]
 fn weekly_archive_before_queue_failure_retries_frozen_intent_after_topics_change() {
     let home = TestHome::new();
     let week = iso_week_tag_from_unix(MONDAY);
-    insert_topic(home.path(), MONDAY, 1, "kubernetes kubernetes original topic");
+    insert_topic(
+        home.path(),
+        MONDAY,
+        1,
+        "kubernetes kubernetes original topic",
+    );
     std::fs::create_dir(queue_path(home.path())).unwrap();
 
     assert!(run_reflection_tick_once(home.path(), MONDAY, 0).is_err());
-    let frozen: WeeklyArchiveIntent = serde_json::from_slice(
-        &std::fs::read(intent_path(home.path(), &week)).unwrap(),
-    )
-    .unwrap();
+    let frozen: WeeklyArchiveIntent =
+        serde_json::from_slice(&std::fs::read(intent_path(home.path(), &week)).unwrap()).unwrap();
     assert!(archive_path(home.path(), &week).exists());
     assert!(!tick_state_path(home.path()).exists());
 
@@ -150,7 +177,10 @@ fn weekly_archive_before_queue_failure_retries_frozen_intent_after_topics_change
     assert!(run_reflection_tick_once(home.path(), MONDAY + 1, 0).unwrap());
 
     let queue = queue_items(home.path());
-    assert_eq!(queue, vec![frozen.to_proactive_item(frozen.generated_ts_unix)]);
+    assert_eq!(
+        queue,
+        vec![frozen.to_proactive_item(frozen.generated_ts_unix)]
+    );
     let archive = std::fs::read_to_string(archive_path(home.path(), &week)).unwrap();
     assert!(archive.contains("kubernetes"));
     assert!(!archive.contains("terraform"));
@@ -160,7 +190,12 @@ fn weekly_archive_before_queue_failure_retries_frozen_intent_after_topics_change
 fn weekly_queue_then_state_failure_recovers_after_drain_without_duplicate() {
     let home = TestHome::new();
     let week = iso_week_tag_from_unix(MONDAY);
-    insert_topic(home.path(), MONDAY, 1, "observability observability tracing");
+    insert_topic(
+        home.path(),
+        MONDAY,
+        1,
+        "observability observability tracing",
+    );
     std::fs::create_dir_all(tick_state_path(home.path())).unwrap();
 
     assert!(run_reflection_tick_once(home.path(), MONDAY, 0).is_err());
@@ -171,10 +206,19 @@ fn weekly_queue_then_state_failure_recovers_after_drain_without_duplicate() {
 
     std::fs::remove_dir(tick_state_path(home.path())).unwrap();
     assert!(!run_reflection_tick_once(home.path(), MONDAY + 1, 0).unwrap());
-    assert!(queue_items(home.path()).is_empty(), "drained receipt must prevent requeue");
-    assert_eq!(load_tick_state(home.path()).unwrap().last_emitted_unix, MONDAY + 1);
+    assert!(
+        queue_items(home.path()).is_empty(),
+        "drained receipt must prevent requeue"
+    );
     assert_eq!(
-        std::fs::read_to_string(archive_path(home.path(), &week)).unwrap().lines().count(),
+        load_tick_state(home.path()).unwrap().last_emitted_unix,
+        MONDAY + 1
+    );
+    assert_eq!(
+        std::fs::read_to_string(archive_path(home.path(), &week))
+            .unwrap()
+            .lines()
+            .count(),
         1,
     );
 }
@@ -208,7 +252,10 @@ fn weekly_oldest_sunday_intent_recovers_on_monday_without_current_candidate_or_d
 
     assert!(archive_path(home.path(), &sunday_week).exists());
     assert!(!intent_path(home.path(), &monday_week).exists());
-    assert_eq!(queue_items(home.path()), vec![old.to_proactive_item(SUNDAY)]);
+    assert_eq!(
+        queue_items(home.path()),
+        vec![old.to_proactive_item(SUNDAY)]
+    );
 }
 
 #[test]
@@ -216,7 +263,12 @@ fn weekly_malformed_oldest_intent_cannot_be_bypassed_by_current_week() {
     let home = TestHome::new();
     let sunday_week = iso_week_tag_from_unix(SUNDAY);
     let monday_week = iso_week_tag_from_unix(MONDAY);
-    insert_topic(home.path(), MONDAY, 1, "current-topic current-topic production");
+    insert_topic(
+        home.path(),
+        MONDAY,
+        1,
+        "current-topic current-topic production",
+    );
     std::fs::create_dir_all(intent_path(home.path(), &sunday_week).parent().unwrap()).unwrap();
     std::fs::write(intent_path(home.path(), &sunday_week), b"{malformed intent").unwrap();
 
@@ -236,12 +288,18 @@ fn weekly_matching_old_receipt_skips_to_current_week_production() {
     old_session.append_once(&old).unwrap();
     drop(old_session);
     ProactiveQueue::modify(&queue_path(home.path()), |queue| {
-        let result = queue.enqueue_weekly_reflection_once(&old.to_proactive_item(SUNDAY), &old.producer_key);
+        let result =
+            queue.enqueue_weekly_reflection_once(&old.to_proactive_item(SUNDAY), &old.producer_key);
         (result.as_ref().is_ok_and(|inserted| *inserted), result)
     })
     .unwrap()
     .unwrap();
-    insert_topic(home.path(), MONDAY, 1, "current-production current-production topic");
+    insert_topic(
+        home.path(),
+        MONDAY,
+        1,
+        "current-production current-production topic",
+    );
 
     assert!(run_reflection_tick_once(home.path(), MONDAY, 0).unwrap());
     assert!(archive_path(home.path(), &sunday_week).exists());
@@ -269,7 +327,9 @@ fn weekly_no_source_no_topics_and_window_suppression_preserve_weekly_data() {
     insert_topic(suppressed.path(), MONDAY, 1, "windowed windowed topic");
     save_tick_state(
         suppressed.path(),
-        &SubconsciousTickState { last_emitted_unix: MONDAY },
+        &SubconsciousTickState {
+            last_emitted_unix: MONDAY,
+        },
     )
     .unwrap();
     assert!(!run_reflection_tick_once(suppressed.path(), MONDAY + 1, 86_400).unwrap());
@@ -291,5 +351,9 @@ fn weekly_repeat_writes_independent_fresh_staged_observation_without_duplicate_q
     assert_eq!(observations.len(), 2);
     assert_eq!(observations[0].generated_ts_unix, MONDAY);
     assert_eq!(observations[1].generated_ts_unix, MONDAY + 1);
-    assert!(observations.iter().all(|observation| observation.surface_only));
+    assert!(
+        observations
+            .iter()
+            .all(|observation| observation.surface_only)
+    );
 }

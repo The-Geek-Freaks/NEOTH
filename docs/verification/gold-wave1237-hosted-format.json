@@ -1,0 +1,66 @@
+{
+  "schema": "neoth-format-receipt/v1",
+  "run": 36100159352,
+  "source": "b780b09dd82491720de3b011ad33a2b2d4602fd2",
+  "failure_step": "Check Rust formatting without compiling",
+  "artifact": {
+    "id": 10849048138,
+    "api_digest": "sha256:81c3948489b0816ee4d9050f90d7ca4d8b2eb4451f3351def9f5a4bb4a0f9e60",
+    "zip_sha256": "81c3948489b0816ee4d9050f90d7ca4d8b2eb4451f3351def9f5a4bb4a0f9e60",
+    "matches": true
+  },
+  "inner_hashes": [
+    {
+      "path": "rustfmt.patch",
+      "expected": "2a1cb9136389898aa97eeff5663cae4821c0480de27d9fd9e8fab2b281436979",
+      "actual": "2a1cb9136389898aa97eeff5663cae4821c0480de27d9fd9e8fab2b281436979",
+      "matches": true
+    },
+    {
+      "path": "source-head.txt",
+      "expected": "3c66922b9511088fbf8f5a76411f1687ac2cf42c29efbbfe4de991d56502fdbd",
+      "actual": "3c66922b9511088fbf8f5a76411f1687ac2cf42c29efbbfe4de991d56502fdbd",
+      "matches": true
+    }
+  ],
+  "receipt_source": "b780b09dd82491720de3b011ad33a2b2d4602fd2",
+  "receipt_source_matches_run": true,
+  "touched_path_count": 4,
+  "preimages_all_match": true,
+  "entries": [
+    {
+      "path": "SRC/neothd/src/daemon/reflection_cron.rs",
+      "preimage_blob": "2587fb850e74b1d91521fac2ee4c66a0813b2ae2",
+      "historical_sha256": "98ff754ab08bd7dd62a90ca28e7301526862509cba9510e6cfdc33990faf5845",
+      "postimage_blob": "bdfee26fcbaf058a7978d320a63b9d06f201796b",
+      "preimage_matches": true,
+      "postimage_present": false
+    },
+    {
+      "path": "SRC/neothd/src/daemon/reflection_cron_weekly_tests.rs",
+      "preimage_blob": "b9f9c2388396d4c15fb9889f57725fca77ed1783",
+      "historical_sha256": "266888d8183e58ca68a4c0dc5f91984cc03526fcc3a9994ebe361b4218fd13d2",
+      "postimage_blob": "99e51dee848360a99b868544c12b7cbc948fb9ea",
+      "preimage_matches": true,
+      "postimage_present": false
+    },
+    {
+      "path": "SRC/neothd/src/proactive/mod.rs",
+      "preimage_blob": "ec814451faeff22fe9f834cf1370f2d944d955ad",
+      "historical_sha256": "a472b2c1d9804af18dfe00815d6c202356ec8537034ec9331a2140d9c5fe2583",
+      "postimage_blob": "19cf02930e7660d04a46ab487536137273490d1f",
+      "preimage_matches": true,
+      "postimage_present": false
+    },
+    {
+      "path": "SRC/neothd/src/reflection/weekly_archive.rs",
+      "preimage_blob": "8c57af51a369d78b2d7afe604499e4c3d82a2f86",
+      "historical_sha256": "a9a8c40e1fb91adcb41a56f083f6068614fe4c8aec2ec917022f7c50269deccb",
+      "postimage_blob": "7d2f0258a3de2590e7cc5420365ff26134fd5b4e",
+      "preimage_matches": true,
+      "postimage_present": false
+    }
+  ],
+  "scope": "Root independently verified API ZIP, every extracted byte, inner hashes, historical normalized Git preimages and all four exact hosted postimages. Formatting only; no local execution.",
+  "rootPostimagesVerified": true
+}
