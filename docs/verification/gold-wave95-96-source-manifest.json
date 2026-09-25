@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T07:32:11Z",
-  "validationStatus": "W1271 exact hosted format + minimal type repair; hosted rerun pending",
+  "capturedUtc": "2026-09-25T07:40:17Z",
+  "validationStatus": "W1276 zeroizing snapshot type repair; hosted runtime pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1677,6 +1677,11 @@
       "sha256": "D646F0B220A495F36C68A22EC1C5B1444B330BEFD827C005FCF5D1D9EAB58055"
     },
     {
+      "path": "docs/verification/gold-wave1276-zeroizing-repair.json",
+      "bytes": 720,
+      "sha256": "B84C47148A53A445089CBE6F7885845474CC631934D485C676A73B4BA2D73727"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -2633,18 +2638,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 356279,
-      "sha256": "E1F7656A5074E4120138E5AA4DBE3A02D4492330E32321F4A14EAEBB081A119D"
+      "bytes": 357186,
+      "sha256": "B57904C77F802BF7E43DA6176DAC382557B3CF2D8BA97772C0A6E02DBE7EF36F"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1375210,
-      "sha256": "4958ADB4C918FD800475BE16D8C662120F7B1BF8EDF8FE67BFF36960989A0046"
+      "bytes": 1376117,
+      "sha256": "BC0EBD8A88E0FD72898A812A52583423BCD1E6BA02DF82B3B81DA0BACAC9DFCF"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1985733,
-      "sha256": "81D2D34A9E671CB8B0FE7AE5B8E994BDDB895C6A0EFE564BEAA7F72A2BBB1628"
+      "bytes": 1986640,
+      "sha256": "D45CBC00DD1650726655C816DE27D4EF1E6C90797554BD6A0094AEDAD70AA952"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4123,8 +4128,8 @@
     },
     {
       "path": "SRC/neothd/src/config/credentials.rs",
-      "bytes": 424811,
-      "sha256": "0E7FB0FA015CA216F0732252BE4E0562D0BAAFF69F06760C6FBFDFF0D8A6EF78"
+      "bytes": 424843,
+      "sha256": "BA8DD4C2DB695599A764A00D0D7A1EB02AA2C7DF66035BC8356136494194137A"
     },
     {
       "path": "SRC/neothd/src/config/doc_ingest.rs",

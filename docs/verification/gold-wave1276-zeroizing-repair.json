@@ -1,0 +1,18 @@
+{
+  "kind": "managed-n8n-zeroizing-snapshot-compile-repair",
+  "failedSource": "a7e6b6ab718c0ddbf4eb6f9210113a473ff8dab7",
+  "run": 36108384251,
+  "preflight": 36108350464,
+  "preflightConclusion": "success",
+  "helperTests": 29,
+  "helperTestsResult": "pass",
+  "compile": "E0507 before product runtime",
+  "repair": "borrow rendered Zeroizing<String> bytes; copy into existing Zeroizing<Vec<u8>>",
+  "path": "SRC/neothd/src/config/credentials.rs",
+  "sha256": "BA8DD4C2DB695599A764A00D0D7A1EB02AA2C7DF66035BC8356136494194137A",
+  "blob": "d9240f4eb6859d01897b68b067d0f1a47e853d43",
+  "localExecutableValidationRan": false,
+  "newTests": 0,
+  "behaviorVerification": "pending hosted rerun",
+  "roadmapClosure": false
+}

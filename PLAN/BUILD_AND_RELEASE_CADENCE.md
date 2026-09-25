@@ -3,6 +3,18 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1276 zeroizing snapshot type repair (2026-09-25):**
+Preflight and Code Quality passed on a7e6b6ab. Product run36108384251 passed
+all29 Python helper tests, then the Rust build exposed E0507: an owned byte
+conversion attempted to move through Zeroizing<String>. The cleanup snapshot
+now borrows its bytes and copies them directly into the existing zeroizing byte
+buffer. This is a narrow type repair; behavior checks still require GitHub.
+W1272 identified the next real lifecycle gap: bootstrap data volumes survive
+uninstall but cannot be selected by a later public install. W1275 is implementing
+an explicit receipt-bound reuse path with volume existence/ownership checks.
+Claude046 was read; automatic keychain deletion remains unimplemented because
+its proposed generation field cannot close the external get/delete race.
+TASK047 requests the actual Paperless uninstall/purge map. No checkbox closes.
 **W1271 managed n8n uninstall hosted repair (2026-09-25):**
 GitHub Group1749 run36107204957 and compiled-product run36107212199 at
 5f258f39 stopped during compilation before behavior tests: E0277 compared a

@@ -1970,7 +1970,8 @@ impl Credentials {
                             &freedom_before,
                             InlineTelegramTokenPolicy::Preserve,
                         )?
-                        .into_bytes(),
+                        .as_bytes()
+                        .to_vec(),
                     ));
                     let credentials_after = credentials.rendered_file_snapshot_preserving_unknown(
                         credentials_path,
