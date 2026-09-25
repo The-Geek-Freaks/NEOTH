@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "status": "AUTHENTIC_HOSTED_ARTIFACTS_IMPORTED_CURRENT_RERUN_PENDING",
+  "cliReference": {
+    "run": 36138775902,
+    "source": "ea30c4880d47fdacb47da99f10b0c1986b87b262",
+    "artifactId": 10865758002,
+    "apiZipSha256": "e56bedbb9d39293ae8db6a4cdb64a2b761024edc38c6b69b2a66b203714c21ad",
+    "sha256": "7C3C08907B1EA7E484B9169BD5E30EBAD5448BB1E57F9ACEC6FC45C126367AF8",
+    "headCliAndCargoProducerPathsUnchanged": true,
+    "observedDifference": "one missing blank line before the next generated command",
+    "failedDocgenRun": 36138116933
+  },
+  "format": {
+    "run": 36140004908,
+    "source": "9faca554b44b8dbcab2525d9398ddb10ebab87d1",
+    "artifactId": 10865892988,
+    "apiZipSha256": "a03211138286b2ce4bb70f7ec91f92e8192b4b1c715ae9d15a132fdbf7d836a3",
+    "postimage": "2308ea795e30c57dd8e21d4029253869b90800de",
+    "path": "SRC/neothd/src/installers/paperless_repair_tests.rs"
+  },
+  "nativeExecutionOrder": {
+    "group": "newest wave first, all1831identities required",
+    "windows": "reverse complete600identity selection, all source/count/hash checks remain",
+    "reason": "surface new feature regressions before long established catalog; no test removal"
+  },
+  "localExecutableValidationRan": false,
+  "roadmapClosures": 0
+}

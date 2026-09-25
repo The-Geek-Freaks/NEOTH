@@ -265,7 +265,8 @@ jobs:
               "wave1391PaperlessStoppedPorts": 2,
           }
           required_names = []
-          for wave_name, expected in expected_wave_counts.items():
+          # Run newest subsystem waves first; all exact catalog identities remain required.
+          for wave_name, expected in reversed(list(expected_wave_counts.items())):
               wave = payload.get(wave_name)
               if not isinstance(wave, dict):
                   raise SystemExit(f"Grouped test matrix has no {wave_name} object")

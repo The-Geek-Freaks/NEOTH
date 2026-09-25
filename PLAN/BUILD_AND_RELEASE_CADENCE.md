@@ -3,6 +3,17 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1395-1397 authentic CLI export, hosted test formatting and earlier feedback (2026-09-25):**
+Group36138116933 at46a037d0 found one missing blank line in the manually extended
+CLI reference. The exact generated export from Core36138775902 at ea30c488 is now
+imported with ZIP/source/content hashes; all CLI/Cargo producer paths are unchanged
+through9faca554. That Core passed production Clippy, test typecheck and CLI build;
+its workspace Clippy remains separate. Preflight36140004908 supplied the exact
+single-test-file rustfmt patch, now imported and Git-postimage-verified. Hosted
+native runs now execute newest waves/selections first while retaining every
+Group1831/Windows600 identity and existing count/source/hash gates. No tests are
+removed. Paperless product36140003129 at9faca554 is still a separate open gate;
+n8n repair remains uncommitted implementation under review. No roadmap closure.
 **W1389-1393 real repair failure, stopped-port correction and diagnostics (2026-09-25):**
 Product36138119831 at46a037d0 compiled and passed30helper tests, then failed with
 paperless_unowned_or_mismatch during the expanded repair sequence. Its old

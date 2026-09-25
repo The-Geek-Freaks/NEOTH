@@ -3251,6 +3251,7 @@ Print the full quarantine item JSON for a specific uid
 ### `neoth paperless repair`
 
 Restore receipt-owned containers using the same pinned images and retained data volumes
+
 ### `neoth paperless status`
 
 Check authenticated local API readiness using stored credentials. Artifact provenance and managed installation readiness remain separate

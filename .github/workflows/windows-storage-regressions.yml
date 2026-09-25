@@ -672,6 +672,14 @@ jobs:
           installers::paperless_lifecycle::paperless_repair::tests::stopped_webserver_with_non_loopback_configured_binding_refuses_before_effect	neothd/src/installers/paperless_repair_tests.rs
           EOF
 
+          # Exercise newest regressions first without dropping any selected identity.
+          python3 - "$evidence/selection.tsv" <<'PY'
+          from pathlib import Path
+          import sys
+          selection = Path(sys.argv[1])
+          selection.write_text("\n".join(reversed(selection.read_text(encoding="utf-8").splitlines())) + "\n", encoding="utf-8", newline="\n")
+          PY
+
           : > "$evidence/source-bindings.tsv"
           expected=0
           selection_valid=1

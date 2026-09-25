@@ -332,7 +332,12 @@ async fn stopped_webserver_uses_configured_loopback_when_runtime_ports_are_empty
         .await
         .unwrap();
     assert_eq!(
-        receipt.services.iter().find(|item| item.service == "webserver").unwrap().action,
+        receipt
+            .services
+            .iter()
+            .find(|item| item.service == "webserver")
+            .unwrap()
+            .action,
         PaperlessRepairAction::Started
     );
 }

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T13:14:44Z",
-  "validationStatus": "STATIC_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-09-25T13:22:14Z",
+  "validationStatus": "HOSTED_ARTIFACTS_IMPORTED_NATIVE_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -123,8 +123,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 25754,
-      "sha256": "4E75BBA5F1A42421E81762EDE059F64FFA1A9FE32ABB84E41FBFF9F128D8FD3B"
+      "bytes": 25862,
+      "sha256": "989CDCCF50E07FCE9DE2EF355A4BA18F878A1CC38544C8F0D0E6712711014F54"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -143,8 +143,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 102821,
-      "sha256": "066263CA6FD11572DC36087ED86201369C282723A583D39A0629D42616D532B8"
+      "bytes": 103213,
+      "sha256": "10F9679C555DCFD7D76804DF14C63C63EA2125BAC8C624F54330F15123B31834"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -183,8 +183,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 254686,
-      "sha256": "20D274DD18946A308CBA0E4B198CF3D68980927EF3E3C55CEF7DC61852C8A51A"
+      "bytes": 254687,
+      "sha256": "7C3C08907B1EA7E484B9169BD5E30EBAD5448BB1E57F9ACEC6FC45C126367AF8"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -1947,6 +1947,11 @@
       "sha256": "C69AEC8683371E648EC1783D2FAB8950D9107240E185CAA8ADDC3E7E8AF619CA"
     },
     {
+      "path": "docs/verification/gold-wave1397-hosted-cli-format-and-order.json",
+      "bytes": 1275,
+      "sha256": "4EFAB18B160B3469017B4B094D2203AE5B1D296A0DA4BFCC0FF3EBB2B2083E21"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -2903,18 +2908,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 387308,
-      "sha256": "80E9E38AF518A2EA6A956D82D0424F2A905E491B387CAF31B3A1DD7A7A4D2888"
+      "bytes": 388210,
+      "sha256": "E729A2FB069A1648C6D5683BB61945B63678B1C07E95D44AD28BF263D55EABA7"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1406239,
-      "sha256": "08F2A4DE535172E568CCA5A88256FA591DB997269706A1F47DE3DBC4A03D2A21"
+      "bytes": 1407141,
+      "sha256": "E4098CC55138C9546571678AEDA43C6414B54263A2875E1273AA68B97B4F5EAB"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2016762,
-      "sha256": "E1CE4F90D49A91CF4F459FB53C2C46C1D5C611A8DC0DE459930663C2A78D7909"
+      "bytes": 2017664,
+      "sha256": "C155863B669980BC081D619219641A387A09D96A2FE2A9E827BA89943F8308AF"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4958,8 +4963,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_repair_tests.rs",
-      "bytes": 23172,
-      "sha256": "1574BC6B5FF0D98B18BFEF58C31ACC39AEFC8A987B154744BAA1555743FB7729"
+      "bytes": 23237,
+      "sha256": "7048CB7779394DF51F53CC7B4160B07F179A0AAFBCDA9BDEB3D14CE20040D1C8"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_repair.rs",
