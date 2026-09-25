@@ -118,11 +118,11 @@ impl ComposeExecutor for PurgeFake {
                     .and_then(|part| part.strip_suffix('$'))
                     .ok_or(LifecycleError::Command("fake_purge_volume_list_shape"))?;
                 return Ok(CommandOutput {
-                    stdout: self
-                        .volumes
-                        .contains(filter)
-                        .then(|| format!("{filter}\n"))
-                        .unwrap_or_default(),
+                    stdout: if self.volumes.contains(filter) {
+                        format!("{filter}\n")
+                    } else {
+                        String::new()
+                    },
                 });
             }
             if let Some(position) = argv.iter().position(|part| part == "rm") {
@@ -300,7 +300,11 @@ async fn happy_path_removes_only_six_receipt_bound_volumes_and_keeps_credentials
     let preview = paperless_purge::preview_at(home.path()).unwrap();
     let credential_path = home.path().join("credentials.yaml");
     // The wrapper fixture uses in-memory credentials; seed the disk preservation witness.
-    std::fs::write(&credential_path, b"paperless_token: fixture-preserved-token\n").unwrap();
+    std::fs::write(
+        &credential_path,
+        b"paperless_token: fixture-preserved-token\n",
+    )
+    .unwrap();
     let credentials_before = std::fs::read(&credential_path).unwrap();
     let receipt = paperless_purge::purge_at_with(home.path(), &preview.confirmation, &mut fake)
         .await

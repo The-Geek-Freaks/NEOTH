@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1367/1370/1371 hosted formatting, lint and fresh-generation failure (2026-09-25):**
+The exact five-file rustfmt artifact10862297651 from Preflight36133444348 at
+9b451a11 is imported with API ZIP digest, receipt hashes and postimage checks.
+Core36129605614 at494fc passed production Clippy, test typecheck and CLI build,
+then failed workspace Clippy on one obfuscated-if-else test expression. That
+expression and its two new rotation-fixture equivalents now use explicit branches.
+Product36132989719 at78bc compiled and passed27helper tests plus retained PDF,
+confirmed purge and read-only repeat, but fresh installation failed authenticated
+readiness; its downloaded receipt also reports cleanup unproven. The preserved
+old token points to the purged database, so the fresh-generation authentication
+transition requires repair. This is a failed product gate, not acceptance. No
+roadmap closure. W1368 backend/W1369 tests and Claude067 repair canary are separate
+in-progress files and excluded from this formatting/lint publication.
 **W1366 hosted rotation-test parse correction (2026-09-25):**
 W1362 is published at78bc0a25. Hosted Preflight36132959815 exposed a missing
 raw-string terminator in the test-double port JSON; the one-character fix leaves

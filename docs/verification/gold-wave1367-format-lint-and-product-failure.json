@@ -1,0 +1,46 @@
+{
+  "kind": "HOSTED_ROTATION_FORMAT_AND_TEST_LINT_REPAIR",
+  "formatSource": "9b451a1122b886dc568aee6c073461f98311f7bb",
+  "formatRun": 36133444348,
+  "artifact": 10862297651,
+  "apiZipDigest": "sha256:b2a2c3532ad922727fe190ee55183a598d8bce5282e0153d135a862b37048453",
+  "patchSha256": "5a08af10c289fcc0d24afecd174ed964134e12697cbf4c9af4b2d4310eb6aa1c",
+  "exactFormatterPostimagesVerified": 5,
+  "postFormatChanges": "Three test Boolean response chains expanded to if/else after actual clippy::obfuscated_if_else failure",
+  "historicalCoreRun": 36129605614,
+  "coreSource": "494fc9a4b5beb57f6f0ecab3f670f43396564438",
+  "productionClippy": "success",
+  "testTypecheck": "success",
+  "cliBuild": "success",
+  "workspaceClippy": "failure",
+  "productRun": 36132989719,
+  "productSource": "78bc0a25999b914c0f9eb16be33490a870ff2d41",
+  "productArtifact": 10862838298,
+  "productApiZipDigest": "sha256:08660c5d6b1f10c3a2b7342b6da1e8b1dec9f8d2dde6a4b1fb4572bed9dc5fed",
+  "productFailure": "paperless_authenticated_readiness_failed on fresh install after confirmed purge",
+  "cleanupProven": false,
+  "sources": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_generation_rotation.rs",
+      "sha256": "595E2528625B6E8C55DD34F9C69CAC3F9EDD46978FB724C2BBA94DD047DB5F58"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
+      "sha256": "487E98B3853565E6CCB21522643098C1E7FE1E433A811B8591949E8C30D5801A"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sha256": "5FBEF4636D5F7A9E44AFA8F10C3D9FF22C605D02D26DEB4B8C6A29065FED3C65"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_purge.rs",
+      "sha256": "9A85061846630A0F867D53BF000629FC1B8B2C878DAA1E6C56C2184F433DD043"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_purge_tests.rs",
+      "sha256": "70B526414CE65E79C1A2EED83D20576CCA2A2B52BE8DE7093B0D6111DC97CB66"
+    }
+  ],
+  "status": "HOSTED_PENDING",
+  "localExecutableValidationRan": false
+}

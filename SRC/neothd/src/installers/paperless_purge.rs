@@ -237,10 +237,14 @@ pub(crate) async fn completed_purge_authority_for_rotation<E: ComposeExecutor>(
     root: &OwnedPaperlessRoot,
     binding: &EnvBinding,
 ) -> Result<Option<PaperlessCompletedPurgeAuthority>, LifecycleError> {
-    let Some(custody) = read_purge_custody(root)? else { return Ok(None) };
+    let Some(custody) = read_purge_custody(root)? else {
+        return Ok(None);
+    };
     let resolved = resolve_purge_chain(root, &root.display)?;
     validate_purge_custody(&custody, &resolved)?;
-    if custody.phase != PaperlessPurgeCustodyPhase::Complete { return Err(LifecycleError::Receipt); }
+    if custody.phase != PaperlessPurgeCustodyPhase::Complete {
+        return Err(LifecycleError::Receipt);
+    }
     revalidate_completed_absence(executor, engine, root, binding, &resolved, &custody).await?;
     let _terminal = read_completed_purge_receipt(root, &resolved)?;
     let state = lifecycle_state_dir(root)?;
@@ -253,14 +257,23 @@ pub(crate) async fn completed_purge_authority_for_rotation<E: ComposeExecutor>(
         ("purge-receipt", PURGE_RECEIPT_NAME),
     ] {
         let bytes = crate::skills::store::read_regular_file_bounded(
-            &state, OsStr::new(name), &root.display.join(RECEIPT_DIR).join(name), RECEIPT_READ_LIMIT,
-        ).map_err(|_| LifecycleError::Receipt)?;
+            &state,
+            OsStr::new(name),
+            &root.display.join(RECEIPT_DIR).join(name),
+            RECEIPT_READ_LIMIT,
+        )
+        .map_err(|_| LifecycleError::Receipt)?;
         sources.push(PaperlessPurgeAuthoritySource {
-            role, live_name: name.to_owned(), sha256: format!("{:x}", Sha256::digest(&bytes)), bytes,
+            role,
+            live_name: name.to_owned(),
+            sha256: format!("{:x}", Sha256::digest(&bytes)),
+            bytes,
         });
     }
     Ok(Some(PaperlessCompletedPurgeAuthority {
-        project: resolved.project, volume_set_id: resolved.volume_set_id, sources,
+        project: resolved.project,
+        volume_set_id: resolved.volume_set_id,
+        sources,
     }))
 }
 
@@ -296,68 +309,158 @@ pub(crate) async fn validate_archived_purge_authority_for_rotation<E: ComposeExe
     authority: &PaperlessCompletedPurgeAuthority,
 ) -> Result<(), LifecycleError> {
     let expected = [
-        ("install", RECEIPT_NAME), ("uninstall", UNINSTALL_RECEIPT_NAME),
-        ("volume-set", VOLUME_SET_NAME), ("purge-custody", PURGE_CUSTODY_NAME),
+        ("install", RECEIPT_NAME),
+        ("uninstall", UNINSTALL_RECEIPT_NAME),
+        ("volume-set", VOLUME_SET_NAME),
+        ("purge-custody", PURGE_CUSTODY_NAME),
         ("purge-receipt", PURGE_RECEIPT_NAME),
     ];
-    if authority.sources.len() != expected.len() { return Err(LifecycleError::Receipt); }
-    for (role, name) in expected {
-        let source = authority.sources.iter().find(|source| source.role == role).ok_or(LifecycleError::Receipt)?;
-        if source.live_name != name || source.sha256 != format!("{:x}", Sha256::digest(&source.bytes)) { return Err(LifecycleError::Receipt); }
+    if authority.sources.len() != expected.len() {
+        return Err(LifecycleError::Receipt);
     }
-    let source = |role| authority.sources.iter().find(|source| source.role == role).ok_or(LifecycleError::Receipt);
+    for (role, name) in expected {
+        let source = authority
+            .sources
+            .iter()
+            .find(|source| source.role == role)
+            .ok_or(LifecycleError::Receipt)?;
+        if source.live_name != name
+            || source.sha256 != format!("{:x}", Sha256::digest(&source.bytes))
+        {
+            return Err(LifecycleError::Receipt);
+        }
+    }
+    let source = |role| {
+        authority
+            .sources
+            .iter()
+            .find(|source| source.role == role)
+            .ok_or(LifecycleError::Receipt)
+    };
     let install_source = source("install")?;
     let uninstall_source = source("uninstall")?;
     let snapshot_source = source("volume-set")?;
     let custody_source = source("purge-custody")?;
     let receipt_source = source("purge-receipt")?;
-    let install: StoredPaperlessInstallReceipt = serde_json::from_slice(&install_source.bytes).map_err(|_| LifecycleError::Receipt)?;
+    let install: StoredPaperlessInstallReceipt =
+        serde_json::from_slice(&install_source.bytes).map_err(|_| LifecycleError::Receipt)?;
     validate_install_receipt(&install, &root.display)?;
-    let volume_set_id = install.volume_set_id.clone().ok_or(LifecycleError::Command("paperless_purge_unsupported_legacy_volume_set"))?;
-    if install.schema_version != 2 || install.volumes.len() != paperless_staging::PAPERLESS_VOLUMES.len()
-        || install.volumes.iter().zip(paperless_staging::PAPERLESS_VOLUMES).any(|(actual, expected)| actual.logical_name != expected.logical_name) {
-        return Err(LifecycleError::Command("paperless_purge_unsupported_legacy_volume_set"));
+    let volume_set_id = install
+        .volume_set_id
+        .clone()
+        .ok_or(LifecycleError::Command(
+            "paperless_purge_unsupported_legacy_volume_set",
+        ))?;
+    if install.schema_version != 2
+        || install.volumes.len() != paperless_staging::PAPERLESS_VOLUMES.len()
+        || install
+            .volumes
+            .iter()
+            .zip(paperless_staging::PAPERLESS_VOLUMES)
+            .any(|(actual, expected)| actual.logical_name != expected.logical_name)
+    {
+        return Err(LifecycleError::Command(
+            "paperless_purge_unsupported_legacy_volume_set",
+        ));
     }
-    let snapshot: PaperlessVolumeSetSnapshot = serde_json::from_slice(&snapshot_source.bytes).map_err(|_| LifecycleError::Receipt)?;
+    let snapshot: PaperlessVolumeSetSnapshot =
+        serde_json::from_slice(&snapshot_source.bytes).map_err(|_| LifecycleError::Receipt)?;
     validate_volume_set_snapshot(&snapshot, &install.project)?;
-    if snapshot.volume_set_id != volume_set_id { return Err(LifecycleError::Command("paperless_purge_volume_set_mismatch")); }
-    let uninstall: PaperlessUninstallReceipt = serde_json::from_slice(&uninstall_source.bytes).map_err(|_| LifecycleError::Receipt)?;
+    if snapshot.volume_set_id != volume_set_id {
+        return Err(LifecycleError::Command(
+            "paperless_purge_volume_set_mismatch",
+        ));
+    }
+    let uninstall: PaperlessUninstallReceipt =
+        serde_json::from_slice(&uninstall_source.bytes).map_err(|_| LifecycleError::Receipt)?;
     validate_uninstall_custody(&uninstall)?;
-    if uninstall.phase != PaperlessUninstallPhase::Complete { return Err(LifecycleError::Command("paperless_purge_requires_completed_uninstall")); }
+    if uninstall.phase != PaperlessUninstallPhase::Complete {
+        return Err(LifecycleError::Command(
+            "paperless_purge_requires_completed_uninstall",
+        ));
+    }
     let install_sha256 = format!("{:x}", Sha256::digest(&install_source.bytes));
-    if uninstall.project != install.project || uninstall.install_receipt_sha256 != install_sha256 { return Err(LifecycleError::Command("paperless_purge_volume_set_mismatch")); }
+    if uninstall.project != install.project || uninstall.install_receipt_sha256 != install_sha256 {
+        return Err(LifecycleError::Command(
+            "paperless_purge_volume_set_mismatch",
+        ));
+    }
     validate_completed_uninstall_snapshot(&uninstall, &install)?;
-    if uninstall.schema_version != 2 || uninstall.retained_volume_snapshot.len() != paperless_staging::PAPERLESS_VOLUMES.len()
-        || uninstall.retained_volume_snapshot.iter().zip(&install.volumes).any(|(retained, installed)| {
-            retained.logical_name != installed.logical_name || retained.name != installed.name
-                || retained.project != installed.project || retained.volume_set_id.as_deref() != Some(volume_set_id.as_str())
-        }) { return Err(LifecycleError::Command("paperless_purge_volume_set_mismatch")); }
+    if uninstall.schema_version != 2
+        || uninstall.retained_volume_snapshot.len() != paperless_staging::PAPERLESS_VOLUMES.len()
+        || uninstall
+            .retained_volume_snapshot
+            .iter()
+            .zip(&install.volumes)
+            .any(|(retained, installed)| {
+                retained.logical_name != installed.logical_name
+                    || retained.name != installed.name
+                    || retained.project != installed.project
+                    || retained.volume_set_id.as_deref() != Some(volume_set_id.as_str())
+            })
+    {
+        return Err(LifecycleError::Command(
+            "paperless_purge_volume_set_mismatch",
+        ));
+    }
     let resolved = ResolvedPurge {
-        project: install.project.clone(), install_receipt_sha256: install_sha256,
-        uninstall_receipt_sha256: format!("{:x}", Sha256::digest(&uninstall_source.bytes)), volume_set_id,
-        volumes: install.volumes.iter().map(|volume| PaperlessPurgeVolume {
-            logical_name: volume.logical_name.clone(), name: volume.name.clone(), state: PaperlessPurgeVolumeState::Prepared,
-        }).collect(),
+        project: install.project.clone(),
+        install_receipt_sha256: install_sha256,
+        uninstall_receipt_sha256: format!("{:x}", Sha256::digest(&uninstall_source.bytes)),
+        volume_set_id,
+        volumes: install
+            .volumes
+            .iter()
+            .map(|volume| PaperlessPurgeVolume {
+                logical_name: volume.logical_name.clone(),
+                name: volume.name.clone(),
+                state: PaperlessPurgeVolumeState::Prepared,
+            })
+            .collect(),
     };
-    if authority.project != resolved.project || authority.volume_set_id != resolved.volume_set_id { return Err(LifecycleError::Receipt); }
-    let custody: PaperlessPurgeCustody = serde_json::from_slice(&custody_source.bytes).map_err(|_| LifecycleError::Receipt)?;
+    if authority.project != resolved.project || authority.volume_set_id != resolved.volume_set_id {
+        return Err(LifecycleError::Receipt);
+    }
+    let custody: PaperlessPurgeCustody =
+        serde_json::from_slice(&custody_source.bytes).map_err(|_| LifecycleError::Receipt)?;
     validate_purge_custody(&custody, &resolved)?;
-    if custody.phase != PaperlessPurgeCustodyPhase::Complete { return Err(LifecycleError::Receipt); }
-    let receipt: PaperlessPurgeReceipt = serde_json::from_slice(&receipt_source.bytes).map_err(|_| LifecycleError::Receipt)?;
-    if receipt.schema_version != 1 || receipt.operation != PURGE_OPERATION || receipt.state != PaperlessPurgeState::VolumesRemoved
-        || receipt.project != resolved.project || receipt.install_receipt_sha256 != resolved.install_receipt_sha256
-        || receipt.uninstall_receipt_sha256 != resolved.uninstall_receipt_sha256 || receipt.volume_set_id != resolved.volume_set_id
-        || receipt.volumes.len() != resolved.volumes.len() || receipt.volumes.iter().zip(&resolved.volumes).any(|(actual, expected)| {
-            actual.logical_name != expected.logical_name || actual.name != expected.name || actual.state != PaperlessPurgeVolumeState::AbsentVerified
-        }) { return Err(LifecycleError::Receipt); }
+    if custody.phase != PaperlessPurgeCustodyPhase::Complete {
+        return Err(LifecycleError::Receipt);
+    }
+    let receipt: PaperlessPurgeReceipt =
+        serde_json::from_slice(&receipt_source.bytes).map_err(|_| LifecycleError::Receipt)?;
+    if receipt.schema_version != 1
+        || receipt.operation != PURGE_OPERATION
+        || receipt.state != PaperlessPurgeState::VolumesRemoved
+        || receipt.project != resolved.project
+        || receipt.install_receipt_sha256 != resolved.install_receipt_sha256
+        || receipt.uninstall_receipt_sha256 != resolved.uninstall_receipt_sha256
+        || receipt.volume_set_id != resolved.volume_set_id
+        || receipt.volumes.len() != resolved.volumes.len()
+        || receipt
+            .volumes
+            .iter()
+            .zip(&resolved.volumes)
+            .any(|(actual, expected)| {
+                actual.logical_name != expected.logical_name
+                    || actual.name != expected.name
+                    || actual.state != PaperlessPurgeVolumeState::AbsentVerified
+            })
+    {
+        return Err(LifecycleError::Receipt);
+    }
     for container in &install.containers {
         if exact_container_present(executor, engine, &container.id, root, binding).await? {
-            return Err(LifecycleError::Command("paperless_purge_requires_completed_uninstall"));
+            return Err(LifecycleError::Command(
+                "paperless_purge_requires_completed_uninstall",
+            ));
         }
     }
     for volume in &resolved.volumes {
         if !exact_volume_absent(executor, engine, root, binding, &volume.name).await? {
-            return Err(LifecycleError::Command("paperless_purge_volume_set_mismatch"));
+            return Err(LifecycleError::Command(
+                "paperless_purge_volume_set_mismatch",
+            ));
         }
     }
     Ok(())
