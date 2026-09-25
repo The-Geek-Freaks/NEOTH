@@ -35,7 +35,10 @@ use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
 use crate::installers::{
-    paperless_lifecycle::{PaperlessLifecycleReceipt, PaperlessUninstallReceipt, install_at, uninstall_at, uninstall_status_at},
+    paperless_lifecycle::{
+        PaperlessLifecycleReceipt, PaperlessUninstallReceipt, install_at, uninstall_at,
+        uninstall_status_at,
+    },
     paperless_readiness::{PaperlessReadiness, probe_configured_paperless_at},
     paperless_staging::{PaperlessStagingView, prepare_at},
 };
@@ -137,22 +140,46 @@ pub async fn run_paperless_command(args: PaperlessArgs, output: OutputFormat) ->
         let home = crate::config::FreedomConfig::default_neoth_home();
         let status = paperless_status_at(&home).await?;
         let uninstall = uninstall_status_at(&home).map_err(anyhow::Error::new)?;
-        print!("{}", render_paperless_status(&status, uninstall.as_ref(), output)?);
+        print!(
+            "{}",
+            render_paperless_status(&status, uninstall.as_ref(), output)?
+        );
         Ok(())
-    } else if matches!(args.action, PaperlessAction::Install | PaperlessAction::Uninstall) {
+    } else if matches!(
+        args.action,
+        PaperlessAction::Install | PaperlessAction::Uninstall
+    ) {
         let uninstall = matches!(args.action, PaperlessAction::Uninstall);
         let home = crate::config::FreedomConfig::default_neoth_home();
         let (_, credentials) =
             crate::config::load_optional_runtime_config_pair_from_path(&home.join("freedom.yaml"))
-                .map_err(|_| anyhow::anyhow!("Paperless lifecycle could not read configured credentials"))?;
+                .map_err(|_| {
+                    anyhow::anyhow!("Paperless lifecycle could not read configured credentials")
+                })?;
         if uninstall {
-            let receipt = uninstall_at(&home, &credentials).await.map_err(anyhow::Error::new)?;
+            let receipt = uninstall_at(&home, &credentials)
+                .await
+                .map_err(anyhow::Error::new)?;
             match output {
-                OutputFormat::Json | OutputFormat::Jsonl => print!("{}\n", serde_json::to_string(&receipt)?),
-                OutputFormat::Table => print!("Paperless safe uninstall: {:?}\nremoved containers: {}\nretained volumes: {}\nnetwork retained: {}\n", receipt.phase, receipt.containers.iter().filter(|container| container.removed).count(), receipt.retained_volumes.len(), receipt.network_retained),
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::to_string(&receipt)?)
+                }
+                OutputFormat::Table => print!(
+                    "Paperless safe uninstall: {:?}\nremoved containers: {}\nretained volumes: {}\nnetwork retained: {}\n",
+                    receipt.phase,
+                    receipt
+                        .containers
+                        .iter()
+                        .filter(|container| container.removed)
+                        .count(),
+                    receipt.retained_volumes.len(),
+                    receipt.network_retained
+                ),
             }
         } else {
-            let receipt = install_at(&home, &credentials).await.map_err(anyhow::Error::new)?;
+            let receipt = install_at(&home, &credentials)
+                .await
+                .map_err(anyhow::Error::new)?;
             print!("{}", render_paperless_lifecycle(&receipt, output)?);
         }
         Ok(())
@@ -179,12 +206,21 @@ async fn paperless_status_at(home: &std::path::Path) -> Result<PaperlessReadines
     Ok(probe_configured_paperless_at(home, &credentials).await)
 }
 
-fn render_paperless_status(status: &PaperlessReadiness, uninstall: Option<&PaperlessUninstallReceipt>, output: OutputFormat) -> Result<String> {
+fn render_paperless_status(
+    status: &PaperlessReadiness,
+    uninstall: Option<&PaperlessUninstallReceipt>,
+    output: OutputFormat,
+) -> Result<String> {
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             let mut value = serde_json::to_value(status)?;
-            value.as_object_mut().ok_or_else(|| anyhow::anyhow!("Paperless status must be an object"))?
-                .insert("safe_uninstall".to_owned(), serde_json::to_value(uninstall)?);
+            value
+                .as_object_mut()
+                .ok_or_else(|| anyhow::anyhow!("Paperless status must be an object"))?
+                .insert(
+                    "safe_uninstall".to_owned(),
+                    serde_json::to_value(uninstall)?,
+                );
             Ok(format!("{}\n", serde_json::to_string(&value)?))
         }
         OutputFormat::Table => Ok(format!(
@@ -194,7 +230,9 @@ fn render_paperless_status(status: &PaperlessReadiness, uninstall: Option<&Paper
             status.version.as_deref().unwrap_or("unknown"),
             status.artifact_verified,
             status.staging,
-            uninstall.map(|receipt| format!("{:?}", receipt.phase)).unwrap_or_else(|| "not_started".to_owned()),
+            uninstall
+                .map(|receipt| format!("{:?}", receipt.phase))
+                .unwrap_or_else(|| "not_started".to_owned()),
         )),
     }
 }
@@ -590,9 +628,10 @@ mod tests {
         assert!(!status.authenticated_api_ready);
         assert!(!status.artifact_verified);
         assert!(status.version.is_none());
-        let json: serde_json::Value =
-            serde_json::from_str(&render_paperless_status(&status, None, OutputFormat::Json).unwrap())
-                .unwrap();
+        let json: serde_json::Value = serde_json::from_str(
+            &render_paperless_status(&status, None, OutputFormat::Json).unwrap(),
+        )
+        .unwrap();
         assert_eq!(json["authenticated_api_ready"], false);
         assert_eq!(json["artifact_verified"], false);
         assert!(json["staging"].is_string());

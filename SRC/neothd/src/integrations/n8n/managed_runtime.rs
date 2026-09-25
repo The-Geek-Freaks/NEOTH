@@ -1487,7 +1487,10 @@ async fn inspect_volume_target(name: &str) -> Result<InspectVolumeOutcome, &'sta
 }
 
 fn volume_listing_matches(name: &str, output: &str) -> Result<(), InspectVolumeOutcome> {
-    let names: Vec<_> = output.lines().filter(|candidate| !candidate.is_empty()).collect();
+    let names: Vec<_> = output
+        .lines()
+        .filter(|candidate| !candidate.is_empty())
+        .collect();
     match names.as_slice() {
         [] => Err(InspectVolumeOutcome::Absent),
         [candidate] if *candidate == name => Ok(()),

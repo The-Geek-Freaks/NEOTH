@@ -162,15 +162,35 @@ struct StoredPaperlessInstallReceipt {
     authenticated_api_ready: bool,
 }
 #[derive(Debug, Clone, Deserialize)]
-struct StoredVerifiedImage { service: String, reference: String, repo_digest: String, config_id: String, os: String, architecture: String }
+struct StoredVerifiedImage {
+    service: String,
+    reference: String,
+    repo_digest: String,
+    config_id: String,
+    os: String,
+    architecture: String,
+}
 #[derive(Debug, Clone, Deserialize)]
-struct StoredVerifiedContainer { service: String, id: String, image_id: String }
+struct StoredVerifiedContainer {
+    service: String,
+    id: String,
+    image_id: String,
+}
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-struct StoredVerifiedVolume { logical_name: String, name: String, project: String }
+struct StoredVerifiedVolume {
+    logical_name: String,
+    name: String,
+    project: String,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PaperlessUninstallPhase { Prepared, RemoveDispatched, ContainersRemoved, Complete }
+pub enum PaperlessUninstallPhase {
+    Prepared,
+    RemoveDispatched,
+    ContainersRemoved,
+    Complete,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaperlessUninstallReceipt {
     pub schema_version: u8,
@@ -180,12 +200,19 @@ pub struct PaperlessUninstallReceipt {
     pub containers: Vec<PaperlessUninstallContainer>,
     pub retained_volumes: Vec<String>,
     pub network_retained: bool,
-    #[serde(default)] pub original_container_ids: Vec<String>,
-    #[serde(default)] pub dispatched_id: Option<String>,
-    #[serde(default)] pub install_receipt_sha256: String,
+    #[serde(default)]
+    pub original_container_ids: Vec<String>,
+    #[serde(default)]
+    pub dispatched_id: Option<String>,
+    #[serde(default)]
+    pub install_receipt_sha256: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PaperlessUninstallContainer { pub service: String, pub id: String, pub removed: bool }
+pub struct PaperlessUninstallContainer {
+    pub service: String,
+    pub id: String,
+    pub removed: bool,
+}
 #[derive(Debug, Clone, Serialize)]
 pub struct VerifiedImage {
     pub service: &'static str,
@@ -498,15 +525,13 @@ async fn install_at_with_readiness<E: RetainedComposeExecutor, R: ReadinessVerif
     compose_environment(&binding)?;
     validate_credentials_origin(credentials, &binding.origin)?;
     let _launch = acquire_launch_guard(&owned, &binding)?;
-    let _operation_lock = paperless_operation_lock::acquire(
-        &owned,
-        OsStr::new(OPERATIONS_LOCK_NAME),
-    )
-    .map_err(map_operation_lock_error)?;
-    if let Some(custody) = read_uninstall_receipt(&owned)? {
-        if custody.phase != PaperlessUninstallPhase::Complete {
-            return Err(LifecycleError::Command("paperless_uninstall_in_progress"));
-        }
+    let _operation_lock =
+        paperless_operation_lock::acquire(&owned, OsStr::new(OPERATIONS_LOCK_NAME))
+            .map_err(map_operation_lock_error)?;
+    if let Some(custody) = read_uninstall_receipt(&owned)?
+        && custody.phase != PaperlessUninstallPhase::Complete
+    {
+        return Err(LifecycleError::Command("paperless_uninstall_in_progress"));
     }
     let bootstrap_backend = valid_token(credentials.paperless_token.as_ref())
         .is_none()
@@ -658,13 +683,16 @@ async fn install_at_with_readiness<E: RetainedComposeExecutor, R: ReadinessVerif
 
 /// Read the durable safe-uninstall custody without selecting Docker, probing
 /// Paperless, acquiring a launch lease, or mutating the staged root.
-pub fn uninstall_status_at(home: &Path) -> Result<Option<PaperlessUninstallReceipt>, LifecycleError> {
+pub fn uninstall_status_at(
+    home: &Path,
+) -> Result<Option<PaperlessUninstallReceipt>, LifecycleError> {
     let root_path = crate::config::InstancePaths::for_home(home).paperless_root;
     match paperless_staging::inspect_at(&root_path).status {
         PaperlessStagingStatus::NotPrepared => Ok(None),
         PaperlessStagingStatus::UnownedOrMismatch => Err(LifecycleError::UnownedOrMismatch),
         PaperlessStagingStatus::PreparedPinned | PaperlessStagingStatus::AlreadyPrepared => {
-            let owned = paperless_staging::open_owned_root_at(&root_path).map_err(|_| LifecycleError::UnownedOrMismatch)?;
+            let owned = paperless_staging::open_owned_root_at(&root_path)
+                .map_err(|_| LifecycleError::UnownedOrMismatch)?;
             read_uninstall_receipt(&owned)
         }
     }
@@ -672,7 +700,10 @@ pub fn uninstall_status_at(home: &Path) -> Result<Option<PaperlessUninstallRecei
 /// Remove only the exact container IDs recorded by the original successful
 /// install receipt. Data volumes, staged files, credentials, and networks are
 /// deliberately retained; destructive purge is a separate confirmed operation.
-pub async fn uninstall_at(home: &Path, credentials: &Credentials) -> Result<PaperlessUninstallReceipt, LifecycleError> {
+pub async fn uninstall_at(
+    home: &Path,
+    credentials: &Credentials,
+) -> Result<PaperlessUninstallReceipt, LifecycleError> {
     uninstall_at_with(home, credentials, &mut DockerExecutor).await
 }
 
@@ -687,66 +718,133 @@ pub async fn uninstall_at_with<E: ComposeExecutor>(
         PaperlessStagingStatus::NotPrepared => return Err(LifecycleError::NotPrepared),
         PaperlessStagingStatus::UnownedOrMismatch => return Err(LifecycleError::UnownedOrMismatch),
     }
-    let owned = paperless_staging::open_owned_root_at(&root_path).map_err(|_| LifecycleError::UnownedOrMismatch)?;
+    let owned = paperless_staging::open_owned_root_at(&root_path)
+        .map_err(|_| LifecycleError::UnownedOrMismatch)?;
     let binding = read_binding(&owned)?;
     validate_credentials_origin(credentials, &binding.origin)?;
     let _launch = acquire_launch_guard(&owned, &binding)?;
-    let _operation_lock = paperless_operation_lock::acquire(
-        &owned,
-        OsStr::new(OPERATIONS_LOCK_NAME),
-    )
-    .map_err(map_operation_lock_error)?;
+    let _operation_lock =
+        paperless_operation_lock::acquire(&owned, OsStr::new(OPERATIONS_LOCK_NAME))
+            .map_err(map_operation_lock_error)?;
     let (installed_bytes, installed) = read_install_receipt_with_bytes(&owned)?;
     validate_install_receipt(&installed, &root_path)?;
     let install_receipt_sha256 = format!("{:x}", Sha256::digest(&installed_bytes));
-    let mut custody = read_uninstall_receipt(&owned)?.unwrap_or_else(|| PaperlessUninstallReceipt {
-        schema_version: 1,
-        operation: "paperless.safe_uninstall".to_owned(),
-        project: installed.project.clone(),
-        phase: PaperlessUninstallPhase::Prepared,
-        containers: installed.containers.iter().map(|container| PaperlessUninstallContainer {
-            service: container.service.clone(), id: container.id.clone(), removed: false,
-        }).collect(),
-        retained_volumes: Vec::new(),
-        network_retained: true,
-        original_container_ids: installed.containers.iter().map(|container| container.id.clone()).collect(),
-        dispatched_id: None,
-        install_receipt_sha256: install_receipt_sha256.clone(),
-    });
-    let installed_ids: Vec<String> = installed.containers.iter().map(|container| container.id.clone()).collect();
+    let mut custody =
+        read_uninstall_receipt(&owned)?.unwrap_or_else(|| PaperlessUninstallReceipt {
+            schema_version: 1,
+            operation: "paperless.safe_uninstall".to_owned(),
+            project: installed.project.clone(),
+            phase: PaperlessUninstallPhase::Prepared,
+            containers: installed
+                .containers
+                .iter()
+                .map(|container| PaperlessUninstallContainer {
+                    service: container.service.clone(),
+                    id: container.id.clone(),
+                    removed: false,
+                })
+                .collect(),
+            retained_volumes: Vec::new(),
+            network_retained: true,
+            original_container_ids: installed
+                .containers
+                .iter()
+                .map(|container| container.id.clone())
+                .collect(),
+            dispatched_id: None,
+            install_receipt_sha256: install_receipt_sha256.clone(),
+        });
+    let installed_ids: Vec<String> = installed
+        .containers
+        .iter()
+        .map(|container| container.id.clone())
+        .collect();
     validate_uninstall_custody(&custody)?;
-    if custody.project != installed.project { return Err(LifecycleError::UnownedOrMismatch); }
-    let custody_pairs: std::collections::BTreeSet<_> = custody.containers.iter().map(|container| (&container.service, &container.id)).collect();
-    let installed_pairs: std::collections::BTreeSet<_> = installed.containers.iter().map(|container| (&container.service, &container.id)).collect();
-    let generation_changed = custody.install_receipt_sha256 != install_receipt_sha256 || custody.original_container_ids != installed_ids;
-    if !generation_changed && custody_pairs != installed_pairs { return Err(LifecycleError::UnownedOrMismatch); }
+    if custody.project != installed.project {
+        return Err(LifecycleError::UnownedOrMismatch);
+    }
+    let custody_pairs: std::collections::BTreeSet<_> = custody
+        .containers
+        .iter()
+        .map(|container| (&container.service, &container.id))
+        .collect();
+    let installed_pairs: std::collections::BTreeSet<_> = installed
+        .containers
+        .iter()
+        .map(|container| (&container.service, &container.id))
+        .collect();
+    let generation_changed = custody.install_receipt_sha256 != install_receipt_sha256
+        || custody.original_container_ids != installed_ids;
+    if !generation_changed && custody_pairs != installed_pairs {
+        return Err(LifecycleError::UnownedOrMismatch);
+    }
     if generation_changed {
         if custody.phase != PaperlessUninstallPhase::Complete
             || custody.install_receipt_sha256 == install_receipt_sha256
-            || custody.original_container_ids.iter().any(|id| installed_ids.contains(id))
+            || custody
+                .original_container_ids
+                .iter()
+                .any(|id| installed_ids.contains(id))
         {
             return Err(LifecycleError::UnownedOrMismatch);
         }
         custody = PaperlessUninstallReceipt {
-            schema_version: 1, operation: "paperless.safe_uninstall".to_owned(), project: installed.project.clone(), phase: PaperlessUninstallPhase::Prepared,
-            containers: installed.containers.iter().map(|container| PaperlessUninstallContainer { service: container.service.clone(), id: container.id.clone(), removed: false }).collect(),
-            retained_volumes: Vec::new(), network_retained: true, original_container_ids: installed_ids.clone(), dispatched_id: None, install_receipt_sha256: install_receipt_sha256.clone(),
+            schema_version: 1,
+            operation: "paperless.safe_uninstall".to_owned(),
+            project: installed.project.clone(),
+            phase: PaperlessUninstallPhase::Prepared,
+            containers: installed
+                .containers
+                .iter()
+                .map(|container| PaperlessUninstallContainer {
+                    service: container.service.clone(),
+                    id: container.id.clone(),
+                    removed: false,
+                })
+                .collect(),
+            retained_volumes: Vec::new(),
+            network_retained: true,
+            original_container_ids: installed_ids.clone(),
+            dispatched_id: None,
+            install_receipt_sha256: install_receipt_sha256.clone(),
         };
     }
-    if custody.operation != "paperless.safe_uninstall" || custody.project != installed.project || custody.install_receipt_sha256 != install_receipt_sha256 || custody.original_container_ids != installed_ids || custody.containers.len() != installed.containers.len() { return Err(LifecycleError::UnownedOrMismatch); }
-    if custody.phase == PaperlessUninstallPhase::Complete { return Ok(custody); }
+    if custody.operation != "paperless.safe_uninstall"
+        || custody.project != installed.project
+        || custody.install_receipt_sha256 != install_receipt_sha256
+        || custody.original_container_ids != installed_ids
+        || custody.containers.len() != installed.containers.len()
+    {
+        return Err(LifecycleError::UnownedOrMismatch);
+    }
+    if custody.phase == PaperlessUninstallPhase::Complete {
+        return Ok(custody);
+    }
     let engine = select_local_engine(executor, &owned).await?;
-    let retained = inspect_owned_volumes(executor, &engine, &installed.project, &owned, &binding).await?;
-    if retained.len() != paperless_staging::PAPERLESS_VOLUMES.len() { return Err(LifecycleError::UnownedOrMismatch); }
+    let retained =
+        inspect_owned_volumes(executor, &engine, &installed.project, &owned, &binding).await?;
+    if retained.len() != paperless_staging::PAPERLESS_VOLUMES.len() {
+        return Err(LifecycleError::UnownedOrMismatch);
+    }
     for index in 0..custody.containers.len() {
         let item = custody.containers[index].clone();
-        let original = installed.containers.iter().find(|container| container.service == item.service && container.id == item.id)
+        let original = installed
+            .containers
+            .iter()
+            .find(|container| container.service == item.service && container.id == item.id)
             .ok_or(LifecycleError::UnownedOrMismatch)?;
-        if !exact_container_id(&item.id) { return Err(LifecycleError::UnownedOrMismatch); }
-        if item.removed { continue; }
-        let present = exact_container_present(executor, &engine, &item.id, &owned, &binding).await?;
+        if !exact_container_id(&item.id) {
+            return Err(LifecycleError::UnownedOrMismatch);
+        }
+        if item.removed {
+            continue;
+        }
+        let present =
+            exact_container_present(executor, &engine, &item.id, &owned, &binding).await?;
         if custody.phase == PaperlessUninstallPhase::RemoveDispatched {
-            if custody.dispatched_id.as_deref() != Some(item.id.as_str()) { return Err(LifecycleError::UnownedOrMismatch); }
+            if custody.dispatched_id.as_deref() != Some(item.id.as_str()) {
+                return Err(LifecycleError::UnownedOrMismatch);
+            }
             // A previous dispatch is never repeated. Only observed absence can advance it.
             if !present {
                 custody.containers[index].removed = true;
@@ -755,40 +853,81 @@ pub async fn uninstall_at_with<E: ComposeExecutor>(
                 write_uninstall_receipt(&owned, &custody)?;
                 continue;
             }
-            return Err(LifecycleError::Command("paperless_uninstall_remove_outcome_ambiguous"));
+            return Err(LifecycleError::Command(
+                "paperless_uninstall_remove_outcome_ambiguous",
+            ));
         }
-        if !present { return Err(LifecycleError::Container("paperless_uninstall_original_container_missing")); }
-        let raw = executor.run(&engine.docker("container", &["inspect", &item.id, "--format", CONTAINER_INSPECT_TEMPLATE]), &root_path).await?;
+        if !present {
+            return Err(LifecycleError::Container(
+                "paperless_uninstall_original_container_missing",
+            ));
+        }
+        let raw = executor
+            .run(
+                &engine.docker(
+                    "container",
+                    &["inspect", &item.id, "--format", CONTAINER_INSPECT_TEMPLATE],
+                ),
+                &root_path,
+            )
+            .await?;
         ensure_stage(&owned, &binding)?;
-        verify_original_container(original, &installed.project, installed.loopback_port, &raw.stdout)?;
+        verify_original_container(
+            original,
+            &installed.project,
+            installed.loopback_port,
+            &raw.stdout,
+        )?;
         custody.phase = PaperlessUninstallPhase::RemoveDispatched;
         custody.dispatched_id = Some(item.id.clone());
         write_uninstall_receipt(&owned, &custody)?;
-        executor.run(&engine.docker("rm", &["-f", &item.id]), &root_path).await?;
+        executor
+            .run(&engine.docker("rm", &["-f", &item.id]), &root_path)
+            .await?;
         ensure_stage(&owned, &binding)?;
         if exact_container_present(executor, &engine, &item.id, &owned, &binding).await? {
-            return Err(LifecycleError::Command("paperless_uninstall_remove_outcome_ambiguous"));
+            return Err(LifecycleError::Command(
+                "paperless_uninstall_remove_outcome_ambiguous",
+            ));
         }
         custody.containers[index].removed = true;
         custody.phase = PaperlessUninstallPhase::Prepared;
         custody.dispatched_id = None;
         write_uninstall_receipt(&owned, &custody)?;
     }
-    if custody.containers.iter().any(|container| !container.removed) { return Err(LifecycleError::Command("paperless_uninstall_incomplete")); }
+    if custody
+        .containers
+        .iter()
+        .any(|container| !container.removed)
+    {
+        return Err(LifecycleError::Command("paperless_uninstall_incomplete"));
+    }
     custody.phase = PaperlessUninstallPhase::ContainersRemoved;
     custody.retained_volumes = retained.into_iter().map(|volume| volume.name).collect();
     write_uninstall_receipt(&owned, &custody)?;
-    let final_volumes = inspect_owned_volumes(executor, &engine, &installed.project, &owned, &binding).await?;
-    if final_volumes.iter().map(|volume| &volume.name).collect::<Vec<_>>() != custody.retained_volumes.iter().collect::<Vec<_>>() {
-        return Err(LifecycleError::Container("paperless_uninstall_volume_changed"));
+    let final_volumes =
+        inspect_owned_volumes(executor, &engine, &installed.project, &owned, &binding).await?;
+    if final_volumes
+        .iter()
+        .map(|volume| &volume.name)
+        .collect::<Vec<_>>()
+        != custody.retained_volumes.iter().collect::<Vec<_>>()
+    {
+        return Err(LifecycleError::Container(
+            "paperless_uninstall_volume_changed",
+        ));
     }
     custody.phase = PaperlessUninstallPhase::Complete;
     write_uninstall_receipt(&owned, &custody)?;
     Ok(custody)
 }
 fn lifecycle_state_dir(root: &OwnedPaperlessRoot) -> Result<cap_std::fs::Dir, LifecycleError> {
-    crate::skills::store::open_real_child_dir(&root.root, OsStr::new(RECEIPT_DIR), &root.display.join(RECEIPT_DIR))
-        .map_err(|_| LifecycleError::UnownedOrMismatch)
+    crate::skills::store::open_real_child_dir(
+        &root.root,
+        OsStr::new(RECEIPT_DIR),
+        &root.display.join(RECEIPT_DIR),
+    )
+    .map_err(|_| LifecycleError::UnownedOrMismatch)
 }
 fn map_operation_lock_error(
     error: paperless_operation_lock::PaperlessOperationLockError,
@@ -803,94 +942,305 @@ fn map_operation_lock_error(
         paperless_operation_lock::PaperlessOperationLockError::Io => LifecycleError::Io,
     }
 }
-fn read_install_receipt_with_bytes(root: &OwnedPaperlessRoot) -> Result<(Vec<u8>, StoredPaperlessInstallReceipt), LifecycleError> {
+fn read_install_receipt_with_bytes(
+    root: &OwnedPaperlessRoot,
+) -> Result<(Vec<u8>, StoredPaperlessInstallReceipt), LifecycleError> {
     ensure_bound(root)?;
     let state = lifecycle_state_dir(root)?;
-    let bytes = crate::skills::store::read_regular_file_bounded(&state, OsStr::new(RECEIPT_NAME), &root.display.join(RECEIPT_DIR).join(RECEIPT_NAME), RECEIPT_READ_LIMIT).map_err(|_| LifecycleError::Receipt)?;
+    let bytes = crate::skills::store::read_regular_file_bounded(
+        &state,
+        OsStr::new(RECEIPT_NAME),
+        &root.display.join(RECEIPT_DIR).join(RECEIPT_NAME),
+        RECEIPT_READ_LIMIT,
+    )
+    .map_err(|_| LifecycleError::Receipt)?;
     let receipt = serde_json::from_slice(&bytes).map_err(|_| LifecycleError::Receipt)?;
     Ok((bytes, receipt))
 }
-fn read_uninstall_receipt(root: &OwnedPaperlessRoot) -> Result<Option<PaperlessUninstallReceipt>, LifecycleError> {
+fn read_uninstall_receipt(
+    root: &OwnedPaperlessRoot,
+) -> Result<Option<PaperlessUninstallReceipt>, LifecycleError> {
     ensure_bound(root)?;
     let state = lifecycle_state_dir(root)?;
-    match crate::skills::store::read_regular_file_bounded(&state, OsStr::new(UNINSTALL_RECEIPT_NAME), &root.display.join(RECEIPT_DIR).join(UNINSTALL_RECEIPT_NAME), RECEIPT_READ_LIMIT) {
+    match crate::skills::store::read_regular_file_bounded(
+        &state,
+        OsStr::new(UNINSTALL_RECEIPT_NAME),
+        &root.display.join(RECEIPT_DIR).join(UNINSTALL_RECEIPT_NAME),
+        RECEIPT_READ_LIMIT,
+    ) {
         Ok(bytes) => {
-            let receipt: PaperlessUninstallReceipt = serde_json::from_slice(&bytes)
-                .map_err(|_| LifecycleError::Receipt)?;
+            let receipt: PaperlessUninstallReceipt =
+                serde_json::from_slice(&bytes).map_err(|_| LifecycleError::Receipt)?;
             validate_uninstall_custody(&receipt)?;
             if receipt.project != project_name(&root.display) {
                 return Err(LifecycleError::UnownedOrMismatch);
             }
             Ok(Some(receipt))
         }
-        Err(error) if error.root_cause().downcast_ref::<std::io::Error>().is_some_and(|cause| cause.kind() == std::io::ErrorKind::NotFound) => Ok(None),
+        Err(error)
+            if error
+                .root_cause()
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|cause| cause.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            Ok(None)
+        }
         Err(_) => Err(LifecycleError::Receipt),
     }
 }
-fn write_uninstall_receipt(root: &OwnedPaperlessRoot, receipt: &PaperlessUninstallReceipt) -> Result<(), LifecycleError> {
+fn write_uninstall_receipt(
+    root: &OwnedPaperlessRoot,
+    receipt: &PaperlessUninstallReceipt,
+) -> Result<(), LifecycleError> {
     ensure_bound(root)?;
     let state = lifecycle_state_dir(root)?;
     let bytes = serde_json::to_vec(receipt).map_err(|_| LifecycleError::Io)?;
-    crate::skills::store::atomic_write_private_child(&state, OsStr::new(UNINSTALL_RECEIPT_NAME), &root.display.join(RECEIPT_DIR).join(UNINSTALL_RECEIPT_NAME), &bytes).map_err(|_| LifecycleError::Io)?;
+    crate::skills::store::atomic_write_private_child(
+        &state,
+        OsStr::new(UNINSTALL_RECEIPT_NAME),
+        &root.display.join(RECEIPT_DIR).join(UNINSTALL_RECEIPT_NAME),
+        &bytes,
+    )
+    .map_err(|_| LifecycleError::Io)?;
     ensure_bound(root)
 }
-fn validate_install_receipt(receipt: &StoredPaperlessInstallReceipt, root: &Path) -> Result<(), LifecycleError> {
-    if receipt.schema_version != 1 || receipt.operation != "install" || receipt.contract_id != paperless_staging::OCI_CONTRACT_ID
-        || !receipt.authenticated_api_ready || receipt.project != project_name(root)
-        || receipt.images.len() != expected_images()?.len() || receipt.containers.len() != expected_images()?.len()
-        || receipt.volumes.len() != paperless_staging::PAPERLESS_VOLUMES.len() { return Err(LifecycleError::Receipt); }
+fn validate_install_receipt(
+    receipt: &StoredPaperlessInstallReceipt,
+    root: &Path,
+) -> Result<(), LifecycleError> {
+    if receipt.schema_version != 1
+        || receipt.operation != "install"
+        || receipt.contract_id != paperless_staging::OCI_CONTRACT_ID
+        || !receipt.authenticated_api_ready
+        || receipt.project != project_name(root)
+        || receipt.images.len() != expected_images()?.len()
+        || receipt.containers.len() != expected_images()?.len()
+        || receipt.volumes.len() != paperless_staging::PAPERLESS_VOLUMES.len()
+    {
+        return Err(LifecycleError::Receipt);
+    }
     for expected in expected_images()? {
-        let image = receipt.images.iter().find(|image| image.service == expected.service).ok_or(LifecycleError::Receipt)?;
-        if image.reference != expected.reference || image.repo_digest != expected.repo_digest || image.config_id.is_empty() || image.os.is_empty() || image.architecture.is_empty() { return Err(LifecycleError::Receipt); }
-        let container = receipt.containers.iter().find(|container| container.service == expected.service).ok_or(LifecycleError::Receipt)?;
-        if !exact_container_id(&container.id) || container.image_id != image.config_id { return Err(LifecycleError::Receipt); }
+        let image = receipt
+            .images
+            .iter()
+            .find(|image| image.service == expected.service)
+            .ok_or(LifecycleError::Receipt)?;
+        if image.reference != expected.reference
+            || image.repo_digest != expected.repo_digest
+            || image.config_id.is_empty()
+            || image.os.is_empty()
+            || image.architecture.is_empty()
+        {
+            return Err(LifecycleError::Receipt);
+        }
+        let container = receipt
+            .containers
+            .iter()
+            .find(|container| container.service == expected.service)
+            .ok_or(LifecycleError::Receipt)?;
+        if !exact_container_id(&container.id) || container.image_id != image.config_id {
+            return Err(LifecycleError::Receipt);
+        }
     }
     for expected in paperless_staging::PAPERLESS_VOLUMES {
-        let volume = receipt.volumes.iter().find(|volume| volume.logical_name == expected.logical_name).ok_or(LifecycleError::Receipt)?;
-        if volume.name != volume_name(&receipt.project, expected.logical_name) || volume.project != receipt.project { return Err(LifecycleError::Receipt); }
-    }
-    Ok(())
-}
-fn validate_uninstall_custody(custody: &PaperlessUninstallReceipt) -> Result<(), LifecycleError> {
-    if custody.schema_version != 1 || custody.operation != "paperless.safe_uninstall" || custody.project.is_empty()
-        || custody.install_receipt_sha256.len() != 64 || !custody.install_receipt_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
-        || !custody.network_retained || custody.original_container_ids.len() != custody.containers.len() || custody.containers.is_empty() { return Err(LifecycleError::Receipt); }
-    let mut ids = std::collections::BTreeSet::new();
-    let mut services = std::collections::BTreeSet::new();
-    for container in &custody.containers {
-        if !exact_container_id(&container.id) || !ids.insert(container.id.as_str()) || !services.insert(container.service.as_str())
-            || !custody.original_container_ids.iter().any(|id| id == &container.id) { return Err(LifecycleError::Receipt); }
-    }
-    if custody.original_container_ids.iter().any(|id| !exact_container_id(id)) || custody.original_container_ids.iter().collect::<std::collections::BTreeSet<_>>().len() != custody.original_container_ids.len() { return Err(LifecycleError::Receipt); }
-    let expected_services: std::collections::BTreeSet<_> = expected_images()?.into_iter().map(|image| image.service).collect();
-    if services.len() != expected_services.len() || !services.iter().all(|service| expected_services.contains(service)) { return Err(LifecycleError::Receipt); }
-    match custody.phase {
-        PaperlessUninstallPhase::Prepared => if custody.dispatched_id.is_some() { return Err(LifecycleError::Receipt); },
-        PaperlessUninstallPhase::RemoveDispatched => if custody.dispatched_id.as_ref().is_none_or(|id| !exact_container_id(id) || !custody.containers.iter().any(|container| !container.removed && &container.id == id)) { return Err(LifecycleError::Receipt); },
-        PaperlessUninstallPhase::ContainersRemoved => if custody.dispatched_id.is_some() || custody.containers.iter().any(|container| !container.removed) { return Err(LifecycleError::Receipt); },
-        PaperlessUninstallPhase::Complete => {
-            if custody.dispatched_id.is_some() || custody.containers.iter().any(|container| !container.removed) || custody.retained_volumes.len() != paperless_staging::PAPERLESS_VOLUMES.len() { return Err(LifecycleError::Receipt); }
-            for volume in paperless_staging::PAPERLESS_VOLUMES { if !custody.retained_volumes.iter().any(|name| name == &volume_name(&custody.project, volume.logical_name)) { return Err(LifecycleError::Receipt); } }
+        let volume = receipt
+            .volumes
+            .iter()
+            .find(|volume| volume.logical_name == expected.logical_name)
+            .ok_or(LifecycleError::Receipt)?;
+        if volume.name != volume_name(&receipt.project, expected.logical_name)
+            || volume.project != receipt.project
+        {
+            return Err(LifecycleError::Receipt);
         }
     }
     Ok(())
 }
-fn exact_container_id(value: &str) -> bool { value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) }
-async fn exact_container_present<E: ComposeExecutor>(executor: &mut E, engine: &Engine, id: &str, root: &OwnedPaperlessRoot, binding: &EnvBinding) -> Result<bool, LifecycleError> {
+fn validate_uninstall_custody(custody: &PaperlessUninstallReceipt) -> Result<(), LifecycleError> {
+    if custody.schema_version != 1
+        || custody.operation != "paperless.safe_uninstall"
+        || custody.project.is_empty()
+        || custody.install_receipt_sha256.len() != 64
+        || !custody
+            .install_receipt_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+        || !custody.network_retained
+        || custody.original_container_ids.len() != custody.containers.len()
+        || custody.containers.is_empty()
+    {
+        return Err(LifecycleError::Receipt);
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    let mut services = std::collections::BTreeSet::new();
+    for container in &custody.containers {
+        if !exact_container_id(&container.id)
+            || !ids.insert(container.id.as_str())
+            || !services.insert(container.service.as_str())
+            || !custody
+                .original_container_ids
+                .iter()
+                .any(|id| id == &container.id)
+        {
+            return Err(LifecycleError::Receipt);
+        }
+    }
+    if custody
+        .original_container_ids
+        .iter()
+        .any(|id| !exact_container_id(id))
+        || custody
+            .original_container_ids
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != custody.original_container_ids.len()
+    {
+        return Err(LifecycleError::Receipt);
+    }
+    let expected_services: std::collections::BTreeSet<_> = expected_images()?
+        .into_iter()
+        .map(|image| image.service)
+        .collect();
+    if services.len() != expected_services.len()
+        || !services
+            .iter()
+            .all(|service| expected_services.contains(service))
+    {
+        return Err(LifecycleError::Receipt);
+    }
+    match custody.phase {
+        PaperlessUninstallPhase::Prepared => {
+            if custody.dispatched_id.is_some() {
+                return Err(LifecycleError::Receipt);
+            }
+        }
+        PaperlessUninstallPhase::RemoveDispatched => {
+            if custody.dispatched_id.as_ref().is_none_or(|id| {
+                !exact_container_id(id)
+                    || !custody
+                        .containers
+                        .iter()
+                        .any(|container| !container.removed && &container.id == id)
+            }) {
+                return Err(LifecycleError::Receipt);
+            }
+        }
+        PaperlessUninstallPhase::ContainersRemoved => {
+            if custody.dispatched_id.is_some()
+                || custody
+                    .containers
+                    .iter()
+                    .any(|container| !container.removed)
+            {
+                return Err(LifecycleError::Receipt);
+            }
+        }
+        PaperlessUninstallPhase::Complete => {
+            if custody.dispatched_id.is_some()
+                || custody
+                    .containers
+                    .iter()
+                    .any(|container| !container.removed)
+                || custody.retained_volumes.len() != paperless_staging::PAPERLESS_VOLUMES.len()
+            {
+                return Err(LifecycleError::Receipt);
+            }
+            for volume in paperless_staging::PAPERLESS_VOLUMES {
+                if !custody
+                    .retained_volumes
+                    .iter()
+                    .any(|name| name == &volume_name(&custody.project, volume.logical_name))
+                {
+                    return Err(LifecycleError::Receipt);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+fn exact_container_id(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+async fn exact_container_present<E: ComposeExecutor>(
+    executor: &mut E,
+    engine: &Engine,
+    id: &str,
+    root: &OwnedPaperlessRoot,
+    binding: &EnvBinding,
+) -> Result<bool, LifecycleError> {
     ensure_stage(root, binding)?;
-    let listed = executor.run(&engine.docker("container", &["ls", "--all", "--filter", &format!("id={id}"), "--no-trunc", "--format", "{{.ID}}"]), &root.display).await?;
+    let listed = executor
+        .run(
+            &engine.docker(
+                "container",
+                &[
+                    "ls",
+                    "--all",
+                    "--filter",
+                    &format!("id={id}"),
+                    "--no-trunc",
+                    "--format",
+                    "{{.ID}}",
+                ],
+            ),
+            &root.display,
+        )
+        .await?;
     ensure_stage(root, binding)?;
     let output = listed.stdout.trim();
-    if output.is_empty() { Ok(false) } else if output == id { Ok(true) } else { Err(LifecycleError::UnownedOrMismatch) }
+    if output.is_empty() {
+        Ok(false)
+    } else if output == id {
+        Ok(true)
+    } else {
+        Err(LifecycleError::UnownedOrMismatch)
+    }
 }
-fn verify_original_container(expected: &StoredVerifiedContainer, project: &str, port: u16, raw: &str) -> Result<(), LifecycleError> {
-    let actual: DockerContainer = serde_json::from_str(raw).map_err(|_| LifecycleError::Container("paperless_container_inspect_invalid"))?;
-    if actual.id != expected.id || actual.image != expected.image_id
+fn verify_original_container(
+    expected: &StoredVerifiedContainer,
+    project: &str,
+    port: u16,
+    raw: &str,
+) -> Result<(), LifecycleError> {
+    let actual: DockerContainer = serde_json::from_str(raw)
+        .map_err(|_| LifecycleError::Container("paperless_container_inspect_invalid"))?;
+    if actual.id != expected.id
+        || actual.image != expected.image_id
         || actual.config.labels.get("com.docker.compose.project") != Some(&project.to_owned())
-        || actual.config.labels.get("com.docker.compose.service") != Some(&expected.service) { return Err(LifecycleError::UnownedOrMismatch); }
-    if expected.service == "webserver" && !actual.network.ports.get("8000/tcp").and_then(|entry| entry.as_ref()).is_some_and(|entries| entries.len() == 1 && entries[0].host_ip == "127.0.0.1" && entries[0].host_port == port.to_string()) { return Err(LifecycleError::UnownedOrMismatch); }
-    let expected_mounts: Vec<_> = paperless_staging::PAPERLESS_VOLUMES.iter().filter(|volume| volume.service == expected.service).collect();
-    if actual.mounts.len() != expected_mounts.len() || expected_mounts.iter().any(|volume| !actual.mounts.iter().any(|mount| mount.kind == "volume" && mount.name == volume_name(project, volume.logical_name) && mount.destination == volume.destination)) { return Err(LifecycleError::UnownedOrMismatch); }
+        || actual.config.labels.get("com.docker.compose.service") != Some(&expected.service)
+    {
+        return Err(LifecycleError::UnownedOrMismatch);
+    }
+    if expected.service == "webserver"
+        && !actual
+            .network
+            .ports
+            .get("8000/tcp")
+            .and_then(|entry| entry.as_ref())
+            .is_some_and(|entries| {
+                entries.len() == 1
+                    && entries[0].host_ip == "127.0.0.1"
+                    && entries[0].host_port == port.to_string()
+            })
+    {
+        return Err(LifecycleError::UnownedOrMismatch);
+    }
+    let expected_mounts: Vec<_> = paperless_staging::PAPERLESS_VOLUMES
+        .iter()
+        .filter(|volume| volume.service == expected.service)
+        .collect();
+    if actual.mounts.len() != expected_mounts.len()
+        || expected_mounts.iter().any(|volume| {
+            !actual.mounts.iter().any(|mount| {
+                mount.kind == "volume"
+                    && mount.name == volume_name(project, volume.logical_name)
+                    && mount.destination == volume.destination
+            })
+        })
+    {
+        return Err(LifecycleError::UnownedOrMismatch);
+    }
     Ok(())
 }
 struct Engine {
@@ -1920,7 +2270,13 @@ mod tests {
                 let service = argv.last().ok_or(LifecycleError::Command("fake_ps"))?;
                 return Ok(CommandOutput {
                     stdout: if self.exact_container_ids {
-                        format!("{}\n", uninstall_test_container_id(service, self.uninstall_test_container_seed)?)
+                        format!(
+                            "{}\n",
+                            uninstall_test_container_id(
+                                service,
+                                self.uninstall_test_container_seed
+                            )?
+                        )
                     } else {
                         format!("{service}-container\n")
                     },
@@ -2022,24 +2378,40 @@ mod tests {
         credentials.paperless_token = Some(SecretString::from("existing-token"));
         (home, credentials)
     }
-    pub(super) async fn installed_home_for_uninstall_test() -> (tempfile::TempDir, Credentials, Vec<u8>) {
+    pub(super) async fn installed_home_for_uninstall_test()
+    -> (tempfile::TempDir, Credentials, Vec<u8>) {
         let (home, credentials) = staged_home();
-        let mut executor = FakeExecutor { exact_container_ids: true, ..Default::default() };
+        let mut executor = FakeExecutor {
+            exact_container_ids: true,
+            ..Default::default()
+        };
         let ready = EventuallyReady(AtomicUsize::new(0));
-        install_at_with_readiness(home.path(), &credentials, &mut executor, &ready).await.unwrap();
-        (home, credentials, std::fs::read(lifecycle_receipt_path(home.path())).unwrap())
+        install_at_with_readiness(home.path(), &credentials, &mut executor, &ready)
+            .await
+            .unwrap();
+        let receipt = std::fs::read(lifecycle_receipt_path(home.path())).unwrap();
+        (
+            home,
+            credentials,
+            receipt,
+        )
     }
     fn uninstall_test_container_id(service: &str, seed: u8) -> Result<String, LifecycleError> {
         let digit = match (seed, service) {
-            (0, "webserver") => 'a', (0, "broker") => 'b', (0, "db") => 'c',
-            (1, "webserver") => 'd', (1, "broker") => 'e', (1, "db") => 'f',
+            (0, "webserver") => 'a',
+            (0, "broker") => 'b',
+            (0, "db") => 'c',
+            (1, "webserver") => 'd',
+            (1, "broker") => 'e',
+            (1, "db") => 'f',
             _ => return Err(LifecycleError::Container("fake_container")),
         };
         Ok(digit.to_string().repeat(64))
     }
     fn uninstall_test_container_service(id: &str) -> Result<&'static str, LifecycleError> {
         match id.as_bytes().first().copied() {
-            Some(b'a') | Some(b'd') => Ok("webserver"), Some(b'b') | Some(b'e') => Ok("broker"),
+            Some(b'a') | Some(b'd') => Ok("webserver"),
+            Some(b'b') | Some(b'e') => Ok("broker"),
             Some(b'c') | Some(b'f') => Ok("db"),
             _ => Err(LifecycleError::Container("fake_container")),
         }
@@ -2048,7 +2420,11 @@ mod tests {
         home: &Path,
         credentials: &Credentials,
     ) -> Result<PaperlessLifecycleReceipt, LifecycleError> {
-        let mut executor = FakeExecutor { exact_container_ids: true, uninstall_test_container_seed: 1, ..Default::default() };
+        let mut executor = FakeExecutor {
+            exact_container_ids: true,
+            uninstall_test_container_seed: 1,
+            ..Default::default()
+        };
         let ready = EventuallyReady(AtomicUsize::new(0));
         install_at_with_readiness(home, credentials, &mut executor, &ready).await
     }
@@ -2291,8 +2667,6 @@ mod tests {
         assert!(!exact_container_id(&"a".repeat(63)));
         assert!(!exact_container_id(&("a".repeat(63) + "-")));
     }
-
-
 }
 
 #[cfg(test)]

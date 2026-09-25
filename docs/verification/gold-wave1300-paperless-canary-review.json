@@ -1,0 +1,30 @@
+{
+  "kind": "ROOT_REVIEWED_PAPERLESS_RETAINED_DOCUMENT_CANARY",
+  "base": "5f7b9b344ad52b148f35af7a0d140828c756923f",
+  "review": "work/gold-20260906/wave1297-paperless-canary-review/REPORT.md",
+  "reviewSha256": "8144B1800C098751C99897870B469AAEDF0490BB5DE242497DB272072A6D6EBC",
+  "sources": [
+    {
+      "path": "packaging/paperless_product_canary.py",
+      "sha256": "9821E22DB296356287935FC12DAE63D333378B64BEBE3C7BF5D8D1B2BF0043A7"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "sha256": "75EA152E61026BD0263B18E9C1F2AAE811F13299115A8F468DD28E0C871DF2FF"
+    }
+  ],
+  "pythonHelperTests": 17,
+  "upstream": "7575d6078227ebdb4cf443f263d53ebc7575aa37",
+  "claudeTask": 53,
+  "claudeResultSha256": "D897FA1E2F085B456AE84888C6896C4387BB19E14931F7E3835C3E3F9AD6E650",
+  "scope": "Actual visible-text PDF upload, bounded APIv10 lowercase task polling, same document id/title and byte-identical original download before/after safe uninstall and retained-data reinstall. Exact3ID/sixVolume custody, original receipt hash/bytes and read-only repeat, disjoint new IDs, scoped fixture cleanup.",
+  "rootCorrections": [
+    "Rejected earlier incorrect uppercase APIv10 fixtures after Claude053 exact contract",
+    "Corrected invalid PDF xref offsets; actual stream58/object offsets9,58,115,241,348/xref418 independently calculated",
+    "Required exact per-container coverage and byte-bound original custody repeat",
+    "Bound new operation-lock and child-test source inputs"
+  ],
+  "hosted": "pending",
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

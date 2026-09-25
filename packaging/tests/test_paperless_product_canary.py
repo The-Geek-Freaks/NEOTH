@@ -1,6 +1,7 @@
 """Pure boundary checks for the hosted Paperless product canary."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -28,6 +29,22 @@ def install_receipt() -> dict:
         "images": [{"service": service, "reference": reference, "config_id": configs[service]} for service, reference in canary.IMAGES.items()],
         "containers": [{"service": service, "id": f"{index:064x}", "image_id": configs[service]} for index, service in enumerate(canary.IMAGES, start=10)],
         "volumes": [{"logical_name": logical, "name": f"{project}_{logical}", "project": project} for logical, _, _ in canary.VOLUMES],
+    }
+
+
+def install_receipt_bytes() -> bytes:
+    return json.dumps(install_receipt(), sort_keys=True).encode("utf-8")
+
+
+def uninstall_receipt() -> dict:
+    installed = install_receipt()
+    ids = [row["id"] for row in installed["containers"]]
+    return {
+        "schema_version": 1, "operation": "paperless.safe_uninstall", "project": installed["project"],
+        "phase": "complete", "network_retained": True, "original_container_ids": ids,
+        "install_receipt_sha256": hashlib.sha256(install_receipt_bytes()).hexdigest(),
+        "retained_volumes": [row["name"] for row in installed["volumes"]],
+        "containers": [{"service": service, "id": identifier, "removed": True} for service, identifier in zip(canary.IMAGES, ids, strict=True)],
     }
 
 
@@ -103,3 +120,111 @@ class CustodyTests(unittest.TestCase):
     def test_cleanup_reports_fixed_failure_category(self) -> None:
         with patch.object(canary, "docker_json", side_effect=canary.Failure("container_identity_invalid")):
             self.assertEqual(canary.cleanup("project", {"webserver": "a", "broker": "b", "db": "c"}, ("a" * 64, "b" * 64, "c" * 64, "one", "two", "three", "four", "five", "six"), 18001), (False, "cleanup_ownership_unproven"))
+
+    def test_uninstall_receipt_requires_exact_original_ids_and_all_six_retained_volumes(self) -> None:
+        receipt = uninstall_receipt()
+        installed = install_receipt()
+        ids = tuple(row["id"] for row in installed["containers"])
+        volumes = tuple(row["name"] for row in installed["volumes"])
+        canary.validate_uninstall(receipt, installed["project"], ids, volumes, install_receipt_bytes())
+        bad_ids = uninstall_receipt(); bad_ids["original_container_ids"][0] = "f" * 64
+        with self.assertRaises(canary.Failure): canary.validate_uninstall(bad_ids, installed["project"], ids, volumes, install_receipt_bytes())
+        missing_volume = uninstall_receipt(); missing_volume["retained_volumes"].pop()
+        with self.assertRaises(canary.Failure): canary.validate_uninstall(missing_volume, installed["project"], ids, volumes, install_receipt_bytes())
+        wrong_phase = uninstall_receipt(); wrong_phase["phase"] = "containers_removed"
+        with self.assertRaises(canary.Failure): canary.validate_uninstall(wrong_phase, installed["project"], ids, volumes, install_receipt_bytes())
+        duplicate = uninstall_receipt(); duplicate["containers"][1]["id"] = duplicate["containers"][0]["id"]
+        with self.assertRaises(canary.Failure): canary.validate_uninstall(duplicate, installed["project"], ids, volumes, install_receipt_bytes())
+        omitted = uninstall_receipt(); omitted["containers"].pop()
+        with self.assertRaises(canary.Failure): canary.validate_uninstall(omitted, installed["project"], ids, volumes, install_receipt_bytes())
+        hash_mismatch = uninstall_receipt(); hash_mismatch["install_receipt_sha256"] = "0" * 64
+        with self.assertRaises(canary.Failure): canary.validate_uninstall(hash_mismatch, installed["project"], ids, volumes, install_receipt_bytes())
+
+    def test_persisted_install_receipt_requires_exact_expected_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); state = home / "paperless" / "state"; state.mkdir(parents=True)
+            path = state / ".neoth-paperless-lifecycle-receipt.v1.json"; path.write_bytes(install_receipt_bytes())
+            expected = canary.validate_install(install_receipt(), 18001)
+            self.assertEqual(canary.persisted_install_receipt(home, expected, 18001), install_receipt_bytes())
+            mutated = install_receipt(); mutated["project"] = "foreign"
+            path.write_bytes(json.dumps(mutated, sort_keys=True).encode("utf-8"))
+            with self.assertRaises(canary.Failure): canary.persisted_install_receipt(home, expected, 18001)
+
+    def test_persisted_complete_custody_bytes_must_remain_identical_on_repeat(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); state = home / "paperless" / "state"; state.mkdir(parents=True)
+            receipt = uninstall_receipt(); raw = json.dumps(receipt, sort_keys=True).encode("utf-8")
+            path = state / ".neoth-paperless-uninstall-custody.v1.json"; path.write_bytes(raw)
+            first = canary.persisted_uninstall_receipt(home, receipt)
+            second = canary.persisted_uninstall_receipt(home, receipt)
+            self.assertEqual(first, second)
+            path.write_bytes(raw + b"\n")
+            self.assertNotEqual(path.read_bytes(), first)
+
+    def test_marker_task_requires_one_matching_success_document(self) -> None:
+        task_id = "12345678-1234-1234-1234-123456789abc"
+        success = {"results": [{"task_id": task_id, "status": "success", "related_document_ids": [42]}]}
+        with patch.object(canary, "paperless_api_json", return_value=success):
+            self.assertEqual(canary.task_document_id(18001, "token", task_id), (42, 1))
+        for response in (
+            {"results": [{"task_id": task_id, "status": "success", "related_document_ids": []}]},
+            {"results": [{"task_id": task_id, "status": "success", "related_document_ids": [1, 2]}]},
+            {"results": [{"task_id": task_id, "status": "failure", "related_document_ids": []}]},
+            {"results": [{"task_id": task_id, "status": "revoked", "related_document_ids": []}]},
+            {"results": [{"task_id": task_id, "status": "SUCCESS", "related_document_ids": [42]}]},
+            {"results": [{"task_id": task_id, "status": "unknown", "related_document_ids": []}]},
+            {"results": [{"task_id": task_id, "status": "pending"}, {"task_id": task_id, "status": "pending"}]},
+        ):
+            with self.subTest(response=response), patch.object(canary, "paperless_api_json", return_value=response):
+                with self.assertRaises(canary.Failure): canary.task_document_id(18001, "token", task_id)
+
+    def test_marker_metadata_uses_detail_title_and_original_byte_hash(self) -> None:
+        document_id = 42
+        detail = {"id": document_id, "title": canary.MARKER_TITLE}
+        with patch.object(canary, "paperless_api_json", return_value=detail), patch.object(canary, "paperless_api_bytes", return_value=(200, canary.MARKER_PDF)):
+            self.assertEqual(canary.marker_metadata(18001, "token", document_id), (document_id, canary.MARKER_TITLE, __import__("hashlib").sha256(canary.MARKER_PDF).hexdigest()))
+        with patch.object(canary, "paperless_api_json", return_value={"id": document_id, "title": "other"}):
+            with self.assertRaises(canary.Failure): canary.marker_metadata(18001, "token", document_id)
+
+    def test_marker_pdf_has_visible_text_and_exact_xref_offsets(self) -> None:
+        canary.validate_marker_pdf(canary.MARKER_PDF)
+        self.assertIn(b"/BaseFont /Helvetica", canary.MARKER_PDF)
+        self.assertIn(b"(NEOTH retained-data canary) Tj", canary.MARKER_PDF)
+        self.assertEqual(tuple(canary.MARKER_PDF.find(f"{index} 0 obj\n".encode("ascii")) for index in range(1, 6)), canary.MARKER_PDF_OFFSETS)
+        altered = canary.MARKER_PDF.replace(b"startxref\n418", b"startxref\n417")
+        with self.assertRaises(canary.Failure): canary.validate_marker_pdf(altered)
+
+    def test_json_api_pins_upstream_v10_media_type(self) -> None:
+        with patch.object(canary, "paperless_api_bytes", return_value=(200, b"{}")) as request:
+            self.assertEqual(canary.paperless_api_json(18001, "token", "/api/tasks/?task_id=x", {200}), {})
+        self.assertEqual(request.call_args.kwargs["extra_headers"], {"Accept": "application/json; version=10"})
+
+    def test_cleanup_accepts_only_prevalidated_new_ids_and_absent_old_ids(self) -> None:
+        project = "neoth-paperless-abcdef123456"
+        current_ids = ("a" * 64, "b" * 64, "c" * 64)
+        configs = {"webserver": "d" * 64, "broker": "e" * 64, "db": "f" * 64}
+        volume_names = tuple(f"{project}_{logical}" for logical, _, _ in canary.VOLUMES)
+        old_ids = ("d" * 64, "e" * 64, "f" * 64)
+        def inspected(identifier: str, volume: bool = False) -> dict:
+            if volume:
+                logical = identifier.removeprefix(project + "_")
+                return {"Name": identifier, "Labels": {"com.docker.compose.project": project, "com.docker.compose.volume": logical}}
+            service = next(name for name, current in zip(canary.IMAGES, current_ids, strict=True) if current == identifier)
+            mounts = [{"Type": "volume", "Name": f"{project}_{logical}", "Destination": destination} for logical, owner, destination in canary.VOLUMES if owner == service]
+            return {"Id": identifier, "Image": configs[service], "State": {"Running": True}, "Config": {"Labels": {"com.docker.compose.project": project, "com.docker.compose.service": service}}, "NetworkSettings": {"Ports": {"8000/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18001"}]} if service == "webserver" else {}}, "Mounts": mounts}
+        with patch.object(canary, "docker_json", side_effect=inspected), patch.object(canary, "run", return_value=b""), patch.object(canary.bounded, "prove_absent") as absent:
+            self.assertEqual(canary.cleanup(project, configs, current_ids + volume_names, 18001, old_ids), (True, None))
+        self.assertEqual(absent.call_count, len(old_ids) + len(current_ids) + len(volume_names))
+
+    def test_cleanup_after_uninstall_only_removes_the_six_prevalidated_fixture_volumes(self) -> None:
+        project = "neoth-paperless-abcdef123456"
+        old_ids = ("a" * 64, "b" * 64, "c" * 64)
+        volume_names = tuple(f"{project}_{logical}" for logical, _, _ in canary.VOLUMES)
+        def inspected(identifier: str, volume: bool = False) -> dict:
+            self.assertTrue(volume)
+            logical = identifier.removeprefix(project + "_")
+            return {"Name": identifier, "Labels": {"com.docker.compose.project": project, "com.docker.compose.volume": logical}}
+        with patch.object(canary, "docker_json", side_effect=inspected), patch.object(canary, "run", return_value=b"") as command, patch.object(canary.bounded, "prove_absent"):
+            self.assertEqual(canary.cleanup(project, {"webserver": "d", "broker": "e", "db": "f"}, old_ids + volume_names, 18001, old_ids), (True, None))
+        self.assertEqual(command.call_count, len(volume_names))
+        self.assertTrue(all(call.args[0][:3] == ["docker", "volume", "rm"] for call in command.call_args_list))

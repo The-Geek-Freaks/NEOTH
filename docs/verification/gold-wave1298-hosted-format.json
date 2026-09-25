@@ -1,0 +1,49 @@
+{
+  "run": 36114356709,
+  "source": "5f7b9b344ad52b148f35af7a0d140828c756923f",
+  "zip_sha256": "92f0988b6481da499af1b0c629eb2e0f1ecf0207ff014add4db6fb90ebd67f54",
+  "api_digest": "92f0988b6481da499af1b0c629eb2e0f1ecf0207ff014add4db6fb90ebd67f54",
+  "source_match": true,
+  "files": [
+    {
+      "path": "SRC/neothd/src/cli/paperless.rs",
+      "pre": "a9fabf2d298900e3c050f605a9e6f9a905b80fd0",
+      "post": "4a6b03fa84885bffe0a604c73070928328e12891",
+      "match": true
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "pre": "e365934dd4d00ab033e9b23467b634235b201a2f",
+      "post": "dae3c7c3bb0d1b6b2a27994d590f9db31fbecd75",
+      "match": true
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_operation_lock.rs",
+      "pre": "2173d4c3771148ecd6a301f8e0621b6846f927af",
+      "post": "1f54bc96db97a1c0da7468cbe905dbb7fc5f1b69",
+      "match": true
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
+      "pre": "43a9fc3ac69251cd791ce2787f2b786efbc18a84",
+      "post": "3fd7456daeb146863a0ca6338ac40bb5c4a47334",
+      "match": true
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "pre": "345f8994645ab1af87e942c1ba36004da5ba0871",
+      "post": "b352b061568406c627029584b73997db248630b9",
+      "match": true
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime_tests.rs",
+      "pre": "f4265aaadc5299ea12504c87e9537a86cc4a13c2",
+      "post": "f9b72e09facdf323a727932623dc9885ae486e6d",
+      "match": true
+    }
+  ],
+  "count": 6,
+  "all_match": true,
+  "patch": "receipt/rustfmt.patch",
+  "rootExactPostimagesVerified": true
+}

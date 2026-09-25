@@ -15,7 +15,9 @@ import re
 import secrets
 import shutil
 import sys
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -38,6 +40,22 @@ SHA256 = re.compile(r"[0-9a-f]{64}")
 IDENTIFIER = re.compile(r"[0-9a-f]{64}")
 API_LIMIT = 32 * 1024
 CONFIG_LIMIT = 256 * 1024
+DOWNLOAD_LIMIT = 2 * 1024 * 1024
+TASK_ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+MARKER_TITLE = "NEOTH Paperless retained-data canary"
+# A deterministic, minimal, one-page PDF. PDF is handled by the pinned
+# Paperless image without relying on a separately configured text parser.
+MARKER_PDF = (
+    b"%PDF-1.4\n"
+    b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+    b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+    b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n"
+    b"4 0 obj\n<< /Length 58 >>\nstream\nBT\n/F1 12 Tf\n72 720 Td\n(NEOTH retained-data canary) Tj\nET\nendstream\nendobj\n"
+    b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
+    b"xref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000241 00000 n \n0000000348 00000 n \n"
+    b"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n418\n%%EOF\n"
+)
+MARKER_PDF_OFFSETS = (9, 58, 115, 241, 348)
 
 
 class Failure(RuntimeError):
@@ -221,10 +239,12 @@ def validate_install(value: dict, port: int) -> tuple[str, dict[str, str], tuple
             raise Failure("image_receipt_invalid")
         config_ids[item["service"]] = item["config_id"]
     ids: list[str] = []
+    container_services: set[str] = set()
     for item in containers:
         if not isinstance(item, dict) or item.get("service") not in config_ids or not isinstance(item.get("id"), str) or not IDENTIFIER.fullmatch(item["id"]) or item.get("image_id") != config_ids[item["service"]]:
             raise Failure("container_receipt_invalid")
         ids.append(item["id"])
+        container_services.add(item["service"])
     expected_logical_names = {logical for logical, _, _ in VOLUMES}
     names: dict[str, str] = {}
     for item in volumes:
@@ -233,7 +253,7 @@ def validate_install(value: dict, port: int) -> tuple[str, dict[str, str], tuple
         if not isinstance(item, dict) or not isinstance(logical_name, str) or logical_name not in expected_logical_names or logical_name in names or item.get("project") != project or not isinstance(name, str) or name != f"{project}_{logical_name}":
             raise Failure("volume_receipt_invalid")
         names[logical_name] = name
-    if len(set(ids)) != len(IMAGES) or len(config_ids) != len(IMAGES) or set(names) != expected_logical_names:
+    if len(set(ids)) != len(IMAGES) or len(config_ids) != len(IMAGES) or container_services != set(IMAGES) or set(names) != expected_logical_names:
         raise Failure("lifecycle_identity_duplicate")
     return project, config_ids, tuple(ids + [names[logical] for logical, _, _ in VOLUMES])
 
@@ -291,23 +311,30 @@ def configured_token(home: Path) -> str:
     return token.decode("utf-8", "strict")
 
 
-def paperless_api_json(port: int, token: str | None, path: str, expected: set[int]) -> dict:
+def paperless_api_bytes(port: int, token: str | None, path: str, expected: set[int], *, method: str = "GET", data: bytes | None = None, extra_headers: dict[str, str] | None = None, limit: int = API_LIMIT) -> tuple[int, bytes]:
     headers = {"Authorization": f"Token {token}"} if token is not None else {}
-    request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=headers)
+    if extra_headers:
+        headers.update(extra_headers)
+    request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=data, headers=headers, method=method)
     try:
         with api_opener().open(request, timeout=20) as response:
             status = response.status
-            raw = response.read(API_LIMIT + 1)
+            raw = response.read(limit + 1)
     except urllib.error.HTTPError as error:
-        status, raw = error.code, error.read(API_LIMIT + 1)
+        status, raw = error.code, error.read(limit + 1)
     except Exception as error:
         raise Failure("paperless_api_transport") from error
     if status in range(300, 400):
         raise Failure("paperless_api_redirect")
     if status not in expected:
         raise Failure("paperless_api_status_invalid")
-    if len(raw) > API_LIMIT:
+    if len(raw) > limit:
         raise Failure("paperless_api_response_too_large")
+    return status, raw
+
+
+def paperless_api_json(port: int, token: str | None, path: str, expected: set[int]) -> dict:
+    status, raw = paperless_api_bytes(port, token, path, expected, extra_headers={"Accept": "application/json; version=10"})
     if status in {401, 403}:
         return {}
     try:
@@ -331,15 +358,155 @@ def verify_api(port: int, token: str) -> dict:
     return {"profile_authenticated": True, "negative_control_rejected": True, "status_permission_required": not bool(status), "version_sha256": hashlib.sha256((version or "permission_required").encode()).hexdigest()}
 
 
-def cleanup(project: str, config_ids: dict[str, str], identities: tuple[str, ...], port: int) -> tuple[bool, str | None]:
+def validate_marker_pdf(document: bytes) -> None:
+    objects = tuple(f"{index} 0 obj\n".encode("ascii") for index in range(1, 6))
+    if not document.startswith(b"%PDF-1.4\n") or not document.endswith(b"%%EOF\n") or b"(NEOTH retained-data canary) Tj\n" not in document or b"/Length 58 >>\nstream\n" not in document:
+        raise Failure("marker_pdf_invalid")
+    if tuple(document.find(item) for item in objects) != MARKER_PDF_OFFSETS:
+        raise Failure("marker_pdf_invalid")
+    xref = b"xref\n0 6\n0000000000 65535 f \n" + b"".join(f"{offset:010d} 00000 n \n".encode("ascii") for offset in MARKER_PDF_OFFSETS)
+    if xref not in document or document.find(b"xref\n") != 418 or b"startxref\n418\n" not in document:
+        raise Failure("marker_pdf_invalid")
+
+
+def multipart_marker(title: str, document: bytes) -> tuple[bytes, str]:
+    if not title or "\r" in title or "\n" in title or len(document) > DOWNLOAD_LIMIT:
+        raise Failure("marker_fixture_invalid")
+    validate_marker_pdf(document)
+    boundary = "----neoth-" + secrets.token_hex(16)
+    body = (
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\n{title}\r\n"
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"document\"; filename=\"retained-canary.pdf\"\r\nContent-Type: application/pdf\r\n\r\n"
+    ).encode("ascii") + document + f"\r\n--{boundary}--\r\n".encode("ascii")
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
+def upload_marker(port: int, token: str) -> str:
+    body, content_type = multipart_marker(MARKER_TITLE, MARKER_PDF)
+    _, raw = paperless_api_bytes(port, token, "/api/documents/post_document/", {200}, method="POST", data=body, extra_headers={"Content-Type": content_type, "Accept": "application/json; version=10"}, limit=API_LIMIT)
+    try:
+        task_id = json.loads(raw)
+    except Exception as error:
+        raise Failure("marker_upload_response_invalid") from error
+    if not isinstance(task_id, str) or not TASK_ID.fullmatch(task_id):
+        raise Failure("marker_upload_response_invalid")
+    return task_id
+
+
+def task_document_id(port: int, token: str, task_id: str) -> tuple[int, int]:
+    if not TASK_ID.fullmatch(task_id):
+        raise Failure("marker_task_id_invalid")
+    polls = 0
+    deadline = time.monotonic() + 120
+    path = "/api/tasks/?task_id=" + urllib.parse.quote(task_id, safe="")
+    while time.monotonic() < deadline:
+        polls += 1
+        response = paperless_api_json(port, token, path, {200})
+        results = response.get("results")
+        if not isinstance(results, list):
+            raise Failure("marker_task_response_invalid")
+        if len(results) > 1:
+            raise Failure("marker_task_ambiguous")
+        if not results:
+            time.sleep(2)
+            continue
+        task = results[0]
+        if not isinstance(task, dict) or task.get("task_id") != task_id or not isinstance(task.get("status"), str):
+            raise Failure("marker_task_response_invalid")
+        status = task["status"]
+        if status == "success":
+            document_ids = task.get("related_document_ids")
+            if not isinstance(document_ids, list) or len(document_ids) != 1 or type(document_ids[0]) is not int or document_ids[0] <= 0:
+                raise Failure("marker_task_document_invalid")
+            return document_ids[0], polls
+        if status in {"failure", "revoked"}:
+            raise Failure("marker_task_failed")
+        if status not in {"pending", "started"}:
+            raise Failure("marker_task_status_invalid")
+        time.sleep(2)
+    raise Failure("marker_task_timeout")
+
+
+def marker_metadata(port: int, token: str, document_id: int) -> tuple[int, str, str]:
+    if type(document_id) is not int or document_id <= 0:
+        raise Failure("marker_document_id_invalid")
+    detail = paperless_api_json(port, token, f"/api/documents/{document_id}/", {200})
+    if detail.get("id") != document_id or detail.get("title") != MARKER_TITLE:
+        raise Failure("marker_metadata_invalid")
+    _, original = paperless_api_bytes(port, token, f"/api/documents/{document_id}/download/?original=true", {200}, limit=DOWNLOAD_LIMIT)
+    digest = hashlib.sha256(original).hexdigest()
+    if digest != hashlib.sha256(MARKER_PDF).hexdigest():
+        raise Failure("marker_original_bytes_mismatch")
+    return document_id, MARKER_TITLE, digest
+
+
+def persisted_receipt_bytes(home: Path, name: str, code: str) -> bytes:
+    path = home / "paperless" / "state" / name
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > CONFIG_LIMIT:
+        raise Failure(code)
+    return path.read_bytes()
+
+
+def persisted_install_receipt(home: Path, expected: tuple[str, dict[str, str], tuple[str, ...]], port: int) -> bytes:
+    raw = persisted_receipt_bytes(home, ".neoth-paperless-lifecycle-receipt.v1.json", "install_receipt_bytes_invalid")
+    if validate_install(read_json_bytes(raw, "install_receipt_bytes_invalid"), port) != expected:
+        raise Failure("install_receipt_bytes_invalid")
+    return raw
+
+
+def persisted_uninstall_receipt(home: Path, expected: dict) -> bytes:
+    raw = persisted_receipt_bytes(home, ".neoth-paperless-uninstall-custody.v1.json", "uninstall_receipt_bytes_invalid")
+    if read_json_bytes(raw, "uninstall_receipt_bytes_invalid") != expected:
+        raise Failure("uninstall_receipt_bytes_invalid")
+    return raw
+
+
+def validate_uninstall(value: dict, project: str, original_ids: tuple[str, ...], volume_names: tuple[str, ...], install_receipt_bytes: bytes) -> None:
+    if value.get("schema_version") != 1 or value.get("operation") != "paperless.safe_uninstall" or value.get("project") != project or value.get("phase") != "complete" or value.get("network_retained") is not True:
+        raise Failure("uninstall_receipt_invalid")
+    ids = value.get("original_container_ids")
+    retained = value.get("retained_volumes")
+    containers = value.get("containers")
+    if not isinstance(ids, list) or tuple(ids) != original_ids or not isinstance(retained, list) or tuple(retained) != volume_names or not isinstance(containers, list) or len(containers) != len(original_ids) or value.get("install_receipt_sha256") != hashlib.sha256(install_receipt_bytes).hexdigest():
+        raise Failure("uninstall_receipt_invalid")
+    expected_services = set(IMAGES)
+    seen_ids: set[str] = set()
+    seen_services: set[str] = set()
+    for item in containers:
+        if not isinstance(item, dict) or item.get("id") not in original_ids or item.get("removed") is not True or item.get("service") not in expected_services or item["id"] in seen_ids or item["service"] in seen_services:
+            raise Failure("uninstall_receipt_invalid")
+        seen_ids.add(item["id"]); seen_services.add(item["service"])
+    if seen_ids != set(original_ids) or seen_services != expected_services:
+        raise Failure("uninstall_receipt_invalid")
+
+
+def retained_volumes(project: str, volume_names: tuple[str, ...]) -> None:
+    if len(volume_names) != len(VOLUMES):
+        raise Failure("retained_volume_count_invalid")
+    for (logical, _, _), name in zip(VOLUMES, volume_names, strict=True):
+        if validate_volume(docker_json(name, volume=True), project, logical) != name:
+            raise Failure("retained_volume_identity_invalid")
+
+
+def cleanup(project: str, config_ids: dict[str, str], identities: tuple[str, ...], port: int, retired_container_ids: tuple[str, ...] = ()) -> tuple[bool, str | None]:
     container_ids, volume_names = identities[:3], identities[3:]
     try:
         for service, identifier in zip(IMAGES, container_ids, strict=True):
-            validate_container(docker_json(identifier), project, service, config_ids[service], port)
+            if identifier in retired_container_ids:
+                bounded.prove_absent("container", identifier)
+            else:
+                validate_container(docker_json(identifier), project, service, config_ids[service], port)
+        for identifier in retired_container_ids:
+            if not IDENTIFIER.fullmatch(identifier):
+                raise Failure("retired_container_identity_invalid")
+            if identifier not in container_ids:
+                bounded.prove_absent("container", identifier)
         for (logical, _, _), name in zip(VOLUMES, volume_names, strict=True):
             if validate_volume(docker_json(name, volume=True), project, logical) != name:
                 raise Failure("volume_identity_invalid")
         for identifier in container_ids:
+            if identifier in retired_container_ids:
+                continue
             run(["docker", "rm", "-f", identifier], timeout=45)
             bounded.prove_absent("container", identifier)
         for name in volume_names:
@@ -358,6 +525,7 @@ def source_hashes() -> dict[str, str]:
     names = (
         "packaging/tests/test_paperless_product_canary.py", "SRC/neothd/src/cli/paperless.rs",
         "SRC/neothd/src/installers/paperless_staging.rs", "SRC/neothd/src/installers/paperless_lifecycle.rs",
+        "SRC/neothd/src/installers/paperless_operation_lock.rs", "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
         "SRC/neothd/src/installers/paperless_readiness.rs", "SRC/neothd/src/installers/paperless_bootstrap.rs",
         "SRC/neothd/src/cli/init.rs", "SRC/neothd/src/config/credentials.rs", "SRC/Cargo.lock",
         "SRC/neothd/src/config/mod.rs", "SRC/neothd/src/updater/process_containment.rs",
@@ -370,7 +538,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("--binary", required=True); parser.add_argument("--home", required=True); parser.add_argument("--port", required=True, type=int); parser.add_argument("--receipt", required=True)
     args = parser.parse_args(); binary, home, receipt_path = Path(args.binary), Path(args.home), Path(args.receipt)
     receipt = {"schema": 1, "source_sha": os.environ.get("GITHUB_SHA"), "port": args.port, "credential_backend": "file", "outcome": "failed", "cleanup_proven": False}
-    project = None; config_ids: dict[str, str] | None = None; identities: tuple[str, ...] | None = None
+    project = None; config_ids: dict[str, str] | None = None; identities: tuple[str, ...] | None = None; retired_ids: tuple[str, ...] = ()
     try:
         hosted_paths(home, receipt_path)
         if not 1 <= args.port <= 65535 or not binary.is_file():
@@ -398,12 +566,52 @@ def main() -> int:
         if status.get("status") != "authenticated_api_ready" or status.get("authenticated_api_ready") is not True or status.get("staging") not in {"prepared_pinned", "already_prepared"}:
             raise Failure("product_status_invalid")
         receipt["api"] = verify_api(args.port, configured_token(home))
-        second = read_json_bytes(run([str(binary), "--output", "json", "paperless", "install"], timeout=900), "install_json_invalid")
-        second_project, second_configs, second_ids = validate_install(second, args.port)
-        if (second_project, second_configs, second_ids) != (project, config_ids, identities):
+        repeated = read_json_bytes(run([str(binary), "--output", "json", "paperless", "install"], timeout=900), "install_json_invalid")
+        repeated_project, repeated_configs, repeated_ids = validate_install(repeated, args.port)
+        if (repeated_project, repeated_configs, repeated_ids) != (project, config_ids, identities):
             raise Failure("repeat_install_changed_identities")
+        install_receipt_bytes = persisted_install_receipt(home, (project, config_ids, identities), args.port)
         receipt["repeat_api"] = verify_api(args.port, configured_token(home))
-        receipt.update({"project_sha256": hashlib.sha256(project.encode()).hexdigest(), "images": len(config_ids), "containers": 3, "volumes": 6, "repeat_install_preserved_identities": True, "status_ready": True})
+        token = configured_token(home)
+        document_id, task_polls = task_document_id(args.port, token, upload_marker(args.port, token))
+        baseline_id, baseline_title, baseline_sha256 = marker_metadata(args.port, token, document_id)
+        removed = read_json_bytes(run([str(binary), "--output", "json", "paperless", "uninstall"], timeout=900), "uninstall_json_invalid")
+        retired_ids = identities[:3]
+        volume_names = identities[3:]
+        validate_uninstall(removed, project, retired_ids, volume_names, install_receipt_bytes)
+        uninstall_receipt_bytes = persisted_uninstall_receipt(home, removed)
+        retained_volumes(project, volume_names)
+        for identifier in retired_ids:
+            bounded.prove_absent("container", identifier)
+        repeated_uninstall = read_json_bytes(run([str(binary), "--output", "json", "paperless", "uninstall"], timeout=900), "uninstall_json_invalid")
+        validate_uninstall(repeated_uninstall, project, retired_ids, volume_names, install_receipt_bytes)
+        if persisted_uninstall_receipt(home, repeated_uninstall) != uninstall_receipt_bytes or persisted_install_receipt(home, (project, config_ids, identities), args.port) != install_receipt_bytes:
+            raise Failure("repeat_uninstall_mutated_custody")
+        retained_volumes(project, volume_names)
+        for identifier in retired_ids:
+            bounded.prove_absent("container", identifier)
+        reinstalled = read_json_bytes(run([str(binary), "--output", "json", "paperless", "install"], timeout=900), "install_json_invalid")
+        reinstall_project, reinstall_configs, reinstall_ids = validate_install(reinstalled, args.port)
+        if reinstall_project != project or reinstall_configs != config_ids or reinstall_ids[3:] != volume_names or set(reinstall_ids[:3]) & set(retired_ids):
+            raise Failure("reinstall_retained_data_identity_invalid")
+        for service, identifier in zip(IMAGES, reinstall_ids[:3], strict=True):
+            validate_container(docker_json(identifier), project, service, config_ids[service], args.port)
+        retained_volumes(project, volume_names)
+        identities = reinstall_ids
+        receipt["reinstall_api"] = verify_api(args.port, configured_token(home))
+        survived_id, survived_title, survived_sha256 = marker_metadata(args.port, configured_token(home), document_id)
+        receipt["retained_document"] = {
+            "document_id_sha256": hashlib.sha256(str(document_id).encode()).hexdigest(),
+            "title_sha256": hashlib.sha256(baseline_title.encode()).hexdigest(),
+            "baseline_sha256": baseline_sha256,
+            "metadata_id_stable": survived_id == baseline_id,
+            "metadata_title_stable": survived_title == baseline_title,
+            "download_sha256_matches": survived_sha256 == baseline_sha256,
+            "task_polls": task_polls,
+        }
+        if survived_id != baseline_id or survived_title != baseline_title or survived_sha256 != baseline_sha256:
+            raise Failure("retained_document_mismatch")
+        receipt.update({"project_sha256": hashlib.sha256(project.encode()).hexdigest(), "images": len(config_ids), "containers": 3, "volumes": 6, "repeat_install_preserved_identities": True, "uninstall_repeat_read_only": True, "status_ready": True})
         receipt["outcome"] = "passed"
     except Exception as error:
         receipt["failure_stage"] = str(error) if isinstance(error, Failure) else "unexpected"
@@ -412,7 +620,7 @@ def main() -> int:
     finally:
         cleaned, cleanup_failure = (False, None)
         if project and config_ids and identities:
-            cleaned, cleanup_failure = cleanup(project, config_ids, identities, args.port)
+            cleaned, cleanup_failure = cleanup(project, config_ids, identities, args.port, retired_ids)
         receipt["docker_cleanup_proven"] = cleaned
         if cleanup_failure is not None:
             receipt["cleanup_failure_stage"] = cleanup_failure

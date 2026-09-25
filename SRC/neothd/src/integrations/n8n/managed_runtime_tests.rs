@@ -215,7 +215,10 @@ fn volume_listing_matches_proves_only_an_exact_empty_or_single_name_result() {
         volume_listing_matches(DEFAULT_VOLUME, ""),
         Err(InspectVolumeOutcome::Absent),
     );
-    assert_eq!(volume_listing_matches(DEFAULT_VOLUME, DEFAULT_VOLUME), Ok(()));
+    assert_eq!(
+        volume_listing_matches(DEFAULT_VOLUME, DEFAULT_VOLUME),
+        Ok(())
+    );
     assert_eq!(
         volume_listing_matches(DEFAULT_VOLUME, "other-volume"),
         Err(InspectVolumeOutcome::Unknown),
@@ -851,6 +854,7 @@ fn restart_recovery_removes_only_exact_bound_container_then_retains_absence_tomb
     write_binding(home.path(), &bound_binding(&job, id.clone())).unwrap();
     let state = Arc::new(Mutex::new(RunnerState {
         container: Some(observed(id.clone(), job.job_id.as_str(), 5678)),
+        volume: None,
         create_error_after_effect: false,
         remove_succeeds: true,
         named_unknown: false,
@@ -883,6 +887,7 @@ fn restart_recovery_with_unknown_exact_inspection_retains_bound_custody_and_acti
     write_binding(home.path(), &bound_binding(&job, id.clone())).unwrap();
     let state = Arc::new(Mutex::new(RunnerState {
         container: Some(observed(id, job.job_id.as_str(), 5678)),
+        volume: None,
         create_error_after_effect: false,
         remove_succeeds: true,
         named_unknown: false,
@@ -933,6 +938,7 @@ fn create_intent_restart_discovers_exact_owned_container_then_removes_it() {
     .unwrap();
     let state = Arc::new(Mutex::new(RunnerState {
         container: Some(observed(id, job.job_id.as_str(), 5678)),
+        volume: None,
         create_error_after_effect: false,
         remove_succeeds: true,
         named_unknown: false,
@@ -980,6 +986,7 @@ fn create_intent_restart_unknown_named_inspection_retains_custody_without_remova
     .unwrap();
     let state = Arc::new(Mutex::new(RunnerState {
         container: None,
+        volume: None,
         create_error_after_effect: false,
         remove_succeeds: true,
         named_unknown: true,
@@ -1047,6 +1054,7 @@ fn postwrite_create_intent_error_keeps_queued_job_recoverable_without_docker() {
     assert_eq!(outcome, CreateIntentWrite::Uncertain);
     let state = Arc::new(Mutex::new(RunnerState {
         container: None,
+        volume: None,
         create_error_after_effect: false,
         remove_succeeds: true,
         named_unknown: false,
@@ -1083,6 +1091,7 @@ fn queued_foreign_create_intent_stays_fail_closed_without_docker_inspection() {
     write_binding(home.path(), &foreign).unwrap();
     let state = Arc::new(Mutex::new(RunnerState {
         container: None,
+        volume: None,
         create_error_after_effect: false,
         remove_succeeds: true,
         named_unknown: false,

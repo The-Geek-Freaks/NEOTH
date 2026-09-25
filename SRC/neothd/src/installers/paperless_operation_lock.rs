@@ -74,7 +74,9 @@ pub(crate) fn acquire(
         }
         Err(_) => return Err(PaperlessOperationLockError::Io),
     };
-    let metadata = file.metadata().map_err(|_| PaperlessOperationLockError::Io)?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| PaperlessOperationLockError::Io)?;
     if !metadata.is_file() || metadata.file_type().is_symlink() {
         return Err(PaperlessOperationLockError::Unsafe);
     }
@@ -120,16 +122,9 @@ mod tests {
     fn independent_owned_roots_do_not_share_operation_lock() {
         let (_first_home, first_root) = staged_owned_root();
         let (_second_home, second_root) = staged_owned_root();
-        let _first = acquire(
-            &first_root,
-            OsStr::new(super::super::OPERATIONS_LOCK_NAME),
-        )
-        .unwrap();
-        let _second = acquire(
-            &second_root,
-            OsStr::new(super::super::OPERATIONS_LOCK_NAME),
-        )
-        .unwrap();
+        let _first = acquire(&first_root, OsStr::new(super::super::OPERATIONS_LOCK_NAME)).unwrap();
+        let _second =
+            acquire(&second_root, OsStr::new(super::super::OPERATIONS_LOCK_NAME)).unwrap();
     }
 
     #[cfg(unix)]
@@ -140,7 +135,10 @@ mod tests {
         let (home, owned) = staged_owned_root();
         let target = home.path().join("lock-target");
         std::fs::write(&target, b"retain").unwrap();
-        let lock_path = owned.display.join("state").join(super::super::OPERATIONS_LOCK_NAME);
+        let lock_path = owned
+            .display
+            .join("state")
+            .join(super::super::OPERATIONS_LOCK_NAME);
         symlink(&target, &lock_path).unwrap();
 
         assert!(matches!(

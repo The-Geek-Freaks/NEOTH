@@ -1,0 +1,34 @@
+{
+  "kind": "ROOT_REVIEWED_HOSTED_PAPERLESS_LINT_AND_TEST_COMPILE_REPAIR",
+  "source": "5f7b9b344ad52b148f35af7a0d140828c756923f",
+  "core": 36114356259,
+  "group": 36114358872,
+  "diagnostics": [
+    "print_with_newline",
+    "collapsible_if",
+    "E0382 home moved before receipt path read",
+    "E0063 six RunnerState volume initializers"
+  ],
+  "changes": [
+    "println preserves newline output",
+    "Equivalent custody let-chain",
+    "Read fixture receipt before moving TempDir",
+    "Explicit volume:None for six existing full test initializers"
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cli/paperless.rs",
+      "sha256": "CA8EDEE9080645B51473AE3B72F90FE582E5ECC3446B5DB77E243457D3692E70"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sha256": "CAFDDB4D1F7845196E884F48E4908D62E45627F3DBC2C5B3F4A13E134D60D70A"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime_tests.rs",
+      "sha256": "7654F60271ED715523E6BDBC7ED738AED6D2D5CF2772B93DFDCD85CE9224A28D"
+    }
+  ],
+  "hosted": "pending",
+  "localExecutableValidationRan": false
+}

@@ -3,6 +3,27 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1300 retained-document product canary and hosted repairs (2026-09-25):**
+The Paperless hosted helper now exercises a real deterministic PDF upload,
+bounded versioned task polling, exact document metadata and original-byte
+SHA-256 readback, safe uninstall/repeat, then reinstall and the same readback.
+Independent review required exact per-container coverage and original persisted
+install-receipt/custody binding; final review4 accepts the repaired source. Claude053 caught the real APIv10
+status mismatch; explicit version10/lowercase values now match pinned upstream.
+Root corrected invalid PDF offsets;17helper tests are authored, hosted pending.
+All six data volumes are retained through product uninstall; only final isolated
+fixture teardown removes individually validated fixture IDs and volumes.
+Root verified/imported six exact hosted rustfmt postimages from5f7Preflight.
+W1299 corrects two equivalent Paperless Clippy issues and seven hosted test
+compile errors (read TempDir-dependent bytes before move; six explicit missing
+volume:None test fields). Native assertions and production conditions remain.
+The real n8n retained-volume canary36113139068@d503c368 is ROOT-ADMITTED after
+API/ZIP/receipt verification and27historical source/input Git bindings:13workflows
+survive reinstall, a new runtime reuses the original volume, the canonical key
+is retained, a second uninstall completes and fixture cleanup succeeds.
+That historical result is separate from new Paperless/native/current-head gates.
+No roadmap closure or local executable validation.
+
 **W1295 Paperless safe-uninstall batch (2026-09-25):**
 The public `paperless uninstall` removes only the three original, exactly
 verified container IDs and retains all six volumes, original install receipt,
