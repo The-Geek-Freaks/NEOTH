@@ -460,6 +460,18 @@ fn parse_intent(bytes: &[u8], expected_week: &str) -> Result<WeeklyArchiveIntent
     Ok(intent)
 }
 
+/// Check a producer-owned archive record against its persisted immutable
+/// intent. This read-only consumer boundary never creates producer state.
+pub(crate) fn validate_archived_weekly_intent(bytes: &[u8], record: &WeeklyReflection) -> Result<()> {
+    anyhow::ensure!(bytes.len() <= MAX_INTENT_BYTES, "weekly intent exceeds its byte limit");
+    let intent = parse_intent(bytes, &record.iso_week_tag)?;
+    anyhow::ensure!(
+        intent.to_reflection() == *record,
+        "weekly archive record differs from its established intent"
+    );
+    Ok(())
+}
+
 fn validate_intent(intent: &WeeklyArchiveIntent, expected_week: &str) -> Result<()> {
     anyhow::ensure!(
         intent.schema_version == INTENT_SCHEMA_VERSION,
@@ -515,7 +527,7 @@ fn validate_candidate(candidate: &WeeklyArchiveCandidate) -> Result<()> {
     Ok(())
 }
 
-fn validate_iso_week_tag(iso_week_tag: &str) -> Result<()> {
+pub(crate) fn validate_iso_week_tag(iso_week_tag: &str) -> Result<()> {
     let bytes = iso_week_tag.as_bytes();
     anyhow::ensure!(
         bytes.len() == 8
@@ -535,6 +547,19 @@ fn validate_iso_week_tag(iso_week_tag: &str) -> Result<()> {
         chrono::NaiveDate::from_isoywd_opt(year, week, chrono::Weekday::Mon).is_some(),
         "weekly archive tag is not a real ISO week: {iso_week_tag:?}"
     );
+    Ok(())
+}
+
+/// Validate the self-binding of an archived record without creating or
+/// recovering a producer intent. Legacy records have no producer key.
+pub(crate) fn validate_weekly_reflection_producer_key(record: &WeeklyReflection) -> Result<()> {
+    if let Some(key) = record.producer_key.as_deref() {
+        anyhow::ensure!(
+            valid_producer_key(key)
+                && key == producer_key(&record.iso_week_tag, &record.topics, &record.body),
+            "weekly reflection producer key does not match its archived content"
+        );
+    }
     Ok(())
 }
 

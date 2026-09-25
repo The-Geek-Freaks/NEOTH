@@ -165,6 +165,21 @@ fn build_workflow_skeleton(
             }),
             "Implemented POST /api/dreams/obsidian/sync requires dreams:obsidian:write. It syncs the previous UTC archived day only after NEOTH Dream scheduling, vault policy and scheduler-permitted autonomy are configured. Schedule this workflow after the Dream producer; the default trigger is 02:00 UTC. It does not generate Dreams or call a provider. An absent archive can return written:false; response content is not automatically delivered and an empty result carries no delivery guarantee. Inspect the returned durability tag; published_durability_unknown does not confirm disk durability.",
         )
+    } else if slug == "reflection_weekly_sync" {
+        (
+            serde_json::json!({
+                "url": url,
+                "method": method,
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpHeaderAuth",
+                "sendBody": true,
+                "contentType": "json",
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify({ week: $now.toUTC().toFormat(\"kkkk-'W'WW\") }) }}",
+                "options": {}
+            }),
+            "Implemented POST /api/reflections/weekly/obsidian/sync requires reflections:weekly:obsidian:write and a configured Obsidian vault. It exports the current UTC ISO week's existing archive; schedule it after the weekly producer. It does not generate reflections or require Dream scheduling. An absent archive returns written:false. Inspect the durability tag: published_durability_unknown is a publication with unconfirmed disk durability, not rollback or automatic retry permission. No note content is automatically delivered.",
+        )
     } else if slug == "calendar_morning_agenda" {
         (
             serde_json::json!({
@@ -333,7 +348,7 @@ fn build_workflow_skeleton(
                 "value": "Europe/Berlin"
             }));
         body["settings"]["timezone"] = serde_json::json!("Europe/Berlin");
-    } else if slug == "dream_obsidian_sync" {
+    } else if matches!(slug, "dream_obsidian_sync" | "reflection_weekly_sync") {
         body["settings"]["timezone"] = serde_json::json!("UTC");
     }
     serde_json::to_string(&body).expect("serde_json::Value always serialises")
@@ -419,9 +434,9 @@ const STARTER_SPECS: &[StarterSpec] = &[
     StarterSpec {
         slug: "reflection_weekly_sync",
         name: "Reflection weekly sync",
-        description: "Unavailable adapter: intended weekly sync_reflections_to_obsidian workflow.",
+        description: "OB-02 sync of the current UTC ISO week's archived reflections; configure the vault and schedule after the weekly producer before activation.",
         cron: "0 19 * * 0",
-        endpoint: "/reflection/sync_obsidian",
+        endpoint: "/api/reflections/weekly/obsidian/sync",
         method: "POST",
     },
     StarterSpec {
@@ -768,6 +783,16 @@ mod tests {
                         .is_some_and(|notes| notes.contains("requires dreams:obsidian:write")
                             && notes.contains("written:false"))
                 );
+            } else if w.slug == "reflection_weekly_sync" {
+                assert_eq!(http["parameters"]["method"], "POST");
+                assert_eq!(http["parameters"]["sendBody"], true);
+                assert_eq!(http["parameters"]["contentType"], "json");
+                assert_eq!(http["parameters"]["specifyBody"], "json");
+                assert_eq!(v["settings"]["timezone"], "UTC");
+                assert!(http["notes"].as_str().is_some_and(|notes| {
+                    notes.contains("requires reflections:weekly:obsidian:write")
+                        && notes.contains("written:false")
+                }));
             } else if w.slug == "calendar_morning_agenda" {
                 assert_eq!(http["parameters"]["method"], "POST");
                 assert_eq!(http["parameters"]["sendBody"], true);
@@ -930,6 +955,23 @@ mod tests {
                 .contains("response content is not automatically delivered")
         );
     }
+    #[test]
+    fn reflection_starter_exports_current_utc_iso_week_only() {
+        let workflow = find_by_slug("reflection_weekly_sync").unwrap();
+        let value: serde_json::Value = serde_json::from_str(workflow.body).unwrap();
+        assert_eq!(value["active"], false);
+        assert_eq!(value["settings"]["timezone"], "UTC");
+        let nodes = value["nodes"].as_array().unwrap();
+        let schedule = nodes.iter().find(|node| node["type"] == "n8n-nodes-base.scheduleTrigger").unwrap();
+        assert_eq!(schedule["parameters"]["rule"]["interval"][0]["expression"], "0 19 * * 0");
+        let http = nodes.iter().find(|node| node["type"] == "n8n-nodes-base.httpRequest").unwrap();
+        assert_eq!(http["parameters"]["url"], "={{ $json.neothBaseUrl + '/api/reflections/weekly/obsidian/sync' }}");
+        assert_eq!(http["parameters"]["jsonBody"], "={{ JSON.stringify({ week: $now.toUTC().toFormat(\"kkkk-'W'WW\") }) }}");
+        assert!(http["notes"].as_str().unwrap().contains("does not generate reflections"));
+        assert!(http["notes"].as_str().unwrap().contains("published_durability_unknown"));
+        assert!(http.get("retryOnFail").is_none());
+    }
+
     #[test]
     fn paperless_consult_starter_is_manual_question_lookup_only() {
         let w = find_by_slug("paperless_invoice_consult").expect("consult starter exists");

@@ -62,6 +62,9 @@ fn required_scope_for(method: &str, path: &str) -> Option<&'static str> {
         ("POST", "/api/proactive/proposals/pending") => Some(api_tokens::SCOPE_PROPOSALS_READ),
         ("POST", "/api/email/drafts/pending") => Some(api_tokens::SCOPE_DRAFTS_READ),
         ("POST", "/api/dreams/obsidian/sync") => Some(api_tokens::SCOPE_DREAMS_OBSIDIAN_WRITE),
+        ("POST", "/api/reflections/weekly/obsidian/sync") => {
+            Some(api_tokens::SCOPE_REFLECTIONS_WEEKLY_OBSIDIAN_WRITE)
+        }
         ("POST", "/api/permissions/audit") => Some(api_tokens::SCOPE_PERMISSIONS_READ),
         ("POST", "/api/calendar/agenda") => Some(api_tokens::SCOPE_CALENDAR_READ),
         ("POST", "/api/email/threat/scan") => Some(api_tokens::SCOPE_EMAIL_THREAT_WRITE),
@@ -553,6 +556,9 @@ mod paperless_consult_http_tests;
 
 #[path = "dream_obsidian_http_tests.rs"]
 mod dream_obsidian_http_tests;
+
+#[path = "reflection_weekly_obsidian_http_tests.rs"]
+mod reflection_weekly_obsidian_http_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1174,6 +1180,7 @@ mod tests {
             ("POST", "/api/proactive/proposals/pending"),
             ("POST", "/api/email/drafts/pending"),
             ("POST", "/api/dreams/obsidian/sync"),
+            ("POST", "/api/reflections/weekly/obsidian/sync"),
             ("POST", "/api/permissions/audit"),
             ("POST", "/api/calendar/agenda"),
             ("POST", "/api/email/threat/scan"),

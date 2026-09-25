@@ -1,0 +1,42 @@
+{
+  "schema": "neoth-gold-wave1241-windows/v1",
+  "run": 36100802229,
+  "source": "2043225134b18bc054ee30ee1ddb0827b7e53e86",
+  "status": "ROOT_ADMITTED_PASS",
+  "passed": 478,
+  "failed": 0,
+  "missing": 0,
+  "compileStatus": 0,
+  "sourceBindings": 88,
+  "zipSha256": "6087c4a36add7821c04224834de15ce8dc6a31641804fff718d394ebc6749f79",
+  "admissionSha256": "3B4441A081155D1CA19B4F8617ED72B2D86D2A9C74ED4DB8C3A7E689ECF7899C",
+  "extraInputs": [
+    {
+      "path": "SRC/neothd/src/memory/drift.rs",
+      "blob": "b25eb2b570796a3a467b810e1288bef8c1739152",
+      "sha256": "a36c2164fdfdb23718d61800eb82ca4d0c2f8f0c9482c3a497f77f2389aed506"
+    },
+    {
+      "path": "SRC/neothd/src/proactive/action_staging.rs",
+      "blob": "28c5c0965b5f64daa23796f8ec27fa5edd7f317e",
+      "sha256": "2cb44d6ee5513694bb1ce1c574af08442a11f38d456ba093aee72132044f5ff3"
+    },
+    {
+      "path": "SRC/neothd/assets/n8n_workflows/daily_summary.json",
+      "blob": "114da8333f1733f43692d5e7d49be0dd447f44aa",
+      "sha256": "1f4087959463bbff751f8d9be6beb5f6dd1b2eb55d85a662f01cd8e2ec0562c7"
+    },
+    {
+      "path": "SRC/neothd/assets/n8n_workflows/morning_brief.json",
+      "blob": "d6742615a8c4f478fa23cb4eb1b4ba179cb056f8",
+      "sha256": "35c68f9f5a05bb9af17a46e8b0a8d48e4e5a10e2742bec24aa4831400a9b44d0"
+    },
+    {
+      "path": "SRC/neothd/assets/n8n_workflows/weekly_stats.json",
+      "blob": "f122c72624db63558f07fc550cf02f00ea54b486",
+      "sha256": "f16326f0e1ed99946438a1aea69ab0f8e0fcb8e2a6acb7e267418af0c53b6328"
+    }
+  ],
+  "proof": "API-boundZIP; inner hashes;83historical bindings plus5transitive inputs; all478unique actual list/test/pass terminals and bound logs",
+  "localExecutableValidationRan": false
+}

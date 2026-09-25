@@ -75,6 +75,8 @@ pub const SCOPE_DRAFTS_READ: &str = "drafts:read";
 pub const SCOPE_DREAMS_OBSIDIAN_WRITE: &str = "dreams:obsidian:write";
 /// Read recall / memory search.
 pub const SCOPE_RECALL_READ: &str = "recall:read";
+/// Sync one archived ISO week to the accepted configuration's Obsidian vault.
+pub const SCOPE_REFLECTIONS_WEEKLY_OBSIDIAN_WRITE: &str = "reflections:weekly:obsidian:write";
 /// Read pending proactive proposal metadata.
 pub const SCOPE_PROPOSALS_READ: &str = "proposals:read";
 /// Read authenticated permission-decision audit metadata.
@@ -109,6 +111,7 @@ pub const ALL_SCOPES: &[&str] = &[
     SCOPE_PROPOSALS_READ,
     SCOPE_PROVIDER_CALL,
     SCOPE_RECALL_READ,
+    SCOPE_REFLECTIONS_WEEKLY_OBSIDIAN_WRITE,
     SCOPE_STATS_READ,
 ];
 
@@ -559,6 +562,25 @@ mod tests {
             let (record, other_token) = make_token(&[scope]);
             assert!(matches!(
                 verify_token_for_scope(&mut [record], &other_token, SCOPE_DREAMS_OBSIDIAN_WRITE),
+                VerifyResult::InsufficientScope { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn weekly_reflection_write_scope_is_isolated_from_dreams_and_other_effects() {
+        assert!(ALL_SCOPES.windows(2).all(|pair| pair[0] < pair[1]));
+        let (record, token) = make_token(&[SCOPE_REFLECTIONS_WEEKLY_OBSIDIAN_WRITE]);
+        let mut records = vec![record];
+        assert!(matches!(
+            verify_token_for_scope(&mut records, &token, SCOPE_REFLECTIONS_WEEKLY_OBSIDIAN_WRITE),
+            VerifyResult::Ok { .. }
+        ));
+        for scope in [SCOPE_DREAMS_OBSIDIAN_WRITE, SCOPE_RECALL_READ, SCOPE_MEMORY_WRITE, SCOPE_PROVIDER_CALL, SCOPE_CHANNEL_SEND] {
+            assert!(matches!(verify_token_for_scope(&mut records, &token, scope), VerifyResult::InsufficientScope { .. }));
+            let (other, other_token) = make_token(&[scope]);
+            assert!(matches!(
+                verify_token_for_scope(&mut [other], &other_token, SCOPE_REFLECTIONS_WEEKLY_OBSIDIAN_WRITE),
                 VerifyResult::InsufficientScope { .. }
             ));
         }

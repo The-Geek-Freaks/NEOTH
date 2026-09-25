@@ -8,6 +8,27 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1245 weekly archive export and W1247 producer acceptance (2026-09-25):**
+The dedicated POST /api/reflections/weekly/obsidian/sync exports exactly one
+canonical ISO week into the accepted configuration's vault. It uses its own
+reflections:weekly:obsidian:write scope and an egress-generation lease through
+admission, blocking filesystem work and terminal WAL, including detached HTTP
+waiters and reload. Dream scheduling is independent. Strict bounded no-follow
+reads preserve keyless legacy records and require any owned record to match its
+immutable intent. Atomic note publication reports unknown durability explicitly.
+The n8n starter now sends the current UTC ISO week and remains inactive.
+Independent static review found no blocker;23new tests cover archive, HTTP,
+scope, exact output and terminal/reload boundaries. New consumer behavior is
+HOSTED-PENDING. Native1940/Group1730/Windows500; Unix extras Linux69/macOS64.
+Previous weekly producer source20432251 is ROOT-ADMITTED on Linux:1706/1706PASS,
+0FAIL/0missing,293historical bindings and actual ordered terminals. Windows478
+is ROOT-ADMITTED478PASS/0FAIL/0missing with88historical source/input bindings.
+Old Windowsb780 artifact independently confirms only the two repaired tracing
+E0599 errors and zero executed tests. Core309 runs; Core204 remains pending.
+ROAD1077done/245open/2partial; no whole roadmap row closed by this batch.
+Docs: n8n-weekly-obsidian-sync.md; gold-wave1245-weekly-consumer-review.json;
+gold-wave1247-grouped.json. No local executable validation ran.
+
 **W1240 weekly compile repair (2026-09-25):**
 Group1706b780 stopped before test execution with two E0599 errors: the local
 variable display in weekly_archive.rs collided with tracing::field::display

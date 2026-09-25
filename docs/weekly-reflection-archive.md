@@ -46,8 +46,8 @@ this change does not backfill an already suppressed week. An incompatible
 pre-upgrade pending item is preserved and reported as a conflict.
 
 Weekly reflection production is separate from `PeriodKind::Daily` and
-`PeriodKind::Yearly`. This batch does not introduce a weekly n8n/Obsidian sync
-endpoint. Its archive is the prerequisite for that consumer.
+`PeriodKind::Yearly`. The separate [weekly n8n/Obsidian consumer](n8n-weekly-obsidian-sync.md)
+exports these archives with its own scoped authorization and checked reader.
 
 Validation status: source implementation and focused regression cases passed
 independent static review. Executable acceptance runs on GitHub because local executable

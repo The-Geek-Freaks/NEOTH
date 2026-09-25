@@ -1,0 +1,17 @@
+{
+  "schema": "neoth-gold-wave1247-grouped/v1",
+  "source": "2043225134b18bc054ee30ee1ddb0827b7e53e86",
+  "run": 36100800257,
+  "status": "ROOT_ADMITTED_PASS",
+  "executed": 1706,
+  "passed": 1706,
+  "failed": 0,
+  "missing": 0,
+  "sourceBindings": 293,
+  "admissionSha256": "3374A502CD52DAF1C1A27DACF4B6B7691A2D3109764AFE4BDC5F1FE07533B8B3",
+  "artifactVerificationSha256": "769F98286D4E4F4627F9B3D1FEA96163CA7FF3775C552AAA873FBB60AEBAA857",
+  "logSha256": "64EACC2C566666D528A256B9709B1A70E552E560367180CE7F3CE2474489DFEB",
+  "proof": "3 API-bound ZIPs;293 historical Git tree/blob and snapshot hashes;1706 ordered unique actual identities and passing summaries; checked verifier list/run gates",
+  "scope": "Weekly producer/archive/queue/rollover plus prior regression selection at20432251. New weekly Obsidian consumer is not included.",
+  "localExecutableValidationRan": false
+}

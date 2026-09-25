@@ -8,6 +8,10 @@ Spec: [`PLAN/SPEC_n8n_localhost_api_2026-05-23.md`](../PLAN/SPEC_n8n_localhost_a
 Companion: [cron-vs-n8n.md](cron-vs-n8n.md) for the "which scheduling
 surface should I use" decision.
 
+Archive export routes: [Dream day to Obsidian](n8n-dream-obsidian-sync.md) and
+[weekly reflections to Obsidian](n8n-weekly-obsidian-sync.md). Each has a
+dedicated token scope and uses only the accepted instance's configured vault.
+
 ---
 
 ## Enable + token

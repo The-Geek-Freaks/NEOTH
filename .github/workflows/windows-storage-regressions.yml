@@ -548,6 +548,28 @@ jobs:
           reflection::tests::ob02_sync_overwrites_stale_existing_file	neothd/src/reflection/mod.rs
           daemon::reflection_cron::tests::period_tick_archives_and_is_idempotent_per_tag	neothd/src/daemon/reflection_cron.rs
           proactive::tests::enqueue_dedups_on_key	neothd/src/proactive/mod.rs
+          reflection::weekly_obsidian::tests::multirecord_source_preserves_order_separator_and_replaces_target_on_repeat	neothd/src/reflection/weekly_obsidian.rs
+          reflection::weekly_obsidian::tests::missing_source_is_quiet_without_creating_target	neothd/src/reflection/weekly_obsidian.rs
+          reflection::weekly_obsidian::tests::malformed_source_and_limits_fail_closed_without_replacing_target	neothd/src/reflection/weekly_obsidian.rs
+          reflection::weekly_obsidian::tests::final_newline_week_and_producer_key_invariants_are_strict	neothd/src/reflection/weekly_obsidian.rs
+          reflection::weekly_obsidian::tests::producer_record_must_match_its_immutable_intent	neothd/src/reflection/weekly_obsidian.rs
+          reflection::weekly_obsidian::tests::missing_or_corrupt_producer_intent_preserves_existing_target	neothd/src/reflection/weekly_obsidian.rs
+          reflection::weekly_obsidian::tests::record_limit_subdir_and_week_validation_fail_before_destination_mutation	neothd/src/reflection/weekly_obsidian.rs
+          reflection::weekly_obsidian::tests::durability_tags_serialize_in_snake_case	neothd/src/reflection/weekly_obsidian.rs
+          reflection::weekly_obsidian::tests::hardlinked_target_is_refused_and_preserved	neothd/src/reflection/weekly_obsidian.rs
+          reflection::weekly_obsidian::tests::post_commit_validation_failure_reports_published_durability_unknown	neothd/src/reflection/weekly_obsidian.rs
+          n8n_api::server::reflection_weekly_obsidian_http_tests::weekly_scope_rejects_before_body_parse_or_vault_effect	neothd/src/n8n_api/reflection_weekly_obsidian_http_tests.rs
+          n8n_api::server::reflection_weekly_obsidian_http_tests::weekly_strict_body_and_missing_vault_use_fixed_errors	neothd/src/n8n_api/reflection_weekly_obsidian_http_tests.rs
+          n8n_api::server::reflection_weekly_obsidian_http_tests::weekly_sync_works_with_dreaming_disabled_and_quiet_week_creates_no_target	neothd/src/n8n_api/reflection_weekly_obsidian_http_tests.rs
+          n8n_api::server::reflection_weekly_obsidian_http_tests::weekly_existing_legacy_and_canonical_archive_syncs_and_redacts_response_paths	neothd/src/n8n_api/reflection_weekly_obsidian_http_tests.rs
+          n8n_api::server::reflection_weekly_obsidian_http_tests::weekly_corrupt_source_fails_without_target_and_wal_uses_opaque_verified_caller	neothd/src/n8n_api/reflection_weekly_obsidian_http_tests.rs
+          n8n_api::server::reflection_weekly_obsidian_http_tests::weekly_retired_generation_rejects_before_sync	neothd/src/n8n_api/reflection_weekly_obsidian_http_tests.rs
+          n8n_api::handlers::reflection_weekly_obsidian_sync::tests::weekly_worker_admission_failure_never_starts_effect	neothd/src/n8n_api/handlers/reflection_weekly_obsidian_worker_tests.rs
+          n8n_api::handlers::reflection_weekly_obsidian_sync::tests::weekly_worker_terminal_audit_failure_is_outcome_unknown	neothd/src/n8n_api/handlers/reflection_weekly_obsidian_worker_tests.rs
+          n8n_api::handlers::reflection_weekly_obsidian_sync::tests::detached_weekly_worker_holds_egress_lease_through_terminal_audit_and_reload	neothd/src/n8n_api/handlers/reflection_weekly_obsidian_worker_tests.rs
+          security::api_tokens::tests::weekly_reflection_write_scope_is_isolated_from_dreams_and_other_effects	neothd/src/security/api_tokens.rs
+          installers::n8n_starter_workflows::tests::reflection_starter_exports_current_utc_iso_week_only	neothd/src/installers/n8n_starter_workflows.rs
+          n8n_api::server::tests::required_scope_for_all_mapped_routes_return_some	neothd/src/n8n_api/server.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -564,10 +586,10 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 478 ]]; then
+          if [[ "$expected" -ne 500 ]]; then
             selection_valid=0
           fi
-          sha256sum Cargo.lock neothd/Cargo.toml neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
+          sha256sum Cargo.lock neothd/Cargo.toml neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
 
           artifact_log="$evidence/neoth-lib-test-artifacts.jsonl"
           binary_receipt="$evidence/neoth-lib-test-binary.json"

@@ -1,0 +1,58 @@
+{
+  "schema": "neoth-gold-weekly-consumer-review/v1",
+  "base": "2043225134b18bc054ee30ee1ddb0827b7e53e86",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "reviewReportSha256": "572416CB2A75BB9BC38BCABCEA90F547C5E7E9F66FCCC5CC9B3141028AB85E8A",
+  "sourceBindings": [
+    {
+      "path": "SRC/neothd/src/reflection/weekly_obsidian.rs",
+      "sha256": "7166EB1AEACDEF750CAFD2647E3CA6DCAB81BCC65AA47B2BAD2B0124A3E1BA00"
+    },
+    {
+      "path": "SRC/neothd/src/reflection/weekly_archive.rs",
+      "sha256": "AAC599D4957A940CD77C96E056B1461A931941B19AC4EDD49431D8D37C19A0A8"
+    },
+    {
+      "path": "SRC/neothd/src/reflection/mod.rs",
+      "sha256": "7F5FF090332D09C4C074CA77602BFA665D79F777D1C2E16071EEFFE887BE5D8A"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs",
+      "sha256": "F863BD77E96A65388504E534744AB1E2E84670166D5693AC0DACF841D365CCC7"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers/reflection_weekly_obsidian_worker_tests.rs",
+      "sha256": "A7D2420BE683C137C6D88763291FB8BA23C17507B9CDDE1986F1AD763012A1CB"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/reflection_weekly_obsidian_http_tests.rs",
+      "sha256": "8BABDB60C473ADD1D89E3878C6DFCD9AF7AA3DC6BD3F0E7EA26A4FB86F920B18"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers.rs",
+      "sha256": "36851F5E87C93B98E340AD500190DF64AFFE0BEC2608AD9BB7879405A2E0DD0E"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/server.rs",
+      "sha256": "FAE2C1AB5A34D55C5C581E14A191B08E3E537361B95A94A3443280701C93DC6D"
+    },
+    {
+      "path": "SRC/neothd/src/security/api_tokens.rs",
+      "sha256": "DDD8485D83B4E98BDD5ED023428A9E62446ED04ABD323705071B09FC1B90D29A"
+    },
+    {
+      "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+      "sha256": "3697601B8566810A01802038719C989EBBA871A9C2721CDC386AF701471DA6FF"
+    },
+    {
+      "path": "docs/n8n-weekly-obsidian-sync.md",
+      "sha256": "EFE94D158693FD0CBB5BAE88E3CA4FD36248451A04047899140C26F7CAF59CA0"
+    }
+  ],
+  "newTests": 23,
+  "newUniversal": 21,
+  "newUnix": 2,
+  "groupedRequired": 24,
+  "localExecutableValidationRan": false,
+  "scope": "Configured-vault weekly export, dedicated scope, actual accepted egress lease through terminal WAL;23 new tests. No runtime acceptance yet."
+}

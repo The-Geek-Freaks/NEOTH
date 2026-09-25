@@ -54,6 +54,7 @@ pub mod hygiene_store;
 /// Capability-bound, crash-safe canonical weekly producer archive. The cron
 /// owns topic sampling, queue reconciliation, and tick-state publication.
 pub(crate) mod weekly_archive;
+pub(crate) mod weekly_obsidian;
 
 use crate::proactive::ProactiveItem;
 
