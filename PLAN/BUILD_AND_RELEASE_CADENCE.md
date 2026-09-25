@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1224 hosted Dream formatter and weekly-path correction (2026-09-25):**
+Root verified API/ZIP/inner hashes and all five historical preimages and imported
+exact hosted formatter postimages from run36097659126 at3099747e. No semantic
+change or local formatter. CodeQuality309 passed; Core614 workspace and the
+Dream309 Group1673/Windows446/n8n product gates continue; Core309 is pending.
+Claude036 reviewed the actual Dream primitive at its exact published source hash
+and found no static blocker; this remains static evidence. RESULT034's weekly
+claim is withdrawn: PeriodKind has Daily/Yearly only. The actual weekly producer
+run_reflection_tick_once currently queues/stages without a WeeklyReflection
+archive. W1225 mapped that missing prerequisite; W1226/W1227 implement canonical
+weekly intent, archive-once and queue/state reconciliation. Claude037 requests
+the matching correction. No criterion closes:1077done/245open/2partial.
+
 **W1223 Dream-to-Obsidian batch (2026-09-25):**
 POST /api/dreams/obsidian/sync now accepts only one canonical UTC day under a
 new dreams:obsidian:write scope. The verified master/scoped caller is retained
@@ -26,8 +39,8 @@ cases. Executable acceptance remains pending; no roadmap item closes.
 Core390's full workspace check and exact already-committed CLI export passed;
 Core614 slim/test-typecheck passed and its CLI build continues. Historical
 Groupff32=1634PASS1FAIL/Windowsff32=410PASS1FAIL remain scoped to the old fixture.
-Claude034 corrected the live reflection path;035 inspected helper bodies;
-036 requests actual new-source review. Parked/unstarted032 was completed by Root.
+Claude034 mapped Daily/Yearly periodic export; its weekly claim was incorrect.
+Claude035 reviewed helpers;036 reviewed the exact new Dream primitive statically. Parked/unstarted032 was completed by Root.
 No local executable validation ran. Road remains1077done/245open/2partial.
 
 **W1205 exact hosted consult formatter import (2026-09-25):**

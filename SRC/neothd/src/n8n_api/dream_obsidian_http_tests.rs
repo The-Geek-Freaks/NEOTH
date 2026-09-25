@@ -159,7 +159,8 @@ async fn dream_sync_scope_is_rejected_before_body_parse_or_vault_side_effect() {
     let home = tempfile::tempdir().unwrap();
     let workspace = tempfile::tempdir().unwrap();
     let vault = workspace.path().join("uncreated-vault");
-    let (_, wrong_token) = scoped_token(home.path(), vec![api_tokens::SCOPE_RECALL_READ.to_owned()]);
+    let (_, wrong_token) =
+        scoped_token(home.path(), vec![api_tokens::SCOPE_RECALL_READ.to_owned()]);
     let (state, writer, wal_join, server, shutdown, port) =
         start_dream_sync_http_test_server(home.path(), configured(&vault)).await;
 
@@ -193,7 +194,10 @@ async fn dream_sync_rejects_invalid_unknown_and_private_request_fields_with_fixe
         let response = post_dream_sync_http(port, Some(&token), &body).await;
         assert_eq!(response["_http_status"], "400", "{body}");
         assert_eq!(response["error"]["code"], "BadRequest");
-        assert_eq!(response["error"]["message"], "dream_obsidian_sync_request_invalid");
+        assert_eq!(
+            response["error"]["message"],
+            "dream_obsidian_sync_request_invalid"
+        );
         assert!(!response.to_string().contains("private-bearer-material"));
     }
     assert!(!vault.path().join(SUBDIR).exists());
@@ -229,8 +233,15 @@ async fn dream_sync_archived_day_writes_only_configured_vault_and_redacts_paths(
     assert!(response["data"].get("target_path").is_none());
     let note = dream_note(vault.path());
     assert!(note.exists());
-    assert!(std::fs::read_to_string(note).unwrap().contains("private archived dream summary"));
-    assert_eq!(std::fs::read_to_string(ambient.join(format!("{DAY}.md"))).unwrap(), "ambient private dream");
+    assert!(
+        std::fs::read_to_string(note)
+            .unwrap()
+            .contains("private archived dream summary")
+    );
+    assert_eq!(
+        std::fs::read_to_string(ambient.join(format!("{DAY}.md"))).unwrap(),
+        "ambient private dream"
+    );
     let serialized = response.to_string();
     assert!(!serialized.contains(vault.path().to_string_lossy().as_ref()));
     assert!(!serialized.contains(home.path().to_string_lossy().as_ref()));
@@ -282,12 +293,20 @@ async fn dream_sync_policy_vault_and_retirement_refuse_before_output() {
             state.reload_controller.retire_generation_effect_runtime();
         }
         let response = post_dream_sync_http(port, Some(&state.token), &request(DAY)).await;
-        let expected = if case == "missing_vault" { "503" } else { "403" };
+        let expected = if case == "missing_vault" {
+            "503"
+        } else {
+            "403"
+        };
         assert_eq!(response["_http_status"], expected, "{case}");
         assert!(!vault.exists(), "{case}");
         stop_dream_sync_http_test_server(state, writer, wal_join, server, shutdown).await;
         let receipts = n8n_audit_payloads(&home.path().join("dream-obsidian-http-test.wal"));
-        assert!(!receipts.iter().any(|receipt| receipt["kind"] == "n8n_dream_obsidian_sync"));
+        assert!(
+            !receipts
+                .iter()
+                .any(|receipt| receipt["kind"] == "n8n_dream_obsidian_sync")
+        );
     }
 }
 
@@ -311,10 +330,7 @@ async fn dream_sync_corrupt_input_returns_fixed_503_without_output() {
     let response = post_dream_sync_http(port, Some(&token), &request(DAY)).await;
     assert_eq!(response["_http_status"], "503");
     assert_eq!(response["error"]["code"], "StoreUnavailable");
-    assert_eq!(
-        response["error"]["message"],
-        "dream_obsidian_sync_failed"
-    );
+    assert_eq!(response["error"]["message"], "dream_obsidian_sync_failed");
     let serialized = response.to_string();
     assert!(!serialized.contains("private corrupt dream input"));
     assert!(!serialized.contains(vault.path().to_string_lossy().as_ref()));
@@ -362,7 +378,11 @@ async fn dream_sync_wal_receipt_records_verified_scoped_token_id_without_secrets
         assert!(!serialized.contains(vault.path().to_string_lossy().as_ref()));
         assert!(!serialized.contains("private archived dream summary"));
     }
-    assert!(sync_receipts.iter().any(|receipt| receipt["phase"] == "admission"));
+    assert!(
+        sync_receipts
+            .iter()
+            .any(|receipt| receipt["phase"] == "admission")
+    );
     let completed = sync_receipts
         .iter()
         .find(|receipt| receipt["phase"] == "completed")

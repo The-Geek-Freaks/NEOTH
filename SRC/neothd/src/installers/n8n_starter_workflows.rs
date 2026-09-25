@@ -757,9 +757,17 @@ mod tests {
                 assert_eq!(http["parameters"]["sendBody"], true);
                 assert_eq!(http["parameters"]["contentType"], "json");
                 assert_eq!(http["parameters"]["specifyBody"], "json");
-                assert_eq!(http["parameters"]["jsonBody"], "={{ JSON.stringify({ day: $now.toUTC().minus({ days: 1 }).toFormat('yyyy-MM-dd') }) }}");
+                assert_eq!(
+                    http["parameters"]["jsonBody"],
+                    "={{ JSON.stringify({ day: $now.toUTC().minus({ days: 1 }).toFormat('yyyy-MM-dd') }) }}"
+                );
                 assert_eq!(v["settings"]["timezone"], "UTC");
-                assert!(http["notes"].as_str().is_some_and(|notes| notes.contains("requires dreams:obsidian:write") && notes.contains("written:false")));
+                assert!(
+                    http["notes"]
+                        .as_str()
+                        .is_some_and(|notes| notes.contains("requires dreams:obsidian:write")
+                            && notes.contains("written:false"))
+                );
             } else if w.slug == "calendar_morning_agenda" {
                 assert_eq!(http["parameters"]["method"], "POST");
                 assert_eq!(http["parameters"]["sendBody"], true);
@@ -889,13 +897,38 @@ mod tests {
         assert_eq!(v["active"], false);
         assert_eq!(v["settings"]["timezone"], "UTC");
         let nodes = v["nodes"].as_array().unwrap();
-        let schedule = nodes.iter().find(|n| n["type"] == "n8n-nodes-base.scheduleTrigger").unwrap();
-        assert_eq!(schedule["parameters"]["rule"]["interval"][0]["expression"], "0 2 * * *");
-        let http = nodes.iter().find(|n| n["type"] == "n8n-nodes-base.httpRequest").unwrap();
-        assert_eq!(http["parameters"]["url"], "={{ $json.neothBaseUrl + '/api/dreams/obsidian/sync' }}");
-        assert_eq!(http["parameters"]["jsonBody"], "={{ JSON.stringify({ day: $now.toUTC().minus({ days: 1 }).toFormat('yyyy-MM-dd') }) }}");
-        assert!(http["notes"].as_str().unwrap().contains("does not generate Dreams"));
-        assert!(http["notes"].as_str().unwrap().contains("response content is not automatically delivered"));
+        let schedule = nodes
+            .iter()
+            .find(|n| n["type"] == "n8n-nodes-base.scheduleTrigger")
+            .unwrap();
+        assert_eq!(
+            schedule["parameters"]["rule"]["interval"][0]["expression"],
+            "0 2 * * *"
+        );
+        let http = nodes
+            .iter()
+            .find(|n| n["type"] == "n8n-nodes-base.httpRequest")
+            .unwrap();
+        assert_eq!(
+            http["parameters"]["url"],
+            "={{ $json.neothBaseUrl + '/api/dreams/obsidian/sync' }}"
+        );
+        assert_eq!(
+            http["parameters"]["jsonBody"],
+            "={{ JSON.stringify({ day: $now.toUTC().minus({ days: 1 }).toFormat('yyyy-MM-dd') }) }}"
+        );
+        assert!(
+            http["notes"]
+                .as_str()
+                .unwrap()
+                .contains("does not generate Dreams")
+        );
+        assert!(
+            http["notes"]
+                .as_str()
+                .unwrap()
+                .contains("response content is not automatically delivered")
+        );
     }
     #[test]
     fn paperless_consult_starter_is_manual_question_lookup_only() {

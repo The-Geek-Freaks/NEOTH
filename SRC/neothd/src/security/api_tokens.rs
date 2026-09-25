@@ -558,11 +558,7 @@ mod tests {
             ));
             let (record, other_token) = make_token(&[scope]);
             assert!(matches!(
-                verify_token_for_scope(
-                    &mut [record],
-                    &other_token,
-                    SCOPE_DREAMS_OBSIDIAN_WRITE
-                ),
+                verify_token_for_scope(&mut [record], &other_token, SCOPE_DREAMS_OBSIDIAN_WRITE),
                 VerifyResult::InsufficientScope { .. }
             ));
         }

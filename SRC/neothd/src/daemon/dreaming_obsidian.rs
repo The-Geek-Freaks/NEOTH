@@ -12,9 +12,9 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::skills::store::{
-    atomic_write_private_child_reported, open_absolute_bound_directory,
+    PrivateChildCommit, atomic_write_private_child_reported, open_absolute_bound_directory,
     open_bound_regular_file, open_or_create_private_child_dir, open_real_child_dir_if_present,
-    read_regular_file_bounded, PrivateChildCommit,
+    read_regular_file_bounded,
 };
 
 const DREAMS_DIR: &str = "dreams";
@@ -77,11 +77,9 @@ pub(crate) fn sync_day_checked(
         return Ok(quiet_outcome(day, target_path));
     };
     let dreams_display = home.display_path.join(DREAMS_DIR);
-    let Some(dreams_dir) = open_real_child_dir_if_present(
-        &home.dir,
-        OsStr::new(DREAMS_DIR),
-        &dreams_display,
-    )? else {
+    let Some(dreams_dir) =
+        open_real_child_dir_if_present(&home.dir, OsStr::new(DREAMS_DIR), &dreams_display)?
+    else {
         return Ok(quiet_outcome(day, target_path));
     };
     let source_bytes = match read_regular_file_bounded(
@@ -94,8 +92,7 @@ pub(crate) fn sync_day_checked(
         Err(error) if error_is_not_found(&error) => return Ok(quiet_outcome(day, target_path)),
         Err(error) => return Err(error).context("read checked dream JSONL"),
     };
-    let source = std::str::from_utf8(&source_bytes)
-        .context("dream JSONL must be valid UTF-8")?;
+    let source = std::str::from_utf8(&source_bytes).context("dream JSONL must be valid UTF-8")?;
     let dreams = parse_checked_dreams(source, day)?;
     if dreams.is_empty() {
         return Ok(quiet_outcome(day, target_path));
@@ -108,11 +105,8 @@ pub(crate) fn sync_day_checked(
     let vault = open_absolute_bound_directory(vault, true, "Obsidian vault")?
         .context("create or open explicit Obsidian vault")?;
     let subdir_display = vault.display_path.join(subdir);
-    let subdir_dir = open_or_create_private_child_dir(
-        &vault.dir,
-        OsStr::new(subdir),
-        &subdir_display,
-    )?;
+    let subdir_dir =
+        open_or_create_private_child_dir(&vault.dir, OsStr::new(subdir), &subdir_display)?;
     let target_dir_display = subdir_display.join(OBSIDIAN_DREAMS_DIR);
     let target_dir = open_or_create_private_child_dir(
         &subdir_dir,
@@ -152,8 +146,14 @@ pub(crate) fn sync_day_checked(
 }
 
 fn validate_inputs(home: &Path, vault: &Path, subdir: &str, day: &str) -> Result<()> {
-    anyhow::ensure!(home.is_absolute(), "dream sync home must be an explicit absolute path");
-    anyhow::ensure!(vault.is_absolute(), "Obsidian vault must be an explicit absolute path");
+    anyhow::ensure!(
+        home.is_absolute(),
+        "dream sync home must be an explicit absolute path"
+    );
+    anyhow::ensure!(
+        vault.is_absolute(),
+        "Obsidian vault must be an explicit absolute path"
+    );
     validate_day(day)?;
     validate_subdir(subdir)
 }
@@ -387,11 +387,19 @@ mod tests {
         write_source_dreams(home.path(), day, &[dream(day, "first", "first summary")]);
 
         let first = sync_day_checked(home.path(), vault.path(), "NEOTH", day).unwrap();
-        let target = vault.path().join("NEOTH").join(OBSIDIAN_DREAMS_DIR).join(format!("{day}.md"));
+        let target = vault
+            .path()
+            .join("NEOTH")
+            .join(OBSIDIAN_DREAMS_DIR)
+            .join(format!("{day}.md"));
         assert!(first.written);
         assert_eq!(first.target_path, target);
         assert_ne!(first.durability, DreamSyncDurability::NotWritten);
-        assert!(std::fs::read_to_string(&target).unwrap().contains("first summary"));
+        assert!(
+            std::fs::read_to_string(&target)
+                .unwrap()
+                .contains("first summary")
+        );
 
         write_source_dreams(home.path(), day, &[dream(day, "second", "second summary")]);
         let second = sync_day_checked(home.path(), vault.path(), "NEOTH", day).unwrap();
@@ -411,7 +419,10 @@ mod tests {
 
         assert!(!outcome.written);
         assert!(!vault.exists());
-        assert_eq!(outcome.target_path, vault.join("NEOTH/Dreams/2026-09-24.md"));
+        assert_eq!(
+            outcome.target_path,
+            vault.join("NEOTH/Dreams/2026-09-24.md")
+        );
         assert_eq!(outcome.durability, DreamSyncDurability::NotWritten);
     }
 
@@ -511,7 +522,8 @@ mod tests {
         std::fs::create_dir_all(&target_dir).unwrap();
         let outside_sentinel = outside.path().join("keep.md");
         std::fs::write(&outside_sentinel, "keep").unwrap();
-        std::os::unix::fs::symlink(&outside_sentinel, target_dir.join(format!("{day}.md"))).unwrap();
+        std::os::unix::fs::symlink(&outside_sentinel, target_dir.join(format!("{day}.md")))
+            .unwrap();
         assert!(sync_day_checked(home.path(), vault.path(), "NEOTH", day).is_err());
         assert_eq!(std::fs::read_to_string(outside_sentinel).unwrap(), "keep");
     }
@@ -540,13 +552,20 @@ mod tests {
         let vault = tempdir().unwrap();
         let day = "2026-09-24";
         write_source_dreams(home.path(), day, &[dream(day, "theme", "summary")]);
-        let target = vault.path().join("NEOTH").join(OBSIDIAN_DREAMS_DIR).join(format!("{day}.md"));
+        let target = vault
+            .path()
+            .join("NEOTH")
+            .join(OBSIDIAN_DREAMS_DIR)
+            .join(format!("{day}.md"));
         crate::skills::store::fail_private_child_post_commit_validation_for_test(&target);
 
         let outcome = sync_day_checked(home.path(), vault.path(), "NEOTH", day).unwrap();
 
         assert!(outcome.written);
-        assert_eq!(outcome.durability, DreamSyncDurability::PublishedDurabilityUnknown);
+        assert_eq!(
+            outcome.durability,
+            DreamSyncDurability::PublishedDurabilityUnknown
+        );
         assert!(std::fs::read_to_string(target).unwrap().contains("summary"));
     }
 }

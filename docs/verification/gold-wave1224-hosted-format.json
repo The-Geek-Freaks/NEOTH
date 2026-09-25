@@ -1,0 +1,73 @@
+{
+  "schema": "neoth-format-receipt/v1",
+  "run": 36097659126,
+  "source": "3099747e6e5b1ad3cd3b2d3bb0adbbfa43848865",
+  "artifact": {
+    "id": 10848226324,
+    "api_digest": "sha256:d97caf30c8ca3622afb51aa843e1f7229be97348f54f37c48adce515e0fc79f9",
+    "zip_sha256": "d97caf30c8ca3622afb51aa843e1f7229be97348f54f37c48adce515e0fc79f9",
+    "matches": true
+  },
+  "inner_hashes": [
+    {
+      "path": "rustfmt.patch",
+      "expected": "8e4d8c01c42411e04215ebb6fbc805317d7238a7babe31bff33a3eebc6247d14",
+      "actual": "8e4d8c01c42411e04215ebb6fbc805317d7238a7babe31bff33a3eebc6247d14",
+      "matches": true
+    },
+    {
+      "path": "source-head.txt",
+      "expected": "ce19f852be6ba1d311bfe3945a49d6c4bdff91018a7183b61ecc5918061caab3",
+      "actual": "ce19f852be6ba1d311bfe3945a49d6c4bdff91018a7183b61ecc5918061caab3",
+      "matches": true
+    }
+  ],
+  "receipt_source": "3099747e6e5b1ad3cd3b2d3bb0adbbfa43848865",
+  "receipt_source_matches_run": true,
+  "touched_path_count": 5,
+  "preimages_all_match": true,
+  "entries": [
+    {
+      "path": "SRC/neothd/src/daemon/dreaming_obsidian.rs",
+      "preimage_blob": "599bd1931cf1cf188e5ed2d4b8f8acc17a540dab",
+      "historical_sha256": "1b55f5afd81f7b61bb491547c562cce7de59498b9a470df47eb2fa8578f45ff1",
+      "postimage_blob": "12b9934b3f463ae01a3f76480adee6eb91612e3f",
+      "preimage_matches": true,
+      "postimage_present": false
+    },
+    {
+      "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+      "preimage_blob": "a8160980e329a3abd5f91fd956f5b716a3ed2466",
+      "historical_sha256": "076f92130f178a033cd5b3553dbfa9446c9d86824cc68e272ac46271463ab4be",
+      "postimage_blob": "5866b441218a591f38fcad515a65d5aefc1eff7a",
+      "preimage_matches": true,
+      "postimage_present": false
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/dream_obsidian_http_tests.rs",
+      "preimage_blob": "6a0960013570c29389d55223f2e287b26c10df3e",
+      "historical_sha256": "ba4cccc66088ef8cd2b72f8c38ac164e89774d7addefa74ba93083d8ff5ac262",
+      "postimage_blob": "708844424cf0db566c73703f6583ef29b8d612e9",
+      "preimage_matches": true,
+      "postimage_present": false
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers/dream_obsidian_sync.rs",
+      "preimage_blob": "c911bb4f4b5be57c308a985503ba0b69c4470e41",
+      "historical_sha256": "6bfe2ec948e0ecab17cc163f8f6ac4dc1375437c51d8f1b01cb5a9f7ba55071e",
+      "postimage_blob": "b0eeb30331aa621ab3151554fa44bf7eeb12b4b4",
+      "preimage_matches": true,
+      "postimage_present": false
+    },
+    {
+      "path": "SRC/neothd/src/security/api_tokens.rs",
+      "preimage_blob": "94506ccf526b815589f179efc795f12c6a7a3742",
+      "historical_sha256": "eb3fb138386aa8035aca5db83bab7ea1c9de27fc1851377ae77bcd8c6f8ef709",
+      "postimage_blob": "eb8d1df1fa15aa8cb9db117dcd4d107b010ac688",
+      "preimage_matches": true,
+      "postimage_present": false
+    }
+  ],
+  "scope": "Root verified API ZIP digest, inner hashes, historical Git blob bytes, normalized worktree preimages and all five exact hosted postimages. Formatting only; no local executable validation.",
+  "rootPostimagesVerified": true
+}

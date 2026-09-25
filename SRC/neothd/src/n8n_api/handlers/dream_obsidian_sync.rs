@@ -59,11 +59,13 @@ pub(super) async fn handle(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
         .unwrap_or(DEFAULT_SUBDIR);
     let lease = match accepted.acquire_dream_commit(EFFECT) {
         Ok(lease) => lease,
-        Err(_) => return HandlerOutcome::error(
-            ApiErrorCode::PermissionDenied,
-            "dream_obsidian_sync_generation_retired",
-            "reload or shutdown retired this Dream generation before sync admission",
-        ),
+        Err(_) => {
+            return HandlerOutcome::error(
+                ApiErrorCode::PermissionDenied,
+                "dream_obsidian_sync_generation_retired",
+                "reload or shutdown retired this Dream generation before sync admission",
+            );
+        }
     };
 
     let home = state.home.clone();
@@ -99,17 +101,15 @@ pub(super) async fn handle(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
             durability,
             epoch,
             request_id,
-        }) => {
-            HandlerOutcome::ok_json(serde_json::json!({
-                "day": day,
-                "written": written,
-                "dream_count": dream_count,
-                "bytes_written": bytes_written,
-                "durability": durability,
-                "accepted_epoch": epoch,
-                "request_id": request_id,
-            }))
-        }
+        }) => HandlerOutcome::ok_json(serde_json::json!({
+            "day": day,
+            "written": written,
+            "dream_count": dream_count,
+            "bytes_written": bytes_written,
+            "durability": durability,
+            "accepted_epoch": epoch,
+            "request_id": request_id,
+        })),
         Ok(WorkerResult::AdmissionUnavailable) => unavailable(
             "dream_obsidian_sync_audit_unavailable",
             "durable Dream sync admission could not be recorded; no sync was started",
@@ -199,11 +199,9 @@ fn append_audit(
     writer: &crate::wal::writer::WalWriterHandle,
     payload: Vec<u8>,
 ) -> Result<(), ()> {
-    let header = crate::wal::HeaderBuilder::new(
-        crate::wal::events::EVENT_TYPE_N8N_REQUEST,
-        &payload,
-    )
-    .build();
+    let header =
+        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_N8N_REQUEST, &payload)
+            .build();
     runtime
         .block_on(writer.append(header, payload))
         .map(|_| ())
@@ -229,7 +227,8 @@ fn audit_payload(
         "dream_count": outcome.map(|item| item.dream_count),
         "bytes_written": outcome.map(|item| item.bytes_written),
         "durability": outcome.map(|item| item.durability),
-    })).expect("fixed Dream audit payload serializes")
+    }))
+    .expect("fixed Dream audit payload serializes")
 }
 
 struct TerminalContext {
@@ -241,11 +240,7 @@ struct TerminalContext {
 }
 
 impl TerminalContext {
-    fn payload(
-        &self,
-        phase: &str,
-        outcome: Option<&CheckedDreamSyncOutcome>,
-    ) -> Vec<u8> {
+    fn payload(&self, phase: &str, outcome: Option<&CheckedDreamSyncOutcome>) -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({
             "kind": "n8n_dream_obsidian_sync",
             "phase": phase,
@@ -258,7 +253,8 @@ impl TerminalContext {
             "dream_count": outcome.map(|item| item.dream_count),
             "bytes_written": outcome.map(|item| item.bytes_written),
             "durability": outcome.map(|item| item.durability),
-        })).expect("fixed Dream audit payload serializes")
+        }))
+        .expect("fixed Dream audit payload serializes")
     }
 }
 
@@ -282,7 +278,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{mpsc, Arc};
+    use std::sync::{Arc, mpsc};
     use std::time::Duration;
 
     fn controller() -> Arc<crate::config::reload::ReloadController> {
@@ -328,12 +324,7 @@ mod tests {
     #[test]
     fn canonical_day_rejects_extended_years_and_non_ascii_digits() {
         assert!(canonical_day("2026-09-24"));
-        for invalid in [
-            "+2026-09-24",
-            "02026-09-24",
-            "٢٠٢٦-٠٩-٢٤",
-            "2026-9-24",
-        ] {
+        for invalid in ["+2026-09-24", "02026-09-24", "٢٠٢٦-٠٩-٢٤", "2026-9-24"] {
             assert!(!canonical_day(invalid), "{invalid}");
         }
     }
@@ -367,11 +358,7 @@ mod tests {
             terminal_context(),
             |_| {
                 let call = append_calls.fetch_add(1, Ordering::SeqCst);
-                if call == 0 {
-                    Ok(())
-                } else {
-                    Err(())
-                }
+                if call == 0 { Ok(()) } else { Err(()) }
             },
             || {
                 sync_calls.fetch_add(1, Ordering::SeqCst);
@@ -412,7 +399,9 @@ mod tests {
             )
         });
         drop(worker); // Equivalent to a disconnected HTTP waiter: Tokio detaches this worker.
-        sync_started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        sync_started_rx
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap();
 
         let retiring_controller = Arc::clone(&controller);
         let retiring = std::thread::spawn(move || {
@@ -428,16 +417,21 @@ mod tests {
             assert!(std::time::Instant::now() < retirement_deadline);
             std::thread::yield_now();
         }
-        assert!(matches!(retired_rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        assert!(matches!(
+            retired_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
 
         release_sync_tx.send(()).unwrap();
         terminal_rx.recv_timeout(Duration::from_secs(3)).unwrap();
         retired_rx.recv_timeout(Duration::from_secs(3)).unwrap();
         retiring.join().unwrap();
         assert_eq!(append_calls.load(Ordering::SeqCst), 2);
-        assert!(controller
-            .accepted_snapshot()
-            .acquire_dream_commit("retired handler test")
-            .is_err());
+        assert!(
+            controller
+                .accepted_snapshot()
+                .acquire_dream_commit("retired handler test")
+                .is_err()
+        );
     }
 }
