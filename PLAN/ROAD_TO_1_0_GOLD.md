@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1440/W1443 final fixture evidence and hosted formatting (2026-09-25):**
+Windows36147569552 at6c997a7b corroborates the same three fixture failures:
+621 executed,618passed/3failed/0missing. Original ZIP/API digest, all621 log
+hashes, TSV ordering and93 unique Git source bindings are verified; paths
+are correctly resolved relative to SRC. W1441 corrections are already in
+a0b090fe; new Windows36150856003 and Linux1855run36150850270 are running.
+W1443 imports the two exact rustfmt postimages produced by Preflight36150819669
+at a0b090fe, after original ZIP digest, internal hashes, source and Git
+pre/postimage checks. Combined10-case feature36150861089 and Core36150867383
+remain pending/running; source formatting is not dynamic acceptance.
+No local formatter/compiler/test/runtime ran and no roadmap checkbox changed.
+
 **W1433-1441 shared live-channel recovery and native fixture correction (2026-09-25):**
 Google Chat, IRC, Twitch and Nostr queued-account recovery now share one exact
 live-registry path. It revalidates policy, configured destination, stored

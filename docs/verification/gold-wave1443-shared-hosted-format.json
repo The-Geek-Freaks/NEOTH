@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "status": "AUTHENTIC_HOSTED_FORMAT_IMPORTED",
+  "run": 36150819669,
+  "source": "a0b090fe576e4502f993628876edcbd003dc1981",
+  "artifactId": 10871481894,
+  "zipSha256": "ac8ed92e4f5b2b98e7ddcba89649fdbaa4103dd86f5f3427bc062aa16fe626f9",
+  "patchSha256": "897776A1BB41FE92E333BCE255F2681638A3688089C5406C7826FE8916922FCB",
+  "paths": [
+    {
+      "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "preimage": "08edc736ae6b66dd0038d8a222b107d60ae0c348",
+      "postimage": "79ab5feea30a380f9f48488196e92d4cbe31e81b"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_repair_tests.rs",
+      "preimage": "36f24d71072b32df3b2da74b248992885cfaa13d",
+      "postimage": "5b6a47ef323bfc96ace0eae566c04fc62b91865d"
+    }
+  ],
+  "localFormatterRan": false
+}

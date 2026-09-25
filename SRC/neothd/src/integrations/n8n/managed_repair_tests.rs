@@ -965,11 +965,7 @@ async fn pending_and_malformed_repair_custody_block_purge_before_volume_effects(
         )
         .await
         .unwrap_err();
-        assert!(
-            failure
-                .to_string()
-                .contains(expected_failure)
-        );
+        assert!(failure.to_string().contains(expected_failure));
         assert_no_effect_after_setup(&state);
     }
 }

@@ -890,7 +890,8 @@ async fn recover_persisted_connection_bound_delivery(
         .account_id
         .clone()
         .expect("account-bound connection recovery requires an account id");
-    let channel_ref = crate::channels::registry::ChannelRef::new(expected_channel_id, stored_account);
+    let channel_ref =
+        crate::channels::registry::ChannelRef::new(expected_channel_id, stored_account);
 
     // Sealed v5 bindings belong only to the mapped Telegram/Slack factories.
     // A live-instance-owned adapter never accepts them as connection authority.
@@ -913,7 +914,13 @@ async fn recover_persisted_connection_bound_delivery(
         .await;
     }
 
-    let route = plan_delivery(target_channel, policy, live.config, routing, live.credentials);
+    let route = plan_delivery(
+        target_channel,
+        policy,
+        live.config,
+        routing,
+        live.credentials,
+    );
     if matches!(
         &route,
         DeliveryRoute::ConnectionBound {
@@ -921,18 +928,13 @@ async fn recover_persisted_connection_bound_delivery(
             ..
         } if configured_ref == &channel_ref
     ) {
-        return deliver_live_route(
-            egress,
-            live,
-            item,
-            queue_generation,
-            target_channel,
-            route,
-        )
-        .await
-        .map_err(|error| match error {
-            LiveRouteError::AdapterConfiguration(error) | LiveRouteError::Durability(error) => error,
-        });
+        return deliver_live_route(egress, live, item, queue_generation, target_channel, route)
+            .await
+            .map_err(|error| match error {
+                LiveRouteError::AdapterConfiguration(error) | LiveRouteError::Durability(error) => {
+                    error
+                }
+            });
     }
     crate::daemon::proactive_egress::record_sidecar_only_once(
         egress,
@@ -2851,11 +2853,9 @@ mod tests {
             let wal_dir = tmp.path().join("wal");
             std::fs::create_dir_all(&wal_dir).unwrap();
             let segment = wal_dir.join("000001.wal");
-            let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
-                segment.clone(),
-                tmp.path().to_path_buf(),
-            )
-            .unwrap();
+            let (writer, join, ready) =
+                crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
+                    .unwrap();
             ready.wait().await.unwrap();
             assert_eq!(
                 run_proactive_delivery_tick(
@@ -2912,8 +2912,8 @@ mod tests {
             ("irc", "#ops"),
             ("twitch", "#streamer"),
             (
-            "nostr",
-            "npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m",
+                "nostr",
+                "npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m",
             ),
         ];
         for (channel, destination) in cases {
@@ -2927,10 +2927,8 @@ mod tests {
             ] {
                 let tmp = TempDir::new().unwrap();
                 let queue_path = tmp.path().join("proactive_queue.json");
-                let (queued, channel_ref) = account_bound_connection_item(
-                    &format!("{channel}-account-{state}"),
-                    channel,
-                );
+                let (queued, channel_ref) =
+                    account_bound_connection_item(&format!("{channel}-account-{state}"), channel);
                 let mut queue = ProactiveQueue::new();
                 assert!(queue.enqueue(queued).unwrap());
                 queue.save_to(&queue_path).unwrap();
@@ -3026,8 +3024,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn default_connection_bound_account_recovery_holds_unsupported_sealed_binding_without_effect(
-    ) {
+    async fn default_connection_bound_account_recovery_holds_unsupported_sealed_binding_without_effect()
+     {
         for channel in ["gchat", "irc", "twitch", "nostr"] {
             let tmp = TempDir::new().unwrap();
             let queue_path = tmp.path().join("proactive_queue.json");
@@ -3062,19 +3060,15 @@ mod tests {
             .unwrap();
             let registry = empty_live_channels();
             let live_channel = Arc::new(CountingConnectionChannel::new(channel));
-            let lease = registry
-                .begin_replacement(channel_ref, fingerprint)
-                .await;
+            let lease = registry.begin_replacement(channel_ref, fingerprint).await;
             assert!(registry.publish(&lease, live_channel.clone()).await);
 
             let wal_dir = tmp.path().join("wal");
             std::fs::create_dir_all(&wal_dir).unwrap();
             let segment = wal_dir.join("000001.wal");
-            let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
-                segment.clone(),
-                tmp.path().to_path_buf(),
-            )
-            .unwrap();
+            let (writer, join, ready) =
+                crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
+                    .unwrap();
             ready.wait().await.unwrap();
             for now_unix in [1_700_000_000, 1_700_000_001] {
                 let error = run_proactive_delivery_tick(
@@ -3101,7 +3095,11 @@ mod tests {
             drop(writer);
             join.await.unwrap().unwrap();
 
-            assert_eq!(live_channel.sends(), 0, "{channel} sealed binding reached transport");
+            assert_eq!(
+                live_channel.sends(),
+                0,
+                "{channel} sealed binding reached transport"
+            );
             assert!(
                 crate::daemon::proactive_egress::read_delivery_history(tmp.path())
                     .unwrap()
