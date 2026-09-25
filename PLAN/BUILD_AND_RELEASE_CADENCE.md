@@ -3,6 +3,20 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1323-1324 purge product-observer repair and CLI reference (2026-09-25):**
+Corec6cf production-Clippy, native-test typecheck and CLI build/export passed;
+workspace-Clippy continues. Exact CLI artifact10858567568 is checksum-verified
+and adds the public purge command and its two arguments to the reference.
+The real n8n run36121170729 compiled and completed install/import/reinstall/
+second safe uninstall, then failed in the new pre-purge history observer.
+The helper confused CLI `import_inactive_workflows` with persisted job operation
+`import`. Both database observations are corrected; CLI validation is unchanged.
+Independent review approves the narrow repair plus a focused observer regression
+(37helper tests total). The product purge itself is not yet proven by this run.
+New Group1788/Windows557 gates and the corrected product canary follow publication.
+Paperless volume-set provenance W1322 is separate uncommitted work.
+No checkbox closure or local executable validation.
+
 **W1318-1320 hosted formatting, Windows proof and compile repair (2026-09-25):**
 Windows542 run36118717862 at7bed is admitted:542PASS/0FAIL/0missing,
 87historical Git source blobs and543artifact log hashes verified. Together

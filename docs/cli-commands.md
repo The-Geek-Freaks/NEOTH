@@ -2950,6 +2950,13 @@ Start the pinned, NEOTH-owned Docker n8n runtime and prove its API key
 - `--bootstrap-owner` — Create the first n8n owner and API key inside an unexposed, networkless bootstrap container before publishing the runtime
 - `--reuse-uninstall <REUSE_UNINSTALL>` — Reattach the exact retained volume recorded by this Ready uninstall job
 
+### `neoth n8n purge`
+
+Permanently delete the owned data volume retained by a completed uninstall. Without --confirm, show the exact target and required confirmation only
+
+- `--uninstall <UNINSTALL>` — Ready uninstall job whose receipt identifies the retained volume
+- `--confirm <CONFIRM>` — Exact confirmation phrase shown by this command without --confirm
+
 ### `neoth n8n status`
 
 Read durable adoption status. This does not make a live HTTP request

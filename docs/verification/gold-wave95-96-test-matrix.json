@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "HOSTED_FORMAT_IMPORTED_COMPILE_REPAIR_PENDING",
+  "status": "CLI_IMPORTED_N8N_OBSERVER_REPAIR_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 215229,
-    "sha256": "C385758014E981A9595FC33D7DD8F769BA5EB19D316C6F75C0730D496D11AEA2"
+    "bytes": 215609,
+    "sha256": "D2973344950368FB57D7ECD64F86875E99C3E55CE4DEB26C2E7F90F30D6562A0"
   },
-  "sourceInputs": 1210,
+  "sourceInputs": 1212,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -44979,6 +44979,62 @@
       }
     ],
     "note": "6exacthostedformat postimages then2narrowimport corrections. W1319Windows542historical7bed admitted542PASS87blobs543logs; new purge still needs fresh source gates.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1324PurgeCanaryObserverAndCli": {
+    "base": "c6cf22314a1c6adafc18c919262d670e0ac33b9e",
+    "sources": [
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 254364,
+        "sha256": "09263F0864C838617D42B2989456495F1C1CBC12D14AACAD025F6CD6ED308995",
+        "blob": "392c7a2aec78b938f71df436948ec1daff723467"
+      },
+      {
+        "path": "docs/verification/gold-wave1323-product-observer-repair.json",
+        "bytes": 687,
+        "sha256": "55136246E090604C4C3C795CCB4F83FF4C6F799A9403D0D0737A3C74B4082424",
+        "blob": "ce6a11291a47ed5e848a16b42006714065c3f093"
+      },
+      {
+        "path": "docs/verification/gold-wave1324-cli-reference.json",
+        "bytes": 471,
+        "sha256": "3E63FE6660D730D458E422335B4208EBC49A2783448CE840C43C6027D31ECA19",
+        "blob": "8c3cc40bab3fa7900691600b83b271726c9f8d13"
+      },
+      {
+        "path": "packaging/n8n_product_bootstrap_canary.py",
+        "bytes": 59313,
+        "sha256": "C21A7A0C2AF81B7E6D89FACCDDD50A9D081EF2CBF16BDBBA8DBA2B325F9ACE1F",
+        "blob": "ca09eb6ca7df8585c9e5b4f125f1dc00bdf5b163"
+      },
+      {
+        "path": "packaging/tests/test_n8n_product_bootstrap_canary.py",
+        "bytes": 31842,
+        "sha256": "0231C29AF0019F9ED0E3D23AAE471A05CA91CFCAB05394F337C345838C0244B9",
+        "blob": "a94c44fd7162cda81e3cfd5b5d919bc76afd8161"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 370198,
+        "sha256": "072C6CCE249AAD3CD7A93651B6CE5078EAFF02B2523094CC174F391A12D2A4A0",
+        "blob": "5139405be9b53db1ba1855c7e1cad5db11c4b0b5"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1389129,
+        "sha256": "A82757D0D9E9E4A340D9C20BA3079D21C2A2FF3986847EF3120325DC57EE33BE",
+        "blob": "1ef0e9226a217d4f05631eb8636c5cc5c89cfc77"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1999652,
+        "sha256": "08C748901BEA33DC7DDD8F0A31565547821708600B6F7B08F0B9F915600C76F3",
+        "blob": "09a1f7d75d5a4a8de6daab1bdb37b29624ba88d5"
+      }
+    ],
+    "note": "Corec6cf3gates+CLIexportPASS workspacepending. ExactCLI7lineadd. W1323canary persistedImport repair independentreviewapproved;37helpertests. NativeGroup1788Windows557 andrealpurge require fresh runs. W1322PaperlessWIP excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

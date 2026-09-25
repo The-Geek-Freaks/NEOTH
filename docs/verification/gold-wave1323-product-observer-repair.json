@@ -1,0 +1,14 @@
+{
+  "kind": "N8N_PRODUCT_CANARY_PERSISTED_IMPORT_OBSERVER_REPAIR",
+  "source": "c6cf22314a1c6adafc18c919262d670e0ac33b9e",
+  "run": 36121170729,
+  "artifact": 10857797349,
+  "zipDigest": "f88d58b873f40a032ecdad8aaf60e4f4fcd0d906c6d25459d28cd3cea9956f2b",
+  "failureStage": "full_job_row_invalid",
+  "cause": "Canary confused CLI import_inactive_workflows label with canonical persisted operation import",
+  "scope": "Change only both DB observer callers; preserve CLI validation and complete no-effect witnesses",
+  "newHelperTests": 1,
+  "helperTests": 37,
+  "review": "Independent narrow static review approved; hosted product rerun pending",
+  "localExecutableValidationRan": false
+}

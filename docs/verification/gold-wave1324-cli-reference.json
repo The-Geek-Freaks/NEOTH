@@ -1,0 +1,10 @@
+{
+  "kind": "EXACT_HOSTED_CLI_REFERENCE_IMPORT",
+  "run": 36121166582,
+  "source": "c6cf22314a1c6adafc18c919262d670e0ac33b9e",
+  "artifact": 10858567568,
+  "zipDigest": "490fdf018099b95db85ee2cdbd25872b4308409ecc2cbf637ff228121b6cb69e",
+  "referenceSha256": "09263f0864c838617d42b2989456495f1c1cbc12d14aacad025f6cd6ed308995",
+  "coreGates": "ProductionClippy+testtargettypecheck+CLIbuild/export passed; WorkspaceClippy running",
+  "localExecutableValidationRan": false
+}

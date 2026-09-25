@@ -176,6 +176,13 @@ class ProductUninstallReceiptTests(unittest.TestCase):
             after = canary.observe_exact_job(Path("fixture"), self.source_job, "install")
         self.assertNotEqual(before["row_sha256"], after["row_sha256"])
 
+    def test_full_job_observer_uses_persisted_import_operation(self) -> None:
+        row = {"job_id": self.source_job, "operation": "import"}
+        with patch.object(canary, "run", return_value=json.dumps(row).encode()):
+            self.assertIsInstance(canary.observe_full_job_row(Path("fixture"), self.source_job, "import"), str)
+            with self.assertRaisesRegex(canary.Failure, "full_job_row_invalid"):
+                canary.observe_full_job_row(Path("fixture"), self.source_job, "import_inactive_workflows")
+
     def test_failed_uninstall_cleanup_reconciles_absence_before_any_container_remove(self) -> None:
         volume_row = {"Name": self.volume, "Labels": {"io.neoth.managed": "n8n", "io.neoth.n8n-job": self.source_job, "io.neoth.n8n-bootstrap": "v2"}}
         with patch.object(canary, "exact_absent", side_effect=[True, True, True]), patch.object(canary, "docker_inspect", return_value=volume_row), patch.object(canary, "run") as command:
