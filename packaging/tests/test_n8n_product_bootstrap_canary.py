@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import sys
 import json
+import http.server
 import os
 import tempfile
+import threading
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -42,6 +45,97 @@ class ProductReceiptTests(unittest.TestCase):
 
 
 class CustodyBoundaryTests(unittest.TestCase):
+    def test_workflow_observer_rejects_redirect_without_following_it(self) -> None:
+        hits = {"redirect": 0, "target": 0, "source_key": None}
+        class RedirectHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                if self.path == "/redirect":
+                    hits["redirect"] += 1
+                    hits["source_key"] = self.headers.get("X-N8N-API-KEY")
+                    self.send_response(302)
+                    self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/redirect-target")
+                    self.end_headers()
+                elif self.path == "/redirect-target":
+                    hits["target"] += 1
+                    self.send_response(200)
+                    self.end_headers()
+            def log_message(self, format: str, *args) -> None:
+                pass
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with self.assertRaisesRegex(canary.Failure, "workflow_observer_redirect"):
+                canary.workflow_api_json(server.server_port, b"test-key", "/redirect")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+        self.assertEqual(hits, {"redirect": 1, "target": 0, "source_key": "test-key"})
+
+    def test_workflow_custody_binds_ordered_readbacks_and_manifest(self) -> None:
+        job = "12345678-1234-7234-8234-123456789abc"
+        manifest = "a" * 64
+        observed = tuple((f"workflow_{index}", f"id-{index:02}", f"{index:064x}") for index in range(13))
+        entries = "\n".join(
+            "  - slug: {slug}\n    source_sha256: {source}\n    create_dto_sha256: {dto}\n    state: !read_back\n      workflow_id: {identifier}\n      normalized_readback_sha256: {graph}".format(
+                slug=slug, source=json.dumps("b" * 64), dto=json.dumps("c" * 64), identifier=identifier, graph=json.dumps(graph)
+            )
+            for slug, identifier, graph in observed
+        )
+        document = "job_id: {job}\nendpoint_binding_sha256: {binding}\ncredential_binding_sha256: {binding}\nmanifest_sha256: {manifest}\nentries:\n{entries}\n".format(job=job, binding=json.dumps("d" * 64), manifest=json.dumps(manifest), entries=entries)
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            path = home / f".n8n-workflow-import-{job}.custody.yaml"
+            path.write_text(document)
+            custody = canary.observe_workflow_custody(home, job, observed)
+            self.assertEqual(custody["manifest_sha256"], manifest)
+            canary.validate_workflow_import_provenance(custody, {"manifest_sha256": manifest})
+            path.write_text(document.replace("workflow_id: id-00", "workflow_id: swapped-id", 1))
+            with self.assertRaisesRegex(canary.Failure, "workflow_import_custody_invalid"):
+                canary.observe_workflow_custody(home, job, observed)
+        with self.assertRaisesRegex(canary.Failure, "workflow_import_provenance_mismatch"):
+            canary.validate_workflow_import_provenance(custody, {"manifest_sha256": "e" * 64})
+
+    def test_workflow_import_job_rejects_wrong_capability(self) -> None:
+        job = "12345678-1234-7234-8234-123456789abc"
+        row = f"wrong-capability|import|ready|7|13|13|{'a' * 64}\n".encode()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(canary, "run", return_value=row):
+                with self.assertRaisesRegex(canary.Failure, "workflow_import_job_row_invalid"):
+                    canary.observe_import_job(Path(directory), job)
+
+    def test_workflow_template_admission_requires_exact_unique_bundle(self) -> None:
+        rows = [{"slug": f"workflow_{index}", "name": f"Workflow {index}"} for index in range(13)]
+        self.assertEqual(len(canary.workflow_templates({"workflows": rows})), 13)
+        with self.assertRaisesRegex(canary.Failure, "workflow_template_count_invalid"):
+            canary.workflow_templates({"workflows": rows[:-1]})
+        rows[-1]["slug"] = rows[0]["slug"]
+        with self.assertRaisesRegex(canary.Failure, "workflow_template_duplicate"):
+            canary.workflow_templates({"workflows": rows})
+
+    def test_workflow_observer_rejects_active_readback(self) -> None:
+        templates = tuple((f"workflow_{index}", f"Workflow {index}") for index in range(13))
+        listing = {"data": [{"id": str(index), "name": name, "active": False} for index, (_, name) in enumerate(templates)]}
+        def observed(_: int, __: bytes, path: str) -> dict:
+            if path.endswith("?limit=100"):
+                return listing
+            identifier = path.rsplit("/", 1)[-1]
+            return {"data": {"id": identifier, "name": f"Workflow {identifier}", "active": True, "nodes": [], "connections": {}, "settings": {}}}
+        with patch.object(canary, "workflow_api_json", side_effect=observed):
+            with self.assertRaisesRegex(canary.Failure, "workflow_observer_readback_invalid"):
+                canary.observe_imported_workflows(5681, b"test-key", templates)
+
+    def test_failed_install_job_observer_reports_only_allowlisted_error_code(self) -> None:
+        job = "12345678-1234-7234-8234-123456789abc"
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            (home / "n8n-managed-bootstrap.v2.json").write_text(json.dumps({"schema_version": 2, "phase": "BootstrapRemoved", "job_id": job}))
+            with patch.object(canary, "run", return_value=b"failed|n8n_loopback_health_timeout\n"):
+                observation = canary.observe_failed_install_job(home)
+        self.assertEqual(observation, {"state": "failed", "error_code": "n8n_loopback_health_timeout"})
+        self.assertNotIn("private", json.dumps(observation))
+
     def test_command_diagnosis_reveals_only_fixed_categories(self) -> None:
         secret = "must-never-appear-in-receipt"
         result = canary.bounded.Result(1, secret.encode(), b"Error: n8n_bootstrap_docker_failed " + secret.encode(), False, False)

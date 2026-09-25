@@ -3422,8 +3422,8 @@ mod tests {
         assert_eq!(queued.state, JobState::Queued);
         assert_eq!(queued.state_revision, 0);
         assert_eq!(
-            queued.evidence_contract.as_ref().unwrap().step_plan_sha256,
-            digest('e')
+            queued.evidence_contract.as_ref().unwrap().step_plan_sha256(),
+            &digest('e')
         );
         let failed = fetch_job(&connection, &failed_id).unwrap().unwrap();
         assert_eq!(failed.operation, JobOperation::Update);

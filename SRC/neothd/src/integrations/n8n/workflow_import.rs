@@ -730,7 +730,7 @@ async fn execute_workflow_import_with_binding<T: WorkflowImportTransport + ?Size
                     },
                     Some(current_phase.clone()),
                     ProgressEvidence::claimed(ProgressEvidenceClaim {
-                        job_id,
+                        job_id: job_id.clone(),
                         manifest_sha256,
                         step_plan_sha256,
                         staging_binding_sha256,
@@ -788,6 +788,7 @@ async fn execute_workflow_import_with_binding<T: WorkflowImportTransport + ?Size
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::integrations::JobFailure;
     use std::sync::{Arc, Mutex};
 
     #[derive(Default)]

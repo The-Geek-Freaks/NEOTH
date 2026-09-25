@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T00:51:13.3104275Z",
-  "validationStatus": "W1083Windowsstdinflush awaits OSwrite;hostedpending;exact621format applied",
+  "capturedUtc": "2026-09-25T00:58:33.7188749Z",
+  "validationStatus": "W1087 importer3compilefixes + reviewed actualCLI13importrepeatcanary;hostedpending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -73,8 +73,8 @@
     },
     {
       "path": ".github/workflows/n8n-product-bootstrap.yml",
-      "bytes": 4565,
-      "sha256": "524FE2055C0C86BF5FEADA7929F92D85043BDC380D0DF85993151C228150A3A7"
+      "bytes": 4618,
+      "sha256": "E61DB5CCDE0CC3DFE6EE103031E40A6025DAC328977C24BBF2ABC376FF258D60"
     },
     {
       "path": ".github/workflows/obsidian-bridge-artifact.yml",
@@ -2213,8 +2213,8 @@
     },
     {
       "path": "packaging/n8n_product_bootstrap_canary.py",
-      "bytes": 17748,
-      "sha256": "8EB050A109911DA82B81BC0D2866A63615E1869E88CD7A3B0377B5B50626A6BE"
+      "bytes": 31281,
+      "sha256": "3C374F476039B2A9099047F02746D508D0EB18BC14DBE94C9F38DEFC740094B0"
     },
     {
       "path": "packaging/n8n_template_execution_canary.py",
@@ -2248,8 +2248,8 @@
     },
     {
       "path": "packaging/tests/test_n8n_product_bootstrap_canary.py",
-      "bytes": 8207,
-      "sha256": "359D67CAE59A4C222A50C9B90F04C20BE6C6E47138E98DB2BDD387FC7FE0D024"
+      "bytes": 14228,
+      "sha256": "5210AE178A8852CAA4DFAC2B6256F79767163E45F711B13A1A460031DE530648"
     },
     {
       "path": "packaging/tests/test_preview_windows_workflow_contract.py",
@@ -2303,18 +2303,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 315061,
-      "sha256": "6A55111AC4984CA3C17BFED58202EEB2C81230DBCFD7318D502CE0EC1B31A65A"
+      "bytes": 316179,
+      "sha256": "D1696C7C96D316528EC3FD7F48C59DAA31348718FE832D4403936932A3F50B7D"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1330939,
-      "sha256": "3DAE6A9745FD117F3E54E68CBE5F08483F4CBF3E916C0D72921BA512109DFE0B"
+      "bytes": 1332057,
+      "sha256": "68A47DEB708BB42184DA23535114E3B5B285E9827836AF67078650A1268C0B4E"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1940880,
-      "sha256": "92CA394500DE21E1EB712D5617715FFD31AAAC88FC13CE616D055AB4B3A4B5FC"
+      "bytes": 1941998,
+      "sha256": "236691693CC903ED2581C4E23959712F3D8D522EE68AC40C051D583A93039744"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4293,8 +4293,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/jobs.rs",
-      "bytes": 146439,
-      "sha256": "E86D9600B709692C9333FF6BAF588E45240F5EF6A8E5DD2A881919A3197CEDC4"
+      "bytes": 146442,
+      "sha256": "D41881FB62F6BBD05C24022321F88A965583C310B4F5D6CEF618F0679FB3BFEF"
     },
     {
       "path": "SRC/neothd/src/integrations/mod.rs",
@@ -4333,8 +4333,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
-      "bytes": 51124,
-      "sha256": "ABA087402CF308A9B6F5290D01C2A5F927E8FEAD4281F9B4951D4B3CA654518A"
+      "bytes": 51181,
+      "sha256": "56B8331B8DF50C97AD2F8519DDC955C17718685E77301D740D58FF3D856AA61C"
     },
     {
       "path": "SRC/neothd/src/integrations/state.rs",

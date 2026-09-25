@@ -8,6 +8,22 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1087 import compiler repair and actual CLI acceptance lane (2026-09-25):**
+The first621 Core/Group build exposed three source errors before the new
+fixtures could run: missing test JobFailure import, moved job_id while
+borrowed, and direct private step-plan field access. The minimal corrections
+retain behavior and use the public getter with matching reference types.
+The hosted product lane now invokes the compiled import command twice after
+install/repeat-install. It requires all13 inactive exact-ID API readbacks,
+ordered slug/ID/graph hashes bound to bounded parsed custody, matching
+n8n-instance Import job/manifest/13-step progress, and unchanged second-call
+CLI output, custody and durable revision. Its observer rejects redirects and
+proxies; failure diagnostics expose only an allowlisted exact-job code.
+Helper tests include real loopback redirect refusal and provenance negatives.
+These changes require fresh hosted runs; no new native/runtime pass or
+roadmap closure is claimed. W1085 permission-audit adapter remains separate
+uncommitted work; Claude032 remains assigned the Dream-note atomic fix.
+
 **W1083 Windows stdin completion and hosted formatting (2026-09-25):**
 The875 Windows301 run again reports300PASS/1FAIL at the strict closed-stdin
 case. Root verified its ZIP and failure log. Pinned Tokio1.52.3 source shows
