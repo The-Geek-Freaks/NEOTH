@@ -290,6 +290,7 @@ pub mod checkin_cron;
 /// Dream task. This module owns no scheduler and no sidecar state.
 pub mod dream_phases;
 pub mod dreaming;
+pub(crate) mod dreaming_obsidian;
 /// GOLD-ADAPT-JV-PAPERLESS-01 — email→Paperless ingest cron. Polls IMAP,
 /// runs the content scanner, quarantines HIGH-severity findings, and for
 /// clean messages uploads to Paperless-NGX + writes an Obsidian vault note.

@@ -325,9 +325,8 @@ pub struct DreamSyncOutcome {
 /// rendered note reads as one daily compilation; the YAML
 /// frontmatter on dream #1 is kept and the rest stack under it.
 ///
-/// Atomic write: the body lands in `<file>.tmp` first, then a
-/// rename swaps it into place — operators editing the vault while
-/// NEOTH writes never see a half-flushed file.
+/// The shared atomic writer syncs a sibling temporary file before replacing
+/// the target. Existing notes remain present until the atomic replacement.
 ///
 /// Empty-day behaviour: when no dreams exist for `day`, no file is
 /// created. The vault's Dreams folder stays unpolluted by quiet
@@ -359,23 +358,7 @@ pub fn sync_dreams_to_obsidian(
         .collect::<Vec<_>>()
         .join("\n---\n\n");
 
-    fs::create_dir_all(&dreams_dir)?;
-    let tmp_path = dreams_dir.join(format!("{day}.md.tmp"));
-    // Atomic-rename pattern: write to .tmp, fsync, rename. On Windows
-    // `rename` over an existing file fails — remove the target first.
-    {
-        let mut f = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&tmp_path)?;
-        f.write_all(body.as_bytes())?;
-        f.flush()?;
-    }
-    if target_path.exists() {
-        fs::remove_file(&target_path)?;
-    }
-    fs::rename(&tmp_path, &target_path)?;
+    crate::util::atomic_write::atomic_write(&target_path, body.as_bytes())?;
 
     Ok(DreamSyncOutcome {
         day: day.to_string(),
@@ -1787,8 +1770,11 @@ mod tests {
         let outcome = sync_dreams_to_obsidian(home.path(), vault.path(), "NEOTH", "2026-05-26")
             .expect("sync ok");
         let dreams_dir = outcome.target_path.parent().unwrap();
-        let leftover_tmp = dreams_dir.join("2026-05-26.md.tmp");
-        assert!(!leftover_tmp.exists(), "tmp file must be renamed away");
+        let entries: Vec<_> = std::fs::read_dir(dreams_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(entries, vec![outcome.target_path]);
     }
 
     #[test]

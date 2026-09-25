@@ -2,6 +2,33 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1223 Dream-to-Obsidian batch (2026-09-25):**
+POST /api/dreams/obsidian/sync now accepts only one canonical UTC day under a
+new dreams:obsidian:write scope. The verified master/scoped caller is retained
+without bearer material. Home/vault/subdir, Dream policy and epoch come from one
+accepted configuration; its Dream lease is acquired before the blocking worker
+and held through durable admission, checked sync and terminal audit. Existing
+reload/shutdown drains wait for this work even after the HTTP waiter disappears.
+The new no-follow reader caps JSONL8MiB/line256KiB/1024records and output8MiB,
+rejects malformed/mismatched-day data, unsafe directories and linked targets,
+and leaves the vault untouched for a quiet day. Atomic publication explicitly
+returns not_written/published_and_synced/published_durability_unknown to HTTP
+and WAL. The latter is already published, not a rollback or retry-safe failure.
+The older nightly exporter also now uses the existing atomic writer; its
+actual-directory test checks no temporary files remain. The inactive n8n starter
+uses the previous UTC day and requires configured Dream/vault policy and origin.
+Independent W1219 review found no unresolved issue after Root tightened
+validation, explicit durability, error expectations and the retirement test.
+Twenty-two new cases (20universal/2unix) plus four existing legacy selectors:
+Native1888/Group1673/Windows446; Linux extras65/macOS60. Seven are actual HTTP
+cases. Executable acceptance remains pending; no roadmap item closes.
+Core390's full workspace check and exact already-committed CLI export passed;
+Core614 slim/test-typecheck passed and its CLI build continues. Historical
+Groupff32=1634PASS1FAIL/Windowsff32=410PASS1FAIL remain scoped to the old fixture.
+Claude034 corrected the live reflection path;035 inspected helper bodies;
+036 requests actual new-source review. Parked/unstarted032 was completed by Root.
+No local executable validation ran. Road remains1077done/245open/2partial.
+
 **W1218 historical Linux/Windows admission and exact formatter (2026-09-25):**
 Root verified all1635 Group terminal identities and284 historical source bindings
 atff32:1634passed/1failed/0missing. Windows compiled and yielded410passed/1failed

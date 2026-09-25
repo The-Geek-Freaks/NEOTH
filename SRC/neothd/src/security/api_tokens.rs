@@ -71,6 +71,8 @@ pub const SCOPE_API_HEALTH: &str = "api:health";
 pub const SCOPE_CALENDAR_READ: &str = "calendar:read";
 /// Read pending email-draft reminder metadata.
 pub const SCOPE_DRAFTS_READ: &str = "drafts:read";
+/// Sync one archived Dream day to the accepted configuration's Obsidian vault.
+pub const SCOPE_DREAMS_OBSIDIAN_WRITE: &str = "dreams:obsidian:write";
 /// Read recall / memory search.
 pub const SCOPE_RECALL_READ: &str = "recall:read";
 /// Read pending proactive proposal metadata.
@@ -98,6 +100,7 @@ pub const ALL_SCOPES: &[&str] = &[
     SCOPE_CALENDAR_READ,
     SCOPE_CHANNEL_SEND,
     SCOPE_DRAFTS_READ,
+    SCOPE_DREAMS_OBSIDIAN_WRITE,
     SCOPE_EMAIL_THREAT_WRITE,
     SCOPE_MEMORY_WRITE,
     SCOPE_PAPERLESS_CONSULT_READ,
@@ -537,6 +540,32 @@ mod tests {
         assert!(rec.has_scope(SCOPE_PROPOSALS_READ));
         assert!(!rec.has_scope(SCOPE_RECALL_READ));
         assert!(!rec.has_scope(SCOPE_STATS_READ));
+    }
+
+    #[test]
+    fn dream_obsidian_write_requires_its_own_scope() {
+        assert!(ALL_SCOPES.windows(2).all(|pair| pair[0] < pair[1]));
+        let (record, token) = make_token(&[SCOPE_DREAMS_OBSIDIAN_WRITE]);
+        let mut records = vec![record];
+        assert!(matches!(
+            verify_token_for_scope(&mut records, &token, SCOPE_DREAMS_OBSIDIAN_WRITE),
+            VerifyResult::Ok { .. }
+        ));
+        for scope in [SCOPE_RECALL_READ, SCOPE_MEMORY_WRITE, SCOPE_PROVIDER_CALL] {
+            assert!(matches!(
+                verify_token_for_scope(&mut records, &token, scope),
+                VerifyResult::InsufficientScope { .. }
+            ));
+            let (record, other_token) = make_token(&[scope]);
+            assert!(matches!(
+                verify_token_for_scope(
+                    &mut [record],
+                    &other_token,
+                    SCOPE_DREAMS_OBSIDIAN_WRITE
+                ),
+                VerifyResult::InsufficientScope { .. }
+            ));
+        }
     }
 
     #[test]

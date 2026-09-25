@@ -492,6 +492,30 @@ jobs:
           n8n_api::server::paperless_consult_http_tests::consult_missing_configuration_returns_fixed_503	neothd/src/n8n_api/paperless_consult_http_tests.rs
           n8n_api::server::paperless_consult_http_tests::consult_distinguishes_missing_directory_from_file_corrupt_and_oversized_store_failures	neothd/src/n8n_api/paperless_consult_http_tests.rs
           installers::n8n_starter_workflows::tests::paperless_consult_starter_is_manual_question_lookup_only	neothd/src/installers/n8n_starter_workflows.rs
+          daemon::dreaming_obsidian::tests::valid_day_renders_and_repeated_sync_replaces_target	neothd/src/daemon/dreaming_obsidian.rs
+          daemon::dreaming_obsidian::tests::missing_source_day_is_quiet_without_creating_vault	neothd/src/daemon/dreaming_obsidian.rs
+          daemon::dreaming_obsidian::tests::durability_tags_serialize_in_snake_case	neothd/src/daemon/dreaming_obsidian.rs
+          daemon::dreaming_obsidian::tests::malformed_utf8_and_budget_failures_are_closed	neothd/src/daemon/dreaming_obsidian.rs
+          daemon::dreaming_obsidian::tests::source_dream_day_must_match_requested_day_and_rendering_is_bounded	neothd/src/daemon/dreaming_obsidian.rs
+          daemon::dreaming_obsidian::tests::invalid_day_and_subdir_are_rejected_before_side_effects	neothd/src/daemon/dreaming_obsidian.rs
+          daemon::dreaming_obsidian::tests::post_commit_validation_failure_is_reported_as_published_durability_unknown	neothd/src/daemon/dreaming_obsidian.rs
+          n8n_api::handlers::dream_obsidian_sync::tests::canonical_day_rejects_extended_years_and_non_ascii_digits	neothd/src/n8n_api/handlers/dream_obsidian_sync.rs
+          n8n_api::handlers::dream_obsidian_sync::tests::admission_audit_failure_starts_no_sync_or_filesystem_effect	neothd/src/n8n_api/handlers/dream_obsidian_sync.rs
+          n8n_api::handlers::dream_obsidian_sync::tests::terminal_audit_failure_returns_outcome_unknown_after_sync	neothd/src/n8n_api/handlers/dream_obsidian_sync.rs
+          n8n_api::handlers::dream_obsidian_sync::tests::detached_handler_worker_finishes_terminal_receipt_before_lease_drain	neothd/src/n8n_api/handlers/dream_obsidian_sync.rs
+          n8n_api::server::dream_obsidian_http_tests::dream_sync_scope_is_rejected_before_body_parse_or_vault_side_effect	neothd/src/n8n_api/dream_obsidian_http_tests.rs
+          n8n_api::server::dream_obsidian_http_tests::dream_sync_rejects_invalid_unknown_and_private_request_fields_with_fixed_400	neothd/src/n8n_api/dream_obsidian_http_tests.rs
+          n8n_api::server::dream_obsidian_http_tests::dream_sync_archived_day_writes_only_configured_vault_and_redacts_paths	neothd/src/n8n_api/dream_obsidian_http_tests.rs
+          n8n_api::server::dream_obsidian_http_tests::dream_sync_quiet_day_leaves_configured_vault_uncreated	neothd/src/n8n_api/dream_obsidian_http_tests.rs
+          n8n_api::server::dream_obsidian_http_tests::dream_sync_policy_vault_and_retirement_refuse_before_output	neothd/src/n8n_api/dream_obsidian_http_tests.rs
+          n8n_api::server::dream_obsidian_http_tests::dream_sync_corrupt_input_returns_fixed_503_without_output	neothd/src/n8n_api/dream_obsidian_http_tests.rs
+          n8n_api::server::dream_obsidian_http_tests::dream_sync_wal_receipt_records_verified_scoped_token_id_without_secrets	neothd/src/n8n_api/dream_obsidian_http_tests.rs
+          security::api_tokens::tests::dream_obsidian_write_requires_its_own_scope	neothd/src/security/api_tokens.rs
+          installers::n8n_starter_workflows::tests::dream_obsidian_starter_syncs_previous_utc_day_only	neothd/src/installers/n8n_starter_workflows.rs
+          daemon::dreaming::tests::ob01_sync_no_dreams_skips_write	neothd/src/daemon/dreaming.rs
+          daemon::dreaming::tests::ob01_sync_overwrites_stale_existing_file	neothd/src/daemon/dreaming.rs
+          daemon::dreaming::tests::ob01_sync_writes_atomic_no_dotfile_lingers	neothd/src/daemon/dreaming.rs
+          daemon::dreaming::tests::ob01_sync_byte_count_matches_file_size	neothd/src/daemon/dreaming.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -508,7 +532,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 422 ]]; then
+          if [[ "$expected" -ne 446 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"

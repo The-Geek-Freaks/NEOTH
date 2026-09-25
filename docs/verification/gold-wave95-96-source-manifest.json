@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T04:54:43.2361254Z",
-  "validationStatus": "W1218 Group1634PASS1FAIL Windows410PASS1FAIL source-bound; exact fixture formatter imported; repair rerun pending",
+  "capturedUtc": "2026-09-25T05:10:25.0775689Z",
+  "validationStatus": "W1223 Dream sync statically reviewed; hosted behavior pending; Core390 all gates admitted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -123,8 +123,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 24823,
-      "sha256": "8DA0A54C912FE323A8CA6394A63B9E02D2AF09DE344A4A421AC1B878245D46E3"
+      "bytes": 24870,
+      "sha256": "42FE4BCBF0020952AAD1980ED69D27BE2FA56D3EAF1928DE49FF8832325EDDC6"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -143,8 +143,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 73323,
-      "sha256": "9D776AEBF2E901542EA5F07DE0E85869CE0FE3BFA0FF5138962F980EEC91800A"
+      "bytes": 76825,
+      "sha256": "76A5FA0C2F2921BADB6DDDBCF980ABD3BD85F2CB7A7D6AF17DB941FDE2A13EC3"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -1262,6 +1262,11 @@
       "sha256": "E6254440BBE3058E9AEFC5FC0C7DFA0BE398B4035112E01BC0B2D8DC5E8AAFD8"
     },
     {
+      "path": "docs/n8n-dream-obsidian-sync.md",
+      "bytes": 3048,
+      "sha256": "DEA64CBA66C3777AAB1C1104A0E2FBB3FB77318CAE71233F99BE6FEBF4A732DE"
+    },
+    {
       "path": "docs/obsidian-archive-bridge.md",
       "bytes": 4905,
       "sha256": "23E91BBE7EEAC91691589B8B371A6BF2D6BD86A22711EFA6032261CE80AF677D"
@@ -1555,6 +1560,16 @@
       "path": "docs/verification/gold-wave1214-hosted-format.json",
       "bytes": 1591,
       "sha256": "1451729D1B4510FAFAFA330186A03402B2366D63F0F853810580AC7634DB885C"
+    },
+    {
+      "path": "docs/verification/gold-wave1220-core.json",
+      "bytes": 1948,
+      "sha256": "FC2717556ECACA7268523B4BCDBE1C2C8E05EFBED70082FBFC3F84DCC0D274D9"
+    },
+    {
+      "path": "docs/verification/gold-wave1223-dream-sync-review.json",
+      "bytes": 2576,
+      "sha256": "991CF292DC241A631FD8FE6180FFCF029462014B356CAB1108E01C7E43E51808"
     },
     {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
@@ -2508,18 +2523,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 341740,
-      "sha256": "59E8DC10BA57DAA6120CCE997E726E4F6EA4F0121E6892784ED1EDB64E624A8D"
+      "bytes": 343736,
+      "sha256": "2BA0CAA2361AAE4AC093834867A5A6D07C5C85CBA412D422E4311BCA359AFEB0"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1360641,
-      "sha256": "855524A3834185208D8194165C7CC59E80BFE4A99950740E0F3AF3E472CA36E9"
+      "bytes": 1362637,
+      "sha256": "CF391DA7A238D28A197B9516BD5327A4B5D8045982A3974D8A5B4E4BA720EAF0"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1971164,
-      "sha256": "280B959F07001F3E5D15178FBB52AB90FF3393DCA3932B6F89DFC5BDE60E87F0"
+      "bytes": 1973160,
+      "sha256": "84EB7DC27D605C6A6A2230155396C8C98D63A00724BBE1B8B949A9992C866368"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4222,6 +4237,16 @@
       "sha256": "26DB0E0E68D7613B9E466D6E9CEA565B873503BECECF8094E27072C3CFC85435"
     },
     {
+      "path": "SRC/neothd/src/daemon/dreaming_obsidian.rs",
+      "bytes": 21402,
+      "sha256": "1B55F5AFD81F7B61BB491547C562CCE7DE59498B9A470DF47EB2FA8578F45FF1"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/dreaming.rs",
+      "bytes": 71510,
+      "sha256": "1E1C5CAB51E6176E4D6F1E51672CF54E1CC14ACBB8681BC9A526555DB4BE4703"
+    },
+    {
       "path": "SRC/neothd/src/daemon/g02_surfacing_cron.rs",
       "bytes": 13505,
       "sha256": "3B9D8DD7A4CE75A6A3967226CB4C5031509B2451F6E903E424503D825C0C8E23"
@@ -4268,8 +4293,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/mod.rs",
-      "bytes": 19394,
-      "sha256": "90A13C5B97E5D7B8DCDE138653C4B38962FD587D5D97247B1740DC13D625C5A1"
+      "bytes": 19428,
+      "sha256": "E3B183BEAC3918BCD5E39F05B72D1C84960E74BD9BA661B5B30873537E9409B6"
     },
     {
       "path": "SRC/neothd/src/daemon/obsidian_archive_bridge_ipc.rs",
@@ -4468,8 +4493,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "bytes": 57760,
-      "sha256": "ACB1ED651A444873AD00FD0EDC2BA0804ED411BC7BDC693CAB62F0C40DDC2C92"
+      "bytes": 61007,
+      "sha256": "076F92130F178A033CD5B3553DBFA9446C9D86824CC68E272AC46271463AB4BE"
     },
     {
       "path": "SRC/neothd/src/installers/n8n_workflows.rs",
@@ -4842,14 +4867,19 @@
       "sha256": "90E0425CFEE310CB9547CE671F9F1195D5E701EA508DCFB9C3DEC24CCDE53245"
     },
     {
+      "path": "SRC/neothd/src/n8n_api/dream_obsidian_http_tests.rs",
+      "bytes": 15588,
+      "sha256": "BA4CCCC66088EF8CD2B72F8C38AC164E89774D7ADDEFA74BA93083D8FF5AC262"
+    },
+    {
       "path": "SRC/neothd/src/n8n_api/email_threat_http_tests.rs",
       "bytes": 10396,
       "sha256": "0436956E048817FF0DC842688271A61BA19B7BD2C1AF76C8CCB15430ADC66F90"
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers.rs",
-      "bytes": 64132,
-      "sha256": "E47B2AD5FAC4F21C3BC7984229FBD961334F585176EB1594156057A15C509FF7"
+      "bytes": 64321,
+      "sha256": "10C1C3ABE032F5155CB7DF0B1C2DEDE01064EA86B454E3818D37AA878E7640CA"
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers/calendar_agenda.rs",
@@ -4860,6 +4890,11 @@
       "path": "SRC/neothd/src/n8n_api/handlers/calendar_route.rs",
       "bytes": 8141,
       "sha256": "07C26033E1F02C60ED9732D7D20D05DA96B334FF5F6E756501DE2BE8F4728985"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers/dream_obsidian_sync.rs",
+      "bytes": 15389,
+      "sha256": "6BFE2EC948E0ECAB17CC163F8F6AC4DC1375437C51D8F1B01CB5A9F7BA55071E"
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers/email_threat.rs",
@@ -4903,8 +4938,8 @@
     },
     {
       "path": "SRC/neothd/src/n8n_api/server.rs",
-      "bytes": 52744,
-      "sha256": "5BB7D4C128D49242EDBB2237D2D962AAA9F22F16D01EC837784D40EE564E297C"
+      "bytes": 53380,
+      "sha256": "079A61E782B28A1E70A7E1F3928A6C059B7BC07707F08A3DB7E45CAD9D789300"
     },
     {
       "path": "SRC/neothd/src/os_tools/gate.rs",
@@ -5233,8 +5268,8 @@
     },
     {
       "path": "SRC/neothd/src/security/api_tokens.rs",
-      "bytes": 27403,
-      "sha256": "51535FCB835F740BD52A6F998E095CAE1BB297559AC771AB88ADEFBA7947C6A5"
+      "bytes": 28609,
+      "sha256": "EB3FB138386AA8035ACA5DB83BAB7EA1C9DE27FC1851377AE77BCD8C6F8EF709"
     },
     {
       "path": "SRC/neothd/src/security/ingress_sanitizer.rs",

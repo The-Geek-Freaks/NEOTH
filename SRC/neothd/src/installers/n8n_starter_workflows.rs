@@ -5,7 +5,7 @@
 //! weekly stats). N-06 extends with 10 OPTIONAL workflows operators
 //! browse + import as their NEOTH usage grows. Each is a thin
 //! n8n workflow JSON that references a NEOTH HTTP API path
-//! (`/health`, `/proactive/drain`, `/paperless/consult`,
+//! (`/health`, `/proactive/drain`, `/api/paperless/consult`,
 //! `/reflection/sync_obsidian`, etc.). Route availability and container-to-host
 //! reachability are separate deployment checks.
 //!
@@ -15,22 +15,22 @@
 //!   - `name` — the workflow's own display name (operator sees in
 //!     n8n's workflow list).
 //!   - `active: false` — operator GO required (AGENTER hard rule).
-//!   - A `scheduleTrigger` node with the spec's cron expression.
+//!   - A schedule trigger for scheduled starters, a manual trigger for Paperless consult, or an IMAP trigger for email threat review.
 //!   - A visible operator configuration node for a reachable NEOTH
 //!     origin and an HTTP Request node that uses an operator-bound
 //!     HTTP Header Auth credential.
 //!   - Deterministic node IDs derived from the slug for stable local
 //!     workflow shape. Public workflow POSTs do not deduplicate on node IDs.
-//!   - A connections block wiring Schedule → Configuration → NEOTH HTTP.
+//!   - Connections wiring the selected trigger through visible configuration to NEOTH HTTP.
 //!
 //! Drift-guard tests assert each of these properties per workflow
-//! (name match, cron match, endpoint match, Schedule→Configuration→HTTP wiring,
+//! (name match, trigger/cron match, endpoint match, trigger→Configuration→HTTP wiring,
 //! credential configuration, slug-derived IDs, **bodies are pairwise distinct
 //! across all 10**). See `cfg(test)` block below.
 //!
 //! ## Why minimal skeletons, not handcrafted production flows
 //!
-//! Each starter workflow is the SHAPE — Schedule node + NEOTH HTTP
+//! Each starter workflow is the smallest honest shape — its documented trigger + NEOTH HTTP
 //! request. Operators tune the response-handling chain (format +
 //! channel + recipient) post-import. Shipping fancy multi-branch
 //! flows would lock operators into our UX preferences; skeletons
@@ -41,7 +41,7 @@
 //! Each entry pairs a NEOTH item this session shipped (or earlier)
 //! with an automation it benefits from:
 //!
-//!   1. paperless_invoice_consult — PL-02/PL-03 — new doc → consult
+//!   1. paperless_invoice_consult — PL-03 — manual local keyword consult
 //!   2. email_threat_quarantine — PL-05 — phishing into review queue
 //!   3. calendar_morning_agenda — EM-02 — today's meetings + conflicts
 //!   4. proposal_review_reminder — OB-03 — nudge after 24 h pending
@@ -149,6 +149,21 @@ fn build_workflow_skeleton(
                 "options": {}
             }),
             "Implemented POST /api/memory/drift reads the existing views.db projection with recall:read scope. It returns bounded drift rows and exact counts without creating, migrating, or modifying the database.",
+        )
+    } else if slug == "dream_obsidian_sync" {
+        (
+            serde_json::json!({
+                "url": url,
+                "method": method,
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpHeaderAuth",
+                "sendBody": true,
+                "contentType": "json",
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify({ day: $now.toUTC().minus({ days: 1 }).toFormat('yyyy-MM-dd') }) }}",
+                "options": {}
+            }),
+            "Implemented POST /api/dreams/obsidian/sync requires dreams:obsidian:write. It syncs the previous UTC archived day only after NEOTH Dream scheduling, vault policy and scheduler-permitted autonomy are configured. Schedule this workflow after the Dream producer; the default trigger is 02:00 UTC. It does not generate Dreams or call a provider. An absent archive can return written:false; response content is not automatically delivered and an empty result carries no delivery guarantee. Inspect the returned durability tag; published_durability_unknown does not confirm disk durability.",
         )
     } else if slug == "calendar_morning_agenda" {
         (
@@ -318,6 +333,8 @@ fn build_workflow_skeleton(
                 "value": "Europe/Berlin"
             }));
         body["settings"]["timezone"] = serde_json::json!("Europe/Berlin");
+    } else if slug == "dream_obsidian_sync" {
+        body["settings"]["timezone"] = serde_json::json!("UTC");
     }
     serde_json::to_string(&body).expect("serde_json::Value always serialises")
 }
@@ -393,10 +410,10 @@ const STARTER_SPECS: &[StarterSpec] = &[
     },
     StarterSpec {
         slug: "dream_obsidian_sync",
-        name: "Dream Obsidian sync (nightly)",
-        description: "Unavailable adapter: intended nightly sync_dreams_to_obsidian workflow.",
+        name: "Dream Obsidian sync (previous UTC day)",
+        description: "OB-01 nightly sync of the previous UTC archived Dream day; configure Dream and vault policy before activation.",
         cron: "0 2 * * *",
-        endpoint: "/dreaming/sync_obsidian",
+        endpoint: "/api/dreams/obsidian/sync",
         method: "POST",
     },
     StarterSpec {
@@ -735,6 +752,14 @@ mod tests {
                         .is_some_and(|notes| notes.contains("Implemented POST /api/memory/drift")),
                     "implemented drift starter must identify its supported route",
                 );
+            } else if w.slug == "dream_obsidian_sync" {
+                assert_eq!(http["parameters"]["method"], "POST");
+                assert_eq!(http["parameters"]["sendBody"], true);
+                assert_eq!(http["parameters"]["contentType"], "json");
+                assert_eq!(http["parameters"]["specifyBody"], "json");
+                assert_eq!(http["parameters"]["jsonBody"], "={{ JSON.stringify({ day: $now.toUTC().minus({ days: 1 }).toFormat('yyyy-MM-dd') }) }}");
+                assert_eq!(v["settings"]["timezone"], "UTC");
+                assert!(http["notes"].as_str().is_some_and(|notes| notes.contains("requires dreams:obsidian:write") && notes.contains("written:false")));
             } else if w.slug == "calendar_morning_agenda" {
                 assert_eq!(http["parameters"]["method"], "POST");
                 assert_eq!(http["parameters"]["sendBody"], true);
@@ -857,6 +882,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn dream_obsidian_starter_syncs_previous_utc_day_only() {
+        let w = find_by_slug("dream_obsidian_sync").expect("dream starter exists");
+        let v: serde_json::Value = serde_json::from_str(w.body).unwrap();
+        assert_eq!(v["active"], false);
+        assert_eq!(v["settings"]["timezone"], "UTC");
+        let nodes = v["nodes"].as_array().unwrap();
+        let schedule = nodes.iter().find(|n| n["type"] == "n8n-nodes-base.scheduleTrigger").unwrap();
+        assert_eq!(schedule["parameters"]["rule"]["interval"][0]["expression"], "0 2 * * *");
+        let http = nodes.iter().find(|n| n["type"] == "n8n-nodes-base.httpRequest").unwrap();
+        assert_eq!(http["parameters"]["url"], "={{ $json.neothBaseUrl + '/api/dreams/obsidian/sync' }}");
+        assert_eq!(http["parameters"]["jsonBody"], "={{ JSON.stringify({ day: $now.toUTC().minus({ days: 1 }).toFormat('yyyy-MM-dd') }) }}");
+        assert!(http["notes"].as_str().unwrap().contains("does not generate Dreams"));
+        assert!(http["notes"].as_str().unwrap().contains("response content is not automatically delivered"));
+    }
     #[test]
     fn paperless_consult_starter_is_manual_question_lookup_only() {
         let w = find_by_slug("paperless_invoice_consult").expect("consult starter exists");

@@ -1,0 +1,65 @@
+{
+  "schema": "neoth-dream-sync-review/v1",
+  "base": "94bfcd6ee38b247d26fac11274a4e2350ad3571c",
+  "status": "ROOT_AND_INDEPENDENT_STATIC_REVIEWED_HOSTED_PENDING",
+  "reviewPath": "work/gold-20260906/wave1219-dream-review/REPORT.md",
+  "reviewSha256": "200F2DBBD5D3F5D9697D5E5EB85B234C1770C2C41492434993462473EDFA9162",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/daemon/dreaming.rs",
+      "sha256": "1E1C5CAB51E6176E4D6F1E51672CF54E1CC14ACBB8681BC9A526555DB4BE4703"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/dreaming_obsidian.rs",
+      "sha256": "1B55F5AFD81F7B61BB491547C562CCE7DE59498B9A470DF47EB2FA8578F45FF1"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/mod.rs",
+      "sha256": "E3B183BEAC3918BCD5E39F05B72D1C84960E74BD9BA661B5B30873537E9409B6"
+    },
+    {
+      "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+      "sha256": "A8E6415B0075167DC4981803ED0C5C6E6DBDBC8FAC1C4B49A7E1AAA99EF8E00A"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers/dream_obsidian_sync.rs",
+      "sha256": "6BFE2EC948E0ECAB17CC163F8F6AC4DC1375437C51D8F1B01CB5A9F7BA55071E"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/dream_obsidian_http_tests.rs",
+      "sha256": "BA4CCCC66088EF8CD2B72F8C38AC164E89774D7ADDEFA74BA93083D8FF5AC262"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers.rs",
+      "sha256": "10C1C3ABE032F5155CB7DF0B1C2DEDE01064EA86B454E3818D37AA878E7640CA"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/server.rs",
+      "sha256": "079A61E782B28A1E70A7E1F3928A6C059B7BC07707F08A3DB7E45CAD9D789300"
+    },
+    {
+      "path": "SRC/neothd/src/security/api_tokens.rs",
+      "sha256": "EB3FB138386AA8035ACA5DB83BAB7EA1C9DE27FC1851377AE77BCD8C6F8EF709"
+    }
+  ],
+  "knownRepairs": [
+    "Expose published durability uncertainty in HTTP and WAL",
+    "Validate exactly10ASCII date and existing strict subdir rules",
+    "Align corrupt-input response with final conservative error contract",
+    "Acquire lease before worker and observe retirement before asserting drain",
+    "Use canonical atomic replacement in existing nightly exporter"
+  ],
+  "claude": "RESULT034 live periodic reflection correction and RESULT035 helper-only review read; TASK036 actual new source re-review requested",
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false,
+  "selection": {
+    "new": 22,
+    "legacy": 4,
+    "group": 1673,
+    "windows": 446,
+    "native": 1888,
+    "linuxExtras": 65,
+    "macExtras": 60,
+    "inventoryReportSha256": "873CC604FEC781D76AFE91D59386D3C22C9FFF65F55D5811E33C7E88678A410A"
+  }
+}

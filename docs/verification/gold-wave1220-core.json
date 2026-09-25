@@ -1,0 +1,54 @@
+{
+  "schema": "neoth-core-cli-evidence/v1",
+  "run": 36093813713,
+  "source": "390df51c771d19685b30286bf5c4533496349682",
+  "run_conclusion": "success",
+  "relevant_steps": [
+    {
+      "name": "Check exact-source slim-core production Clippy",
+      "conclusion": "success"
+    },
+    {
+      "name": "Type-check core test targets before native validation",
+      "conclusion": "success"
+    },
+    {
+      "name": "Build current public CLI",
+      "conclusion": "success"
+    },
+    {
+      "name": "Check exact Linux-quality workspace Clippy",
+      "conclusion": "success"
+    }
+  ],
+  "artifact": {
+    "id": 10847326365,
+    "api_digest": "sha256:045c3a097a8ddb02f711faf4be70b4cf8277a3b68bd033ec88cb480fdd5b42a0",
+    "zip_sha256": "045c3a097a8ddb02f711faf4be70b4cf8277a3b68bd033ec88cb480fdd5b42a0",
+    "matches": true
+  },
+  "inner_hashes": [
+    {
+      "path": "cli-commands.md",
+      "expected": "b7ef122a5d336bdc35570df1632724fbd5f1461ff1914fd7b4292ab187335050",
+      "actual": "b7ef122a5d336bdc35570df1632724fbd5f1461ff1914fd7b4292ab187335050",
+      "matches": true
+    }
+  ],
+  "receipt_source": "390df51c771d19685b30286bf5c4533496349682",
+  "receipt_source_matches_run": true,
+  "generated_cli": {
+    "sha256": "b7ef122a5d336bdc35570df1632724fbd5f1461ff1914fd7b4292ab187335050",
+    "bytes": 253593
+  },
+  "current_committed_cli": {
+    "commit": "94bfcd6ee38b247d26fac11274a4e2350ad3571c",
+    "path": "docs/cli-commands.md",
+    "git_blob": "8e8ecc6fe3bc610d8de3757ad780ff4e09d0f311",
+    "sha256": "b7ef122a5d336bdc35570df1632724fbd5f1461ff1914fd7b4292ab187335050",
+    "matches_generated": true
+  },
+  "limitations": "Artifact contains generated CLI reference, SHA256SUMS, and source head; no separate helper or Cargo binding receipt was published.",
+  "localExecutableValidationRan": false,
+  "rootAdmission": "ROOT_ADMITTED_HISTORICAL_CORE_SUCCESS; exact generated CLI already committed; no current Dream WIP acceptance"
+}
