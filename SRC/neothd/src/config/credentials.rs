@@ -1955,8 +1955,8 @@ impl Credentials {
                         return Ok(N8nOwnedCleanupOutcome::AlreadyAbsent);
                     }
                     if endpoint.as_deref() != Some(receipt.endpoint_origin.as_str())
-                        || !instance
-                            .is_some_and(|instance| instance.api_version == receipt.api_version)
+                        || instance
+                            .is_none_or(|instance| instance.api_version != receipt.api_version)
                         || key.map(n8n_key_commitment).as_deref()
                             != Some(receipt.api_key_commitment.as_str())
                     {

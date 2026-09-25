@@ -8,6 +8,34 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1285 retained-volume n8n reinstall batch (2026-09-25):**
+The explicit `n8n install --reuse-uninstall <job> --api-key-stdin` path resolves
+one completed uninstall and its original Ready Install under the same owner
+lease. It validates retained runtime/manifest provenance, requires the exact
+existing bootstrap-labelled volume before create, and creates a new Install
+row. The original volume owner survives later cycles; missing/foreign/unknown
+or legacy unproven receipts cannot silently allocate fresh data. The key remains
+explicit stdin input; port/bootstrap overrides conflict with reuse.
+Root caught and corrected an invented volume-label value: the reader now shares
+the actual unchanged writer constant v2. Independent review also corrected CLI
+fixture shape and the canary's owner chain. The compiled-product canary now
+checks actual retained workflows after reinstall and a second data-preserving
+uninstall. New source validation is pending GitHub; no roadmap closure.
+Historical e991 product run36109131512 is ROOT-ADMITTED for real install,
+13imports, repeat, exact-ID uninstall, retained data/key and repeated uninstall;
+27 historical source/input bindings and API ZIP digest were verified.
+W1282 Core lint repairs preserve the cleanup predicates and collapse equivalent
+Ready-custody conditions. Paperless W1283 is a separate in-progress batch based
+on Claude047/048; Claude049 maps its real data-persistence acceptance seam.
+Selection now contains 1965 universal native identities, 1754 grouped Linux
+identities and 524 Windows identities; all five additions are registered once.
+At source2b77c183, Windows519, Preflight and Code Quality workflows completed
+successfully. Group1749 executed1749:1748PASS and only generated CLI reference
+staleness failed; this is historical diagnosis, not a current whole-group PASS.
+Hosted CLI export is required after the new flags. Root caught missing actual
+Paperless operation serialization and cross-install custody generation binding;
+that separate uncommitted batch remains under repair and is excluded here.
+
 **W1281 hosted test-caller repair (2026-09-25):**
 Group1749 run36109123995 at e991eaa6 exposed two E0061 errors in the
 uninstall recovery fixtures: they still supplied the removed unused enqueue

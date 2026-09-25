@@ -82,7 +82,7 @@ class CommandFailure(Failure):
             "n8n_container_inspect_unknown", "n8n_managed_container_create_failed",
             "n8n_managed_container_identity_ambiguous",
             "n8n_preexisting_container_unowned_or_mismatch",
-            "n8n_managed_custody_mismatch", "n8n_docker_wait_failed",
+            "n8n_managed_custody_mismatch", "n8n_retained_reinstall_already_active", "n8n_docker_wait_failed",
             "n8n_docker_output_limit", "n8n_docker_non_utf8",
             "stale integration job revision", "stale integration job state",
             "illegal integration job transition",
@@ -135,6 +135,21 @@ def validate_uninstall_product(value: dict, source_job: str) -> str:
         raise Failure("uninstall_not_ready")
     return job
 
+def validate_reinstall_product(value: dict, source_job: str, uninstall_job: str) -> str:
+    job = validate_product(value)
+    if job in {source_job, uninstall_job} or value.get("probe_binding") != "authenticated_n8n_workflows":
+        raise Failure("reinstall_not_ready")
+    return job
+
+def validate_reinstalled_custody(runtime: dict, reinstall_job: str, reinstall_manifest: str, volume: str, old_runtime_id: str, port: int) -> str:
+    runtime_id = required(runtime, "container_id", str)
+    if (runtime.get("schema_version") != 2 or runtime.get("phase") != "Ready"
+            or runtime.get("job_id") != reinstall_job or runtime.get("manifest_sha256") != reinstall_manifest
+            or not ID.fullmatch(runtime_id) or runtime_id == old_runtime_id
+            or runtime.get("container_name") != "neoth-n8n" or runtime.get("host_port") != port
+            or runtime.get("volume") != volume or runtime.get("image") != IMAGE):
+        raise Failure("reinstall_custody_invalid")
+    return runtime_id
 def validate_uninstall_status(value: dict, uninstall_job: str) -> None:
     row = value.get("job")
     if (not isinstance(row, dict) or row.get("id") != uninstall_job
@@ -146,7 +161,7 @@ def validate_uninstall_status(value: dict, uninstall_job: str) -> None:
             or row["completed_steps"] != row.get("total_steps")):
         raise Failure("uninstall_status_invalid")
 
-def read_uninstall_completion_receipt(home: Path, uninstall_job: str, uninstall_manifest: str, source_job: str, source_manifest: str) -> dict:
+def read_uninstall_completion_receipt(home: Path, uninstall_job: str, uninstall_manifest: str, source_job: str, source_manifest: str, source_runtime_id: str, volume: str, port: int) -> dict:
     path = home / f"n8n-uninstall-{uninstall_job}.receipt.json"
     value = read_json(path)
     expected = {
@@ -156,11 +171,46 @@ def read_uninstall_completion_receipt(home: Path, uninstall_job: str, uninstall_
         "source_install_job_id": source_job,
         "source_install_manifest_sha256": source_manifest,
         "cleanup_disposition": "preserved_unproven",
+        "source_container_id": source_runtime_id,
+        "source_image": IMAGE,
+        "source_host_port": port,
+        "source_volume": volume,
+        "source_bootstrap_volume": True,
+        "source_retained_reinstall": None,
+        "source_volume_owner_install_job_id": source_job,
     }
     if value != expected:
         raise Failure("uninstall_completion_receipt_invalid")
     return {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "bytes": path.stat().st_size}
 
+def read_reinstall_uninstall_completion_receipt(home: Path, uninstall_job: str, uninstall_manifest: str, reinstall_job: str, reinstall_manifest: str, runtime_id: str, volume: str, port: int, original_uninstall_job: str, original_uninstall_manifest: str, original_install_job: str, original_install_manifest: str) -> dict:
+    path = home / f"n8n-uninstall-{uninstall_job}.receipt.json"
+    value = read_json(path)
+    expected = {
+        "schema_version": 1,
+        "uninstall_job_id": uninstall_job,
+        "uninstall_manifest_sha256": uninstall_manifest,
+        "source_install_job_id": reinstall_job,
+        "source_install_manifest_sha256": reinstall_manifest,
+        "cleanup_disposition": "preserved_unproven",
+        "source_container_id": runtime_id,
+        "source_image": IMAGE,
+        "source_host_port": port,
+        "source_volume": volume,
+        "source_bootstrap_volume": True,
+        "source_retained_reinstall": {
+            "uninstall_job_id": original_uninstall_job,
+            "uninstall_manifest_sha256": original_uninstall_manifest,
+            "source_install_job_id": original_install_job,
+            "source_install_manifest_sha256": original_install_manifest,
+            "bootstrap_volume": True,
+            "volume_owner_install_job_id": original_install_job,
+        },
+        "source_volume_owner_install_job_id": original_install_job,
+    }
+    if value != expected:
+        raise Failure("reinstall_uninstall_completion_receipt_invalid")
+    return {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "bytes": path.stat().st_size}
 def observe_exact_job(home: Path, job: str, operation: str) -> dict:
     if not JOB.fullmatch(job):
         raise Failure("exact_job_row_invalid")
@@ -178,6 +228,17 @@ def observe_exact_job(home: Path, job: str, operation: str) -> dict:
         raise Failure("exact_job_row_invalid")
     return {"row_sha256": json_sha256(row), "manifest_sha256": row["manifest_sha256"], "revision": row["state_revision"]}
 
+def observe_full_job_row(home: Path, job: str, operation: str) -> str:
+    columns = ("job_id", "capability_id", "operation", "release_version", "manifest_sha256", "state", "state_revision", "current_step", "completed_steps", "total_steps", "bytes_done", "bytes_total", "created_at", "started_at", "updated_at", "terminal_at", "error_code", "redacted_error", "ready_evidence_json", "retry_of", "requested_by", "cancel_requested", "evidence_contract_json", "progress_evidence_json")
+    pairs = ",".join(f"'{column}',{column}" for column in columns)
+    output = run(["sqlite3", "-readonly", str(home / "setup.db"), "SELECT json_object(" + pairs + ") FROM integration_jobs WHERE job_id='" + job + "';"])
+    rows = output.splitlines()
+    if len(rows) != 1:
+        raise Failure("full_job_row_invalid")
+    value = read_json_bytes(rows[0])
+    if value.get("job_id") != job or value.get("operation") != operation:
+        raise Failure("full_job_row_invalid")
+    return hashlib.sha256(rows[0]).hexdigest()
 def validate_retained_volume(row: dict, source_job: str, volume: str) -> None:
     labels = row.get("Labels")
     if (row.get("Name") != volume or not isinstance(labels, dict)
@@ -368,6 +429,19 @@ def run(argv: list[str], timeout: int = 180) -> bytes:
         raise CommandFailure(argv, result)
     return result.stdout
 
+def run_with_payload(argv: list[str], payload: bytes, timeout: int = 180) -> bytes:
+    result = bounded.run(argv, payload=payload, timeout=timeout)
+    if result.code != 0 or result.timed_out or result.overflow:
+        raise CommandFailure(argv, result)
+    return result.stdout
+
+def read_json_from_payload_command(argv: list[str], payload: bytes) -> dict:
+    return read_json_bytes(run_with_payload(argv, payload))
+def assert_reinstall_repeat_rejected(binary: Path, uninstall_job: str, payload: bytes) -> dict:
+    result = bounded.run([str(binary), "--output", "json", "n8n", "install", "--reuse-uninstall", uninstall_job, "--api-key-stdin"], payload=payload, timeout=180)
+    if result.code == 0 or result.timed_out or result.overflow or b"n8n_retained_reinstall_already_active" not in result.stderr:
+        raise Failure("reinstall_repeat_rejection_unproven")
+    return {"exit_code": result.code, "reason": "active_runtime_pre_effect_rejection"}
 def docker_inspect(identifier: str) -> dict:
     raw = run(["docker", "inspect", identifier])
     value = json.loads(raw)
@@ -496,6 +570,7 @@ def main() -> int:
         volume, bootstrap_id, runtime_id = validate_custody(boot, runtime, job, args.port); validate_runtime(docker_inspect(runtime_id), job, volume, runtime_id, args.port)
         validate_single_job(home, job, boot["manifest_sha256"])
         source_install = observe_exact_job(home, job, "install")
+        source_install_full = observe_full_job_row(home, job, "install")
         if source_install["manifest_sha256"] != boot["manifest_sha256"]:
             raise Failure("source_install_manifest_mismatch")
         if not exact_absent("container", bootstrap_id): raise Failure("bootstrap_absence_unproven")
@@ -548,6 +623,7 @@ def main() -> int:
             raise Failure("uninstall_output_key_leak")
         uninstall_job = validate_uninstall_product(read_json_bytes(first_uninstall_raw), job)
         uninstall_record = observe_exact_job(home, uninstall_job, "uninstall")
+        uninstall_record_full = observe_full_job_row(home, uninstall_job, "uninstall")
         validate_uninstall_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", uninstall_job]), uninstall_job)
         if not exact_absent("container", runtime_id):
             raise Failure("uninstall_runtime_absence_unproven")
@@ -558,7 +634,7 @@ def main() -> int:
             raise Failure("canonical_n8n_key_changed")
         sidecar_absent(home, "n8n-managed-runtime.v2.json")
         sidecar_absent(home, "n8n-managed-uninstall.v1.json")
-        completion = read_uninstall_completion_receipt(home, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"])
+        completion = read_uninstall_completion_receipt(home, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"], runtime_id, volume, args.port)
         receipt["stage"] = "repeat_product_uninstall"
         repeat_uninstall_raw = run([str(binary), "--output", "json", "n8n", "uninstall"])
         if canonical_key in repeat_uninstall_raw:
@@ -567,9 +643,9 @@ def main() -> int:
             raise Failure("uninstall_repeat_changed")
         repeat_uninstall_record = observe_exact_job(home, uninstall_job, "uninstall")
         validate_uninstall_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", uninstall_job]), uninstall_job)
-        if repeat_uninstall_record != uninstall_record or observe_exact_job(home, job, "install") != source_install:
+        if repeat_uninstall_record != uninstall_record or observe_exact_job(home, job, "install") != source_install or observe_full_job_row(home, job, "install") != source_install_full or observe_full_job_row(home, uninstall_job, "uninstall") != uninstall_record_full:
             raise Failure("uninstall_repeat_job_mutation")
-        if read_uninstall_completion_receipt(home, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"]) != completion:
+        if read_uninstall_completion_receipt(home, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"], runtime_id, volume, args.port) != completion:
             raise Failure("uninstall_repeat_receipt_mutation")
         if not exact_absent("container", runtime_id):
             raise Failure("uninstall_repeat_runtime_absence_unproven")
@@ -582,7 +658,56 @@ def main() -> int:
         sidecar_absent(home, "n8n-managed-runtime.v2.json")
         sidecar_absent(home, "n8n-managed-uninstall.v1.json")
         uninstall_runtime_absent = True
-        receipt["uninstall"] = {"job_id": uninstall_job, "job_row_sha256": uninstall_record["row_sha256"], "job_manifest_sha256": uninstall_record["manifest_sha256"], "completion_receipt_sha256": completion["sha256"], "completion_receipt_bytes": completion["bytes"], "disposition": "container_removed_data_volume_retained", "config_cleanup": "preserved_unproven", "data_volume_policy": "retain", "runtime_absent": True, "volume_retained": True, "canonical_api_key_preserved": True, "repeat_read_only": True, "active_sidecars_removed": True}
+        receipt["uninstall"] = {"job_id": uninstall_job, "job_row_sha256": uninstall_record["row_sha256"], "full_job_row_sha256": uninstall_record_full, "job_manifest_sha256": uninstall_record["manifest_sha256"], "completion_receipt_sha256": completion["sha256"], "completion_receipt_bytes": completion["bytes"], "disposition": "container_removed_data_volume_retained", "config_cleanup": "preserved_unproven", "data_volume_policy": "retain", "runtime_absent": True, "volume_retained": True, "canonical_api_key_preserved": True, "repeat_read_only": True, "active_sidecars_removed": True}
+        receipt["stage"] = "retained_volume_reinstall"
+        reinstall_payload = canonical_key + b"\n"
+        reinstall_raw = run_with_payload([str(binary), "--output", "json", "n8n", "install", "--reuse-uninstall", uninstall_job, "--api-key-stdin"], reinstall_payload)
+        if canonical_key in reinstall_raw:
+            raise Failure("reinstall_output_key_leak")
+        reinstall_job = validate_reinstall_product(read_json_bytes(reinstall_raw), job, uninstall_job)
+        reinstall_record = observe_exact_job(home, reinstall_job, "install")
+        reinstall_record_full = observe_full_job_row(home, reinstall_job, "install")
+        validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", reinstall_job]), reinstall_job, args.port)
+        reinstall_runtime = read_json(home / "n8n-managed-runtime.v2.json")
+        reinstall_runtime_id = validate_reinstalled_custody(reinstall_runtime, reinstall_job, reinstall_record["manifest_sha256"], volume, runtime_id, args.port)
+        validate_runtime(docker_inspect(reinstall_runtime_id), reinstall_job, volume, reinstall_runtime_id, args.port)
+        if read_json(home / "n8n-managed-bootstrap.v2.json") != boot:
+            raise Failure("reinstall_bootstrap_custody_changed")
+        if canonical_n8n_api_key() != canonical_key:
+            raise Failure("reinstall_canonical_n8n_key_changed")
+        reinstall_workflows = observe_imported_workflows(args.port, canonical_key, templates)
+        if reinstall_workflows != first_workflows:
+            raise Failure("reinstall_workflow_persistence_unproven")
+        if observe_exact_job(home, job, "install") != source_install or observe_exact_job(home, uninstall_job, "uninstall") != uninstall_record or observe_full_job_row(home, job, "install") != source_install_full or observe_full_job_row(home, uninstall_job, "uninstall") != uninstall_record_full:
+            raise Failure("reinstall_history_mutation")
+        if read_uninstall_completion_receipt(home, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"], runtime_id, volume, args.port) != completion:
+            raise Failure("reinstall_original_receipt_mutation")
+        receipt["stage"] = "repeat_retained_volume_reinstall"
+        reinstall_repeat = assert_reinstall_repeat_rejected(binary, uninstall_job, reinstall_payload)
+        if observe_exact_job(home, reinstall_job, "install") != reinstall_record or observe_full_job_row(home, reinstall_job, "install") != reinstall_record_full or read_json(home / "n8n-managed-runtime.v2.json") != reinstall_runtime:
+            raise Failure("reinstall_repeat_mutation")
+        validate_runtime(docker_inspect(reinstall_runtime_id), reinstall_job, volume, reinstall_runtime_id, args.port)
+        if observe_exact_job(home, job, "install") != source_install or observe_exact_job(home, uninstall_job, "uninstall") != uninstall_record or observe_full_job_row(home, job, "install") != source_install_full or observe_full_job_row(home, uninstall_job, "uninstall") != uninstall_record_full:
+            raise Failure("reinstall_repeat_history_mutation")
+        receipt["stage"] = "reinstall_product_uninstall"
+        reinstall_uninstall_raw = run([str(binary), "--output", "json", "n8n", "uninstall"])
+        if canonical_key in reinstall_uninstall_raw:
+            raise Failure("reinstall_uninstall_output_key_leak")
+        reinstall_uninstall_job = validate_uninstall_product(read_json_bytes(reinstall_uninstall_raw), reinstall_job)
+        reinstall_uninstall_record = observe_exact_job(home, reinstall_uninstall_job, "uninstall")
+        reinstall_uninstall_record_full = observe_full_job_row(home, reinstall_uninstall_job, "uninstall")
+        validate_uninstall_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", reinstall_uninstall_job]), reinstall_uninstall_job)
+        if not exact_absent("container", reinstall_runtime_id):
+            raise Failure("reinstall_uninstall_runtime_absence_unproven")
+        validate_retained_volume(docker_inspect(volume), job, volume)
+        if canonical_n8n_api_key() != canonical_key:
+            raise Failure("reinstall_uninstall_canonical_n8n_key_changed")
+        sidecar_absent(home, "n8n-managed-runtime.v2.json")
+        sidecar_absent(home, "n8n-managed-uninstall.v1.json")
+        reinstall_completion = read_reinstall_uninstall_completion_receipt(home, reinstall_uninstall_job, reinstall_uninstall_record["manifest_sha256"], reinstall_job, reinstall_record["manifest_sha256"], reinstall_runtime_id, volume, args.port, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"])
+        if read_json(home / "n8n-managed-bootstrap.v2.json") != boot or observe_exact_job(home, job, "install") != source_install or observe_exact_job(home, uninstall_job, "uninstall") != uninstall_record:
+            raise Failure("reinstall_final_history_mutation")
+        receipt["reinstall"] = {"job_id": reinstall_job, "job_row_sha256": reinstall_record["row_sha256"], "full_job_row_sha256": reinstall_record_full, "runtime_id": reinstall_runtime_id, "reused_volume": volume, "workflows_persisted": True, "canonical_api_key_preserved": True, "repeat": reinstall_repeat, "final_uninstall_job_id": reinstall_uninstall_job, "final_uninstall_row_sha256": reinstall_uninstall_record["row_sha256"], "final_uninstall_full_row_sha256": reinstall_uninstall_record_full, "final_completion_receipt_sha256": reinstall_completion["sha256"], "final_completion_receipt_bytes": reinstall_completion["bytes"], "final_runtime_absent": True, "volume_retained": True}
         receipt.update({"manifest_sha256": boot["manifest_sha256"], "volume": volume, "bootstrap_id": bootstrap_id, "runtime_id": runtime_id, "status_ready": True, "reused_same_job": True, "no_rebootstrap_events": True})
         receipt["outcome"] = "passed"
     except Exception as error:

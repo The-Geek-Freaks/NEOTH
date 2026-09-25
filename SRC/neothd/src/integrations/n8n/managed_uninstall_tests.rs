@@ -1,12 +1,14 @@
 use super::super::{
-    DEFAULT_VOLUME, InspectOutcome, MANAGED_LABEL_VALUE, ManagedCommandReceipt,
+    DEFAULT_VOLUME, InspectOutcome, InspectVolumeOutcome, MANAGED_LABEL_KEY, MANAGED_LABEL_VALUE, ManagedCommandReceipt,
     ManagedDockerRunner, ManagedN8nRequest, ManagedReadiness, ObservedContainer,
-    install_managed_at_with, write_binding,
+    ObservedVolume, install_managed_at_with, install_retained_at_with, write_binding,
 };
+use super::super::super::managed_bootstrap::BOOTSTRAP_SCHEMA;
 use super::{
     STEPS, UninstallCustody, UninstallPhase, checkpoint, cleanup_disposition_at, create_custody,
     enqueue_uninstall, finalize_ready_uninstall_custody, open_explicit_uninstall_service_with,
-    read_binding, read_custody, source_ready_binding, uninstall_managed_at_with,
+    read_binding, read_custody, receipt_path, retained_reinstall_request_in_service,
+    source_ready_binding, uninstall_managed_at_with,
     uninstall_managed_at_with_restart_inspector, write_custody,
 };
 use crate::installers::n8n::N8N_OCI_REFERENCE;
@@ -39,9 +41,11 @@ fn observed(id: &str, job: &str) -> ObservedContainer {
 #[derive(Default)]
 struct FakeState {
     container: Option<ObservedContainer>,
+    volume: Option<ObservedVolume>,
     calls: Vec<String>,
     remove_error: bool,
     exact_unknown: bool,
+    volume_unknown: bool,
 }
 struct Fake(Arc<Mutex<FakeState>>);
 #[async_trait::async_trait]
@@ -67,13 +71,29 @@ impl ManagedDockerRunner for Fake {
             .map(InspectOutcome::Found)
             .unwrap_or(InspectOutcome::Absent))
     }
+    async fn inspect_volume(&mut self, name: &str) -> Result<InspectVolumeOutcome, &'static str> {
+        let mut state = self.0.lock().unwrap();
+        state.calls.push(format!("inspect_volume:{name}"));
+        if state.volume_unknown {
+            Ok(InspectVolumeOutcome::Unknown)
+        } else {
+            Ok(state.volume.clone().filter(|volume| volume.name == name).map(InspectVolumeOutcome::Found).unwrap_or(InspectVolumeOutcome::Absent))
+        }
+    }
     async fn create(&mut self, argv: &[String]) -> Result<ManagedCommandReceipt, &'static str> {
         let job = argv
             .windows(2)
             .find(|pair| pair[0] == "--label" && pair[1].starts_with("io.neoth.n8n-job="))
             .ok_or("missing_job")?[1]
             .trim_start_matches("io.neoth.n8n-job=");
-        self.0.lock().unwrap().container = Some(observed(&"c".repeat(64), job));
+        let volume = argv
+            .windows(2)
+            .find(|pair| pair[0] == "-v")
+            .and_then(|pair| pair[1].split(':').next())
+            .ok_or("missing_volume")?;
+        let mut state = self.0.lock().unwrap();
+        state.calls.push("create".into());
+        state.container = Some(observed_with_volume(&"c".repeat(64), job, volume));
         Ok(ManagedCommandReceipt {
             succeeded: true,
             output_sha256: "a".repeat(64),
@@ -131,6 +151,68 @@ async fn installed(home: &std::path::Path, runner: &mut Fake) -> IntegrationJob 
     )
     .await
     .unwrap()
+}
+
+async fn installed_bootstrap_like(home: &std::path::Path, runner: &mut Fake) -> IntegrationJob {
+    let (_tx, mut cancel) = tokio::sync::oneshot::channel();
+    let job = install_managed_at_with(
+        home,
+        ManagedN8nRequest::new_with_volume(5678, N8N_OCI_REFERENCE, "neoth_n8n_bootstrap_test".into()).unwrap(),
+        crate::secret::SecretString::from("test-key"),
+        runner,
+        &Ready,
+        &Probe,
+        &mut cancel,
+    )
+    .await
+    .unwrap();
+    let mut binding = read_binding(home).unwrap().unwrap();
+    binding.bootstrap_volume_owner_job_id = Some(job.job_id.as_str().into());
+    write_binding(home, &binding).unwrap();
+    job
+}
+
+async fn completed_bootstrap_uninstall_seed(
+    home: &std::path::Path,
+    runner: &mut Fake,
+) -> (IntegrationJob, IntegrationJob) {
+    let source = installed_bootstrap_like(home, runner).await;
+    runner.0.lock().unwrap().volume = Some(ObservedVolume {
+        name: "neoth_n8n_bootstrap_test".into(),
+        labels: std::collections::BTreeMap::from([
+            (MANAGED_LABEL_KEY.into(), MANAGED_LABEL_VALUE.into()),
+            ("io.neoth.n8n-job".into(), source.job_id.as_str().into()),
+            ("io.neoth.n8n-bootstrap".into(), BOOTSTRAP_SCHEMA.into()),
+        ]),
+    });
+    let uninstall = uninstall_managed_at_with(home, runner).await.unwrap();
+    assert!(read_binding(home).unwrap().is_none());
+    (source, uninstall)
+}
+
+fn job_snapshot(home: &std::path::Path) -> Vec<u8> {
+    serde_json::to_vec(&IntegrationJobService::read_only_snapshot(home).unwrap()).unwrap()
+}
+
+fn assert_receipt_selector_rejected_without_docker(
+    home: &std::path::Path,
+    state: &Arc<Mutex<FakeState>>,
+    selector: &crate::integrations::state::JobId,
+    jobs_before: &[u8],
+    calls_before: usize,
+) {
+    let inspector = restart_inspector(state.clone());
+    let service = open_explicit_uninstall_service_with(home, &inspector).unwrap();
+    assert!(retained_reinstall_request_in_service(&service, home, selector).is_err());
+    assert!(read_binding(home).unwrap().is_none());
+    assert_eq!(job_snapshot(home), jobs_before.to_vec());
+    assert_eq!(state.lock().unwrap().calls.len(), calls_before);
+}
+
+fn observed_with_volume(id: &str, job: &str, volume: &str) -> ObservedContainer {
+    let mut observed = observed(id, job);
+    observed.volume = volume.into();
+    observed
 }
 
 fn restart_inspector(
@@ -198,6 +280,185 @@ async fn exact_id_uninstall_removes_container_never_volume_and_repeats_without_d
         job.job_id
     );
     assert_eq!(state.lock().unwrap().calls.len(), before);
+}
+
+#[tokio::test]
+async fn retained_bootstrap_volume_reinstalls_twice_with_the_original_label_owner() {
+    let home = tempfile::tempdir().unwrap();
+    initialize(home.path());
+    let state = Arc::new(Mutex::new(FakeState::default()));
+    let mut runner = Fake(state.clone());
+    let original = installed_bootstrap_like(home.path(), &mut runner).await;
+    state.lock().unwrap().volume = Some(ObservedVolume {
+        name: "neoth_n8n_bootstrap_test".into(),
+        labels: std::collections::BTreeMap::from([
+            (MANAGED_LABEL_KEY.into(), MANAGED_LABEL_VALUE.into()),
+            ("io.neoth.n8n-job".into(), original.job_id.as_str().into()),
+            ("io.neoth.n8n-bootstrap".into(), BOOTSTRAP_SCHEMA.into()),
+        ]),
+    });
+
+    let first_uninstall = uninstall_managed_at_with(home.path(), &mut runner).await.unwrap();
+    let first_calls = state.lock().unwrap().calls.len();
+    let (_tx, mut cancel) = tokio::sync::oneshot::channel();
+    let first_reinstall = install_retained_at_with(
+        home.path(), &first_uninstall.job_id, crate::secret::SecretString::from("test-key"),
+        &mut runner, &Ready, &Probe, &mut cancel,
+    ).await.unwrap();
+    assert_ne!(first_reinstall.job_id, original.job_id);
+    assert_ne!(first_reinstall.job_id, first_uninstall.job_id);
+    let first_reinstall_calls = state.lock().unwrap().calls[first_calls..].to_vec();
+    let inspect = first_reinstall_calls.iter().position(|call| call == "inspect_volume:neoth_n8n_bootstrap_test").unwrap();
+    let create = first_reinstall_calls.iter().position(|call| call == "create").unwrap();
+    assert!(inspect < create);
+
+    let second_uninstall = uninstall_managed_at_with(home.path(), &mut runner).await.unwrap();
+    let before_second_reinstall = state.lock().unwrap().calls.len();
+    let (_tx, mut cancel) = tokio::sync::oneshot::channel();
+    let second_reinstall = install_retained_at_with(
+        home.path(), &second_uninstall.job_id, crate::secret::SecretString::from("test-key"),
+        &mut runner, &Ready, &Probe, &mut cancel,
+    ).await.unwrap();
+    assert_ne!(second_reinstall.job_id, first_reinstall.job_id);
+    let calls = state.lock().unwrap().calls[before_second_reinstall..].to_vec();
+    assert!(calls.iter().any(|call| call == "inspect_volume:neoth_n8n_bootstrap_test"));
+    assert!(calls.iter().any(|call| call == "create"));
+    let binding = read_binding(home.path()).unwrap().unwrap();
+    assert_eq!(binding.volume, "neoth_n8n_bootstrap_test");
+    assert_eq!(
+        binding.retained_reinstall.unwrap().volume_owner_install_job_id,
+        original.job_id.as_str(),
+    );
+}
+
+#[tokio::test]
+async fn retained_reinstall_rejects_unproven_missing_unknown_and_foreign_volumes_before_create() {
+    let home = tempfile::tempdir().unwrap();
+    initialize(home.path());
+    let state = Arc::new(Mutex::new(FakeState::default()));
+    let mut runner = Fake(state.clone());
+    let ordinary = installed(home.path(), &mut runner).await;
+    let ordinary_uninstall = uninstall_managed_at_with(home.path(), &mut runner).await.unwrap();
+    let before = state.lock().unwrap().calls.len();
+    let (_tx, mut cancel) = tokio::sync::oneshot::channel();
+    assert!(install_retained_at_with(
+        home.path(), &ordinary_uninstall.job_id, crate::secret::SecretString::from("test-key"),
+        &mut runner, &Ready, &Probe, &mut cancel,
+    ).await.is_err());
+    assert_eq!(ordinary.state, JobState::Ready);
+    assert!(!state.lock().unwrap().calls[before..].iter().any(|call| call == "create"));
+
+    for case in ["missing", "unknown", "foreign"] {
+        let home = tempfile::tempdir().unwrap();
+        initialize(home.path());
+        let state = Arc::new(Mutex::new(FakeState::default()));
+        let mut runner = Fake(state.clone());
+        let original = installed_bootstrap_like(home.path(), &mut runner).await;
+        let uninstall = uninstall_managed_at_with(home.path(), &mut runner).await.unwrap();
+        match case {
+            "missing" => {}
+            "unknown" => state.lock().unwrap().volume_unknown = true,
+            "foreign" => state.lock().unwrap().volume = Some(ObservedVolume {
+                name: "neoth_n8n_bootstrap_test".into(), labels: Default::default(),
+            }),
+            _ => unreachable!(),
+        }
+        let before = state.lock().unwrap().calls.len();
+        let (_tx, mut cancel) = tokio::sync::oneshot::channel();
+        assert!(install_retained_at_with(
+            home.path(), &uninstall.job_id, crate::secret::SecretString::from("test-key"),
+            &mut runner, &Ready, &Probe, &mut cancel,
+        ).await.is_err());
+        let calls = state.lock().unwrap().calls[before..].to_vec();
+        assert!(calls.iter().any(|call| call == "inspect_volume:neoth_n8n_bootstrap_test"));
+        assert!(!calls.iter().any(|call| call == "create"));
+        assert_eq!(original.state, JobState::Ready);
+    }
+}
+
+#[tokio::test]
+async fn retained_reinstall_rejects_missing_legacy_malformed_and_mismatched_receipts_without_docker() {
+    for case in ["missing", "legacy", "malformed", "mismatched"] {
+        let home = tempfile::tempdir().unwrap();
+        initialize(home.path());
+        let state = Arc::new(Mutex::new(FakeState::default()));
+        let mut runner = Fake(state.clone());
+        let (source, uninstall) = completed_bootstrap_uninstall_seed(home.path(), &mut runner).await;
+        let jobs_before = job_snapshot(home.path());
+        let calls_before = state.lock().unwrap().calls.len();
+        let path = receipt_path(home.path(), uninstall.job_id.as_str());
+        match case {
+            "missing" => std::fs::remove_file(&path).unwrap(),
+            "legacy" => {
+                let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                value.as_object_mut().unwrap().remove("source_container_id");
+                std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+            }
+            "malformed" => std::fs::write(&path, b"{").unwrap(),
+            "mismatched" => {
+                let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                value.as_object_mut().unwrap().insert(
+                    "uninstall_manifest_sha256".into(), serde_json::Value::String("d".repeat(64)),
+                );
+                std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        assert_receipt_selector_rejected_without_docker(
+            home.path(), &state, &uninstall.job_id, &jobs_before, calls_before,
+        );
+        assert_eq!(source.state, JobState::Ready);
+        assert_eq!(uninstall.state, JobState::Ready);
+    }
+}
+
+#[tokio::test]
+async fn retained_reinstall_rejects_selected_or_mutated_source_evidence_without_docker() {
+    for case in [
+        "selected_install",
+        "source_operation",
+        "source_manifest",
+        "source_image",
+        "source_port",
+        "source_volume",
+        "source_owner",
+        "source_container",
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        initialize(home.path());
+        let state = Arc::new(Mutex::new(FakeState::default()));
+        let mut runner = Fake(state.clone());
+        let (source, uninstall) = completed_bootstrap_uninstall_seed(home.path(), &mut runner).await;
+        let jobs_before = job_snapshot(home.path());
+        let calls_before = state.lock().unwrap().calls.len();
+        let mut selector = uninstall.job_id.clone();
+        if case == "selected_install" {
+            selector = source.job_id.clone();
+        } else {
+            let path = receipt_path(home.path(), uninstall.job_id.as_str());
+            let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            let receipt = value.as_object_mut().unwrap();
+            match case {
+                "source_operation" => {
+                    receipt.insert("source_install_job_id".into(), serde_json::Value::String(uninstall.job_id.as_str().into()));
+                    receipt.insert("source_install_manifest_sha256".into(), serde_json::Value::String(uninstall.manifest_sha256.as_str().into()));
+                }
+                "source_manifest" => { receipt.insert("source_install_manifest_sha256".into(), serde_json::Value::String("d".repeat(64))); }
+                "source_image" => { receipt.insert("source_image".into(), serde_json::Value::String("unreviewed:image".into())); }
+                "source_port" => { receipt.insert("source_host_port".into(), serde_json::json!(5679)); }
+                "source_volume" => { receipt.insert("source_volume".into(), serde_json::Value::String("neoth_n8n_other".into())); }
+                "source_owner" => { receipt.insert("source_volume_owner_install_job_id".into(), serde_json::Value::String(uuid::Uuid::now_v7().to_string())); }
+                "source_container" => { receipt.insert("source_container_id".into(), serde_json::Value::String("d".repeat(64))); }
+                _ => unreachable!(),
+            }
+            std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        }
+        assert_receipt_selector_rejected_without_docker(
+            home.path(), &state, &selector, &jobs_before, calls_before,
+        );
+        assert_eq!(source.state, JobState::Ready);
+        assert_eq!(uninstall.state, JobState::Ready);
+    }
 }
 
 #[tokio::test]

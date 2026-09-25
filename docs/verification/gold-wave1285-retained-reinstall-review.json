@@ -1,0 +1,54 @@
+{
+  "kind": "ROOT_REVIEWED_RETAINED_N8N_REINSTALL",
+  "base": "2b77c183ab48c5dee4e4e9d6c859ec00c962649c",
+  "reviewPath": "work/gold-20260906/wave1280-retained-reinstall-review/REPORT.md",
+  "reviewSha256": "FD0732BD48B6CB300FBB66A29BB82D673BBA71AD3DF10D7031C720C68B025797",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cli/n8n.rs",
+      "sha256": "5736A8BE47CC8BFD9E3F41313007C24517008AC6CA49C31813498E9CA9A95FDB"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs",
+      "sha256": "1BDEE233A5014458DBF97DABE55C7C6EC6BFB132693A54064BE834F506AF7328"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "sha256": "3B37187BCFCA54442BE8BEC71AF67A2E83DEB8BE3636FD12694134244A1E1B1E"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime_tests.rs",
+      "sha256": "CA0B1131C2FAA77B48E604A0D01F4346910584C511286DC72C3C543918630F5A"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",
+      "sha256": "8DEDC0B6971BE31E121B10B671A58C69B5F3723D938EADDAE6C45B632C0785D4"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_uninstall_tests.rs",
+      "sha256": "F50A060057D8F6A381A15CDC306959B56D93737713AD4C16B1EA54A77B297F47"
+    },
+    {
+      "path": "packaging/n8n_product_bootstrap_canary.py",
+      "sha256": "1D4B4D1CE0E822AA566A0B6F49FCE96F2ED6C4A76AB494E74873CAEEE655ED29"
+    },
+    {
+      "path": "packaging/tests/test_n8n_product_bootstrap_canary.py",
+      "sha256": "0673524EDB01364FCFC6196CC874A896BFFFA48AB7FFE2179EDBE4BE0BE6993F"
+    }
+  ],
+  "requiredNewTests": [
+    "cli::n8n::tests::retained_reinstall_cli_requires_explicit_stdin_key_and_excludes_new_owner_options",
+    "integrations::n8n::managed_runtime::managed_uninstall::tests::retained_bootstrap_volume_reinstalls_twice_with_the_original_label_owner",
+    "integrations::n8n::managed_runtime::managed_uninstall::tests::retained_reinstall_rejects_unproven_missing_unknown_and_foreign_volumes_before_create",
+    "integrations::n8n::managed_runtime::managed_uninstall::tests::retained_reinstall_rejects_missing_legacy_malformed_and_mismatched_receipts_without_docker",
+    "integrations::n8n::managed_runtime::managed_uninstall::tests::retained_reinstall_rejects_selected_or_mutated_source_evidence_without_docker"
+  ],
+  "scope": "Explicit stdin-key retained-volume reinstall; original owner provenance across cycles; immutable source jobs; native and real product canary authored, execution pending. Actual writer label constant v2 reused.",
+  "universalNative": 1965,
+  "grouped": 1754,
+  "windows": 524,
+  "localExecutableValidationRan": false,
+  "hosted": "pending",
+  "roadmapClosure": false
+}

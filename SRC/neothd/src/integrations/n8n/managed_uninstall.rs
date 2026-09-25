@@ -14,9 +14,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     InspectOutcome, IntegrationJob, IntegrationJobService, JobEvidenceContract, JobOperation,
-    JobRequester, ManagedDockerRunner, N8N_CAPABILITY_ID, RuntimeBinding, RuntimePhase,
+    JobRequester, ManagedDockerRunner, ManagedN8nRequest, N8N_CAPABILITY_ID, RetainedReinstallSource, RuntimeBinding, RuntimePhase,
     is_managed_job, read_binding, remove_binding, sha256_parts, validate_binding,
-    validate_existing_identity,
+    validate_existing_identity, managed_manifest,
 };
 use crate::integrations::{
     catalog::CapabilityId,
@@ -24,7 +24,7 @@ use crate::integrations::{
     jobs::RestartValidator,
     state::{
         JobProgress, JobState, ProgressEvidence, ProgressEvidenceClaim, ReadyEvidence,
-        RecoveryDispositionEvidence, RestartDecision, ResumeEvidence,
+        RecoveryDispositionEvidence, RestartDecision, ResumeEvidence, JobId,
     },
 };
 
@@ -71,6 +71,20 @@ struct UninstallCompletionReceipt {
     source_install_job_id: String,
     source_install_manifest_sha256: String,
     cleanup_disposition: String,
+    #[serde(default)]
+    source_container_id: Option<String>,
+    #[serde(default)]
+    source_image: Option<String>,
+    #[serde(default)]
+    source_host_port: Option<u16>,
+    #[serde(default)]
+    source_volume: Option<String>,
+    #[serde(default)]
+    source_bootstrap_volume: Option<bool>,
+    #[serde(default)]
+    source_volume_owner_install_job_id: Option<String>,
+    #[serde(default)]
+    source_retained_reinstall: Option<RetainedReinstallSource>,
 }
 
 fn custody_path(home: &Path) -> PathBuf {
@@ -134,6 +148,31 @@ fn write_completion_receipt(home: &Path, custody: &UninstallCustody) -> Result<(
         .cleanup_disposition
         .as_deref()
         .ok_or("n8n_uninstall_cleanup_disposition_missing")?;
+    let binding = read_binding(home)?
+        .ok_or("n8n_uninstall_receipt_source_binding_missing")?;
+    if binding.job_id != custody.source_install_job_id
+        || binding.manifest_sha256 != custody.source_install_manifest_sha256
+        || binding.container_id.as_deref() != Some(custody.container_id.as_str())
+        || binding.image != custody.image
+        || binding.host_port != custody.host_port
+        || binding.volume != custody.volume
+    {
+        return Err("n8n_uninstall_receipt_source_binding_mismatch");
+    }
+    let (bootstrap_volume, volume_owner_install_job_id, retained_reinstall) =
+        match binding.retained_reinstall.clone() {
+            Some(source) if super::valid_retained_reinstall_source(&source) => (
+                true,
+                Some(source.volume_owner_install_job_id.clone()),
+                Some(source),
+            ),
+            Some(_) => return Err("n8n_uninstall_receipt_source_binding_mismatch"),
+            None => match binding.bootstrap_volume_owner_job_id.clone() {
+                Some(owner) if owner == custody.source_install_job_id => (true, Some(owner), None),
+                Some(_) => return Err("n8n_uninstall_receipt_source_binding_mismatch"),
+                None => (false, None, None),
+            },
+        };
     let receipt = UninstallCompletionReceipt {
         schema_version: 1,
         uninstall_job_id: custody.uninstall_job_id.clone(),
@@ -141,6 +180,13 @@ fn write_completion_receipt(home: &Path, custody: &UninstallCustody) -> Result<(
         source_install_job_id: custody.source_install_job_id.clone(),
         source_install_manifest_sha256: custody.source_install_manifest_sha256.clone(),
         cleanup_disposition: cleanup_disposition.to_owned(),
+        source_container_id: Some(custody.container_id.clone()),
+        source_image: Some(custody.image.clone()),
+        source_host_port: Some(custody.host_port),
+        source_volume: Some(custody.volume.clone()),
+        source_bootstrap_volume: Some(bootstrap_volume),
+        source_volume_owner_install_job_id: volume_owner_install_job_id,
+        source_retained_reinstall: retained_reinstall,
     };
     crate::util::atomic_write::atomic_write_private(
         &receipt_path(home, &receipt.uninstall_job_id),
@@ -174,16 +220,128 @@ fn read_completion_receipt(
     Ok(Some(receipt))
 }
 
-fn uninstall_manifest(binding: &RuntimeBinding) -> super::super::Sha256Digest {
+/// Resolve a completed uninstall receipt while the caller owns the n8n job
+/// service. Legacy receipts deliberately remain readable for status but cannot
+/// authorize attaching a retained Docker volume.
+pub(crate) fn retained_reinstall_request_in_service(
+    service: &IntegrationJobService,
+    home: &Path,
+    uninstall_id: &JobId,
+) -> Result<ManagedN8nRequest, &'static str> {
+    let uninstall = service
+        .get(uninstall_id)
+        .map_err(|_| "n8n_retained_reinstall_job_read_failed")?
+        .ok_or("n8n_retained_reinstall_job_missing")?;
+    if uninstall.operation != JobOperation::Uninstall || uninstall.state != JobState::Ready {
+        return Err("n8n_retained_reinstall_job_not_ready");
+    }
+    let receipt = read_completion_receipt(home, &uninstall)?
+        .ok_or("n8n_retained_reinstall_receipt_missing")?;
+    let (container_id, image, host_port, volume, bootstrap_volume, volume_owner_install_job_id) = match (
+        receipt.source_container_id.as_deref(), receipt.source_image.as_deref(),
+        receipt.source_host_port, receipt.source_volume.as_deref(), receipt.source_bootstrap_volume,
+        receipt.source_volume_owner_install_job_id.as_deref(),
+    ) {
+        (Some(container_id), Some(image), Some(host_port), Some(volume), Some(true), Some(owner))
+            if super::valid_container_id(container_id)
+                && super::valid_volume_name(volume)
+                && host_port != 0
+                && JobId::parse(owner.to_owned()).is_ok() =>
+                (container_id, image, host_port, volume, true, owner),
+        (Some(_), Some(_), Some(_), Some(_), Some(false), _) =>
+            return Err("n8n_retained_reinstall_volume_unproven"),
+        _ => return Err("n8n_retained_reinstall_receipt_incomplete"),
+    };
+    if image != crate::installers::n8n::N8N_OCI_REFERENCE {
+        return Err("n8n_retained_reinstall_receipt_mismatch");
+    }
+    let source = service.snapshot().map_err(|_| "n8n_retained_reinstall_job_read_failed")?
+        .into_iter().find(|job| job.job_id.as_str() == receipt.source_install_job_id)
+        .ok_or("n8n_retained_reinstall_source_missing")?;
+    if source.operation != JobOperation::Install || source.state != JobState::Ready || !is_managed_job(&source)
+        || source.manifest_sha256.as_str() != receipt.source_install_manifest_sha256 {
+        return Err("n8n_retained_reinstall_source_mismatch");
+    }
+    let source_reinstall = receipt.source_retained_reinstall.clone();
+    match &source_reinstall {
+        Some(previous)
+            if super::valid_retained_reinstall_source(previous)
+                && previous.bootstrap_volume
+                && previous.volume_owner_install_job_id == volume_owner_install_job_id => {}
+        Some(_) => return Err("n8n_retained_reinstall_source_mismatch"),
+        None if volume_owner_install_job_id != source.job_id.as_str() => {
+            return Err("n8n_retained_reinstall_source_mismatch");
+        }
+        None => {}
+    }
+    let mut source_request = ManagedN8nRequest::new_with_volume(host_port, crate::installers::n8n::N8N_OCI_REFERENCE, volume.into())?;
+    if let Some(previous) = source_reinstall.clone() { source_request = source_request.with_retained_reinstall(previous); }
+    if source.manifest_sha256 != managed_manifest(&source_request) {
+        return Err("n8n_retained_reinstall_source_manifest_mismatch");
+    }
+    if uninstall.manifest_sha256
+        != uninstall_manifest_from_identity(
+            source.job_id.as_str(),
+            source.manifest_sha256.as_str(),
+            container_id,
+            image,
+            host_port,
+            volume,
+            volume_owner_install_job_id,
+        )
+    {
+        return Err("n8n_retained_reinstall_uninstall_manifest_mismatch");
+    }
+    Ok(ManagedN8nRequest::new_with_volume(host_port, crate::installers::n8n::N8N_OCI_REFERENCE, volume.into())?
+        .with_retained_reinstall(RetainedReinstallSource {
+            uninstall_job_id: uninstall.job_id.as_str().into(),
+            uninstall_manifest_sha256: uninstall.manifest_sha256.as_str().into(),
+            source_install_job_id: source.job_id.as_str().into(),
+            source_install_manifest_sha256: source.manifest_sha256.as_str().into(),
+            bootstrap_volume,
+            volume_owner_install_job_id: volume_owner_install_job_id.into(),
+        }))
+}
+
+fn uninstall_manifest_from_identity(
+    source_job_id: &str,
+    source_manifest_sha256: &str,
+    container_id: &str,
+    image: &str,
+    host_port: u16,
+    volume: &str,
+    volume_owner_install_job_id: &str,
+) -> super::super::Sha256Digest {
+    let port = host_port.to_string();
     sha256_parts(&[
         "n8n-managed-uninstall-v1",
+        source_job_id,
+        source_manifest_sha256,
+        container_id,
+        image,
+        &port,
+        volume,
+        "n8n-managed-retained-volume-provenance-v1",
+        volume_owner_install_job_id,
+    ])
+}
+
+fn uninstall_manifest(binding: &RuntimeBinding) -> super::super::Sha256Digest {
+    let owner = binding
+        .retained_reinstall
+        .as_ref()
+        .map(|source| source.volume_owner_install_job_id.as_str())
+        .or(binding.bootstrap_volume_owner_job_id.as_deref())
+        .unwrap_or("");
+    uninstall_manifest_from_identity(
         binding.job_id.as_str(),
         binding.manifest_sha256.as_str(),
         binding.container_id.as_deref().unwrap_or(""),
         binding.image.as_str(),
-        &binding.host_port.to_string(),
+        binding.host_port,
         binding.volume.as_str(),
-    ])
+        owner,
+    )
 }
 
 fn enqueue_uninstall(
@@ -467,19 +625,18 @@ async fn uninstall_managed_at_with_restart_inspector<
     inspector: &I,
 ) -> Result<IntegrationJob> {
     let service = open_explicit_uninstall_service_with(home, inspector)?;
-    if let Some(custody) = read_custody(home).map_err(anyhow::Error::msg)? {
-        if custody.phase == UninstallPhase::Completed {
-            if let Some(ready) = service.snapshot()?.into_iter().find(|job| {
-                job.operation == JobOperation::Uninstall
-                    && job.state == JobState::Ready
-                    && job.job_id.as_str() == custody.uninstall_job_id
-                    && job.manifest_sha256.as_str() == custody.uninstall_manifest_sha256
-            }) {
-                finalize_ready_uninstall_custody(home, &ready).map_err(anyhow::Error::msg)?;
-                if read_binding(home).map_err(anyhow::Error::msg)?.is_none() {
-                    return Ok(ready);
-                }
-            }
+    if let Some(custody) = read_custody(home).map_err(anyhow::Error::msg)?
+        && custody.phase == UninstallPhase::Completed
+        && let Some(ready) = service.snapshot()?.into_iter().find(|job| {
+            job.operation == JobOperation::Uninstall
+                && job.state == JobState::Ready
+                && job.job_id.as_str() == custody.uninstall_job_id
+                && job.manifest_sha256.as_str() == custody.uninstall_manifest_sha256
+        })
+    {
+        finalize_ready_uninstall_custody(home, &ready).map_err(anyhow::Error::msg)?;
+        if read_binding(home).map_err(anyhow::Error::msg)?.is_none() {
+            return Ok(ready);
         }
     }
     if read_binding(home).map_err(anyhow::Error::msg)?.is_none() {

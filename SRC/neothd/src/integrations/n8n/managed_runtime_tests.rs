@@ -19,6 +19,7 @@ fn receipt(succeeded: bool) -> ManagedCommandReceipt {
 #[derive(Clone)]
 struct RunnerState {
     container: Option<ObservedContainer>,
+    volume: Option<ObservedVolume>,
     create_error_after_effect: bool,
     remove_succeeds: bool,
     named_unknown: bool,
@@ -30,6 +31,7 @@ impl FakeRunner {
     fn fresh() -> (Self, Arc<Mutex<RunnerState>>) {
         let state = Arc::new(Mutex::new(RunnerState {
             container: None,
+            volume: Some(ObservedVolume { name: DEFAULT_VOLUME.into(), labels: Default::default() }),
             create_error_after_effect: false,
             remove_succeeds: true,
             named_unknown: false,
@@ -83,6 +85,11 @@ impl ManagedDockerRunner for FakeRunner {
             _ => InspectOutcome::Absent,
         })
     }
+    async fn inspect_volume(&mut self, name: &str) -> Result<InspectVolumeOutcome, &'static str> {
+        let mut state = self.0.lock().unwrap();
+        state.calls.push(format!("inspect_volume:{name}"));
+        Ok(state.volume.clone().filter(|volume| volume.name == name).map(InspectVolumeOutcome::Found).unwrap_or(InspectVolumeOutcome::Absent))
+    }
     async fn create(&mut self, argv: &[String]) -> Result<ManagedCommandReceipt, &'static str> {
         let mut state = self.0.lock().unwrap();
         state.calls.push("create".into());
@@ -97,7 +104,14 @@ impl ManagedDockerRunner for FakeRunner {
             .and_then(|pair| pair[1].split(':').nth(1))
             .and_then(|value| value.parse().ok())
             .ok_or("fake_missing_loopback_port")?;
-        state.container = Some(observed("c".repeat(64), &job, port));
+        let volume = argv
+            .windows(2)
+            .find(|pair| pair[0] == "-v")
+            .and_then(|pair| pair[1].split(':').next())
+            .ok_or("fake_missing_volume")?;
+        let mut container = observed("c".repeat(64), &job, port);
+        container.volume = volume.into();
+        state.container = Some(container);
         if state.create_error_after_effect {
             Err("fake_create_interrupted")
         } else {
@@ -540,6 +554,8 @@ fn runtime_sidecar_denies_unknown_fields() {
         image: N8N_OCI_REFERENCE.into(),
         host_port: 5678,
         volume: DEFAULT_VOLUME.into(),
+        retained_reinstall: None,
+        bootstrap_volume_owner_job_id: None,
     };
     write_binding(home.path(), &binding).unwrap();
     let mut raw: serde_json::Value =
@@ -616,6 +632,8 @@ fn bound_binding(job: &super::super::IntegrationJob, id: String) -> RuntimeBindi
         image: N8N_OCI_REFERENCE.into(),
         host_port: 5678,
         volume: DEFAULT_VOLUME.into(),
+        retained_reinstall: None,
+        bootstrap_volume_owner_job_id: None,
     }
 }
 
@@ -772,6 +790,8 @@ async fn foreign_ready_binding_is_unchanged_and_blocks_a_second_queued_job() {
         image: N8N_OCI_REFERENCE.into(),
         host_port: 5678,
         volume: DEFAULT_VOLUME.into(),
+        retained_reinstall: None,
+        bootstrap_volume_owner_job_id: None,
     };
     write_binding(home.path(), &binding).unwrap();
     let before = std::fs::read(binding_path(home.path())).unwrap();
@@ -881,6 +901,8 @@ fn create_intent_restart_discovers_exact_owned_container_then_removes_it() {
             image: N8N_OCI_REFERENCE.into(),
             host_port: 5678,
             volume: DEFAULT_VOLUME.into(),
+            retained_reinstall: None,
+            bootstrap_volume_owner_job_id: None,
         },
     )
     .unwrap();
@@ -926,6 +948,8 @@ fn create_intent_restart_unknown_named_inspection_retains_custody_without_remova
             image: N8N_OCI_REFERENCE.into(),
             host_port: 5678,
             volume: DEFAULT_VOLUME.into(),
+            retained_reinstall: None,
+            bootstrap_volume_owner_job_id: None,
         },
     )
     .unwrap();
@@ -987,6 +1011,8 @@ fn postwrite_create_intent_error_keeps_queued_job_recoverable_without_docker() {
         image: N8N_OCI_REFERENCE.into(),
         host_port: 5678,
         volume: DEFAULT_VOLUME.into(),
+        retained_reinstall: None,
+        bootstrap_volume_owner_job_id: None,
     };
     let outcome = persist_create_intent_with(home.path(), &intent, |path, bytes| {
         std::fs::write(path, bytes).map_err(|_| "fixture_write_failed")?;
@@ -1026,6 +1052,8 @@ fn queued_foreign_create_intent_stays_fail_closed_without_docker_inspection() {
         image: N8N_OCI_REFERENCE.into(),
         host_port: 5678,
         volume: DEFAULT_VOLUME.into(),
+        retained_reinstall: None,
+        bootstrap_volume_owner_job_id: None,
     };
     write_binding(home.path(), &foreign).unwrap();
     let state = Arc::new(Mutex::new(RunnerState {

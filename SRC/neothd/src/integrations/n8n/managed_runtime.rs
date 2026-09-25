@@ -52,6 +52,22 @@ pub(crate) struct ManagedN8nRequest {
     image: &'static str,
     volume: String,
     prepared_job: Option<IntegrationJob>,
+    retained_reinstall: Option<RetainedReinstallSource>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RetainedReinstallSource {
+    pub uninstall_job_id: String,
+    pub uninstall_manifest_sha256: String,
+    pub source_install_job_id: String,
+    pub source_install_manifest_sha256: String,
+    pub bootstrap_volume: bool,
+    /// The bootstrap install that created and labelled this volume.  This is
+    /// deliberately distinct from `source_install_job_id`: a reinstall chain
+    /// changes the latter but must never change the volume's label owner.
+    #[serde(default)]
+    pub volume_owner_install_job_id: String,
 }
 impl ManagedN8nRequest {
     pub(crate) fn new(port: u16, image: &'static str) -> Result<Self, &'static str> {
@@ -63,6 +79,7 @@ impl ManagedN8nRequest {
                 image,
                 volume: DEFAULT_VOLUME.into(),
                 prepared_job: None,
+                retained_reinstall: None,
             })
         }
     }
@@ -87,6 +104,10 @@ impl ManagedN8nRequest {
     /// first Docker mutation.  The runtime consumes it exactly once.
     pub(crate) fn with_prepared_job(mut self, job: IntegrationJob) -> Self {
         self.prepared_job = Some(job);
+        self
+    }
+    pub(crate) fn with_retained_reinstall(mut self, source: RetainedReinstallSource) -> Self {
+        self.retained_reinstall = Some(source);
         self
     }
     pub(crate) fn endpoint(&self) -> LoopbackHttpEndpoint {
@@ -137,6 +158,18 @@ pub(crate) enum InspectOutcome {
     Unknown,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ObservedVolume {
+    pub name: String,
+    pub labels: BTreeMap<String, String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum InspectVolumeOutcome {
+    Absent,
+    Found(ObservedVolume),
+    Unknown,
+}
+
 #[derive(Deserialize)]
 struct DockerInspect {
     #[serde(rename = "Id")]
@@ -183,12 +216,20 @@ struct DockerMount {
     #[serde(rename = "Destination")]
     destination: String,
 }
+#[derive(Deserialize)]
+struct DockerVolume {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "Labels")]
+    labels: Option<BTreeMap<String, String>>,
+}
 #[async_trait]
 pub(crate) trait ManagedDockerRunner: Send {
     /// `inspect_named` is only discovery.  Destruction is always followed by
     /// `inspect_exact`, so a renamed/recreated container cannot prove absence.
     async fn inspect_named(&mut self) -> Result<InspectOutcome, &'static str>;
     async fn inspect_exact(&mut self, id: &str) -> Result<InspectOutcome, &'static str>;
+    async fn inspect_volume(&mut self, name: &str) -> Result<InspectVolumeOutcome, &'static str>;
     async fn create(&mut self, argv: &[String]) -> Result<ManagedCommandReceipt, &'static str>;
     async fn remove(&mut self, id: &str) -> Result<ManagedCommandReceipt, &'static str>;
 }
@@ -212,6 +253,12 @@ struct RuntimeBinding {
     image: String,
     host_port: u16,
     volume: String,
+    #[serde(default)]
+    retained_reinstall: Option<RetainedReinstallSource>,
+    /// Present only for a first-owner bootstrap runtime. Reinstall bindings
+    /// carry this same immutable owner through `retained_reinstall` instead.
+    #[serde(default)]
+    bootstrap_volume_owner_job_id: Option<String>,
 }
 fn binding_path(home: &Path) -> PathBuf {
     home.join(BINDING_FILE)
@@ -357,13 +404,7 @@ pub(crate) fn enqueue_prepared(
     request: &ManagedN8nRequest,
 ) -> anyhow::Result<IntegrationJob> {
     let endpoint = request.endpoint();
-    let manifest = sha256_parts(&[
-        "n8n-managed-runtime-v4",
-        request.image,
-        MANAGED_CONTAINER_NAME,
-        &request.port.to_string(),
-        request.volume(),
-    ]);
+    let manifest = managed_manifest(request);
     let contract = JobEvidenceContract::verified(
         manifest.clone(),
         sha256_parts(&[
@@ -388,6 +429,28 @@ pub(crate) fn enqueue_prepared(
         })?
         .job)
 }
+
+pub(super) fn managed_manifest(request: &ManagedN8nRequest) -> super::Sha256Digest {
+    let port = request.port.to_string();
+    let mut parts = vec![
+        "n8n-managed-runtime-v4",
+        request.image,
+        MANAGED_CONTAINER_NAME,
+        &port,
+        request.volume(),
+    ];
+    if let Some(source) = &request.retained_reinstall {
+        parts.extend([
+            "n8n-managed-retained-reinstall-v1",
+            source.uninstall_job_id.as_str(),
+            source.uninstall_manifest_sha256.as_str(),
+            source.source_install_job_id.as_str(),
+            source.source_install_manifest_sha256.as_str(),
+            source.volume_owner_install_job_id.as_str(),
+        ]);
+    }
+    sha256_parts(&parts)
+}
 fn fail(
     service: &IntegrationJobService,
     job: &IntegrationJob,
@@ -399,18 +462,30 @@ fn validate_binding(
     binding: &RuntimeBinding,
     job: &IntegrationJob,
 ) -> Result<ManagedN8nRequest, &'static str> {
-    let request = ManagedN8nRequest::new_with_volume(
+    let mut request = ManagedN8nRequest::new_with_volume(
         binding.host_port,
         N8N_OCI_REFERENCE,
         binding.volume.clone(),
     )?;
-    let expected = sha256_parts(&[
-        "n8n-managed-runtime-v4",
-        request.image,
-        MANAGED_CONTAINER_NAME,
-        &request.port.to_string(),
-        request.volume(),
-    ]);
+    if let Some(source) = binding.retained_reinstall.clone() {
+        request = request.with_retained_reinstall(source);
+    }
+    let expected = managed_manifest(&request);
+    let retained_owner_matches = match binding.retained_reinstall.as_ref() {
+        None => true,
+        Some(source) => {
+            source.bootstrap_volume
+                && source.volume_owner_install_job_id
+                    == binding.bootstrap_volume_owner_job_id.clone().unwrap_or_default()
+                && valid_retained_reinstall_source(source)
+        }
+    };
+    let bootstrap_owner_matches = match (&binding.retained_reinstall, &binding.bootstrap_volume_owner_job_id) {
+        (Some(_), Some(_)) => retained_owner_matches,
+        (Some(_), None) => false,
+        (None, Some(owner)) => owner == binding.job_id && binding.volume != DEFAULT_VOLUME,
+        (None, None) => true,
+    };
     if !is_managed_job(job)
         || binding.schema_version != 2
         || binding.job_id != job.job_id.as_str()
@@ -419,6 +494,7 @@ fn validate_binding(
         || binding.container_name != MANAGED_CONTAINER_NAME
         || binding.image != request.image
         || binding.volume != request.volume
+        || !bootstrap_owner_matches
         || binding
             .container_id
             .as_ref()
@@ -430,6 +506,22 @@ fn validate_binding(
         return Err("n8n_managed_custody_mismatch");
     }
     Ok(request)
+}
+
+pub(crate) fn valid_manifest_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+pub(crate) fn valid_retained_reinstall_source(source: &RetainedReinstallSource) -> bool {
+    source.bootstrap_volume
+        && super::JobId::parse(source.uninstall_job_id.clone()).is_ok()
+        && valid_manifest_sha256(&source.uninstall_manifest_sha256)
+        && super::JobId::parse(source.source_install_job_id.clone()).is_ok()
+        && valid_manifest_sha256(&source.source_install_manifest_sha256)
+        && super::JobId::parse(source.volume_owner_install_job_id.clone()).is_ok()
 }
 
 pub(crate) fn valid_container_id(id: &str) -> bool {
@@ -583,6 +675,54 @@ pub(in crate::integrations) async fn install_managed_at_with<
     .await
 }
 
+async fn verify_retained_volume<R: ManagedDockerRunner>(
+    runner: &mut R,
+    request: &ManagedN8nRequest,
+) -> anyhow::Result<()> {
+    let source = request.retained_reinstall.as_ref().ok_or_else(|| anyhow::anyhow!("n8n_retained_reinstall_source_missing"))?;
+    let found = match runner.inspect_volume(request.volume()).await.map_err(anyhow::Error::msg)? {
+        InspectVolumeOutcome::Found(found) if found.name == request.volume() => found,
+        InspectVolumeOutcome::Absent => anyhow::bail!("n8n_retained_volume_absent"),
+        InspectVolumeOutcome::Unknown => anyhow::bail!("n8n_retained_volume_unknown"),
+        InspectVolumeOutcome::Found(_) => anyhow::bail!("n8n_retained_volume_foreign"),
+    };
+    if !valid_retained_reinstall_source(source)
+        || found.labels.get(MANAGED_LABEL_KEY).map(String::as_str) != Some(MANAGED_LABEL_VALUE)
+        || found.labels.get("io.neoth.n8n-job").map(String::as_str)
+            != Some(source.volume_owner_install_job_id.as_str())
+        || found.labels.get("io.neoth.n8n-bootstrap").map(String::as_str)
+            != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA)
+    {
+        anyhow::bail!("n8n_retained_volume_foreign");
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::integrations) async fn install_retained_at_with<
+    R: ManagedDockerRunner,
+    H: ManagedReadiness,
+    P: N8nApiProbe + ?Sized,
+>(
+    home: &Path,
+    uninstall_id: &super::JobId,
+    api_key: SecretString,
+    runner: &mut R,
+    readiness: &H,
+    probe: &P,
+    cancel: &mut tokio::sync::oneshot::Receiver<()>,
+) -> anyhow::Result<IntegrationJob> {
+    super::ensure_initialized_home_for_new_managed_install(home)?;
+    let service = super::open_n8n_job_service(home)?;
+    if read_binding(home).map_err(anyhow::Error::msg)?.is_some() {
+        anyhow::bail!("n8n_retained_reinstall_already_active");
+    }
+    let request = managed_uninstall::retained_reinstall_request_in_service(&service, home, uninstall_id)
+        .map_err(anyhow::Error::msg)?;
+    verify_retained_volume(runner, &request).await?;
+    install_managed_in_service_with(&service, home, request, api_key, runner, readiness, probe, cancel).await
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn install_managed_in_service_with<
     R: ManagedDockerRunner,
@@ -601,6 +741,10 @@ async fn install_managed_in_service_with<
     if read_binding(home).map_err(anyhow::Error::msg)?.is_some() {
         anyhow::bail!("n8n_managed_instance_already_owned");
     }
+    let prepared_bootstrap_owner = request
+        .prepared_job
+        .as_ref()
+        .map(|job| job.job_id.as_str().to_owned());
     let queued = match request.prepared_job.take() {
         Some(job) => {
             let expected = enqueue_prepared(service, &request)?;
@@ -614,6 +758,19 @@ async fn install_managed_in_service_with<
         }
         None => enqueue_prepared(service, &request)?,
     };
+    let bootstrap_volume_owner_job_id = match (
+        prepared_bootstrap_owner,
+        request.retained_reinstall.as_ref(),
+    ) {
+        (Some(owner), None) if owner == queued.job_id.as_str() => Some(owner),
+        (Some(_), None) => anyhow::bail!("n8n_managed_prepared_job_mismatch"),
+        (None, Some(source)) if valid_retained_reinstall_source(source) => {
+            Some(source.volume_owner_install_job_id.clone())
+        }
+        (None, Some(_)) => anyhow::bail!("n8n_retained_reinstall_source_invalid"),
+        (Some(_), Some(_)) => anyhow::bail!("n8n_retained_reinstall_source_invalid"),
+        (None, None) => None,
+    };
     let mut binding = RuntimeBinding {
         schema_version: 2,
         phase: RuntimePhase::CreateIntent,
@@ -624,6 +781,8 @@ async fn install_managed_in_service_with<
         image: request.image.into(),
         host_port: request.port,
         volume: request.volume.clone(),
+        retained_reinstall: request.retained_reinstall.clone(),
+        bootstrap_volume_owner_job_id,
     };
     if persist_create_intent(home, &binding).map_err(anyhow::Error::msg)?
         == CreateIntentWrite::Uncertain
@@ -810,6 +969,15 @@ pub(crate) async fn install_managed_at(
         cancel,
     )
     .await
+}
+
+pub(crate) async fn install_retained_at(
+    home: &Path,
+    uninstall_id: &super::JobId,
+    api_key: SecretString,
+    cancel: &mut tokio::sync::oneshot::Receiver<()>,
+) -> anyhow::Result<IntegrationJob> {
+    install_retained_at_with(home, uninstall_id, api_key, &mut DockerManagedRunner, &ProductionReadiness, &HttpN8nApiProbe, cancel).await
 }
 
 pub(crate) async fn install_prepared_managed_in_service(
@@ -1244,6 +1412,16 @@ async fn inspect_target(target: &str) -> Result<InspectOutcome, &'static str> {
         .or(Ok(InspectOutcome::Unknown))
 }
 
+async fn inspect_volume_target(name: &str) -> Result<InspectVolumeOutcome, &'static str> {
+    let (ok, data, _) = docker(&["docker".into(), "volume".into(), "inspect".into(), name.into()]).await?;
+    if !ok { return Ok(InspectVolumeOutcome::Unknown); }
+    let mut rows: Vec<DockerVolume> = serde_json::from_str(&data).map_err(|_| "n8n_volume_inspect_invalid")?;
+    if rows.len() != 1 { return Ok(InspectVolumeOutcome::Unknown); }
+    let row = rows.pop().expect("length checked");
+    if row.name != name { return Ok(InspectVolumeOutcome::Unknown); }
+    Ok(InspectVolumeOutcome::Found(ObservedVolume { name: row.name, labels: row.labels.unwrap_or_default() }))
+}
+
 #[async_trait]
 impl ManagedDockerRunner for DockerManagedRunner {
     async fn inspect_named(&mut self) -> Result<InspectOutcome, &'static str> {
@@ -1304,6 +1482,9 @@ impl ManagedDockerRunner for DockerManagedRunner {
             InspectOutcome::Found(found) if found.id == id => Ok(InspectOutcome::Found(found)),
             _ => Ok(InspectOutcome::Unknown),
         }
+    }
+    async fn inspect_volume(&mut self, name: &str) -> Result<InspectVolumeOutcome, &'static str> {
+        inspect_volume_target(name).await
     }
     async fn create(&mut self, argv: &[String]) -> Result<ManagedCommandReceipt, &'static str> {
         let (_, _, receipt) = docker(argv).await?;

@@ -74,17 +74,56 @@ class ProductUninstallReceiptTests(unittest.TestCase):
                     canary.validate_uninstall_status({"job": changed}, self.uninstall_job)
 
     def test_completion_receipt_binds_exact_source_and_uninstall_jobs(self) -> None:
-        receipt = {"schema_version": 1, "uninstall_job_id": self.uninstall_job, "uninstall_manifest_sha256": self.manifest, "source_install_job_id": self.source_job, "source_install_manifest_sha256": self.manifest, "cleanup_disposition": "preserved_unproven"}
+        runtime = "c" * 64
+        receipt = {"schema_version": 1, "uninstall_job_id": self.uninstall_job, "uninstall_manifest_sha256": self.manifest, "source_install_job_id": self.source_job, "source_install_manifest_sha256": self.manifest, "cleanup_disposition": "preserved_unproven", "source_container_id": runtime, "source_image": canary.IMAGE, "source_host_port": 5681, "source_volume": self.volume, "source_bootstrap_volume": True, "source_volume_owner_install_job_id": self.source_job, "source_retained_reinstall": None}
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
             path = home / f"n8n-uninstall-{self.uninstall_job}.receipt.json"
             path.write_text(json.dumps(receipt))
-            observed = canary.read_uninstall_completion_receipt(home, self.uninstall_job, self.manifest, self.source_job, self.manifest)
+            observed = canary.read_uninstall_completion_receipt(home, self.uninstall_job, self.manifest, self.source_job, self.manifest, runtime, self.volume, 5681)
             self.assertEqual(observed["bytes"], path.stat().st_size)
             receipt["source_install_job_id"] = "wrong"
             path.write_text(json.dumps(receipt))
             with self.assertRaisesRegex(canary.Failure, "uninstall_completion_receipt_invalid"):
-                canary.read_uninstall_completion_receipt(home, self.uninstall_job, self.manifest, self.source_job, self.manifest)
+                canary.read_uninstall_completion_receipt(home, self.uninstall_job, self.manifest, self.source_job, self.manifest, runtime, self.volume, 5681)
+
+    def test_reinstall_requires_new_ready_job_and_exact_new_runtime_custody(self) -> None:
+        reinstall = "fedcba98-1234-7234-8234-123456789abc"
+        output = {"job_id": reinstall, "state": "ready", "probe_binding": "authenticated_n8n_workflows", "failure_code": None}
+        self.assertEqual(canary.validate_reinstall_product(output, self.source_job, self.uninstall_job), reinstall)
+        runtime = {"schema_version": 2, "phase": "Ready", "job_id": reinstall, "manifest_sha256": self.manifest, "container_id": "c" * 64, "container_name": "neoth-n8n", "host_port": 5681, "volume": self.volume, "image": canary.IMAGE}
+        self.assertEqual(canary.validate_reinstalled_custody(runtime, reinstall, self.manifest, self.volume, "d" * 64, 5681), "c" * 64)
+        for key, value in (("job_id", self.uninstall_job), ("container_id", "d" * 64), ("volume", "foreign")):
+            with self.subTest(key=key):
+                changed = dict(runtime)
+                changed[key] = value
+                with self.assertRaises(canary.Failure):
+                    canary.validate_reinstalled_custody(changed, reinstall, self.manifest, self.volume, "d" * 64, 5681)
+
+    def test_reinstall_completion_receipt_requires_original_chain(self) -> None:
+        reinstall = "fedcba98-1234-7234-8234-123456789abc"
+        final_uninstall = "deafbeef-1234-7234-8234-123456789abc"
+        runtime = "c" * 64
+        chain = {"uninstall_job_id": self.uninstall_job, "uninstall_manifest_sha256": self.manifest, "source_install_job_id": self.source_job, "source_install_manifest_sha256": self.manifest, "bootstrap_volume": True, "volume_owner_install_job_id": self.source_job}
+        receipt = {"schema_version": 1, "uninstall_job_id": final_uninstall, "uninstall_manifest_sha256": self.manifest, "source_install_job_id": reinstall, "source_install_manifest_sha256": self.manifest, "cleanup_disposition": "preserved_unproven", "source_container_id": runtime, "source_image": canary.IMAGE, "source_host_port": 5681, "source_volume": self.volume, "source_bootstrap_volume": True, "source_volume_owner_install_job_id": self.source_job, "source_retained_reinstall": chain}
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            path = home / f"n8n-uninstall-{final_uninstall}.receipt.json"
+            path.write_text(json.dumps(receipt))
+            canary.read_reinstall_uninstall_completion_receipt(home, final_uninstall, self.manifest, reinstall, self.manifest, runtime, self.volume, 5681, self.uninstall_job, self.manifest, self.source_job, self.manifest)
+            receipt["source_retained_reinstall"]["source_install_job_id"] = "wrong"
+            path.write_text(json.dumps(receipt))
+            with self.assertRaisesRegex(canary.Failure, "reinstall_uninstall_completion_receipt_invalid"):
+                canary.read_reinstall_uninstall_completion_receipt(home, final_uninstall, self.manifest, reinstall, self.manifest, runtime, self.volume, 5681, self.uninstall_job, self.manifest, self.source_job, self.manifest)
+
+    def test_reinstall_repeat_requires_documented_pre_effect_rejection(self) -> None:
+        binary = Path("neoth")
+        result = canary.bounded.Result(1, b"", b"n8n_retained_reinstall_already_active", False, False)
+        with patch.object(canary.bounded, "run", return_value=result) as command:
+            self.assertEqual(canary.assert_reinstall_repeat_rejected(binary, self.uninstall_job, b"private-key\n"), {"exit_code": 1, "reason": "active_runtime_pre_effect_rejection"})
+        argv = command.call_args.args[0]
+        self.assertNotIn("private-key", json.dumps(argv))
+        self.assertEqual(command.call_args.kwargs["payload"], b"private-key\n")
 
     def test_retained_volume_rejects_wrong_id_volume_or_job(self) -> None:
         row = {"Name": self.volume, "Labels": {"io.neoth.managed": "n8n", "io.neoth.n8n-job": self.source_job, "io.neoth.n8n-bootstrap": "v2"}}

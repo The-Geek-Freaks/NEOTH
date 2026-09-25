@@ -52,6 +52,32 @@ in this implementation; automatic keychain deletion requires a separate
 recoverable transaction. A successful container uninstall does not claim that
 these retained credentials were revoked.
 
+## Reinstall a retained bootstrap volume
+
+A new uninstall receipt retains the original runtime identity and the original
+bootstrap volume owner. To attach that existing data volume again, provide the
+completed Uninstall job ID and pipe its still-valid API key to:
+
+```text
+neoth n8n install --reuse-uninstall <uninstall-job-id> --api-key-stdin
+```
+
+The command uses the receipt's original port and reviewed pinned image. It
+requires the same named volume to exist with the original bootstrap ownership
+labels. Missing, unknown or foreign volumes fail before container creation;
+Docker is not allowed to silently create an empty replacement. The selector
+cannot be combined with `--port` or `--bootstrap-owner`. The key is required on
+stdin and is not read automatically from retained keychain credentials.
+
+Reinstallation creates a new Install job while preserving the original Install
+and Uninstall history. Later uninstall/reinstall cycles keep the original
+bootstrap volume owner. This attaches the volume's current data; the receipt is
+not a database snapshot. Workflow import remains a separate command.
+
+A repeat while a managed runtime is active is rejected before Docker actions.
+Older receipts without retained-volume proof and ordinary unlabelled default
+volumes remain readable in status but cannot authorize this explicit selector.
+The existing ordinary stdin-key installation path is unchanged.
 ## Validation boundary
 
 The implementation includes focused fake-runner and configuration transaction

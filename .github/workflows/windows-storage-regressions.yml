@@ -589,6 +589,11 @@ jobs:
           integrations::n8n::managed_runtime::managed_uninstall::tests::queued_before_custody_is_terminalized_without_orphaning_the_runtime_binding	neothd/src/integrations/n8n/managed_uninstall_tests.rs
           integrations::n8n::managed_runtime::managed_uninstall::tests::configuring_between_checkpoint_one_and_three_reopens_from_the_durable_receipt	neothd/src/integrations/n8n/managed_uninstall_tests.rs
           integrations::n8n::managed_runtime::managed_uninstall::tests::later_uninstall_recovery_never_finalizes_an_earlier_ready_uninstall	neothd/src/integrations/n8n/managed_uninstall_tests.rs
+          cli::n8n::tests::retained_reinstall_cli_requires_explicit_stdin_key_and_excludes_new_owner_options	neothd/src/cli/n8n.rs
+          integrations::n8n::managed_runtime::managed_uninstall::tests::retained_bootstrap_volume_reinstalls_twice_with_the_original_label_owner	neothd/src/integrations/n8n/managed_uninstall_tests.rs
+          integrations::n8n::managed_runtime::managed_uninstall::tests::retained_reinstall_rejects_unproven_missing_unknown_and_foreign_volumes_before_create	neothd/src/integrations/n8n/managed_uninstall_tests.rs
+          integrations::n8n::managed_runtime::managed_uninstall::tests::retained_reinstall_rejects_missing_legacy_malformed_and_mismatched_receipts_without_docker	neothd/src/integrations/n8n/managed_uninstall_tests.rs
+          integrations::n8n::managed_runtime::managed_uninstall::tests::retained_reinstall_rejects_selected_or_mutated_source_evidence_without_docker	neothd/src/integrations/n8n/managed_uninstall_tests.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -605,7 +610,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 519 ]]; then
+          if [[ "$expected" -ne 524 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"

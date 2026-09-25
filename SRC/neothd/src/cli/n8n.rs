@@ -28,8 +28,8 @@ pub enum N8nAction {
     /// Start the pinned, NEOTH-owned Docker n8n runtime and prove its API key.
     Install {
         /// Literal loopback host port; the container is always bound to 127.0.0.1.
-        #[arg(long, default_value_t = crate::installers::n8n::DEFAULT_N8N_PORT)]
-        port: u16,
+        #[arg(long)]
+        port: Option<u16>,
         /// Read an already-issued n8n API key from piped standard input.
         #[arg(long, conflicts_with = "bootstrap_owner")]
         api_key_stdin: bool,
@@ -37,6 +37,9 @@ pub enum N8nAction {
         /// networkless bootstrap container before publishing the runtime.
         #[arg(long, conflicts_with = "api_key_stdin")]
         bootstrap_owner: bool,
+        /// Reattach the exact retained volume recorded by this Ready uninstall job.
+        #[arg(long, conflicts_with_all = ["bootstrap_owner", "port"])]
+        reuse_uninstall: Option<String>,
     },
     /// Remove the exact NEOTH-managed container and retain its data volume.
     /// Repeating an interrupted command reconciles absence without retrying deletion.
@@ -65,7 +68,8 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
             port,
             api_key_stdin,
             bootstrap_owner,
-        } => run_install(port, api_key_stdin, bootstrap_owner, output).await,
+            reuse_uninstall,
+        } => run_install(port, api_key_stdin, bootstrap_owner, reuse_uninstall.as_deref(), output).await,
         N8nAction::Uninstall => run_uninstall(output).await,
         N8nAction::Adopt {
             endpoint,
@@ -174,9 +178,10 @@ fn render_import_job(
 }
 
 async fn run_install(
-    port: u16,
+    port: Option<u16>,
     api_key_stdin: bool,
     bootstrap_owner: bool,
+    reuse_uninstall: Option<&str>,
     output: OutputFormat,
 ) -> Result<()> {
     if !api_key_stdin && !bootstrap_owner {
@@ -184,6 +189,7 @@ async fn run_install(
             "n8n install requires exactly one of --api-key-stdin or --bootstrap-owner"
         ));
     }
+    let port = port.unwrap_or(crate::installers::n8n::DEFAULT_N8N_PORT);
     if bootstrap_owner {
         let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
         let cancellation_task = tokio::spawn(async move {
@@ -203,11 +209,6 @@ async fn run_install(
     if std::io::stdin().is_terminal() {
         return Err(anyhow!("--api-key-stdin requires piped standard input"));
     }
-    let request = crate::integrations::n8n::managed_runtime::ManagedN8nRequest::new(
-        port,
-        crate::installers::n8n::N8N_OCI_REFERENCE,
-    )
-    .map_err(anyhow::Error::msg)?;
     let api_key = read_api_key_from_stdin().await?;
     let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
     let cancellation_task = tokio::spawn(async move {
@@ -215,13 +216,19 @@ async fn run_install(
             let _ = cancel_tx.send(());
         }
     });
-    let result = crate::integrations::n8n::managed_runtime::install_managed_at(
-        &crate::config::FreedomConfig::default_neoth_home(),
-        request,
-        api_key,
-        &mut cancel_rx,
-    )
-    .await;
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let result = if let Some(value) = reuse_uninstall {
+            let job_id = JobId::parse(value.to_owned())
+                .map_err(anyhow::Error::msg)?;
+            crate::integrations::n8n::managed_runtime::install_retained_at(
+                &home, &job_id, api_key, &mut cancel_rx,
+            ).await
+        } else {
+            let request = crate::integrations::n8n::managed_runtime::ManagedN8nRequest::new(
+                port, crate::installers::n8n::N8N_OCI_REFERENCE,
+            ).map_err(anyhow::Error::msg)?;
+            crate::integrations::n8n::managed_runtime::install_managed_at(&home, request, api_key, &mut cancel_rx).await
+        };
     cancellation_task.abort();
     render_managed_install_job(&result?, output)
 }
@@ -507,9 +514,10 @@ mod tests {
             cli.command,
             crate::cli::Commands::N8n(N8nArgs {
                 action: N8nAction::Install {
-                    port: 5679,
+                    port: Some(5679),
                     api_key_stdin: true,
-                    bootstrap_owner: false
+                    bootstrap_owner: false,
+                    reuse_uninstall: None,
                 }
             })
         ));
@@ -536,9 +544,10 @@ mod tests {
             bootstrap.command,
             crate::cli::Commands::N8n(N8nArgs {
                 action: N8nAction::Install {
-                    port: 5679,
+                    port: Some(5679),
                     api_key_stdin: false,
-                    bootstrap_owner: true
+                    bootstrap_owner: true,
+                    reuse_uninstall: None,
                 }
             })
         ));
@@ -552,6 +561,40 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn retained_reinstall_cli_requires_explicit_stdin_key_and_excludes_new_owner_options() {
+        use clap::Parser;
+        let uninstall = uuid::Uuid::now_v7().to_string();
+        let cli = crate::cli::Cli::try_parse_from([
+            "neoth",
+            "n8n",
+            "install",
+            "--reuse-uninstall",
+            uninstall.as_str(),
+            "--api-key-stdin",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            crate::cli::Commands::N8n(N8nArgs {
+                action: N8nAction::Install {
+                    port: None,
+                    api_key_stdin: true,
+                    bootstrap_owner: false,
+                    reuse_uninstall: Some(value),
+                }
+            }) if value == uninstall
+        ));
+        for args in [
+            vec!["--reuse-uninstall", uninstall.as_str(), "--port", "5679", "--api-key-stdin"],
+            vec!["--reuse-uninstall", uninstall.as_str(), "--bootstrap-owner"],
+        ] {
+            assert!(crate::cli::Cli::try_parse_from(
+                ["neoth", "n8n", "install"].into_iter().chain(args)
+            ).is_err());
+        }
     }
 
     #[test]

@@ -25,7 +25,7 @@ use super::sha256_parts;
 
 const CUSTODY_FILE: &str = "n8n-managed-bootstrap.v2.json";
 const RUNTIME_BINDING_FILE: &str = "n8n-managed-runtime.v2.json";
-const BOOTSTRAP_SCHEMA: &str = "v2";
+pub(super) const BOOTSTRAP_SCHEMA: &str = "v2";
 const MOUNT: &str = "/home/node/.n8n";
 
 // This program is deliberately constant.  It accepts one strict JSON envelope
