@@ -241,16 +241,16 @@ impl WeeklyArchiveSession {
         let bytes = serialize_intent(&intent)?;
         self.ensure_lock()?;
         let leaf = self.intent_leaf();
-        let display = self.intents_display.join(&leaf);
+        let intent_path = self.intents_display.join(&leaf);
         match atomic_write_private_child_create_new_reported(
             &self.intents,
             OsStr::new(&leaf),
-            &display,
+            &intent_path,
             &bytes,
         ) {
             Ok(PrivateChildCommit::PublishedAndSynced) => Ok(intent),
             Ok(PrivateChildCommit::PublishedDurabilityUnknown(reason)) => {
-                tracing::warn!(%reason, intent = %display.display(), "weekly archive intent published with unknown durability");
+                tracing::warn!(%reason, intent = %intent_path.display(), "weekly archive intent published with unknown durability");
                 // The canonical intent may already be live. Do not hand an
                 // unconfirmed in-memory candidate to the queue/archive path.
                 Err(anyhow::anyhow!(
@@ -280,11 +280,11 @@ impl WeeklyArchiveSession {
     ) -> Result<WeeklyArchiveAppendOutcome> {
         self.ensure_intent(intent)?;
         let leaf = self.archive_leaf();
-        let display = self.reflections_display.join(&leaf);
+        let archive_path = self.reflections_display.join(&leaf);
         let existing = match read_regular_file_bounded(
             &self.reflections,
             OsStr::new(&leaf),
-            &display,
+            &archive_path,
             MAX_ARCHIVE_BYTES,
         ) {
             Ok(bytes) => bytes,
@@ -323,14 +323,14 @@ impl WeeklyArchiveSession {
         match atomic_write_private_child_reported(
             &self.reflections,
             OsStr::new(&leaf),
-            &display,
+            &archive_path,
             &replacement,
         )? {
             PrivateChildCommit::PublishedAndSynced => {
                 Ok(WeeklyArchiveAppendOutcome::ArchivedAndSynced)
             }
             PrivateChildCommit::PublishedDurabilityUnknown(reason) => {
-                tracing::warn!(%reason, archive = %display.display(), "weekly archive publication durability is unknown");
+                tracing::warn!(%reason, archive = %archive_path.display(), "weekly archive publication durability is unknown");
                 Ok(WeeklyArchiveAppendOutcome::ArchivedDurabilityUnknown)
             }
         }

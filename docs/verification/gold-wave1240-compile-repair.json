@@ -1,0 +1,15 @@
+{
+  "schema": "neoth-weekly-compile-repair/v1",
+  "run": 36100174053,
+  "source": "b780b09dd82491720de3b011ad33a2b2d4602fd2",
+  "status": "COMPILATION_FAILED_ZERO_BEHAVIOR_TESTS",
+  "errors": [
+    "E0599 weekly_archive.rs257 local display shadows tracing::field::display",
+    "E0599 weekly_archive.rs331 local display shadows tracing::field::display"
+  ],
+  "logPath": "work/gold-20260906/wave1240-weekly-compile/group-failed.log",
+  "logSha256": "CE6EAB9981BC7DBEFFDE756BECBCD0DB62FDAD4B2130C97B05510C9EDCA12307",
+  "repair": "Rename local display variables to intent_path/archive_path only",
+  "validation": "Source reviewed; hosted rerun pending",
+  "localExecutableValidationRan": false
+}

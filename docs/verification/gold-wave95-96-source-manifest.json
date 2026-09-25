@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T05:51:49.7507262Z",
-  "validationStatus": "Four exact weekly hosted formatter outputs imported; Core614 full success admitted; weekly gates pending",
+  "capturedUtc": "2026-09-25T05:55:59.4865495Z",
+  "validationStatus": "Weekly tracing name-shadowing compile repair; hosted behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1607,6 +1607,11 @@
       "sha256": "6294E062EF7854DB97265FECFC1C759D5BDB85DAD5457E0DFA7C040BDFAF7CDF"
     },
     {
+      "path": "docs/verification/gold-wave1240-compile-repair.json",
+      "bytes": 695,
+      "sha256": "BFF9FB82F88C6F6C80BC6960FB3DFD090FDD36D9DA0F1D9B762FF91B71690C78"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -2563,18 +2568,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 348661,
-      "sha256": "BE4809C3C63A7A1E663D2BAE51E9C0239E17464794C165C46D49CF3B4DF14515"
+      "bytes": 349260,
+      "sha256": "F17A4D192C4C45FDDE95B9767A26AEBE136D94EFADA0919DEE0C6F2C3F632CCE"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1367592,
-      "sha256": "95DF3A10CDEA3EE4FD1B041F6D9B0115F9CD5ABC6F15B0EB7BB80395156C6A81"
+      "bytes": 1368191,
+      "sha256": "D035ED2AD5FA5593525BF18F692AE28E3DF5BD9845362C454513638B88420EA0"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1978115,
-      "sha256": "41F68F10B2D5813FD94306A43F4C37FE80DD164AC782F20F4C78D0FA2F2A9FEE"
+      "bytes": 1978714,
+      "sha256": "98AF00E5D3C61AE3AE9818D82E921DE7A2721D141E056C84B26DAF72756983A4"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5313,8 +5318,8 @@
     },
     {
       "path": "SRC/neothd/src/reflection/weekly_archive.rs",
-      "bytes": 37237,
-      "sha256": "91B1F5B849AC767E4E634103BAF93F7D14628BE7682AC1AA138739FD9C85218A"
+      "bytes": 37269,
+      "sha256": "BB8A9BEF946DA5C805076E158DD3108337ACF950958B27552631F301023073A6"
     },
     {
       "path": "SRC/neothd/src/security/api_tokens.rs",

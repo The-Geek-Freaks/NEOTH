@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Four exact weekly hosted formatter outputs imported; Core614 full success admitted; weekly gates pending",
+  "status": "Weekly tracing name-shadowing compile repair; hosted behavior pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 206321,
-    "sha256": "B2AE4AC620A64CE39649A4CB6A9235AB1AFBC46F5A85B5D19BB13E195F7DDCFA"
+    "bytes": 206471,
+    "sha256": "B548779B0C5C33550B09098F61B161CA62D87BFEBBA2969B196AD7707107786B"
   },
-  "sourceInputs": 1162,
+  "sourceInputs": 1163,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -11340,61 +11340,61 @@
     {
       "test": "reflection::weekly_archive::tests::freezes_once_and_archives_once_with_legacy_records_preserved",
       "sourcePath": "SRC/neothd/src/reflection/weekly_archive.rs",
-      "sourceSha256": "91B1F5B849AC767E4E634103BAF93F7D14628BE7682AC1AA138739FD9C85218A",
+      "sourceSha256": "BB8A9BEF946DA5C805076E158DD3108337ACF950958B27552631F301023073A6",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::weekly_archive::tests::preexisting_intent_is_recovery_authority",
       "sourcePath": "SRC/neothd/src/reflection/weekly_archive.rs",
-      "sourceSha256": "91B1F5B849AC767E4E634103BAF93F7D14628BE7682AC1AA138739FD9C85218A",
+      "sourceSha256": "BB8A9BEF946DA5C805076E158DD3108337ACF950958B27552631F301023073A6",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::weekly_archive::tests::malformed_or_truncated_archive_fails_closed_without_rewrite",
       "sourcePath": "SRC/neothd/src/reflection/weekly_archive.rs",
-      "sourceSha256": "91B1F5B849AC767E4E634103BAF93F7D14628BE7682AC1AA138739FD9C85218A",
+      "sourceSha256": "BB8A9BEF946DA5C805076E158DD3108337ACF950958B27552631F301023073A6",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::weekly_archive::tests::wrong_week_and_duplicate_producer_key_fail_closed",
       "sourcePath": "SRC/neothd/src/reflection/weekly_archive.rs",
-      "sourceSha256": "91B1F5B849AC767E4E634103BAF93F7D14628BE7682AC1AA138739FD9C85218A",
+      "sourceSha256": "BB8A9BEF946DA5C805076E158DD3108337ACF950958B27552631F301023073A6",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::weekly_archive::tests::archive_record_cap_allows_replay_at_limit_but_rejects_a_new_line",
       "sourcePath": "SRC/neothd/src/reflection/weekly_archive.rs",
-      "sourceSha256": "91B1F5B849AC767E4E634103BAF93F7D14628BE7682AC1AA138739FD9C85218A",
+      "sourceSha256": "BB8A9BEF946DA5C805076E158DD3108337ACF950958B27552631F301023073A6",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::weekly_archive::tests::published_unknowns_recover_by_reading_canonical_bytes",
       "sourcePath": "SRC/neothd/src/reflection/weekly_archive.rs",
-      "sourceSha256": "91B1F5B849AC767E4E634103BAF93F7D14628BE7682AC1AA138739FD9C85218A",
+      "sourceSha256": "BB8A9BEF946DA5C805076E158DD3108337ACF950958B27552631F301023073A6",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::weekly_archive::tests::invalid_weeks_and_bounded_candidates_are_rejected",
       "sourcePath": "SRC/neothd/src/reflection/weekly_archive.rs",
-      "sourceSha256": "91B1F5B849AC767E4E634103BAF93F7D14628BE7682AC1AA138739FD9C85218A",
+      "sourceSha256": "BB8A9BEF946DA5C805076E158DD3108337ACF950958B27552631F301023073A6",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::weekly_archive::tests::inventory_is_oldest_first_ignores_foreign_and_selects_without_relocking",
       "sourcePath": "SRC/neothd/src/reflection/weekly_archive.rs",
-      "sourceSha256": "91B1F5B849AC767E4E634103BAF93F7D14628BE7682AC1AA138739FD9C85218A",
+      "sourceSha256": "BB8A9BEF946DA5C805076E158DD3108337ACF950958B27552631F301023073A6",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::weekly_archive::tests::inventory_rejects_malformed_owned_intent_and_oversized_read",
       "sourcePath": "SRC/neothd/src/reflection/weekly_archive.rs",
-      "sourceSha256": "91B1F5B849AC767E4E634103BAF93F7D14628BE7682AC1AA138739FD9C85218A",
+      "sourceSha256": "BB8A9BEF946DA5C805076E158DD3108337ACF950958B27552631F301023073A6",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::weekly_archive::tests::inventory_enforces_aggregate_budget",
       "sourcePath": "SRC/neothd/src/reflection/weekly_archive.rs",
-      "sourceSha256": "91B1F5B849AC767E4E634103BAF93F7D14628BE7682AC1AA138739FD9C85218A",
+      "sourceSha256": "BB8A9BEF946DA5C805076E158DD3108337ACF950958B27552631F301023073A6",
       "junitClass": "neoth"
     },
     {
@@ -13804,13 +13804,13 @@
       {
         "test": "reflection::weekly_archive::tests::intent_and_archive_links_are_refused",
         "sourcePath": "SRC/neothd/src/reflection/weekly_archive.rs",
-        "sourceSha256": "91B1F5B849AC767E4E634103BAF93F7D14628BE7682AC1AA138739FD9C85218A",
+        "sourceSha256": "BB8A9BEF946DA5C805076E158DD3108337ACF950958B27552631F301023073A6",
         "junitClass": "neoth"
       },
       {
         "test": "reflection::weekly_archive::tests::inventory_rejects_owned_intent_link",
         "sourcePath": "SRC/neothd/src/reflection/weekly_archive.rs",
-        "sourceSha256": "91B1F5B849AC767E4E634103BAF93F7D14628BE7682AC1AA138739FD9C85218A",
+        "sourceSha256": "BB8A9BEF946DA5C805076E158DD3108337ACF950958B27552631F301023073A6",
         "junitClass": "neoth"
       }
     ],
@@ -14178,13 +14178,13 @@
       {
         "test": "reflection::weekly_archive::tests::intent_and_archive_links_are_refused",
         "sourcePath": "SRC/neothd/src/reflection/weekly_archive.rs",
-        "sourceSha256": "91B1F5B849AC767E4E634103BAF93F7D14628BE7682AC1AA138739FD9C85218A",
+        "sourceSha256": "BB8A9BEF946DA5C805076E158DD3108337ACF950958B27552631F301023073A6",
         "junitClass": "neoth"
       },
       {
         "test": "reflection::weekly_archive::tests::inventory_rejects_owned_intent_link",
         "sourcePath": "SRC/neothd/src/reflection/weekly_archive.rs",
-        "sourceSha256": "91B1F5B849AC767E4E634103BAF93F7D14628BE7682AC1AA138739FD9C85218A",
+        "sourceSha256": "BB8A9BEF946DA5C805076E158DD3108337ACF950958B27552631F301023073A6",
         "junitClass": "neoth"
       }
     ]
@@ -43065,6 +43065,44 @@
       }
     ],
     "note": "Exact hosted formatting only; Claude039 rollover repair statically confirmed; no roadmap/release closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1240WeeklyCompileRepair": {
+    "base": "9db80f8c81acee48a1f84d49d6e43e865869c1fc",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1240-compile-repair.json",
+        "bytes": 695,
+        "sha256": "BFF9FB82F88C6F6C80BC6960FB3DFD090FDD36D9DA0F1D9B762FF91B71690C78",
+        "blob": "7bf54beadb94c7e610fdcd7eac84a3cd81d0b51a"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 349260,
+        "sha256": "F17A4D192C4C45FDDE95B9767A26AEBE136D94EFADA0919DEE0C6F2C3F632CCE",
+        "blob": "825301296e6918544631fc13cfe894844bed0b2b"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1368191,
+        "sha256": "D035ED2AD5FA5593525BF18F692AE28E3DF5BD9845362C454513638B88420EA0",
+        "blob": "d80dc50ce1667d970de811f22b529175402400de"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1978714,
+        "sha256": "98AF00E5D3C61AE3AE9818D82E921DE7A2721D141E056C84B26DAF72756983A4",
+        "blob": "d2f9049b27c16dbd6e5fd0c09c623a628d917d57"
+      },
+      {
+        "path": "SRC/neothd/src/reflection/weekly_archive.rs",
+        "bytes": 37269,
+        "sha256": "BB8A9BEF946DA5C805076E158DD3108337ACF950958B27552631F301023073A6",
+        "blob": "d7211a523c230591d5f8847d05541e3aee44d712"
+      }
+    ],
+    "note": "Only two local path variables renamed; knownb780 E0599 before behavior; no test counts or roadmap closure changed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

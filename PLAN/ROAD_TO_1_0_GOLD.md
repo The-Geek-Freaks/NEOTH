@@ -8,6 +8,15 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1240 weekly compile repair (2026-09-25):**
+Group1706b780 stopped before test execution with two E0599 errors: the local
+variable display in weekly_archive.rs collided with tracing::field::display
+inside diagnostic macros. Root renamed only those two local path variables and
+their uses; archive, queue and durability behavior is unchanged. The exact hosted
+log is retained under work/gold-20260906/wave1240-weekly-compile. Fresh GitHub
+compilation and behavior gates are required; no test pass is inferred from this
+repair. Earlier9db80f8c Preflight/CodeQuality passed. No local executable ran.
+
 **W1239 weekly hosted formatting and Core614 admission (2026-09-25):**
 Root imported all four exact b780b09d hosted formatter postimages after API/ZIP,
 inner receipt, historical preimage and final Git blob verification. No semantic
