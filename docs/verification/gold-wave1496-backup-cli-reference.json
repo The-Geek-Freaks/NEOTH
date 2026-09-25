@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "status": "HOSTED_CLI_REFERENCE_IMPORTED_NATIVE_RERUN_PENDING",
+  "source": "feb848a3342392a260aa1653cfd08c9e47fe5b06",
+  "nativeRun": 36162830661,
+  "nativeSummary": {
+    "executed": 1877,
+    "passed": 1876,
+    "failed": 1,
+    "failedTest": "cli::docgen::tests::cli_commands_md_is_up_to_date"
+  },
+  "reference": {
+    "run": 36162836957,
+    "artifact": 10875894916,
+    "zipSha256": "956ef1f1aaa81e9046819c06f1167d462ba04533304cd512532f0fa5f8526a1c",
+    "path": "docs/cli-commands.md",
+    "sha256": "3c9d16e4580e2ee8d70aedcaaa7448f274ad8662fc62b72bf15d72e0a24c951a",
+    "delta": "Only new neoth n8n backup section"
+  },
+  "localExecutableValidationRan": false
+}

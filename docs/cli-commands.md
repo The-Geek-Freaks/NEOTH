@@ -2937,6 +2937,10 @@ Adopt an already-running n8n API at an exact literal-loopback origin
 - `--endpoint <ENDPOINT>`
 - `--api-key-stdin`
 
+### `neoth n8n backup`
+
+Stop the owned runtime, archive its complete data volume, and restore its running state. Repeating an interrupted backup reconciles custody without repeating an uncertain copy
+
 ### `neoth n8n import-workflows`
 
 Import all bundled inactive workflows into an already-ready managed n8n binding

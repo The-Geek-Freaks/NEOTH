@@ -2,6 +2,15 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1494/W1496 native backup coverage and generated CLI reference (2026-09-25):**
+Group36162830661 atfeb848a3 compiled and executed all1877 selected tests;
+1876 passed and only cli::docgen::tests::cli_commands_md_is_up_to_date failed.
+The checked-in reference lacked the new Backup command. Core36162836957 at
+that exact producer exported the reference; original artifact10875894916,
+ZIP/API/internal hashes and producer preimage match. Imported output adds
+only `neoth n8n backup`; no local binary/doc generator ran. The Group run
+remains failed until its rerun, and Windows/product/full Core remain pending.
+Next Restore schema/IO WIP is excluded. ROAD checkboxes/counts unchanged.
 **W1489/W1490 real backup and stopped-container canary correction (2026-09-25):**
 Product36162229745 at2917a4a5 compiled and completed its running-source backup:
 5707264 archive bytes,10 safe tar headers, exact receipt/hash, API401/200 and
