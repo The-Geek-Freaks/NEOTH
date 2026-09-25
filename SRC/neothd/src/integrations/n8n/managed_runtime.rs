@@ -997,6 +997,20 @@ pub(crate) fn sync_inspect_named() -> Result<InspectOutcome, &'static str> {
 }
 
 const DOCKER_OUTPUT_LIMIT: usize = 8192;
+// Request only the identity fields consumed below. The full inspect document
+// includes large runtime and environment metadata unrelated to ownership.
+const DOCKER_IDENTITY_FORMAT: &str = r#"[{"Id":{{json .Id}},"Config":{"Image":{{json .Config.Image}},"Labels":{"io.neoth.managed":{{json (index .Config.Labels "io.neoth.managed")}},"io.neoth.n8n-job":{{json (index .Config.Labels "io.neoth.n8n-job")}}}},"NetworkSettings":{"Ports":{{json .NetworkSettings.Ports}}},"HostConfig":{"PortBindings":{{json .HostConfig.PortBindings}}},"Mounts":{{json .Mounts}}}]"#;
+
+fn inspect_command(target: &str) -> Vec<String> {
+    vec![
+        "docker".into(),
+        "container".into(),
+        "inspect".into(),
+        "--format".into(),
+        DOCKER_IDENTITY_FORMAT.into(),
+        target.into(),
+    ]
+}
 
 fn local_docker_host() -> &'static str {
     #[cfg(windows)]
@@ -1104,12 +1118,7 @@ fn docker_list_sync(filter: &str) -> Result<String, &'static str> {
 }
 
 fn docker_inspect_sync(id: &str) -> Result<Option<ObservedContainer>, &'static str> {
-    let result = run_docker_sync(&[
-        "docker".into(),
-        "container".into(),
-        "inspect".into(),
-        id.into(),
-    ])?;
+    let result = run_docker_sync(&inspect_command(id))?;
     if !result.succeeded || result.overflow {
         return Ok(None);
     }
@@ -1201,13 +1210,7 @@ fn parse_observed_json(data: &[u8]) -> Result<ObservedContainer, &'static str> {
 }
 
 async fn inspect_target(target: &str) -> Result<InspectOutcome, &'static str> {
-    let (ok, data, _) = docker(&[
-        "docker".into(),
-        "container".into(),
-        "inspect".into(),
-        target.into(),
-    ])
-    .await?;
+    let (ok, data, _) = docker(&inspect_command(target)).await?;
     if !ok {
         return Ok(InspectOutcome::Unknown);
     }

@@ -659,17 +659,16 @@ mod tests {
         let closed_marker = marker_dir.path().join("closed");
         let ack_marker = marker_dir.path().join("acknowledged");
         let (_cancel_tx, mut cancel) = oneshot::channel();
-        let result = fixture_runner_for_closed_stdin(
-            Duration::from_secs(5),
-            &closed_marker,
-            &ack_marker,
-        )
-            .run(
-                &fixture_args("integrations::n8n::bootstrap_transport::tests::fixture_close_stdin"),
-                Some(Zeroizing::new(vec![7_u8; 1024 * 1024])),
-                &mut cancel,
-            )
-            .await;
+        let result =
+            fixture_runner_for_closed_stdin(Duration::from_secs(5), &closed_marker, &ack_marker)
+                .run(
+                    &fixture_args(
+                        "integrations::n8n::bootstrap_transport::tests::fixture_close_stdin",
+                    ),
+                    Some(Zeroizing::new(vec![7_u8; 1024 * 1024])),
+                    &mut cancel,
+                )
+                .await;
         assert!(
             matches!(result, Err(BootstrapCommandFailure::Stdin)),
             "closed stdin must be a coarse Stdin failure, got {result:?}"

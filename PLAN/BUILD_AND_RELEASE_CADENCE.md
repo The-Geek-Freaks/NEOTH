@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1073 bounded runtime inspection repair (2026-09-25):** Root admitted the
+508bfb74 product failure36077123010 with11 exact source/input hashes and its
+API ZIP. It identifies n8n_docker_output_limit during CreateIntent, after the
+owner/key bootstrap succeeded. Both synchronous recovery and async runtime
+inspection now request only the identity JSON fields the existing validator
+consumes: full ID/image, two ownership labels, all declared/runtime ports and
+all mounts. The8192-byte cap and strict ownership checks remain unchanged;
+large unrelated Docker metadata is no longer captured. Independent W1071
+review approved the projection; actual product acceptance requires a fresh
+run. The one-file875 hosted stdin-format patch was separately verified and
+applied (ZIP,2 inner checks, exact pre/postimage). Importer W1057/W1058 remains
+outside this commit while complete executor/concurrency tests are reviewed.
+
 **W1069 verified Linux batch and deterministic Windows fixture (2026-09-25):**
 Root admitted Group36076163500 atf0ce9d60:1524PASS,0FAIL,0missing,269
 historical source/input bindings,3 API ZIP digests and12 extracted-entry
