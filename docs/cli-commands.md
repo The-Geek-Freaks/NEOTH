@@ -3228,6 +3228,12 @@ Prepare a pinned, local Compose directory. This does not pull or start Docker
 
 - `--directory <PATH>` — Exact destination; without it NEOTH uses the selected instance home
 
+### `neoth paperless purge`
+
+Preview permanent removal of the six volumes retained by a completed safe uninstall
+
+- `--confirm <PHRASE>` — Exact phrase from the preview; without it, no data is removed
+
 ### `neoth paperless quarantine`
 
 GOLD-ADAPT-JV-PAPERLESS-01 — review emails quarantined by the content scanner. Items land here when the scanner finds HIGH-severity patterns (prompt-injection, malware indicators) or when the scanner itself errors (fail-closed). Operator reviews + decides to discard

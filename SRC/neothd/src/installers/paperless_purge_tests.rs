@@ -299,6 +299,8 @@ async fn happy_path_removes_only_six_receipt_bound_volumes_and_keeps_credentials
     let (home, _credentials, _install, mut fake) = completed_fixture().await;
     let preview = paperless_purge::preview_at(home.path()).unwrap();
     let credential_path = home.path().join("credentials.yaml");
+    // The wrapper fixture uses in-memory credentials; seed the disk preservation witness.
+    std::fs::write(&credential_path, b"paperless_token: fixture-preserved-token\n").unwrap();
     let credentials_before = std::fs::read(&credential_path).unwrap();
     let receipt = paperless_purge::purge_at_with(home.path(), &preview.confirmation, &mut fake)
         .await

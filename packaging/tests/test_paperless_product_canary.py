@@ -253,6 +253,29 @@ class CustodyTests(unittest.TestCase):
             path.write_bytes(raw + b"\n")
             self.assertNotEqual(path.read_bytes(), first)
 
+    def test_retired_generation_archives_require_canonical_names_and_exact_old_authority(self) -> None:
+        generation = "12345678-1234-4234-8234-123456789abc"
+        authority = tuple((role, f"{role}-authority".encode()) for role in canary.RETIRED_AUTHORITY_ROLES)
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); state = home / "paperless" / "state"; state.mkdir(parents=True)
+            for role, raw in authority:
+                (state / canary.retired_authority_archive_name(generation, role, raw)).write_bytes(raw)
+            canary.retained_retired_authority(home, generation, authority)
+            role, raw = authority[0]
+            (state / canary.retired_authority_archive_name(generation, role, raw)).write_bytes(b"substituted")
+            with self.assertRaises(canary.Failure):
+                canary.retained_retired_authority(home, generation, authority)
+        with self.assertRaises(canary.Failure):
+            canary.retired_authority_archive_name("not-a-generation", "install", b"receipt")
+
+    def test_rotation_journal_must_be_retired_after_fresh_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); state = home / "paperless" / "state"; state.mkdir(parents=True)
+            canary.rotation_journal_absent(home)
+            (state / ".neoth-paperless-generation-rotation.v1.json").write_text("{}")
+            with self.assertRaises(canary.Failure):
+                canary.rotation_journal_absent(home)
+
     def test_marker_task_requires_one_matching_success_document(self) -> None:
         task_id = "12345678-1234-1234-1234-123456789abc"
         success = {"results": [{"task_id": task_id, "status": "success", "related_document_ids": [42]}]}

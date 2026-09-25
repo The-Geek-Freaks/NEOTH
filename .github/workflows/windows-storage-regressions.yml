@@ -644,6 +644,12 @@ jobs:
           installers::paperless_lifecycle::paperless_purge::tests::dispatched_after_effect_reconciles_absence_without_second_remove	neothd/src/installers/paperless_purge_tests.rs
           installers::paperless_lifecycle::paperless_purge::tests::repeat_completed_purge_reobserves_absence_but_never_removes_again	neothd/src/installers/paperless_purge_tests.rs
           cli::paperless::tests::paperless_purge_cli_preserves_exact_confirmation_without_target_overrides	neothd/src/cli/paperless.rs
+          installers::paperless_lifecycle::paperless_generation_rotation::tests::install_uninstall_purge_fresh_install_rotates_and_archives_exact_old_receipts	neothd/src/installers/paperless_generation_rotation_tests.rs
+          installers::paperless_lifecycle::paperless_generation_rotation::tests::resumes_all_phases_and_every_archive_or_removal_prefix	neothd/src/installers/paperless_generation_rotation_tests.rs
+          installers::paperless_lifecycle::paperless_generation_rotation::tests::archive_snapshot_and_terminal_absence_substitutions_reject	neothd/src/installers/paperless_generation_rotation_tests.rs
+          installers::paperless_lifecycle::paperless_generation_rotation::tests::substituted_new_snapshot_rejects_at_written_and_complete_crash_cuts	neothd/src/installers/paperless_generation_rotation_tests.rs
+          installers::paperless_lifecycle::paperless_generation_rotation::tests::archived_partial_live_removal_rechecks_old_container_and_volume_absence	neothd/src/installers/paperless_generation_rotation_tests.rs
+          installers::paperless_lifecycle::paperless_generation_rotation::tests::normal_missing_volume_refuses_and_second_generation_can_rotate	neothd/src/installers/paperless_generation_rotation_tests.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -660,10 +666,10 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 574 ]]; then
+          if [[ "$expected" -ne 580 ]]; then
             selection_valid=0
           fi
-          sha256sum Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
+          sha256sum Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
 
           artifact_log="$evidence/neoth-lib-test-artifacts.jsonl"
           binary_receipt="$evidence/neoth-lib-test-binary.json"

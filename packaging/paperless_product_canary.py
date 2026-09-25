@@ -39,6 +39,9 @@ VOLUMES = (
 SHA256 = re.compile(r"[0-9a-f]{64}")
 IDENTIFIER = re.compile(r"[0-9a-f]{64}")
 VOLUME_SET_ID = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}")
+RETIRED_AUTHORITY_ROLES = (
+    "install", "uninstall", "volume-set", "purge-custody", "purge-receipt",
+)
 API_LIMIT = 32 * 1024
 CONFIG_LIMIT = 256 * 1024
 DOWNLOAD_LIMIT = 2 * 1024 * 1024
@@ -480,6 +483,26 @@ def persisted_purge_receipt(home: Path, expected: dict) -> bytes:
     return raw
 
 
+def retired_authority_archive_name(retired_volume_set_id: str, role: str, raw: bytes) -> str:
+    if not VOLUME_SET_ID.fullmatch(retired_volume_set_id) or role not in RETIRED_AUTHORITY_ROLES:
+        raise Failure("retired_archive_name_invalid")
+    return f".neoth-paperless-retired-{retired_volume_set_id}-{role}-{hashlib.sha256(raw).hexdigest()[:16]}.v1.json"
+
+
+def retained_retired_authority(home: Path, retired_volume_set_id: str, expected: tuple[tuple[str, bytes], ...]) -> None:
+    if tuple(role for role, _ in expected) != RETIRED_AUTHORITY_ROLES:
+        raise Failure("retired_archive_shape_invalid")
+    for role, raw in expected:
+        if persisted_receipt_bytes(home, retired_authority_archive_name(retired_volume_set_id, role, raw), "retired_archive_bytes_invalid") != raw:
+            raise Failure("retired_archive_bytes_invalid")
+
+
+def rotation_journal_absent(home: Path) -> None:
+    path = home / "paperless" / "state" / ".neoth-paperless-generation-rotation.v1.json"
+    if path.exists() or path.is_symlink():
+        raise Failure("rotation_journal_present")
+
+
 def purge_artifacts_absent(home: Path) -> tuple[object, ...]:
     for name in (".neoth-paperless-purge-custody.v1.json", ".neoth-paperless-purge-receipt.v1.json"):
         path = home / "paperless" / "state" / name
@@ -599,6 +622,7 @@ def source_hashes() -> dict[str, str]:
         "packaging/tests/test_paperless_product_canary.py", "SRC/neothd/src/cli/paperless.rs",
         "SRC/neothd/src/installers/paperless_staging.rs", "SRC/neothd/src/installers/paperless_lifecycle.rs",
         "SRC/neothd/src/installers/paperless_purge.rs", "SRC/neothd/src/installers/paperless_purge_tests.rs",
+        "SRC/neothd/src/installers/paperless_generation_rotation.rs", "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
         "SRC/neothd/src/installers/paperless_operation_lock.rs", "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
         "SRC/neothd/src/installers/paperless_readiness.rs", "SRC/neothd/src/installers/paperless_bootstrap.rs",
         "SRC/neothd/src/cli/init.rs", "SRC/neothd/src/config/credentials.rs", "SRC/Cargo.lock",
@@ -743,7 +767,47 @@ def main() -> int:
             bounded.prove_absent("volume", name)
         volumes_purged = True
         receipt["purge"] = {"install_receipt_sha256": hashlib.sha256(install_receipt_bytes).hexdigest(), "final_uninstall_receipt_sha256": hashlib.sha256(final_uninstall_receipt_bytes).hexdigest(), "volume_set_id_sha256": hashlib.sha256(volume_set_id.encode()).hexdigest(), "volumes_absent": True, "repeat_read_only": True}
-        receipt.update({"project_sha256": hashlib.sha256(project.encode()).hexdigest(), "volume_set_id_sha256": hashlib.sha256(volume_set_id.encode()).hexdigest(), "volume_set_snapshot_sha256": hashlib.sha256(volume_set_snapshot_bytes).hexdigest(), "images": len(config_ids), "containers": 3, "volumes": 6, "repeat_install_preserved_identities": True, "uninstall_repeat_read_only": True, "status_ready": True})
+        retired_authority = (
+            ("install", install_receipt_bytes), ("uninstall", final_uninstall_receipt_bytes), ("volume-set", volume_set_snapshot_bytes),
+            ("purge-custody", purge_custody_bytes), ("purge-receipt", purge_receipt_bytes),
+        )
+        retired_volume_set_id = volume_set_id
+        credentials_before_fresh_install = (home / "credentials.yaml").read_bytes()
+        fresh = read_json_bytes(run([str(binary), "--output", "json", "paperless", "install"], timeout=900), "post_purge_install_json_invalid")
+        fresh_project, fresh_configs, fresh_ids, fresh_volume_set_id = validate_install(fresh, args.port)
+        if fresh_project != project or fresh_configs != config_ids or fresh_volume_set_id is None or fresh_volume_set_id == retired_volume_set_id:
+            raise Failure("post_purge_generation_invalid")
+        # From this point cleanup may remove only the new receipt-bound generation.
+        identities, volume_set_id, retired_ids, volumes_purged = fresh_ids, fresh_volume_set_id, (), False
+        fresh_snapshot_bytes = persisted_volume_set_snapshot(home, project, volume_set_id)
+        fresh_install_receipt_bytes = persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port)
+        for service, identifier in zip(IMAGES, identities[:3], strict=True):
+            validate_container(docker_json(identifier), project, service, config_ids[service], args.port)
+        retained_volumes(project, identities[3:], volume_set_id)
+        fresh_status = read_json_bytes(run([str(binary), "--output", "json", "paperless", "status"]), "post_purge_status_json_invalid")
+        if fresh_status.get("status") != "authenticated_api_ready" or fresh_status.get("authenticated_api_ready") is not True or fresh_status.get("staging") not in {"prepared_pinned", "already_prepared"}:
+            raise Failure("post_purge_status_invalid")
+        fresh_token = configured_token(home)
+        fresh_api = verify_api(args.port, fresh_token)
+        if (home / "credentials.yaml").read_bytes() != credentials_before_fresh_install:
+            raise Failure("post_purge_credentials_mutated")
+        for marker_path in (f"/api/documents/{document_id}/", f"/api/documents/{document_id}/download/?original=true"):
+            status_code, _ = paperless_api_bytes(args.port, fresh_token, marker_path, {404}, extra_headers={"Accept": "application/json; version=10"})
+            if status_code != 404:
+                raise Failure("post_purge_marker_present")
+        retained_retired_authority(home, retired_volume_set_id, retired_authority)
+        rotation_journal_absent(home)
+        fresh_repeat = read_json_bytes(run([str(binary), "--output", "json", "paperless", "install"], timeout=900), "post_purge_repeat_install_json_invalid")
+        repeat_project, repeat_configs, repeat_ids, repeat_volume_set_id = validate_install(fresh_repeat, args.port)
+        if (repeat_project, repeat_configs, repeat_ids, repeat_volume_set_id) != (project, config_ids, identities, volume_set_id) or persisted_volume_set_snapshot(home, project, volume_set_id) != fresh_snapshot_bytes or persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port) != fresh_install_receipt_bytes:
+            raise Failure("post_purge_repeat_install_changed_generation")
+        retained_volumes(project, identities[3:], volume_set_id)
+        if (home / "credentials.yaml").read_bytes() != credentials_before_fresh_install:
+            raise Failure("post_purge_repeat_credentials_mutated")
+        retained_retired_authority(home, retired_volume_set_id, retired_authority)
+        rotation_journal_absent(home)
+        receipt["post_purge_generation"] = {"retired_volume_set_id_sha256": hashlib.sha256(retired_volume_set_id.encode()).hexdigest(), "fresh_volume_set_id_sha256": hashlib.sha256(volume_set_id.encode()).hexdigest(), "fresh_volume_set_changed": True, "archives_retained": True, "rotation_journal_retired": True, "marker_absent": True, "credentials_preserved": True, "repeat_install_stable": True, "api": fresh_api}
+        receipt.update({"project_sha256": hashlib.sha256(project.encode()).hexdigest(), "volume_set_id_sha256": hashlib.sha256(volume_set_id.encode()).hexdigest(), "volume_set_snapshot_sha256": hashlib.sha256(fresh_snapshot_bytes).hexdigest(), "images": len(config_ids), "containers": 3, "volumes": 6, "repeat_install_preserved_identities": True, "uninstall_repeat_read_only": True, "status_ready": True})
         receipt["outcome"] = "passed"
     except Exception as error:
         receipt["failure_stage"] = str(error) if isinstance(error, Failure) else "unexpected"

@@ -143,7 +143,14 @@ exact volume is observed absent; it never repeats an uncertain removal.
 Configuration, credentials, snapshots and lifecycle receipts remain preserved.
 Repeating a completed purge rechecks absence and returns the existing receipt.
 
-A fresh installation after purge still requires the separate generation-rotation
-follow-up; the current installer refuses to recreate the deleted completed set.
-The purge source has independent static review. Native execution and the real
-six-volume product canary remain pending for this change.
+After a completed confirmed purge, `neoth paperless install` creates a fresh
+six-volume generation. It archives the exact old lifecycle records before
+retiring their active authority. An interrupted transition resumes from its
+verified journal and archives; a partial or uncertain purge cannot authorize it.
+Normal volume checks still run before installation. Repeating installation keeps
+the new generation, and later generations can go through the same lifecycle.
+
+Confirmed purge has passed the real compiled-product canary with six independently
+observed absences and unchanged receipts/credentials on repeat. Fresh-generation
+rotation has independent static review; its native and real-product execution
+remain pending for this change.

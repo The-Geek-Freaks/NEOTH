@@ -1,0 +1,62 @@
+{
+  "schema": "neoth-windows574-hosted-admission/v1",
+  "candidateOnly": false,
+  "rootAdmissionClaim": "Historical evidence admitted: 573 pass, 1 fixture failure, 0 missing; not a green gate",
+  "run": {
+    "id": 36128926415,
+    "source": "494fc9a4b5beb57f6f0ecab3f670f43396564438",
+    "status": "completed",
+    "conclusion": "failure",
+    "updatedAt": "2026-09-25T11:42:48Z"
+  },
+  "artifact": {
+    "id": 10861758342,
+    "apiZipDigest": "sha256:7a657996a86ef6e9708a1339d445a6c51f1cc1c2f8705e4e23a811aa19dcac51",
+    "localZipSha256": "7a657996a86ef6e9708a1339d445a6c51f1cc1c2f8705e4e23a811aa19dcac51",
+    "digestMatches": true,
+    "artifactSourceMatchesRun": true
+  },
+  "compile": {
+    "status": 0,
+    "candidateCount": 1,
+    "selectedLibTarget": "neothd",
+    "selectedExecutable": "neothd-6c7ce2ac0c7e63cd.exe"
+  },
+  "required574": {
+    "expected": 574,
+    "selectionValid": true,
+    "selectedRows": 574,
+    "uniqueSelected": 574,
+    "terminalRows": 574,
+    "uniqueTerminal": 574,
+    "passed": 573,
+    "failed": 1,
+    "missing": 0,
+    "extra": 0
+  },
+  "failure": {
+    "ordinal": 570,
+    "test": "installers::paperless_lifecycle::paperless_purge::tests::happy_path_removes_only_six_receipt_bound_volumes_and_keeps_credentials",
+    "path": "SRC/neothd/src/installers/paperless_purge_tests.rs",
+    "line": 302,
+    "assertion": "Os NotFound code 2: The system cannot find the file specified",
+    "observedBeforePurge": true,
+    "rootCauseProven": "The log proves a fixture file lookup failed at the test unwrap; it does not prove any purge runtime action."
+  },
+  "sourceBindings": {
+    "bindingRows": 574,
+    "uniquePaths": 89,
+    "commit": "494fc9a4b5beb57f6f0ecab3f670f43396564438",
+    "gitBlobSha256Matches": 89,
+    "gitBlobSha256Mismatches": 0,
+    "verificationFile": "git-blob-sha256-checks.json"
+  },
+  "logs": {
+    "hashedFiles": 575,
+    "sha256Matches": 575,
+    "sha256Mismatches": 0,
+    "verificationFile": "log-sha256-checks.json"
+  },
+  "artifactPath": "windows574-evidence",
+  "rootAdmission": "Historical573PASS1FAIL: same credentials.yaml test fixture NotFound before purge. Source repair seeds exact on-disk preservation witness; fresh gates pending."
+}

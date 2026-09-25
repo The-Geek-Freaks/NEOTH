@@ -574,6 +574,8 @@ async fn install_at_with_readiness<E: RetainedComposeExecutor, R: ReadinessVerif
     let expected = expected_images()?;
     let project = project_name(&root_path);
     let engine = select_local_engine(executor, &owned).await?;
+    paperless_generation_rotation::
+        rotate_completed_purge_generation_at(executor, &engine, &owned, &binding).await?;
     binding.volume_set_id =
         preflight_existing_volumes(executor, &engine, &project, &owned, &binding).await?;
     for image in &expected {
@@ -3261,3 +3263,5 @@ mod paperless_uninstall_tests;
 
 #[path = "paperless_purge.rs"]
 pub(crate) mod paperless_purge;
+#[path = "paperless_generation_rotation.rs"]
+mod paperless_generation_rotation;

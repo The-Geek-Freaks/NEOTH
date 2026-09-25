@@ -1,0 +1,46 @@
+{
+  "kind": "PAPERLESS_POST_PURGE_GENERATION_ROTATION_SOURCE_REVIEW",
+  "base": "450a9d603f32ec90303237928ec01191084e76f3",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_generation_rotation.rs",
+      "sha256": "25C2DB019278E8648BC28C7599BFC53F3318133F5AD4AB331E420FBBC33EFF35"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
+      "sha256": "774F176ABF34B158A0EEEED095E275CF0716E8FF5FA325FCFB19FF52F9B6B028"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sha256": "3E0BCB8340DC2E792273A9101BEC05BE30AE435BEC8527558CFE4B524CC285DD"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_purge.rs",
+      "sha256": "DC933D6C5050093A9C85442ACCE062C205174382E803AE75E277DDDF3762B497"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_purge_tests.rs",
+      "sha256": "67AEBCD5272940C04F0A5BB9148D08F1B88EFFB404975A645F67F82F92CCD844"
+    },
+    {
+      "path": "packaging/paperless_product_canary.py",
+      "sha256": "E984CE1D69C037A9E165CB8F49AFC9D1C2E0731CC071C8EF509A413D691D2437"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "sha256": "9EF368C60F4AFF9D9C863E5BC9B53395B054B028E682139217C8961750BAC86C"
+    }
+  ],
+  "productionReviewSha256": "F8B92B59D763F23F1E4BDAC070F854D92B6FEC23588CDF39B583463DA99D638B",
+  "productCanaryReviewSha256": "81B9EF94D90CE99FADB8CEFCE406F99BB56F152D51E94C9C9DA32CB0430D3A50",
+  "newNative": 6,
+  "universalNative": 2021,
+  "group": 1811,
+  "windows": 580,
+  "helperTests": 27,
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "scope": "Only completed confirmed purge permits fresh set: 5role exact archives, durable perphase resume, archive-backed terminal chain and oldcontainer/volume absence after partial clear, exact new snapshot, journal retirement and second lifecycle; normal preflight always remains.",
+  "realProductPending": "Fresh generation all6labels, oldmarker404, credentials+five archives preserved, stable repeat+cleanup",
+  "localExecutableValidationRan": false,
+  "rootStaticCompileCorrection": "Import sibling purge constants; remove unused volume-rm index; discard insert bool; first test observes actual new snapshot generation, checks snapshot replacement and exact five archives."
+}

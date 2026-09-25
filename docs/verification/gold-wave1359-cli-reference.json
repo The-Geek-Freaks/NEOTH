@@ -1,0 +1,11 @@
+{
+  "kind": "EXACT_HOSTED_CLI_REFERENCE_IMPORT",
+  "run": 36129605614,
+  "source": "494fc9a4b5beb57f6f0ecab3f670f43396564438",
+  "artifact": 10861763133,
+  "zipDigest": "5b009841c005cf5614694748360647f0c7b06420c051ded9f05832124e15762e",
+  "referenceSha256": "aec06622940122190eee4fd3952324a5d1346a361fe39a66b5b679cd459bf254",
+  "sourceHeadAndChecksumVerified": true,
+  "scope": "Adds6generated lines documenting paperless purge and exact confirm phrase; Core workspace-Clippy still pending at capture.",
+  "localExecutableValidationRan": false
+}

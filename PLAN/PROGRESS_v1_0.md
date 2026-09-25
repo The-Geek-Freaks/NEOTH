@@ -2,6 +2,28 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1349/1353/1357-1362 generation rotation, real purge and exact regression results (2026-09-25):**
+Real Paperless purge is admitted: run36130019262 at450a9d60, artifact10861793011,
+API ZIP/receipt and19historical source/input bindings match. The full product
+preserves PDF bytes across retained reinstall, then performs the second safe
+uninstall, rejects wrong confirmation without mutation, removes exactly six
+bound volumes, repeats read-only and completes isolated cleanup.
+Group1805 at494fc9a4 executed1805:1803PASS/2FAIL/0missing with303source bindings.
+Windows574 at that source compiled and executed574:573PASS/1FAIL/0missing,
+89source blobs and575log hashes. Their shared failure is a test-only missing
+credentials.yaml file before purge; the fixture now seeds its preservation
+witness. Group's other failure is stale CLI documentation: exact hosted artifact
+10861763133 from Core36129605614 adds the six generated purge-reference lines.
+Fresh generation rotation is now implemented with a durable five-role archive
+journal. It revalidates terminal purge and old container/volume absence under the
+shared lock, resumes partial live-authority clearing from the verified archived
+chain, validates the exact new snapshot and retires the completed journal to
+permit a second cycle. Normal volume preflight remains mandatory. Six native
+wrapper/crash-cut cases and the real fresh-generation product extension have
+independent static review; Group1811/Windows580/native2021/helper27 gates follow.
+Claude064 guide changes are already published; Claude065 repair-job reuse map is
+received for a later batch. New rotation runtime evidence remains pending, with
+no roadmap checkbox closure or local executable validation.
 **W1355-1356 Core success and Paperless observer correction (2026-09-25):**
 Historical Core36125282572 atfdb186fe completed all four gates successfully.
 The repaired current source494fc9a4 passes preflight and builds the public CLI.
