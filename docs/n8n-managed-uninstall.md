@@ -9,6 +9,10 @@ There is no volume purge or foreign-container override on this command.
 An adopted instance has no managed-container ownership and cannot be removed
 through this command. Missing or conflicting runtime ownership stops removal.
 
+For a complete stopped-volume archive before lifecycle changes, see
+[managed n8n backup](n8n-managed-backup.md). Archive creation, restoring an
+archive and reusing the current retained volume are separate operations.
+
 ## Managed repair
 
 `neoth n8n repair` is a parameterless public command for the existing NEOTH

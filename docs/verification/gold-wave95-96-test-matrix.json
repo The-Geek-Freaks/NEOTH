@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "SOURCE_ADMISSIONS_BACKUP_WIP",
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 227985,
-    "sha256": "584727914A3ACA5C9564E19E8C131D000308E7BBBF8862CB27E75CD3FBC9A6B8"
+    "bytes": 228714,
+    "sha256": "D9A1E28A3B67207E7BEA93FB80BD6BE33889C8CC2ABA03582385C3270B720FA9"
   },
-  "sourceInputs": 1277,
+  "sourceInputs": 1281,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -3792,13 +3792,13 @@
     {
       "test": "cli::n8n::tests::stdin_key_line_accepts_exact_limit_with_lf_and_crlf",
       "sourcePath": "SRC/neothd/src/cli/n8n.rs",
-      "sourceSha256": "251E6539FA22FF73095049D9E11215B4AA24C30F73D1823D0025666A12CCF7B3",
+      "sourceSha256": "BAD691FFCC92440064DF9D48713565B83C8A120D0AF85B0D8E7FFD4554F265BB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::n8n::tests::stdin_key_line_rejects_oversize_invalid_utf8_and_controls",
       "sourcePath": "SRC/neothd/src/cli/n8n.rs",
-      "sourceSha256": "251E6539FA22FF73095049D9E11215B4AA24C30F73D1823D0025666A12CCF7B3",
+      "sourceSha256": "BAD691FFCC92440064DF9D48713565B83C8A120D0AF85B0D8E7FFD4554F265BB",
       "junitClass": "neoth"
     },
     {
@@ -9816,43 +9816,43 @@
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::stopped_container_uses_host_config_port_binding_for_exact_identity",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "E98D6842B7FE9E33CA534A77CA8794DB1F46AD56839A5299E93C15666244A88B",
+      "sourceSha256": "1860310892DF10D98D6448A1D6AB1807332CB363ABCC77DF0064868C14A5BB46",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::running_network_binding_must_match_durable_host_config",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "E98D6842B7FE9E33CA534A77CA8794DB1F46AD56839A5299E93C15666244A88B",
+      "sourceSha256": "1860310892DF10D98D6448A1D6AB1807332CB363ABCC77DF0064868C14A5BB46",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::extra_host_port_is_rejected_before_ownership_is_granted",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "E98D6842B7FE9E33CA534A77CA8794DB1F46AD56839A5299E93C15666244A88B",
+      "sourceSha256": "1860310892DF10D98D6448A1D6AB1807332CB363ABCC77DF0064868C14A5BB46",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::docker_adapter_tests::extra_mount_is_rejected_before_ownership_is_granted",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "sourceSha256": "E98D6842B7FE9E33CA534A77CA8794DB1F46AD56839A5299E93C15666244A88B",
+      "sourceSha256": "1860310892DF10D98D6448A1D6AB1807332CB363ABCC77DF0064868C14A5BB46",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::jobs::tests::restart_hold_preserves_active_cancel_intent_until_a_proven_reject",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "4BFB5DE7566A64D773D0CCB5DB522431DA112E44AD55A0E79DA5298C9064194F",
+      "sourceSha256": "52BB22700A1B8AB3C6C45430C6A21E6761AD3790DC27693C2E73515561F1DA35",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::jobs::tests::later_restart_hold_rolls_back_recovery_for_two_active_capability_leases",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "4BFB5DE7566A64D773D0CCB5DB522431DA112E44AD55A0E79DA5298C9064194F",
+      "sourceSha256": "52BB22700A1B8AB3C6C45430C6A21E6761AD3790DC27693C2E73515561F1DA35",
       "junitClass": "neoth"
     },
     {
       "test": "cli::n8n::tests::install_cli_requires_secret_stdin_and_keeps_port_typed",
       "sourcePath": "SRC/neothd/src/cli/n8n.rs",
-      "sourceSha256": "251E6539FA22FF73095049D9E11215B4AA24C30F73D1823D0025666A12CCF7B3",
+      "sourceSha256": "BAD691FFCC92440064DF9D48713565B83C8A120D0AF85B0D8E7FFD4554F265BB",
       "junitClass": "neoth"
     },
     {
@@ -10542,55 +10542,55 @@
     {
       "test": "integrations::jobs::tests::schema_v2_migrates_existing_history_and_round_trips_import_jobs",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "4BFB5DE7566A64D773D0CCB5DB522431DA112E44AD55A0E79DA5298C9064194F",
+      "sourceSha256": "52BB22700A1B8AB3C6C45430C6A21E6761AD3790DC27693C2E73515561F1DA35",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::jobs::tests::schema_v2_malformed_history_rolls_back_without_relabeling_source",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "4BFB5DE7566A64D773D0CCB5DB522431DA112E44AD55A0E79DA5298C9064194F",
+      "sourceSha256": "52BB22700A1B8AB3C6C45430C6A21E6761AD3790DC27693C2E73515561F1DA35",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::jobs::tests::schema_v1_migrates_active_work_to_fail_closed_history",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "4BFB5DE7566A64D773D0CCB5DB522431DA112E44AD55A0E79DA5298C9064194F",
+      "sourceSha256": "52BB22700A1B8AB3C6C45430C6A21E6761AD3790DC27693C2E73515561F1DA35",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::jobs::tests::schema_v1_foreign_key_failure_rolls_back_without_losing_source_history",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "4BFB5DE7566A64D773D0CCB5DB522431DA112E44AD55A0E79DA5298C9064194F",
+      "sourceSha256": "52BB22700A1B8AB3C6C45430C6A21E6761AD3790DC27693C2E73515561F1DA35",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::jobs::tests::schema_v1_malformed_terminal_history_rolls_back_without_relabeling_source",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "4BFB5DE7566A64D773D0CCB5DB522431DA112E44AD55A0E79DA5298C9064194F",
+      "sourceSha256": "52BB22700A1B8AB3C6C45430C6A21E6761AD3790DC27693C2E73515561F1DA35",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::jobs::tests::schema_v3_rejects_same_name_wrong_index_contract",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "4BFB5DE7566A64D773D0CCB5DB522431DA112E44AD55A0E79DA5298C9064194F",
+      "sourceSha256": "52BB22700A1B8AB3C6C45430C6A21E6761AD3790DC27693C2E73515561F1DA35",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::jobs::tests::schema_v3_rejects_missing_retry_foreign_key_with_same_columns",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "4BFB5DE7566A64D773D0CCB5DB522431DA112E44AD55A0E79DA5298C9064194F",
+      "sourceSha256": "52BB22700A1B8AB3C6C45430C6A21E6761AD3790DC27693C2E73515561F1DA35",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::state::tests::operations_use_canonical_durable_strings",
       "sourcePath": "SRC/neothd/src/integrations/state.rs",
-      "sourceSha256": "744F96BD8BE0F6789E587730A63D09BBCF11609C718620572E3CE296A179FB18",
+      "sourceSha256": "93ECE6A2B38BD167386C42A18E754C501E9A4B24483A9DC1B249BB1AB641FC92",
       "junitClass": "neoth"
     },
     {
       "test": "cli::n8n::tests::import_workflows_cli_has_no_hidden_execution_options",
       "sourcePath": "SRC/neothd/src/cli/n8n.rs",
-      "sourceSha256": "251E6539FA22FF73095049D9E11215B4AA24C30F73D1823D0025666A12CCF7B3",
+      "sourceSha256": "BAD691FFCC92440064DF9D48713565B83C8A120D0AF85B0D8E7FFD4554F265BB",
       "junitClass": "neoth"
     },
     {
@@ -11712,7 +11712,7 @@
     {
       "test": "cli::n8n::tests::uninstall_cli_retains_data_and_has_no_foreign_target_override",
       "sourcePath": "SRC/neothd/src/cli/n8n.rs",
-      "sourceSha256": "251E6539FA22FF73095049D9E11215B4AA24C30F73D1823D0025666A12CCF7B3",
+      "sourceSha256": "BAD691FFCC92440064DF9D48713565B83C8A120D0AF85B0D8E7FFD4554F265BB",
       "junitClass": "neoth"
     },
     {
@@ -11772,7 +11772,7 @@
     {
       "test": "cli::n8n::tests::retained_reinstall_cli_requires_explicit_stdin_key_and_excludes_new_owner_options",
       "sourcePath": "SRC/neothd/src/cli/n8n.rs",
-      "sourceSha256": "251E6539FA22FF73095049D9E11215B4AA24C30F73D1823D0025666A12CCF7B3",
+      "sourceSha256": "BAD691FFCC92440064DF9D48713565B83C8A120D0AF85B0D8E7FFD4554F265BB",
       "junitClass": "neoth"
     },
     {
@@ -11910,25 +11910,25 @@
     {
       "test": "integrations::jobs::tests::schema_v3_migrates_representative_history_and_round_trips_purge_jobs",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "4BFB5DE7566A64D773D0CCB5DB522431DA112E44AD55A0E79DA5298C9064194F",
+      "sourceSha256": "52BB22700A1B8AB3C6C45430C6A21E6761AD3790DC27693C2E73515561F1DA35",
       "junitClass": "neoth"
     },
     {
-      "test": "integrations::jobs::tests::read_only_snapshot_reads_v3_history_without_schema_writes_then_owned_open_migrates_v4",
+      "test": "integrations::jobs::tests::read_only_snapshot_reads_v3_history_without_schema_writes_then_owned_open_migrates_v5",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "4BFB5DE7566A64D773D0CCB5DB522431DA112E44AD55A0E79DA5298C9064194F",
+      "sourceSha256": "52BB22700A1B8AB3C6C45430C6A21E6761AD3790DC27693C2E73515561F1DA35",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::jobs::tests::schema_v3_corrupt_index_refuses_before_v4_migration",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "4BFB5DE7566A64D773D0CCB5DB522431DA112E44AD55A0E79DA5298C9064194F",
+      "sourceSha256": "52BB22700A1B8AB3C6C45430C6A21E6761AD3790DC27693C2E73515561F1DA35",
       "junitClass": "neoth"
     },
     {
       "test": "cli::n8n::tests::purge_cli_selects_only_an_uninstall_job_and_preserves_exact_confirmation",
       "sourcePath": "SRC/neothd/src/cli/n8n.rs",
-      "sourceSha256": "251E6539FA22FF73095049D9E11215B4AA24C30F73D1823D0025666A12CCF7B3",
+      "sourceSha256": "BAD691FFCC92440064DF9D48713565B83C8A120D0AF85B0D8E7FFD4554F265BB",
       "junitClass": "neoth"
     },
     {
@@ -12378,7 +12378,7 @@
     {
       "test": "cli::n8n::tests::n8n_repair_cli_uses_stored_managed_identity_without_overrides",
       "sourcePath": "SRC/neothd/src/cli/n8n.rs",
-      "sourceSha256": "251E6539FA22FF73095049D9E11215B4AA24C30F73D1823D0025666A12CCF7B3",
+      "sourceSha256": "BAD691FFCC92440064DF9D48713565B83C8A120D0AF85B0D8E7FFD4554F265BB",
       "junitClass": "neoth"
     },
     {
@@ -12409,6 +12409,126 @@
       "test": "integrations::n8n::managed_runtime::managed_repair::tests::binding_commit_restart_proof_rejects_independent_custody_identity_tampering",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_repair_tests.rs",
       "sourceSha256": "D788BE55D83B1336C4C207CB2096C1ACB92381F5AD954BDA9C92A366466BB8A2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::managed_backup::tests::running_source_backup_stops_archives_restores_and_publishes_exact_receipt",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
+      "sourceSha256": "8A0E35EB35AE11EA4E05CEAE4BEC7D06B950F41C0C230307BBB3D02BE0153238",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::managed_backup::tests::stopped_source_backup_has_no_stop_or_start_effect",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
+      "sourceSha256": "8A0E35EB35AE11EA4E05CEAE4BEC7D06B950F41C0C230307BBB3D02BE0153238",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::managed_backup::tests::copy_dispatch_crash_restores_source_without_second_copy_after_reopen",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
+      "sourceSha256": "8A0E35EB35AE11EA4E05CEAE4BEC7D06B950F41C0C230307BBB3D02BE0153238",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::managed_backup::tests::uncertain_stop_and_start_receipts_are_observed_once_then_complete_ready",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
+      "sourceSha256": "8A0E35EB35AE11EA4E05CEAE4BEC7D06B950F41C0C230307BBB3D02BE0153238",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::managed_backup::tests::archive_receipt_error_restores_source_and_cannot_publish_ready",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
+      "sourceSha256": "8A0E35EB35AE11EA4E05CEAE4BEC7D06B950F41C0C230307BBB3D02BE0153238",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::managed_backup::tests::completed_receipt_rehash_rejects_tampering_after_custody_retirement",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
+      "sourceSha256": "8A0E35EB35AE11EA4E05CEAE4BEC7D06B950F41C0C230307BBB3D02BE0153238",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::managed_backup::tests::completed_receipt_rejects_foreign_source_and_stale_manifest_fields",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
+      "sourceSha256": "8A0E35EB35AE11EA4E05CEAE4BEC7D06B950F41C0C230307BBB3D02BE0153238",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::managed_backup::tests::sequential_backups_retain_historical_first_receipt",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
+      "sourceSha256": "8A0E35EB35AE11EA4E05CEAE4BEC7D06B950F41C0C230307BBB3D02BE0153238",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::managed_backup::tests::completed_custody_and_prepublished_receipt_finalize_ready_after_reopen",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
+      "sourceSha256": "8A0E35EB35AE11EA4E05CEAE4BEC7D06B950F41C0C230307BBB3D02BE0153238",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::managed_backup::tests::malformed_custody_and_final_destination_collision_leave_no_active_or_source_effect",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
+      "sourceSha256": "8A0E35EB35AE11EA4E05CEAE4BEC7D06B950F41C0C230307BBB3D02BE0153238",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_stream_counts_and_hashes_opaque_bytes",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "sourceSha256": "1860310892DF10D98D6448A1D6AB1807332CB363ABCC77DF0064868C14A5BB46",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_stream_refuses_cap_before_unbounded_write",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "sourceSha256": "1860310892DF10D98D6448A1D6AB1807332CB363ABCC77DF0064868C14A5BB46",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_stream_refuses_symlinked_outside_volume_data",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "sourceSha256": "1860310892DF10D98D6448A1D6AB1807332CB363ABCC77DF0064868C14A5BB46",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_stream_accepts_docker_style_current_directory_root",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "sourceSha256": "1860310892DF10D98D6448A1D6AB1807332CB363ABCC77DF0064868C14A5BB46",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_stream_rejects_nonzero_data_after_tar_end",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "sourceSha256": "1860310892DF10D98D6448A1D6AB1807332CB363ABCC77DF0064868C14A5BB46",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_publish_never_replaces_existing_destination",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "sourceSha256": "1860310892DF10D98D6448A1D6AB1807332CB363ABCC77DF0064868C14A5BB46",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::docker_adapter_tests::archive_rejects_non_exact_container_id_before_private_file_creation",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "sourceSha256": "1860310892DF10D98D6448A1D6AB1807332CB363ABCC77DF0064868C14A5BB46",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::n8n::managed_runtime::docker_adapter_tests::archive_rejects_known_destination_collision_before_staging_or_docker",
+      "sourcePath": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "sourceSha256": "1860310892DF10D98D6448A1D6AB1807332CB363ABCC77DF0064868C14A5BB46",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "integrations::jobs::tests::schema_v4_migrates_history_preserves_foreign_key_indexes_and_round_trips_backup_jobs",
+      "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
+      "sourceSha256": "52BB22700A1B8AB3C6C45430C6A21E6761AD3790DC27693C2E73515561F1DA35",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::n8n::tests::n8n_backup_cli_uses_owned_archive_and_runtime_without_overrides",
+      "sourcePath": "SRC/neothd/src/cli/n8n.rs",
+      "sourceSha256": "BAD691FFCC92440064DF9D48713565B83C8A120D0AF85B0D8E7FFD4554F265BB",
       "junitClass": "neoth"
     }
   ],
@@ -45195,7 +45315,7 @@
   "wave1317ConfirmedN8nPurge": {
     "requiredTests": [
       "integrations::jobs::tests::schema_v3_migrates_representative_history_and_round_trips_purge_jobs",
-      "integrations::jobs::tests::read_only_snapshot_reads_v3_history_without_schema_writes_then_owned_open_migrates_v4",
+      "integrations::jobs::tests::read_only_snapshot_reads_v3_history_without_schema_writes_then_owned_open_migrates_v5",
       "integrations::jobs::tests::schema_v3_corrupt_index_refuses_before_v4_migration",
       "cli::n8n::tests::purge_cli_selects_only_an_uninstall_job_and_preserves_exact_confirmation",
       "integrations::n8n::managed_purge::tests::purge_ready_uninstall_removes_only_the_label_proven_volume_and_repeats_read_only",
@@ -47692,6 +47812,160 @@
     ],
     "note": "Group1857 and Windows622@32df8d26 source-admitted; positive canonical n8n GHCR upstream provenance@b692356b admitted; wrong-signer inconclusive. Backup code excluded.",
     "hosted": "EXACT_SOURCE_RUNS_ADMITTED_BACKUP_EXCLUDED",
+    "localExecutableValidationRan": false
+  },
+  "wave1480ManagedN8nBackup": {
+    "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+    "requiredTests": [
+      "integrations::n8n::managed_runtime::managed_backup::tests::running_source_backup_stops_archives_restores_and_publishes_exact_receipt",
+      "integrations::n8n::managed_runtime::managed_backup::tests::stopped_source_backup_has_no_stop_or_start_effect",
+      "integrations::n8n::managed_runtime::managed_backup::tests::copy_dispatch_crash_restores_source_without_second_copy_after_reopen",
+      "integrations::n8n::managed_runtime::managed_backup::tests::uncertain_stop_and_start_receipts_are_observed_once_then_complete_ready",
+      "integrations::n8n::managed_runtime::managed_backup::tests::archive_receipt_error_restores_source_and_cannot_publish_ready",
+      "integrations::n8n::managed_runtime::managed_backup::tests::completed_receipt_rehash_rejects_tampering_after_custody_retirement",
+      "integrations::n8n::managed_runtime::managed_backup::tests::completed_receipt_rejects_foreign_source_and_stale_manifest_fields",
+      "integrations::n8n::managed_runtime::managed_backup::tests::sequential_backups_retain_historical_first_receipt",
+      "integrations::n8n::managed_runtime::managed_backup::tests::completed_custody_and_prepublished_receipt_finalize_ready_after_reopen",
+      "integrations::n8n::managed_runtime::managed_backup::tests::malformed_custody_and_final_destination_collision_leave_no_active_or_source_effect",
+      "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_stream_counts_and_hashes_opaque_bytes",
+      "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_stream_refuses_cap_before_unbounded_write",
+      "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_stream_refuses_symlinked_outside_volume_data",
+      "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_stream_accepts_docker_style_current_directory_root",
+      "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_stream_rejects_nonzero_data_after_tar_end",
+      "integrations::n8n::managed_runtime::docker_adapter_tests::private_archive_publish_never_replaces_existing_destination",
+      "integrations::n8n::managed_runtime::docker_adapter_tests::archive_rejects_non_exact_container_id_before_private_file_creation",
+      "integrations::n8n::managed_runtime::docker_adapter_tests::archive_rejects_known_destination_collision_before_staging_or_docker",
+      "integrations::jobs::tests::schema_v4_migrates_history_preserves_foreign_key_indexes_and_round_trips_backup_jobs",
+      "cli::n8n::tests::n8n_backup_cli_uses_owned_archive_and_runtime_without_overrides"
+    ],
+    "scope": "Schema-v5 Backup, bounded private full tar stream, exact custody recovery and CLI; actual product canary separately required."
+  },
+  "wave1480ManagedBackupSource": {
+    "base": "bcd6b9a27d16cd3455a718fc6024a31acb56e0b7",
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 26052,
+        "sha256": "0C3E3B511E373D02DA3653E93852836BD805EAF3A6B5DFBEC33CA594DFA9D10E",
+        "blob": "416d7b2ed85e212fa606ecd7b345c9499b3a2cf6"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 110921,
+        "sha256": "673FEBC7611F370FC2E9EA855799A6B1548B104BDFE7A64BBC0351E4EF2CD059",
+        "blob": "4744933fee29bfaf26df0894408c6c7f4ac0b761"
+      },
+      {
+        "path": "docs/n8n-managed-backup.md",
+        "bytes": 2399,
+        "sha256": "04B02F981480D3FD85B81B682DA4C2B3F9E257CAC1F7A56593414B677225A092",
+        "blob": "7619f3029302d6ba430b8acbeddb64d4f8431cc3"
+      },
+      {
+        "path": "docs/n8n-managed-uninstall.md",
+        "bytes": 9332,
+        "sha256": "64EFFF2FB1ABA2016960FBFB23A785C2695D6BF3308130B7E05913FCB20E944D",
+        "blob": "50e63dd83a206b4dcd5eeb9d4bda5dbd2ef5066c"
+      },
+      {
+        "path": "docs/verification/gold-wave1480-managed-n8n-backup.json",
+        "bytes": 1691,
+        "sha256": "582AFDA4B39089A55C1B1B6952F7E3E6525DA465384CBA8FE61DDC8FA87B49EA",
+        "blob": "c5871b874ebecb0b80b0e1384efb7d4e9143c591"
+      },
+      {
+        "path": "packaging/n8n_product_bootstrap_canary.py",
+        "bytes": 85017,
+        "sha256": "FB5BE03DFEAFEF083BD43B2EEE6FEE4D24CE831986BC416C8F62D82623852C6A",
+        "blob": "96c8ada300310be4418faecc66ce5f5c29182a60"
+      },
+      {
+        "path": "packaging/tests/test_n8n_product_bootstrap_canary.py",
+        "bytes": 44342,
+        "sha256": "E83DB50E9A03321399D858C6FE8D797BB4D6DDE5BDC0401BE581163C6F7F7DBD",
+        "blob": "b9c42bd59ffd4890afb4af1f022e39d82dd19846"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 406982,
+        "sha256": "125CDF35B6C274BF11CDE0FA5899BB93AE0E836ABEAC6F807F3240D8379AFA48",
+        "blob": "a48bbb5940a5bd28dd3a58f24de5709ff08b403a"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1425913,
+        "sha256": "86B56AD39A1065A951C3A75B8D097388199D35F8A26B5CE56BF118C606F5863A",
+        "blob": "bb0ec1fdffc5a5dff39d9beabdba711c4b008fea"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2036436,
+        "sha256": "218B6252612F347F6DF5AE1BD958E4CBAD1A82BB134FB6174EA335BF7A0D4D37",
+        "blob": "2606d786afd2778b4716729605514f629ba31f71"
+      },
+      {
+        "path": "SRC/neothd/src/cli/n8n.rs",
+        "bytes": 33332,
+        "sha256": "BAD691FFCC92440064DF9D48713565B83C8A120D0AF85B0D8E7FFD4554F265BB",
+        "blob": "f866d95b7a8c9db890a0b2aa6275e0c7be565b16"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/jobs.rs",
+        "bytes": 173524,
+        "sha256": "52BB22700A1B8AB3C6C45430C6A21E6761AD3790DC27693C2E73515561F1DA35",
+        "blob": "40d29e6664f8f9f26d208e011ede744534f6c309"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n.rs",
+        "bytes": 48876,
+        "sha256": "B34C2B4A0CD7F3C9FE102495EA593613E982B4475D8F68463BCE7947C0806765",
+        "blob": "7d4564378f6491c8ca8e2bf6615a50e0022b79b4"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
+        "bytes": 20519,
+        "sha256": "8A0E35EB35AE11EA4E05CEAE4BEC7D06B950F41C0C230307BBB3D02BE0153238",
+        "blob": "7ae05866c246063f87a29ba1bdbf732b98f4ea0c"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_backup.rs",
+        "bytes": 38070,
+        "sha256": "EE58A58AE96ED494126BEB1898EA0E054CD0790E419891054A65B904626AE795",
+        "blob": "4e6597fc0d843edbe910c54fa623cdcdd565bda7"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_purge.rs",
+        "bytes": 25923,
+        "sha256": "EB0C71E6DD6CA0BFF8D164F25774FAA3AD4396D812CE071B0544165D5EE20838",
+        "blob": "a8752866ba85ce19282ba14a56d13588e8c812dc"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_repair.rs",
+        "bytes": 37335,
+        "sha256": "5D8F877FDD6823A74B59F2ADCFC0FD410C43EEF9077BCE8E33887E7860D89BB7",
+        "blob": "57ff052bea78539c1446eeeecef4424cbd21e41c"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+        "bytes": 84640,
+        "sha256": "1860310892DF10D98D6448A1D6AB1807332CB363ABCC77DF0064868C14A5BB46",
+        "blob": "cbcbb36e3d8fa8611613175fa6ea9ec416b8dd14"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",
+        "bytes": 36625,
+        "sha256": "F4A9B00CD9F2A2FE7BFCE318D3441B6A07E6B2561890805C57FF3555215AADD8",
+        "blob": "c1fd79523edd2e2849fac3f2dbc42642d85d84e6"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/state.rs",
+        "bytes": 45951,
+        "sha256": "93ECE6A2B38BD167386C42A18E754C501E9A4B24483A9DC1B249BB1AB641FC92",
+        "blob": "7e8e7090fa9943997910e654798b2061d86576c3"
+      }
+    ],
+    "note": "Managed full backup schema/stream/custody/CLI and product canary; final independent static review; executable GitHub gates pending.",
+    "hosted": "pending",
     "localExecutableValidationRan": false
   }
 }

@@ -8,6 +8,22 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1480 managed n8n full-backup implementation (2026-09-25):**
+`neoth n8n backup` now derives its exact managed source and privately archives
+the complete stopped SQLite .n8n volume. It restores the original running state,
+limits/validates the binary tar stream, publishes without overwrite, and retains
+an immutable per-job receipt. Durable stop/copy/restart custody prevents replay
+of an uncertain copy and fences conflicting lifecycle operations. Existing
+custody resumes the exact job; restored failures terminalize and release custody.
+The shared integration schema migrates v4 to v5 with a distinct Backup operation.
+Twenty new native tests cover migration, stream, recovery, historical receipts
+and CLI boundaries; selections are Portable2087/Group1877/Windows642. The real
+product canary now exercises running and stopped backups plus historical status.
+Final production/tests passed independent STATIC review. Hosted native, product,
+Core/CLI and formatting gates remain pending; backup is not yet runtime-admitted.
+Restore, update, rollback, P1-14/P2-20 and release remain open. ROAD remains
+1324 total /1077 done /245 open /2 partial. No local executable validation ran.
+Evidence: docs/verification/gold-wave1480-managed-n8n-backup.json.
 **W1471/W1475/W1477 native and upstream-source acceptance (2026-09-25):**
 At32df8d26, Group36155698163 passed all1857 selected/discovered/executed fixtures
 with298 unique source and10 input Git bindings; Windows36155701973 passed all622

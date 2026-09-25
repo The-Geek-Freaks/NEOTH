@@ -1,4 +1,4 @@
-//! `neoth n8n {install,repair,uninstall,purge,adopt,status,import-workflows,workflows}`.
+//! `neoth n8n {install,repair,backup,uninstall,purge,adopt,status,import-workflows,workflows}`.
 //!
 //! Adoption binds an operator-supplied, already-running literal-loopback n8n
 //! instance. It never installs, starts, discovers, or owns an n8n process.
@@ -43,6 +43,9 @@ pub enum N8nAction {
     },
     /// Restore the receipt-owned container with its pinned image, retained volume and stored API key.
     Repair,
+    /// Stop the owned runtime, archive its complete data volume, and restore its running state.
+    /// Repeating an interrupted backup reconciles custody without repeating an uncertain copy.
+    Backup,
     /// Remove the exact NEOTH-managed container and retain its data volume.
     /// Repeating an interrupted command reconciles absence without retrying deletion.
     Uninstall,
@@ -92,6 +95,7 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
             .await
         }
         N8nAction::Repair => run_repair(output).await,
+        N8nAction::Backup => run_backup(output).await,
         N8nAction::Uninstall => run_uninstall(output).await,
         N8nAction::Purge { uninstall, confirm } => {
             run_purge(&uninstall, confirm.as_deref(), output).await
@@ -104,6 +108,65 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
         N8nAction::ImportWorkflows => run_import_workflows(output).await,
         N8nAction::Workflows => run_workflows(output),
     }
+}
+
+async fn run_backup(output: OutputFormat) -> Result<()> {
+    use crate::integrations::n8n::managed_runtime::managed_backup;
+
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let job = managed_backup::backup_managed_at(&home).await?;
+    let receipt = managed_backup::completed_receipt_at(&home, &job)
+        .map_err(anyhow::Error::msg)?;
+    if job.state == crate::integrations::JobState::Ready && receipt.is_none() {
+        return Err(anyhow!("n8n backup has no verified completion receipt"));
+    }
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "job_id": job.job_id,
+                "state": job.state,
+                "operation": "backup",
+                "receipt": receipt,
+                "failure_code": job.failure.as_ref().map(|failure| &failure.code),
+            })
+        ),
+        OutputFormat::Table => {
+            println!("n8n backup job: {}", job.job_id);
+            println!("state: {}", job.state);
+            if let Some(receipt) = &receipt {
+                print_backup_receipt(receipt)?;
+            }
+            if let Some(failure) = &job.failure {
+                println!("failure: {} — {}", failure.code, failure.redacted_message);
+            }
+        }
+    }
+    if job.state != crate::integrations::JobState::Ready {
+        return Err(anyhow!(
+            "n8n backup job {} requires reconciliation (state: {})",
+            job.job_id,
+            job.state,
+        ));
+    }
+    Ok(())
+}
+
+fn print_backup_receipt(
+    receipt: &crate::integrations::n8n::managed_runtime::managed_backup::BackupReceiptView,
+) -> Result<()> {
+    let fields = serde_json::to_value(receipt)?;
+    if let Some(fields) = fields.as_object() {
+        for (name, value) in fields {
+            let label = name.replace('_', " ");
+            if let Some(value) = value.as_str() {
+                println!("{label}: {value}");
+            } else {
+                println!("{label}: {value}");
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn run_repair(output: OutputFormat) -> Result<()> {
@@ -562,6 +625,9 @@ fn run_status(selected_job: Option<&str>, output: OutputFormat) -> Result<()> {
                     if let Some(cleanup) = job.config_cleanup {
                         println!("configuration cleanup: {cleanup}");
                     }
+                    if let Some(receipt) = &job.backup {
+                        print_backup_receipt(receipt)?;
+                    }
                     println!("progress: {}/{}", job.completed_steps, job.total_steps);
                     if let Some(step) = &job.current_step {
                         println!("current step: {step}");
@@ -602,6 +668,26 @@ fn run_workflows(output: OutputFormat) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn n8n_backup_cli_uses_owned_archive_and_runtime_without_overrides() {
+        use clap::Parser;
+        let cli = crate::cli::Cli::try_parse_from(["neoth", "n8n", "backup"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            crate::cli::Commands::N8n(N8nArgs {
+                action: N8nAction::Backup,
+            })
+        ));
+        for argument in ["--container", "--image", "--volume", "--output", "--destination", "--endpoint", "--job"] {
+            assert!(crate::cli::Cli::try_parse_from([
+                "neoth", "n8n", "backup", argument, "unowned",
+            ]).is_err());
+        }
+        for argument in ["--follow-links", "--live", "--api-key-stdin"] {
+            assert!(crate::cli::Cli::try_parse_from(["neoth", "n8n", "backup", argument]).is_err());
+        }
+    }
+
     #[test]
     fn n8n_repair_cli_uses_stored_managed_identity_without_overrides() {
         use clap::Parser;

@@ -294,6 +294,116 @@ def validate_purge_product(value: dict, uninstall_job: str) -> str:
     if not JOB.fullmatch(job) or value != {"job_id": job, "operation": "purge", "state": "ready", "disposition": "volume_removed", "uninstall_job_id": uninstall_job, "failure_code": None}: raise Failure("purge_product_invalid")
     return job
 
+def validate_backup_product(value: dict, source_job: str,
+                            original_running: bool = True) -> tuple[str, dict]:
+    """Accept only the completed, content-free managed-backup projection."""
+    job = required(value, "job_id", str)
+    receipt = required(value, "receipt", dict)
+    expected_keys = {"job_id", "state", "operation", "receipt", "failure_code"}
+    receipt_keys = {
+        "schema_version", "backup_job_id", "backup_manifest_sha256", "source_install_job_id",
+        "source_pinned_image", "source_container_id", "volume_name",
+        "generation", "archive_sha256", "archive_bytes",
+        "original_running_state", "restored_running_state",
+    }
+    if (set(value) != expected_keys or not JOB.fullmatch(job) or job == source_job
+            or value.get("state") != "ready" or value.get("operation") != "backup"
+            or value.get("failure_code") is not None or set(receipt) != receipt_keys
+            or receipt.get("schema_version") != 1 or receipt.get("backup_job_id") != job
+            or not ID.fullmatch(receipt.get("backup_manifest_sha256", ""))
+            or receipt.get("source_install_job_id") != source_job
+            or receipt.get("source_pinned_image") != IMAGE
+            or not ID.fullmatch(receipt.get("source_container_id", ""))
+            or not VOLUME.fullmatch(receipt.get("volume_name", ""))
+            or type(receipt.get("generation")) is not int or receipt["generation"] < 1
+            or not ID.fullmatch(receipt.get("archive_sha256", ""))
+            or type(receipt.get("archive_bytes")) is not int or receipt["archive_bytes"] < 1
+            or receipt.get("original_running_state") is not original_running
+            or receipt.get("restored_running_state") is not original_running):
+        raise Failure("backup_not_ready")
+    return job, receipt
+
+def read_backup_completion_receipt(home: Path, backup_job: str, backup_manifest: str,
+                                   receipt: dict, source_job: str, source_manifest: str, runtime_id: str,
+                                   volume: str, original_running: bool = True) -> dict:
+    """Bind the public CLI projection to private durable custody and archive."""
+    if not ID.fullmatch(source_manifest):
+        raise Failure("backup_source_manifest_invalid")
+    path = home / f"n8n-backup-{backup_job}.receipt.json"
+    persisted = read_json(path)
+    if persisted != receipt:
+        raise Failure("backup_completion_receipt_invalid")
+    if (receipt.get("backup_manifest_sha256") != backup_manifest
+            or receipt.get("source_install_job_id") != source_job
+            or receipt.get("source_container_id") != runtime_id
+            or receipt.get("volume_name") != volume
+            or receipt.get("original_running_state") is not original_running
+            or receipt.get("restored_running_state") is not original_running):
+        raise Failure("backup_completion_receipt_invalid")
+    custody = home / "n8n-managed-backup.v1.json"
+    if custody.exists() or custody.is_symlink():
+        raise Failure("backup_custody_not_retired")
+    generation = read_json(home / "n8n-managed-backup-generation.v1.json")
+    if (generation.get("schema_version") != 1 or type(generation.get("generation")) is not int
+            or generation["generation"] < receipt["generation"]):
+        raise Failure("backup_generation_invalid")
+    archive_dir = home / "n8n-backups"
+    archive = archive_dir / f"{backup_job}.tar"
+    try:
+        directory_mode = archive_dir.stat().st_mode & 0o777
+        archive_mode = archive.stat().st_mode & 0o777
+    except OSError as error:
+        raise Failure("backup_archive_missing") from error
+    if (archive_dir.is_symlink() or archive.is_symlink() or not archive.is_file()
+            or directory_mode & 0o077 or archive_mode & 0o077):
+        raise Failure("backup_archive_permissions_invalid")
+    digest, total = hashlib.sha256(), 0
+    try:
+        with archive.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                total += len(chunk)
+    except OSError as error:
+        raise Failure("backup_archive_read_failed") from error
+    if total != receipt["archive_bytes"] or digest.hexdigest() != receipt["archive_sha256"]:
+        raise Failure("backup_archive_digest_invalid")
+    return {
+        "receipt_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "receipt_bytes": path.stat().st_size,
+        "archive_sha256": receipt["archive_sha256"],
+        "archive_bytes": receipt["archive_bytes"],
+        "archive_path_sha256": hashlib.sha256(str(archive).encode()).hexdigest(),
+    }
+
+def validate_archive_headers(archive: Path) -> int:
+    """Admit only ordinary-file/directory tar members without retaining names."""
+    raw = run(["tar", "--list", "--verbose", "--file", str(archive)], timeout=30)
+    names = run(["tar", "--list", "--file", str(archive)], timeout=30)
+    try:
+        rows = raw.decode("utf-8", "strict").splitlines()
+    except UnicodeDecodeError as error:
+        raise Failure("backup_archive_headers_invalid") from error
+    if not rows:
+        raise Failure("backup_archive_headers_empty")
+    for row in rows:
+        # GNU tar emits the member type in column zero. Links and device/FIFO
+        # entries are deliberately rejected before any later restore feature.
+        if not row or row[0] not in "-d" or " -> " in row or " link to " in row:
+            raise Failure("backup_archive_headers_unsafe")
+    try:
+        members = names.decode("utf-8", "strict").splitlines()
+    except UnicodeDecodeError as error:
+        raise Failure("backup_archive_headers_invalid") from error
+    if len(members) != len(rows) or any(
+            not member or member.startswith(("/", "\\")) or "\\" in member
+            or any(part == ".." for part in member.split("/"))
+            for member in members):
+        raise Failure("backup_archive_headers_unsafe")
+    return len(rows)
+
 def validate_repair_product(value: dict, source_job: str, action: str) -> str:
     """Accept only the redacted, completed same-generation repair receipt."""
     job = required(value, "job_id", str)
@@ -658,7 +768,10 @@ def main() -> int:
             "packaging/tests/test_n8n_product_bootstrap_canary.py",
             "SRC/neothd/src/cli/n8n.rs", "SRC/neothd/src/integrations/n8n.rs",
             "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs",
-            "SRC/neothd/src/integrations/n8n/managed_runtime.rs", "SRC/neothd/src/integrations/n8n/managed_repair.rs", "SRC/neothd/src/integrations/n8n/managed_repair_tests.rs", "SRC/neothd/src/integrations/n8n/managed_uninstall.rs", "SRC/neothd/src/integrations/n8n/managed_purge.rs",
+            "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+            "SRC/neothd/src/integrations/n8n/managed_backup.rs",
+            "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
+            "SRC/neothd/src/integrations/n8n/managed_repair.rs", "SRC/neothd/src/integrations/n8n/managed_repair_tests.rs", "SRC/neothd/src/integrations/n8n/managed_uninstall.rs", "SRC/neothd/src/integrations/n8n/managed_purge.rs",
             "SRC/neothd/src/integrations/n8n/bootstrap_transport.rs",
             "SRC/neothd/src/integrations/n8n/workflow_import.rs",
             "SRC/neothd/src/integrations/jobs.rs", "SRC/neothd/src/integrations/state.rs",
@@ -731,6 +844,107 @@ def main() -> int:
         if second_workflows != first_workflows or second_custody != first_custody or second_import_job != first_import_job:
             raise Failure("workflow_import_repeat_not_read_only")
         receipt["workflow_import"] = {"workflow_count": WORKFLOW_COUNT, "first_cli_sha256": hashlib.sha256(first_import_raw).hexdigest(), "workflow_set_sha256": first_workflows["workflow_set_sha256"], "custody_sha256": first_custody["sha256"], "custody_bytes": first_custody["bytes"], "job_row_sha256": first_import_job["sha256"], "job_revision": first_import_job["revision"], "repeat_read_only": True}
+        receipt["stage"] = "managed_n8n_full_backup"
+        backup_raw = run([str(binary), "--output", "json", "n8n", "backup"])
+        if canonical_key in backup_raw:
+            raise Failure("backup_output_key_leak")
+        backup_job, backup_view = validate_backup_product(read_json_bytes(backup_raw), job)
+        backup_record = observe_exact_job(home, backup_job, "backup")
+        backup_record_full = observe_full_job_row(home, backup_job, "backup")
+        validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", backup_job]), backup_job, args.port)
+        if (backup_view["source_container_id"] != runtime_id or backup_view["volume_name"] != volume
+                or backup_view["source_install_job_id"] != job):
+            raise Failure("backup_source_custody_mismatch")
+        backup_completion = read_backup_completion_receipt(
+            home, backup_job, backup_record["manifest_sha256"], backup_view,
+            job, source_install["manifest_sha256"], runtime_id, volume,
+        )
+        archive = home / "n8n-backups" / f"{backup_job}.tar"
+        header_count = validate_archive_headers(archive)
+        if (read_json(home / "n8n-managed-runtime.v2.json") != runtime
+                or observe_exact_job(home, job, "install") != source_install
+                or observe_full_job_row(home, job, "install") != source_install_full
+                or canonical_n8n_api_key() != canonical_key):
+            raise Failure("backup_runtime_or_authority_mutation")
+        validate_runtime(docker_inspect(runtime_id), job, volume, runtime_id, args.port)
+        assert_runtime_running(runtime_id, True)
+        if (authenticated_probe(job, args.port) != receipt["http_probe"]
+                or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows):
+            raise Failure("backup_api_or_workflow_persistence_unproven")
+        receipt["backup"] = {
+            "job_id": backup_job, "job_row_sha256": backup_record["row_sha256"],
+            "full_job_row_sha256": backup_record_full,
+            "job_manifest_sha256": backup_record["manifest_sha256"],
+            "receipt_sha256": backup_completion["receipt_sha256"],
+            "receipt_bytes": backup_completion["receipt_bytes"],
+            "archive_sha256": backup_completion["archive_sha256"],
+            "archive_bytes": backup_completion["archive_bytes"],
+            "archive_path_sha256": backup_completion["archive_path_sha256"],
+            "safe_header_count": header_count, "source_container_id": runtime_id,
+            "volume": volume, "original_running_state": True,
+            "restored_running_state": True, "api_preserved": True,
+            "workflows_persisted": True,
+        }
+        receipt["stage"] = "managed_n8n_stopped_source_backup"
+        run(["docker", "container", "stop", runtime_id])
+        assert_runtime_running(runtime_id, False)
+        stopped_backup_raw = run([str(binary), "--output", "json", "n8n", "backup"])
+        if canonical_key in stopped_backup_raw:
+            raise Failure("backup_output_key_leak")
+        stopped_backup_job, stopped_backup_view = validate_backup_product(
+            read_json_bytes(stopped_backup_raw), job, original_running=False,
+        )
+        if stopped_backup_job == backup_job:
+            raise Failure("stopped_backup_job_reused")
+        stopped_backup_record = observe_exact_job(home, stopped_backup_job, "backup")
+        stopped_backup_record_full = observe_full_job_row(home, stopped_backup_job, "backup")
+        if (stopped_backup_view["source_container_id"] != runtime_id
+                or stopped_backup_view["volume_name"] != volume):
+            raise Failure("stopped_backup_source_custody_mismatch")
+        stopped_backup_completion = read_backup_completion_receipt(
+            home, stopped_backup_job, stopped_backup_record["manifest_sha256"],
+            stopped_backup_view, job, source_install["manifest_sha256"], runtime_id,
+            volume, original_running=False,
+        )
+        if read_backup_completion_receipt(
+                home, backup_job, backup_record["manifest_sha256"], backup_view,
+                job, source_install["manifest_sha256"], runtime_id, volume,
+        ) != backup_completion:
+            raise Failure("historical_backup_receipt_mutation")
+        stopped_archive = home / "n8n-backups" / f"{stopped_backup_job}.tar"
+        stopped_header_count = validate_archive_headers(stopped_archive)
+        if (read_json(home / "n8n-managed-runtime.v2.json") != runtime
+                or observe_exact_job(home, job, "install") != source_install
+                or observe_full_job_row(home, job, "install") != source_install_full
+                or not observe_exact_job(home, backup_job, "backup") == backup_record):
+            raise Failure("stopped_backup_history_mutation")
+        validate_runtime(docker_inspect(runtime_id), job, volume, runtime_id, args.port)
+        assert_runtime_running(runtime_id, False)
+        # Restore the fixture ourselves only after the backup proves that it
+        # preserved its stopped disposition, then retain the existing repair
+        # coverage unchanged.
+        run(["docker", "container", "start", runtime_id])
+        assert_runtime_running(runtime_id, True)
+        if (authenticated_probe(job, args.port) != receipt["http_probe"]
+                or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
+                or canonical_n8n_api_key() != canonical_key):
+            raise Failure("stopped_backup_api_or_workflow_persistence_unproven")
+        receipt["backup_stopped_source"] = {
+            "job_id": stopped_backup_job,
+            "job_row_sha256": stopped_backup_record["row_sha256"],
+            "full_job_row_sha256": stopped_backup_record_full,
+            "job_manifest_sha256": stopped_backup_record["manifest_sha256"],
+            "receipt_sha256": stopped_backup_completion["receipt_sha256"],
+            "receipt_bytes": stopped_backup_completion["receipt_bytes"],
+            "archive_sha256": stopped_backup_completion["archive_sha256"],
+            "archive_bytes": stopped_backup_completion["archive_bytes"],
+            "archive_path_sha256": stopped_backup_completion["archive_path_sha256"],
+            "safe_header_count": stopped_header_count,
+            "source_container_id": runtime_id, "volume": volume,
+            "original_running_state": False, "restored_running_state": False,
+            "fixture_running_state_restored_for_repair": True,
+            "api_preserved_after_manual_restore": True, "workflows_persisted": True,
+        }
         receipt["stage"] = "healthy_n8n_repair"
         before_ns = time.time_ns()
         before = f"{before_ns // 1_000_000_000}.{before_ns % 1_000_000_000:09d}"

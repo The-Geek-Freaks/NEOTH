@@ -455,6 +455,94 @@ class CustodyBoundaryTests(unittest.TestCase):
                 canary.clear_bootstrap_secrets("fixture")
 
 
+class ProductBackupReceiptTests(unittest.TestCase):
+    source_job = "12345678-1234-7234-8234-123456789abc"
+    backup_job = "abcdef12-1234-7234-8234-123456789abc"
+    source_manifest = "a" * 64
+    backup_manifest = "b" * 64
+    runtime = "c" * 64
+    volume = "neoth_n8n_" + "d" * 32
+
+    def receipt(self, archive: bytes) -> dict:
+        return {
+            "schema_version": 1, "backup_job_id": self.backup_job,
+            "backup_manifest_sha256": self.backup_manifest,
+            "source_install_job_id": self.source_job,
+            "source_pinned_image": canary.IMAGE,
+            "source_container_id": self.runtime, "volume_name": self.volume,
+            "generation": 1, "archive_sha256": canary.hashlib.sha256(archive).hexdigest(),
+            "archive_bytes": len(archive), "original_running_state": True,
+            "restored_running_state": True,
+        }
+
+    def output(self, archive: bytes) -> dict:
+        return {"job_id": self.backup_job, "state": "ready", "operation": "backup",
+                "receipt": self.receipt(archive), "failure_code": None}
+
+    def test_backup_output_requires_exact_ready_content_free_receipt(self) -> None:
+        archive = b"opaque archive"
+        self.assertEqual(canary.validate_backup_product(self.output(archive), self.source_job)[0], self.backup_job)
+        stopped = self.output(archive); stopped["receipt"] = dict(stopped["receipt"])
+        stopped["receipt"].update({"original_running_state": False, "restored_running_state": False})
+        self.assertEqual(canary.validate_backup_product(stopped, self.source_job, original_running=False)[0], self.backup_job)
+        for key, value in (("state", "failed"), ("operation", "repair"), ("failure_code", "private")):
+            with self.subTest(key=key):
+                changed = self.output(archive); changed[key] = value
+                with self.assertRaisesRegex(canary.Failure, "backup_not_ready"):
+                    canary.validate_backup_product(changed, self.source_job)
+        changed = self.output(archive); changed["receipt"] = dict(changed["receipt"]); changed["receipt"]["archive_bytes"] = 0
+        with self.assertRaisesRegex(canary.Failure, "backup_not_ready"):
+            canary.validate_backup_product(changed, self.source_job)
+
+    def test_backup_receipt_binds_archive_private_custody_and_exact_source(self) -> None:
+        archive = b"opaque archive"
+        receipt = self.receipt(archive)
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            private = home / "n8n-backups"; private.mkdir(); private.chmod(0o700)
+            archive_path = private / f"{self.backup_job}.tar"; archive_path.write_bytes(archive); archive_path.chmod(0o600)
+            (home / f"n8n-backup-{self.backup_job}.receipt.json").write_text(json.dumps(receipt))
+            (home / "n8n-managed-backup-generation.v1.json").write_text('{"schema_version":1,"generation":1}')
+            observed = canary.read_backup_completion_receipt(home, self.backup_job, self.backup_manifest, receipt, self.source_job, self.source_manifest, self.runtime, self.volume)
+            self.assertEqual(observed["archive_sha256"], receipt["archive_sha256"])
+            receipt["source_container_id"] = "e" * 64
+            (home / f"n8n-backup-{self.backup_job}.receipt.json").write_text(json.dumps(receipt))
+            with self.assertRaisesRegex(canary.Failure, "backup_completion_receipt_invalid"):
+                canary.read_backup_completion_receipt(home, self.backup_job, self.backup_manifest, receipt, self.source_job, self.source_manifest, self.runtime, self.volume)
+
+    def test_ready_backup_rejects_active_custody_but_keeps_historical_receipt_valid(self) -> None:
+        archive = b"first archive"
+        receipt = self.receipt(archive)
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); private = home / "n8n-backups"; private.mkdir(); private.chmod(0o700)
+            archive_path = private / f"{self.backup_job}.tar"; archive_path.write_bytes(archive); archive_path.chmod(0o600)
+            (home / f"n8n-backup-{self.backup_job}.receipt.json").write_text(json.dumps(receipt))
+            (home / "n8n-managed-backup-generation.v1.json").write_text('{"schema_version":1,"generation":2}')
+            canary.read_backup_completion_receipt(home, self.backup_job, self.backup_manifest, receipt, self.source_job, self.source_manifest, self.runtime, self.volume)
+            (home / "n8n-managed-backup.v1.json").write_text('{"phase":"completed"}')
+            with self.assertRaisesRegex(canary.Failure, "backup_custody_not_retired"):
+                canary.read_backup_completion_receipt(home, self.backup_job, self.backup_manifest, receipt, self.source_job, self.source_manifest, self.runtime, self.volume)
+
+    def test_archive_headers_reject_link_and_parent_escape_without_retaining_names(self) -> None:
+        safe_verbose = b"-rw------- root/root 1 2026-09-25 00:00 ./database.sqlite\n"
+        safe_names = b"./database.sqlite\n"
+        with patch.object(canary, "run", side_effect=[safe_verbose, safe_names]):
+            self.assertEqual(canary.validate_archive_headers(Path("archive.tar")), 1)
+        # The production streamer explicitly accepts Docker's directory-root
+        # member emitted for `docker cp <id>:/home/node/.n8n/. -`.
+        root_verbose = b"drwx------ root/root 0 2026-09-25 00:00 ./\n"
+        root_names = b"./\n"
+        with patch.object(canary, "run", side_effect=[root_verbose, root_names]):
+            self.assertEqual(canary.validate_archive_headers(Path("archive.tar")), 1)
+        unsafe_verbose = b"lrwxrwxrwx root/root 0 2026-09-25 00:00 ./link -> /etc/passwd\n"
+        with patch.object(canary, "run", return_value=unsafe_verbose):
+            with self.assertRaisesRegex(canary.Failure, "backup_archive_headers_unsafe"):
+                canary.validate_archive_headers(Path("archive.tar"))
+        with patch.object(canary, "run", side_effect=[safe_verbose, b"./../escape\n"]):
+            with self.assertRaisesRegex(canary.Failure, "backup_archive_headers_unsafe"):
+                canary.validate_archive_headers(Path("archive.tar"))
+
+
 class ProductRepairReceiptTests(unittest.TestCase):
     source_job = "12345678-1234-7234-8234-123456789abc"
     repair_job = "abcdef12-1234-7234-8234-123456789abc"

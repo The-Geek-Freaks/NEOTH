@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "base": "bcd6b9a27d16cd3455a718fc6024a31acb56e0b7",
+  "feature": "Parameterless managed n8n complete stopped SQLite data-directory backup",
+  "semantics": [
+    "exact ready-install source/image/container/volume custody",
+    "schema v4 to v5 Backup operation with preserved history",
+    "private bounded opaque tar stream; regular files and directories only",
+    "no-clobber archive publication and per-job immutable receipt",
+    "original running-state restoration; uncertain copy never replayed",
+    "exact job recovery and historical receipts after custody retirement"
+  ],
+  "review": {
+    "kind": "independent static",
+    "reportSha256": "FB7E84648D902C45C1768F95CAB160D8BEB89F18A03001344DA96F670F42C8C9",
+    "productionSha256": "EE58A58AE96ED494126BEB1898EA0E054CD0790E419891054A65B904626AE795",
+    "testsSha256": "8A0E35EB35AE11EA4E05CEAE4BEC7D06B950F41C0C230307BBB3D02BE0153238"
+  },
+  "selections": {
+    "newNativeTests": 20,
+    "portable": 2087,
+    "group": 1877,
+    "windows": 642
+  },
+  "hostedGates": [
+    "research-lifecycle.yml",
+    "windows-storage-regressions.yml",
+    "n8n-product-bootstrap.yml",
+    "cli-reference.yml with slim_clippy=true and workspace_clippy=true",
+    "preflight formatting"
+  ],
+  "productCanary": "Real running and stopped backup, archive bytes/hash/source binding, API/workflow recovery, historical status, then existing repair/reinstall/purge/cleanup",
+  "boundaries": [
+    "Hosted compilation and test results pending",
+    "No restore/update/rollback acceptance",
+    "No P1-14/P2-20 or overall Gold closure"
+  ],
+  "localExecutableValidationRan": false
+}

@@ -308,6 +308,7 @@ pub struct N8nJobStatusView {
     pub state: JobState,
     pub disposition: Option<&'static str>,
     pub config_cleanup: Option<&'static str>,
+    pub backup: Option<managed_runtime::managed_backup::BackupReceiptView>,
     pub current_step: Option<String>,
     pub completed_steps: u32,
     pub total_steps: u32,
@@ -329,6 +330,7 @@ impl From<&IntegrationJob> for N8nJobStatusView {
                 _ => None,
             },
             config_cleanup: None,
+            backup: None,
             current_step: job.current_step.clone(),
             completed_steps: job.progress.completed_steps,
             total_steps: job.progress.total_steps,
@@ -462,6 +464,15 @@ impl N8nRestartValidator {
 
 impl RestartValidator for N8nRestartValidator {
     fn validate(&self, job: &IntegrationJob) -> RestartDecision {
+        if job.operation == JobOperation::Backup {
+            return RestartDecision::Hold {
+                failure: JobFailure::new(
+                    "n8n_backup_reconciliation_required",
+                    "The interrupted backup retains archive and runtime custody; rerun n8n backup to restore its prior state without replaying an uncertain copy.",
+                )
+                .expect("static failure is valid"),
+            };
+        }
         if job.operation == JobOperation::Repair {
             return RestartDecision::Hold {
                 failure: JobFailure::new(
@@ -636,6 +647,15 @@ pub(super) fn has_ready_managed_binding(
 pub(crate) fn open_n8n_job_service(home: &Path) -> Result<IntegrationJobService, JobServiceError> {
     let service =
         IntegrationJobService::open(home, n8n_catalog(), &N8nRestartValidator::new(home))?;
+    managed_runtime::managed_backup::reject_pending_backup(home).map_err(|_| {
+        JobServiceError::RecoveryHold {
+            failure: JobFailure::new(
+                "n8n_backup_reconciliation_required",
+                "Backup custody requires explicit reconciliation before another n8n operation.",
+            )
+            .expect("static failure is valid"),
+        }
+    })?;
     // A Ready row is immutable evidence of a completed publication. If the
     // best-effort custody-file removal was interrupted after Ready, retry only
     // that removal on the next owned adapter open. Failure intentionally leaves
@@ -653,7 +673,7 @@ pub(crate) fn open_n8n_job_service(home: &Path) -> Result<IntegrationJobService,
             }
             continue;
         }
-        if job.operation == JobOperation::Purge {
+        if matches!(job.operation, JobOperation::Purge | JobOperation::Backup) {
             continue;
         }
         if job.operation == JobOperation::Repair {
@@ -1032,7 +1052,7 @@ pub(crate) fn status_at(
             .into_iter()
             .max_by_key(|candidate| (candidate.updated_at, candidate.job_id.clone())),
     };
-    let job = job.as_ref().map(|job| {
+    let job = job.as_ref().map(|job| -> anyhow::Result<N8nJobStatusView> {
         let mut view = N8nJobStatusView::from(job);
         if job.operation == JobOperation::Uninstall {
             view.config_cleanup = Some(
@@ -1042,8 +1062,20 @@ pub(crate) fn status_at(
                     .unwrap_or("unknown_or_preserved"),
             );
         }
-        view
-    });
+        if job.operation == JobOperation::Backup {
+            view.backup = managed_runtime::managed_backup::completed_receipt_at(home, job)
+                .map_err(anyhow::Error::msg)?;
+            if job.state == JobState::Ready && view.backup.is_none() {
+                anyhow::bail!("n8n backup has no verified completion receipt");
+            }
+            view.disposition = Some(if view.backup.is_some() {
+                "archive_verified"
+            } else {
+                "reconciliation_required"
+            });
+        }
+        Ok(view)
+    }).transpose()?;
     Ok(N8nStatusView {
         configured_endpoint,
         api_key_present,
