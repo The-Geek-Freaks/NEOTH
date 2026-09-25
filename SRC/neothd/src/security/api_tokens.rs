@@ -45,6 +45,7 @@
 //!
 //! Defined scopes:
 //!   `"api:health"` — GET /api/health (always granted to any valid token)
+//!   `"drafts:read"` — POST /api/email/drafts/pending
 //!   `"recall:read"` — POST /api/recall
 //!   `"proposals:read"` — POST /api/proactive/proposals/pending
 //!   `"stats:read"` — GET /api/stats
@@ -66,6 +67,8 @@ use uuid::Uuid;
 
 /// Health probe — always granted to any valid, non-expired, non-revoked token.
 pub const SCOPE_API_HEALTH: &str = "api:health";
+/// Read pending email-draft reminder metadata.
+pub const SCOPE_DRAFTS_READ: &str = "drafts:read";
 /// Read recall / memory search.
 pub const SCOPE_RECALL_READ: &str = "recall:read";
 /// Read pending proactive proposal metadata.
@@ -83,6 +86,7 @@ pub const SCOPE_CHANNEL_SEND: &str = "channel:send";
 pub const ALL_SCOPES: &[&str] = &[
     SCOPE_API_HEALTH,
     SCOPE_CHANNEL_SEND,
+    SCOPE_DRAFTS_READ,
     SCOPE_MEMORY_WRITE,
     SCOPE_PROPOSALS_READ,
     SCOPE_PROVIDER_CALL,
@@ -509,9 +513,28 @@ mod tests {
     #[test]
     fn proposals_read_is_a_known_dedicated_scope() {
         assert!(ALL_SCOPES.windows(2).all(|pair| pair[0] < pair[1]));
-        let (rec, _) = create_token("proposal-reminder", vec![SCOPE_PROPOSALS_READ.to_string()], None)
-            .unwrap();
+        let (rec, _) = create_token(
+            "proposal-reminder",
+            vec![SCOPE_PROPOSALS_READ.to_string()],
+            None,
+        )
+        .unwrap();
         assert!(rec.has_scope(SCOPE_PROPOSALS_READ));
+        assert!(!rec.has_scope(SCOPE_RECALL_READ));
+        assert!(!rec.has_scope(SCOPE_STATS_READ));
+    }
+
+    #[test]
+    fn drafts_read_is_a_known_dedicated_scope() {
+        assert!(ALL_SCOPES.windows(2).all(|pair| pair[0] < pair[1]));
+        let (rec, _) = create_token(
+            "draft-reminder",
+            vec![SCOPE_DRAFTS_READ.to_string()],
+            None,
+        )
+        .unwrap();
+        assert!(rec.has_scope(SCOPE_DRAFTS_READ));
+        assert!(!rec.has_scope(SCOPE_PROPOSALS_READ));
         assert!(!rec.has_scope(SCOPE_RECALL_READ));
         assert!(!rec.has_scope(SCOPE_STATS_READ));
     }

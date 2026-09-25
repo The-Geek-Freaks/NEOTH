@@ -1,4 +1,4 @@
-//! Eight v1 endpoint handlers for the localhost API.
+//! Nine v1 endpoint handlers for the localhost API.
 //!
 //! Every handler:
 //! 1. Receives the parsed [`ApiRequestCtx`] from [`super::server::serve`]
@@ -57,6 +57,7 @@ pub struct MemoryDriftRequest {
 }
 
 mod pending_proposals;
+mod pending_drafts;
 
 /// `/api/stats` payload — high-level counts the n8n weekly_stats
 /// workflow renders into a markdown digest.
@@ -806,6 +807,7 @@ pub async fn route(ctx: ApiRequestCtx, state: Arc<ApiState>) -> HandlerOutcome {
         ("GET", "/api/stats") => stats(&ctx, &state),
         ("POST", "/api/memory/drift") => memory_drift(&ctx, &state),
         ("POST", "/api/proactive/proposals/pending") => pending_proposals::handle(&ctx, &state),
+        ("POST", "/api/email/drafts/pending") => pending_drafts::handle(&ctx, &state),
         ("POST", "/api/memory/save") => memory_save(&ctx, &state).await,
         ("POST", "/api/provider/call") => provider_call(&ctx, &state).await,
         ("POST", "/api/channel/send") => channel_send(&ctx, &state).await,

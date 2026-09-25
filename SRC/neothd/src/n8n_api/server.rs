@@ -60,6 +60,7 @@ fn required_scope_for(method: &str, path: &str) -> Option<&'static str> {
         ("GET", "/api/stats") => Some(api_tokens::SCOPE_STATS_READ),
         ("POST", "/api/memory/drift") => Some(api_tokens::SCOPE_RECALL_READ),
         ("POST", "/api/proactive/proposals/pending") => Some(api_tokens::SCOPE_PROPOSALS_READ),
+        ("POST", "/api/email/drafts/pending") => Some(api_tokens::SCOPE_DRAFTS_READ),
         ("POST", "/api/memory/save") => Some(api_tokens::SCOPE_MEMORY_WRITE),
         ("POST", "/api/provider/call") => Some(api_tokens::SCOPE_PROVIDER_CALL),
         ("POST", "/api/channel/send") => Some(api_tokens::SCOPE_CHANNEL_SEND),
@@ -567,7 +568,12 @@ mod tests {
         post_test_http(port, "/api/memory/drift", token, body).await
     }
 
-    async fn post_test_http(port: u16, path: &str, token: Option<&str>, body: &str) -> serde_json::Value {
+    async fn post_test_http(
+        port: u16,
+        path: &str,
+        token: Option<&str>,
+        body: &str,
+    ) -> serde_json::Value {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
@@ -593,9 +599,8 @@ mod tests {
             let response = String::from_utf8(response).unwrap();
             let (head, body) = response.split_once("\r\n\r\n").unwrap();
             let mut envelope: serde_json::Value = serde_json::from_str(body).unwrap();
-            envelope["_http_status"] = serde_json::Value::String(
-                head.split_whitespace().nth(1).unwrap().to_owned(),
-            );
+            envelope["_http_status"] =
+                serde_json::Value::String(head.split_whitespace().nth(1).unwrap().to_owned());
             envelope
         })
         .await
@@ -693,11 +698,17 @@ mod tests {
     async fn loopback_pending_proposals_requires_dedicated_scope() {
         let home = tempfile::tempdir().unwrap();
         let (proposal_record, proposal_token) = api_tokens::create_token(
-            "proposal-reader", vec![api_tokens::SCOPE_PROPOSALS_READ.to_owned()], None,
-        ).unwrap();
+            "proposal-reader",
+            vec![api_tokens::SCOPE_PROPOSALS_READ.to_owned()],
+            None,
+        )
+        .unwrap();
         let (recall_record, recall_token) = api_tokens::create_token(
-            "recall-reader", vec![api_tokens::SCOPE_RECALL_READ.to_owned()], None,
-        ).unwrap();
+            "recall-reader",
+            vec![api_tokens::SCOPE_RECALL_READ.to_owned()],
+            None,
+        )
+        .unwrap();
         api_tokens::save_store(home.path(), &[proposal_record, recall_record]).unwrap();
         let (state, writer, wal_join, server, shutdown, port) =
             start_drift_http_test_server(home.path()).await;
@@ -711,6 +722,65 @@ mod tests {
         assert_eq!(denied["_http_status"], "403");
         assert_eq!(denied["error"]["code"], "PermissionDenied");
         assert!(!home.path().join("proposals").exists());
+        stop_drift_http_test_server(state, writer, wal_join, server, shutdown).await;
+    }
+
+    #[tokio::test]
+    async fn loopback_pending_drafts_requires_dedicated_scope_and_returns_metadata() {
+        let home = tempfile::tempdir().unwrap();
+        let draft = crate::email::draft::build_draft(
+            "private@example.test",
+            "Ada Example",
+            "Pending review",
+            "private brief",
+            crate::email::draft::SalutationLocale::EnglishCasual,
+            "private signature",
+            vec![crate::email::draft::DraftContextSnippet {
+                source_label: "private source".to_owned(),
+                excerpt: "private excerpt".to_owned(),
+            }],
+            1_700_000_000,
+        );
+        crate::email::draft::save_draft(home.path(), &draft).unwrap();
+        let (draft_record, draft_token) = api_tokens::create_token(
+            "draft-reader",
+            vec![api_tokens::SCOPE_DRAFTS_READ.to_owned()],
+            None,
+        )
+        .unwrap();
+        let (proposal_record, proposal_token) = api_tokens::create_token(
+            "proposal-reader",
+            vec![api_tokens::SCOPE_PROPOSALS_READ.to_owned()],
+            None,
+        )
+        .unwrap();
+        api_tokens::save_store(home.path(), &[draft_record, proposal_record]).unwrap();
+
+        let (state, writer, wal_join, server, shutdown, port) =
+            start_drift_http_test_server(home.path()).await;
+        let path = "/api/email/drafts/pending";
+        let allowed = post_test_http(
+            port,
+            path,
+            Some(&draft_token),
+            r#"{"limit":20,"min_age_secs":0}"#,
+        )
+        .await;
+        assert_eq!(allowed["_http_status"], "200");
+        assert_eq!(allowed["ok"], true);
+        assert_eq!(allowed["data"]["total"], 1);
+        let pending = allowed["data"]["pending"].as_array().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0]["id"], draft.id);
+        assert_eq!(pending[0]["subject"], "Pending review");
+        assert_eq!(pending[0]["recipient_display_name"], "Ada Example");
+        assert_eq!(pending[0]["status"], "pending");
+        for field in ["to", "brief", "signature", "context_snippets", "operator_note"] {
+            assert!(pending[0].get(field).is_none(), "unexpected response field {field}");
+        }
+        let denied = post_test_http(port, path, Some(&proposal_token), "{not-json").await;
+        assert_eq!(denied["_http_status"], "403");
+        assert_eq!(denied["error"]["code"], "PermissionDenied");
         stop_drift_http_test_server(state, writer, wal_join, server, shutdown).await;
     }
 
@@ -851,6 +921,7 @@ mod tests {
             ("GET", "/api/stats"),
             ("POST", "/api/memory/drift"),
             ("POST", "/api/proactive/proposals/pending"),
+            ("POST", "/api/email/drafts/pending"),
             ("POST", "/api/memory/save"),
             ("POST", "/api/provider/call"),
             ("POST", "/api/channel/send"),
@@ -883,6 +954,26 @@ mod tests {
         );
         assert_ne!(
             required_scope_for("POST", "/api/memory/drift"),
+            Some(api_tokens::SCOPE_STATS_READ),
+        );
+    }
+
+    #[test]
+    fn pending_drafts_requires_dedicated_drafts_read_scope() {
+        assert_eq!(
+            required_scope_for("POST", "/api/email/drafts/pending"),
+            Some(api_tokens::SCOPE_DRAFTS_READ),
+        );
+        assert_ne!(
+            required_scope_for("POST", "/api/email/drafts/pending"),
+            Some(api_tokens::SCOPE_PROPOSALS_READ),
+        );
+        assert_ne!(
+            required_scope_for("POST", "/api/email/drafts/pending"),
+            Some(api_tokens::SCOPE_RECALL_READ),
+        );
+        assert_ne!(
+            required_scope_for("POST", "/api/email/drafts/pending"),
             Some(api_tokens::SCOPE_STATS_READ),
         );
     }

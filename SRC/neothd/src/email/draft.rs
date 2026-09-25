@@ -1,10 +1,16 @@
 //! EM-04 draft module — see [`super`].
 
 use std::fs::{self, OpenOptions};
+use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+
+use crate::skills::store::{BoundDirectory, open_bound_directory, read_regular_file_bounded};
+
+const MAX_DRAFT_BYTES: usize = 1024 * 1024;
+const MAX_DRAFT_ENTRIES: usize = 4096;
 
 /// One grounded snippet attached to a draft. Operators paste
 /// paperless consult hits, calendar lookups, or memory anchors
@@ -285,6 +291,113 @@ pub fn save_draft(home: &Path, draft: &EmailDraft) -> std::io::Result<PathBuf> {
 pub fn load_draft(home: &Path, id: &str) -> Option<EmailDraft> {
     let body = fs::read_to_string(draft_path(home, id)).ok()?;
     serde_json::from_str(&body).ok()
+}
+
+fn anyhow_is_not_found(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
+        .any(|error| error.kind() == std::io::ErrorKind::NotFound)
+}
+
+fn anyhow_to_io(error: anyhow::Error) -> std::io::Error {
+    let kind = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<std::io::Error>().map(std::io::Error::kind))
+        .unwrap_or(std::io::ErrorKind::Other);
+    std::io::Error::new(kind, error)
+}
+
+fn drafts_root(home: &Path) -> std::io::Result<Option<BoundDirectory>> {
+    open_bound_directory(&drafts_dir(home), false, "email draft store").map_err(anyhow_to_io)
+}
+
+fn decode_draft(bytes: Vec<u8>, display_path: &Path) -> std::io::Result<EmailDraft> {
+    let body = String::from_utf8(bytes).map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("email draft {} is not UTF-8: {error}", display_path.display()),
+        )
+    })?;
+    serde_json::from_str(&body).map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("parse email draft {}: {error}", display_path.display()),
+        )
+    })
+}
+
+/// List drafts using a bounded no-follow file-store walk. This stricter read
+/// path is for external API consumers: a missing directory is empty, foreign
+/// non-draft entries are ignored, and anything recognisably owned but unreadable
+/// or malformed is surfaced rather than silently disappearing. Existing
+/// [`list_drafts`] keeps its tolerant legacy behavior for its current callers.
+pub fn list_drafts_checked(
+    home: &Path,
+    status_filter: Option<DraftStatus>,
+) -> std::io::Result<Vec<EmailDraft>> {
+    let Some(root) = drafts_root(home)? else {
+        return Ok(Vec::new());
+    };
+    let entries = root.dir.entries()?;
+    let mut out = Vec::new();
+    let mut entry_count = 0usize;
+    for entry in entries {
+        let entry = entry?;
+        entry_count = entry_count.checked_add(1).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "email draft entry counter overflow")
+        })?;
+        if entry_count > MAX_DRAFT_ENTRIES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "email draft store {} exceeds the {MAX_DRAFT_ENTRIES}-entry limit",
+                    root.display_path.display()
+                ),
+            ));
+        }
+
+        let name: OsString = entry.file_name();
+        let Some(name_text) = name.to_str() else {
+            tracing::warn!(store = %root.display_path.display(), "skipping non-UTF-8 foreign email draft entry");
+            continue;
+        };
+        let Some(id) = name_text.strip_suffix(".json") else {
+            continue;
+        };
+        if !is_safe_id(id) {
+            tracing::warn!(store = %root.display_path.display(), "skipping foreign email draft filename");
+            continue;
+        }
+
+        let display_path = root.display_path.join(&name);
+        let bytes = match read_regular_file_bounded(&root.dir, &name, &display_path, MAX_DRAFT_BYTES) {
+            Ok(bytes) => bytes,
+            Err(error) if anyhow_is_not_found(&error) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("email draft disappeared during checked read: {}", display_path.display()),
+                ));
+            }
+            Err(error) => return Err(anyhow_to_io(error)),
+        };
+        let draft = decode_draft(bytes, &display_path)?;
+        if draft.id != id {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "email draft filename id {id:?} does not match record id {:?} at {}",
+                    draft.id,
+                    display_path.display()
+                ),
+            ));
+        }
+        if status_filter.map(|status| draft.status == status).unwrap_or(true) {
+            out.push(draft);
+        }
+    }
+    out.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(out)
 }
 
 /// List drafts. Optional status filter. Sorted ascending by id
@@ -578,6 +691,108 @@ mod tests {
         let sent = list_drafts(home.path(), Some(DraftStatus::Sent));
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].id, b.id);
+    }
+
+    #[test]
+    fn checked_list_drafts_filters_status_sorts_and_ignores_foreign_files() {
+        let home = tempfile::tempdir().unwrap();
+        let mut pending_earlier = sample_draft(100);
+        let mut pending_later = sample_draft(400);
+        let mut reviewed = sample_draft(200);
+        let mut sent = sample_draft(300);
+        let mut discarded = sample_draft(350);
+        pending_earlier.status = DraftStatus::Pending;
+        pending_later.status = DraftStatus::Pending;
+        reviewed.status = DraftStatus::Reviewed;
+        sent.status = DraftStatus::Sent;
+        discarded.status = DraftStatus::Discarded;
+        for draft in [&pending_later, &reviewed, &sent, &discarded, &pending_earlier] {
+            save_draft(home.path(), draft).unwrap();
+        }
+        let drafts = drafts_dir(home.path());
+        std::fs::write(drafts.join("editor-backup.txt"), b"foreign").unwrap();
+        std::fs::write(drafts.join(".tmp"), b"foreign").unwrap();
+
+        let pending = list_drafts_checked(home.path(), Some(DraftStatus::Pending)).unwrap();
+        assert_eq!(pending.len(), 2);
+        assert_eq!(pending[0].id, pending_earlier.id);
+        assert_eq!(pending[1].id, pending_later.id);
+    }
+
+    #[test]
+    fn checked_list_drafts_missing_store_is_empty_without_creation() {
+        let home = tempfile::tempdir().unwrap();
+        let drafts = drafts_dir(home.path());
+        assert!(list_drafts_checked(home.path(), Some(DraftStatus::Pending))
+            .unwrap()
+            .is_empty());
+        assert!(!drafts.exists());
+    }
+
+    #[test]
+    fn checked_list_drafts_recognised_corruption_is_an_error() {
+        let home = tempfile::tempdir().unwrap();
+        let draft = sample_draft(100);
+        save_draft(home.path(), &draft).unwrap();
+        std::fs::write(draft_path(home.path(), &draft.id), b"not json").unwrap();
+
+        let error = list_drafts_checked(home.path(), Some(DraftStatus::Pending)).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn checked_list_drafts_rejects_oversized_recognised_record_without_mutation() {
+        let home = tempfile::tempdir().unwrap();
+        let draft = sample_draft(100);
+        let path = draft_path(home.path(), &draft.id);
+        std::fs::create_dir_all(drafts_dir(home.path())).unwrap();
+        std::fs::File::create(&path)
+            .unwrap()
+            .set_len((MAX_DRAFT_BYTES + 1) as u64)
+            .unwrap();
+        let before_len = std::fs::metadata(&path).unwrap().len();
+
+        let error = list_drafts_checked(home.path(), Some(DraftStatus::Pending)).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), before_len);
+        assert!(path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_list_drafts_refuses_recognised_symlinked_file_or_root() {
+        use std::os::unix::fs::symlink;
+
+        let outside = tempfile::tempdir().unwrap();
+        let draft = sample_draft(100);
+        save_draft(outside.path(), &draft).unwrap();
+        let outside_path = draft_path(outside.path(), &draft.id);
+        let outside_before = std::fs::read(&outside_path).unwrap();
+
+        let file_link_home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(drafts_dir(file_link_home.path())).unwrap();
+        symlink(&outside_path, draft_path(file_link_home.path(), &draft.id)).unwrap();
+        assert!(list_drafts_checked(file_link_home.path(), None).is_err());
+        assert_eq!(std::fs::read(&outside_path).unwrap(), outside_before);
+
+        let root_link_home = tempfile::tempdir().unwrap();
+        symlink(drafts_dir(outside.path()), drafts_dir(root_link_home.path())).unwrap();
+        assert!(list_drafts_checked(root_link_home.path(), None).is_err());
+        assert_eq!(std::fs::read(&outside_path).unwrap(), outside_before);
+    }
+
+    #[test]
+    fn checked_list_drafts_rejects_filename_id_mismatch() {
+        let home = tempfile::tempdir().unwrap();
+        let draft = sample_draft(100);
+        let mismatched_name = "200-00000000";
+        let body = serde_json::to_vec(&draft).unwrap();
+        std::fs::create_dir_all(drafts_dir(home.path())).unwrap();
+        std::fs::write(draft_path(home.path(), mismatched_name), body).unwrap();
+
+        let error = list_drafts_checked(home.path(), Some(DraftStatus::Pending)).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]

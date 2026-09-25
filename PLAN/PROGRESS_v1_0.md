@@ -2,6 +2,29 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1054 Linux keychain repair and pending email drafts (2026-09-25):**
+Root admitted the redacted failed product receipt from run36074617847 at
+8d86e8aa with its API ZIP digest and all11 historical source/input hashes.
+The first actual install failed at VolumeIntent before Docker with the exact
+nested-Tokio-runtime category. Linux get/set/delete now keep the entire
+blocking Secret Service client lifetime on a scoped worker thread. Five
+Linux regressions exercise runtime creation/use/drop under synchronous,
+current-thread and multithread callers plus error/panic return behavior.
+The third real starter adapter, POST /api/email/drafts/pending, requires its
+own drafts:read scope. It reads Pending metadata from the existing draft
+store without creating it, excludes raw address/body/context, and exposes
+recognised corruption instead of silently losing drafts. Size and no-follow
+read boundaries, inclusive minimum age and real loopback HTTP scope isolation
+are covered. The inactive starter requests pending drafts at least48 hours
+old; seven generated starter adapters remain open. No draft is sent or changed.
+Seventeen new cases are registered: Native1743 plus Windows41/Linux61/macOS56;
+Group1524 and Windows301 selected. Hosted execution and the fresh compiled
+product bootstrap remain pending. GitHub reports Group1507 and Core975 successful; source-bound artifact
+admission follows. Windows290 still runs; older Windows279 failed only the
+already repaired stdin fixture.
+No roadmap criterion is closed on source review alone. The local BSOD hold
+remains absolute. Claude TASK030 traces the real calendar agenda reader.
+
 **W1045 pending proposals, real HTTP gates and Windows execution (2026-09-25):**
 The second real starter adapter, POST /api/proactive/proposals/pending, reads
 Pending proposal metadata from the existing no-create file store. It preserves

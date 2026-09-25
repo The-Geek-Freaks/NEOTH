@@ -360,6 +360,17 @@ jobs:
           n8n_api::handlers::pending_proposals::tests::pending_proposals_recognised_corruption_is_a_structured_error	neothd/src/n8n_api/handlers/pending_proposals.rs
           n8n_api::handlers::pending_proposals::tests::pending_proposals_request_rejects_wrong_types	neothd/src/n8n_api/handlers/pending_proposals.rs
           security::api_tokens::tests::proposals_read_is_a_known_dedicated_scope	neothd/src/security/api_tokens.rs
+          email::draft::tests::checked_list_drafts_filters_status_sorts_and_ignores_foreign_files	neothd/src/email/draft.rs
+          email::draft::tests::checked_list_drafts_missing_store_is_empty_without_creation	neothd/src/email/draft.rs
+          email::draft::tests::checked_list_drafts_recognised_corruption_is_an_error	neothd/src/email/draft.rs
+          email::draft::tests::checked_list_drafts_rejects_filename_id_mismatch	neothd/src/email/draft.rs
+          email::draft::tests::checked_list_drafts_rejects_oversized_recognised_record_without_mutation	neothd/src/email/draft.rs
+          n8n_api::handlers::pending_drafts::tests::pending_drafts_default_cap_zero_and_metadata_only	neothd/src/n8n_api/handlers/pending_drafts.rs
+          n8n_api::handlers::pending_drafts::tests::pending_drafts_request_rejects_wrong_types	neothd/src/n8n_api/handlers/pending_drafts.rs
+          n8n_api::handlers::pending_drafts::tests::pending_drafts_status_age_and_future_rows_are_filtered	neothd/src/n8n_api/handlers/pending_drafts.rs
+          n8n_api::server::tests::loopback_pending_drafts_requires_dedicated_scope_and_returns_metadata	neothd/src/n8n_api/server.rs
+          n8n_api::server::tests::pending_drafts_requires_dedicated_drafts_read_scope	neothd/src/n8n_api/server.rs
+          security::api_tokens::tests::drafts_read_is_a_known_dedicated_scope	neothd/src/security/api_tokens.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -376,7 +387,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 290 ]]; then
+          if [[ "$expected" -ne 301 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -462,7 +473,7 @@ jobs:
             fi
           else
             compile_status=64
-            printf 'selection is not the required 290 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 301 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

@@ -88,7 +88,7 @@ fn build_workflow_skeleton(
     let http_id = format!("{slug}_http");
     let url = format!("={{{{ $json.neothBaseUrl + '{endpoint}' }}}}");
     let unavailable_note = format!(
-        "Unavailable starter intent: {endpoint} is not one of the eight current NEOTH n8n API routes. Keep this workflow inactive until an explicit adapter and its request-payload contract are implemented; no payload adapter is shipped here."
+        "Unavailable starter intent: {endpoint} is not one of the nine current NEOTH n8n API routes. Keep this workflow inactive until an explicit adapter and its request-payload contract are implemented; no payload adapter is shipped here."
     );
     let (http_parameters, http_note) = if slug == "memory_decay_report" {
         (
@@ -119,6 +119,21 @@ fn build_workflow_skeleton(
                 "options": {}
             }),
             "Implemented POST /api/proactive/proposals/pending requires proposals:read and returns metadata for pending proposals at least 24 hours old. Draft YAML, rationale and operator notes stay in NEOTH; this workflow does not approve or apply proposals.",
+        )
+    } else if slug == "drafts_pending_review" {
+        (
+            serde_json::json!({
+                "url": url,
+                "method": method,
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpHeaderAuth",
+                "sendBody": true,
+                "contentType": "json",
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify({ limit: 20, min_age_secs: 172800 }) }}",
+                "options": {}
+            }),
+            "Implemented POST /api/email/drafts/pending requires drafts:read and returns pending draft reminder metadata at least 48 hours old. Recipient address, brief, signature and snippets stay in NEOTH; this workflow does not review, send or discard drafts.",
         )
     } else {
         (
@@ -321,10 +336,10 @@ const STARTER_SPECS: &[StarterSpec] = &[
     StarterSpec {
         slug: "drafts_pending_review",
         name: "Email drafts pending review (48 h)",
-        description: "Unavailable adapter: intended EM-04 drafts-pending-review reminder workflow.",
+        description: "Read pending email-draft metadata after 48 hours; review and sending remain in NEOTH.",
         cron: "0 9,17 * * *",
-        endpoint: "/email/drafts/pending",
-        method: "GET",
+        endpoint: "/api/email/drafts/pending",
+        method: "POST",
     },
 ];
 
@@ -575,8 +590,29 @@ mod tests {
             } else if w.slug == "proposal_review_reminder" {
                 assert_eq!(http["parameters"]["method"], "POST");
                 assert_eq!(http["parameters"]["sendBody"], true);
-                assert_eq!(http["parameters"]["jsonBody"], "={{ JSON.stringify({ limit: 20, min_age_secs: 86400 }) }}");
-                assert!(http["notes"].as_str().is_some_and(|notes| notes.contains("requires proposals:read")));
+                assert_eq!(
+                    http["parameters"]["jsonBody"],
+                    "={{ JSON.stringify({ limit: 20, min_age_secs: 86400 }) }}"
+                );
+                assert!(
+                    http["notes"]
+                        .as_str()
+                    .is_some_and(|notes| notes.contains("requires proposals:read"))
+                );
+            } else if w.slug == "drafts_pending_review" {
+                assert_eq!(http["parameters"]["method"], "POST");
+                assert_eq!(http["parameters"]["sendBody"], true);
+                assert_eq!(http["parameters"]["contentType"], "json");
+                assert_eq!(http["parameters"]["specifyBody"], "json");
+                assert_eq!(
+                    http["parameters"]["jsonBody"],
+                    "={{ JSON.stringify({ limit: 20, min_age_secs: 172800 }) }}"
+                );
+                assert!(
+                    http["notes"]
+                        .as_str()
+                        .is_some_and(|notes| notes.contains("requires drafts:read"))
+                );
             } else {
                 assert!(
                     http["notes"]

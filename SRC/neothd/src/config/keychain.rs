@@ -600,78 +600,84 @@ pub(super) struct LinuxCredStore;
 #[cfg(all(target_os = "linux", feature = "keychain"))]
 impl SecretStore for LinuxCredStore {
     fn get(&self, key: &str) -> Result<Option<SecretString>> {
-        let service = linux_secret_service()?;
-        let mut found = service
-            .search_items(linux_secret_attributes(key))
-            .with_context(|| format!("Linux Secret Service search failed for key {key:?}"))?;
-        let count = found.unlocked.len() + found.locked.len();
-        if count == 0 {
-            return Ok(None);
-        }
-        if count != 1 {
-            anyhow::bail!(
-                "Linux Secret Service contains {count} entries for key {key:?}; \
-                 remove duplicates before continuing"
-            );
-        }
-        let item = if let Some(item) = found.unlocked.pop() {
-            item
-        } else {
-            let item = found.locked.pop().expect("count checked");
-            item.unlock()
-                .with_context(|| format!("unlock Linux Secret Service key {key:?}"))?;
-            item
-        };
-        let bytes = item
-            .get_secret()
-            .with_context(|| format!("read Linux Secret Service key {key:?}"))?;
-        Ok(Some(SecretString::from(
-            String::from_utf8(bytes).context("Linux Secret Service value is not UTF-8")?,
-        )))
+        linux_secret_service_operation(|| {
+            let service = linux_secret_service()?;
+            let mut found = service
+                .search_items(linux_secret_attributes(key))
+                .with_context(|| format!("Linux Secret Service search failed for key {key:?}"))?;
+            let count = found.unlocked.len() + found.locked.len();
+            if count == 0 {
+                return Ok(None);
+            }
+            if count != 1 {
+                anyhow::bail!(
+                    "Linux Secret Service contains {count} entries for key {key:?}; \
+                     remove duplicates before continuing"
+                );
+            }
+            let item = if let Some(item) = found.unlocked.pop() {
+                item
+            } else {
+                let item = found.locked.pop().expect("count checked");
+                item.unlock()
+                    .with_context(|| format!("unlock Linux Secret Service key {key:?}"))?;
+                item
+            };
+            let bytes = item
+                .get_secret()
+                .with_context(|| format!("read Linux Secret Service key {key:?}"))?;
+            Ok(Some(SecretString::from(
+                String::from_utf8(bytes).context("Linux Secret Service value is not UTF-8")?,
+            )))
+        })
     }
 
     fn set(&self, key: &str, value: &SecretString) -> Result<()> {
-        let service = linux_secret_service()?;
-        let collection = service
-            .get_default_collection()
-            .or_else(|_| service.get_any_collection())
-            .context("open a Linux Secret Service collection")?;
-        if collection
-            .is_locked()
-            .context("query Linux Secret Service collection lock state")?
-        {
+        linux_secret_service_operation(|| {
+            let service = linux_secret_service()?;
+            let collection = service
+                .get_default_collection()
+                .or_else(|_| service.get_any_collection())
+                .context("open a Linux Secret Service collection")?;
+            if collection
+                .is_locked()
+                .context("query Linux Secret Service collection lock state")?
+            {
+                collection
+                    .unlock()
+                    .context("unlock Linux Secret Service collection")?;
+            }
             collection
-                .unlock()
-                .context("unlock Linux Secret Service collection")?;
-        }
-        collection
-            .create_item(
-                &store_key(key),
-                linux_secret_attributes(key),
-                value.expose().as_bytes(),
-                true,
-                "text/plain; charset=utf-8",
-            )
-            .with_context(|| format!("write Linux Secret Service key {key:?}"))?;
-        Ok(())
+                .create_item(
+                    &store_key(key),
+                    linux_secret_attributes(key),
+                    value.expose().as_bytes(),
+                    true,
+                    "text/plain; charset=utf-8",
+                )
+                .with_context(|| format!("write Linux Secret Service key {key:?}"))?;
+            Ok(())
+        })
     }
 
     fn delete(&self, key: &str) -> Result<()> {
-        let service = linux_secret_service()?;
-        let found = service
-            .search_items(linux_secret_attributes(key))
-            .with_context(|| format!("Linux Secret Service search failed for key {key:?}"))?;
-        for item in found.unlocked {
-            item.delete()
-                .with_context(|| format!("delete Linux Secret Service key {key:?}"))?;
-        }
-        for item in found.locked {
-            item.unlock()
-                .with_context(|| format!("unlock Linux Secret Service key {key:?}"))?;
-            item.delete()
-                .with_context(|| format!("delete Linux Secret Service key {key:?}"))?;
-        }
-        Ok(())
+        linux_secret_service_operation(|| {
+            let service = linux_secret_service()?;
+            let found = service
+                .search_items(linux_secret_attributes(key))
+                .with_context(|| format!("Linux Secret Service search failed for key {key:?}"))?;
+            for item in found.unlocked {
+                item.delete()
+                    .with_context(|| format!("delete Linux Secret Service key {key:?}"))?;
+            }
+            for item in found.locked {
+                item.unlock()
+                    .with_context(|| format!("unlock Linux Secret Service key {key:?}"))?;
+                item.delete()
+                    .with_context(|| format!("delete Linux Secret Service key {key:?}"))?;
+            }
+            Ok(())
+        })
     }
 
     fn backend_name(&self) -> &'static str {
@@ -683,6 +689,21 @@ impl SecretStore for LinuxCredStore {
 fn linux_secret_service() -> Result<secret_service::blocking::SecretService<'static>> {
     secret_service::blocking::SecretService::connect(secret_service::EncryptionType::Dh)
         .context("connect to Linux Secret Service over the session D-Bus")
+}
+
+/// The Secret Service blocking client builds its own Tokio runtime. Run the
+/// entire client lifetime on a dedicated thread so synchronous `SecretStore`
+/// calls remain safe from either flavor of an active Tokio runtime.
+#[cfg(all(target_os = "linux", feature = "keychain"))]
+fn linux_secret_service_operation<T: Send>(
+    operation: impl FnOnce() -> Result<T> + Send,
+) -> Result<T> {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(operation)
+            .join()
+            .map_err(|_| anyhow::anyhow!("Linux Secret Service worker thread panicked"))?
+    })
 }
 
 #[cfg(all(target_os = "linux", feature = "keychain"))]
@@ -1180,6 +1201,58 @@ mod tests {
             .find(|account_id| account_id.as_str() == id)
             .expect("configured test account");
         telegram_account_token_key(account_id)
+    }
+
+    #[cfg(all(target_os = "linux", feature = "keychain"))]
+    fn assert_linux_secret_service_operation_uses_worker_thread() {
+        let caller = std::thread::current().id();
+        let (worker, value) = linux_secret_service_operation(|| {
+            assert!(tokio::runtime::Handle::try_current().is_err());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build worker-bound test runtime");
+            let value = runtime.block_on(async { 7_u8 });
+            drop(runtime);
+            Ok((std::thread::current().id(), value))
+        })
+        .unwrap();
+        assert_ne!(worker, caller);
+        assert_eq!(value, 7);
+    }
+
+    #[cfg(all(target_os = "linux", feature = "keychain"))]
+    #[test]
+    fn linux_secret_service_operation_uses_worker_thread_without_runtime() {
+        assert_linux_secret_service_operation_uses_worker_thread();
+    }
+
+    #[cfg(all(target_os = "linux", feature = "keychain"))]
+    #[tokio::test(flavor = "current_thread")]
+    async fn linux_secret_service_operation_uses_worker_thread_in_current_thread_runtime() {
+        assert_linux_secret_service_operation_uses_worker_thread();
+    }
+
+    #[cfg(all(target_os = "linux", feature = "keychain"))]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn linux_secret_service_operation_uses_worker_thread_in_multi_thread_runtime() {
+        assert_linux_secret_service_operation_uses_worker_thread();
+    }
+
+    #[cfg(all(target_os = "linux", feature = "keychain"))]
+    #[test]
+    fn linux_secret_service_operation_propagates_operation_error() {
+        let error = linux_secret_service_operation::<()>(|| anyhow::bail!("injected worker error"))
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("injected worker error"));
+    }
+
+    #[cfg(all(target_os = "linux", feature = "keychain"))]
+    #[test]
+    fn linux_secret_service_operation_reports_worker_panic_coarsely() {
+        let error = linux_secret_service_operation::<()>(|| panic!("injected worker panic"))
+            .unwrap_err();
+        assert_eq!(error.to_string(), "Linux Secret Service worker thread panicked");
     }
 
     struct FailOnSetStore {

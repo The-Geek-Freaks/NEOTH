@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{parse_body, ApiErrorCode, ApiRequestCtx, ApiState, HandlerOutcome};
+use super::{ApiErrorCode, ApiRequestCtx, ApiState, HandlerOutcome, parse_body};
 use crate::proactive::action_staging::{self, ProposalStatus};
 
 /// `/api/proactive/proposals/pending` request. `min_age_secs` is an inclusive
@@ -118,7 +118,7 @@ pub fn handle(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proactive::action_staging::{save_proposal, ProposalKind, ProposedAction};
+    use crate::proactive::action_staging::{ProposalKind, ProposedAction, save_proposal};
 
     fn proposal(id: &str, status: ProposalStatus, generated_ts_unix: i64) -> ProposedAction {
         ProposedAction {
@@ -138,7 +138,11 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         for index in 0..101 {
             let id = format!("{}-cron_job-{index:08x}", 1_000 + index);
-            save_proposal(home.path(), &proposal(&id, ProposalStatus::Pending, 1_000 + index)).unwrap();
+            save_proposal(
+                home.path(),
+                &proposal(&id, ProposalStatus::Pending, 1_000 + index),
+            )
+            .unwrap();
         }
 
         let default = read_pending_proposals_at(home.path(), 20, 0, 2_000).unwrap();
@@ -168,20 +172,53 @@ mod tests {
     #[test]
     fn pending_proposals_filter_status_age_and_keep_id_order() {
         let home = tempfile::tempdir().unwrap();
-        save_proposal(home.path(), &proposal("100-cron_job-00000001", ProposalStatus::Pending, 100)).unwrap();
-        save_proposal(home.path(), &proposal("200-cron_job-00000002", ProposalStatus::Approved, 200)).unwrap();
-        save_proposal(home.path(), &proposal("300-cron_job-00000003", ProposalStatus::Rejected, 300)).unwrap();
-        save_proposal(home.path(), &proposal("400-cron_job-00000004", ProposalStatus::Pending, 400)).unwrap();
-        save_proposal(home.path(), &proposal("600-cron_job-00000005", ProposalStatus::Pending, 600)).unwrap();
-        save_proposal(home.path(), &proposal("700-cron_job-00000006", ProposalStatus::Pending, 700)).unwrap();
+        save_proposal(
+            home.path(),
+            &proposal("100-cron_job-00000001", ProposalStatus::Pending, 100),
+        )
+        .unwrap();
+        save_proposal(
+            home.path(),
+            &proposal("200-cron_job-00000002", ProposalStatus::Approved, 200),
+        )
+        .unwrap();
+        save_proposal(
+            home.path(),
+            &proposal("300-cron_job-00000003", ProposalStatus::Rejected, 300),
+        )
+        .unwrap();
+        save_proposal(
+            home.path(),
+            &proposal("400-cron_job-00000004", ProposalStatus::Pending, 400),
+        )
+        .unwrap();
+        save_proposal(
+            home.path(),
+            &proposal("600-cron_job-00000005", ProposalStatus::Pending, 600),
+        )
+        .unwrap();
+        save_proposal(
+            home.path(),
+            &proposal("700-cron_job-00000006", ProposalStatus::Pending, 700),
+        )
+        .unwrap();
 
         let response = read_pending_proposals_at(home.path(), 20, 200, 600).unwrap();
         assert_eq!(response.total, 2);
         assert_eq!(
-            response.pending.iter().map(|proposal| proposal.id.as_str()).collect::<Vec<_>>(),
+            response
+                .pending
+                .iter()
+                .map(|proposal| proposal.id.as_str())
+                .collect::<Vec<_>>(),
             vec!["100-cron_job-00000001", "400-cron_job-00000004"]
         );
-        assert!(response.pending.iter().all(|proposal| proposal.status == "pending"));
+        assert!(
+            response
+                .pending
+                .iter()
+                .all(|proposal| proposal.status == "pending")
+        );
     }
 
     #[test]
@@ -204,7 +241,9 @@ mod tests {
         let error = read_pending_proposals_at(home.path(), 20, 0, 1_000).unwrap_err();
         assert_eq!(error.error_code(), Some(ApiErrorCode::UpstreamError));
         match error {
-            HandlerOutcome::Err { message, .. } => assert!(message.contains("proposal store read failed")),
+            HandlerOutcome::Err { message, .. } => {
+                assert!(message.contains("proposal store read failed"))
+            }
             HandlerOutcome::Ok { .. } => panic!("corrupt recognised proposal must fail closed"),
         }
     }
