@@ -1,0 +1,56 @@
+{
+  "kind": "HISTORICAL_CORE_GATES_SUCCESS",
+  "run": 36125282572,
+  "source": "fdb186fef79b9a922ae5b4e2c9b5b4cc29167688",
+  "status": "completed",
+  "conclusion": "success",
+  "gates": [
+    {
+      "name": "Install Linux workspace-Clippy build deps",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Restore CLI-reference Cargo checkpoint",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Check exact-source slim-core production Clippy",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Type-check core test targets before native validation",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Build current public CLI",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Export generated reference",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Upload generated reference",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Check exact Linux-quality workspace Clippy",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Save completed CLI-reference Cargo checkpoint",
+      "status": "completed",
+      "conclusion": "skipped"
+    }
+  ],
+  "scope": "Historicalfdb186fe completed production/testtarget/CLI/workspace gates; no new Paperless purge acceptance",
+  "localExecutableValidationRan": false
+}

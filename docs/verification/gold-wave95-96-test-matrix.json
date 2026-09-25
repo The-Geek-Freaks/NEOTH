@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1348 real Paperless admitted; W1350 hosted format and W1352 typed receipt repair await hosted gates",
+  "status": "W1356 observer current-receipt fix reviewed; real purge run pending; historical fdb Core complete",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 218473,
-    "sha256": "003B82948829C256D58DA31E3EF322A417044F6296F3EB33B6FFC8BEEFF5DAA0"
+    "bytes": 218857,
+    "sha256": "F3913FA757721F95F42E1350A4B13B6ECC3F68816B62E8B253F019315611A052"
   },
-  "sourceInputs": 1227,
+  "sourceInputs": 1229,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -45622,6 +45622,56 @@
       }
     ],
     "note": "Explicit generic annotation only after exact hosted formatting. 25 helper tests passed on72c6; product did not execute. Native Group1805 Windows574 unchanged. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "w1356CurrentReinstallReceipt": {
+    "base": "494fc9a4b5beb57f6f0ecab3f670f43396564438",
+    "sources": [
+      {
+        "path": "docs/paperless-readiness.md",
+        "bytes": 9129,
+        "sha256": "BC8669C5CB689CCC6ECF6403C4233731E402FC1A546489DD9F34EFDB76A9CED5",
+        "blob": "f0f52274f5cc7b048073e69f4581f11a2c14b160"
+      },
+      {
+        "path": "docs/verification/gold-wave1355-core-fdb-success.json",
+        "bytes": 1505,
+        "sha256": "9847282B3F6633FF837C21398DAA918E74BF7DF7AECB55A6A8D8F819153C74EC",
+        "blob": "54bc6c634fa5552d1b82f102b36bd677a7549574"
+      },
+      {
+        "path": "docs/verification/gold-wave1356-paperless-reinstall-receipt.json",
+        "bytes": 1557,
+        "sha256": "75D890112A29E73764A7E71BCC09CB60C6428BEA1F9BB1D3E59B53B9F82FBC53",
+        "blob": "20e1ab6eb2823d53177d00545261c25514a5740d"
+      },
+      {
+        "path": "packaging/paperless_product_canary.py",
+        "bytes": 49540,
+        "sha256": "57125334972093D125BABC230D7EA8EAD1D6161F3646940416815444F064B2E4",
+        "blob": "903175bc229bd5b9f06d94f404f75dac61820fcf"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 378933,
+        "sha256": "237D7FE44EBCDCA8F8B130342DC5D86EAAF06D429B043EB8878257DFD1E7C61C",
+        "blob": "c372004b80adb2f0176e22308027695512ced07f"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1397864,
+        "sha256": "FE0618151AD98040D46903828F068A2568AD4FC38C847CAE3D69DC996F93AA93",
+        "blob": "06348771e466e9b26ac98e6adcd335f0626150dd"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2008387,
+        "sha256": "669B7E5DD925338CA33DEB78023F00D4948FDC5DE5BA73122D5B811AA760A568",
+        "blob": "1807640fa9b6512a3ce97471cc1af1c543226fc4"
+      }
+    ],
+    "note": "No Rust source changes; ongoing494fc native/full Core runs remain exact historical gates. Claude064 docs clarify recursive checksum vs signature/prepare. W1349 rotation WIP excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

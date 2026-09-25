@@ -676,6 +676,8 @@ def main() -> int:
             validate_container(docker_json(identifier), project, service, config_ids[service], args.port)
         retained_volumes(project, volume_names, volume_set_id)
         identities = reinstall_ids
+        # Reinstall records the new container IDs in a new install receipt.
+        install_receipt_bytes = persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port)
         receipt["reinstall_api"] = verify_api(args.port, configured_token(home))
         survived_id, survived_title, survived_sha256 = marker_metadata(args.port, configured_token(home), document_id)
         receipt["retained_document"] = {

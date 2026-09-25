@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1355-1356 Core success and Paperless observer correction (2026-09-25):**
+Historical Core36125282572 atfdb186fe completed all four gates successfully.
+The repaired current source494fc9a4 passes preflight and builds the public CLI.
+Product run36128929566 passes25helper tests and the real PDF survival check,
+then stops at `uninstall_receipt_invalid` before any purge. The observer retained
+the first install's receipt bytes after reinstall had published a new receipt
+with new container IDs. It now re-reads and validates that actual receipt before
+the second uninstall. Docker cleanup succeeded; complete home cleanup was not
+proven by this failed run. The unchanged real product canary must rerun on the
+repair. Native Group1805/Windows574 and full Core494fc gates remain in progress.
+Claude064's source-checked guide correction distinguishes existing recursive OCI
+layer/config checksum evidence from metadata-only preparation and still-unverified
+signatures. W1349 rotation remains uncommitted until its behavioral/crash-cut
+review is complete. No roadmap closure or local executable validation.
 **W1352 hosted purge build correction (2026-09-25):**
 The new product run36128136411 at72c6e9fc passed all25helper tests but its CLI
 build stopped at E0283: `read_optional_json` could not infer the purge-receipt

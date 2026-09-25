@@ -1,0 +1,29 @@
+{
+  "kind": "PAPERLESS_PRODUCT_REINSTALL_RECEIPT_OBSERVER_REPAIR",
+  "run": 36128929566,
+  "source": "494fc9a4b5beb57f6f0ecab3f670f43396564438",
+  "artifact": 10861611127,
+  "apiDigest": "sha256:2dcc0614f618a7306998e9bfa88b59b901a5afc10c7328dbcf77831640902332",
+  "zipSha256": "2DCC0614F618A7306998E9BFA88B59B901A5AFC10C7328DBCF77831640902332",
+  "receiptSha256": "F74806B5580FD2FB9ED64249AAC99FF4B1D88D3488A5CC4556257575124B712E",
+  "observedFailure": "uninstall_receipt_invalid",
+  "compiledProduct": true,
+  "helperTestsPassed": 25,
+  "retainedDocument": {
+    "baseline_sha256": "3adce435da1073b2a1440789f61aca2cf7892b183d2b9dd991cfd893cfb90512",
+    "document_id_sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+    "download_sha256_matches": true,
+    "metadata_id_stable": true,
+    "metadata_title_stable": true,
+    "task_polls": 4,
+    "title_sha256": "0193c3e0ec61cf54e3ffa73d4b3fc6e0c41f8066ff31a8ccab0d7e6fdf3395ed"
+  },
+  "dockerCleanupProven": true,
+  "completeCleanupProven": false,
+  "repair": "Refresh the actual persisted install receipt after validated reinstall identities; second safe uninstall and purge bind current container receipt instead of stale prior install bytes.",
+  "sourcePath": "packaging/paperless_product_canary.py",
+  "sourceSha256": "57125334972093D125BABC230D7EA8EAD1D6161F3646940416815444F064B2E4",
+  "status": "STATIC_REVIEW_APPROVED_FRESH_PRODUCT_PENDING",
+  "localExecutableValidationRan": false,
+  "reviewSha256": "009F37621E26735EFEB77D29D2CEC97562270988C478B7C4E711D5877A36D960"
+}

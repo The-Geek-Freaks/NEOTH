@@ -24,6 +24,16 @@ operator `paperless.env` or `state/`. `neoth paperless prepare` reports this
 contract and coverage in both structured and table output. It still never pulls
 or inspects Docker images.
 
+Separately from that preparation-ownership coverage, the pinned Paperless, Valkey
+and PostgreSQL OCI artifacts were recursively hash-verified — the OCI index,
+platform manifests, config blobs and compressed layer bytes — recorded in
+`docs/verification/paperless-oci-v3.2.1/recursive-blob-receipt.json`
+(`artifact_blob_bytes_verified: true`). The managed installer compiles that
+receipt in and checks the flag before it verifies engine images. That acquisition
+retained, decompressed, extracted or ran nothing and performed no signature
+verification; it is candidate provenance that does not by itself set
+`artifact_verified`.
+
 Status reports the default instance's staging observation separately from API
 readiness. Preparing an explicit alternative directory does not change that
 default. `artifact_verified` remains false: admitted registry metadata and a
@@ -65,9 +75,12 @@ are projected. Upstream API shapes were inspected at Paperless-ngx commit
 
 `artifact_verified` is always false in this diagnostic. An authenticated API and
 a reported version do not attest the running image digest or an owned managed
-installation. P2-20 remains open for pinned recursive artifact verification and
-install/update/repair/rollback/data-preserving-uninstall jobs. The older TCP scan
-now reports `port_open_unverified` and cannot mark Paperless as already running.
+installation. Recursive OCI config and compressed layer bytes are already
+hash-verified (see the recursive-blob receipt above); what P2-20 still requires is
+artifact signature admission and binding verified artifacts to
+install/update/repair/rollback/data-preserving-uninstall jobs — the update, repair
+and rollback jobs are not yet implemented. The older TCP scan now reports
+`port_open_unverified` and cannot mark Paperless as already running.
 
 W515 source review covers the actual async CLI entry, the shared stored-credential
 loader, the bounded authenticated HTTP probe, eight HTTP cases, four CLI cases
