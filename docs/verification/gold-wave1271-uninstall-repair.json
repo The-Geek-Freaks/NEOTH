@@ -1,0 +1,93 @@
+{
+  "kind": "hosted-uninstall-format-and-compile-repair",
+  "source": "5f258f39788d24922fae1efaf1c383e84e27e90f",
+  "format": {
+    "source": "5f258f39788d24922fae1efaf1c383e84e27e90f",
+    "run": 36107174181,
+    "artifact": 10851258053,
+    "zipSha256": "sha256:ac1decc78239203b42a6411c8165d902b9634ea16fab5a3314728ef25cf3306e",
+    "verifiedPostimages": [
+      {
+        "path": "SRC/neothd/src/cli/n8n.rs",
+        "preimage_blob": "76e61bf3d8ac192942ba2b97dabc446a9c9eee8e",
+        "historical_sha256": "6db488c225c1c93d13660bbb533ed21664fd5e69357cbe2812dd2f8289269b4a",
+        "postimage_blob": "60e9ad30c221f78a3d39dfeeca46db01831d8e61",
+        "preimage_matches": true
+      },
+      {
+        "path": "SRC/neothd/src/config/credentials.rs",
+        "preimage_blob": "6269f3e60db20838ba71e9069aada35552d57ce5",
+        "historical_sha256": "5d6e902e2c79d55c03647bc068a98d06e6fc1bea714990573ae79f2444c266d1",
+        "postimage_blob": "139335314a88cbc4ea80d0c82d601cb7a02222ec",
+        "preimage_matches": true
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",
+        "preimage_blob": "70b9be3dcb46a6f19b05e2dffb0fdc7c945c4c70",
+        "historical_sha256": "3cb9eb71ccab9d8368da63226d82457ac265fb13a99698bb335e310342230b62",
+        "postimage_blob": "33f2b865c1ee91bac1eb6ee50d90795826e7df4f",
+        "preimage_matches": true
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_uninstall_tests.rs",
+        "preimage_blob": "5f475294a46dda75ec70a561c65b9bb75cf323ac",
+        "historical_sha256": "d8d06fbd7c0532b43da7bbfaeed08ff7b56f186e98060d0a9459142ce57d20bf",
+        "postimage_blob": "2ef8f9b496fb462a7e1f8f32374a2fd1eb0be856",
+        "preimage_matches": true
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n_tests.rs",
+        "preimage_blob": "7f90f8543b7811b030b71bb2a0963d962ec31d66",
+        "historical_sha256": "bdde229c9f3acd58dd54fdf406b514d14aa82e511a8fb305aafcbda2c8a74785",
+        "postimage_blob": "b96552c097349295ae140b0904a61fd74d039319",
+        "preimage_matches": true
+      }
+    ],
+    "localFormatterRan": false
+  },
+  "failures": {
+    "group": 36107204957,
+    "typeErrors": [
+      "E0277 borrowed ownership receipt comparison",
+      "E0271 private atomic writer error conversion"
+    ],
+    "product": 36107212199,
+    "windows": 36107207540,
+    "testsExecuted": false
+  },
+  "repair": "minimal source type corrections and removal of unused enqueue argument; hosted rerun required",
+  "sourceTestsAdded": 0,
+  "native": 1960,
+  "grouped": 1749,
+  "windows": 519,
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false,
+  "claude": "RESULT045 read; FEEDBACK045 and TASK046 prepared for crash/ownership gaps; ACK046 not observed",
+  "repairSources": [
+    {
+      "path": "SRC/neothd/src/cli/n8n.rs",
+      "sha256": "7243A751C45F9D8AA7B48E76E2C5A54E95F2258B344B14BE5F8DF93607265B09",
+      "blob": "60e9ad30c221f78a3d39dfeeca46db01831d8e61"
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials.rs",
+      "sha256": "0E7FB0FA015CA216F0732252BE4E0562D0BAAFF69F06760C6FBFDFF0D8A6EF78",
+      "blob": "d179452bdad0e74dd4ab0fe7a25e2a9ab958ee37"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",
+      "sha256": "397F1524291C576160860602D51A82FDC41BB46EBC498B9AA915C73CBEB3CB65",
+      "blob": "de8a98f67c8b1be069f2b5d7570ff35c2a3cb2ef"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_uninstall_tests.rs",
+      "sha256": "94F9AF58E2FFABFAB170EE0CF00F63B83E2C668BA00E425C6FAA8E7D65BFEED0",
+      "blob": "2ef8f9b496fb462a7e1f8f32374a2fd1eb0be856"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n_tests.rs",
+      "sha256": "A290C9305312A3DBF5A406BFDDFF921A51A4BB0F93EAC88B3AABBEAB1714DA56",
+      "blob": "b96552c097349295ae140b0904a61fd74d039319"
+    }
+  ]
+}

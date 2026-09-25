@@ -79,10 +79,9 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
 
 async fn run_uninstall(output: OutputFormat) -> Result<()> {
     let home = crate::config::FreedomConfig::default_neoth_home();
-    let job = crate::integrations::n8n::managed_runtime::managed_uninstall::uninstall_managed_at(
-        &home,
-    )
-    .await?;
+    let job =
+        crate::integrations::n8n::managed_runtime::managed_uninstall::uninstall_managed_at(&home)
+            .await?;
     let disposition =
         crate::integrations::n8n::managed_runtime::managed_uninstall::disposition(&job);
     let cleanup =
@@ -454,7 +453,9 @@ mod tests {
         let cli = crate::cli::Cli::try_parse_from(["neoth", "n8n", "uninstall"]).unwrap();
         assert!(matches!(
             cli.command,
-            crate::cli::Commands::N8n(N8nArgs { action: N8nAction::Uninstall })
+            crate::cli::Commands::N8n(N8nArgs {
+                action: N8nAction::Uninstall
+            })
         ));
         for args in [
             vec!["--purge"],
@@ -462,9 +463,12 @@ mod tests {
             vec!["--container", "foreign"],
             vec!["--endpoint", "http://127.0.0.1:7777"],
         ] {
-            assert!(crate::cli::Cli::try_parse_from(
-                ["neoth", "n8n", "uninstall"].into_iter().chain(args)
-            ).is_err());
+            assert!(
+                crate::cli::Cli::try_parse_from(
+                    ["neoth", "n8n", "uninstall"].into_iter().chain(args)
+                )
+                .is_err()
+            );
         }
     }
 

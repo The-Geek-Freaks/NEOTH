@@ -1092,8 +1092,12 @@ fn persist_n8n_owned_binding_receipt(path: &Path, receipt: &N8nOwnedBindingRecei
 }
 
 fn load_n8n_owned_binding_receipt(path: &Path) -> Result<Option<N8nOwnedBindingReceipt>> {
-    let Some(body) = read_private_journal(path)? else { return Ok(None); };
-    serde_yaml::from_slice(&body).context("parse n8n ownership receipt").map(Some)
+    let Some(body) = read_private_journal(path)? else {
+        return Ok(None);
+    };
+    serde_yaml::from_slice(&body)
+        .context("parse n8n ownership receipt")
+        .map(Some)
 }
 
 fn persist_n8n_adoption_custody(path: &Path, custody: &N8nAdoptionCustody) -> Result<()> {
@@ -1814,9 +1818,12 @@ impl Credentials {
                     let existing_receipt = load_n8n_owned_binding_receipt(&receipt_path)?;
 
                     if custody.phase != N8nAdoptionPhase::ReadyFinalizationPending {
-                        let config = crate::config::FreedomConfig::load_public_from_path_unlocked(freedom_path)?;
+                        let config = crate::config::FreedomConfig::load_public_from_path_unlocked(
+                            freedom_path,
+                        )?;
                         anyhow::ensure!(
-                            (config.secrets_backend == crate::config::SecretsBackend::Keychain) == custody.keychain_mode,
+                            (config.secrets_backend == crate::config::SecretsBackend::Keychain)
+                                == custody.keychain_mode,
                             "n8n secrets backend changed before finalization; refusing to remove custody"
                         );
                         let instance = config
@@ -1832,7 +1839,10 @@ impl Credentials {
                                 .get("n8n_api_key")?
                                 .context("n8n API key missing before ownership receipt")?;
                             anyhow::ensure!(
-                                same_secret_snapshot(Some(&current), store.get(candidate)?.as_ref()),
+                                same_secret_snapshot(
+                                    Some(&current),
+                                    store.get(candidate)?.as_ref()
+                                ),
                                 "n8n API key changed before finalization; refusing to remove custody"
                             );
                             current
@@ -1853,7 +1863,7 @@ impl Credentials {
                         };
                         match existing_receipt.as_ref() {
                             Some(existing) => anyhow::ensure!(
-                                existing == receipt,
+                                *existing == receipt,
                                 "n8n ownership receipt conflicts with completed adoption"
                             ),
                             None => persist_n8n_owned_binding_receipt(&receipt_path, &receipt)?,
@@ -1861,9 +1871,12 @@ impl Credentials {
                         custody.phase = N8nAdoptionPhase::ReadyFinalizationPending;
                         persist_n8n_adoption_custody(&custody_path, &custody)?;
                     } else if let Some(existing) = existing_receipt {
-                        let config = crate::config::FreedomConfig::load_public_from_path_unlocked(freedom_path)?;
+                        let config = crate::config::FreedomConfig::load_public_from_path_unlocked(
+                            freedom_path,
+                        )?;
                         anyhow::ensure!(
-                            (config.secrets_backend == crate::config::SecretsBackend::Keychain) == existing.keychain_mode,
+                            (config.secrets_backend == crate::config::SecretsBackend::Keychain)
+                                == existing.keychain_mode,
                             "n8n secrets backend changed after ownership receipt; refusing to remove custody"
                         );
                         let instance = config
@@ -1891,7 +1904,12 @@ impl Credentials {
                         cleanup_n8n_keychain_custody(store, &custody)?;
                     }
                     crate::util::atomic_write::durable_remove_file(&custody_path).with_context(
-                        || format!("remove completed n8n adoption custody {}", custody_path.display()),
+                        || {
+                            format!(
+                                "remove completed n8n adoption custody {}",
+                                custody_path.display()
+                            )
+                        },
                     )
                 })
             })
@@ -1913,13 +1931,19 @@ impl Credentials {
                     let Some(receipt) = load_n8n_owned_binding_receipt(&receipt_path)? else {
                         return Ok(N8nOwnedCleanupOutcome::PreservedUnproven);
                     };
-                    anyhow::ensure!(receipt.job_id == source_job_id, "n8n ownership receipt job mismatch");
-                    if receipt.endpoint_origin != expected_endpoint.origin() || receipt.keychain_mode {
+                    anyhow::ensure!(
+                        receipt.job_id == source_job_id,
+                        "n8n ownership receipt job mismatch"
+                    );
+                    if receipt.endpoint_origin != expected_endpoint.origin()
+                        || receipt.keychain_mode
+                    {
                         return Ok(N8nOwnedCleanupOutcome::PreservedUnproven);
                     }
                     let freedom_before = FileSnapshot::capture(freedom_path)?;
                     let credentials_before = FileSnapshot::capture(credentials_path)?;
-                    let mut config = crate::config::FreedomConfig::load_public_from_path_unlocked(freedom_path)?;
+                    let mut config =
+                        crate::config::FreedomConfig::load_public_from_path_unlocked(freedom_path)?;
                     if config.secrets_backend != crate::config::SecretsBackend::File {
                         return Ok(N8nOwnedCleanupOutcome::PreservedChanged);
                     }
@@ -1931,23 +1955,41 @@ impl Credentials {
                         return Ok(N8nOwnedCleanupOutcome::AlreadyAbsent);
                     }
                     if endpoint.as_deref() != Some(receipt.endpoint_origin.as_str())
-                        || !instance.is_some_and(|instance| instance.api_version == receipt.api_version)
-                        || key.map(n8n_key_commitment).as_deref() != Some(receipt.api_key_commitment.as_str())
+                        || !instance
+                            .is_some_and(|instance| instance.api_version == receipt.api_version)
+                        || key.map(n8n_key_commitment).as_deref()
+                            != Some(receipt.api_key_commitment.as_str())
                     {
                         return Ok(N8nOwnedCleanupOutcome::PreservedChanged);
                     }
                     config.n8n_instance = None;
                     credentials.n8n_api_key = None;
                     let freedom_after = FileSnapshot::Present(zeroize::Zeroizing::new(
-                        render_freedom_preserving_unknown_yaml(&config, &freedom_before, InlineTelegramTokenPolicy::Preserve)?.into_bytes(),
+                        render_freedom_preserving_unknown_yaml(
+                            &config,
+                            &freedom_before,
+                            InlineTelegramTokenPolicy::Preserve,
+                        )?
+                        .into_bytes(),
                     ));
-                    let credentials_after = credentials.rendered_file_snapshot_preserving_unknown(credentials_path, &credentials_before)?;
+                    let credentials_after = credentials.rendered_file_snapshot_preserving_unknown(
+                        credentials_path,
+                        &credentials_before,
+                    )?;
                     let freedom_dir = transaction_directory(freedom_path);
                     publish_prepared_file_pair(
-                        freedom_path, credentials_path, &freedom_dir,
-                        &freedom_before, &freedom_after, &credentials_before, &credentials_after,
+                        freedom_path,
+                        credentials_path,
+                        &freedom_dir,
+                        &freedom_before,
+                        &freedom_after,
+                        &credentials_before,
+                        &credentials_after,
                         N8nOwnedCleanupOutcome::Cleared,
-                        Some(|path: &Path, body: &[u8]| crate::util::atomic_write::atomic_write_private(path, body)),
+                        Some(|path: &Path, body: &[u8]| {
+                            crate::util::atomic_write::atomic_write_private(path, body)
+                                .map_err(anyhow::Error::from)
+                        }),
                         |_| Ok(()),
                     )
                 })
@@ -4846,19 +4888,39 @@ mod n8n_adoption_transaction_tests {
         let dir = tempfile::tempdir().unwrap();
         let freedom = dir.path().join("freedom.yaml");
         let credentials = dir.path().join("credentials.yaml");
-        std::fs::write(&freedom, "operator_id: sam\nfuture_extension:\n  retain: true\n").unwrap();
+        std::fs::write(
+            &freedom,
+            "operator_id: sam\nfuture_extension:\n  retain: true\n",
+        )
+        .unwrap();
         let job_id = "018f4f64-5700-7000-8000-000000000101";
         let endpoint = adopt_and_finish_file_binding(&freedom, &credentials, job_id);
 
         assert_eq!(
-            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint).unwrap(),
+            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint)
+                .unwrap(),
             super::N8nOwnedCleanupOutcome::Cleared,
         );
-        assert!(FreedomConfig::load_from_path(&freedom).unwrap().n8n_instance.is_none());
-        assert!(Credentials::load_or_default_unlocked(&credentials).unwrap().n8n_api_key.is_none());
-        assert!(std::fs::read_to_string(&freedom).unwrap().contains("future_extension:"));
+        assert!(
+            FreedomConfig::load_from_path(&freedom)
+                .unwrap()
+                .n8n_instance
+                .is_none()
+        );
+        assert!(
+            Credentials::load_or_default_unlocked(&credentials)
+                .unwrap()
+                .n8n_api_key
+                .is_none()
+        );
+        assert!(
+            std::fs::read_to_string(&freedom)
+                .unwrap()
+                .contains("future_extension:")
+        );
         assert_eq!(
-            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint).unwrap(),
+            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint)
+                .unwrap(),
             super::N8nOwnedCleanupOutcome::AlreadyAbsent,
         );
     }
@@ -4872,7 +4934,8 @@ mod n8n_adoption_transaction_tests {
         let endpoint = LoopbackHttpEndpoint::parse("http://127.0.0.1:5678").unwrap();
         let job_id = "018f4f64-5700-7000-8000-000000000102";
         assert_eq!(
-            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint).unwrap(),
+            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint)
+                .unwrap(),
             super::N8nOwnedCleanupOutcome::PreservedUnproven,
         );
 
@@ -4884,7 +4947,8 @@ mod n8n_adoption_transaction_tests {
         });
         std::fs::write(&freedom, config.public_yaml().unwrap()).unwrap();
         assert_eq!(
-            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint).unwrap(),
+            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint)
+                .unwrap(),
             super::N8nOwnedCleanupOutcome::PreservedChanged,
         );
 
@@ -4892,7 +4956,8 @@ mod n8n_adoption_transaction_tests {
         changed.n8n_api_key = None;
         changed.write(&credentials).unwrap();
         assert_eq!(
-            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint).unwrap(),
+            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint)
+                .unwrap(),
             super::N8nOwnedCleanupOutcome::PreservedChanged,
         );
     }
@@ -4912,7 +4977,8 @@ mod n8n_adoption_transaction_tests {
         Credentials::default().write(&credentials).unwrap();
 
         assert_eq!(
-            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint).unwrap(),
+            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint)
+                .unwrap(),
             super::N8nOwnedCleanupOutcome::PreservedChanged,
         );
     }
@@ -4928,7 +4994,10 @@ mod n8n_adoption_transaction_tests {
             &freedom,
             &credentials,
             job_id,
-            N8nInstanceConfig { endpoint: endpoint.clone(), api_version: None },
+            N8nInstanceConfig {
+                endpoint: endpoint.clone(),
+                api_version: None,
+            },
             SecretString::from("n8n-test-key"),
         )
         .unwrap();
@@ -4940,9 +5009,14 @@ mod n8n_adoption_transaction_tests {
 
         Credentials::finish_n8n_adoption_at(&freedom, &credentials, job_id).unwrap();
         let receipt = super::n8n_owned_binding_receipt_path(&freedom, job_id).unwrap();
-        assert!(super::load_n8n_owned_binding_receipt(&receipt).unwrap().is_none());
+        assert!(
+            super::load_n8n_owned_binding_receipt(&receipt)
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(
-            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint).unwrap(),
+            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint)
+                .unwrap(),
             super::N8nOwnedCleanupOutcome::PreservedUnproven,
         );
     }
@@ -4961,7 +5035,8 @@ mod n8n_adoption_transaction_tests {
         let credentials_before = std::fs::read(&credentials).unwrap();
 
         assert_eq!(
-            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint).unwrap(),
+            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint)
+                .unwrap(),
             super::N8nOwnedCleanupOutcome::PreservedChanged,
         );
         assert_eq!(std::fs::read(&freedom).unwrap(), freedom_before);
@@ -4983,7 +5058,8 @@ mod n8n_adoption_transaction_tests {
         let credentials_before = std::fs::read(&credentials).unwrap();
 
         assert_eq!(
-            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint).unwrap(),
+            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint)
+                .unwrap(),
             super::N8nOwnedCleanupOutcome::PreservedChanged,
         );
         assert_eq!(std::fs::read(&freedom).unwrap(), freedom_before);
@@ -4999,13 +5075,18 @@ mod n8n_adoption_transaction_tests {
         let job_id = "018f4f64-5700-7000-8000-000000000107";
         let endpoint = adopt_and_finish_file_binding(&freedom, &credentials, job_id);
         let receipt_path = super::n8n_owned_binding_receipt_path(&freedom, job_id).unwrap();
-        let mut receipt = super::load_n8n_owned_binding_receipt(&receipt_path).unwrap().unwrap();
+        let mut receipt = super::load_n8n_owned_binding_receipt(&receipt_path)
+            .unwrap()
+            .unwrap();
         receipt.job_id = "018f4f64-5700-7000-8000-000000000108".to_owned();
         super::persist_n8n_owned_binding_receipt(&receipt_path, &receipt).unwrap();
         let freedom_before = std::fs::read(&freedom).unwrap();
         let credentials_before = std::fs::read(&credentials).unwrap();
 
-        assert!(Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint).is_err());
+        assert!(
+            Credentials::clear_owned_n8n_binding_at(&freedom, &credentials, job_id, &endpoint)
+                .is_err()
+        );
         assert_eq!(std::fs::read(&freedom).unwrap(), freedom_before);
         assert_eq!(std::fs::read(&credentials).unwrap(), credentials_before);
     }
@@ -5022,7 +5103,10 @@ mod n8n_adoption_transaction_tests {
             &freedom,
             &credentials,
             job_id,
-            N8nInstanceConfig { endpoint, api_version: Some("v1".to_owned()) },
+            N8nInstanceConfig {
+                endpoint,
+                api_version: Some("v1".to_owned()),
+            },
             SecretString::from("n8n-test-key"),
         )
         .unwrap();
@@ -5046,7 +5130,10 @@ mod n8n_adoption_transaction_tests {
 
         assert!(Credentials::finish_n8n_adoption_at(&freedom, &credentials, job_id).is_err());
         assert_eq!(
-            super::load_n8n_owned_binding_receipt(&receipt_path).unwrap().unwrap().api_key_commitment,
+            super::load_n8n_owned_binding_receipt(&receipt_path)
+                .unwrap()
+                .unwrap()
+                .api_key_commitment,
             receipt.api_key_commitment,
         );
     }

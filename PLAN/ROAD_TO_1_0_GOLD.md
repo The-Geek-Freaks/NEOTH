@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1271 managed n8n uninstall hosted repair (2026-09-25):**
+GitHub Group1749 run36107204957 and compiled-product run36107212199 at
+5f258f39 stopped during compilation before behavior tests: E0277 compared a
+borrowed ownership receipt with an owned receipt; E0271 exposed std::io::Error
+from the private writer where the transaction helper requires anyhow::Error.
+Windows519 run36107207540 confirms the same two errors and zero tests run.
+The minimal repair fixes those types and removes the unused enqueue parameter.
+W1268 imported all five exact hosted formatter postimages after Root verified
+API/ZIP/inner hashes, historical/current preimages and final Git blob identities.
+No local formatter, compiler or test ran. New hosted checks are required; no
+uninstall behavior PASS or roadmap closure is inferred. Inventories remain
+Native1960/Group1749/Windows519. Claude RESULT045 was read; TASK046 addresses
+ambiguous keychain deletion, publication generations and actual rollback helpers
+before any keychain-cleanup implementation. Existing five-minute inbox cadence.
 **W1266 managed n8n uninstall implementation (2026-09-25):**
 The operator command `neoth n8n uninstall` removes only the full container ID
 bound to the original Ready managed Install job, retaining the named volume.
