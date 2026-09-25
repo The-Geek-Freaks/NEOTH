@@ -1,0 +1,47 @@
+{
+  "kind": "hosted-product-n8n-bootstrap-import-evidence",
+  "run": {
+    "id": 36102662394,
+    "status": "completed",
+    "conclusion": "success",
+    "sourceHead": "d4836aa47b8b1ede1451895ba46508966b933666",
+    "workflow": ".github/workflows/n8n-product-bootstrap.yml"
+  },
+  "artifact": {
+    "id": 10850240823,
+    "apiDigest": "sha256:1786793adab48a89e577f4ac86c1bc1af780faa915209f71141b1336a9356bfe",
+    "localZipSha256": "1786793adab48a89e577f4ac86c1bc1af780faa915209f71141b1336a9356bfe",
+    "zipMatches": true,
+    "receiptSha256": "85a89bb8a18fd3d6a468f815204d39446f89fc6dd13c97ed70b477f14813c487"
+  },
+  "receipt": {
+    "outcome": "passed",
+    "stage": "second_workflow_import",
+    "ready": true,
+    "auth200": [
+      200,
+      200
+    ],
+    "anonymous401": [
+      401,
+      401
+    ],
+    "compiledWorkflowImports": 13,
+    "workflowSetSha256": "caee5038f08d6113c1316794adb843a4320788788eb73c133c9f84406f02d2ea",
+    "repeatReadOnly": true,
+    "reusedSameJob": true,
+    "noRebootstrapEvents": true,
+    "cleanupProven": true,
+    "dockerCleanupProven": true,
+    "isolatedHomeRemoved": true,
+    "bootstrapSecretsCleared": true
+  },
+  "sourceBindings": {
+    "count": 26,
+    "allMatch": true,
+    "file": "source-bindings.json"
+  },
+  "rootAdmission": "ROOT_ADMITTED_13_COMPILED_IMPORTS",
+  "scopeLimit": "Historical receipt evidence only; no retained binary/container/live service/cleanup filesystem and no business execution claim.",
+  "localExecutableValidationRan": false
+}

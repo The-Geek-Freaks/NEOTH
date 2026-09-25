@@ -2,6 +2,16 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1254 n8n import proof and second selection guard (2026-09-25):**
+Run36102662394 atd4836aa4 is ROOT-ADMITTED:13 compiled workflow imports,
+26historical source/input bindings, auth200/anonymous401 on both attempts,
+same job, read-only repeat, no rebootstrap and cleanup receipts. This includes
+the updated inactive weekly starter; workflow business execution is not inferred.
+Group8f1 successfully bound1730 identities but a second shell guard still expected
+1706, so it stopped before compiling. That guard now also requires1730; all
+cardinality references were inspected. Product code and test expectations stay
+unchanged. Preflight8f1 passed. New consumer Windows500 remains running.
+
 **W1251 hosted formatting and workspace timeout correction (2026-09-25):**
 Seven exact d4836aa4 formatter postimages were imported after API/ZIP, inner
 hash, historical/current preimage and final Git-blob checks. No local formatter

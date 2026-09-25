@@ -5,5 +5,12 @@
   "failure": "Missing native source identity for existing required_scope_for_all_mapped_routes_return_some",
   "repair": "Add existing test to universal native matrix1941;Group1730 unchanged",
   "testExecution": false,
-  "localExecutableValidationRan": false
+  "localExecutableValidationRan": false,
+  "followup": {
+    "run": 36103184586,
+    "source": "8f1da900127bffc55b882fa35b39be12afa4e4ea",
+    "failure": "A second shell guard retained1706 while Python selection correctly bound1730",
+    "repair": "Exact shell guard1730 now matches source-bound selection; reviewed all cardinality references",
+    "testExecution": false
+  }
 }
