@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "HOSTED_FORMAT_IMPORTED_COMPILE_REPAIR_PENDING",
+  "status": "HOSTED_COMPILE_REPAIR_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 228920,
-    "sha256": "7BB9B156C50A1415D457EC08FD8CC8A92741DD98958D7198A548AA22B4FE6D71"
+    "bytes": 228905,
+    "sha256": "566D6B46576060B5941B0F60853932B3FD4C4140B55F1E1511A025F2D219233E"
   },
   "sourceInputs": 1282,
   "requiredNativeTests": [
@@ -12414,61 +12414,61 @@
     {
       "test": "integrations::n8n::managed_runtime::managed_backup::tests::running_source_backup_stops_archives_restores_and_publishes_exact_receipt",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
-      "sourceSha256": "35D87E55FCD11AA4C756A9ED4C8AC311A7052889E4B4E9B089A68797215F22A8",
+      "sourceSha256": "AF12A69BC79CCC2DF25C87F42DD693BC448787236D513F435763F65F68860C42",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_backup::tests::stopped_source_backup_has_no_stop_or_start_effect",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
-      "sourceSha256": "35D87E55FCD11AA4C756A9ED4C8AC311A7052889E4B4E9B089A68797215F22A8",
+      "sourceSha256": "AF12A69BC79CCC2DF25C87F42DD693BC448787236D513F435763F65F68860C42",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_backup::tests::copy_dispatch_crash_restores_source_without_second_copy_after_reopen",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
-      "sourceSha256": "35D87E55FCD11AA4C756A9ED4C8AC311A7052889E4B4E9B089A68797215F22A8",
+      "sourceSha256": "AF12A69BC79CCC2DF25C87F42DD693BC448787236D513F435763F65F68860C42",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_backup::tests::uncertain_stop_and_start_receipts_are_observed_once_then_complete_ready",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
-      "sourceSha256": "35D87E55FCD11AA4C756A9ED4C8AC311A7052889E4B4E9B089A68797215F22A8",
+      "sourceSha256": "AF12A69BC79CCC2DF25C87F42DD693BC448787236D513F435763F65F68860C42",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_backup::tests::archive_receipt_error_restores_source_and_cannot_publish_ready",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
-      "sourceSha256": "35D87E55FCD11AA4C756A9ED4C8AC311A7052889E4B4E9B089A68797215F22A8",
+      "sourceSha256": "AF12A69BC79CCC2DF25C87F42DD693BC448787236D513F435763F65F68860C42",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_backup::tests::completed_receipt_rehash_rejects_tampering_after_custody_retirement",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
-      "sourceSha256": "35D87E55FCD11AA4C756A9ED4C8AC311A7052889E4B4E9B089A68797215F22A8",
+      "sourceSha256": "AF12A69BC79CCC2DF25C87F42DD693BC448787236D513F435763F65F68860C42",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_backup::tests::completed_receipt_rejects_foreign_source_and_stale_manifest_fields",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
-      "sourceSha256": "35D87E55FCD11AA4C756A9ED4C8AC311A7052889E4B4E9B089A68797215F22A8",
+      "sourceSha256": "AF12A69BC79CCC2DF25C87F42DD693BC448787236D513F435763F65F68860C42",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_backup::tests::sequential_backups_retain_historical_first_receipt",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
-      "sourceSha256": "35D87E55FCD11AA4C756A9ED4C8AC311A7052889E4B4E9B089A68797215F22A8",
+      "sourceSha256": "AF12A69BC79CCC2DF25C87F42DD693BC448787236D513F435763F65F68860C42",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_backup::tests::completed_custody_and_prepublished_receipt_finalize_ready_after_reopen",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
-      "sourceSha256": "35D87E55FCD11AA4C756A9ED4C8AC311A7052889E4B4E9B089A68797215F22A8",
+      "sourceSha256": "AF12A69BC79CCC2DF25C87F42DD693BC448787236D513F435763F65F68860C42",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_backup::tests::malformed_custody_and_final_destination_collision_leave_no_active_or_source_effect",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
-      "sourceSha256": "35D87E55FCD11AA4C756A9ED4C8AC311A7052889E4B4E9B089A68797215F22A8",
+      "sourceSha256": "AF12A69BC79CCC2DF25C87F42DD693BC448787236D513F435763F65F68860C42",
       "junitClass": "neoth"
     },
     {
@@ -48039,6 +48039,44 @@
       }
     ],
     "note": "Original hosted rustfmt postimages imported and three authentic stream compiler errors narrowly repaired; functional confirmation remains pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1484BackupTestCompileRepair": {
+    "base": "2917a4a58271b246a76a3541ebab36bf800829b0",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1483-backup-hosted-repair.json",
+        "bytes": 1297,
+        "sha256": "D9D1BB6FA0431B5EBF2D12D82D642B250719B85F99B8CF9F838F1392EE27CCE8",
+        "blob": "39106557dee20793c9052aba007adc2ae7757f6a"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 408510,
+        "sha256": "357C920876476502A1E68BE403CB2002CD1C593BF284AF571E4FD5A59EB73FC1",
+        "blob": "b8c3b9f4ecca04f9446e59eddbe4fee428516ebc"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1427441,
+        "sha256": "9CE6951570A18065BB42365A8515EE020BD3667483C21B7C7238F614EB74D6EB",
+        "blob": "d76fbb305948643f4a68fc9f096f300aeb808d26"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2037964,
+        "sha256": "9F4EB04B3385F1EB4964C314F5314C3E02C20E7BCFB136C90865B7E51AF94009",
+        "blob": "2e613b6aa42b938091a55f987e409424ea411c66"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
+        "bytes": 24520,
+        "sha256": "AF12A69BC79CCC2DF25C87F42DD693BC448787236D513F435763F65F68860C42",
+        "blob": "34d512afa35be6c9874677f789d2ff393f19a987"
+      }
+    ],
+    "note": "Four authentic native test probe path errors corrected; selections unchanged; native/Core confirmation pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

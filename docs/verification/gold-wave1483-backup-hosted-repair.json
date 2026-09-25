@@ -21,5 +21,17 @@
     "repairedSha256": "DABEA701BE80F1AED5B5A4B6A063DCBDA7F4C3C82AE1E8AA6F8D96017444F68B",
     "confirmation": "hosted pending"
   },
-  "localExecutableValidationRan": false
+  "localExecutableValidationRan": false,
+  "testModuleRepair": {
+    "groupRun": 36161511586,
+    "windowsRun": 36161515589,
+    "windowsArtifact": 10876311844,
+    "diagnostics": [
+      "E0412 N8nProbeError twice and N8nProbeReceipt",
+      "E0425 parse_workflows_response"
+    ],
+    "fix": "Direct imports from crate::integrations::n8n; redundant Digest and exactly two unused mut removed",
+    "sourceSha256": "AF12A69BC79CCC2DF25C87F42DD693BC448787236D513F435763F65F68860C42",
+    "hosted": "pending"
+  }
 }

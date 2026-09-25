@@ -8,6 +8,15 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1484/W1486 backup test-module compile correction (2026-09-25):**
+Group36161511586 and original Windows36161515589 artifact confirm four test
+Probe path errors, in addition to the three stream errors repaired in2917a4a5.
+The Probe now imports its actual n8n module types/function. Only unused imports
+and the two genuinely non-mutated fixture runners were simplified. Test behavior
+and all2087/1877/642 selections are unchanged. Preflight36162220235 at2917a4a5
+passed. Fresh native/Core gates must confirm the final test correction; the
+product run at2917a4a5 remains valid for its unchanged production source.
+No local executable validation; no runtime admission or ROAD checkbox change.
 **W1482/W1483 hosted backup format and compile repair (2026-09-25):**
 Preflight36161481934 at9e9d6bce failed formatting; original artifact10875472974,
 ZIP/API digest and internal hashes plus all seven Git pre/postimages verify.

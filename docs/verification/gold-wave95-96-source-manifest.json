@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T16:37:45Z",
-  "validationStatus": "HOSTED_FORMAT_IMPORTED_COMPILE_REPAIR_PENDING",
+  "capturedUtc": "2026-09-25T16:43:26Z",
+  "validationStatus": "HOSTED_COMPILE_REPAIR_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2093,8 +2093,8 @@
     },
     {
       "path": "docs/verification/gold-wave1483-backup-hosted-repair.json",
-      "bytes": 826,
-      "sha256": "B22F370E1E7EF4757D500DEF1B8A48960D2F8BE9B03F3B2A159B871502BAF4EE"
+      "bytes": 1297,
+      "sha256": "D9D1BB6FA0431B5EBF2D12D82D642B250719B85F99B8CF9F838F1392EE27CCE8"
     },
     {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
@@ -3053,18 +3053,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 407819,
-      "sha256": "DA7508970AB84D59B615B139CA71ACC1AEDA194A94CFAA2949AB1FBDCF8FB1A3"
+      "bytes": 408510,
+      "sha256": "357C920876476502A1E68BE403CB2002CD1C593BF284AF571E4FD5A59EB73FC1"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1426750,
-      "sha256": "45594CE5B1F9663207A8DA75CF02C42A0C685D13EF1C071FDD820639AA881528"
+      "bytes": 1427441,
+      "sha256": "9CE6951570A18065BB42365A8515EE020BD3667483C21B7C7238F614EB74D6EB"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2037273,
-      "sha256": "D30C1C5C4751B7CE18FBDAF2E8BFD0089B9EF7BBACCD76DE79303FC92CC90006"
+      "bytes": 2037964,
+      "sha256": "9F4EB04B3385F1EB4964C314F5314C3E02C20E7BCFB136C90865B7E51AF94009"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5168,8 +5168,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
-      "bytes": 24514,
-      "sha256": "35D87E55FCD11AA4C756A9ED4C8AC311A7052889E4B4E9B089A68797215F22A8"
+      "bytes": 24520,
+      "sha256": "AF12A69BC79CCC2DF25C87F42DD693BC448787236D513F435763F65F68860C42"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_backup.rs",

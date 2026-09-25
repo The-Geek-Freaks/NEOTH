@@ -1,8 +1,11 @@
 //! Behavioural custody tests for stopped managed n8n backups.
 
 use super::*;
-use crate::{installers::n8n::N8N_OCI_REFERENCE, secret::SecretString};
-use sha2::Digest as _;
+use crate::{
+    installers::n8n::N8N_OCI_REFERENCE,
+    integrations::n8n::{parse_workflows_response, N8nApiProbe, N8nProbeError, N8nProbeReceipt},
+    secret::SecretString,
+};
 use std::{
     io::Write,
     path::Path,
@@ -216,19 +219,19 @@ impl super::super::ManagedReadiness for Ready {
 }
 struct Probe;
 #[async_trait::async_trait]
-impl super::super::N8nApiProbe for Probe {
+impl N8nApiProbe for Probe {
     async fn negative_control(
         &self,
         _: &crate::config::LoopbackHttpEndpoint,
-    ) -> Result<(), super::super::N8nProbeError> {
+    ) -> Result<(), N8nProbeError> {
         Ok(())
     }
     async fn authenticated_probe(
         &self,
         endpoint: &crate::config::LoopbackHttpEndpoint,
         _: &SecretString,
-    ) -> Result<super::super::N8nProbeReceipt, super::super::N8nProbeError> {
-        super::super::parse_workflows_response(
+    ) -> Result<N8nProbeReceipt, N8nProbeError> {
+        parse_workflows_response(
             endpoint.clone(),
             200,
             br#"{"data":[],"nextCursor":null}"#,
@@ -327,7 +330,7 @@ async fn stopped_source_backup_has_no_stop_or_start_effect() {
 
 #[tokio::test]
 async fn copy_dispatch_crash_restores_source_without_second_copy_after_reopen() {
-    let (home, mut runner, state, source) = fixture().await;
+    let (home, runner, state, source) = fixture().await;
     let binding = super::super::read_binding(home.path()).unwrap().unwrap();
     let service = open_backup_service(home.path()).unwrap();
     let generation = next_generation(home.path()).unwrap();
@@ -502,7 +505,7 @@ async fn sequential_backups_retain_historical_first_receipt() {
 
 #[tokio::test]
 async fn completed_custody_and_prepublished_receipt_finalize_ready_after_reopen() {
-    let (home, mut runner, state, source) = fixture().await;
+    let (home, runner, state, source) = fixture().await;
     let binding = super::super::read_binding(home.path()).unwrap().unwrap();
     let service = open_backup_service(home.path()).unwrap();
     let generation = next_generation(home.path()).unwrap();
