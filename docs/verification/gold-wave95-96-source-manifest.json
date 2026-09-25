@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T08:56:32Z",
-  "validationStatus": "W1300_REVIEWED_EXECUTABLE_GATES_PENDING",
+  "capturedUtc": "2026-09-25T09:11:00Z",
+  "validationStatus": "W1306_LINUX_PRODUCT_LIFECYCLES_ADMITTED_WINDOWS_SMOKE_AUTHORED_NATIVE_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -183,8 +183,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 253593,
-      "sha256": "B7EF122A5D336BDC35570DF1632724FBD5F1461FF1914FD7B4292AB187335050"
+      "bytes": 254000,
+      "sha256": "BDC81640B71767092976DB6CE4E64FEC89D13EB0088003FE1D4D849BD22002FD"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -1742,6 +1742,31 @@
       "sha256": "917AA1CE904769FEDE1B51C16BBFEB5C6E0E82C6BFD16C1EDD9B32F838DE4536"
     },
     {
+      "path": "docs/verification/gold-wave1302-hosted-format.json",
+      "bytes": 736,
+      "sha256": "2594B58826C6072E76B81FE91B5657CDAE34BF7042B7F61D32612D0CD4FC76AC"
+    },
+    {
+      "path": "docs/verification/gold-wave1303-windows-preservation.json",
+      "bytes": 646,
+      "sha256": "57702249EA7F1C62ADA68EAD3109882448EE11F201AD28BC325F18A66408C956"
+    },
+    {
+      "path": "docs/verification/gold-wave1304-hosted-product.json",
+      "bytes": 9043,
+      "sha256": "37822F939FEA80698DA25619C6346869893FC23125723B565EBF944E6E4EFB09"
+    },
+    {
+      "path": "docs/verification/gold-wave1305-hosted-product.json",
+      "bytes": 14094,
+      "sha256": "FFBB8DDBC53AB5A20E3638CBA6903F72599B59C468686B46E8902CD80899577C"
+    },
+    {
+      "path": "docs/verification/gold-wave1306-cli-reference.json",
+      "bytes": 682,
+      "sha256": "530BDDD8641AE59B1CF09EF842792406C9C2C01BC5792A8D82C4A2C92B67D445"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -2683,8 +2708,8 @@
     },
     {
       "path": "packaging/windows/smoke-installer.ps1",
-      "bytes": 46147,
-      "sha256": "869BAEA8D03493377E8590789CD6A3CF17C6FBF2F53036EC467247B037C1C2AF"
+      "bytes": 48211,
+      "sha256": "750ABDC136D266FD7A9A050AE473DE8D05D09ABF5E53900CD817303EF4C5136C"
     },
     {
       "path": "packaging/workflow_replay_gate.py",
@@ -2698,18 +2723,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 364423,
-      "sha256": "DCF1111DE670AD343A7AE817E960D86606B932C9CE13E879026825FC3BB9A6A9"
+      "bytes": 366126,
+      "sha256": "D0C84F037AC529B682081FB55DB07781FA656EED33235BE98679E09D2C4A7B62"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1383354,
-      "sha256": "49FD82636E73E2998BF8EBF09CB3287CE12CE0170102F938F9CEA08007FA623D"
+      "bytes": 1385057,
+      "sha256": "8B736BD686C31FCD4EC6935A70A4847EC13F6110C135816DD10FE6B0974E50DF"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1993877,
-      "sha256": "3E8666806190CBBC6F3DBDDC5CE41F5ACC3DD9D4469C431EA1B53886066ABBDA"
+      "bytes": 1995580,
+      "sha256": "625CC502201051F016B3FF3AD5F8B110552BEDFDBABE18A66D953834A96FF303"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4703,8 +4728,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "bytes": 100793,
-      "sha256": "CAFDDB4D1F7845196E884F48E4908D62E45627F3DBC2C5B3F4A13E134D60D70A"
+      "bytes": 100746,
+      "sha256": "5CECB782A5365B287D5AABCDCD9B35E61E8FA7D9B6C657A6B625A9E5CD4BEEE3"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_operation_lock.rs",

@@ -618,6 +618,8 @@ $collisionUserDirectory = Join-Path $root 'scope-user\NEOTH'
 $collisionMachineDirectory = Join-Path $machineRoot 'scope-machine\NEOTH'
 $collisionAttemptDirectory = Join-Path $root 'scope-attempt\NEOTH'
 $malformedAttemptDirectory = Join-Path $root 'malformed-attempt\NEOTH'
+$uninstallPreservationHome = Join-Path $root 'operator-data\NEOTH_HOME'
+$unownedAppSentinel = Join-Path $ownedDirectory 'operator-notes\preserve.bin'
 $testDirectories = @(
     $ownedDirectory
     $preExistingDirectory
@@ -840,7 +842,31 @@ try {
     if ($null -eq $ownedMarker -or $ownedMarker.TrimEnd('\') -ine $ownedDirectory.TrimEnd('\')) {
         Stop-Smoke 'upgrade did not preserve the user PATH ownership marker'
     }
-    Invoke-Uninstall -Directory $ownedDirectory
+    $previousUninstallNeothHome = $env:NEOTH_HOME
+    try {
+        $env:NEOTH_HOME = $uninstallPreservationHome
+        New-Item -ItemType Directory -Path (Join-Path $uninstallPreservationHome 'config'), (Join-Path $uninstallPreservationHome 'data\nested'), (Join-Path $uninstallPreservationHome 'keys') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Split-Path -Parent $unownedAppSentinel) -Force | Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $uninstallPreservationHome 'config\operator.yaml'), [Text.Encoding]::UTF8.GetBytes("bind: 127.0.0.1`noperator: smoke"))
+        [IO.File]::WriteAllBytes((Join-Path $uninstallPreservationHome 'data\nested\neoth.sqlite'), [byte[]](0x53, 0x51, 0x4C, 0x69, 0x74, 0x65, 0x00, 0xFE, 0x01))
+        [IO.File]::WriteAllBytes((Join-Path $uninstallPreservationHome 'keys\operator.key'), [byte[]](0x00, 0xA5, 0x5A, 0xFF, 0x10))
+        [IO.File]::WriteAllBytes($unownedAppSentinel, [byte[]](0x6F, 0x70, 0x65, 0x72, 0x61, 0x74, 0x6F, 0x72, 0x00, 0xFF))
+        $uninstallPreservationFingerprint = Get-DirectoryTreeFingerprint -Directory $uninstallPreservationHome
+        $unownedAppSentinelHash = (Get-FileHash -LiteralPath $unownedAppSentinel -Algorithm SHA256).Hash
+
+        Invoke-Uninstall -Directory $ownedDirectory
+
+        if (-not (Test-Path -LiteralPath $uninstallPreservationHome -PathType Container) -or
+            (Get-DirectoryTreeFingerprint -Directory $uninstallPreservationHome) -cne $uninstallPreservationFingerprint) {
+            Stop-Smoke 'uninstaller changed operator NEOTH_HOME preservation data'
+        }
+        if (-not (Test-Path -LiteralPath $unownedAppSentinel -PathType Leaf) -or
+            (Get-FileHash -LiteralPath $unownedAppSentinel -Algorithm SHA256).Hash -cne $unownedAppSentinelHash) {
+            Stop-Smoke 'uninstaller changed unowned operator data under the app directory'
+        }
+    } finally {
+        $env:NEOTH_HOME = $previousUninstallNeothHome
+    }
     if ((Test-PathEntry -Scope User -Expected $ownedDirectory) -ne 0) {
         Stop-Smoke 'uninstaller left its owned directory on user PATH'
     }

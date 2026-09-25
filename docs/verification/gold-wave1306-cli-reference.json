@@ -1,0 +1,13 @@
+{
+  "kind": "EXACT_HOSTED_GENERATED_CLI_REFERENCE",
+  "source": "be003a46a8a70b2f4dcc01e6683858b86d3dcaf2",
+  "run": 36115882267,
+  "artifact": 10855715753,
+  "apiDigest": "sha256:ba1a8bfa1d82fa81486b8e33793b362940cfe870f04b64c303b91e97a0e443e3",
+  "zipSha256": "BA1A8BFA1D82FA81486B8E33793B362940CFE870F04B64C303B91E97A0E443E3",
+  "path": "docs/cli-commands.md",
+  "sha256": "bdc81640b71767092976db6ce4e64fec89d13eb0088003fe1d4d849bd22002fd",
+  "delta": "9 generated lines: n8n reuse-uninstall option, n8n uninstall and paperless uninstall",
+  "coreGates": "slim Clippy, test typecheck, CLI build/export passed; workspace Clippy running",
+  "localExecutableValidationRan": false
+}

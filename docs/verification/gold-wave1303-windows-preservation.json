@@ -1,0 +1,12 @@
+{
+  "kind": "STATIC_REVIEWED_WINDOWS_UNINSTALL_PRESERVATION_TEST",
+  "sourceBase": "be003a46a8a70b2f4dcc01e6683858b86d3dcaf2",
+  "script": "packaging/windows/smoke-installer.ps1",
+  "scriptGitBlob": "b3808de12b0a487b1f3b42729309c1161a60c834",
+  "review": "work/gold-20260906/wave1303-windows-preservation/REVIEW.md",
+  "reviewSha256": "7C9A7A481BABB562B15DF39A2694D76CEED75F0AE6C1F9EF2441DAA140585565",
+  "verdict": "APPROVE",
+  "scope": "Existing user-scope real Inno uninstall caller now checks full NEOTH_HOME tree and arbitrary app data preservation",
+  "hostedRuntime": "pending release installer",
+  "localExecutableValidationRan": false
+}

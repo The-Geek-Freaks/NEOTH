@@ -2390,11 +2390,7 @@ mod tests {
             .await
             .unwrap();
         let receipt = std::fs::read(lifecycle_receipt_path(home.path())).unwrap();
-        (
-            home,
-            credentials,
-            receipt,
-        )
+        (home, credentials, receipt)
     }
     fn uninstall_test_container_id(service: &str, seed: u8) -> Result<String, LifecycleError> {
         let digit = match (seed, service) {

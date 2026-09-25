@@ -8,6 +8,30 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1306 retained-product evidence and Windows preservation test (2026-09-25):**
+Root admits Paperless36115888159 and n8n36115891074 at exact source
+be003a46 after independent API/ZIP/receipt and historical Git-byte checks
+(17Paperless /27n8n inputs). Paperless uploads a real PDF, completes the v10
+task, checks document ID/title and original-byte SHA-256, safely uninstalls
+three original containers while retaining six volumes, repeats read-only,
+then reinstalls with disjoint IDs and proves the same document survives.
+n8n again proves13workflow imports survive the retained-volume reinstall,
+new runtime/job identities, preserved canonical key, repeat rejection before
+effects, second safe uninstall and complete isolated fixture cleanup.
+Receipts: docs/verification/gold-wave1304-hosted-product.json and
+ gold-wave1305-hosted-product.json. These are Linux fixture lifecycle proofs;
+workflow business execution, Windows application uninstall and full-home
+confirmed purge remain separate acceptance boundaries.
+W1303 strengthens the existing Windows state-marker smoke with byte-exact
+nested NEOTH_HOME config/database/key preservation and unowned application
+content. Independent review approves the source; real installer smoke remains
+pending its release installer. Claude054/055 inform the remaining purge map.
+W1302 imports the single exact hosted Paperless tuple-format postimage.
+Corebe003 slim-Clippy, test-typecheck and CLI build/export passed. The exact
+CLI artifact10855715753 adds9lines for reuse-uninstall and both uninstall commands.
+WorkspaceClippy and Windows542 remain running; Group1773 follows this publication.
+No checkbox closure, release claim or local executable validation.
+
 **W1300 retained-document product canary and hosted repairs (2026-09-25):**
 The Paperless hosted helper now exercises a real deterministic PDF upload,
 bounded versioned task polling, exact document metadata and original-byte

@@ -1,0 +1,17 @@
+{
+  "run": 36115882610,
+  "source": "be003a46a8a70b2f4dcc01e6683858b86d3dcaf2",
+  "artifact": {
+    "id": 10855451172,
+    "api_digest": "sha256:8b56773c9c94f2d370cb7054e9f50828668a1b5a757b1ec46cb5f260a1cb89b0",
+    "zip_sha256": "8b56773c9c94f2d370cb7054e9f50828668a1b5a757b1ec46cb5f260a1cb89b0",
+    "matches": true
+  },
+  "source_match": true,
+  "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+  "preimage_blob": "92ead08e8d1e96a86516ebfd19aa68cebdf06257",
+  "preimage_matches": true,
+  "postimage_blob": "dab944ffc3dcafab3d5a880227857b8192b7658b",
+  "patch": "receipt/rustfmt.patch",
+  "scope": "Root applied exact hosted postimage after verifying preimage, git apply --check and resulting Git blob; no local rustfmt"
+}

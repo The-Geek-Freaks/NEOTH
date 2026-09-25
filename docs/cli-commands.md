@@ -2948,12 +2948,17 @@ Start the pinned, NEOTH-owned Docker n8n runtime and prove its API key
 - `--port <PORT>` — Literal loopback host port; the container is always bound to 127.0.0.1
 - `--api-key-stdin` — Read an already-issued n8n API key from piped standard input
 - `--bootstrap-owner` — Create the first n8n owner and API key inside an unexposed, networkless bootstrap container before publishing the runtime
+- `--reuse-uninstall <REUSE_UNINSTALL>` — Reattach the exact retained volume recorded by this Ready uninstall job
 
 ### `neoth n8n status`
 
 Read durable adoption status. This does not make a live HTTP request
 
 - `--job <JOB>`
+
+### `neoth n8n uninstall`
+
+Remove the exact NEOTH-managed container and retain its data volume. Repeating an interrupted command reconciles absence without retrying deletion
 
 ### `neoth n8n workflows`
 
@@ -3233,6 +3238,10 @@ Print the full quarantine item JSON for a specific uid
 ### `neoth paperless status`
 
 Check authenticated local API readiness using stored credentials. Artifact provenance and managed installation readiness remain separate
+
+### `neoth paperless uninstall`
+
+Remove receipt-bound containers while retaining all data volumes and staged files
 
 ## `neoth permissions`
 
