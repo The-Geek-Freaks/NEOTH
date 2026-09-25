@@ -657,10 +657,38 @@ def docker_inspect(identifier: str) -> dict:
     return value[0]
 
 def validate_runtime(row: dict, job: str, volume: str, runtime_id: str, port: int) -> None:
-    labels = row.get("Config", {}).get("Labels", {}); mounts = row.get("Mounts", []); ports = row.get("NetworkSettings", {}).get("Ports", {}).get("5678/tcp")
+    config, state = row.get("Config"), row.get("State")
+    host_config, network = row.get("HostConfig"), row.get("NetworkSettings")
+    if not isinstance(config, dict) or not isinstance(state, dict) or not isinstance(host_config, dict) or not isinstance(network, dict):
+        raise Failure("runtime_inspect_shape_invalid")
+    labels, mounts = config.get("Labels"), row.get("Mounts")
+    if not isinstance(labels, dict):
+        raise Failure("runtime_identity_invalid")
     if row.get("Id") != runtime_id or row.get("Config", {}).get("Image") != IMAGE or labels.get("io.neoth.managed") != "n8n" or labels.get("io.neoth.n8n-job") != job: raise Failure("runtime_identity_invalid")
-    if not isinstance(mounts, list) or len(mounts) != 1 or mounts[0].get("Type") != "volume" or mounts[0].get("Name") != volume or mounts[0].get("Destination") != "/home/node/.n8n": raise Failure("runtime_mount_invalid")
-    if not isinstance(ports, list) or len(ports) != 1 or ports[0].get("HostIp") != "127.0.0.1" or ports[0].get("HostPort") != str(port): raise Failure("runtime_port_invalid")
+    if (not isinstance(mounts, list) or len(mounts) != 1 or not isinstance(mounts[0], dict)
+            or mounts[0].get("Type") != "volume" or mounts[0].get("Name") != volume
+            or mounts[0].get("Destination") != "/home/node/.n8n"):
+        raise Failure("runtime_mount_invalid")
+    configured_ports = host_config.get("PortBindings")
+    expected_binding = {"5678/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(port)}]}
+    if configured_ports != expected_binding:
+        raise Failure("runtime_port_config_invalid")
+    running = state.get("Running")
+    if type(running) is not bool:
+        raise Failure("runtime_state_invalid")
+    if "Ports" not in network:
+        raise Failure("runtime_network_ports_invalid")
+    active_ports = network["Ports"]
+    if active_ports is not None and not isinstance(active_ports, dict):
+        raise Failure("runtime_network_ports_invalid")
+    if running:
+        if active_ports != expected_binding:
+            raise Failure("runtime_port_invalid")
+    elif active_ports not in (None, {}, {"5678/tcp": None}):
+        # Docker may retain the declared key with a null runtime value after
+        # stop; no active binding is acceptable only with the exact saved
+        # HostConfig mapping above.
+        raise Failure("runtime_stopped_port_invalid")
 
 def exact_absent(kind: str, identifier: str) -> bool:
     try:

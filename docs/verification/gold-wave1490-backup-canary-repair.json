@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "status": "PRODUCT_DIAGNOSED_CANARY_REPAIRED_PENDING",
+  "run": 36162229745,
+  "source": "2917a4a58271b246a76a3541ebab36bf800829b0",
+  "artifact": 10875858053,
+  "zipSha256": "0481a6af3ffcdb518bb1cedb16307293d439a7627aeddb8985e5859304a14b4c",
+  "receiptSha256": "1f27f2f0fe9c2c70e60d60fc355b07019460de73ab1d145c0c55e2ab5472c748",
+  "verifiedSourceBindings": 32,
+  "partialEvidence": {
+    "runningBackupBytes": 5707264,
+    "safeTarHeaders": 10,
+    "apiPreserved": true,
+    "workflowCount": 13
+  },
+  "failure": {
+    "stage": "managed_n8n_stopped_source_backup",
+    "code": "runtime_port_invalid",
+    "cleanupProven": false,
+    "cause": "Canary required active NetworkSettings.Ports for intentionally stopped exact owned runtime, including cleanup path."
+  },
+  "repair": "Saved HostConfig exact loopback binding in both states; running exact active ports; stopped no active ports; same custody validation before cleanup.",
+  "boundaries": [
+    "Original run remains failed",
+    "Stopped backup and full cleanup pending fresh product run",
+    "Restore WIP excluded"
+  ],
+  "localExecutableValidationRan": false
+}

@@ -44,6 +44,57 @@ class ProductReceiptTests(unittest.TestCase):
         with self.assertRaises(canary.Failure): canary.validate_custody(boot, runtime, job, 5681)
 
 
+class RuntimePortCustodyTests(unittest.TestCase):
+    job = "12345678-1234-7234-8234-123456789abc"
+    runtime = "a" * 64
+    volume = "neoth_n8n_" + "b" * 32
+
+    def row(self, running: bool, active: object = None, configured: object = None) -> dict:
+        expected = {"5678/tcp": [{"HostIp": "127.0.0.1", "HostPort": "5681"}]}
+        if configured is None:
+            configured = expected
+        if active is None:
+            active = expected if running else {"5678/tcp": None}
+        return {
+            "Id": self.runtime,
+            "Config": {"Image": canary.IMAGE, "Labels": {"io.neoth.managed": "n8n", "io.neoth.n8n-job": self.job}},
+            "State": {"Running": running},
+            "HostConfig": {"PortBindings": configured},
+            "NetworkSettings": {"Ports": active},
+            "Mounts": [{"Type": "volume", "Name": self.volume, "Destination": "/home/node/.n8n"}],
+        }
+
+    def test_running_and_stopped_runtime_prove_different_port_surfaces(self) -> None:
+        canary.validate_runtime(self.row(True), self.job, self.volume, self.runtime, 5681)
+        canary.validate_runtime(self.row(False), self.job, self.volume, self.runtime, 5681)
+        stopped_empty = self.row(False, active={})
+        canary.validate_runtime(stopped_empty, self.job, self.volume, self.runtime, 5681)
+
+    def test_host_config_and_active_port_tampering_are_rejected(self) -> None:
+        exposed = self.row(False, configured={"5678/tcp": [{"HostIp": "0.0.0.0", "HostPort": "5681"}]})
+        with self.assertRaisesRegex(canary.Failure, "runtime_port_config_invalid"):
+            canary.validate_runtime(exposed, self.job, self.volume, self.runtime, 5681)
+        stopped_active = self.row(False, active={"5678/tcp": [{"HostIp": "127.0.0.1", "HostPort": "5681"}]})
+        with self.assertRaisesRegex(canary.Failure, "runtime_stopped_port_invalid"):
+            canary.validate_runtime(stopped_active, self.job, self.volume, self.runtime, 5681)
+        running_missing = self.row(True, active={})
+        with self.assertRaisesRegex(canary.Failure, "runtime_port_invalid"):
+            canary.validate_runtime(running_missing, self.job, self.volume, self.runtime, 5681)
+        malformed = self.row(True); malformed["State"]["Running"] = "true"
+        with self.assertRaisesRegex(canary.Failure, "runtime_state_invalid"):
+            canary.validate_runtime(malformed, self.job, self.volume, self.runtime, 5681)
+        missing_ports = self.row(False); del missing_ports["NetworkSettings"]["Ports"]
+        with self.assertRaisesRegex(canary.Failure, "runtime_network_ports_invalid"):
+            canary.validate_runtime(missing_ports, self.job, self.volume, self.runtime, 5681)
+
+    def test_cleanup_accepts_exact_stopped_runtime_with_durable_loopback_config(self) -> None:
+        retained = {"Name": self.volume, "Labels": {"io.neoth.managed": "n8n", "io.neoth.n8n-job": self.job, "io.neoth.n8n-bootstrap": "v2"}}
+        with patch.object(canary, "exact_absent", side_effect=[False, True, True]), patch.object(canary, "docker_inspect", side_effect=[self.row(False), retained]), patch.object(canary, "run") as command:
+            self.assertTrue(canary.cleanup_owned_runtime_and_volume(self.runtime, self.volume, self.job, 5681, False))
+        self.assertEqual(command.call_args_list[0].args[0], ["docker", "rm", "-f", self.runtime])
+        self.assertEqual(command.call_args_list[1].args[0], ["docker", "volume", "rm", self.volume])
+
+
 class ProductUninstallReceiptTests(unittest.TestCase):
     source_job = "12345678-1234-7234-8234-123456789abc"
     uninstall_job = "abcdef12-1234-7234-8234-123456789abc"

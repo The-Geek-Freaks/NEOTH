@@ -3,7 +3,7 @@
 use super::*;
 use crate::{
     installers::n8n::N8N_OCI_REFERENCE,
-    integrations::n8n::{parse_workflows_response, N8nApiProbe, N8nProbeError, N8nProbeReceipt},
+    integrations::n8n::{N8nApiProbe, N8nProbeError, N8nProbeReceipt, parse_workflows_response},
     secret::SecretString,
 };
 use std::{
@@ -231,11 +231,7 @@ impl N8nApiProbe for Probe {
         endpoint: &crate::config::LoopbackHttpEndpoint,
         _: &SecretString,
     ) -> Result<N8nProbeReceipt, N8nProbeError> {
-        parse_workflows_response(
-            endpoint.clone(),
-            200,
-            br#"{"data":[],"nextCursor":null}"#,
-        )
+        parse_workflows_response(endpoint.clone(), 200, br#"{"data":[],"nextCursor":null}"#)
     }
 }
 async fn fixture() -> (tempfile::TempDir, Runner, Arc<Mutex<State>>, IntegrationJob) {

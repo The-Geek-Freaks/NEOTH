@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1489/W1490 real backup and stopped-container canary correction (2026-09-25):**
+Product36162229745 at2917a4a5 compiled and completed its running-source backup:
+5707264 archive bytes,10 safe tar headers, exact receipt/hash, API401/200 and
+all13 workflows preserved. Original artifact10875858053 ZIP/API digest, receipt
+and32 source/input bindings verify. The later stopped-source check incorrectly
+required an active network port; the same assumption prevented fixture cleanup.
+The canary now validates exact saved HostConfig loopback ports for both states,
+requires active ports only while running, and rejects active ports while stopped.
+Its cleanup reuses this state-aware custody check, with focused helper tests.
+The run remains FAILED; stopped-backup and complete cleanup still require a
+fresh product run. Original Preflight36162830365 test-only formatting is also
+imported with all pre/postimage hashes verified. Native/Core gates atfeb848a3
+remain pending. Restore schema/IO are separate unpublished WIP. ROAD unchanged;
+no local executable validation ran.
 **W1484/W1486 backup test-module compile correction (2026-09-25):**
 Group36161511586 and original Windows36161515589 artifact confirm four test
 Probe path errors, in addition to the three stream errors repaired in2917a4a5.
