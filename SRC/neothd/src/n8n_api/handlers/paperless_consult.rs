@@ -29,7 +29,11 @@ pub(super) async fn handle(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
     // Capture the accepted configuration once; the request cannot select a
     // vault, a subdirectory or an ambient-home fallback.
     let config = state.reload_controller.latest();
-    let Some(vault) = config.obsidian_vault.as_ref().filter(|path| !path.trim().is_empty()) else {
+    let Some(vault) = config
+        .obsidian_vault
+        .as_ref()
+        .filter(|path| !path.trim().is_empty())
+    else {
         return HandlerOutcome::error(
             ApiErrorCode::StoreUnavailable,
             "paperless_consult_vault_not_configured",
@@ -37,20 +41,27 @@ pub(super) async fn handle(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
         );
     };
     let vault = PathBuf::from(vault);
-    let subdir = config.obsidian_subdir.clone().unwrap_or_else(|| "NEOTH".to_owned());
+    let subdir = config
+        .obsidian_subdir
+        .clone()
+        .unwrap_or_else(|| "NEOTH".to_owned());
     let result = tokio::task::spawn_blocking(move || {
         crate::paperless::consult::consult_bounded(&vault, &subdir, &request.question, limit)
     })
     .await;
     match result {
         Ok(Ok(result)) => {
-            let matches: Vec<_> = result.matches.into_iter().map(|item| {
-                serde_json::json!({
-                    "filename": item.filename,
-                    "score": item.score,
-                    "excerpt": item.excerpt,
+            let matches: Vec<_> = result
+                .matches
+                .into_iter()
+                .map(|item| {
+                    serde_json::json!({
+                        "filename": item.filename,
+                        "score": item.score,
+                        "excerpt": item.excerpt,
+                    })
                 })
-            }).collect();
+                .collect();
             HandlerOutcome::ok_json(serde_json::json!({
                 "coverage": "local_paperless_notes_keyword_lookup",
                 "matches": matches,

@@ -3,6 +3,15 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1205 exact hosted consult formatter import (2026-09-25):**
+The sole614 preflight failure was formatting. Root verified and imported all
+four exact hosted outputs (reader, handler, HTTP tests and starter), including
+ZIP/inner hashes and Git pre/postimages. Semantics and test counts are unchanged.
+Core390 passed slim/typecheck/CLI/export and continues workspace Clippy;
+Core614 is queued36095012655; real n8nProduct61436095014487 is compiling.
+Email Group1635ff32/Windows411ff32 continue. Claude034 read-only reflection map
+is prepared after the still-unacknowledged032 assignment. No local executable ran.
+
 **W1203 bounded Paperless question lookup (2026-09-25):**
 POST /api/paperless/consult requires its own paperless:consult:read scope and a
 strict question/limit body. It captures the accepted instance configuration;

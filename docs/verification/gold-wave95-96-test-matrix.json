@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1203 reviewed bounded Paperless consult/HTTP/manual starter; hosted behavior pending",
+  "status": "W1205 exact hosted consult formatter4; behavior pending Core614/Group1647",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 202136,
-    "sha256": "1DC12AED35DFB3EF432DFD386191AFF856D023369E6CCDC2BFD03F46A944649D"
+    "bytes": 202309,
+    "sha256": "C165477D953F34590E18A3354E108E64E3312A10E698E0AD3FB6C11AC02E343D"
   },
-  "sourceInputs": 1139,
+  "sourceInputs": 1140,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -10224,73 +10224,73 @@
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_description_fits_picker_width",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "BB79AC2BF90379D3BE2382FB7A302ADBB1278CB14E6161CD6058ED0C4BB45E68",
+      "sourceSha256": "ACB1ED651A444873AD00FD0EDC2BA0804ED411BC7BDC693CAB62F0C40DDC2C92",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_body_is_valid_json_and_inactive",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "BB79AC2BF90379D3BE2382FB7A302ADBB1278CB14E6161CD6058ED0C4BB45E68",
+      "sourceSha256": "ACB1ED651A444873AD00FD0EDC2BA0804ED411BC7BDC693CAB62F0C40DDC2C92",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_body_contains_its_own_name",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "BB79AC2BF90379D3BE2382FB7A302ADBB1278CB14E6161CD6058ED0C4BB45E68",
+      "sourceSha256": "ACB1ED651A444873AD00FD0EDC2BA0804ED411BC7BDC693CAB62F0C40DDC2C92",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::scheduled_starters_embed_cron_while_email_starter_uses_imap_trigger",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "BB79AC2BF90379D3BE2382FB7A302ADBB1278CB14E6161CD6058ED0C4BB45E68",
+      "sourceSha256": "ACB1ED651A444873AD00FD0EDC2BA0804ED411BC7BDC693CAB62F0C40DDC2C92",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_body_embeds_its_endpoint_in_an_http_node",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "BB79AC2BF90379D3BE2382FB7A302ADBB1278CB14E6161CD6058ED0C4BB45E68",
+      "sourceSha256": "ACB1ED651A444873AD00FD0EDC2BA0804ED411BC7BDC693CAB62F0C40DDC2C92",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_body_has_its_required_trigger_configuration_and_http_wiring",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "BB79AC2BF90379D3BE2382FB7A302ADBB1278CB14E6161CD6058ED0C4BB45E68",
+      "sourceSha256": "ACB1ED651A444873AD00FD0EDC2BA0804ED411BC7BDC693CAB62F0C40DDC2C92",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::each_starter_body_uses_generic_header_auth_and_visible_origin",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "BB79AC2BF90379D3BE2382FB7A302ADBB1278CB14E6161CD6058ED0C4BB45E68",
+      "sourceSha256": "ACB1ED651A444873AD00FD0EDC2BA0804ED411BC7BDC693CAB62F0C40DDC2C92",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::starter_bodies_are_distinct_across_workflows",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "BB79AC2BF90379D3BE2382FB7A302ADBB1278CB14E6161CD6058ED0C4BB45E68",
+      "sourceSha256": "ACB1ED651A444873AD00FD0EDC2BA0804ED411BC7BDC693CAB62F0C40DDC2C92",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::all_known_workflows_concatenates_bootstrap_then_starter",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "BB79AC2BF90379D3BE2382FB7A302ADBB1278CB14E6161CD6058ED0C4BB45E68",
+      "sourceSha256": "ACB1ED651A444873AD00FD0EDC2BA0804ED411BC7BDC693CAB62F0C40DDC2C92",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::all_known_workflows_no_slug_collisions_across_bootstrap_starter",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "BB79AC2BF90379D3BE2382FB7A302ADBB1278CB14E6161CD6058ED0C4BB45E68",
+      "sourceSha256": "ACB1ED651A444873AD00FD0EDC2BA0804ED411BC7BDC693CAB62F0C40DDC2C92",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::starter_slugs_match_picker_documentation_intent",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "BB79AC2BF90379D3BE2382FB7A302ADBB1278CB14E6161CD6058ED0C4BB45E68",
+      "sourceSha256": "ACB1ED651A444873AD00FD0EDC2BA0804ED411BC7BDC693CAB62F0C40DDC2C92",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::build_workflow_skeleton_embeds_name_cron_endpoint",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "BB79AC2BF90379D3BE2382FB7A302ADBB1278CB14E6161CD6058ED0C4BB45E68",
+      "sourceSha256": "ACB1ED651A444873AD00FD0EDC2BA0804ED411BC7BDC693CAB62F0C40DDC2C92",
       "junitClass": "neoth"
     },
     {
@@ -11124,73 +11124,73 @@
     {
       "test": "installers::n8n_starter_workflows::tests::email_threat_starter_uses_pinned_text_only_imap_contract",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "BB79AC2BF90379D3BE2382FB7A302ADBB1278CB14E6161CD6058ED0C4BB45E68",
+      "sourceSha256": "ACB1ED651A444873AD00FD0EDC2BA0804ED411BC7BDC693CAB62F0C40DDC2C92",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::consult::tests::bounded_consult_matches_and_ranks_without_following_legacy_paths",
       "sourcePath": "SRC/neothd/src/paperless/consult.rs",
-      "sourceSha256": "5A299ED3A7FE2B23D1BC1ECEF35AA37E438333BFAC7DE6E55F9005BE1D679EC4",
+      "sourceSha256": "0C0D05F16C89668835A33DC307993B8123CD0AD72FD4B933DAC2EA5A6524266C",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::consult::tests::bounded_consult_distinguishes_missing_directory_from_file_and_corrupt_document",
       "sourcePath": "SRC/neothd/src/paperless/consult.rs",
-      "sourceSha256": "5A299ED3A7FE2B23D1BC1ECEF35AA37E438333BFAC7DE6E55F9005BE1D679EC4",
+      "sourceSha256": "0C0D05F16C89668835A33DC307993B8123CD0AD72FD4B933DAC2EA5A6524266C",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::consult::tests::bounded_consult_enforces_per_document_entry_and_aggregate_budgets",
       "sourcePath": "SRC/neothd/src/paperless/consult.rs",
-      "sourceSha256": "5A299ED3A7FE2B23D1BC1ECEF35AA37E438333BFAC7DE6E55F9005BE1D679EC4",
+      "sourceSha256": "0C0D05F16C89668835A33DC307993B8123CD0AD72FD4B933DAC2EA5A6524266C",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::consult::tests::unicode_lowercase_expansion_keeps_excerpt_on_a_valid_utf8_boundary",
       "sourcePath": "SRC/neothd/src/paperless/consult.rs",
-      "sourceSha256": "5A299ED3A7FE2B23D1BC1ECEF35AA37E438333BFAC7DE6E55F9005BE1D679EC4",
+      "sourceSha256": "0C0D05F16C89668835A33DC307993B8123CD0AD72FD4B933DAC2EA5A6524266C",
       "junitClass": "neoth"
     },
     {
       "test": "paperless::consult::tests::unicode_greek_final_sigma_keeps_legacy_whole_string_scoring",
       "sourcePath": "SRC/neothd/src/paperless/consult.rs",
-      "sourceSha256": "5A299ED3A7FE2B23D1BC1ECEF35AA37E438333BFAC7DE6E55F9005BE1D679EC4",
+      "sourceSha256": "0C0D05F16C89668835A33DC307993B8123CD0AD72FD4B933DAC2EA5A6524266C",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::server::paperless_consult_http_tests::consult_scope_is_rejected_before_body_parse_or_vault_read",
       "sourcePath": "SRC/neothd/src/n8n_api/paperless_consult_http_tests.rs",
-      "sourceSha256": "9C711A5A5D741DF174DEB2C1E0393A6DCD26EACCE8DB99782B06E6E27919A1B2",
+      "sourceSha256": "FE5554F26433A64135E77E610D5ADEA7962F31E3B5B5943A4E550165E1766EF4",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::server::paperless_consult_http_tests::consult_rejects_strict_invalid_requests_before_configured_vault_read",
       "sourcePath": "SRC/neothd/src/n8n_api/paperless_consult_http_tests.rs",
-      "sourceSha256": "9C711A5A5D741DF174DEB2C1E0393A6DCD26EACCE8DB99782B06E6E27919A1B2",
+      "sourceSha256": "FE5554F26433A64135E77E610D5ADEA7962F31E3B5B5943A4E550165E1766EF4",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::server::paperless_consult_http_tests::consult_reads_only_configured_vault_and_redacts_paths_from_real_match_response",
       "sourcePath": "SRC/neothd/src/n8n_api/paperless_consult_http_tests.rs",
-      "sourceSha256": "9C711A5A5D741DF174DEB2C1E0393A6DCD26EACCE8DB99782B06E6E27919A1B2",
+      "sourceSha256": "FE5554F26433A64135E77E610D5ADEA7962F31E3B5B5943A4E550165E1766EF4",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::server::paperless_consult_http_tests::consult_missing_configuration_returns_fixed_503",
       "sourcePath": "SRC/neothd/src/n8n_api/paperless_consult_http_tests.rs",
-      "sourceSha256": "9C711A5A5D741DF174DEB2C1E0393A6DCD26EACCE8DB99782B06E6E27919A1B2",
+      "sourceSha256": "FE5554F26433A64135E77E610D5ADEA7962F31E3B5B5943A4E550165E1766EF4",
       "junitClass": "neoth"
     },
     {
       "test": "n8n_api::server::paperless_consult_http_tests::consult_distinguishes_missing_directory_from_file_corrupt_and_oversized_store_failures",
       "sourcePath": "SRC/neothd/src/n8n_api/paperless_consult_http_tests.rs",
-      "sourceSha256": "9C711A5A5D741DF174DEB2C1E0393A6DCD26EACCE8DB99782B06E6E27919A1B2",
+      "sourceSha256": "FE5554F26433A64135E77E610D5ADEA7962F31E3B5B5943A4E550165E1766EF4",
       "junitClass": "neoth"
     },
     {
       "test": "installers::n8n_starter_workflows::tests::paperless_consult_starter_is_manual_question_lookup_only",
       "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "sourceSha256": "BB79AC2BF90379D3BE2382FB7A302ADBB1278CB14E6161CD6058ED0C4BB45E68",
+      "sourceSha256": "ACB1ED651A444873AD00FD0EDC2BA0804ED411BC7BDC693CAB62F0C40DDC2C92",
       "junitClass": "neoth"
     }
   ],
@@ -13456,7 +13456,7 @@
       {
         "test": "paperless::consult::tests::bounded_consult_refuses_a_symlinked_document",
         "sourcePath": "SRC/neothd/src/paperless/consult.rs",
-        "sourceSha256": "5A299ED3A7FE2B23D1BC1ECEF35AA37E438333BFAC7DE6E55F9005BE1D679EC4",
+        "sourceSha256": "0C0D05F16C89668835A33DC307993B8123CD0AD72FD4B933DAC2EA5A6524266C",
         "junitClass": "neoth"
       }
     ],
@@ -13806,7 +13806,7 @@
       {
         "test": "paperless::consult::tests::bounded_consult_refuses_a_symlinked_document",
         "sourcePath": "SRC/neothd/src/paperless/consult.rs",
-        "sourceSha256": "5A299ED3A7FE2B23D1BC1ECEF35AA37E438333BFAC7DE6E55F9005BE1D679EC4",
+        "sourceSha256": "0C0D05F16C89668835A33DC307993B8123CD0AD72FD4B933DAC2EA5A6524266C",
         "junitClass": "neoth"
       }
     ]
@@ -42114,6 +42114,62 @@
       }
     ],
     "note": "12 newtests11universal1unix;Native1864Group1647Windows422 Linuxextras63mac58; no newroadclosure. Root timestamp/type/Unicode repairs independently reviewed.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1205": {
+    "base": "614e2273f2a272e75e2c5a4135f5c65580188c0e",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1205-hosted-format.json",
+        "bytes": 2809,
+        "sha256": "84D856EB03E95B61825F490A0DFA58E42B7F975440962A265E90E5A50FA1E034",
+        "blob": "70d3e63e521c9757c6da061678008bc56e64a5a9"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 341740,
+        "sha256": "59E8DC10BA57DAA6120CCE997E726E4F6EA4F0121E6892784ED1EDB64E624A8D",
+        "blob": "b7b836335027f3e839e5d5f32ea4ee5cf7adb5ae"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1358551,
+        "sha256": "DA0A91D1893FCCC6AAD64F5760F05DE0B39CF0C8190F0E32AFB45DC8D2350C8F",
+        "blob": "e105210bf73a3aefdffbd053e71f4bb996c69b4c"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1969123,
+        "sha256": "4405DD3A62F3274127396626B886F49C139CAB59589B4E77031BF4C40DBF53DF",
+        "blob": "700fba095888adb378fd2d01c9b3865918112b0f"
+      },
+      {
+        "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+        "bytes": 57760,
+        "sha256": "ACB1ED651A444873AD00FD0EDC2BA0804ED411BC7BDC693CAB62F0C40DDC2C92",
+        "blob": "6bfee854851229084b31a10b172311cb79eac0c2"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/handlers/paperless_consult.rs",
+        "bytes": 2926,
+        "sha256": "2442D06E63131B5CD3247E5D663D4ECDA8EC14DF21B7C9122495A50304B83D84",
+        "blob": "0e93e2b4ee75d193fbcd49004511bc802e4de176"
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/paperless_consult_http_tests.rs",
+        "bytes": 11518,
+        "sha256": "FE5554F26433A64135E77E610D5ADEA7962F31E3B5B5943A4E550165E1766EF4",
+        "blob": "d4b4e9983e632d9907759be756b84ab9a3a9241c"
+      },
+      {
+        "path": "SRC/neothd/src/paperless/consult.rs",
+        "bytes": 31908,
+        "sha256": "0C0D05F16C89668835A33DC307993B8123CD0AD72FD4B933DAC2EA5A6524266C",
+        "blob": "4b2cf8a2490199f406f3f18907af2ea15a16da03"
+      }
+    ],
+    "note": "No semantic changes/no new tests; all four exact formatter pre/postimages verified. Claude034 prepared.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

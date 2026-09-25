@@ -251,7 +251,10 @@ pub fn consult_bounded(
     let mut total_bytes = 0usize;
     let mut scanned = 0usize;
     let mut candidates = Vec::new();
-    for entry in directory.entries().context("enumerate bounded Paperless directory")? {
+    for entry in directory
+        .entries()
+        .context("enumerate bounded Paperless directory")?
+    {
         directory_entries = directory_entries
             .checked_add(1)
             .context("bounded Paperless directory entry counter overflow")?;
@@ -273,7 +276,8 @@ pub fn consult_bounded(
             !crate::skills::store::cap_metadata_is_link_like(&metadata),
             "bounded Paperless directory contains a link-like entry"
         );
-        let is_markdown = Path::new(filename).extension().and_then(|ext| ext.to_str()) == Some("md");
+        let is_markdown =
+            Path::new(filename).extension().and_then(|ext| ext.to_str()) == Some("md");
         if !is_markdown {
             continue;
         }
@@ -337,7 +341,10 @@ fn validate_bounded_inputs(
     anyhow::ensure!(
         vault_root.is_absolute()
             && vault_root.components().all(|component| {
-                matches!(component, Component::Prefix(_) | Component::RootDir | Component::Normal(_))
+                matches!(
+                    component,
+                    Component::Prefix(_) | Component::RootDir | Component::Normal(_)
+                )
             }),
         "bounded Paperless vault root must be absolute with normal descendants"
     );
@@ -384,11 +391,8 @@ fn open_bounded_paperless_dir(
     for component in Path::new(subdir).components() {
         let name = component.as_os_str();
         let child_path = display_path.join(name);
-        let Some(child) = crate::skills::store::open_real_child_dir_if_present(
-            &directory,
-            name,
-            &child_path,
-        )?
+        let Some(child) =
+            crate::skills::store::open_real_child_dir_if_present(&directory, name, &child_path)?
         else {
             return Ok(None);
         };
@@ -433,7 +437,8 @@ fn score_body(body: &str, query_tokens: &[String]) -> (usize, Option<usize>) {
                 .find(|(lowered_start, _)| *lowered_start <= lowered_hit)
                 .map(|(_, original_byte)| *original_byte)
                 .unwrap_or(0);
-            first_hit_byte = Some(first_hit_byte.map_or(original_hit, |prior| prior.min(original_hit)));
+            first_hit_byte =
+                Some(first_hit_byte.map_or(original_hit, |prior| prior.min(original_hit)));
         }
     }
     (score, first_hit_byte)

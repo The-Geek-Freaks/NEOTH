@@ -40,7 +40,11 @@ async fn start_consult_http_test_server(
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let shutdown = Arc::new(Notify::new());
-    let server = tokio::spawn(run_server(listener, Arc::clone(&state), Arc::clone(&shutdown)));
+    let server = tokio::spawn(run_server(
+        listener,
+        Arc::clone(&state),
+        Arc::clone(&shutdown),
+    ));
     (state, writer, wal_join, server, shutdown, port)
 }
 
@@ -70,9 +74,8 @@ async fn post_consult_http(port: u16, token: Option<&str>, body: &str) -> serde_
         let response = String::from_utf8(response).unwrap();
         let (head, body) = response.split_once("\r\n\r\n").unwrap();
         let mut envelope: serde_json::Value = serde_json::from_str(body).unwrap();
-        envelope["_http_status"] = serde_json::Value::String(
-            head.split_whitespace().nth(1).unwrap().to_owned(),
-        );
+        envelope["_http_status"] =
+            serde_json::Value::String(head.split_whitespace().nth(1).unwrap().to_owned());
         envelope
     })
     .await
@@ -137,11 +140,18 @@ async fn consult_scope_is_rejected_before_body_parse_or_vault_read() {
 async fn consult_rejects_strict_invalid_requests_before_configured_vault_read() {
     let home = tempfile::tempdir().unwrap();
     let vault = tempfile::tempdir().unwrap();
-    let marker = vault.path().join("Scoped").join("Paperless").join("private.md");
+    let marker = vault
+        .path()
+        .join("Scoped")
+        .join("Paperless")
+        .join("private.md");
     std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
     std::fs::write(&marker, "private fixture must not be read").unwrap();
     let before = std::fs::read(&marker).unwrap();
-    let token = consult_token(home.path(), vec![api_tokens::SCOPE_PAPERLESS_CONSULT_READ.to_owned()]);
+    let token = consult_token(
+        home.path(),
+        vec![api_tokens::SCOPE_PAPERLESS_CONSULT_READ.to_owned()],
+    );
     let (state, writer, wal_join, server, shutdown, port) =
         start_consult_http_test_server(home.path(), configured(vault.path(), "Scoped")).await;
 
@@ -156,7 +166,10 @@ async fn consult_rejects_strict_invalid_requests_before_configured_vault_read() 
     ] {
         let response = post_consult_http(port, Some(&token), &request).await;
         assert_eq!(response["_http_status"], "400", "{request}");
-        assert_eq!(response["error"]["message"], "paperless_consult_request_invalid");
+        assert_eq!(
+            response["error"]["message"],
+            "paperless_consult_request_invalid"
+        );
     }
     assert_eq!(std::fs::read(&marker).unwrap(), before);
 
@@ -168,24 +181,39 @@ async fn consult_reads_only_configured_vault_and_redacts_paths_from_real_match_r
     let home = tempfile::tempdir().unwrap();
     let vault = tempfile::tempdir().unwrap();
     let ambient = home.path().join("NEOTH").join("Paperless");
-    let configured_note = vault.path().join("Scoped").join("Paperless").join("acme.md");
+    let configured_note = vault
+        .path()
+        .join("Scoped")
+        .join("Paperless")
+        .join("acme.md");
     std::fs::create_dir_all(configured_note.parent().unwrap()).unwrap();
     std::fs::write(&configured_note, "ACME invoice totals are settled.").unwrap();
     std::fs::create_dir_all(&ambient).unwrap();
     std::fs::write(ambient.join("ambient.md"), "invoice private ambient marker").unwrap();
-    let token = consult_token(home.path(), vec![api_tokens::SCOPE_PAPERLESS_CONSULT_READ.to_owned()]);
+    let token = consult_token(
+        home.path(),
+        vec![api_tokens::SCOPE_PAPERLESS_CONSULT_READ.to_owned()],
+    );
     let (state, writer, wal_join, server, shutdown, port) =
         start_consult_http_test_server(home.path(), configured(vault.path(), "Scoped")).await;
 
     let response = post_consult_http(port, Some(&token), &body("invoice acme", 5)).await;
     assert_eq!(response["_http_status"], "200");
-    assert_eq!(response["data"]["coverage"], "local_paperless_notes_keyword_lookup");
+    assert_eq!(
+        response["data"]["coverage"],
+        "local_paperless_notes_keyword_lookup"
+    );
     assert_eq!(response["data"]["matches"].as_array().unwrap().len(), 1);
     let matched = &response["data"]["matches"][0];
     assert_eq!(matched.as_object().unwrap().len(), 3);
     assert!(matched.get("path").is_none());
     assert_eq!(matched["filename"], "acme.md");
-    assert!(matched["excerpt"].as_str().unwrap().contains("ACME invoice"));
+    assert!(
+        matched["excerpt"]
+            .as_str()
+            .unwrap()
+            .contains("ACME invoice")
+    );
     assert!(matched["score"].is_u64());
     let serialized = response.to_string();
     assert!(!serialized.contains(vault.path().to_string_lossy().as_ref()));
@@ -199,15 +227,25 @@ async fn consult_reads_only_configured_vault_and_redacts_paths_from_real_match_r
 #[tokio::test]
 async fn consult_missing_configuration_returns_fixed_503() {
     let home = tempfile::tempdir().unwrap();
-    let token = consult_token(home.path(), vec![api_tokens::SCOPE_PAPERLESS_CONSULT_READ.to_owned()]);
+    let token = consult_token(
+        home.path(),
+        vec![api_tokens::SCOPE_PAPERLESS_CONSULT_READ.to_owned()],
+    );
     let (state, writer, wal_join, server, shutdown, port) =
         start_consult_http_test_server(home.path(), FreedomConfig::default()).await;
 
     let response = post_consult_http(port, Some(&token), &body("invoice", 5)).await;
     assert_eq!(response["_http_status"], "503");
     assert_eq!(response["error"]["code"], "StoreUnavailable");
-    assert_eq!(response["error"]["message"], "paperless_consult_vault_not_configured");
-    assert!(!response.to_string().contains(home.path().to_string_lossy().as_ref()));
+    assert_eq!(
+        response["error"]["message"],
+        "paperless_consult_vault_not_configured"
+    );
+    assert!(
+        !response
+            .to_string()
+            .contains(home.path().to_string_lossy().as_ref())
+    );
 
     stop_consult_http_test_server(state, writer, wal_join, server, shutdown).await;
 }
@@ -216,7 +254,10 @@ async fn consult_missing_configuration_returns_fixed_503() {
 async fn consult_distinguishes_missing_directory_from_file_corrupt_and_oversized_store_failures() {
     let home = tempfile::tempdir().unwrap();
     let vault = tempfile::tempdir().unwrap();
-    let token = consult_token(home.path(), vec![api_tokens::SCOPE_PAPERLESS_CONSULT_READ.to_owned()]);
+    let token = consult_token(
+        home.path(),
+        vec![api_tokens::SCOPE_PAPERLESS_CONSULT_READ.to_owned()],
+    );
     let (state, writer, wal_join, server, shutdown, port) =
         start_consult_http_test_server(home.path(), configured(vault.path(), "Scoped")).await;
 
@@ -238,8 +279,15 @@ async fn consult_distinguishes_missing_directory_from_file_corrupt_and_oversized
     let oversized_error = post_consult_http(port, Some(&token), &body("invoice", 5)).await;
     assert_eq!(oversized_error["_http_status"], "503");
     for response in [file_error, corrupt_error, oversized_error] {
-        assert_eq!(response["error"]["message"], "paperless_consult_unavailable_or_limit_exceeded");
-        assert!(!response.to_string().contains(vault.path().to_string_lossy().as_ref()));
+        assert_eq!(
+            response["error"]["message"],
+            "paperless_consult_unavailable_or_limit_exceeded"
+        );
+        assert!(
+            !response
+                .to_string()
+                .contains(vault.path().to_string_lossy().as_ref())
+        );
     }
 
     stop_consult_http_test_server(state, writer, wal_join, server, shutdown).await;

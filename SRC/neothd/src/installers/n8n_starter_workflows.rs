@@ -560,8 +560,16 @@ mod tests {
             let v: serde_json::Value = serde_json::from_str(w.body).unwrap();
             let nodes = v["nodes"].as_array().expect("nodes is array");
             if spec.slug == "paperless_invoice_consult" {
-                assert!(nodes.iter().any(|n| n["type"] == "n8n-nodes-base.manualTrigger"));
-                assert!(!nodes.iter().any(|n| n["type"] == "n8n-nodes-base.scheduleTrigger"));
+                assert!(
+                    nodes
+                        .iter()
+                        .any(|n| n["type"] == "n8n-nodes-base.manualTrigger")
+                );
+                assert!(
+                    !nodes
+                        .iter()
+                        .any(|n| n["type"] == "n8n-nodes-base.scheduleTrigger")
+                );
                 continue;
             } else if spec.slug == "email_threat_quarantine" {
                 assert!(
@@ -631,8 +639,14 @@ mod tests {
         for w in starter_workflows() {
             let v: serde_json::Value = serde_json::from_str(w.body).unwrap();
             if w.slug == "paperless_invoice_consult" {
-                assert_eq!(v["connections"]["Manual Trigger"]["main"][0][0]["node"], "Operator Configuration");
-                assert_eq!(v["connections"]["Operator Configuration"]["main"][0][0]["node"], "NEOTH HTTP");
+                assert_eq!(
+                    v["connections"]["Manual Trigger"]["main"][0][0]["node"],
+                    "Operator Configuration"
+                );
+                assert_eq!(
+                    v["connections"]["Operator Configuration"]["main"][0][0]["node"],
+                    "NEOTH HTTP"
+                );
                 continue;
             } else if w.slug == "email_threat_quarantine" {
                 assert_eq!(
@@ -813,8 +827,15 @@ mod tests {
                 assert_eq!(http["parameters"]["sendBody"], true);
                 assert_eq!(http["parameters"]["contentType"], "json");
                 assert_eq!(http["parameters"]["specifyBody"], "json");
-                assert_eq!(http["parameters"]["jsonBody"], "={{ JSON.stringify({ question: $json.question, limit: $json.limit }) }}");
-                assert!(http["notes"].as_str().is_some_and(|notes| notes.contains("requires paperless:consult:read")));
+                assert_eq!(
+                    http["parameters"]["jsonBody"],
+                    "={{ JSON.stringify({ question: $json.question, limit: $json.limit }) }}"
+                );
+                assert!(
+                    http["notes"]
+                        .as_str()
+                        .is_some_and(|notes| notes.contains("requires paperless:consult:read"))
+                );
             } else if w.slug == "email_threat_quarantine" {
                 assert_eq!(http["parameters"]["method"], "POST");
                 assert_eq!(http["parameters"]["sendBody"], true);
@@ -842,17 +863,58 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(w.body).unwrap();
         assert_eq!(v["active"], false);
         let nodes = v["nodes"].as_array().unwrap();
-        assert!(nodes.iter().any(|n| n["type"] == "n8n-nodes-base.manualTrigger"));
-        assert!(!nodes.iter().any(|n| n["type"] == "n8n-nodes-base.scheduleTrigger"));
-        let configuration = nodes.iter().find(|n| n["name"] == "Operator Configuration").unwrap();
-        let fields = configuration["parameters"]["assignments"]["assignments"].as_array().unwrap();
-        assert_eq!(fields[0]["name"], "neothBaseUrl"); assert_eq!(fields[1]["name"], "question"); assert_eq!(fields[1]["value"], ""); assert_eq!(fields[2]["name"], "limit"); assert_eq!(fields[2]["value"], 5);
-        let http = nodes.iter().find(|n| n["type"] == "n8n-nodes-base.httpRequest").unwrap();
-        assert_eq!(http["parameters"]["url"], "={{ $json.neothBaseUrl + '/api/paperless/consult' }}");
-        assert_eq!(http["parameters"]["method"], "POST"); assert_eq!(http["parameters"]["authentication"], "genericCredentialType"); assert_eq!(http["parameters"]["genericAuthType"], "httpHeaderAuth");
-        assert_eq!(http["parameters"]["jsonBody"], "={{ JSON.stringify({ question: $json.question, limit: $json.limit }) }}");
-        assert!(http["notes"].as_str().unwrap().contains("requires paperless:consult:read"));
-        assert!(http["notes"].as_str().unwrap().contains("does not ingest documents"));
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n["type"] == "n8n-nodes-base.manualTrigger")
+        );
+        assert!(
+            !nodes
+                .iter()
+                .any(|n| n["type"] == "n8n-nodes-base.scheduleTrigger")
+        );
+        let configuration = nodes
+            .iter()
+            .find(|n| n["name"] == "Operator Configuration")
+            .unwrap();
+        let fields = configuration["parameters"]["assignments"]["assignments"]
+            .as_array()
+            .unwrap();
+        assert_eq!(fields[0]["name"], "neothBaseUrl");
+        assert_eq!(fields[1]["name"], "question");
+        assert_eq!(fields[1]["value"], "");
+        assert_eq!(fields[2]["name"], "limit");
+        assert_eq!(fields[2]["value"], 5);
+        let http = nodes
+            .iter()
+            .find(|n| n["type"] == "n8n-nodes-base.httpRequest")
+            .unwrap();
+        assert_eq!(
+            http["parameters"]["url"],
+            "={{ $json.neothBaseUrl + '/api/paperless/consult' }}"
+        );
+        assert_eq!(http["parameters"]["method"], "POST");
+        assert_eq!(
+            http["parameters"]["authentication"],
+            "genericCredentialType"
+        );
+        assert_eq!(http["parameters"]["genericAuthType"], "httpHeaderAuth");
+        assert_eq!(
+            http["parameters"]["jsonBody"],
+            "={{ JSON.stringify({ question: $json.question, limit: $json.limit }) }}"
+        );
+        assert!(
+            http["notes"]
+                .as_str()
+                .unwrap()
+                .contains("requires paperless:consult:read")
+        );
+        assert!(
+            http["notes"]
+                .as_str()
+                .unwrap()
+                .contains("does not ingest documents")
+        );
     }
     #[test]
     fn email_threat_starter_uses_pinned_text_only_imap_contract() {

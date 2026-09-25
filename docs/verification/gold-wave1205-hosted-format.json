@@ -1,0 +1,68 @@
+{
+  "schema": "neoth-format-receipt/v1",
+  "run": 36094997920,
+  "source": "614e2273f2a272e75e2c5a4135f5c65580188c0e",
+  "run_conclusion": "failure",
+  "failed_steps": [
+    "Check Rust formatting without compiling"
+  ],
+  "artifact": {
+    "id": 10847341162,
+    "api_digest": "sha256:1d0a930d69e92427b038d3adac47f42bb50a5687c4bbe704952b3c1673fb15e9",
+    "zip_sha256": "1d0a930d69e92427b038d3adac47f42bb50a5687c4bbe704952b3c1673fb15e9",
+    "matches": true
+  },
+  "inner_hashes": [
+    {
+      "path": "rustfmt.patch",
+      "expected": "3b1b5524cd56cd4762d93cc91df2ecf5858827e7ba60d8ba133ed68d641cf2a3",
+      "actual": "3b1b5524cd56cd4762d93cc91df2ecf5858827e7ba60d8ba133ed68d641cf2a3",
+      "matches": true
+    },
+    {
+      "path": "source-head.txt",
+      "expected": "0ba0ce7e72b9479a5a7d5ec05d75d49f0af0812c40a47c7d404f0692fddb2427",
+      "actual": "0ba0ce7e72b9479a5a7d5ec05d75d49f0af0812c40a47c7d404f0692fddb2427",
+      "matches": true
+    }
+  ],
+  "receipt_source": "614e2273f2a272e75e2c5a4135f5c65580188c0e",
+  "receipt_source_matches_run": true,
+  "touched_path_count": 4,
+  "preimages_all_match": true,
+  "entries": [
+    {
+      "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+      "preimage_git_blob": "9b9a1cd9f43fd1d59ec02cf55fe453b15ce037b3",
+      "historical_sha256": "bb79ac2bf90379d3be2382fb7a302adbb1278cb14e6161cd6058ed0c4bb45e68",
+      "postimage_git_blob": "6bfee854851229084b31a10b172311cb79eac0c2",
+      "preimage_matches": true,
+      "postimage_present": false
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers/paperless_consult.rs",
+      "preimage_git_blob": "1fa820f2b43ec90820ba68d8708ccfd85709d958",
+      "historical_sha256": "3ab5d70b5ccd1f443e9f4ffe87d08603c6685ff3cf8a3bc067b220402a6c847f",
+      "postimage_git_blob": "0e93e2b4ee75d193fbcd49004511bc802e4de176",
+      "preimage_matches": true,
+      "postimage_present": false
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/paperless_consult_http_tests.rs",
+      "preimage_git_blob": "9868bc1209d9b9c53cdc3b28d74a598b86c37ae7",
+      "historical_sha256": "9c711a5a5d741df174deb2c1e0393a6dcd26eacce8db99782b06e6e27919a1b2",
+      "postimage_git_blob": "d4b4e9983e632d9907759be756b84ab9a3a9241c",
+      "preimage_matches": true,
+      "postimage_present": false
+    },
+    {
+      "path": "SRC/neothd/src/paperless/consult.rs",
+      "preimage_git_blob": "52844e637cdf9909710ad0c22691660c7f053622",
+      "historical_sha256": "5a299ed3a7fe2b23d1bc1ecef35aa37e438333bfac7de6e55f9005be1d679ec4",
+      "postimage_git_blob": "4b2cf8a2490199f406f3f18907af2ea15a16da03",
+      "preimage_matches": true,
+      "postimage_present": false
+    }
+  ],
+  "scope": "Root imported four exact hosted formatter outputs after ZIP/inner/source/preimage/postimage verification; no local formatter."
+}
