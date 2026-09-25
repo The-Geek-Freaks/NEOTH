@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "base": "bc3dd0f858af064a57751dae88460feedd5427e1",
+  "provenance": {
+    "workflow": ".github/workflows/n8n-upstream-provenance.yml",
+    "reviewSha256": "D7E3B4D97F744CFA4F2F21834A9CF9164BC1C6DF1C3B8679E23F0A0C9EB31865",
+    "policy": "Official gh attestation verify default GitHub/Sigstore public-good trust. Exact canonical GHCR digest, n8n repo/workflow/release ref/source commit, SLSA predicate and hosted runner.",
+    "negativeControl": "Wrong signer nonzero required; semantic rejection remains pending original artifact diagnosis.",
+    "boundaries": [
+      "No Docker Hub mirror-trust adoption",
+      "No runtime image pull",
+      "No P2-20 closure"
+    ]
+  },
+  "clippy": {
+    "failedRun": 36150867383,
+    "failedSource": "a0b090fe576e4502f993628876edcbd003dc1981",
+    "source": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+    "diagnostics": [
+      "unused_mut in feature-conditional recovery fixture",
+      "clone_on_copy for ChannelKind"
+    ],
+    "fix": "Immutable cfg-gated array and direct Copy value; no behavior change or lint suppression.",
+    "hostedRerun": "pending"
+  },
+  "localExecutableValidationRan": false
+}

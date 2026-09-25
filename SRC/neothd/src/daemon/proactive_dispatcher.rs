@@ -2815,12 +2815,15 @@ mod tests {
 
     #[tokio::test]
     async fn default_connection_bound_account_recovery_delivers_once_and_never_replays() {
-        let mut cases = vec![("irc", "#ops"), ("twitch", "#streamer")];
-        #[cfg(feature = "nostr-channel")]
-        cases.push((
-            "nostr",
-            "npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m",
-        ));
+        let cases = [
+            ("irc", "#ops"),
+            ("twitch", "#streamer"),
+            #[cfg(feature = "nostr-channel")]
+            (
+                "nostr",
+                "npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m",
+            ),
+        ];
         for (channel, destination) in cases {
             let tmp = TempDir::new().unwrap();
             let queue_path = tmp.path().join("proactive_queue.json");
@@ -2960,7 +2963,7 @@ mod tests {
                     let (published_ref, published_fingerprint) = match state {
                         "foreign" => (
                             crate::channels::registry::ChannelRef::new(
-                                channel_ref.channel_id.clone(),
+                                channel_ref.channel_id,
                                 crate::channels::registry::ChannelAccountId::new("other").unwrap(),
                             ),
                             fingerprint,

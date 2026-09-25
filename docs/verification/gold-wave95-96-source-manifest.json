@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T15:57:36Z",
-  "validationStatus": "SOURCE_ADMISSIONS_NATIVE_PENDING",
+  "capturedUtc": "2026-09-25T16:08:05Z",
+  "validationStatus": "SOURCE_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -75,6 +75,11 @@
       "path": ".github/workflows/n8n-product-bootstrap.yml",
       "bytes": 4618,
       "sha256": "E61DB5CCDE0CC3DFE6EE103031E40A6025DAC328977C24BBF2ABC376FF258D60"
+    },
+    {
+      "path": ".github/workflows/n8n-upstream-provenance.yml",
+      "bytes": 10438,
+      "sha256": "CEABB764168965CF5DF026B80D36189CF7DFC6894886158AAFE3B29137E7616D"
     },
     {
       "path": ".github/workflows/obsidian-bridge-artifact.yml",
@@ -2057,6 +2062,11 @@
       "sha256": "8DC1C1E1165869915F019458A28D90270FB1BF5B2BB1FD6308D3D057E964F30E"
     },
     {
+      "path": "docs/verification/gold-wave1476-provenance-and-clippy.json",
+      "bytes": 1223,
+      "sha256": "FA4469166E2E5C11988829E1FC15B5FFB859991D591A630BB9394C8C76C9A411"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3013,18 +3023,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 403475,
-      "sha256": "D4DF27F36BC30EE5A4C5864329692E28EA4CCE47B5465FB3DF114FE07DBBDFE1"
+      "bytes": 404495,
+      "sha256": "2D00449A6851C0C0FF6CC820B2E8973A53E7CF3CB0AB8230591EFD21B6997322"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1422406,
-      "sha256": "45405D630CC8D168ED0591560F78F4B735EFB04885739FE466A915B4314408B5"
+      "bytes": 1423426,
+      "sha256": "239723F663B350A7D03CF5720B174E222460C4F9C9B42983514A8FD0A446B42B"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2032929,
-      "sha256": "365FA442F5A1FD804ADDB1116ED57256C89C0A86FCAF6ABA35C3B66B95A3F914"
+      "bytes": 2033949,
+      "sha256": "EB16D055D73C7685DF7F58FE22374367105F4240D2F1E0FE976D85E6D12B448F"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4818,8 +4828,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "bytes": 174293,
-      "sha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A"
+      "bytes": 174320,
+      "sha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF"
     },
     {
       "path": "SRC/neothd/src/daemon/proactive_egress.rs",

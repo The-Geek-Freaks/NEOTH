@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "SOURCE_ADMISSIONS_NATIVE_PENDING",
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 227039,
-    "sha256": "A7FA11A94F032BFA95AD72A402AB66B975CAF7D0E72C967E0E9DCFC95713B966"
+    "bytes": 227411,
+    "sha256": "7418B69748C4ECEECADFA48C9BD321C96321C08581242F150E74CE7C580743FB"
   },
-  "sourceInputs": 1272,
+  "sourceInputs": 1274,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -588,31 +588,31 @@
     {
       "test": "daemon::proactive_dispatcher::tests::connection_bound_delivery_uses_only_the_exact_live_channel_ref",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A",
+      "sourceSha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::unavailable_connection_bound_handles_settle_sidecar_before_transport",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A",
+      "sourceSha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::malformed_connection_bound_targets_never_acquire_or_arm_live_transport",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A",
+      "sourceSha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::failed_connection_bound_adapter_never_records_delivered",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A",
+      "sourceSha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::plan_delivery_connection_bound_channels_require_the_live_registry",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A",
+      "sourceSha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
       "junitClass": "neoth"
     },
     {
@@ -7740,37 +7740,37 @@
     {
       "test": "daemon::proactive_dispatcher::tests::delivery_tick_invalid_routing_leaves_queue_untouched",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A",
+      "sourceSha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::disabled_delivery_tick_ignores_invalid_routing_and_preserves_queue",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A",
+      "sourceSha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::explicit_queued_account_keeps_its_original_channel_when_routing_changes",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A",
+      "sourceSha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::invalid_adapter_configuration_settles_only_that_item_and_does_not_starve_tick",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A",
+      "sourceSha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::oversized_legacy_route_rejects_before_queue_mutation",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A",
+      "sourceSha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::unbound_item_with_bound_route_settles_before_planning_or_transport",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A",
+      "sourceSha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
       "junitClass": "neoth"
     },
     {
@@ -7980,13 +7980,13 @@
     {
       "test": "daemon::proactive_dispatcher::tests::slack_account_only_item_preserves_slack_target_and_never_becomes_telegram",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A",
+      "sourceSha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::plan_delivery_slack_account_maps_are_sidecar_only_without_account_selection",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A",
+      "sourceSha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
       "junitClass": "neoth"
     },
     {
@@ -12384,25 +12384,25 @@
     {
       "test": "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_delivers_once_and_never_replays",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A",
+      "sourceSha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_refuses_nonmatching_or_denied_state",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A",
+      "sourceSha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::invalid_persisted_live_channel_sealed_binding_is_quarantined_before_dispatch",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A",
+      "sourceSha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::live_channel_sealed_binding_guard_rejects_before_egress_and_preserves_valid_queue",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "9ECBA70728631A3A893423DC2DBA46036F8601CFD8BA40736A00886676FE808A",
+      "sourceSha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
       "junitClass": "neoth"
     },
     {
@@ -47604,6 +47604,50 @@
     ],
     "note": "W1462 channel11@80091494 and W1464 real n8n product@32df8d26 admitted from original artifacts and Git source hashes; Group1857,Windows622,Core32df pending. Backup development separate, no closure.",
     "hosted": "SOURCE_RUNS_ADMITTED_NATIVE_PENDING",
+    "localExecutableValidationRan": false
+  },
+  "wave1476ProvenanceAndClippy": {
+    "base": "bc3dd0f858af064a57751dae88460feedd5427e1",
+    "sources": [
+      {
+        "path": ".github/workflows/n8n-upstream-provenance.yml",
+        "bytes": 10438,
+        "sha256": "CEABB764168965CF5DF026B80D36189CF7DFC6894886158AAFE3B29137E7616D",
+        "blob": "07ffde4eae2ea78a050db99259f97647e01b5e49"
+      },
+      {
+        "path": "docs/verification/gold-wave1476-provenance-and-clippy.json",
+        "bytes": 1223,
+        "sha256": "FA4469166E2E5C11988829E1FC15B5FFB859991D591A630BB9394C8C76C9A411",
+        "blob": "2ddbdef57b2e7800acf1f568fac792aecdbb53ef"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 404495,
+        "sha256": "2D00449A6851C0C0FF6CC820B2E8973A53E7CF3CB0AB8230591EFD21B6997322",
+        "blob": "18421afb7a8ebf84911afcc17d6d0bb35a313477"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1423426,
+        "sha256": "239723F663B350A7D03CF5720B174E222460C4F9C9B42983514A8FD0A446B42B",
+        "blob": "a50e3dfafd878783ee46a5d6ff88b82caaa0efad"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2033949,
+        "sha256": "EB16D055D73C7685DF7F58FE22374367105F4240D2F1E0FE976D85E6D12B448F",
+        "blob": "cd0e90a2b716bf56f899ba27c7d87bb3181dbef8"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+        "bytes": 174320,
+        "sha256": "E1CF3A224477570B5AA82359EF3F1900F3AB7FA53F0F29E72F212E466E3DBBAF",
+        "blob": "5c8dc7a7e73068c0fe4bff3b7ece03cd7ee0d68d"
+      }
+    ],
+    "note": "Reviewed official upstream n8n attestation workflow with full failure receipts and explicit negative-control admission boundary; two exact channel Clippy diagnostics corrected. Backup WIP excluded.",
+    "hosted": "pending",
     "localExecutableValidationRan": false
   }
 }

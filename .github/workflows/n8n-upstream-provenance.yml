@@ -1,0 +1,199 @@
+name: W1465 n8n upstream provenance verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: n8n-upstream-provenance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact source without credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Capture canonical n8n verification evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+
+          readonly source_file='SRC/neothd/src/installers/n8n.rs'
+          readonly expected_version='2.40.5'
+          readonly expected_docker_reference='docker.io/n8nio/n8n@sha256:9f693fd5565539efd5e75ad168526c8041a6af516d9e50bc4d9cb1c9c5031523'
+          readonly canonical_subject='oci://ghcr.io/n8n-io/n8n@sha256:9f693fd5565539efd5e75ad168526c8041a6af516d9e50bc4d9cb1c9c5031523'
+          readonly signer_workflow='n8n-io/n8n/.github/workflows/docker-build-push.yml'
+          readonly source_ref='refs/heads/release/2.40.5'
+          readonly source_digest='a331d3858797b161e4acba288396be3835425d8e'
+          readonly predicate_type='https://slsa.dev/provenance/v1'
+          readonly receipt_dir="$RUNNER_TEMP/n8n-upstream-provenance"
+
+          mkdir -p "$receipt_dir"
+          set +e
+          grep -Fqx "pub const N8N_VERSION: &str = \"${expected_version}\";" "$source_file"
+          pin_version_exit=$?
+          grep -Fqx "    \"${expected_docker_reference}\";" "$source_file"
+          pin_reference_exit=$?
+          gh --version > "$receipt_dir/gh-version.txt" 2>&1
+          gh_version_exit=$?
+          git rev-parse HEAD > "$receipt_dir/checkout-head.txt" 2>&1
+          checkout_head_exit=$?
+          grep -n -E 'N8N_VERSION|N8N_OCI_REFERENCE|docker\.io/n8nio/n8n@sha256:' "$source_file" > "$receipt_dir/n8n-source-bindings.txt" 2>&1
+          source_bindings_exit=$?
+          sha256sum "$source_file" > "$receipt_dir/n8n-source-bindings.sha256" 2>&1
+          source_hash_exit=$?
+          sha256sum .github/workflows/n8n-upstream-provenance.yml > "$receipt_dir/workflow.sha256" 2>&1
+          workflow_hash_exit=$?
+          set -e
+
+          cat > "$receipt_dir/verification-policy.txt" <<'POLICY'
+          Standard GitHub CLI attestation verification is used with its default Sigstore public-good trust verification. No custom trusted root, leaf certificate, registry bundle, OIDC credential, Docker command, image layer, publish permission or attestation upload is supplied by this workflow.
+
+          The canonical GitHub-signed subject is intentionally ghcr.io/n8n-io/n8n. The checked-in installer reference remains Docker Hub and is only pin-gated here. A byte-identical cross-registry mapping, actual Docker pull/runtime identity and any NEOTH admission remain separate decisions.
+
+          Required policy:
+          - GitHub attestation repository: n8n-io/n8n
+          - signer workflow: n8n-io/n8n/.github/workflows/docker-build-push.yml
+          - source ref: refs/heads/release/2.40.5
+          - source digest: a331d3858797b161e4acba288396be3835425d8e
+          - predicate: https://slsa.dev/provenance/v1
+          - reject self-hosted runners
+          POLICY
+
+          cat > "$receipt_dir/verified-command.txt" <<EOF
+          gh attestation verify ${canonical_subject} --repo n8n-io/n8n --signer-workflow ${signer_workflow} --source-ref ${source_ref} --source-digest ${source_digest} --predicate-type ${predicate_type} --deny-self-hosted-runners --format json
+          EOF
+
+          cat > "$receipt_dir/negative-wrong-signer-command.txt" <<EOF
+          gh attestation verify ${canonical_subject} --repo n8n-io/n8n --signer-workflow n8n-io/n8n/.github/workflows/release-publish.yml --source-ref ${source_ref} --source-digest ${source_digest} --predicate-type ${predicate_type} --deny-self-hosted-runners --format json
+          EOF
+
+          primary_exit=125
+          negative_exit=125
+          negative_assessment='not_run_due_to_preflight_failure'
+          if [[ "$pin_version_exit" -eq 0 && "$pin_reference_exit" -eq 0 && "$gh_version_exit" -eq 0 ]]; then
+            set +e
+            gh attestation verify "$canonical_subject" \
+              --repo n8n-io/n8n \
+              --signer-workflow "$signer_workflow" \
+              --source-ref "$source_ref" \
+              --source-digest "$source_digest" \
+              --predicate-type "$predicate_type" \
+              --deny-self-hosted-runners \
+              --format json > "$receipt_dir/verified.json" 2> "$receipt_dir/primary.stderr"
+            primary_exit=$?
+
+            gh attestation verify "$canonical_subject" \
+              --repo n8n-io/n8n \
+              --signer-workflow 'n8n-io/n8n/.github/workflows/release-publish.yml' \
+              --source-ref "$source_ref" \
+              --source-digest "$source_digest" \
+              --predicate-type "$predicate_type" \
+              --deny-self-hosted-runners \
+              --format json > "$receipt_dir/negative-wrong-signer.stdout" 2> "$receipt_dir/negative-wrong-signer.stderr"
+            negative_exit=$?
+            set -e
+
+            # The official CLI source documents policy flags but no stable
+            # signer-mismatch diagnostic. A nonzero exit alone could be a
+            # transient lookup/trust failure, so it is retained but never
+            # counted as semantic wrong-signer rejection.
+            if [[ "$negative_exit" -eq 0 ]]; then
+              negative_assessment='unexpected_success'
+            else
+              negative_assessment='nonzero_without_documented_identity_signal'
+            fi
+          else
+            printf 'primary verifier not run because the checked-in pin or gh CLI preflight failed\n' > "$receipt_dir/verified.json"
+            printf 'negative verifier not run because the checked-in pin or gh CLI preflight failed\n' > "$receipt_dir/negative-wrong-signer.stdout"
+            : > "$receipt_dir/primary.stderr"
+            : > "$receipt_dir/negative-wrong-signer.stderr"
+          fi
+
+          printf 'exit_code=%s\nexpected=nonzero\nassessment=%s\n' "$negative_exit" "$negative_assessment" > "$receipt_dir/negative-wrong-signer-result.txt"
+          printf 'pin_version_exit=%s\npin_reference_exit=%s\ngh_version_exit=%s\ncheckout_head_exit=%s\nsource_bindings_exit=%s\nsource_hash_exit=%s\nworkflow_hash_exit=%s\nprimary_exit=%s\nnegative_exit=%s\nnegative_assessment=%s\n' \
+            "$pin_version_exit" "$pin_reference_exit" "$gh_version_exit" "$checkout_head_exit" "$source_bindings_exit" "$source_hash_exit" "$workflow_hash_exit" "$primary_exit" "$negative_exit" "$negative_assessment" > "$receipt_dir/capture-result.txt"
+
+      - name: Finalize verification receipt
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          readonly receipt_dir="$RUNNER_TEMP/n8n-upstream-provenance"
+          mkdir -p "$receipt_dir"
+          set +e
+          (
+            cd "$receipt_dir"
+            find . -maxdepth 1 -type f ! -name SHA256SUMS ! -name 'receipt-finalization*' -print0 \
+              | sort -z \
+              | xargs -0 sha256sum > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          ) > "$receipt_dir/receipt-finalization.stdout" 2> "$receipt_dir/receipt-finalization.stderr"
+          finalization_exit=$?
+          set -e
+          printf 'exit_code=%s\nstatus=%s\n' "$finalization_exit" "$( [[ "$finalization_exit" -eq 0 ]] && printf verified || printf failed )" > "$receipt_dir/receipt-finalization-result.txt"
+
+      - name: Enforce recorded gate outcome
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          readonly receipt_dir="$RUNNER_TEMP/n8n-upstream-provenance"
+          if [[ ! -f "$receipt_dir/capture-result.txt" || ! -f "$receipt_dir/receipt-finalization-result.txt" ]]; then
+            echo 'receipt capture or finalization result is missing' >&2
+            exit 1
+          fi
+
+          primary_exit="$(sed -n 's/^primary_exit=//p' "$receipt_dir/capture-result.txt")"
+          negative_exit="$(sed -n 's/^negative_exit=//p' "$receipt_dir/capture-result.txt")"
+          negative_assessment="$(sed -n 's/^negative_assessment=//p' "$receipt_dir/capture-result.txt")"
+          finalization_exit="$(sed -n 's/^exit_code=//p' "$receipt_dir/receipt-finalization-result.txt")"
+          pin_version_exit="$(sed -n 's/^pin_version_exit=//p' "$receipt_dir/capture-result.txt")"
+          pin_reference_exit="$(sed -n 's/^pin_reference_exit=//p' "$receipt_dir/capture-result.txt")"
+
+          for required in gh_version_exit checkout_head_exit source_bindings_exit source_hash_exit workflow_hash_exit; do
+            value="$(sed -n "s/^${required}=//p" "$receipt_dir/capture-result.txt")"
+            if [[ "$value" != 0 ]]; then
+              echo "required source evidence capture failed: ${required}" >&2
+              exit 1
+            fi
+          done
+
+          if [[ "$finalization_exit" != 0 ]]; then
+            echo 'receipt finalization failed; inspect receipt-finalization.stderr' >&2
+            exit 1
+          fi
+          if [[ "$pin_version_exit" != 0 || "$pin_reference_exit" != 0 ]]; then
+            echo 'checked-in n8n pin changed; primary and negative evidence are recorded as skipped' >&2
+            exit 1
+          fi
+          if [[ "$primary_exit" != 0 ]]; then
+            echo 'primary verifier failed; inspect primary.stderr and recorded exit status' >&2
+            exit 1
+          fi
+          if [[ "$negative_exit" -eq 0 ]]; then
+            echo 'wrong-signer control unexpectedly verified' >&2
+            exit 1
+          fi
+          if [[ "$negative_assessment" = 'nonzero_without_documented_identity_signal' ]]; then
+            echo 'primary verification passed and wrong-signer rejected nonzero; semantic signer-identity rejection is PENDING ADMISSION from the archived diagnostics' >&2
+          fi
+
+      - name: Upload original verification receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: n8n-upstream-provenance-receipt-${{ github.run_id }}
+          path: ${{ runner.temp }}/n8n-upstream-provenance
+          if-no-files-found: warn
+          retention-days: 14

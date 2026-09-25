@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1465/W1466/W1474 upstream verifier and targeted Clippy repair (2026-09-25):**
+The on-demand n8n provenance workflow now uses official gh attestation verify
+with default public-good trust, canonical GHCR digest, exact repo/signer/ref/
+source-commit/predicate/hosted-runner policy. Independent review approved the
+capture/finalization gates. Positive verification and wrong-signer diagnostics
+are still pending hosted execution; a nonzero negative alone is not semantic
+policy rejection. Docker Hub mirror/runtime trust and P2-20 remain separate.
+Core36150867383 at a0b090fe failed strict workspace Clippy on two test-only
+issues: feature-conditional unused mut and clone_on_copy. W1474 uses a cfg-gated
+array and direct Copy value; hosted confirmation is pending. Linux1857 and
+Windows622 runs at32df8d26 report success; original artifact admission is ongoing.
+Backup code is WIP and excluded from this publication. ROAD counts unchanged.
+See gold-wave1476-provenance-and-clippy.json. No local executable validation.
+
 **W1462/W1464 channel and real-product acceptance (2026-09-25):**
 Channel36154654992 at80091494 is admitted: all11 selected/discovered/executed
 cases pass, eight source/workflow bindings and all three original ZIP digests
