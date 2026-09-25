@@ -129,7 +129,10 @@ pub(crate) async fn rotate_completed_purge_generation_at<E: ComposeExecutor>(
         return Err(LifecycleError::Receipt);
     }
     paperless_generation_auth::emit_rotation_marker(
-        root, &journal.project, &journal.new_volume_set_id, &journal.new_snapshot_bytes,
+        root,
+        &journal.project,
+        &journal.new_volume_set_id,
+        &journal.new_snapshot_bytes,
     )?;
     retire_complete_journal(root, &journal)
 }

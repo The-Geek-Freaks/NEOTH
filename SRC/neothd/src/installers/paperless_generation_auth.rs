@@ -8,7 +8,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::{credentials::Credentials, FreedomConfig, SecretsBackend},
+    config::{FreedomConfig, SecretsBackend, credentials::Credentials},
     secret::SecretString,
 };
 
@@ -116,7 +116,8 @@ pub(crate) fn begin_fresh_generation_token(
     origin: &str,
     old_token: Option<&SecretString>,
 ) -> Result<Option<FreshGenerationTokenGrant>, &'static str> {
-    let Some(mut marker) = read_marker(root).map_err(|_| "paperless_generation_auth_receipt")? else {
+    let Some(mut marker) = read_marker(root).map_err(|_| "paperless_generation_auth_receipt")?
+    else {
         return Ok(None);
     };
     let origin = canonical_generation_origin(origin)?;
@@ -160,7 +161,9 @@ pub(crate) fn begin_fresh_generation_token(
         snapshot_sha256: marker.snapshot_sha256,
         backend,
         origin,
-        old_token_sha256: marker.old_token_sha256.ok_or("paperless_generation_auth_receipt")?,
+        old_token_sha256: marker
+            .old_token_sha256
+            .ok_or("paperless_generation_auth_receipt")?,
     }))
 }
 
@@ -225,7 +228,9 @@ pub(crate) fn retire_after_authenticated_receipt(
     root: &OwnedPaperlessRoot,
     receipt: &PaperlessLifecycleReceipt,
 ) -> Result<(), LifecycleError> {
-    let Some(marker) = read_marker(root)? else { return Ok(()); };
+    let Some(marker) = read_marker(root)? else {
+        return Ok(());
+    };
     validate_marker_snapshot(root, &marker)?;
     if marker.phase != GenerationAuthPhase::TokenAuthorized
         || marker.new_token_sha256.is_none()
@@ -250,17 +255,25 @@ pub(crate) fn retire_if_completed_receipt_matches(
     root: &OwnedPaperlessRoot,
     current_token: &SecretString,
 ) -> Result<bool, LifecycleError> {
-    let Some(marker) = read_marker(root)? else { return Ok(false); };
+    let Some(marker) = read_marker(root)? else {
+        return Ok(false);
+    };
     validate_marker_snapshot(root, &marker)?;
     if marker.phase != GenerationAuthPhase::TokenAuthorized
         || marker.new_token_sha256.as_deref()
             != Some(sha256_auth(current_token.expose_secret().as_bytes()).as_str())
-    { return Ok(false); }
-    let Some(receipt) = read_completed_install_for_volume_set(root)? else { return Ok(false); };
+    {
+        return Ok(false);
+    }
+    let Some(receipt) = read_completed_install_for_volume_set(root)? else {
+        return Ok(false);
+    };
     if !receipt.authenticated_api_ready
         || receipt.project != marker.project
         || receipt.volume_set_id.as_deref() != Some(marker.volume_set_id.as_str())
-    { return Err(LifecycleError::Receipt); }
+    {
+        return Err(LifecycleError::Receipt);
+    }
     remove_auth_child(root)?;
     Ok(true)
 }
@@ -280,10 +293,16 @@ fn persist_file_generation_token(
                 .map_err(|_| anyhow::anyhow!("paperless_generation_auth_config_invalid"))?
                 .map(|config| config.secrets_backend)
                 .unwrap_or(SecretsBackend::File);
-            if backend != SecretsBackend::File || credentials.paperless_url.as_deref() != Some(&grant.origin) {
+            if backend != SecretsBackend::File
+                || credentials.paperless_url.as_deref() != Some(&grant.origin)
+            {
                 return Err(anyhow::anyhow!("paperless_generation_auth_binding_changed"));
             }
-            match credentials.paperless_token.as_ref().map(|current| sha256_auth(current.expose_secret().as_bytes())) {
+            match credentials
+                .paperless_token
+                .as_ref()
+                .map(|current| sha256_auth(current.expose_secret().as_bytes()))
+            {
                 Some(current) if current == grant.old_token_sha256 => {
                     credentials.paperless_token = Some(new_token.clone());
                 }
@@ -301,7 +320,8 @@ fn persist_keychain_generation_token(
     grant: &FreshGenerationTokenGrant,
     new_token: &SecretString,
 ) -> Result<(), &'static str> {
-    let store = crate::config::keychain::open_store().map_err(|_| "paperless_generation_auth_keychain")?;
+    let store =
+        crate::config::keychain::open_store().map_err(|_| "paperless_generation_auth_keychain")?;
     persist_keychain_generation_token_with_store(home, grant, new_token, store.as_ref())
 }
 
@@ -320,15 +340,24 @@ fn persist_keychain_generation_token_with_store(
             {
                 return Err(anyhow::anyhow!("paperless_generation_auth_binding_changed"));
             }
-            let current = store.get("paperless_token").map_err(|_| anyhow::anyhow!("paperless_generation_auth_keychain"))?;
-            if effective.paperless_token.as_ref().map(|token| token.expose_secret())
+            let current = store
+                .get("paperless_token")
+                .map_err(|_| anyhow::anyhow!("paperless_generation_auth_keychain"))?;
+            if effective
+                .paperless_token
+                .as_ref()
+                .map(|token| token.expose_secret())
                 != current.as_ref().map(|token| token.expose_secret())
-            { return Err(anyhow::anyhow!("paperless_generation_auth_binding_changed")); }
+            {
+                return Err(anyhow::anyhow!("paperless_generation_auth_binding_changed"));
+            }
             match current.map(|token| sha256_auth(token.expose_secret().as_bytes())) {
                 Some(current) if current == grant.old_token_sha256 => store
                     .set("paperless_token", new_token)
                     .map_err(|_| anyhow::anyhow!("paperless_generation_auth_keychain")),
-                Some(current) if current == sha256_auth(new_token.expose_secret().as_bytes()) => Ok(()),
+                Some(current) if current == sha256_auth(new_token.expose_secret().as_bytes()) => {
+                    Ok(())
+                }
                 _ => Err(anyhow::anyhow!("paperless_generation_auth_token_conflict")),
             }
         },
@@ -346,8 +375,13 @@ fn map_generation_auth_error(error: anyhow::Error) -> &'static str {
     }
 }
 
-fn validated_bound_marker(root: &OwnedPaperlessRoot, grant: &FreshGenerationTokenGrant) -> Result<GenerationAuthMarker, &'static str> {
-    let marker = read_marker(root).map_err(|_| "paperless_generation_auth_receipt")?.ok_or("paperless_generation_auth_receipt")?;
+fn validated_bound_marker(
+    root: &OwnedPaperlessRoot,
+    grant: &FreshGenerationTokenGrant,
+) -> Result<GenerationAuthMarker, &'static str> {
+    let marker = read_marker(root)
+        .map_err(|_| "paperless_generation_auth_receipt")?
+        .ok_or("paperless_generation_auth_receipt")?;
     validate_marker_snapshot(root, &marker).map_err(|_| "paperless_generation_auth_receipt")?;
     if marker.phase != GenerationAuthPhase::TokenAuthorized
         || marker.project != grant.project
@@ -356,50 +390,153 @@ fn validated_bound_marker(root: &OwnedPaperlessRoot, grant: &FreshGenerationToke
         || marker.backend != Some(grant.backend)
         || marker.origin.as_deref() != Some(grant.origin.as_str())
         || marker.old_token_sha256.as_deref() != Some(grant.old_token_sha256.as_str())
-    { return Err("paperless_generation_auth_binding_changed"); }
+    {
+        return Err("paperless_generation_auth_binding_changed");
+    }
     Ok(marker)
 }
 
-fn validate_marker_snapshot(root: &OwnedPaperlessRoot, marker: &GenerationAuthMarker) -> Result<(), LifecycleError> {
+fn validate_marker_snapshot(
+    root: &OwnedPaperlessRoot,
+    marker: &GenerationAuthMarker,
+) -> Result<(), LifecycleError> {
     if marker.schema_version != 1
         || marker.operation != "paperless.fresh_generation_auth"
         || marker.project != project_name(&root.display)
         || !paperless_staging::valid_volume_set_id(&marker.volume_set_id)
         || marker.snapshot_sha256.len() != 64
-        || !marker.snapshot_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
-    { return Err(LifecycleError::Receipt); }
+        || !marker
+            .snapshot_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(LifecycleError::Receipt);
+    }
     let bytes = read_optional_auth_child(root, VOLUME_SET_NAME)?.ok_or(LifecycleError::Receipt)?;
-    let snapshot: PaperlessVolumeSetSnapshot = serde_json::from_slice(&bytes).map_err(|_| LifecycleError::Receipt)?;
+    let snapshot: PaperlessVolumeSetSnapshot =
+        serde_json::from_slice(&bytes).map_err(|_| LifecycleError::Receipt)?;
     validate_volume_set_snapshot(&snapshot, &marker.project)?;
-    if snapshot.volume_set_id != marker.volume_set_id || sha256_auth(&bytes) != marker.snapshot_sha256 { return Err(LifecycleError::Receipt); }
+    if snapshot.volume_set_id != marker.volume_set_id
+        || sha256_auth(&bytes) != marker.snapshot_sha256
+    {
+        return Err(LifecycleError::Receipt);
+    }
     match marker.phase {
-        GenerationAuthPhase::RotationAuthorized => if marker.backend.is_some() || marker.origin.is_some() || marker.old_token_sha256.is_some() || marker.new_token_sha256.is_some() { return Err(LifecycleError::Receipt); },
-        GenerationAuthPhase::TokenAuthorized => if marker.backend.is_none() || marker.origin.as_deref().and_then(|origin| canonical_generation_origin(origin).ok()).as_deref() != marker.origin.as_deref() || !valid_fingerprint(marker.old_token_sha256.as_deref()) || marker.new_token_sha256.as_deref().is_some_and(|value| !valid_fingerprint(Some(value))) { return Err(LifecycleError::Receipt); },
+        GenerationAuthPhase::RotationAuthorized => {
+            if marker.backend.is_some()
+                || marker.origin.is_some()
+                || marker.old_token_sha256.is_some()
+                || marker.new_token_sha256.is_some()
+            {
+                return Err(LifecycleError::Receipt);
+            }
+        }
+        GenerationAuthPhase::TokenAuthorized => {
+            if marker.backend.is_none()
+                || marker
+                    .origin
+                    .as_deref()
+                    .and_then(|origin| canonical_generation_origin(origin).ok())
+                    .as_deref()
+                    != marker.origin.as_deref()
+                || !valid_fingerprint(marker.old_token_sha256.as_deref())
+                || marker
+                    .new_token_sha256
+                    .as_deref()
+                    .is_some_and(|value| !valid_fingerprint(Some(value)))
+            {
+                return Err(LifecycleError::Receipt);
+            }
+        }
     }
     Ok(())
 }
 
-fn valid_fingerprint(value: Option<&str>) -> bool { value.is_some_and(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())) }
+fn valid_fingerprint(value: Option<&str>) -> bool {
+    value.is_some_and(|value| {
+        value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+    })
+}
 fn fingerprint_is_old_or_new(marker: &GenerationAuthMarker, current: &str) -> bool {
     marker.old_token_sha256.as_deref() == Some(current)
         || marker.new_token_sha256.as_deref() == Some(current)
 }
-fn canonical_generation_origin(origin: &str) -> Result<String, &'static str> { super::paperless_bootstrap::canonical_bootstrap_origin(origin) }
-fn sha256_auth(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
+fn canonical_generation_origin(origin: &str) -> Result<String, &'static str> {
+    super::paperless_bootstrap::canonical_bootstrap_origin(origin)
+}
+fn sha256_auth(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
 
-fn auth_state(root: &OwnedPaperlessRoot) -> Result<cap_std::fs::Dir, LifecycleError> { lifecycle_state_dir(root) }
-fn read_optional_auth_child(root: &OwnedPaperlessRoot, name: &str) -> Result<Option<Vec<u8>>, LifecycleError> {
+fn auth_state(root: &OwnedPaperlessRoot) -> Result<cap_std::fs::Dir, LifecycleError> {
+    lifecycle_state_dir(root)
+}
+fn read_optional_auth_child(
+    root: &OwnedPaperlessRoot,
+    name: &str,
+) -> Result<Option<Vec<u8>>, LifecycleError> {
     let state = auth_state(root)?;
-    match crate::skills::store::read_regular_file_bounded(&state, OsStr::new(name), &root.display.join(RECEIPT_DIR).join(name), RECEIPT_READ_LIMIT) {
+    match crate::skills::store::read_regular_file_bounded(
+        &state,
+        OsStr::new(name),
+        &root.display.join(RECEIPT_DIR).join(name),
+        RECEIPT_READ_LIMIT,
+    ) {
         Ok(bytes) => Ok(Some(bytes)),
-        Err(error) if error.root_cause().downcast_ref::<std::io::Error>().is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) => Ok(None),
+        Err(error)
+            if error
+                .root_cause()
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            Ok(None)
+        }
         Err(_) => Err(LifecycleError::Receipt),
     }
 }
-fn read_marker(root: &OwnedPaperlessRoot) -> Result<Option<GenerationAuthMarker>, LifecycleError> { read_optional_auth_child(root, GENERATION_AUTH_NAME)?.map(|bytes| serde_json::from_slice(&bytes).map_err(|_| LifecycleError::Receipt)).transpose() }
-fn write_auth_create_new(root: &OwnedPaperlessRoot, marker: &GenerationAuthMarker) -> Result<(), LifecycleError> { let state = auth_state(root)?; crate::skills::store::atomic_write_private_child_create_new(&state, OsStr::new(GENERATION_AUTH_NAME), &root.display.join(RECEIPT_DIR).join(GENERATION_AUTH_NAME), &serde_json::to_vec(marker).map_err(|_| LifecycleError::Io)?).map_err(|_| LifecycleError::Io)?; ensure_bound(root) }
-fn write_auth_replace(root: &OwnedPaperlessRoot, marker: &GenerationAuthMarker) -> Result<(), LifecycleError> { let state = auth_state(root)?; crate::skills::store::atomic_write_private_child(&state, OsStr::new(GENERATION_AUTH_NAME), &root.display.join(RECEIPT_DIR).join(GENERATION_AUTH_NAME), &serde_json::to_vec(marker).map_err(|_| LifecycleError::Io)?).map_err(|_| LifecycleError::Io)?; ensure_bound(root) }
-fn remove_auth_child(root: &OwnedPaperlessRoot) -> Result<(), LifecycleError> { let state = auth_state(root)?; crate::skills::store::remove_child_file(&state, OsStr::new(GENERATION_AUTH_NAME), &root.display.join(RECEIPT_DIR).join(GENERATION_AUTH_NAME)).map_err(|_| LifecycleError::Io)?; ensure_bound(root) }
+fn read_marker(root: &OwnedPaperlessRoot) -> Result<Option<GenerationAuthMarker>, LifecycleError> {
+    read_optional_auth_child(root, GENERATION_AUTH_NAME)?
+        .map(|bytes| serde_json::from_slice(&bytes).map_err(|_| LifecycleError::Receipt))
+        .transpose()
+}
+fn write_auth_create_new(
+    root: &OwnedPaperlessRoot,
+    marker: &GenerationAuthMarker,
+) -> Result<(), LifecycleError> {
+    let state = auth_state(root)?;
+    crate::skills::store::atomic_write_private_child_create_new(
+        &state,
+        OsStr::new(GENERATION_AUTH_NAME),
+        &root.display.join(RECEIPT_DIR).join(GENERATION_AUTH_NAME),
+        &serde_json::to_vec(marker).map_err(|_| LifecycleError::Io)?,
+    )
+    .map_err(|_| LifecycleError::Io)?;
+    ensure_bound(root)
+}
+fn write_auth_replace(
+    root: &OwnedPaperlessRoot,
+    marker: &GenerationAuthMarker,
+) -> Result<(), LifecycleError> {
+    let state = auth_state(root)?;
+    crate::skills::store::atomic_write_private_child(
+        &state,
+        OsStr::new(GENERATION_AUTH_NAME),
+        &root.display.join(RECEIPT_DIR).join(GENERATION_AUTH_NAME),
+        &serde_json::to_vec(marker).map_err(|_| LifecycleError::Io)?,
+    )
+    .map_err(|_| LifecycleError::Io)?;
+    ensure_bound(root)
+}
+fn remove_auth_child(root: &OwnedPaperlessRoot) -> Result<(), LifecycleError> {
+    let state = auth_state(root)?;
+    crate::skills::store::remove_child_file(
+        &state,
+        OsStr::new(GENERATION_AUTH_NAME),
+        &root.display.join(RECEIPT_DIR).join(GENERATION_AUTH_NAME),
+    )
+    .map_err(|_| LifecycleError::Io)?;
+    ensure_bound(root)
+}
 
 #[cfg(test)]
 #[path = "paperless_generation_auth_tests.rs"]

@@ -377,14 +377,20 @@ trait ReadinessVerifier: Send + Sync {
 }
 #[async_trait]
 trait BootstrapTokenProvider: Send + Sync {
-    async fn obtain(&self, root: &OwnedPaperlessRoot, binding: &EnvBinding)
-    -> Result<SecretString, LifecycleError>;
+    async fn obtain(
+        &self,
+        root: &OwnedPaperlessRoot,
+        binding: &EnvBinding,
+    ) -> Result<SecretString, LifecycleError>;
 }
 struct ConfiguredBootstrapToken;
 #[async_trait]
 impl BootstrapTokenProvider for ConfiguredBootstrapToken {
-    async fn obtain(&self, root: &OwnedPaperlessRoot, binding: &EnvBinding)
-    -> Result<SecretString, LifecycleError> {
+    async fn obtain(
+        &self,
+        root: &OwnedPaperlessRoot,
+        binding: &EnvBinding,
+    ) -> Result<SecretString, LifecycleError> {
         obtain_bootstrap_token(root, binding).await
     }
 }
@@ -560,12 +566,19 @@ async fn install_at_with_readiness<E: RetainedComposeExecutor, R: ReadinessVerif
     readiness: &R,
 ) -> Result<PaperlessLifecycleReceipt, LifecycleError> {
     install_at_with_readiness_and_bootstrap(
-        home, credentials, executor, readiness, &ConfiguredBootstrapToken,
-    ).await
+        home,
+        credentials,
+        executor,
+        readiness,
+        &ConfiguredBootstrapToken,
+    )
+    .await
 }
 
 async fn install_at_with_readiness_and_bootstrap<
-    E: RetainedComposeExecutor, R: ReadinessVerifier, B: BootstrapTokenProvider,
+    E: RetainedComposeExecutor,
+    R: ReadinessVerifier,
+    B: BootstrapTokenProvider,
 >(
     home: &Path,
     credentials: &Credentials,
@@ -606,8 +619,11 @@ async fn install_at_with_readiness_and_bootstrap<
     )
     .await?;
     let fresh_credentials = if paperless_generation_auth::has_pending_marker(&owned)? {
-        let current = Credentials::load_effective(&home.join("credentials.yaml"), configured_backend(home)?)
-            .map_err(|_| LifecycleError::Bootstrap("paperless_generation_auth_config_invalid"))?;
+        let current =
+            Credentials::load_effective(&home.join("credentials.yaml"), configured_backend(home)?)
+                .map_err(|_| {
+                    LifecycleError::Bootstrap("paperless_generation_auth_config_invalid")
+                })?;
         if let Some(token) = valid_token(current.paperless_token.as_ref()) {
             paperless_generation_auth::retire_if_completed_receipt_matches(&owned, token)?;
         }
@@ -695,15 +711,20 @@ async fn install_at_with_readiness_and_bootstrap<
     let current_credentials = fresh_credentials.as_ref().unwrap_or(credentials);
     let fresh_grant = if fresh_credentials.is_some() {
         paperless_generation_auth::begin_fresh_generation_token(
-            &owned, configured_backend(home)?, current_credentials.paperless_url.as_deref(),
-            &binding.origin, current_credentials.paperless_token.as_ref(),
-        ).map_err(LifecycleError::Bootstrap)?
+            &owned,
+            configured_backend(home)?,
+            current_credentials.paperless_url.as_deref(),
+            &binding.origin,
+            current_credentials.paperless_token.as_ref(),
+        )
+        .map_err(LifecycleError::Bootstrap)?
     } else {
         None
     };
     let effective = if let Some(grant) = fresh_grant {
-        let current = valid_token(current_credentials.paperless_token.as_ref())
-            .ok_or(LifecycleError::Bootstrap("paperless_generation_auth_old_token_missing"))?;
+        let current = valid_token(current_credentials.paperless_token.as_ref()).ok_or(
+            LifecycleError::Bootstrap("paperless_generation_auth_old_token_missing"),
+        )?;
         if paperless_generation_auth::token_is_persisted_new(&owned, &grant, current)
             .map_err(LifecycleError::Bootstrap)?
         {
@@ -713,8 +734,10 @@ async fn install_at_with_readiness_and_bootstrap<
             ensure_stage(&owned, &binding)?;
             paperless_generation_auth::record_new_token_fingerprint(&owned, &grant, &token)
                 .map_err(LifecycleError::Bootstrap)?;
-            paperless_generation_auth::persist_fresh_generation_token_at(home, &owned, &grant, &token)
-                .map_err(LifecycleError::Bootstrap)?;
+            paperless_generation_auth::persist_fresh_generation_token_at(
+                home, &owned, &grant, &token,
+            )
+            .map_err(LifecycleError::Bootstrap)?;
             token
         }
     } else {
@@ -725,11 +748,14 @@ async fn install_at_with_readiness_and_bootstrap<
                 ensure_stage(&owned, &binding)?;
                 paperless_bootstrap::persist_bootstrap_at(
                     home,
-                    bootstrap_backend.ok_or(LifecycleError::Bootstrap("paperless_bootstrap_config_invalid"))?,
+                    bootstrap_backend.ok_or(LifecycleError::Bootstrap(
+                        "paperless_bootstrap_config_invalid",
+                    ))?,
                     current_credentials.paperless_url.as_deref(),
                     &binding.origin,
                     &token,
-                ).map_err(LifecycleError::Bootstrap)?;
+                )
+                .map_err(LifecycleError::Bootstrap)?;
                 token
             }
         }
@@ -2838,15 +2864,22 @@ mod tests {
     struct FixtureBootstrapToken;
     #[async_trait]
     impl BootstrapTokenProvider for FixtureBootstrapToken {
-        async fn obtain(&self, _root: &OwnedPaperlessRoot, _binding: &EnvBinding)
-        -> Result<SecretString, LifecycleError> {
+        async fn obtain(
+            &self,
+            _root: &OwnedPaperlessRoot,
+            _binding: &EnvBinding,
+        ) -> Result<SecretString, LifecycleError> {
             Ok(SecretString::from("fresh-generation-fixture-token"))
         }
     }
     pub(super) async fn installed_home_for_uninstall_test()
     -> (tempfile::TempDir, Credentials, Vec<u8>) {
         let (home, credentials) = staged_home();
-        std::fs::write(home.path().join("credentials.yaml"), serde_yaml::to_string(&credentials).unwrap()).unwrap();
+        std::fs::write(
+            home.path().join("credentials.yaml"),
+            serde_yaml::to_string(&credentials).unwrap(),
+        )
+        .unwrap();
         let mut executor = FakeExecutor {
             exact_container_ids: true,
             ..Default::default()
@@ -2891,7 +2924,14 @@ mod tests {
             ..Default::default()
         };
         let ready = EventuallyReady(AtomicUsize::new(0));
-        install_at_with_readiness_and_bootstrap(home, credentials, &mut executor, &ready, &FixtureBootstrapToken).await
+        install_at_with_readiness_and_bootstrap(
+            home,
+            credentials,
+            &mut executor,
+            &ready,
+            &FixtureBootstrapToken,
+        )
+        .await
     }
     #[test]
     fn empty_or_absent_legacy_state_is_allowed() {

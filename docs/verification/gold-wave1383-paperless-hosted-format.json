@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "status": "AUTHENTIC_HOSTED_FORMAT_IMPORTED_RUNTIME_PENDING",
+  "run": 36137075185,
+  "source": "28b1b2c41149dabf2c2d6c26dcc73de6e28abb74",
+  "artifactId": 10864762150,
+  "apiZipSha256": "8e2bebeda553d259f4e638430076feb3e8b1bb4400538a472ff49c230215e93a",
+  "patchSha256": "1F602B9D6D88642F7528400D010BF35E248D0E940568099E0CC7651542470553",
+  "postimages": [
+    {
+      "path": "SRC/neothd/src/cli/paperless.rs",
+      "gitBlob": "361e68e09156f0a5fd01365cd3837c791594c036",
+      "sha256": "756A24C7E1C3D0829AB85A011B3298285133C680957C30D313991ED31D3777A8"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_generation_auth.rs",
+      "gitBlob": "01f4f8ca831be4363e4a2a8ba46932524dc0936e",
+      "sha256": "DCB5D5856435741D1BC566B30FB8A4F1CAD46EE6F4830A04A70352C852962ADE"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_generation_auth_tests.rs",
+      "gitBlob": "87ebc12a7f6dd792e305b11285b55d72156c0337",
+      "sha256": "F4627D3A101DB3EE09E992DB8A44055ADE533149C8F9BCD7ABE04B099B61A961"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_generation_rotation.rs",
+      "gitBlob": "a1607d0e5699224080040694d23791df93c9e164",
+      "sha256": "C645999767CE9B4998DE1AAB9F891324C88F038EAB4960790BDB39D8B13D75C5"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "gitBlob": "e995f3619c3d543e89cdfcc5ea8cd16bc9eab28b",
+      "sha256": "2AD759F0548760C7E14C0636B9D2634EEE374E5271B647BDCBCD2C3C3C4D8C5E"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_repair.rs",
+      "gitBlob": "96b7fb6e366086cddc5728fe40190b91524053a8",
+      "sha256": "0350AD9E54C2AD7B4DB477CD9231ACD8EF02AEF519182A5043C69A86ABC43159"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_repair_tests.rs",
+      "gitBlob": "196bab2f1ae5d80552f744a5b4b4b28ab012011c",
+      "sha256": "6C050433B0D3833A002675A1268432C24C305BC618EDC2700F441479EC56EB32"
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "roadmapClosures": 0
+}

@@ -195,7 +195,9 @@ pub async fn run_paperless_command(args: PaperlessArgs, output: OutputFormat) ->
         let home = crate::config::FreedomConfig::default_neoth_home();
         let (_, credentials) =
             crate::config::load_optional_runtime_config_pair_from_path(&home.join("freedom.yaml"))
-                .map_err(|_| anyhow::anyhow!("Paperless repair could not read the configured credentials"))?;
+                .map_err(|_| {
+                    anyhow::anyhow!("Paperless repair could not read the configured credentials")
+                })?;
         let receipt = paperless_repair::repair_at(&home, &credentials)
             .await
             .map_err(anyhow::Error::new)?;
@@ -661,10 +663,24 @@ mod tests {
                 ..
             })
         ));
-        for argument in ["--container", "--volume", "--image", "--project", "--directory", "--token"] {
-            assert!(crate::cli::Cli::try_parse_from([
-                "neoth", "paperless", "repair", argument, "unowned",
-            ]).is_err());
+        for argument in [
+            "--container",
+            "--volume",
+            "--image",
+            "--project",
+            "--directory",
+            "--token",
+        ] {
+            assert!(
+                crate::cli::Cli::try_parse_from([
+                    "neoth",
+                    "paperless",
+                    "repair",
+                    argument,
+                    "unowned",
+                ])
+                .is_err()
+            );
         }
     }
     #[test]
