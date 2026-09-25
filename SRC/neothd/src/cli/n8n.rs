@@ -178,7 +178,10 @@ async fn run_purge(
                 println!("Retained n8n data volume: {}", plan.volume);
                 println!("Source uninstall job: {}", plan.uninstall_job_id);
                 println!("Purge permanently deletes the workflows and data in this volume.");
-                println!("To proceed, repeat this command with --confirm {:?}.", plan.confirmation);
+                println!(
+                    "To proceed, repeat this command with --confirm {:?}.",
+                    plan.confirmation
+                );
             }
         }
         return Ok(());
@@ -578,9 +581,9 @@ mod tests {
     fn purge_cli_selects_only_an_uninstall_job_and_preserves_exact_confirmation() {
         use clap::Parser;
         let id = uuid::Uuid::now_v7().to_string();
-        let preview = crate::cli::Cli::try_parse_from([
-            "neoth", "n8n", "purge", "--uninstall", id.as_str(),
-        ]).unwrap();
+        let preview =
+            crate::cli::Cli::try_parse_from(["neoth", "n8n", "purge", "--uninstall", id.as_str()])
+                .unwrap();
         assert!(matches!(preview.command,
             crate::cli::Commands::N8n(N8nArgs {
                 action: N8nAction::Purge { uninstall, confirm: None },
@@ -588,18 +591,41 @@ mod tests {
         ));
         let phrase = format!("PURGE N8N VOLUME {id} neoth_n8n_owned");
         let confirmed = crate::cli::Cli::try_parse_from([
-            "neoth", "n8n", "purge", "--uninstall", id.as_str(), "--confirm", phrase.as_str(),
-        ]).unwrap();
+            "neoth",
+            "n8n",
+            "purge",
+            "--uninstall",
+            id.as_str(),
+            "--confirm",
+            phrase.as_str(),
+        ])
+        .unwrap();
         assert!(matches!(confirmed.command,
             crate::cli::Commands::N8n(N8nArgs {
                 action: N8nAction::Purge { uninstall, confirm: Some(value) },
             }) if uninstall == id && value == phrase
         ));
         assert!(crate::cli::Cli::try_parse_from(["neoth", "n8n", "purge"]).is_err());
-        for argument in ["--volume", "--container", "--endpoint", "--home", "--yes", "--purge-data"] {
-            assert!(crate::cli::Cli::try_parse_from([
-                "neoth", "n8n", "purge", "--uninstall", id.as_str(), argument, "foreign",
-            ]).is_err());
+        for argument in [
+            "--volume",
+            "--container",
+            "--endpoint",
+            "--home",
+            "--yes",
+            "--purge-data",
+        ] {
+            assert!(
+                crate::cli::Cli::try_parse_from([
+                    "neoth",
+                    "n8n",
+                    "purge",
+                    "--uninstall",
+                    id.as_str(),
+                    argument,
+                    "foreign",
+                ])
+                .is_err()
+            );
         }
     }
 

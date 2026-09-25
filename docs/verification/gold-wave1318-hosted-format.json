@@ -1,0 +1,42 @@
+{
+  "kind": "EXACT_HOSTED_FORMAT_IMPORT",
+  "run": 36120522937,
+  "source": "a13b68824059a35acc69afa553d82b606571b51a",
+  "artifact": 10857300266,
+  "zipDigest": "218be564aebd65f43aaf22d09b636dd522215a73775039783477c23dd3650514",
+  "receiptChecksumsVerified": true,
+  "paths": [
+    {
+      "path": "SRC/neothd/src/cli/n8n.rs",
+      "preimage": "b470c89d0e0ddd1782eefd9496c17c62c84851f1",
+      "postimage": "aaf02d6436a954e60c564d17dad35f4d5bbc4aa0"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/jobs.rs",
+      "preimage": "8fab85f8217bd54661b16c769f1bdfd9065120ee",
+      "postimage": "ef740f4a26236d8973b37515da4e436cb1effecb"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n.rs",
+      "preimage": "aa6fcec7548cad4190e9e69b531eff6557b7f774",
+      "postimage": "c96afd39b802ac33f92db48819ed307f550fcd1e"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_purge.rs",
+      "preimage": "aad76c78f650d1996673c3ceda547eb658ea8758",
+      "postimage": "1a92dfc90f0b0a84c5618729b11ebf457c985098"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_purge_tests.rs",
+      "preimage": "2dfaf46fa76edfebc59ed5d7c09aaa29430ab24c",
+      "postimage": "713ba53b5865a896458c7ac28844e023784dc4b4"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "preimage": "40616ce151b469976905430a6028edf17343aaab",
+      "postimage": "b1168c2bfb9b11434ddfc6c355ea8efbb836e46b"
+    }
+  ],
+  "allPrePostimagesVerified": true,
+  "localExecutableValidationRan": false
+}

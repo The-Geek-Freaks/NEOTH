@@ -1,0 +1,15 @@
+{
+  "kind": "PURGE_EXACT_HOSTED_COMPILE_REPAIR",
+  "source": "a13b68824059a35acc69afa553d82b606571b51a",
+  "coreRun": 36120542753,
+  "productRun": 36120545363,
+  "errors": [
+    "E0433 super::ResumeEvidence is absent in parent n8n module",
+    "E0603 N8N_CAPABILITY_ID imported via private managed_runtime alias"
+  ],
+  "repair": "Import ResumeEvidence from integrations::state and capability constant from defining n8n parent. Preserve hosted formatter output.",
+  "postimageBlob": "1fb00927cf2dc89ead8b9906bbdc25006b5829b0",
+  "logSha256": "0EC94409D485DF5BE291AFCB0FB71B5DCDF434DBDF8C0DF82EE8E46E418C05C5",
+  "validation": "Independent bounded compile repair + Root reference trace/static check. Fresh hosted build required.",
+  "localExecutableValidationRan": false
+}

@@ -1,0 +1,53 @@
+{
+  "schema": "neoth-windows542-hosted-admission-candidate/v1",
+  "candidateOnly": false,
+  "rootAdmissionClaim": "ROOT_ADMITTED_EXACT_HISTORICAL_7BED_WINDOWS542",
+  "run": {
+    "id": 36118717862,
+    "source": "7bedcc1fc36cb7beec04fc3a581ad4e8f10f9b87",
+    "status": "completed",
+    "conclusion": "success",
+    "updatedAt": "2026-09-25T09:49:17Z"
+  },
+  "artifact": {
+    "id": 10856768456,
+    "apiZipDigest": "sha256:620c36995e92c04d94144e137ba8732bc0566a0b52569d39e1d3a3cf10ead3be",
+    "localZipSha256": "620c36995e92c04d94144e137ba8732bc0566a0b52569d39e1d3a3cf10ead3be",
+    "digestMatches": true,
+    "artifactSourceMatchesRun": true
+  },
+  "compile": {
+    "status": 0,
+    "candidateCount": 1,
+    "selectedLibTarget": "neothd",
+    "selectedExecutable": "neothd-6c7ce2ac0c7e63cd.exe"
+  },
+  "required542": {
+    "expected": 542,
+    "selectionValid": true,
+    "selectedRows": 542,
+    "uniqueSelected": 542,
+    "terminalRows": 542,
+    "uniqueTerminal": 542,
+    "passed": 542,
+    "failed": 0,
+    "missing": 0,
+    "extra": 0
+  },
+  "sourceBindings": {
+    "bindingRows": 542,
+    "uniquePaths": 87,
+    "commit": "7bedcc1fc36cb7beec04fc3a581ad4e8f10f9b87",
+    "gitBlobSha256Matches": 87,
+    "gitBlobSha256Mismatches": 0,
+    "verificationFile": "git-blob-sha256-checks.json"
+  },
+  "logs": {
+    "hashedFiles": 543,
+    "sha256Matches": 543,
+    "sha256Mismatches": 0,
+    "verificationFile": "log-sha256-checks.json"
+  },
+  "artifactPath": "windows542-evidence",
+  "localExecutableValidationRan": false
+}

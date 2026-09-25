@@ -321,7 +321,9 @@ impl From<&IntegrationJob> for N8nJobStatusView {
             operation: job.operation,
             state: job.state,
             disposition: match job.operation {
-                JobOperation::Uninstall => Some(managed_runtime::managed_uninstall::disposition(job)),
+                JobOperation::Uninstall => {
+                    Some(managed_runtime::managed_uninstall::disposition(job))
+                }
                 JobOperation::Purge if job.state == JobState::Ready => Some("volume_removed"),
                 JobOperation::Purge => Some("reconciliation_required"),
                 _ => None,

@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1318-1320 hosted formatting, Windows proof and compile repair (2026-09-25):**
+Windows542 run36118717862 at7bed is admitted:542PASS/0FAIL/0missing,
+87historical Git source blobs and543artifact log hashes verified. Together
+with Group1773 at the same source, this verifies the strict Paperless fake repair.
+The new purge sourcea13 had two hosted production compile errors: the recovery
+evidence type used the wrong module path, and the capability constant was imported
+through a private sibling import. W1320 corrects those references only.
+W1318 imports six exact rustfmt postimages from Preflight36120522937;
+API ZIP digest, receipt hashes, preimages and postimages all match.
+Purge helper tests passed before the product build encountered those compile errors.
+Fresh Core, CLI export, native tests and real purge canary are still required.
+No checkbox closure or local executable validation.
+
 **W1317 confirmed n8n retained-volume purge (2026-09-25):**
 A separate `n8n purge --uninstall ID` previews the exact receipt-derived
 bootstrap volume. Only the exact displayed confirmation authorizes its removal.

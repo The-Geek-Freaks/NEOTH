@@ -3707,11 +3707,7 @@ mod tests {
         assert_eq!(retry.failure.unwrap().code, "offline");
         assert_eq!(retry.retry_of, Some(parent_id.clone()));
         assert_eq!(
-            retry
-                .evidence_contract
-                .as_ref()
-                .unwrap()
-                .step_plan_sha256(),
+            retry.evidence_contract.as_ref().unwrap().step_plan_sha256(),
             &digest('f')
         );
         drop(connection);
@@ -3814,7 +3810,10 @@ mod tests {
 
         let validator = |job: &IntegrationJob| resume_decision(job, 'f');
         let service = IntegrationJobService::open(&home, catalog(), &validator).unwrap();
-        assert_eq!(service.get(&job_id).unwrap().unwrap().operation, JobOperation::Import);
+        assert_eq!(
+            service.get(&job_id).unwrap().unwrap().operation,
+            JobOperation::Import
+        );
         drop(service);
         let connection = open_connection(&database, false).unwrap();
         let version_after_migration: i64 = connection
@@ -3837,7 +3836,7 @@ mod tests {
             .execute_batch(
                 "DROP INDEX integration_jobs_updated;
                  CREATE INDEX integration_jobs_updated ON integration_jobs(capability_id);",
-        )
+            )
             .unwrap();
         drop(connection);
 

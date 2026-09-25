@@ -1584,9 +1584,8 @@ impl ManagedDockerRunner for DockerManagedRunner {
         if !valid_volume_name(name) {
             return Err("n8n_volume_remove_invalid_name");
         }
-        let (_, _, receipt) = docker(&[
-            "docker".into(), "volume".into(), "rm".into(), name.into(),
-        ]).await?;
+        let (_, _, receipt) =
+            docker(&["docker".into(), "volume".into(), "rm".into(), name.into()]).await?;
         Ok(receipt)
     }
     async fn create(&mut self, argv: &[String]) -> Result<ManagedCommandReceipt, &'static str> {
