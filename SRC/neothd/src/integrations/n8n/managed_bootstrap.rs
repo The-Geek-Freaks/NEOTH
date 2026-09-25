@@ -30,7 +30,7 @@ const MOUNT: &str = "/home/node/.n8n";
 
 // This program is deliberately constant.  It accepts one strict JSON envelope
 // from stdin and only talks to loopback in its own network namespace.
-const NODE_CLIENT: &str = r#"const fs=require('fs');(async()=>{const x=JSON.parse(fs.readFileSync(0,'utf8'));if(!['settings','setup','login','mint'].includes(x.op))throw Error('op');let p=x.op==='settings'?'/rest/settings':x.op==='setup'?'/rest/owner/setup':x.op==='login'?'/rest/login':'/rest/api-keys';let h={'content-type':'application/json','browser-id':x.browserId};if(x.cookie)h.cookie=x.cookie;let o={method:x.op==='settings'?'GET':'POST',headers:h};if(x.op==='setup')o.body=JSON.stringify({email:x.email,password:x.password,firstName:'NEOTH',lastName:'Owner'});if(x.op==='login')o.body=JSON.stringify({emailOrLdapLoginId:x.email,password:x.password});if(x.op==='mint')o.body=JSON.stringify({label:x.label,scopes:['workflow:list'],expiresAt:null});let ac=new AbortController(),t=setTimeout(()=>ac.abort(),5000),r=await fetch('http://127.0.0.1:5678'+p,{...o,signal:ac.signal}),rd=r.body.getReader(),a=[],n=0;for(;;){let q=await rd.read();if(q.done)break;n+=q.value.length;if(n>32768)throw Error('body');a.push(q.value)}clearTimeout(t);let b=Buffer.concat(a).toString('utf8');process.stdout.write(JSON.stringify({status:r.status,cookie:r.headers.get('set-cookie')||'',body:JSON.parse(b)}));})().catch(()=>process.exit(23));"#;
+const NODE_CLIENT: &str = r#"const fs=require('fs');(async()=>{const x=JSON.parse(fs.readFileSync(0,'utf8'));if(!['settings','setup','login','mint'].includes(x.op))throw Error('op');let p=x.op==='settings'?'/rest/settings':x.op==='setup'?'/rest/owner/setup':x.op==='login'?'/rest/login':'/rest/api-keys';let h={'content-type':'application/json','browser-id':x.browserId};if(x.cookie)h.cookie=x.cookie;let o={method:x.op==='settings'?'GET':'POST',headers:h};if(x.op==='setup')o.body=JSON.stringify({email:x.email,password:x.password,firstName:'NEOTH',lastName:'Owner'});if(x.op==='login')o.body=JSON.stringify({emailOrLdapLoginId:x.email,password:x.password});if(x.op==='mint')o.body=JSON.stringify({label:x.label,scopes:['workflow:list','workflow:create','workflow:read'],expiresAt:null});let ac=new AbortController(),t=setTimeout(()=>ac.abort(),5000),r=await fetch('http://127.0.0.1:5678'+p,{...o,signal:ac.signal}),rd=r.body.getReader(),a=[],n=0;for(;;){let q=await rd.read();if(q.done)break;n+=q.value.length;if(n>32768)throw Error('body');a.push(q.value)}clearTimeout(t);let b=Buffer.concat(a).toString('utf8');process.stdout.write(JSON.stringify({status:r.status,cookie:r.headers.get('set-cookie')||'',body:JSON.parse(b)}));})().catch(()=>process.exit(23));"#;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum BootstrapPhase {
@@ -631,6 +631,34 @@ fn finalize_bootstrap_ready(
     )
 }
 
+fn complete_bootstrap_runtime_outcome_with<F>(
+    custody: &mut BootstrapCustody,
+    job: super::IntegrationJob,
+    finalize_ready: F,
+) -> Result<super::IntegrationJob>
+where
+    F: FnOnce(&mut BootstrapCustody, &super::IntegrationJob) -> Result<()>,
+{
+    match job.state {
+        super::JobState::Ready => {
+            finalize_ready(custody, &job)?;
+            Ok(job)
+        }
+        super::JobState::Failed | super::JobState::Cancelled => Ok(job),
+        _ => Err(anyhow!("n8n_bootstrap_runtime_outcome_unexpected")),
+    }
+}
+
+fn complete_bootstrap_runtime_outcome(
+    home: &Path,
+    custody: &mut BootstrapCustody,
+    job: super::IntegrationJob,
+) -> Result<super::IntegrationJob> {
+    complete_bootstrap_runtime_outcome_with(custody, job, |custody, job| {
+        finalize_bootstrap_ready(home, custody, job)
+    })
+}
+
 fn repair_ready_bootstrap_with<L, F>(
     custody: &mut BootstrapCustody,
     expected_port: u16,
@@ -898,8 +926,7 @@ async fn install_bootstrap_at_with<R: BootstrapDockerRunner>(
         cancel,
     )
     .await?;
-    finalize_bootstrap_ready(home, &mut custody, &job)?;
-    Ok(job)
+    complete_bootstrap_runtime_outcome(home, &mut custody, job)
 }
 
 async fn resume_bootstrap_at_with<R: BootstrapDockerRunner>(
@@ -1056,8 +1083,7 @@ async fn resume_bootstrap_at_with<R: BootstrapDockerRunner>(
         cancel,
     )
     .await?;
-    finalize_bootstrap_ready(home, &mut custody, &job)?;
-    Ok(job)
+    complete_bootstrap_runtime_outcome(home, &mut custody, job)
 }
 
 #[cfg(test)]
@@ -1115,6 +1141,11 @@ mod tests {
     }
     #[test]
     fn node_client_uses_setup_email_and_login_email_or_ldap_login_id() {
+        // The managed importer stores inactive workflows and reads exact IDs.
+        // No update, delete, activation or execution capability is minted.
+        assert!(NODE_CLIENT.contains(
+            "scopes:['workflow:list','workflow:create','workflow:read'],expiresAt:null"
+        ));
         assert!(NODE_CLIENT.contains(
             "if(x.op==='setup')o.body=JSON.stringify({email:x.email,password:x.password"
         ));
@@ -1382,6 +1413,73 @@ mod tests {
             .is_err()
         );
         assert_eq!(foreign_custody.phase, BootstrapPhase::BootstrapRemoved);
+    }
+
+    #[test]
+    fn terminal_runtime_outcomes_return_the_durable_job_without_ready_custody_mutation() {
+        let home = tempfile::tempdir().unwrap();
+        let job = recovery_job(home.path());
+        for state in [
+            crate::integrations::JobState::Failed,
+            crate::integrations::JobState::Cancelled,
+        ] {
+            let mut terminal = job.clone();
+            terminal.state = state;
+            terminal.state_revision += 7;
+            terminal.failure = (state == crate::integrations::JobState::Failed).then(|| {
+                crate::integrations::JobFailure::new(
+                    "n8n_fixture_runtime_failed",
+                    "fixture cleanup was proven",
+                )
+                .unwrap()
+            });
+            let expected_revision = terminal.state_revision;
+            let expected_failure = terminal.failure.clone();
+            let mut custody = custody_for(&job, BootstrapPhase::BootstrapRemoved);
+
+            let returned = complete_bootstrap_runtime_outcome_with(
+                &mut custody,
+                terminal,
+                |_, _| panic!("terminal runtime outcome must not finalize Ready custody"),
+            )
+            .unwrap();
+
+            assert_eq!(returned.state, state);
+            assert_eq!(returned.state_revision, expected_revision);
+            assert_eq!(returned.failure, expected_failure);
+            assert_eq!(custody.phase, BootstrapPhase::BootstrapRemoved);
+            assert!(custody.runtime_container_id.is_none());
+        }
+    }
+
+    #[test]
+    fn only_ready_runtime_outcome_finalizes_bootstrap_custody() {
+        let home = tempfile::tempdir().unwrap();
+        let job = recovery_job(home.path());
+        let mut ready = job.clone();
+        ready.state = crate::integrations::JobState::Ready;
+        let mut custody = custody_for(&job, BootstrapPhase::BootstrapRemoved);
+        let returned = complete_bootstrap_runtime_outcome_with(
+            &mut custody,
+            ready,
+            |custody, observed| {
+                assert_eq!(observed.state, crate::integrations::JobState::Ready);
+                custody.phase = BootstrapPhase::Ready;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(returned.state, crate::integrations::JobState::Ready);
+        assert_eq!(custody.phase, BootstrapPhase::Ready);
+
+        let mut active_custody = custody_for(&job, BootstrapPhase::BootstrapRemoved);
+        assert!(complete_bootstrap_runtime_outcome_with(
+            &mut active_custody,
+            job,
+            |_, _| panic!("active runtime outcome must not finalize Ready custody"),
+        )
+        .is_err());
+        assert_eq!(active_custody.phase, BootstrapPhase::BootstrapRemoved);
     }
 
     #[test]

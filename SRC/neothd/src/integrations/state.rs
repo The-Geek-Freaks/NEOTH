@@ -204,6 +204,7 @@ impl FromStr for JobState {
 #[serde(rename_all = "snake_case")]
 pub enum JobOperation {
     Install,
+    Import,
     Repair,
     Update,
     Uninstall,
@@ -213,6 +214,7 @@ impl JobOperation {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Install => "install",
+            Self::Import => "import",
             Self::Repair => "repair",
             Self::Update => "update",
             Self::Uninstall => "uninstall",
@@ -226,6 +228,7 @@ impl FromStr for JobOperation {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "install" => Ok(Self::Install),
+            "import" => Ok(Self::Import),
             "repair" => Ok(Self::Repair),
             "update" => Ok(Self::Update),
             "uninstall" => Ok(Self::Uninstall),
@@ -1300,6 +1303,20 @@ mod tests {
         for error in errors {
             assert!(!error.contains(untrusted));
             assert!(!error.contains("super-secret-value"));
+        }
+    }
+
+    #[test]
+    fn operations_use_canonical_durable_strings() {
+        for (operation, encoded) in [
+            (JobOperation::Install, "install"),
+            (JobOperation::Import, "import"),
+            (JobOperation::Repair, "repair"),
+            (JobOperation::Update, "update"),
+            (JobOperation::Uninstall, "uninstall"),
+        ] {
+            assert_eq!(operation.as_str(), encoded);
+            assert_eq!(JobOperation::from_str(encoded).unwrap(), operation);
         }
     }
 }

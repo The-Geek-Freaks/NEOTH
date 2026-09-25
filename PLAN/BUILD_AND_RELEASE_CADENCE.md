@@ -3,6 +3,29 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1080 durable workflow import and outcome propagation (2026-09-25):**
+The public `neoth n8n import-workflows` command now has a separate durable
+Import job and schema-v3 migration preserving all24 columns. All13 bundled
+workflows remain inactive. Per-item intent precedes POST; the returned exact
+ID precedes GET/readback. Ambiguous effects hold without retry. Reopened
+Ready admission reuses the same job and reads existing workflows; a prior
+failed or mismatched import blocks automatic duplication. Private bounded
+custody, lifetime locking and current managed-binding checks are covered.
+Root found and corrected a missing-sidecar retry and a fresh-CLI duplicate
+path before final independent W1064 approval. The bootstrap now returns
+its original Failed/Cancelled runtime job to the CLI instead of masking it
+with a Ready-finalization error. Twenty-three focused native cases are
+registered (including existing migration contracts): Native1766, Group1547,
+Windows324. Source review is complete; hosted compilation/execution remains
+pending. Root also admitted875 Group1524 with1524PASS/0FAIL/0missing,
+269 historical bindings,3 API ZIP digests and12 inner entries (W1078).
+The c150 product canary36077951423 still failed after BootstrapRemoved;
+its11 input hashes and API ZIP are admitted in W1076, underlying terminal
+cause remains unclassified. Windows875 has300PASS/1FAIL in the stdin case;
+that Windows-specific failure remains under investigation. Claude032 remains
+assigned the separate Dream-note atomic-write repair. No roadmap completion
+or all-workflow runtime acceptance is claimed from these source changes.
+
 **W1073 bounded runtime inspection repair (2026-09-25):** Root admitted the
 508bfb74 product failure36077123010 with11 exact source/input hashes and its
 API ZIP. It identifies n8n_docker_output_limit during CreateIntent, after the

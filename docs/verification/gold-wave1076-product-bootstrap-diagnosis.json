@@ -1,0 +1,104 @@
+{
+  "schema": "neoth-product-bootstrap-diagnosis/v1",
+  "run": 36077951423,
+  "source": "c150c960824c94440c9fa53d62c938fbee10f9d3",
+  "artifactId": 10840856984,
+  "artifactDigest": "sha256:a4c2ffd5e56a49c608ca5a96109ba6459e6de9aca55630982e11b1cc395c2daf",
+  "rootSourceBindingsVerified": 11,
+  "sourceBindings": [
+    {
+      "path": "SRC/neothd/src/integrations/n8n.rs",
+      "blob": "ec900cee1f5dc382b5a2767446c3352a817a6387",
+      "sha256": "25aefad3b28caa1b3f023398dfd56146b4f186addc76f5165d22d83d802be4b1"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs",
+      "blob": "2415c499b784ad1de605df17cd616c20d2e9d99a",
+      "sha256": "fb0ed0fae2454b5d94c71cae7af3bbf756e055ed86813168fb0d1d1f7ec0e446"
+    },
+    {
+      "path": ".github/workflows/n8n-product-bootstrap.yml",
+      "blob": "382f3a10c395b39e15aded9df4b56de0f19f9882",
+      "sha256": "524fe2055c0c86bf5feada7929f92d85043bdc380d0df85993151c228150a3a7"
+    },
+    {
+      "path": "SRC/neothd/src/config/keychain.rs",
+      "blob": "4027f4882543303f08b7c14575a10bd0cc921f8e",
+      "sha256": "1b83b306aae415ac8edaa39256271e779bee5f3181a7b8f796079cfcf8b87d0f"
+    },
+    {
+      "path": "packaging/tests/test_n8n_product_bootstrap_canary.py",
+      "blob": "5e72ed672e79118a7d950e01994887aafcac36a6",
+      "sha256": "359d67cae59a4c222a50c9b90f04c20be6c6e47138e98db2bdd387fc7fe0d024"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/bootstrap_transport.rs",
+      "blob": "22176752c60a7ee1521c739885535bdd193eeb41",
+      "sha256": "b4b84a6a17330577635a39aa19e3fc8cc12465407b6a773bccd58e698c348a79"
+    },
+    {
+      "path": "packaging/n8n_product_bootstrap_canary.py",
+      "blob": "3d7f1e98bf529534beecc3c05fde321443051e51",
+      "sha256": "8eb050a109911da82b81bc0d2866a63615e1869e88cd7a3b0377b5b50626a6be"
+    },
+    {
+      "path": "SRC/neothd/src/cli/n8n.rs",
+      "blob": "fbc55354461dde2ba763bcac50eebc4709fd1dca",
+      "sha256": "252ecf3c64af39060a31871a3ae33d9a6f406ebecbc4595e35ff56be3145f925"
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "blob": "f89a0cdee009703aeb423562fefea56dcf467ee6",
+      "sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "blob": "3d5fe70e3a753a09c862fdcb394c06d37454def8",
+      "sha256": "1259233ef8743d77d64b1ec270654bc5a11a950f76b98a1633bdd39df436c35f"
+    },
+    {
+      "path": "packaging/n8n_bootstrap_canary.py",
+      "blob": "1550e751dbc1e674062a5ce86eba846fbc2510ca",
+      "sha256": "23118857e4655bad3fedbb702e4d0840aec9114482386aab5fee783ef688500a"
+    }
+  ],
+  "receipt": {
+    "binary_sha256": "4cba983589ea9a2943ee807d11b5db0eada3abf87fd47d394f1ea54e4bc0263d",
+    "bounded_helper_sha256": "23118857e4655bad3fedbb702e4d0840aec9114482386aab5fee783ef688500a",
+    "cargo_lock_sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+    "cleanup_proven": false,
+    "command_failure": {
+      "command": "product_install",
+      "exit_code": 1,
+      "known_error_categories": [],
+      "overflow": false,
+      "stderr_bytes": 121,
+      "stdout_bytes": 0,
+      "timed_out": false
+    },
+    "docker_cleanup_proven": false,
+    "failure_stage": "command_failed",
+    "helper_sha256": "8eb050a109911da82b81bc0d2866a63615e1869e88cd7a3b0377b5b50626a6be",
+    "input_sha256": {
+      "SRC/neothd/src/cli/n8n.rs": "252ecf3c64af39060a31871a3ae33d9a6f406ebecbc4595e35ff56be3145f925",
+      "SRC/neothd/src/config/keychain.rs": "1b83b306aae415ac8edaa39256271e779bee5f3181a7b8f796079cfcf8b87d0f",
+      "SRC/neothd/src/integrations/n8n.rs": "25aefad3b28caa1b3f023398dfd56146b4f186addc76f5165d22d83d802be4b1",
+      "SRC/neothd/src/integrations/n8n/bootstrap_transport.rs": "b4b84a6a17330577635a39aa19e3fc8cc12465407b6a773bccd58e698c348a79",
+      "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs": "fb0ed0fae2454b5d94c71cae7af3bbf756e055ed86813168fb0d1d1f7ec0e446",
+      "SRC/neothd/src/integrations/n8n/managed_runtime.rs": "1259233ef8743d77d64b1ec270654bc5a11a950f76b98a1633bdd39df436c35f",
+      "packaging/tests/test_n8n_product_bootstrap_canary.py": "359d67cae59a4c222a50c9b90f04c20be6c6e47138e98db2bdd387fc7fe0d024"
+    },
+    "n8n-managed-bootstrap.v2.json": {
+      "exists": true,
+      "phase": "BootstrapRemoved"
+    },
+    "outcome": "failed",
+    "port": 5681,
+    "schema": 1,
+    "source_sha": "c150c960824c94440c9fa53d62c938fbee10f9d3",
+    "stage": "first_product_install",
+    "workflow_sha256": "524fe2055c0c86bf5feada7929f92d85043bdc380d0df85993151c228150a3a7"
+  },
+  "assessment": "Compiled CLI passed build; install failed after BootstrapRemoved, runtime sidecar absent, no allowlisted stderr category. Underlying product failure unclassified; bootstrap finalizer source masks Failed runtime JobFailure. No runtime/import/cleanup acceptance.",
+  "localExecutableValidationRan": false
+}

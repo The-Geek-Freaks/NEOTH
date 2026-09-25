@@ -34,6 +34,7 @@ use super::{EnqueueResult, IntegrationJobService, JobServiceError, RestartValida
 pub(crate) mod bootstrap_transport;
 pub(crate) mod managed_bootstrap;
 pub(crate) mod managed_runtime;
+pub(crate) mod workflow_import;
 
 pub const N8N_CAPABILITY_ID: &str = "n8n-instance";
 const ADAPTER_REVISION: &str = "n8n-adoption-v1";
@@ -404,6 +405,15 @@ impl N8nRestartValidator {
 
 impl RestartValidator for N8nRestartValidator {
     fn validate(&self, job: &IntegrationJob) -> RestartDecision {
+        if job.operation == JobOperation::Import {
+            return RestartDecision::Hold {
+                failure: JobFailure::new(
+                    "n8n_workflow_import_recovery_hold",
+                    "The interrupted workflow import may have crossed a create request boundary; inspect its exact custody sidecar before resuming.",
+                )
+                .expect("static failure is valid"),
+            };
+        }
         // The durable foundation has a separate migration path for legacy
         // rows without a contract. Do not panic here: a validator must never
         // certify custody when it cannot bind its disposition to a contract.
@@ -512,6 +522,29 @@ impl RestartValidator for N8nRestartValidator {
     }
 }
 
+pub(super) fn has_ready_managed_binding(
+    service: &IntegrationJobService,
+    home: &Path,
+    endpoint: &crate::config::LoopbackHttpEndpoint,
+) -> Result<bool, JobServiceError> {
+    for job in service.snapshot()? {
+        if job.state == JobState::Ready
+            && managed_runtime::is_managed_job(&job)
+            && job.capability_id.as_str() == N8N_CAPABILITY_ID
+            && expected_authenticated_probe_sha256(endpoint)
+                == job.evidence_contract
+                    .as_ref()
+                    .map(JobEvidenceContract::authenticated_probe_sha256)
+                    .cloned()
+                    .unwrap_or_else(|| sha256_parts(&["missing-contract"]))
+            && managed_runtime::ready_binding_matches(home, &job, endpoint).unwrap_or(false)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub(crate) fn open_n8n_job_service(home: &Path) -> Result<IntegrationJobService, JobServiceError> {
     let service =
         IntegrationJobService::open(home, n8n_catalog(), &N8nRestartValidator::new(home))?;
@@ -548,6 +581,48 @@ pub(crate) fn open_n8n_job_service(home: &Path) -> Result<IntegrationJobService,
         {}
     }
     Ok(service)
+}
+
+/// Import all bundled inactive workflows through an independent durable Import
+/// job. It only consumes an already published n8n binding and has no Docker
+/// process ownership.
+pub(crate) async fn import_managed_workflows_at(home: &Path) -> anyhow::Result<IntegrationJob> {
+    // The service's DB owner lease excludes independent processes while it is
+    // open, but it does not cover the gap before idempotent enqueue nor two
+    // callers sharing an already-open process. Retain this sibling lock over
+    // every custody read/write and POST boundary.
+    let _import_lock = crate::util::locked_file::lock_file_blocking(
+        &workflow_import::import_lock_path(home), "n8n workflow import",
+    )?;
+    let service = open_n8n_job_service(home)?;
+    let queued = workflow_import::enqueue_managed_workflow_import(&service, home, JobRequester::Cli)?;
+    let job_id = queued.job.job_id.clone();
+    let result = workflow_import::execute_managed_workflow_import_at(
+        &service,
+        queued.job,
+        home,
+        &workflow_import::HttpWorkflowImportTransport,
+    )
+    .await;
+    match result {
+        Ok(job) => Ok(job),
+        Err(error) => {
+            let current = service.get(&job_id)?
+                .ok_or_else(|| anyhow::anyhow!("n8n workflow import job disappeared"))?;
+            if !workflow_import::safe_to_terminalize_import(home, &current, &error) {
+                return Err(anyhow::anyhow!(error.code));
+            }
+            if current.state.is_terminal() {
+                return Ok(current);
+            }
+            let failed = service.fail(
+                &current.job_id,
+                current.state_revision,
+                JobFailure::new(error.code, "The n8n workflow import received a confirmed local or create-rejection failure; retain its custody record and repair before starting a new import.")?,
+            )?;
+            Ok(failed)
+        }
+    }
 }
 
 /// Execute one complete adoption while holding no process ownership over n8n.

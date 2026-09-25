@@ -1,4 +1,4 @@
-//! `neoth n8n {install,adopt,status,workflows}`.
+//! `neoth n8n {install,adopt,status,import-workflows,workflows}`.
 //!
 //! Adoption binds an operator-supplied, already-running literal-loopback n8n
 //! instance. It never installs, starts, discovers, or owns an n8n process.
@@ -50,6 +50,8 @@ pub enum N8nAction {
         #[arg(long)]
         job: Option<String>,
     },
+    /// Import all bundled inactive workflows into an already-ready managed n8n binding.
+    ImportWorkflows,
     /// List NEOTH workflow templates bundled in the binary.
     Workflows,
 }
@@ -66,8 +68,45 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
             api_key_stdin,
         } => run_adopt(&endpoint, api_key_stdin, output).await,
         N8nAction::Status { job } => run_status(job.as_deref(), output),
+        N8nAction::ImportWorkflows => run_import_workflows(output).await,
         N8nAction::Workflows => run_workflows(output),
     }
+}
+
+async fn run_import_workflows(output: OutputFormat) -> Result<()> {
+    let job = crate::integrations::n8n::import_managed_workflows_at(
+        &crate::config::FreedomConfig::default_neoth_home(),
+    )
+    .await?;
+    render_import_job(&job, output)
+}
+
+fn render_import_job(job: &crate::integrations::IntegrationJob, output: OutputFormat) -> Result<()> {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "job_id": job.job_id,
+                "state": job.state,
+                "operation": "import_inactive_workflows",
+                "failure_code": job.failure.as_ref().map(|failure| &failure.code),
+            })
+        ),
+        OutputFormat::Table => {
+            println!("n8n inactive-workflow import job: {}", job.job_id);
+            println!("state: {}", job.state);
+            if let Some(failure) = &job.failure {
+                println!("failure: {} — {}", failure.code, failure.redacted_message);
+            }
+        }
+    }
+    if let Some(failure) = &job.failure {
+        return Err(anyhow!("n8n workflow import job {} failed: {}", job.job_id, failure.code));
+    }
+    if job.state != crate::integrations::JobState::Ready {
+        return Err(anyhow!("n8n workflow import job {} did not reach Ready (state: {})", job.job_id, job.state));
+    }
+    Ok(())
 }
 
 async fn run_install(
@@ -417,5 +456,19 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn import_workflows_cli_has_no_hidden_execution_options() {
+        use clap::Parser;
+        let cli = crate::cli::Cli::try_parse_from(["neoth", "n8n", "import-workflows"])
+            .unwrap();
+        assert!(matches!(
+            cli.command,
+            crate::cli::Commands::N8n(N8nArgs { action: N8nAction::ImportWorkflows })
+        ));
+        assert!(crate::cli::Cli::try_parse_from([
+            "neoth", "n8n", "import-workflows", "--endpoint", "http://127.0.0.1:5678"
+        ]).is_err());
     }
 }

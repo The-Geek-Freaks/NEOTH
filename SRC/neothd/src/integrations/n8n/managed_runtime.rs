@@ -958,6 +958,24 @@ pub(crate) fn reconcile_ready_custody(
     Ok(())
 }
 
+/// Prove that the currently retained runtime custody belongs to this exact
+/// Ready managed-install job and still exposes the configured loopback origin.
+/// Historical Ready rows are deliberately insufficient: import is allowed only
+/// while the current runtime sidecar retains the exact managed binding.
+pub(crate) fn ready_binding_matches(
+    home: &Path,
+    job: &IntegrationJob,
+    endpoint: &LoopbackHttpEndpoint,
+) -> Result<bool, &'static str> {
+    let Some(binding) = read_binding(home)? else {
+        return Ok(false);
+    };
+    let request = validate_binding(&binding, job)?;
+    Ok(job.state == super::JobState::Ready
+        && binding.phase == RuntimePhase::Ready
+        && request.endpoint() == *endpoint)
+}
+
 fn sync_docker_ok(argv: &[&str]) -> Result<bool, &'static str> {
     let args = argv
         .iter()
