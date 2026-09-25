@@ -13,7 +13,7 @@
       "twitch",
       "nostr"
     ],
-    "custody": "Unsupported v5 binding returns an error before effects; byte-exact queue input and generation remain held after repeated ticks.",
+    "custody": "Corrected W1450: malformed persisted v5 live-channel bindings are quarantined during queue normalization before the helper. The helper guard is defense-in-depth; only a direct helper invocation preserves a separate valid queue without a claim.",
     "featureOffNostr": "SidecarOnly",
     "unchanged": [
       "Telegram/Slack sealed factory paths",
@@ -49,5 +49,15 @@
     ],
     "hosted": "pending"
   },
-  "localExecutableValidationRan": false
+  "localExecutableValidationRan": false,
+  "correction": {
+    "wave": "W1450",
+    "reason": "Hosted Group1855 and feature10 showed the original test cannot enqueue the unsupported binding. Source tracing confirms normalization quarantines raw persisted invalid bindings before dispatch. The earlier byte-identical held-disk-path claim is withdrawn.",
+    "failedSource": "a0b090fe576e4502f993628876edcbd003dc1981",
+    "runs": [
+      36150850270,
+      36150861089
+    ],
+    "replacement": "Two separate quarantine/direct-helper tests; hosted verification pending."
+  }
 }

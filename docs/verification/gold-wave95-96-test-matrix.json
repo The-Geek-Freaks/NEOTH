@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "HOSTED_FORMAT_IMPORTED_NATIVE_AND_FEATURE_PENDING",
+  "status": "CHANNEL_TESTS_REVIEWED_CORE6C_ADMITTED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 225732,
-    "sha256": "A699110F2AEAA16843C0BAEC195CD91205F6F04DBD14A61EAFF5D7123ACE30DA"
+    "bytes": 226111,
+    "sha256": "BA4A8D19DB74A22582C0D1C20773DBE8DB1C5FE9A78D6F0CF931B764660549F0"
   },
-  "sourceInputs": 1265,
+  "sourceInputs": 1267,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -588,31 +588,31 @@
     {
       "test": "daemon::proactive_dispatcher::tests::connection_bound_delivery_uses_only_the_exact_live_channel_ref",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "506FE6C45A3BD967F1AFCB5D163C445AF21A9D867FA8DF2DBDCA669D327F42A9",
+      "sourceSha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::unavailable_connection_bound_handles_settle_sidecar_before_transport",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "506FE6C45A3BD967F1AFCB5D163C445AF21A9D867FA8DF2DBDCA669D327F42A9",
+      "sourceSha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::malformed_connection_bound_targets_never_acquire_or_arm_live_transport",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "506FE6C45A3BD967F1AFCB5D163C445AF21A9D867FA8DF2DBDCA669D327F42A9",
+      "sourceSha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::failed_connection_bound_adapter_never_records_delivered",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "506FE6C45A3BD967F1AFCB5D163C445AF21A9D867FA8DF2DBDCA669D327F42A9",
+      "sourceSha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::plan_delivery_connection_bound_channels_require_the_live_registry",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "506FE6C45A3BD967F1AFCB5D163C445AF21A9D867FA8DF2DBDCA669D327F42A9",
+      "sourceSha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
       "junitClass": "neoth"
     },
     {
@@ -7200,13 +7200,13 @@
     {
       "test": "daemon::proactive_egress::tests::v6_connection_binding_authenticates_exact_live_identity_without_raw_body",
       "sourcePath": "SRC/neothd/src/daemon/proactive_egress.rs",
-      "sourceSha256": "01AD00C6C106376D4D038C3708C063241A51CED69F3E0EC58BF17BD53837C6EE",
+      "sourceSha256": "481A55E480CCC76E85692E8BFF463D1709B0D72614336C2D53DBBB3684919551",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_egress::tests::expired_v6_armed_recovery_records_crash_unknown_without_live_reacquire",
       "sourcePath": "SRC/neothd/src/daemon/proactive_egress.rs",
-      "sourceSha256": "01AD00C6C106376D4D038C3708C063241A51CED69F3E0EC58BF17BD53837C6EE",
+      "sourceSha256": "481A55E480CCC76E85692E8BFF463D1709B0D72614336C2D53DBBB3684919551",
       "junitClass": "neoth"
     },
     {
@@ -7740,37 +7740,37 @@
     {
       "test": "daemon::proactive_dispatcher::tests::delivery_tick_invalid_routing_leaves_queue_untouched",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "506FE6C45A3BD967F1AFCB5D163C445AF21A9D867FA8DF2DBDCA669D327F42A9",
+      "sourceSha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::disabled_delivery_tick_ignores_invalid_routing_and_preserves_queue",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "506FE6C45A3BD967F1AFCB5D163C445AF21A9D867FA8DF2DBDCA669D327F42A9",
+      "sourceSha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::explicit_queued_account_keeps_its_original_channel_when_routing_changes",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "506FE6C45A3BD967F1AFCB5D163C445AF21A9D867FA8DF2DBDCA669D327F42A9",
+      "sourceSha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::invalid_adapter_configuration_settles_only_that_item_and_does_not_starve_tick",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "506FE6C45A3BD967F1AFCB5D163C445AF21A9D867FA8DF2DBDCA669D327F42A9",
+      "sourceSha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::oversized_legacy_route_rejects_before_queue_mutation",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "506FE6C45A3BD967F1AFCB5D163C445AF21A9D867FA8DF2DBDCA669D327F42A9",
+      "sourceSha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::unbound_item_with_bound_route_settles_before_planning_or_transport",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "506FE6C45A3BD967F1AFCB5D163C445AF21A9D867FA8DF2DBDCA669D327F42A9",
+      "sourceSha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
       "junitClass": "neoth"
     },
     {
@@ -7980,13 +7980,13 @@
     {
       "test": "daemon::proactive_dispatcher::tests::slack_account_only_item_preserves_slack_target_and_never_becomes_telegram",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "506FE6C45A3BD967F1AFCB5D163C445AF21A9D867FA8DF2DBDCA669D327F42A9",
+      "sourceSha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::plan_delivery_slack_account_maps_are_sidecar_only_without_account_selection",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "506FE6C45A3BD967F1AFCB5D163C445AF21A9D867FA8DF2DBDCA669D327F42A9",
+      "sourceSha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
       "junitClass": "neoth"
     },
     {
@@ -8232,25 +8232,25 @@
     {
       "test": "daemon::proactive_egress::tests::slack_v5_binding_admits_only_its_member_without_global_destination",
       "sourcePath": "SRC/neothd/src/daemon/proactive_egress.rs",
-      "sourceSha256": "01AD00C6C106376D4D038C3708C063241A51CED69F3E0EC58BF17BD53837C6EE",
+      "sourceSha256": "481A55E480CCC76E85692E8BFF463D1709B0D72614336C2D53DBBB3684919551",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_egress::tests::slack_v5_binding_drift_settles_before_factory_and_cannot_resend",
       "sourcePath": "SRC/neothd/src/daemon/proactive_egress.rs",
-      "sourceSha256": "01AD00C6C106376D4D038C3708C063241A51CED69F3E0EC58BF17BD53837C6EE",
+      "sourceSha256": "481A55E480CCC76E85692E8BFF463D1709B0D72614336C2D53DBBB3684919551",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_egress::tests::slack_v5_terminal_transport_error_is_not_reopened_on_second_invocation",
       "sourcePath": "SRC/neothd/src/daemon/proactive_egress.rs",
-      "sourceSha256": "01AD00C6C106376D4D038C3708C063241A51CED69F3E0EC58BF17BD53837C6EE",
+      "sourceSha256": "481A55E480CCC76E85692E8BFF463D1709B0D72614336C2D53DBBB3684919551",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_egress::tests::account_bound_executor_factories_reject_cross_channel_bindings",
       "sourcePath": "SRC/neothd/src/daemon/proactive_egress.rs",
-      "sourceSha256": "01AD00C6C106376D4D038C3708C063241A51CED69F3E0EC58BF17BD53837C6EE",
+      "sourceSha256": "481A55E480CCC76E85692E8BFF463D1709B0D72614336C2D53DBBB3684919551",
       "junitClass": "neoth"
     },
     {
@@ -12384,19 +12384,25 @@
     {
       "test": "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_delivers_once_and_never_replays",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "506FE6C45A3BD967F1AFCB5D163C445AF21A9D867FA8DF2DBDCA669D327F42A9",
+      "sourceSha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_refuses_nonmatching_or_denied_state",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "506FE6C45A3BD967F1AFCB5D163C445AF21A9D867FA8DF2DBDCA669D327F42A9",
+      "sourceSha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
       "junitClass": "neoth"
     },
     {
-      "test": "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_holds_unsupported_sealed_binding_without_effect",
+      "test": "daemon::proactive_dispatcher::tests::invalid_persisted_live_channel_sealed_binding_is_quarantined_before_dispatch",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "506FE6C45A3BD967F1AFCB5D163C445AF21A9D867FA8DF2DBDCA669D327F42A9",
+      "sourceSha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::proactive_dispatcher::tests::live_channel_sealed_binding_guard_rejects_before_egress_and_preserves_valid_queue",
+      "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "sourceSha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
       "junitClass": "neoth"
     }
   ],
@@ -30909,9 +30915,10 @@
       "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_policy_denial_never_sends",
       "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_delivers_once_and_never_replays",
       "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_refuses_nonmatching_or_denied_state",
-      "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_holds_unsupported_sealed_binding_without_effect"
+      "daemon::proactive_dispatcher::tests::invalid_persisted_live_channel_sealed_binding_is_quarantined_before_dispatch",
+      "daemon::proactive_dispatcher::tests::live_channel_sealed_binding_guard_rejects_before_egress_and_preserves_valid_queue"
     ],
-    "status": "Expanded ten-case connection-bound hosted feature suite pending"
+    "status": "Eleven exact feature cases pending after replacing invalid held fixture with quarantine and direct guard tests"
   },
   "wave547551PublicationEvidence": {
     "base": "6d0fa73c82952b6333638e1ce434c93d3e20dc3a",
@@ -47246,10 +47253,11 @@
     "requiredTests": [
       "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_delivers_once_and_never_replays",
       "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_refuses_nonmatching_or_denied_state",
-      "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_holds_unsupported_sealed_binding_without_effect"
+      "daemon::proactive_dispatcher::tests::invalid_persisted_live_channel_sealed_binding_is_quarantined_before_dispatch",
+      "daemon::proactive_dispatcher::tests::live_channel_sealed_binding_guard_rejects_before_egress_and_preserves_valid_queue"
     ],
-    "status": "STATIC_REVIEWED_HOSTED_PENDING",
-    "scope": "Exact persisted default-account queued recovery through current live registry; IRC/Twitch default cases and feature-gated Nostr table cases, GChat regression retained."
+    "status": "CORRECTED_QUARANTINE_AND_DIRECT_GUARD_HOSTED_PENDING",
+    "scope": "Current live-account recovery; malformed persisted v5 bindings are quarantined by the queue validator. Defensive helper rejection is tested directly and preserves a separately valid original queue."
   },
   "wave1442SharedChannelPublication": {
     "base": "b205096151b6ec4235ecce6af642f98077bf7296",
@@ -47355,6 +47363,74 @@
     ],
     "note": "W1443 authentic two-file rustfmt patch from36150819669 at a0b090fe imported. W1440 Windows618/621 has same three fixtures already corrected inW1441. New Group1855/Windows621/combined10feature and Core gates remain pending; no local executables.",
     "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1456ChannelRecoveryCorrection": {
+    "base": "4cb94735cb6cec5ad42d040a965f5a10920c484d",
+    "sources": [
+      {
+        "path": ".github/workflows/gchat-live-regressions.yml",
+        "bytes": 8705,
+        "sha256": "54EE18DF389D25D04C9150590D338FDDB95CCD9D726F6BF6C4E39DC237028573",
+        "blob": "a069bacdf64a94c35e91f2af43232b1ca3e6efdd"
+      },
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 26006,
+        "sha256": "0354CD932FB437599BB1BF435835C2B3C05BD9A57567691D299FD46670418538",
+        "blob": "e0fd2d63c88b5e4efc78980ce3fcee4aaebc8001"
+      },
+      {
+        "path": "docs/verification/gold-wave1433-1441-channel-and-fixture-batch.json",
+        "bytes": 2442,
+        "sha256": "C59F572EEF557F9342A2C185C868EDAC16DFA88123CA9F88E9CAB44354A4C1DF",
+        "blob": "f54ec4447e5513fe42cecfaf3ac3f2b93c31fa2b"
+      },
+      {
+        "path": "docs/verification/gold-wave1448-core6c-accepted.json",
+        "bytes": 2483,
+        "sha256": "8ED4C2FC4E98119050ABC31723B4742C7CD49E71541E0575FE1CC2069B28F28E",
+        "blob": "4dfd170fce29af2edf856da29fe238b223859e90"
+      },
+      {
+        "path": "docs/verification/gold-wave1456-channel-recovery.json",
+        "bytes": 4317,
+        "sha256": "F4638313DD7C1CF552BA01479E462B6F28A13D153C398536047C6FE66BC11A29",
+        "blob": "d656e5fa1e6f0a1cf376d6da5a572dc833cd0d5e"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 400272,
+        "sha256": "6F31BE4942E61F5FB0742916A43D20910E0317B29E3B4588EB1D65CC198E4BB2",
+        "blob": "803ecd65d9a9eead87b7709c6f951ac7e3893e3b"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1419203,
+        "sha256": "F70F9B91AA57A7F577A4A417EA462D55BAB8D4A9B528E57831393D47465CE593",
+        "blob": "54331a3394930e18f565a8e9247869f83ed68554"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2029726,
+        "sha256": "89728A0704260F5C2389F7EF1DAB0928AFDC3FC86431CC6CFDB5115FDBAFC37F",
+        "blob": "118654ebdff2e77febf7620e582ee629f95d5075"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+        "bytes": 174213,
+        "sha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78",
+        "blob": "bb33319933e8695c1444af2b090d616e604acd2d"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/proactive_egress.rs",
+        "bytes": 430146,
+        "sha256": "481A55E480CCC76E85692E8BFF463D1709B0D72614336C2D53DBBB3684919551",
+        "blob": "4264e79916e796e6608c563bd284d2912758a82e"
+      }
+    ],
+    "note": "W1450 corrects unreachable held-input claim with quarantine/direct-helper tests; W1453 proves no terminal resend or duplicate budget charge. W1448 Core6c admitted; prior Group1855/Windows621/features10 authenticated failures; n8n W1451 uncommitted and excluded.",
+    "hosted": "Channel/source regression execution pending; exact historical Core6c is admitted separately.",
     "localExecutableValidationRan": false
   }
 }

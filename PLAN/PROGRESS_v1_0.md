@@ -2,6 +2,24 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1447-1456 recovery evidence and corrected channel tests (2026-09-25):**
+Core36147550725 at6c997a7b is now fully admitted: slim production Clippy,
+core-test typecheck, public CLI build/export, and strict Linux workspace
+Clippy all passed. Original export digest/source match; CLI docs unchanged.
+At a0b090fe the authenticated results are Group1855:1853pass/2fail,
+Windows621:620pass/1fail, combined features10:9pass/1fail. They are not
+accepted. Both native runs expose n8n BindingCommit restart Hold; its repair
+and negative matrix are separate ongoing work. The channel failure exposed
+an invalid test assumption: persisted unsupported v5 bindings are quarantined
+by queue normalization before dispatch, not retained byte-for-byte. W1450
+replaces that fixture with separate real-quarantine and direct-helper-guard
+coverage. W1453 adds normal second-tick no-resend/single-budget evidence for
+TransportError and expired-v6 CrashUnknown using the existing fixtures.
+Independent static review approved both channel sources. Inventories now
+2066portable/Group1856/Windows621, with11 combined-feature cases. New hosted
+validation remains required; no new retry authority or provider delivery is
+claimed. ROAD stays1077done/245open/2partial. No local executable checks ran.
+Evidence: gold-wave1448-core6c-accepted.json and gold-wave1456-channel-recovery.json.
 **W1440/W1443 final fixture evidence and hosted formatting (2026-09-25):**
 Windows36147569552 at6c997a7b corroborates the same three fixture failures:
 621 executed,618passed/3failed/0missing. Original ZIP/API digest, all621 log
@@ -18,8 +36,9 @@ No local formatter/compiler/test/runtime ran and no roadmap checkbox changed.
 Google Chat, IRC, Twitch and Nostr queued-account recovery now share one exact
 live-registry path. It revalidates policy, configured destination, stored
 ChannelRef, current fingerprint and ready permit before existing v6 egress.
-Unsupported sealed v5 bindings stay held with byte-identical original queue
-custody and no claim/send; disabled Nostr settles SidecarOnly. Telegram/Slack,
+W1450 corrects the earlier custody claim: malformed persisted v5 bindings
+are quarantined before dispatch; only the direct helper guard preserves a
+separate valid queue. Disabled Nostr settles SidecarOnly. Telegram/Slack,
 Keet and g_01_mini retain their distinct behavior. W1437 review approved.
 Three table-driven default tests cover delivery/replay, denied/stale/foreign
 state, feature-off behavior and repeated held-input preservation. Inventories

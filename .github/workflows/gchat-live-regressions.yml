@@ -119,11 +119,12 @@ jobs:
           run_case 08 lib daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_delivers_once_and_never_replays daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_delivers_once_and_never_replays --lib
           run_case 09 lib daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_refuses_nonmatching_or_denied_state daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_refuses_nonmatching_or_denied_state --lib
 
-          run_case 10 lib daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_holds_unsupported_sealed_binding_without_effect daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_holds_unsupported_sealed_binding_without_effect --lib
+          run_case 10 lib daemon::proactive_dispatcher::tests::invalid_persisted_live_channel_sealed_binding_is_quarantined_before_dispatch daemon::proactive_dispatcher::tests::invalid_persisted_live_channel_sealed_binding_is_quarantined_before_dispatch --lib
+          run_case 11 lib daemon::proactive_dispatcher::tests::live_channel_sealed_binding_guard_rejects_before_egress_and_preserves_valid_queue daemon::proactive_dispatcher::tests::live_channel_sealed_binding_guard_rejects_before_egress_and_preserves_valid_queue --lib
 
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 10
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 10
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 10
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 11
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 11
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 11
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Save Cargo cache

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T14:58:24Z",
-  "validationStatus": "HOSTED_FORMAT_IMPORTED_NATIVE_AND_FEATURE_PENDING",
+  "capturedUtc": "2026-09-25T15:27:55Z",
+  "validationStatus": "CHANNEL_TESTS_REVIEWED_CORE6C_ADMITTED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
-      "bytes": 8461,
-      "sha256": "20BA463C21531AEF9086BBE2CEB3F9611B034F8185796244974CD8F2F125E2BC"
+      "bytes": 8705,
+      "sha256": "54EE18DF389D25D04C9150590D338FDDB95CCD9D726F6BF6C4E39DC237028573"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
@@ -124,7 +124,7 @@
     {
       "path": ".github/workflows/research-lifecycle.yml",
       "bytes": 26006,
-      "sha256": "DAFF27973DF4E391F7BD94192FF4DDA72CD5F8A0F3E7EDFE648114B625548A3B"
+      "sha256": "0354CD932FB437599BB1BF435835C2B3C05BD9A57567691D299FD46670418538"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -2008,8 +2008,8 @@
     },
     {
       "path": "docs/verification/gold-wave1433-1441-channel-and-fixture-batch.json",
-      "bytes": 1792,
-      "sha256": "2E4CB83BE627DF5747B7435D8833E4F7D3AA5E7D82484DADB3B4A635ADF4A186"
+      "bytes": 2442,
+      "sha256": "C59F572EEF557F9342A2C185C868EDAC16DFA88123CA9F88E9CAB44354A4C1DF"
     },
     {
       "path": "docs/verification/gold-wave1439-gchat7-accepted.json",
@@ -2020,6 +2020,16 @@
       "path": "docs/verification/gold-wave1443-shared-hosted-format.json",
       "bytes": 805,
       "sha256": "E04091BC6CF2EFB854FAF5E8ABCE647C142BD31EA98D33DF1ADD840A562F9662"
+    },
+    {
+      "path": "docs/verification/gold-wave1448-core6c-accepted.json",
+      "bytes": 2483,
+      "sha256": "8ED4C2FC4E98119050ABC31723B4742C7CD49E71541E0575FE1CC2069B28F28E"
+    },
+    {
+      "path": "docs/verification/gold-wave1456-channel-recovery.json",
+      "bytes": 4317,
+      "sha256": "F4638313DD7C1CF552BA01479E462B6F28A13D153C398536047C6FE66BC11A29"
     },
     {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
@@ -2978,18 +2988,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 398848,
-      "sha256": "8778488F1BB25BA91E778BA893826C41F5D69DE64A578B95679BED73BE5EDE54"
+      "bytes": 400272,
+      "sha256": "6F31BE4942E61F5FB0742916A43D20910E0317B29E3B4588EB1D65CC198E4BB2"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1417779,
-      "sha256": "2FD8F7E3FD0938700A190316A4843C4FDF7A5D24F90644ABA4D496F389830F68"
+      "bytes": 1419203,
+      "sha256": "F70F9B91AA57A7F577A4A417EA462D55BAB8D4A9B528E57831393D47465CE593"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2028302,
-      "sha256": "A7DAE29B4AB351B84789CCD10880BD7B6CFFE9D1EC23583763C8B90B8D08BD87"
+      "bytes": 2029726,
+      "sha256": "89728A0704260F5C2389F7EF1DAB0928AFDC3FC86431CC6CFDB5115FDBAFC37F"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4783,13 +4793,13 @@
     },
     {
       "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "bytes": 166040,
-      "sha256": "506FE6C45A3BD967F1AFCB5D163C445AF21A9D867FA8DF2DBDCA669D327F42A9"
+      "bytes": 174213,
+      "sha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78"
     },
     {
       "path": "SRC/neothd/src/daemon/proactive_egress.rs",
-      "bytes": 427497,
-      "sha256": "01AD00C6C106376D4D038C3708C063241A51CED69F3E0EC58BF17BD53837C6EE"
+      "bytes": 430146,
+      "sha256": "481A55E480CCC76E85692E8BFF463D1709B0D72614336C2D53DBBB3684919551"
     },
     {
       "path": "SRC/neothd/src/daemon/profile_adapt_cron.rs",

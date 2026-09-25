@@ -1,0 +1,69 @@
+{
+  "schema": "neoth-hosted-core-admission/v1",
+  "capturedUtc": "2026-09-25T15:11:34Z",
+  "run": 36147550725,
+  "source": "6c997a7b19a8a87eb02f817f5d8a0238c6441a62",
+  "status": "SOURCE_ADMITTED_PASS",
+  "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36147550725",
+  "gates": [
+    {
+      "completedAt": "2026-09-25T14:30:36Z",
+      "conclusion": "success",
+      "name": "Check exact-source slim-core production Clippy",
+      "number": 6,
+      "startedAt": "2026-09-25T14:27:57Z",
+      "status": "completed"
+    },
+    {
+      "completedAt": "2026-09-25T14:35:56Z",
+      "conclusion": "success",
+      "name": "Type-check core test targets before native validation",
+      "number": 7,
+      "startedAt": "2026-09-25T14:30:36Z",
+      "status": "completed"
+    },
+    {
+      "completedAt": "2026-09-25T14:40:30Z",
+      "conclusion": "success",
+      "name": "Build current public CLI",
+      "number": 8,
+      "startedAt": "2026-09-25T14:35:56Z",
+      "status": "completed"
+    },
+    {
+      "completedAt": "2026-09-25T14:40:30Z",
+      "conclusion": "success",
+      "name": "Export generated reference",
+      "number": 9,
+      "startedAt": "2026-09-25T14:40:30Z",
+      "status": "completed"
+    },
+    {
+      "completedAt": "2026-09-25T15:10:42Z",
+      "conclusion": "success",
+      "name": "Check exact Linux-quality workspace Clippy",
+      "number": 11,
+      "startedAt": "2026-09-25T14:40:31Z",
+      "status": "completed"
+    }
+  ],
+  "sourceBindings": [
+    {
+      "path": ".github/workflows/cli-reference.yml",
+      "blob": "684d6b6b4ec73643edf2a04cdb16950e55f268ba",
+      "sha256": "0B971561DCB33D02FC5943F1AD3F37CFE22FFA0BCC8229704D9D7E395695403B"
+    },
+    {
+      "path": "docs/cli-commands.md",
+      "blob": "5940c3262e7ac4ed7bb6c02d6cfe0e2e49617aaa",
+      "sha256": "4A4F60146F78AD9D7B0334311CC5290A651B2F454E1F9E6F9A05654957042391"
+    }
+  ],
+  "logSha256": "B7266985E7355752C8B39179C8AB71B5EEE38CDA30DAE50DC409362B0B74A619",
+  "artifactId": 10869769196,
+  "zipSha256": "E58DE7747D5052986B3DE596FC959992A1110C1ADEBAFCC53958C20F03AB0C47",
+  "cliSha256": "4A4F60146F78AD9D7B0334311CC5290A651B2F454E1F9E6F9A05654957042391",
+  "cliMatchesCommitted": true,
+  "scope": "Slim production Clippy, default core-test typecheck, public CLI build/export, Linux workspace all-targets Clippy with wizard and wasm-plugin-host. Native behavior, feature channels and other platforms remain separate.",
+  "localExecutableValidationRan": false
+}

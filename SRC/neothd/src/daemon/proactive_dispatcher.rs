@@ -3024,27 +3024,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn default_connection_bound_account_recovery_holds_unsupported_sealed_binding_without_effect()
-     {
+    async fn invalid_persisted_live_channel_sealed_binding_is_quarantined_before_dispatch() {
         for channel in ["gchat", "irc", "twitch", "nostr"] {
             let tmp = TempDir::new().unwrap();
             let queue_path = tmp.path().join("proactive_queue.json");
-            let (mut queued, channel_ref) =
+            let (_, channel_ref) =
                 account_bound_connection_item(&format!("{channel}-sealed-binding"), channel);
-            queued.account_binding = Some(
-                serde_json::from_value(serde_json::json!({
-                    "channel_ref": {
-                        "channel_id": "telegram",
-                        "account_id": channel_ref.account_id.as_str(),
-                    },
-                    "incarnation": "018f3d1e-2c50-7000-8000-000000000001",
-                }))
-                .unwrap(),
+            let dedup_key = format!("{channel}-sealed-binding");
+            let mut item_generations = serde_json::Map::new();
+            item_generations.insert(
+                dedup_key.clone(),
+                serde_json::Value::String("sealed-binding-generation".to_string()),
             );
-            let mut queue = ProactiveQueue::new();
-            assert!(queue.enqueue(queued).unwrap());
-            queue.save_to(&queue_path).unwrap();
-            let queue_before = std::fs::read(&queue_path).unwrap();
+            let raw_queue = serde_json::json!({
+                "items": [{
+                    "priority": 50,
+                    "dedup_key": dedup_key.clone(),
+                    "channel": channel,
+                    "account_id": channel_ref.account_id.as_str(),
+                    "account_binding": {
+                        "channel_ref": {
+                            "channel_id": "telegram",
+                            "account_id": channel_ref.account_id.as_str(),
+                        },
+                        "incarnation": "018f3d1e-2c50-7000-8000-000000000001",
+                    },
+                    "source": "test",
+                    "body": format!("test body {channel}-sealed-binding"),
+                    "scheduled_for_unix": 0,
+                    "is_failure": false,
+                    "expires_unix": 0,
+                }],
+                "drained_at": [],
+                "config": {"max_per_day": 3},
+                "settled_egress_intents": [],
+                "item_generations": item_generations,
+            });
+            let raw_queue_bytes = serde_json::to_vec(&raw_queue).unwrap();
+            crate::util::atomic_write::atomic_write_private(&queue_path, &raw_queue_bytes).unwrap();
 
             let mut config = FreedomConfig::default();
             config.proactive.enabled = true;
@@ -3070,15 +3087,156 @@ mod tests {
                 crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
                     .unwrap();
             ready.wait().await.unwrap();
-            for now_unix in [1_700_000_000, 1_700_000_001] {
-                let error = run_proactive_delivery_tick(
+            assert_eq!(
+                run_proactive_delivery_tick(
                     tmp.path(),
                     &segment,
                     &config,
                     &credentials,
                     &writer,
-                    now_unix,
+                    1_700_000_000,
                     Arc::clone(&registry),
+                )
+                .await
+                .unwrap(),
+                0,
+                "{channel} invalid persisted binding must not dispatch",
+            );
+            let queue_after_quarantine = std::fs::read(&queue_path).unwrap();
+            assert_ne!(
+                queue_after_quarantine, raw_queue_bytes,
+                "{channel} normalization must durably replace the malformed fixture",
+            );
+            assert_eq!(
+                run_proactive_delivery_tick(
+                    tmp.path(),
+                    &segment,
+                    &config,
+                    &credentials,
+                    &writer,
+                    1_700_000_001,
+                    Arc::clone(&registry),
+                )
+                .await
+                .unwrap(),
+                0,
+                "{channel} quarantined item must stay undispatchable",
+            );
+            assert_eq!(
+                std::fs::read(&queue_path).unwrap(),
+                queue_after_quarantine,
+                "{channel} second tick must not mutate the settled quarantine",
+            );
+            drop(writer);
+            join.await.unwrap().unwrap();
+
+            let queue = ProactiveQueue::load_from(&queue_path).unwrap();
+            assert!(queue.is_empty(), "{channel} malformed item must be quarantined");
+            assert!(
+                queue.entry_generation(&dedup_key).is_none(),
+                "{channel} quarantined item must not retain egress generation authority",
+            );
+            assert_eq!(queue.stats(1_700_000_001).budget_left, 3);
+            assert_eq!(
+                live_channel.sends(),
+                0,
+                "{channel} malformed persisted binding reached transport",
+            );
+            assert!(
+                crate::daemon::proactive_egress::read_delivery_history(tmp.path())
+                    .unwrap()
+                    .is_empty(),
+                "{channel} malformed persisted binding must not record Delivered or another terminal egress result",
+            );
+            assert!(!tmp.path().join(PROACTIVE_DELIVERED_SIDECAR).exists());
+            assert!(!tmp.path().join(PROACTIVE_INFLIGHT_DIR).exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn live_channel_sealed_binding_guard_rejects_before_egress_and_preserves_valid_queue() {
+        for channel in ["gchat", "irc", "twitch", "nostr"] {
+            let tmp = TempDir::new().unwrap();
+            let queue_path = tmp.path().join("proactive_queue.json");
+            let (queued, channel_ref) =
+                account_bound_connection_item(&format!("{channel}-guarded-binding"), channel);
+            let dedup_key = queued.dedup_key.clone();
+            let mut queue = ProactiveQueue::new();
+            assert!(queue.enqueue(queued.clone()).unwrap());
+            queue.save_to(&queue_path).unwrap();
+            let queue_before = std::fs::read(&queue_path).unwrap();
+            let original_generation = ProactiveQueue::load_from(&queue_path)
+                .unwrap()
+                .entry_generation(&dedup_key)
+                .unwrap()
+                .to_string();
+            let mut sealed_item = queued;
+            sealed_item.account_binding = Some(
+                serde_json::from_value(serde_json::json!({
+                    "channel_ref": {
+                        "channel_id": "telegram",
+                        "account_id": channel_ref.account_id.as_str(),
+                    },
+                    "incarnation": "018f3d1e-2c50-7000-8000-000000000001",
+                }))
+                .unwrap(),
+            );
+
+            let mut config = FreedomConfig::default();
+            config.proactive.enabled = true;
+            config.autonomy = AutonomyLevel::Full;
+            let credentials = Credentials::default();
+            let accepted_config = crate::config::reload::ReloadController::new(
+                config.clone(),
+                tmp.path().join("freedom.yaml"),
+            )
+            .accepted_snapshot();
+            let policy = config.autonomy_policy();
+            let channel_fingerprints = crate::cli::serve_tasks::channel_account_fingerprints(
+                &config,
+                &credentials,
+                &[],
+                tmp.path(),
+            );
+            let fingerprint = *channel_fingerprints.get(&channel_ref).unwrap();
+            let registry = empty_live_channels();
+            let live_channel = Arc::new(CountingConnectionChannel::new(channel));
+            let lease = registry
+                .begin_replacement(channel_ref, fingerprint)
+                .await;
+            assert!(registry.publish(&lease, live_channel.clone()).await);
+
+            let wal_dir = tmp.path().join("wal");
+            std::fs::create_dir_all(&wal_dir).unwrap();
+            let segment = wal_dir.join("000001.wal");
+            let (writer, join, ready) =
+                crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
+                    .unwrap();
+            ready.wait().await.unwrap();
+            let egress = crate::daemon::proactive_egress::ProactiveEgressContext::new(
+                tmp.path(),
+                &segment,
+                &writer,
+                accepted_config,
+                1_700_000_000,
+                Duration::from_secs(config.proactive.delivery_attempt_timeout_secs),
+            );
+            let live = LiveRouteContext {
+                credentials: &credentials,
+                config: &config,
+                live_channels: registry.as_ref(),
+                channel_fingerprints: &channel_fingerprints,
+            };
+            let routing = crate::channels::routing::ChannelRouting::default();
+            for _ in 0..2 {
+                let error = recover_persisted_connection_bound_delivery(
+                    &egress,
+                    &live,
+                    sealed_item.clone(),
+                    "sealed-binding-guard-generation",
+                    channel,
+                    &policy,
+                    &routing,
                 )
                 .await
                 .unwrap_err();
@@ -3089,7 +3247,13 @@ mod tests {
                 assert_eq!(
                     std::fs::read(&queue_path).unwrap(),
                     queue_before,
-                    "{channel} rejection must retain the exact original queue bytes",
+                    "{channel} direct guard must not alter the valid persisted queue",
+                );
+                let preserved = ProactiveQueue::load_from(&queue_path).unwrap();
+                assert_eq!(
+                    preserved.entry_generation(&dedup_key),
+                    Some(original_generation.as_str()),
+                    "{channel} direct guard must not alter queue generation authority",
                 );
             }
             drop(writer);
@@ -3098,18 +3262,17 @@ mod tests {
             assert_eq!(
                 live_channel.sends(),
                 0,
-                "{channel} sealed binding reached transport"
+                "{channel} sealed binding guard reached transport",
             );
             assert!(
                 crate::daemon::proactive_egress::read_delivery_history(tmp.path())
                     .unwrap()
                     .is_empty(),
-                "{channel} sealed binding must not create a terminal projection",
+                "{channel} sealed binding guard must not record a terminal egress result",
             );
             assert!(!tmp.path().join(PROACTIVE_INFLIGHT_DIR).exists());
         }
     }
-
     #[tokio::test]
     async fn unavailable_connection_bound_handles_settle_sidecar_before_transport() {
         for state in ["unready", "stale", "revoked"] {
@@ -3343,6 +3506,27 @@ mod tests {
             .unwrap(),
             0,
         );
+        let queue_after_first = ProactiveQueue::load_from(&queue_path).unwrap();
+        assert!(queue_after_first.is_empty(), "transport failure must settle the queued item");
+        assert_eq!(queue_after_first.stats(1_700_000_000).budget_left, 2);
+        assert_eq!(
+            run_proactive_delivery_tick(
+                tmp.path(),
+                &segment,
+                &config,
+                &credentials,
+                &writer,
+                1_700_000_001,
+                Arc::clone(&registry),
+            )
+            .await
+            .unwrap(),
+            0,
+            "terminal transport failure must not retry a normal later tick",
+        );
+        let queue_after_second = ProactiveQueue::load_from(&queue_path).unwrap();
+        assert!(queue_after_second.is_empty(), "terminal item must remain settled");
+        assert_eq!(queue_after_second.stats(1_700_000_001).budget_left, 2);
         drop(writer);
         join.await.unwrap().unwrap();
         assert_eq!(channel.sends(), 1);

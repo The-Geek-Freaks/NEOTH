@@ -1,0 +1,112 @@
+{
+  "schema": "neoth-wave1456-channel-recovery/v1",
+  "base": "4cb94735cb6cec5ad42d040a965f5a10920c484d",
+  "status": "STATIC_REVIEW_APPROVED_HOSTED_PENDING",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "sha256": "4326BC327B4BBF988C8FDFAF902CDDFC28112C1AC56D6FF8EA7DECE8BCAE5B78"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/proactive_egress.rs",
+      "sha256": "481A55E480CCC76E85692E8BFF463D1709B0D72614336C2D53DBBB3684919551"
+    }
+  ],
+  "reviewSha256": "CF14CC3644C32DB680716EDA6993D40BD19F626056E1D1E57F1BA3B75EECA775",
+  "correction": "Invalid persisted sealed live-channel bindings are quarantined before dispatch, not held byte-identically. Separate direct-helper guard preserves valid original custody; no validator changes.",
+  "behavior": "Two normal ticks after TransportError prove no resend or double daily-budget charge. Authenticated expired-v6 recovery and two normal ticks with a ready current route prove zero sends, one CrashUnknown, one charge. Deterministic fixtures, not physical process-kill or provider acceptance.",
+  "selection": {
+    "portable": 2066,
+    "group": 1856,
+    "windows": 621,
+    "features": 11
+  },
+  "previousHosted": {
+    "group": {
+      "run": 36150850270,
+      "source": "a0b090fe576e4502f993628876edcbd003dc1981",
+      "executed": 1855,
+      "passed": 1853,
+      "failed": 2,
+      "missing": 0,
+      "sourceBindings": 308,
+      "failedTests": [
+        "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_holds_unsupported_sealed_binding_without_effect",
+        "integrations::n8n::managed_runtime::managed_repair::tests::binding_commit_cas_recovers_with_old_or_already_new_binding_without_redispatch"
+      ],
+      "receiptSha256": "B406177605295617B8DE841D3F58CF3AC45B0A7547DABEC4046FCCF214F1D0ED"
+    },
+    "feature": {
+      "schema": "neoth-wave1447-channel10-admission/v1",
+      "run": {
+        "id": 36150861089,
+        "status": "completed",
+        "conclusion": "failure",
+        "source": "a0b090fe576e4502f993628876edcbd003dc1981"
+      },
+      "artifacts": [
+        {
+          "id": 10871634191,
+          "role": "source",
+          "zip_sha256": "49343b59bb0ef34938a414356c00fceaf221d0995f54810420f9ccfd7592469e"
+        },
+        {
+          "id": 10871669028,
+          "role": "logs",
+          "zip_sha256": "bd1a876b98decc7d6c2186e47b75c2ef75a5d6f8cb8e99340a7613f30578181a"
+        },
+        {
+          "id": 10871843996,
+          "role": "receipt",
+          "zip_sha256": "6f8888b3c64a6da30fff0c73558ff7aa7f2b846c37af1b46ae38f5d5c2398618"
+        }
+      ],
+      "integrity": {
+        "all_api_zip_digests_verified": true,
+        "source_head_verified": true,
+        "source_and_workflow_bindings": 8,
+        "source_and_workflow_binding_mismatches": 0
+      },
+      "counts": {
+        "selected": 10,
+        "discovered": 10,
+        "executed": 10,
+        "passed": 9,
+        "failed": 1,
+        "ordinal_bindings_valid": true
+      },
+      "failure": {
+        "ordinal": 10,
+        "name": "daemon::proactive_dispatcher::tests::default_connection_bound_account_recovery_holds_unsupported_sealed_binding_without_effect",
+        "location": "neothd/src/daemon/proactive_dispatcher.rs:3047:43",
+        "unwrap_error": "validate proactive item before enqueue",
+        "cause": "proactive account binding conflicts with channel"
+      },
+      "admission": {
+        "accepted": false,
+        "reason": "One exact selected/discovered/executed terminal case failed."
+      },
+      "mutations": {
+        "source": false,
+        "docs": false,
+        "plan": false,
+        "index": false,
+        "ci_dispatch": false
+      }
+    },
+    "windows": {
+      "run": 36150856003,
+      "source": "a0b090fe576e4502f993628876edcbd003dc1981",
+      "executed": 621,
+      "passed": 620,
+      "failed": 1,
+      "missing": 0,
+      "sourceBindings": 93,
+      "zipSha256": "1b7f158c8be2d5f36dee536ce3d65bca9f318b68f405d903372c9d8912cd3a69",
+      "receiptSha256": "C079F2EADD4422E401E28D470BB369A8ABE2B8390E458F418D5CAAFD8964692C"
+    }
+  },
+  "n8n": "Its BCD restart correction and negative matrix are separate uncommitted work at this publication boundary.",
+  "roadmapClosure": false,
+  "localExecutableValidationRan": false
+}

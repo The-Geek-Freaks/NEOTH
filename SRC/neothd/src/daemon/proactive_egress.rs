@@ -10278,6 +10278,30 @@ mod tests {
     async fn expired_v6_armed_recovery_records_crash_unknown_without_live_reacquire() {
         let home = tempfile::tempdir().unwrap();
         let channel_ref = ChannelRef::default_account(ChannelId::Irc);
+        let mut config = crate::config::FreedomConfig::default();
+        config.proactive.enabled = true;
+        config.autonomy = crate::permissions::AutonomyLevel::Full;
+        let credentials = crate::config::credentials::Credentials::default();
+        let mut routing = crate::channels::routing::ChannelRouting::default();
+        routing.destinations.irc_channel = Some("#private-target".to_string());
+        routing
+            .save_to(&home.path().join(crate::channels::routing::CHANNEL_ROUTING_FILE))
+            .unwrap();
+        let fingerprint = *crate::cli::serve_tasks::channel_account_fingerprints(
+            &config,
+            &credentials,
+            &[],
+            home.path(),
+        )
+        .get(&channel_ref)
+        .unwrap();
+        let registry = Arc::new(crate::daemon::channel_live_registry::ChannelLiveRegistry::new());
+        let channel = Arc::new(CountingChannel::new());
+        let lease = registry.begin_replacement(channel_ref.clone(), fingerprint).await;
+        assert!(registry.publish(&lease, channel.clone()).await);
+        let permit = registry.acquire(&channel_ref, fingerprint).await.unwrap();
+        let live_generation = permit.generation();
+        drop(permit);
         let mut queued = item("v6-armed-recovery");
         queued.channel = "irc".to_string();
         queued.account_id = Some(channel_ref.account_id.clone());
@@ -10285,8 +10309,8 @@ mod tests {
         let (segment, writer, join) = ready_writer(home.path()).await;
         let binding = ConnectionBoundEgressBinding {
             channel_ref: channel_ref.clone(),
-            generation: 7,
-            fingerprint: 91,
+            generation: live_generation,
+            fingerprint,
         };
         let delivery_lock = acquire_delivery_lock(home.path()).await.unwrap();
         let mut prepared = new_claim_with_deadline_and_connection_binding(
@@ -10339,7 +10363,7 @@ mod tests {
         assert_eq!(history[0].outcome(), ProactiveEgressOutcome::CrashUnknown);
         assert_eq!(
             history[0].connection_binding_identity_for_test(),
-            Some((&channel_ref, 7, 91))
+            Some((&channel_ref, live_generation, fingerprint))
         );
         assert_eq!(
             authenticated_connection_binding_for_test(
@@ -10348,7 +10372,7 @@ mod tests {
                 history[0].intent_id(),
             )
             .unwrap(),
-            Some((channel_ref, 7, 91)),
+            Some((channel_ref, live_generation, fingerprint)),
             "recovery authenticates existing v6 evidence and never needs a live permit"
         );
         assert_eq!(
@@ -10358,6 +10382,38 @@ mod tests {
             0,
             "terminal v6 recovery must be exactly-once"
         );
+        for now_unix in [161, 162] {
+            let queue = ProactiveQueue::load_from(&home.path().join("proactive_queue.json"))
+                .unwrap();
+            assert!(queue.entry_generation("v6-armed-recovery").is_none());
+            assert!(queue.is_empty());
+            assert_eq!(queue.budget_left(now_unix), 2, "one terminal budget charge");
+            assert_eq!(
+                crate::daemon::proactive_dispatcher::run_proactive_delivery_tick(
+                    home.path(),
+                    &segment,
+                    &config,
+                    &credentials,
+                    &writer,
+                    now_unix,
+                    Arc::clone(&registry),
+                )
+                .await
+                .unwrap(),
+                0,
+            );
+            assert_eq!(channel.sends.load(Ordering::SeqCst), 0);
+            let history = read_delivery_history(home.path()).unwrap();
+            assert_eq!(history.len(), 1);
+            assert_eq!(history[0].outcome(), ProactiveEgressOutcome::CrashUnknown);
+            assert_eq!(
+                ProactiveQueue::load_from(&home.path().join("proactive_queue.json"))
+                    .unwrap()
+                    .budget_left(now_unix),
+                2,
+                "later dispatcher ticks must not charge terminal recovery again",
+            );
+        }
         drop(writer);
         join.await.unwrap().unwrap();
     }
