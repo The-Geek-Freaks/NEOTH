@@ -775,8 +775,17 @@ mod tests {
         assert_eq!(pending[0]["subject"], "Pending review");
         assert_eq!(pending[0]["recipient_display_name"], "Ada Example");
         assert_eq!(pending[0]["status"], "pending");
-        for field in ["to", "brief", "signature", "context_snippets", "operator_note"] {
-            assert!(pending[0].get(field).is_none(), "unexpected response field {field}");
+        for field in [
+            "to",
+            "brief",
+            "signature",
+            "context_snippets",
+            "operator_note",
+        ] {
+            assert!(
+                pending[0].get(field).is_none(),
+                "unexpected response field {field}"
+            );
         }
         let denied = post_test_http(port, path, Some(&proposal_token), "{not-json").await;
         assert_eq!(denied["_http_status"], "403");

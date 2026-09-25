@@ -1250,9 +1250,12 @@ mod tests {
     #[cfg(all(target_os = "linux", feature = "keychain"))]
     #[test]
     fn linux_secret_service_operation_reports_worker_panic_coarsely() {
-        let error = linux_secret_service_operation::<()>(|| panic!("injected worker panic"))
-            .unwrap_err();
-        assert_eq!(error.to_string(), "Linux Secret Service worker thread panicked");
+        let error =
+            linux_secret_service_operation::<()>(|| panic!("injected worker panic")).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Linux Secret Service worker thread panicked"
+        );
     }
 
     struct FailOnSetStore {

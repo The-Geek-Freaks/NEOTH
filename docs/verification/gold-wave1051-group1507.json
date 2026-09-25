@@ -1,0 +1,88 @@
+{
+  "schema": "neoth-gold-group1507-root/v1",
+  "run": 36074968299,
+  "source": "975d31b25a6e668d3ebde0e8581d1022e3629917",
+  "status": "ROOT_SOURCE_ADMITTED_PASS",
+  "passed": 1507,
+  "failed": 0,
+  "missingTerminal": 0,
+  "sourceBindings": 267,
+  "apiArtifacts": [
+    {
+      "id": 10840331888,
+      "digest": "sha256:a10be3317b036012e516adb66bb9ef76f16aa678b95f1a7e977c505c8515c2f0"
+    },
+    {
+      "id": 10840311843,
+      "digest": "sha256:236452961f4cd9ef2f1950cfea63f0a27c5b2d23440a949d3cac301526497c31"
+    },
+    {
+      "id": 10840222194,
+      "digest": "sha256:7c7365ad3b55426c4cdfd92bd5dbe4c6acc647e1df628c0cf17a0c1651d16e5c"
+    }
+  ],
+  "rootZipEntryChecks": [
+    {
+      "artifact": 10840331888,
+      "entry": "executed-count.txt",
+      "sha256": "5989DCB09C8EF895BBE0AA835F47DCA7F13DC13B61C78DE565E4F2B69AA6EE69"
+    },
+    {
+      "artifact": 10840331888,
+      "entry": "failed-fixtures.txt",
+      "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+    },
+    {
+      "artifact": 10840331888,
+      "entry": "neoth-lib-test-binary.json",
+      "sha256": "166B2CCD865A2306C8E36FCF9567CF5C15FA7C5C5ABBF17CAAA6EF25BE1A7458"
+    },
+    {
+      "artifact": 10840331888,
+      "entry": "selection.json",
+      "sha256": "842898B65E1667C3A4A287DF50610C34E827FFAB129D892FBB19B77D74E159D8"
+    },
+    {
+      "artifact": 10840331888,
+      "entry": "source-head.txt",
+      "sha256": "29D80759785B9989B541558532ADEBD06D12220F835CDC12197A197944B55BBF"
+    },
+    {
+      "artifact": 10840331888,
+      "entry": "source-ref.txt",
+      "sha256": "599BBCD7B7F94B50D9B83318BA0DD4B8E1BA9E39D1D3EE73D1FBBD70496D0F93"
+    },
+    {
+      "artifact": 10840311843,
+      "entry": "cargo-research-lifecycle.log",
+      "sha256": "E7A6FBD458A625D6AACD445AA17F608E214C39817A15BC416FAF5451D8B717A4"
+    },
+    {
+      "artifact": 10840311843,
+      "entry": "neoth-lib-test-artifacts.jsonl",
+      "sha256": "E4802788049F546E7B13C3326DA570427B60655CD93A299AA7ED0DD4101BD41C"
+    },
+    {
+      "artifact": 10840311843,
+      "entry": "neoth-lib-test-compile.stderr.log",
+      "sha256": "4C093B7D711FCEFE31DF332D75E629AD883866618986E7F8224439E3CFE6C8CE"
+    },
+    {
+      "artifact": 10840222194,
+      "entry": "fixture-identities.json",
+      "sha256": "DB4C7BB07A3C4993B21D6CC317D862EAA53F70B7833C23848D188855333FC787"
+    },
+    {
+      "artifact": 10840222194,
+      "entry": "fixture-names.txt",
+      "sha256": "5F0A5C7FAFDE79CB941EE00A0CEE03681E7898C8A2EBAF8E4F88B42611FD550D"
+    },
+    {
+      "artifact": 10840222194,
+      "entry": "inputs.sha256",
+      "sha256": "C5423A630CC9DC5A2CDF5494BF4FBA3EE8DA8F3167EBAD5048E6BC14C3B053F5"
+    }
+  ],
+  "logSha256": "E7A6FBD458A625D6AACD445AA17F608E214C39817A15BC416FAF5451D8B717A4",
+  "boundary": "All1507 actual selected terminals match, including11 proposal/HTTP cases. Later f0ce keychain/drafts changes require fresh hosted proof."
+}

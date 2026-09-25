@@ -8,6 +8,19 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1059 grouped acceptance and hosted formatting (2026-09-25):** Root verified
+all1507 selected test terminals from run36074968299 at975d31b2:1507PASS,
+0FAIL,0missing;267 historical source/input bindings, all3 API ZIP digests
+and all12 extracted ZIP entries matched. This includes all11 proposal/HTTP
+cases. Receipt: docs/verification/gold-wave1051-group1507.json. Core975 also
+reports success. The exact seven-file f0ce hosted-rustfmt patch was applied
+only after ZIP/inner/source/preimage checks and seven postimage checks.
+The f0ce product/Core/Group1524/Windows301 gates continue; no new runtime or
+release claim follows from formatting. The all13 managed importer is now
+being implemented with separate Import-job migration and durable per-item
+Prepared/Intent/Created/ReadBack custody. Claude031 maps the real vault-sync
+calls after030 confirmed calendar requires actual egress and day/TZ logic.
+
 **W1054 Linux keychain repair and pending email drafts (2026-09-25):**
 Root admitted the redacted failed product receipt from run36074617847 at
 8d86e8aa with its API ZIP digest and all11 historical source/input hashes.

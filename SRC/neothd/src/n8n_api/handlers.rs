@@ -56,8 +56,8 @@ pub struct MemoryDriftRequest {
     pub limit: Option<usize>,
 }
 
-mod pending_proposals;
 mod pending_drafts;
+mod pending_proposals;
 
 /// `/api/stats` payload — high-level counts the n8n weekly_stats
 /// workflow renders into a markdown digest.

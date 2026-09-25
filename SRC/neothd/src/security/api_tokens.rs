@@ -527,12 +527,8 @@ mod tests {
     #[test]
     fn drafts_read_is_a_known_dedicated_scope() {
         assert!(ALL_SCOPES.windows(2).all(|pair| pair[0] < pair[1]));
-        let (rec, _) = create_token(
-            "draft-reminder",
-            vec![SCOPE_DRAFTS_READ.to_string()],
-            None,
-        )
-        .unwrap();
+        let (rec, _) =
+            create_token("draft-reminder", vec![SCOPE_DRAFTS_READ.to_string()], None).unwrap();
         assert!(rec.has_scope(SCOPE_DRAFTS_READ));
         assert!(!rec.has_scope(SCOPE_PROPOSALS_READ));
         assert!(!rec.has_scope(SCOPE_RECALL_READ));

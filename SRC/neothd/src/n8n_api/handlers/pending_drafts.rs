@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{parse_body, ApiErrorCode, ApiRequestCtx, ApiState, HandlerOutcome};
+use super::{ApiErrorCode, ApiRequestCtx, ApiState, HandlerOutcome, parse_body};
 use crate::email::draft::{self, DraftStatus};
 
 /// `/api/email/drafts/pending` request. `min_age_secs` is an inclusive lower
@@ -112,7 +112,7 @@ pub fn handle(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::email::draft::{build_draft, save_draft, DraftContextSnippet, SalutationLocale};
+    use crate::email::draft::{DraftContextSnippet, SalutationLocale, build_draft, save_draft};
 
     fn pending_draft(timestamp: i64) -> crate::email::draft::EmailDraft {
         build_draft(
@@ -155,8 +155,17 @@ mod tests {
         assert!(zero.pending.is_empty());
 
         let value = serde_json::to_value(default).unwrap();
-        for field in ["to", "brief", "signature", "context_snippets", "operator_note"] {
-            assert!(value["pending"][0].get(field).is_none(), "unexpected field {field}");
+        for field in [
+            "to",
+            "brief",
+            "signature",
+            "context_snippets",
+            "operator_note",
+        ] {
+            assert!(
+                value["pending"][0].get(field).is_none(),
+                "unexpected field {field}"
+            );
         }
     }
 
@@ -179,10 +188,19 @@ mod tests {
         let response = read_pending_drafts_at(home.path(), 20, 200, 600).unwrap();
         assert_eq!(response.total, 2);
         assert_eq!(
-            response.pending.iter().map(|draft| draft.id.as_str()).collect::<Vec<_>>(),
+            response
+                .pending
+                .iter()
+                .map(|draft| draft.id.as_str())
+                .collect::<Vec<_>>(),
             vec![old.id.as_str(), recent.id.as_str()]
         );
-        assert!(response.pending.iter().all(|draft| draft.status == "pending"));
+        assert!(
+            response
+                .pending
+                .iter()
+                .all(|draft| draft.status == "pending")
+        );
     }
 
     #[test]

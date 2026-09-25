@@ -597,7 +597,7 @@ mod tests {
                 assert!(
                     http["notes"]
                         .as_str()
-                    .is_some_and(|notes| notes.contains("requires proposals:read"))
+                        .is_some_and(|notes| notes.contains("requires proposals:read"))
                 );
             } else if w.slug == "drafts_pending_review" {
                 assert_eq!(http["parameters"]["method"], "POST");

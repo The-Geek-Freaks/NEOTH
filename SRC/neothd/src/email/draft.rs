@@ -1,7 +1,7 @@
 //! EM-04 draft module — see [`super`].
 
-use std::fs::{self, OpenOptions};
 use std::ffi::OsString;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -303,7 +303,11 @@ fn anyhow_is_not_found(error: &anyhow::Error) -> bool {
 fn anyhow_to_io(error: anyhow::Error) -> std::io::Error {
     let kind = error
         .chain()
-        .find_map(|cause| cause.downcast_ref::<std::io::Error>().map(std::io::Error::kind))
+        .find_map(|cause| {
+            cause
+                .downcast_ref::<std::io::Error>()
+                .map(std::io::Error::kind)
+        })
         .unwrap_or(std::io::ErrorKind::Other);
     std::io::Error::new(kind, error)
 }
@@ -316,7 +320,10 @@ fn decode_draft(bytes: Vec<u8>, display_path: &Path) -> std::io::Result<EmailDra
     let body = String::from_utf8(bytes).map_err(|error| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("email draft {} is not UTF-8: {error}", display_path.display()),
+            format!(
+                "email draft {} is not UTF-8: {error}",
+                display_path.display()
+            ),
         )
     })?;
     serde_json::from_str(&body).map_err(|error| {
@@ -345,7 +352,10 @@ pub fn list_drafts_checked(
     for entry in entries {
         let entry = entry?;
         entry_count = entry_count.checked_add(1).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, "email draft entry counter overflow")
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "email draft entry counter overflow",
+            )
         })?;
         if entry_count > MAX_DRAFT_ENTRIES {
             return Err(std::io::Error::new(
@@ -371,16 +381,20 @@ pub fn list_drafts_checked(
         }
 
         let display_path = root.display_path.join(&name);
-        let bytes = match read_regular_file_bounded(&root.dir, &name, &display_path, MAX_DRAFT_BYTES) {
-            Ok(bytes) => bytes,
-            Err(error) if anyhow_is_not_found(&error) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("email draft disappeared during checked read: {}", display_path.display()),
-                ));
-            }
-            Err(error) => return Err(anyhow_to_io(error)),
-        };
+        let bytes =
+            match read_regular_file_bounded(&root.dir, &name, &display_path, MAX_DRAFT_BYTES) {
+                Ok(bytes) => bytes,
+                Err(error) if anyhow_is_not_found(&error) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!(
+                            "email draft disappeared during checked read: {}",
+                            display_path.display()
+                        ),
+                    ));
+                }
+                Err(error) => return Err(anyhow_to_io(error)),
+            };
         let draft = decode_draft(bytes, &display_path)?;
         if draft.id != id {
             return Err(std::io::Error::new(
@@ -392,7 +406,10 @@ pub fn list_drafts_checked(
                 ),
             ));
         }
-        if status_filter.map(|status| draft.status == status).unwrap_or(true) {
+        if status_filter
+            .map(|status| draft.status == status)
+            .unwrap_or(true)
+        {
             out.push(draft);
         }
     }
@@ -706,7 +723,13 @@ mod tests {
         reviewed.status = DraftStatus::Reviewed;
         sent.status = DraftStatus::Sent;
         discarded.status = DraftStatus::Discarded;
-        for draft in [&pending_later, &reviewed, &sent, &discarded, &pending_earlier] {
+        for draft in [
+            &pending_later,
+            &reviewed,
+            &sent,
+            &discarded,
+            &pending_earlier,
+        ] {
             save_draft(home.path(), draft).unwrap();
         }
         let drafts = drafts_dir(home.path());
@@ -723,9 +746,11 @@ mod tests {
     fn checked_list_drafts_missing_store_is_empty_without_creation() {
         let home = tempfile::tempdir().unwrap();
         let drafts = drafts_dir(home.path());
-        assert!(list_drafts_checked(home.path(), Some(DraftStatus::Pending))
-            .unwrap()
-            .is_empty());
+        assert!(
+            list_drafts_checked(home.path(), Some(DraftStatus::Pending))
+                .unwrap()
+                .is_empty()
+        );
         assert!(!drafts.exists());
     }
 
@@ -777,7 +802,11 @@ mod tests {
         assert_eq!(std::fs::read(&outside_path).unwrap(), outside_before);
 
         let root_link_home = tempfile::tempdir().unwrap();
-        symlink(drafts_dir(outside.path()), drafts_dir(root_link_home.path())).unwrap();
+        symlink(
+            drafts_dir(outside.path()),
+            drafts_dir(root_link_home.path()),
+        )
+        .unwrap();
         assert!(list_drafts_checked(root_link_home.path(), None).is_err());
         assert_eq!(std::fs::read(&outside_path).unwrap(), outside_before);
     }
