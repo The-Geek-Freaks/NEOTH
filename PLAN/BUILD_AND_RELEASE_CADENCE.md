@@ -3,6 +3,25 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1295 Paperless safe-uninstall batch (2026-09-25):**
+The public `paperless uninstall` removes only the three original, exactly
+verified container IDs and retains all six volumes, original install receipt,
+credentials, staging and network. Install/uninstall share a capability-relative
+nonblocking OS lock. Durable per-ID dispatch state permits absence reconciliation
+without repeating an uncertain remove. Complete records are validated before
+reuse; a new cycle requires a different install receipt and entirely new IDs.
+CLI status keeps its prior JSON fields and adds the safe-uninstall state.
+Independent W1289review3 is statically accepted after Root/reviewer repairs;
+18new native tests cover cycles, ambiguity, corrupted custody/status and locks
+(17universal,1Unix). Actual retained-document product acceptance is separate and
+being implemented using Claude051/052's source-backed API research.
+W1294 also repairs the actual n8n adapter's missing Absent producer: bounded
+exact-name volume listing distinguishes observed absence from unknown errors
+before existing label inspection, with one new focused test. Core d503 exposed
+the dead-code diagnostic; its real product build/behavior remains separate.
+New selection:1983universal, Group1773, Windows542; Linux70/macOS65 extras.
+No roadmap checkbox closed. Execution remains exclusively on GitHub.
+
 **W1292 hosted format and retained-owner type correction (2026-09-25):**
 Root imported all five exact rustfmt postimages from Preflight36112303133,
 sourcef22e7734, artifact10853926274; API ZIP digest, embedded source, patch

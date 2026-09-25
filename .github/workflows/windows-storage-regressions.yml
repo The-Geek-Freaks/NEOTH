@@ -594,6 +594,24 @@ jobs:
           integrations::n8n::managed_runtime::managed_uninstall::tests::retained_reinstall_rejects_unproven_missing_unknown_and_foreign_volumes_before_create	neothd/src/integrations/n8n/managed_uninstall_tests.rs
           integrations::n8n::managed_runtime::managed_uninstall::tests::retained_reinstall_rejects_missing_legacy_malformed_and_mismatched_receipts_without_docker	neothd/src/integrations/n8n/managed_uninstall_tests.rs
           integrations::n8n::managed_runtime::managed_uninstall::tests::retained_reinstall_rejects_selected_or_mutated_source_evidence_without_docker	neothd/src/integrations/n8n/managed_uninstall_tests.rs
+          installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_success_removes_owned_stopped_containers_and_retains_six_volumes	neothd/src/installers/paperless_uninstall_tests.rs
+          installers::paperless_lifecycle::paperless_uninstall_tests::completed_custody_tampering_rejects_before_docker_or_mutation	neothd/src/installers/paperless_uninstall_tests.rs
+          installers::paperless_lifecycle::paperless_uninstall_tests::prepared_custody_with_late_wrong_service_id_pair_rejects_before_any_remove	neothd/src/installers/paperless_uninstall_tests.rs
+          installers::paperless_lifecycle::paperless_uninstall_tests::status_rejects_malformed_and_foreign_custody_without_rewriting_it	neothd/src/installers/paperless_uninstall_tests.rs
+          installers::paperless_lifecycle::paperless_uninstall_tests::completed_uninstall_repeat_is_read_only_and_does_not_select_docker	neothd/src/installers/paperless_uninstall_tests.rs
+          installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_missing_original_id_rejects_before_any_remove	neothd/src/installers/paperless_uninstall_tests.rs
+          installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_listing_error_is_not_treated_as_observed_absence	neothd/src/installers/paperless_uninstall_tests.rs
+          installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_foreign_original_id_rejects_before_any_remove	neothd/src/installers/paperless_uninstall_tests.rs
+          installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_failed_remove_after_actual_absence_reopens_without_second_remove	neothd/src/installers/paperless_uninstall_tests.rs
+          installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_failed_remove_with_present_container_holds_without_second_remove	neothd/src/installers/paperless_uninstall_tests.rs
+          installers::paperless_lifecycle::paperless_uninstall_tests::install_is_blocked_while_uninstall_custody_is_pending	neothd/src/installers/paperless_uninstall_tests.rs
+          installers::paperless_lifecycle::paperless_uninstall_tests::completed_custody_does_not_apply_to_a_fresh_install_generation	neothd/src/installers/paperless_uninstall_tests.rs
+          installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_partial_sequence_recovery_does_not_redelete_earlier_container	neothd/src/installers/paperless_uninstall_tests.rs
+          installers::paperless_lifecycle::paperless_operation_lock::tests::same_owned_root_is_busy_until_first_guard_drops	neothd/src/installers/paperless_operation_lock.rs
+          installers::paperless_lifecycle::paperless_operation_lock::tests::independent_owned_roots_do_not_share_operation_lock	neothd/src/installers/paperless_operation_lock.rs
+          installers::paperless_lifecycle::paperless_operation_lock::tests::malformed_state_entry_is_rejected	neothd/src/installers/paperless_operation_lock.rs
+          installers::paperless_lifecycle::tests::safe_uninstall_accepts_only_exact_64_hex_container_ids	neothd/src/installers/paperless_lifecycle.rs
+          integrations::n8n::managed_runtime::tests::volume_listing_matches_proves_only_an_exact_empty_or_single_name_result	neothd/src/integrations/n8n/managed_runtime_tests.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -610,7 +628,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 524 ]]; then
+          if [[ "$expected" -ne 542 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"

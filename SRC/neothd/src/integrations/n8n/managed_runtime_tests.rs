@@ -209,6 +209,23 @@ fn key() -> crate::secret::SecretString {
     crate::secret::SecretString::from("test-n8n-key")
 }
 
+#[test]
+fn volume_listing_matches_proves_only_an_exact_empty_or_single_name_result() {
+    assert_eq!(
+        volume_listing_matches(DEFAULT_VOLUME, ""),
+        Err(InspectVolumeOutcome::Absent),
+    );
+    assert_eq!(volume_listing_matches(DEFAULT_VOLUME, DEFAULT_VOLUME), Ok(()));
+    assert_eq!(
+        volume_listing_matches(DEFAULT_VOLUME, "other-volume"),
+        Err(InspectVolumeOutcome::Unknown),
+    );
+    assert_eq!(
+        volume_listing_matches(DEFAULT_VOLUME, &format!("{DEFAULT_VOLUME}\nother-volume")),
+        Err(InspectVolumeOutcome::Unknown),
+    );
+}
+
 struct PanicProbe;
 #[async_trait::async_trait]
 impl super::super::N8nApiProbe for PanicProbe {

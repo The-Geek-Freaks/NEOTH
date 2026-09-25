@@ -83,3 +83,26 @@ integration exercises preparation followed by actual instance-scoped status;
 the file tests verify byte-preservation of operator environment and state.
 Independent static review is complete; hosted execution is pending at source
 publication. P2-20 remains open.
+
+## Managed safe uninstall and reinstall
+
+`neoth paperless uninstall` removes the three exact managed container IDs from
+the last successful installation. It retains all six named volumes, staged
+configuration, API credentials and the original install receipt. It also retains
+the Docker network. It does not remove an arbitrary Paperless deployment.
+
+Install and uninstall share one nonblocking operation lock. A second operation
+reports `paperless_operation_in_progress`. Uninstall records its progress before
+each exact-ID removal. If a removal response is lost, a retry only advances after
+Docker proves that ID absent; an uncertain or still-present outcome stops without
+issuing another removal. `neoth paperless status` includes `safe_uninstall` while
+preserving its existing readiness fields.
+
+After a completed uninstall, `neoth paperless install` reuses the retained data
+volumes. A later uninstall binds to the new install receipt and new container
+IDs. Invalid or mismatched receipts stop before removal. Purging retained data
+is not part of this command.
+
+The implementation and regression tests are reviewed; hosted native and real
+retained-document acceptance remain separate gates. Do not treat a successful
+volume-name inspection as proof that document bytes survived.

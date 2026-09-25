@@ -1442,6 +1442,25 @@ async fn inspect_target(target: &str) -> Result<InspectOutcome, &'static str> {
 }
 
 async fn inspect_volume_target(name: &str) -> Result<InspectVolumeOutcome, &'static str> {
+    if !valid_volume_name(name) {
+        return Ok(InspectVolumeOutcome::Unknown);
+    }
+    let (listed_ok, names, _) = docker(&[
+        "docker".into(),
+        "volume".into(),
+        "ls".into(),
+        "--filter".into(),
+        format!("name=^{}$", name.replace('.', r"\.")),
+        "--format".into(),
+        "{{.Name}}".into(),
+    ])
+    .await?;
+    if !listed_ok {
+        return Ok(InspectVolumeOutcome::Unknown);
+    }
+    if let Err(outcome) = volume_listing_matches(name, &names) {
+        return Ok(outcome);
+    }
     let (ok, data, _) = docker(&[
         "docker".into(),
         "volume".into(),
@@ -1465,6 +1484,15 @@ async fn inspect_volume_target(name: &str) -> Result<InspectVolumeOutcome, &'sta
         name: row.name,
         labels: row.labels.unwrap_or_default(),
     }))
+}
+
+fn volume_listing_matches(name: &str, output: &str) -> Result<(), InspectVolumeOutcome> {
+    let names: Vec<_> = output.lines().filter(|candidate| !candidate.is_empty()).collect();
+    match names.as_slice() {
+        [] => Err(InspectVolumeOutcome::Absent),
+        [candidate] if *candidate == name => Ok(()),
+        _ => Err(InspectVolumeOutcome::Unknown),
+    }
 }
 
 #[async_trait]

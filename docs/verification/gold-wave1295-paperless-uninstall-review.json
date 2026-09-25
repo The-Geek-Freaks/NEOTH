@@ -1,0 +1,39 @@
+{
+  "kind": "ROOT_REVIEWED_PAPERLESS_SAFE_UNINSTALL",
+  "base": "d503c3684a99c3d7947e361baee35d0679ff224c",
+  "review": "work/gold-20260906/wave1289-paperless-uninstall-review/REPORT.md",
+  "reviewSha256": "96B2CD6D13E16C26C3204DEE8D635DDCCA3122296D17B067B3F0BDD8C821F4EE",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cli/paperless.rs",
+      "sha256": "ADE42855066D0A7EFBE6B910D95C6373B133B473FDE41C00003BDECCAA6BFB6E"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sha256": "D2875D720DA4DA3F8734D909805099051A1C153A78879FAFCF4D5A182775DBF6"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_operation_lock.rs",
+      "sha256": "7D2511123A280DE29C36243CAE0DE7A464277F0E57D7528C9D9DAAFD70E52625"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
+      "sha256": "6DF99A333EA6DDEBF867705454B496145B8AC7CD1F42AC1C238DD769C34AB16F"
+    }
+  ],
+  "tests": 18,
+  "universal": 17,
+  "unix": 1,
+  "scope": "Exact original container IDs,6data volumes retained, same operation lock, durable per-ID dispatched state, installed generation hash/full ID binding and repeated cycles. Corrupt/missing evidence rejects before effect.",
+  "rootCorrections": [
+    "Preserved existing top-level CLI status JSON fields",
+    "Reader validates custody structure/project for install/status/uninstall",
+    "Fresh cycle requires changed receipt hash AND wholly disjoint IDs",
+    "Test visibility narrowed; invalid synthetic emptyCompletefixture removed in favor of real caller coverage",
+    "cfgUnix symlink test excluded from Windows selection"
+  ],
+  "hosted": "pending",
+  "realRetainedDocumentCanary": "implementation_in_progress",
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

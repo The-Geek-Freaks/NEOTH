@@ -1,0 +1,22 @@
+{
+  "kind": "ROOT_REVIEWED_N8N_VOLUME_ABSENCE",
+  "source": "d503c3684a99c3d7947e361baee35d0679ff224c",
+  "failedCore": 36113130643,
+  "diagnostic": "Absent enum outcome never constructed by production",
+  "review": "work/gold-20260906/wave1294-retained-volume-absence/REVIEW.md",
+  "reviewSha256": "4573FAA40DBD12776762D95D763F075559B6586176A05F8F02E18D0C7C6B0444",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "sha256": "E5B364D110BE330DDC7162646BCAFD47B75D3F4822C3CFBB2AB0EF39A35EFB43"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime_tests.rs",
+      "sha256": "7D23B02C2C445187D3F65E8CD220E8A61A57890CFACD1F8ADE31E5C717552FFF"
+    }
+  ],
+  "scope": "Successful bounded exact volume-name listing proves absence; invalid/foreign/ambiguous replies remain unknown; existing inspect labels remain required. Literal-dot names regex escaped.",
+  "newTest": "integrations::n8n::managed_runtime::tests::volume_listing_matches_proves_only_an_exact_empty_or_single_name_result",
+  "localExecutableValidationRan": false,
+  "hosted": "pending"
+}
