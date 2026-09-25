@@ -2,6 +2,23 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1235 Dream hosted behavior and product acceptance (2026-09-25):**
+Root independently admitted Group1673 at3099747e:1673passed/0failed/0missing,
+290 historical bindings and all ordered actual test terminals. Windows446 at
+the same source compiled and passed446/446 with83 historical source/input
+bindings and446 unique actual list/test/pass terminals. This covers the new
+Dream HTTP/lease/durability/storage cases and repaired Paperless volume fixture.
+n8nProduct309 also passed:26 historical bindings,13 compiled workflow imports,
+authenticated200/anonymous401 twice, read-only repeat/same job/no rebootstrap,
+and verified cleanup. All GitHub ZIP digests and extracted bytes were checked.
+Current3c96af3e differs by exact hosted formatting plus docs; its Preflight and
+CodeQuality passed. Core614 workspace and Core309 remain unfinished. No release
+or whole-roadmap acceptance is inferred. Weekly archive/queue reconciliation is
+still WIP with integration tests and rollover review pending; Claude037 corrected
+the old weekly-path claim and038 independently reproduced the rollover gap.
+Evidence: gold-wave1228-n8n-product.json, gold-wave1233-grouped.json and
+gold-wave1234-windows.json under docs/verification. Road remains1077/245/2.
+
 **W1224 hosted Dream formatter and weekly-path correction (2026-09-25):**
 Root verified API/ZIP/inner hashes and all five historical preimages and imported
 exact hosted formatter postimages from run36097659126 at3099747e. No semantic
