@@ -155,7 +155,9 @@ impl FixtureCarrierRegistry {
             .unwrap()
             .contains(&(origin, route.node_id))
         {
-            return Err(Box::new(unreachable_rpc("fixture partition drops this target")));
+            return Err(Box::new(unreachable_rpc(
+                "fixture partition drops this target",
+            )));
         }
         self.services
             .lock()
@@ -172,7 +174,9 @@ impl FixtureCarrierRegistry {
             .iter()
             .find(|(stable_node_id, _)| self.config.raft_node_id(stable_node_id) == Some(origin))
             .ok_or_else(|| {
-                Box::new(unreachable_rpc("fixture origin is not an exact frozen voter binding"))
+                Box::new(unreachable_rpc(
+                    "fixture origin is not an exact frozen voter binding",
+                ))
             })?;
         Ok(AuthenticatedBudgetPeer::from_revalidated_peer_session(
             stable_node_id.clone(),
@@ -387,7 +391,9 @@ impl ThreeNodeFixture {
                 for service in &self.services {
                     leaders.insert(service.current_leader_node().await);
                 }
-                if leaders.len() == 1 && let Some(leader) = *leaders.first().unwrap() {
+                if leaders.len() == 1
+                    && let Some(leader) = *leaders.first().unwrap()
+                {
                     return leader;
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;

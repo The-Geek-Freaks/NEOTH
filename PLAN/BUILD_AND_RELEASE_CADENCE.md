@@ -3,6 +3,23 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1133 initialized product canary and green native batches (2026-09-25):**
+Root admitted a050 Group1569 run36083867168:1569PASS/0FAIL/0missing,
+274 historical inputs and all three API artifact ZIPs. Root also admitted
+Windows346 run36083869020:346PASS/0FAIL/0missing,66 historical inputs,
+358 ZIP entries and every actual terminal line. These runs include the new
+readiness/calendar/audit regressions, fixed Ready-import fixture and CLI
+reference; real Docker installation/import acceptance remains separate.
+The product canary now runs the public noninteractive init command with
+provider skip before installation. A bounded fresh public-config fixture
+selects keychain without a credential value, and readback must confirm it.
+W1132 independently approved both helper files; a20th helper test checks init
+ordering and failure refusal. The receipt now binds the relevant init/config
+sources. Root applied all nine exact120 hosted formatter outputs after API
+ZIP/inner/preimage/postimage checks. The56-warning repair core36084719866
+remains pending; an initialized product rerun follows this publication.
+No roadmap box is closed from fixture success or static source alone.
+
 **W1123 hosted-Clippy repair batch (2026-09-25):**
 The bac Core36080853403 failed on56 actual workspace-Clippy diagnostics,
 not a timeout; slim production Clippy and core test type-check had passed.

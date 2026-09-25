@@ -18355,11 +18355,7 @@ modes:
             20_000,
         )
         .with_usage_home(measured_home.path())
-        .with_prompt_tax(
-            bundle.prompt_tax,
-            &bundle.prompt,
-            bundle.system.as_deref(),
-        );
+        .with_prompt_tax(bundle.prompt_tax, &bundle.prompt, bundle.system.as_deref());
         let authorized = crate::providers::cost_authorization::CostAuthorizingProvider::new(
             &provider,
             authorizer,

@@ -190,7 +190,6 @@ impl ExternalHttpPermit {
         }
         Ok(())
     }
-
 }
 
 impl fmt::Debug for ExternalHttpPermit {

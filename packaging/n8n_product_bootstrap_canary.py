@@ -14,6 +14,7 @@ VOLUME = re.compile(r"neoth_n8n_[0-9a-f]{32}")
 JOB = re.compile(r"[0-9a-f-]{36}")
 WORKFLOW_COUNT = 13
 WORKFLOW_RESPONSE_MAX = 256 * 1024
+PRODUCT_CONFIG_MAX = 256 * 1024
 INSTALL_FAILURE_CODES = (
     "n8n_bootstrap_runtime_finalize_unproven", "n8n_loopback_health_timeout",
     "n8n_adoption_cancelled", "n8n_postcommit_probe_failed", "n8n_probe_timeout",
@@ -243,6 +244,39 @@ def validate_custody(boot: dict, runtime: dict, job: str, port: int) -> tuple[st
     if boot.get("host_port") != port or boot.get("pinned_image") != IMAGE or runtime.get("container_id") != runtime_id or runtime.get("container_name") != "neoth-n8n" or runtime.get("host_port") != port or runtime.get("volume") != volume or runtime.get("image") != IMAGE: raise Failure("custody_binding_mismatch")
     return volume, bootstrap_id, runtime_id
 
+def read_product_config(path: Path) -> dict:
+    if path.is_symlink() or not path.is_file():
+        raise Failure("product_init_config_missing")
+    with path.open("rb") as config_file:
+        raw = config_file.read(PRODUCT_CONFIG_MAX + 1)
+    if len(raw) > PRODUCT_CONFIG_MAX:
+        raise Failure("product_init_config_too_large")
+    try:
+        config = yaml.safe_load(raw)
+    except yaml.YAMLError as error:
+        raise Failure("product_init_config_invalid") from error
+    if not isinstance(config, dict):
+        raise Failure("product_init_config_invalid")
+    return config
+
+def initialize_product_home(binary: Path, home: Path) -> None:
+    config_path = home / "freedom.yaml"
+    if config_path.exists() or config_path.is_symlink():
+        raise Failure("product_init_config_preexisting")
+    run([str(binary), "init", "--non-interactive", "--cli", "--accept-license", "--operator-id", "w1127canary", "--provider", "skip"])
+    config = read_product_config(config_path)
+    config["secrets_backend"] = "keychain"
+    rendered = yaml.safe_dump(config, allow_unicode=True, sort_keys=True).encode("utf-8")
+    if len(rendered) > PRODUCT_CONFIG_MAX:
+        raise Failure("product_init_config_too_large")
+    config_path.write_bytes(rendered)
+    if read_product_config(config_path).get("secrets_backend") != "keychain":
+        raise Failure("product_init_keychain_unproven")
+
+def first_product_install(binary: Path, home: Path, port: int) -> dict:
+    initialize_product_home(binary, home)
+    return read_json_from_command([str(binary), "--output", "json", "n8n", "install", "--bootstrap-owner", "--port", str(port)])
+
 def run(argv: list[str], timeout: int = 180) -> bytes:
     result = bounded.run(argv, timeout=timeout)
     if result.code != 0 or result.timed_out or result.overflow:
@@ -352,7 +386,10 @@ def main() -> int:
             "SRC/neothd/src/integrations/jobs.rs", "SRC/neothd/src/integrations/state.rs",
             "SRC/neothd/src/installers/n8n_workflows.rs",
             "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-            "SRC/neothd/src/config/keychain.rs",
+            "SRC/neothd/src/cli/init.rs", "SRC/neothd/src/cli/init/io.rs",
+            "SRC/neothd/src/cli/init/steps_provider.rs", "SRC/neothd/src/cli/init/types.rs",
+            "SRC/neothd/src/cli/credential.rs", "SRC/neothd/src/config/mod.rs",
+            "SRC/neothd/src/config/credentials.rs", "SRC/neothd/src/config/keychain.rs",
         )
         assets = sorted((Path.cwd() / "SRC/neothd/assets/n8n_workflows").glob("*.json"))
         if len(assets) != 3:
@@ -362,7 +399,7 @@ def main() -> int:
             for name in input_names + tuple(str(asset.relative_to(Path.cwd())).replace("\\", "/") for asset in assets)
         }
         receipt["stage"] = "first_product_install"
-        first = read_json_from_command([str(binary), "--output", "json", "n8n", "install", "--bootstrap-owner", "--port", str(args.port)])
+        first = first_product_install(binary, home, args.port)
         job = validate_product(first); receipt["job_id"] = job; receipt["first_state"] = first["state"]
         status = read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", job]); validate_status(status, job, args.port)
         boot = read_json(home / "n8n-managed-bootstrap.v2.json"); runtime = read_json(home / "n8n-managed-runtime.v2.json")

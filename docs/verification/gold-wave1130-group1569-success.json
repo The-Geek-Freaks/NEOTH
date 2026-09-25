@@ -1,0 +1,78 @@
+{
+  "schema": "neoth-hosted-group-success/v1",
+  "rootVerified": true,
+  "run": 36083867168,
+  "source": "a0509158c608a45dcb0328e7ecad213a30f327b3",
+  "artifactZipDigestsVerified": 3,
+  "innerEntriesVerified": 12,
+  "sourceInputCount": 274,
+  "executed": 1569,
+  "passed": 1569,
+  "failed": 0,
+  "missing": 0,
+  "logSha256": "4D77B98F9E844948C0F395A11C38D9C9B2CE3BD24CB3BD8DB6EE8700C7129B89",
+  "artifactApi": [
+    {
+      "id": 10843625091,
+      "node_id": "MDg6QXJ0aWZhY3QxMDg0MzYyNTA5MQ==",
+      "name": "w190-research-lifecycle-receipt-a0509158c608a45dcb0328e7ecad213a30f327b3",
+      "size_in_bytes": 1140,
+      "url": "https://api.github.com/repos/The-Geek-Freaks/NEOTH/actions/artifacts/10843625091",
+      "archive_download_url": "https://api.github.com/repos/The-Geek-Freaks/NEOTH/actions/artifacts/10843625091/zip",
+      "expired": false,
+      "digest": "sha256:a1ca5c81b8bdeb98a46cec2c84df8dd74386f47b42371143207763b701d727d6",
+      "created_at": "2026-09-25T02:04:27Z",
+      "updated_at": "2026-09-25T02:04:27Z",
+      "expires_at": "2026-10-09T02:04:26Z",
+      "workflow_run": {
+        "id": 36083867168,
+        "repository_id": 1239663829,
+        "head_repository_id": 1239663829,
+        "head_branch": "main",
+        "head_sha": "a0509158c608a45dcb0328e7ecad213a30f327b3"
+      }
+    },
+    {
+      "id": 10843129396,
+      "node_id": "MDg6QXJ0aWZhY3QxMDg0MzEyOTM5Ng==",
+      "name": "w190-research-lifecycle-log-a0509158c608a45dcb0328e7ecad213a30f327b3",
+      "size_in_bytes": 114714,
+      "url": "https://api.github.com/repos/The-Geek-Freaks/NEOTH/actions/artifacts/10843129396",
+      "archive_download_url": "https://api.github.com/repos/The-Geek-Freaks/NEOTH/actions/artifacts/10843129396/zip",
+      "expired": false,
+      "digest": "sha256:fbbeee40a8a07ebc761655b06114a3647dfd578e547680d34cc65fab39e5f4a4",
+      "created_at": "2026-09-25T02:04:26Z",
+      "updated_at": "2026-09-25T02:04:26Z",
+      "expires_at": "2026-10-09T02:04:25Z",
+      "workflow_run": {
+        "id": 36083867168,
+        "repository_id": 1239663829,
+        "head_repository_id": 1239663829,
+        "head_branch": "main",
+        "head_sha": "a0509158c608a45dcb0328e7ecad213a30f327b3"
+      }
+    },
+    {
+      "id": 10843039539,
+      "node_id": "MDg6QXJ0aWZhY3QxMDg0MzAzOTUzOQ==",
+      "name": "w190-research-lifecycle-source-a0509158c608a45dcb0328e7ecad213a30f327b3",
+      "size_in_bytes": 97159,
+      "url": "https://api.github.com/repos/The-Geek-Freaks/NEOTH/actions/artifacts/10843039539",
+      "archive_download_url": "https://api.github.com/repos/The-Geek-Freaks/NEOTH/actions/artifacts/10843039539/zip",
+      "expired": false,
+      "digest": "sha256:f3593772a989b0fb549ad771b159b8a3112d343f69f8e156c8f5158cd282686e",
+      "created_at": "2026-09-25T02:04:25Z",
+      "updated_at": "2026-09-25T02:04:25Z",
+      "expires_at": "2026-10-09T02:04:25Z",
+      "workflow_run": {
+        "id": 36083867168,
+        "repository_id": 1239663829,
+        "head_repository_id": 1239663829,
+        "head_branch": "main",
+        "head_sha": "a0509158c608a45dcb0328e7ecad213a30f327b3"
+      }
+    }
+  ],
+  "scope": "All selected Linux lifecycle tests including readiness/calendar/audit/CLI/Ready-import; real Docker product acceptance separate",
+  "localExecutableValidationRan": false
+}

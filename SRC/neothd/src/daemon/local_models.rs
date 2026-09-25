@@ -1746,60 +1746,60 @@ pub(crate) mod loopback_fixture {
             let mut guard = state.lock().await;
             guard.requests.push(request.to_string());
             match (method, path) {
-            ("GET", "/api/tags") if guard.oversized_response => {
-                (200, "x".repeat(super::MAX_STATE_BYTES + 1), false)
-            }
-            ("GET", "/api/tags") => {
-                let models: Vec<_> = guard.models.values().map(|model| if guard.omit_tag_model { serde_json::json!({"name":model.selector,"digest":model.digest,"size":model.size}) } else { serde_json::json!({"name":model.selector,"model":model.selector,"digest":model.digest,"size":model.size}) }).collect();
-                (200, serde_json::json!({"models":models}).to_string(), false)
-            }
-            ("GET", "/api/ps") => {
-                let models: Vec<_> = guard.models.values().filter(|model| model.loaded).map(|model| serde_json::json!({"name":model.selector,"model":model.selector,"digest":if guard.script.ps_digest_matches { model.digest.clone() } else { "sha256:mismatch".to_owned() },"size":model.size,"size_vram":model.size / 2})).collect();
-                (200, serde_json::json!({"models":models}).to_string(), false)
-            }
-            ("POST", "/api/chat") if guard.script.chat_succeeds => {
-                if guard.script.chat_marks_requested_loaded
-                    && let Some(requested) = request_model.as_deref()
-                    && let Some(model) = guard.models.get_mut(requested)
-                {
-                    model.loaded = true;
+                ("GET", "/api/tags") if guard.oversized_response => {
+                    (200, "x".repeat(super::MAX_STATE_BYTES + 1), false)
                 }
-                let model = request_model.unwrap_or_else(|| "missing".to_owned());
-                let model = if guard.script.chat_returns_requested_model {
-                    model
-                } else {
-                    "wrong-model".to_owned()
-                };
-                (200, serde_json::json!({"model":model,"done":true,"message":{"role":"assistant","content":"OK"}}).to_string(), false)
-            }
-            ("POST", "/api/chat") => (
-                500,
-                r#"{"error":"scripted chat failure"}"#.to_owned(),
-                false,
-            ),
-            ("POST", "/api/pull") => {
-                guard.pulls_started += 1;
-                let body = guard.script.pull_frames.join("\n") + "\n";
-                (200, body, guard.script.hold_pull_open)
-            }
-            ("DELETE", "/api/delete") => {
-                let target = request
-                    .split("\r\n\r\n")
-                    .nth(1)
-                    .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok())
-                    .and_then(|json| {
-                        json.get("name")
-                            .and_then(serde_json::Value::as_str)
-                            .map(str::to_owned)
-                    })
-                    .unwrap_or_default();
-                if guard.models.remove(&target).is_some() {
-                    guard.deletes.push(target);
-                    (200, "{}".to_owned(), false)
-                } else {
-                    (404, r#"{"error":"missing exact target"}"#.to_owned(), false)
+                ("GET", "/api/tags") => {
+                    let models: Vec<_> = guard.models.values().map(|model| if guard.omit_tag_model { serde_json::json!({"name":model.selector,"digest":model.digest,"size":model.size}) } else { serde_json::json!({"name":model.selector,"model":model.selector,"digest":model.digest,"size":model.size}) }).collect();
+                    (200, serde_json::json!({"models":models}).to_string(), false)
                 }
-            }
+                ("GET", "/api/ps") => {
+                    let models: Vec<_> = guard.models.values().filter(|model| model.loaded).map(|model| serde_json::json!({"name":model.selector,"model":model.selector,"digest":if guard.script.ps_digest_matches { model.digest.clone() } else { "sha256:mismatch".to_owned() },"size":model.size,"size_vram":model.size / 2})).collect();
+                    (200, serde_json::json!({"models":models}).to_string(), false)
+                }
+                ("POST", "/api/chat") if guard.script.chat_succeeds => {
+                    if guard.script.chat_marks_requested_loaded
+                        && let Some(requested) = request_model.as_deref()
+                        && let Some(model) = guard.models.get_mut(requested)
+                    {
+                        model.loaded = true;
+                    }
+                    let model = request_model.unwrap_or_else(|| "missing".to_owned());
+                    let model = if guard.script.chat_returns_requested_model {
+                        model
+                    } else {
+                        "wrong-model".to_owned()
+                    };
+                    (200, serde_json::json!({"model":model,"done":true,"message":{"role":"assistant","content":"OK"}}).to_string(), false)
+                }
+                ("POST", "/api/chat") => (
+                    500,
+                    r#"{"error":"scripted chat failure"}"#.to_owned(),
+                    false,
+                ),
+                ("POST", "/api/pull") => {
+                    guard.pulls_started += 1;
+                    let body = guard.script.pull_frames.join("\n") + "\n";
+                    (200, body, guard.script.hold_pull_open)
+                }
+                ("DELETE", "/api/delete") => {
+                    let target = request
+                        .split("\r\n\r\n")
+                        .nth(1)
+                        .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok())
+                        .and_then(|json| {
+                            json.get("name")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned)
+                        })
+                        .unwrap_or_default();
+                    if guard.models.remove(&target).is_some() {
+                        guard.deletes.push(target);
+                        (200, "{}".to_owned(), false)
+                    } else {
+                        (404, r#"{"error":"missing exact target"}"#.to_owned(), false)
+                    }
+                }
                 _ => (404, r#"{"error":"missing"}"#.to_owned(), false),
             }
         };

@@ -1041,7 +1041,11 @@ mod tests {
         let removed: std::collections::BTreeSet<_> = command
             .as_std()
             .get_envs()
-            .filter_map(|(name, value)| value.is_none().then_some(name.to_string_lossy().into_owned()))
+            .filter_map(|(name, value)| {
+                value
+                    .is_none()
+                    .then_some(name.to_string_lossy().into_owned())
+            })
             .collect();
         for name in ["DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_DEFAULT_PLATFORM"]
             .into_iter()

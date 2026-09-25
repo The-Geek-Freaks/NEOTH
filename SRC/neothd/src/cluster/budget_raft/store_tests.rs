@@ -177,10 +177,7 @@ async fn applied_index_ledger_and_snapshot_survive_one_restart_together() {
     drop(store);
 
     let mut recovered = open(&path, ledger("cluster-a", 100)).unwrap();
-    assert_eq!(
-        Some(log),
-        recovered.applied_state().await.unwrap().0
-    );
+    assert_eq!(Some(log), recovered.applied_state().await.unwrap().0);
     assert_eq!(
         snapshot_id,
         recovered
@@ -273,10 +270,8 @@ async fn truncation_and_purge_keep_the_log_boundary_durable() {
         [serde_json::to_vec(&log).unwrap()],
     )
     .unwrap();
-    let membership = StoredMembership::new(
-        Some(log),
-        Membership::from(initial.config().raft_voters()),
-    );
+    let membership =
+        StoredMembership::new(Some(log), Membership::from(initial.config().raft_voters()));
     conn.execute(
         "UPDATE raft_state SET membership = ?1 WHERE singleton = 1",
         [serde_json::to_vec(&membership).unwrap()],

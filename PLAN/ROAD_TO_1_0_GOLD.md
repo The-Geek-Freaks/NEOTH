@@ -8,6 +8,37 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1129 managed-install initialization preflight (2026-09-25):**
+The direct managed n8n install now loads the coherent effective config pair
+read-only before opening the job service. Missing `freedom.yaml` stops with
+`n8n_managed_home_uninitialized`; malformed or unreadable effective state
+stops with `n8n_managed_home_invalid`. Both are fixed redacted codes and occur
+before enqueue, runtime custody, Docker, or authenticated probe. The prepared
+bootstrap/resume path remains outside this new-install gate. After a proven
+runtime absence, an unconfirmed adoption rollback now records the original
+fixed failure code as terminal and retains `AbsentVerified` custody for repair,
+instead of replacing it with cleanup failure or leaving a validating job.
+Three focused source tests cover missing/invalid homes and the cleanup case.
+Static diff validation passed; GitHub validation and roadmap closure remain
+pending under the local BSOD hold.
+
+**W1133 initialized product canary and green native batches (2026-09-25):**
+Root admitted a050 Group1569 run36083867168:1569PASS/0FAIL/0missing,
+274 historical inputs and all three API artifact ZIPs. Root also admitted
+Windows346 run36083869020:346PASS/0FAIL/0missing,66 historical inputs,
+358 ZIP entries and every actual terminal line. These runs include the new
+readiness/calendar/audit regressions, fixed Ready-import fixture and CLI
+reference; real Docker installation/import acceptance remains separate.
+The product canary now runs the public noninteractive init command with
+provider skip before installation. A bounded fresh public-config fixture
+selects keychain without a credential value, and readback must confirm it.
+W1132 independently approved both helper files; a20th helper test checks init
+ordering and failure refusal. The receipt now binds the relevant init/config
+sources. Root applied all nine exact120 hosted formatter outputs after API
+ZIP/inner/preimage/postimage checks. The56-warning repair core36084719866
+remains pending; an initialized product rerun follows this publication.
+No roadmap box is closed from fixture success or static source alone.
+
 **W1123 hosted-Clippy repair batch (2026-09-25):**
 The bac Core36080853403 failed on56 actual workspace-Clippy diagnostics,
 not a timeout; slim production Clippy and core test type-check had passed.

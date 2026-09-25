@@ -1,0 +1,16 @@
+{
+  "schema": "neoth-hosted-windows-success/v1",
+  "rootVerified": true,
+  "run": 36083869020,
+  "source": "a0509158c608a45dcb0328e7ecad213a30f327b3",
+  "artifact": 10843268433,
+  "apiZipDigest": "sha256:d4cae7a81c061781febac857b12325148d117e8ab7b48e4bc7c688c54a115b31",
+  "innerEntriesVerified": 358,
+  "sourceInputCount": 66,
+  "executed": 346,
+  "passed": 346,
+  "failed": 0,
+  "missing": 0,
+  "scope": "All346 selected Windows tests compiled and terminalPASS; no Docker product acceptance",
+  "localExecutableValidationRan": false
+}

@@ -654,8 +654,9 @@ mod tests {
     #[test]
     fn d7_evidence_requires_one_closed_unique_assessment() {
         let assessment = confirmed_assessment();
-        let evidence = verifiability_evidence_for_workflow(std::slice::from_ref(&assessment), "chat_turn")
-            .expect("unique closed row");
+        let evidence =
+            verifiability_evidence_for_workflow(std::slice::from_ref(&assessment), "chat_turn")
+                .expect("unique closed row");
         assert_eq!(evidence.outcome_checkable, ChecklistEvidence::Confirmed);
         assert_eq!(evidence.expert_agreement, ChecklistEvidence::Confirmed);
         assert!(verifiability_evidence_for_workflow(&[], "chat_turn").is_none());

@@ -45,6 +45,24 @@ class ProductReceiptTests(unittest.TestCase):
 
 
 class CustodyBoundaryTests(unittest.TestCase):
+    def test_fresh_product_initialization_precedes_install_and_requires_keychain(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            config = home / "freedom.yaml"
+            calls = []
+            def initialized(argv: list[str], timeout: int = 180) -> bytes:
+                calls.append((argv, timeout))
+                config.write_text("operator_id: w1127canary\nsecrets_backend: file\n")
+                return b""
+            with patch.object(canary, "run", side_effect=initialized):
+                canary.initialize_product_home(Path("neoth"), home)
+            self.assertEqual(calls, [(["neoth", "init", "--non-interactive", "--cli", "--accept-license", "--operator-id", "w1127canary", "--provider", "skip"], 180)])
+            self.assertEqual(canary.read_product_config(config)["secrets_backend"], "keychain")
+        with patch.object(canary, "initialize_product_home", side_effect=canary.Failure("product_init_config_missing")), patch.object(canary, "read_json_from_command") as install:
+            with self.assertRaisesRegex(canary.Failure, "product_init_config_missing"):
+                canary.first_product_install(Path("neoth"), Path("unused"), 5681)
+        install.assert_not_called()
+
     def test_workflow_observer_rejects_redirect_without_following_it(self) -> None:
         hits = {"redirect": 0, "target": 0, "source_key": None}
         class RedirectHandler(http.server.BaseHTTPRequestHandler):

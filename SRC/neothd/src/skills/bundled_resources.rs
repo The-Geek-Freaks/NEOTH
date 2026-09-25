@@ -346,9 +346,7 @@ type W192StageHook = (PathBuf, std::sync::mpsc::Sender<()>, W192StageRelease);
 type W192StageHookSlot = std::sync::Mutex<Option<W192StageHook>>;
 
 #[cfg(test)]
-static W192_STAGE_HOOK: std::sync::OnceLock<
-    W192StageHookSlot,
-> = std::sync::OnceLock::new();
+static W192_STAGE_HOOK: std::sync::OnceLock<W192StageHookSlot> = std::sync::OnceLock::new();
 
 #[cfg(test)]
 pub(crate) fn set_stage_hook_for_test(value: Option<W192StageHook>) {
@@ -377,9 +375,7 @@ fn pause_after_stage_created_for_test(skill_path: &Path) {
 }
 
 #[cfg(test)]
-pub(crate) fn release_stage_hook_for_test(
-    release: &W192StageRelease,
-) {
+pub(crate) fn release_stage_hook_for_test(release: &W192StageRelease) {
     let (state, wake) = &**release;
     *state.lock().expect("W192 stage release lock") = true;
     wake.notify_all();
@@ -392,9 +388,8 @@ type W192LockContentionHook = (PathBuf, std::sync::mpsc::Sender<()>);
 type W192LockContentionHookSlot = std::sync::Mutex<Option<W192LockContentionHook>>;
 
 #[cfg(test)]
-static W192_LOCK_CONTENTION_HOOK: std::sync::OnceLock<
-    W192LockContentionHookSlot,
-> = std::sync::OnceLock::new();
+static W192_LOCK_CONTENTION_HOOK: std::sync::OnceLock<W192LockContentionHookSlot> =
+    std::sync::OnceLock::new();
 
 #[cfg(test)]
 pub(crate) fn set_lock_contention_hook_for_test(value: Option<W192LockContentionHook>) {
