@@ -1,0 +1,119 @@
+{
+  "schema": "neoth-gold-static-review/v1",
+  "base": "0a5ad8f35cc268af1986454129315e28732c8740",
+  "wave": "W1180",
+  "review": "W1180 and W1178 APPROVE_STATIC_ONLY; Root hashes verified",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/paperless/webhook.rs",
+      "sha256": "59CD22F950AAF1BEAE4E0C21AADE1E99328F873C5FE52E39319BEC4F693FFFD0"
+    },
+    {
+      "path": ".github/workflows/cli-reference.yml",
+      "sha256": "DCE2347306B93E747C87507824699C164BBC602F5321989AD406F48ACABFFB4B"
+    }
+  ],
+  "environmentFixture": {
+    "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+    "sha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711"
+  },
+  "failureRun": 36091422292,
+  "failure": "E0308 payload/error response mismatch",
+  "repair": "Both error responses return before vault effect; fixture reflects env_clear; CLI export precedes unchanged full workspace Clippy",
+  "formatter": {
+    "artifact": {
+      "id": 10845751929,
+      "name": "preflight-rustfmt-patch-receipt",
+      "api_digest": "sha256:f53842eba947c717932060ee0017b7bed7c3c32e97d6f67d432a7019703ac297",
+      "local_sha256": "f53842eba947c717932060ee0017b7bed7c3c32e97d6f67d432a7019703ac297",
+      "matches": true
+    },
+    "inner_hashes": [
+      {
+        "path": "rustfmt.patch",
+        "expected": "94df799acaffc9d644be4f763345aa1f97cb88a7c21a975e1199d45e3b8c0a3a",
+        "actual": "94df799acaffc9d644be4f763345aa1f97cb88a7c21a975e1199d45e3b8c0a3a",
+        "matches": true
+      },
+      {
+        "path": "source-head.txt",
+        "expected": "1fd627f1486d2e07d5b118a10d1e97565aa282b9a24499d7c188b9a79d011547",
+        "actual": "1fd627f1486d2e07d5b118a10d1e97565aa282b9a24499d7c188b9a79d011547",
+        "matches": true
+      }
+    ],
+    "source_head": "0a5ad8f35cc268af1986454129315e28732c8740",
+    "source_head_matches_run": true,
+    "touched_path_count": 8,
+    "preimages_all_match": true,
+    "entries": [
+      {
+        "path": "SRC/neothd/src/cli/paperless.rs",
+        "patch_preimage_git_blob": "8b263813e3bdef2e6cd70ad85d534429237dc202",
+        "historical_preimage_sha256": "4c6789a6de4392d729ad37ee6c8b1c8fed10fbc589295dd6fe9b7a3da0fbccd4",
+        "patch_postimage_git_blob": "f6bc1646e9041b99109ca4f2e699dee80bf99b6c",
+        "preimage_matches": true,
+        "postimage_object_present_locally": false
+      },
+      {
+        "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+        "patch_preimage_git_blob": "846209b41425deab02d939f4da6dfa4ca25fdd8e",
+        "historical_preimage_sha256": "89fd587ea020b79497a81a4405bdf10b7bde5dbe60158545b6d3516152517934",
+        "patch_postimage_git_blob": "ae103b5f164a8de85a371229cfab979c09742f4f",
+        "preimage_matches": true,
+        "postimage_object_present_locally": false
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/handlers.rs",
+        "patch_preimage_git_blob": "632c49eeae01d1104cd34ca52aa1d610585db27a",
+        "historical_preimage_sha256": "c7b4c4ed8477f99b4d1c419f8eb41d387d5fde09b13d6afcb179bff37b4c3121",
+        "patch_postimage_git_blob": "9e9df6c9e1da6161de22e1fc24c0c57c95ae363c",
+        "preimage_matches": true,
+        "postimage_object_present_locally": false
+      },
+      {
+        "path": "SRC/neothd/src/n8n_api/server.rs",
+        "patch_preimage_git_blob": "b4517821e9f50875ebe58d96773dbb0b58f4ae79",
+        "historical_preimage_sha256": "7e837357c525805892631547df23975521a5caac3a21e45392f083f7ccf2748b",
+        "patch_postimage_git_blob": "ab892fd3523e6bec99199000ba25fea8cf1dd9ba",
+        "preimage_matches": true,
+        "postimage_object_present_locally": false
+      },
+      {
+        "path": "SRC/neothd/src/paperless/findings.rs",
+        "patch_preimage_git_blob": "b1ec29311a41a1ee3820ee80f30f825bc29cb74b",
+        "historical_preimage_sha256": "a994a478374b80f1a571d493971503ee11ff4cd7820d8a67992baf85d56a8811",
+        "patch_postimage_git_blob": "08c38a7b01fa3d5c4429f9a7467470881b55fae2",
+        "preimage_matches": true,
+        "postimage_object_present_locally": false
+      },
+      {
+        "path": "SRC/neothd/src/paperless/webhook.rs",
+        "patch_preimage_git_blob": "8c28a35fda0fabde11e3a88d854b10c250b8e8a8",
+        "historical_preimage_sha256": "376652811964b372f0190daa1512d64632d31f0c75044e3646cc36dccec2da82",
+        "patch_postimage_git_blob": "98c59e36d5a3129a1d07a74e3afcda7f18d8994a",
+        "preimage_matches": true,
+        "postimage_object_present_locally": false
+      },
+      {
+        "path": "SRC/neothd/src/paperless/webhook_server.rs",
+        "patch_preimage_git_blob": "3218337e5aa8a0b7918664a47d87d5a64601bbe7",
+        "historical_preimage_sha256": "85095a66aa8e31676856fa8cd1fd0bea822d8bd6f35276d9fa62590aada3d8ec",
+        "patch_postimage_git_blob": "904db7dba3d38d6df51f35c27876269da8227c64",
+        "preimage_matches": true,
+        "postimage_object_present_locally": false
+      },
+      {
+        "path": "SRC/neothd/src/security/paperless_ingest.rs",
+        "patch_preimage_git_blob": "bd479df407a656917e4b152da728b9784c277659",
+        "historical_preimage_sha256": "90439069a23ec5feee0896592de6378c4a51363769bbdcfb29a6a6fdc829746b",
+        "patch_postimage_git_blob": "cb1b35ce8d530bb7e7b0a82b25f424eea229ad77",
+        "preimage_matches": true,
+        "postimage_object_present_locally": false
+      }
+    ],
+    "scope": "Read-only receipt recovery; no patch applied/staged."
+  },
+  "hosted": "pending",
+  "localExecutableValidationRan": false
+}

@@ -25,7 +25,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::sync_ocr_to_obsidian;
-use crate::security::paperless_ingest::{IngestError, OcrSource, ingest_ocr_text, ingest_ocr_text_at, redacted_finding_kinds};
+use crate::security::paperless_ingest::{
+    IngestError, OcrSource, ingest_ocr_text, ingest_ocr_text_at, redacted_finding_kinds,
+};
 
 /// JSON body of `POST /paperless/ingest`. n8n + future channel
 /// adapters serialise this verbatim.
@@ -194,11 +196,7 @@ pub fn handle_ingest(request: &IngestRequest, vault_root: &Path) -> IngestRespon
 /// Home-bound webhook producer. Unlike [`handle_ingest`], this production
 /// helper records a threat quarantine under the configured instance home.
 /// The home is supplied by daemon configuration, never by request JSON.
-pub fn handle_ingest_at(
-    request: &IngestRequest,
-    vault_root: &Path,
-    home: &Path,
-) -> IngestResponse {
+pub fn handle_ingest_at(request: &IngestRequest, vault_root: &Path, home: &Path) -> IngestResponse {
     if request.doc_id.is_empty() {
         return IngestResponse::bad_request(request.doc_id.clone(), "doc_id is required");
     }
@@ -212,21 +210,23 @@ pub fn handle_ingest_at(
     };
     let payload = match ingest_ocr_text_at(home, &request.text, source, request.doc_id.clone()) {
         Ok(payload) => payload,
-        Err(error) => match error.downcast::<IngestError>() {
-            Ok(IngestError::Quarantined {
-                findings,
-                document_id,
-                ..
-            }) => IngestResponse::quarantined(
-                document_id,
-                "SC-16 sanitizer halted the payload".to_string(),
-                redacted_finding_kinds(&findings)
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect(),
-            ),
-            Err(_) => IngestResponse::persistence_failed(request.doc_id.clone()),
-        },
+        Err(error) => {
+            return match error.downcast::<IngestError>() {
+                Ok(IngestError::Quarantined {
+                    findings,
+                    document_id,
+                    ..
+                }) => IngestResponse::quarantined(
+                    document_id,
+                    "SC-16 sanitizer halted the payload".to_string(),
+                    redacted_finding_kinds(&findings)
+                        .into_iter()
+                        .map(str::to_string)
+                        .collect(),
+                ),
+                Err(_) => IngestResponse::persistence_failed(request.doc_id.clone()),
+            };
+        }
     };
 
     match sync_ocr_to_obsidian(&payload, vault_root, &request.subdir) {
@@ -394,9 +394,11 @@ mod tests {
         let response = IngestResponse::quarantined(
             "redaction-webhook-001".to_string(),
             "SC-16 sanitizer halted the payload".to_string(),
-            redacted_finding_kinds(&[crate::security::ingress_sanitizer::Finding::PromptInjectionMarker {
-                pattern: PRIVATE_PATTERN.to_string(),
-            }])
+            redacted_finding_kinds(&[
+                crate::security::ingress_sanitizer::Finding::PromptInjectionMarker {
+                    pattern: PRIVATE_PATTERN.to_string(),
+                },
+            ])
             .into_iter()
             .map(str::to_string)
             .collect(),

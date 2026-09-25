@@ -40,7 +40,9 @@ use crate::installers::{
     paperless_staging::{PaperlessStagingView, prepare_at},
 };
 use crate::paperless::{self, OcrSyncOutcome, consult::consult, quarantine};
-use crate::security::paperless_ingest::{IngestError, OcrSource, ingest_ocr_text, ingest_ocr_text_at};
+use crate::security::paperless_ingest::{
+    IngestError, OcrSource, ingest_ocr_text, ingest_ocr_text_at,
+};
 
 // serde_json used for quarantine show serialisation.
 use serde_json;
@@ -296,7 +298,8 @@ pub fn run_paperless(args: PaperlessArgs) -> Result<()> {
             };
             let source = parse_source(&source)?;
             let home = neoth_home_path();
-            let outcome = ingest_to_vault_at(&home, &doc_id, &raw_text, source, &vault, &args.subdir)?;
+            let outcome =
+                ingest_to_vault_at(&home, &doc_id, &raw_text, source, &vault, &args.subdir)?;
             println!(
                 "ingested {doc_id} → {} ({} bytes)",
                 outcome.target_path.display(),
@@ -729,9 +732,11 @@ mod tests {
         let error = format_production_ingest_error(anyhow::Error::new(IngestError::Quarantined {
             ocr_source: OcrSource::PaperlessNgx,
             document_id: "redaction-cli-001".to_string(),
-            findings: vec![crate::security::ingress_sanitizer::Finding::PromptInjectionMarker {
-                pattern: PRIVATE_PATTERN.to_string(),
-            }],
+            findings: vec![
+                crate::security::ingress_sanitizer::Finding::PromptInjectionMarker {
+                    pattern: PRIVATE_PATTERN.to_string(),
+                },
+            ],
             raw_input_hash: "0123456789abcdef".to_string(),
             ts_unix: 1,
         }));

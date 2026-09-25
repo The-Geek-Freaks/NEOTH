@@ -85,34 +85,15 @@ jobs:
         working-directory: SRC
         run: cargo check -p neoth --tests --locked --keep-going
 
-      - name: Check exact Linux-quality workspace Clippy
-        if: ${{ inputs.workspace_clippy }}
-        timeout-minutes: 30
-        working-directory: SRC
-        run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -D warnings
-
       - name: Build current public CLI
         timeout-minutes: 25
         working-directory: SRC
         run: cargo build -p neoth --bin neoth --locked
 
-      # Publish one immutable, successful compile checkpoint per lockfile.
-      # Failed or cancelled gates never save state, and cache contents do not
-      # constitute evidence for the strict source and release checks above.
-      - name: Save completed CLI-reference Cargo checkpoint
-        if: ${{ success() && steps.cli-reference-cargo-cache.outputs.cache-hit != 'true' }}
-        timeout-minutes: 10
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            SRC/target/
-          key: ${{ steps.cli-reference-cargo-cache.outputs.cache-primary-key }}
-
       # Generate without changing the committed snapshot or bypassing its
       # equality test. A maintainer imports only the SHA/digest-bound output.
+      # Export before the longer workspace gate so valid derived docs can be
+      # imported independently. An artifact is not a workspace-Clippy pass.
       - name: Export generated reference
         timeout-minutes: 1
         shell: bash
@@ -129,3 +110,24 @@ jobs:
           name: generated-cli-reference
           path: ${{ runner.temp }}/neoth-cli-reference/
           if-no-files-found: error
+
+      - name: Check exact Linux-quality workspace Clippy
+        if: ${{ inputs.workspace_clippy }}
+        timeout-minutes: 30
+        working-directory: SRC
+        run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -D warnings
+
+      # Publish one immutable, successful compile checkpoint per lockfile.
+      # Failed or cancelled gates never save state, and cache contents do not
+      # constitute evidence for the strict source and release checks above.
+      - name: Save completed CLI-reference Cargo checkpoint
+        if: ${{ success() && steps.cli-reference-cargo-cache.outputs.cache-hit != 'true' }}
+        timeout-minutes: 10
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ steps.cli-reference-cargo-cache.outputs.cache-primary-key }}

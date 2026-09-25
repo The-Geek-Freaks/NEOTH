@@ -8,6 +8,27 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1180 hosted fixture/compile repairs and earlier reference export (2026-09-25):**
+Root admitted Group1606 run36089951615 atf2030a00 after278 source/input
+bindings and all three API ZIPs:1604PASS/2FAIL/0missing. Windows383
+run36089953964 has382PASS/1FAIL/0missing,65 historical inputs and383 actual
+terminal lines verified. All22 calendar regression cases pass on both systems.
+Both runs exposed the same invalid fixture assumption: after env_clear,
+Command::get_envs need not retain removal tombstones. W1178 replaces that
+expectation with forbidden-value absence, complete OS-whitelist membership,
+exact PATH preservation and COMPOSE_DISABLE_ENV_FILE=1. Production command
+construction is unchanged. The remaining Linux failure is stale CLI reference.
+Paperless0a run36091422292 passed helper tests but stopped before Docker on
+E0308 in the new webhook payload match. W1179 makes quarantine/persistence
+responses return immediately, before any vault write. The pending Core0a run
+was cancelled after the common compiler fault was confirmed. W1177 imports all
+eight exact hosted formatter outputs after ZIP/inner/preimage/postimage checks.
+The CLI workflow now builds and exports its reference before the longer
+workspace Clippy gate; all prior checks remain, and cache publication still
+requires every gate to pass. An exported reference alone is not full CI success.
+Latest source requires fresh compile/behavior proof. No roadmap closure or
+local compiler/formatter/parser/test/runtime execution.
+
 **W1172 durable Paperless findings and owned image volumes (2026-09-25):**
 Paperless CLI/webhook ingestion now records threat quarantines in a private,
 instance-bound atomic store before returning quarantine. Only fixed threat

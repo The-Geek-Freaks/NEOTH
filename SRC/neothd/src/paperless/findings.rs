@@ -4,21 +4,13 @@
 //! recent-findings reader. OCR bodies and sanitizer marker patterns may contain
 //! hostile document text, so neither is represented in the durable schema.
 
-use std::{
-    cmp::Ordering,
-    ffi::OsStr,
-    path::Path,
-    sync::Mutex,
-};
+use std::{cmp::Ordering, ffi::OsStr, path::Path, sync::Mutex};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    security::{
-        ingress_sanitizer::Finding,
-        paperless_ingest::OcrSource,
-    },
+    security::{ingress_sanitizer::Finding, paperless_ingest::OcrSource},
     skills::store,
 };
 
@@ -155,11 +147,8 @@ pub fn recent_at(home: &Path, since_unix: u64, limit: usize) -> Result<RecentFin
         return Ok(empty_recent_findings());
     };
     let store_path = home.display_path.join(STORE_DIRECTORY);
-    let Some(directory) = store::open_real_child_dir_if_present(
-        &home.dir,
-        OsStr::new(STORE_DIRECTORY),
-        &store_path,
-    )?
+    let Some(directory) =
+        store::open_real_child_dir_if_present(&home.dir, OsStr::new(STORE_DIRECTORY), &store_path)?
     else {
         return Ok(empty_recent_findings());
     };
@@ -227,7 +216,11 @@ fn load_store(directory: &cap_std::fs::Dir, store_path: &Path) -> Result<Option<
     Ok(Some(state))
 }
 
-fn persist_store(directory: &cap_std::fs::Dir, store_path: &Path, state: &FindingStore) -> Result<()> {
+fn persist_store(
+    directory: &cap_std::fs::Dir,
+    store_path: &Path,
+    state: &FindingStore,
+) -> Result<()> {
     validate_store(state)?;
     let bytes = serde_json::to_vec(state).context("serialize paperless findings store")?;
     anyhow::ensure!(
@@ -360,7 +353,10 @@ mod tests {
         let recent = recent_at(home.path(), 0, 20).unwrap();
         let response = serde_json::to_string(&recent).unwrap();
         assert!(!response.contains(marker_pattern));
-        assert_eq!(recent.findings[0].finding_kinds, vec![FindingKind::PromptInjectionMarker]);
+        assert_eq!(
+            recent.findings[0].finding_kinds,
+            vec![FindingKind::PromptInjectionMarker]
+        );
     }
 
     #[test]
@@ -385,8 +381,14 @@ mod tests {
             2,
         )
         .unwrap();
-        assert_eq!(recent_at(first.path(), 0, 20).unwrap().findings[0].document_id, "first");
-        assert_eq!(recent_at(second.path(), 0, 20).unwrap().findings[0].document_id, "second");
+        assert_eq!(
+            recent_at(first.path(), 0, 20).unwrap().findings[0].document_id,
+            "first"
+        );
+        assert_eq!(
+            recent_at(second.path(), 0, 20).unwrap().findings[0].document_id,
+            "second"
+        );
     }
 
     #[test]
@@ -461,15 +463,17 @@ mod tests {
         fs::create_dir_all(home.path().join(STORE_DIRECTORY)).unwrap();
         fs::write(state_path(home.path()), serde_json::to_vec(&state).unwrap()).unwrap();
 
-        assert!(record_quarantine_at(
-            home.path(),
-            OcrSource::ManualUpload,
-            "over-cap",
-            HASH,
-            &[marker("pattern")],
-            2_000,
-        )
-        .is_err());
+        assert!(
+            record_quarantine_at(
+                home.path(),
+                OcrSource::ManualUpload,
+                "over-cap",
+                HASH,
+                &[marker("pattern")],
+                2_000,
+            )
+            .is_err()
+        );
         assert_eq!(recent_at(home.path(), 0, 100).unwrap().total, MAX_RECORDS);
         assert!(recent_at(home.path(), 0, 0).is_err());
         assert!(recent_at(home.path(), 0, MAX_RECENT_LIMIT + 1).is_err());

@@ -680,9 +680,16 @@ mod tests {
                 assert_eq!(http["parameters"]["sendBody"], true);
                 assert_eq!(http["parameters"]["contentType"], "json");
                 assert_eq!(http["parameters"]["specifyBody"], "json");
-                assert_eq!(http["parameters"]["jsonBody"], "={{ JSON.stringify({ since_unix: Math.floor($now.minus({ minutes: 15 }).toSeconds()), limit: 20 }) }}");
+                assert_eq!(
+                    http["parameters"]["jsonBody"],
+                    "={{ JSON.stringify({ since_unix: Math.floor($now.minus({ minutes: 15 }).toSeconds()), limit: 20 }) }}"
+                );
                 assert_eq!(v["active"], false);
-                assert!(http["notes"].as_str().is_some_and(|notes| notes.contains("requires paperless:findings:read") && notes.contains("recorded_quarantines_only") && notes.contains("does not alert")));
+                assert!(http["notes"].as_str().is_some_and(|notes| {
+                    notes.contains("requires paperless:findings:read")
+                        && notes.contains("recorded_quarantines_only")
+                        && notes.contains("does not alert")
+                }));
             } else if w.slug == "consent_audit_export" {
                 assert_eq!(http["parameters"]["method"], "POST");
                 assert_eq!(http["parameters"]["sendBody"], true);

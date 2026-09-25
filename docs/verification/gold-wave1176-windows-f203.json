@@ -1,0 +1,20 @@
+{
+  "schema": "neoth-gold-hosted-partial/v1",
+  "source": "f2030a009b616511d0e6ae668c779f2f7f299340",
+  "run": 36089953964,
+  "artifact": {
+    "id": 10846260789,
+    "apiDigest": "sha256:ad6383bd6c4d3ba3a0c09e5a3dd43091b5f276986fd4ab2fb4a9e7a19227e08e",
+    "localSha256": "ad6383bd6c4d3ba3a0c09e5a3dd43091b5f276986fd4ab2fb4a9e7a19227e08e",
+    "matches": true
+  },
+  "passed": 382,
+  "failed": 1,
+  "missing": 0,
+  "sourceBindings": 65,
+  "failedTests": [
+    "installers::paperless_lifecycle::tests::docker_command_uses_a_sterile_compose_environment"
+  ],
+  "rootVerified": true,
+  "localExecutableValidationRan": false
+}

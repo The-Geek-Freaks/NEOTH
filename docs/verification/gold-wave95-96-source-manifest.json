@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T03:39:13.0101630Z",
-  "validationStatus": "W1172 statically reviewed findings and W1173 six-volume Paperless repair; hosted pending",
+  "capturedUtc": "2026-09-25T03:52:43.0850770Z",
+  "validationStatus": "W1180 reviewed exact hosted compile/fixture repairs and formatter8; verified historical partial results; fresh hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -38,8 +38,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 4950,
-      "sha256": "DB6A7B1811071A4002C352DE4CB23E2DE8C0DDEE47B58286FB2CF7C1D4495321"
+      "bytes": 5103,
+      "sha256": "DCE2347306B93E747C87507824699C164BBC602F5321989AD406F48ACABFFB4B"
     },
     {
       "path": ".github/workflows/gchat-live-regressions.yml",
@@ -1472,6 +1472,21 @@
       "sha256": "6FBF91A3354D6DA8387AEDE5C2AD16761B0DF95600E7F77FBF07B6324E48F6C9"
     },
     {
+      "path": "docs/verification/gold-wave1174-group-f203.json",
+      "bytes": 1411,
+      "sha256": "975F654052D0E0FC88B8400AACC6289D2663B6A0490107F8691FA92128C9E415"
+    },
+    {
+      "path": "docs/verification/gold-wave1176-windows-f203.json",
+      "bytes": 625,
+      "sha256": "7550BB9C909F6280DF3BB30045075D09C3D57A8F9F64819B3DDC322182C27BDD"
+    },
+    {
+      "path": "docs/verification/gold-wave1180-repair-review.json",
+      "bytes": 5474,
+      "sha256": "C5C763E7EAB094171E604950332B6B0C40664C0E9E44DAA2F85AE86C8CB9AE9D"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -2423,18 +2438,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 333529,
-      "sha256": "1AE32A22EEAB2282846A050136DC279B538613FA9E1E6D45F4053EA00253C3EC"
+      "bytes": 335032,
+      "sha256": "606CF0E39410B5C8747859D2F0FB42893FD0EB34DDEA892F95B72051BD18F373"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1350340,
-      "sha256": "AE13BC0373AAA2185CF5C7F38567AF784FC722DF7F39FC9CD3625D7371D99DED"
+      "bytes": 1351843,
+      "sha256": "6DAD8B7183D75365BB3F451BCC65E0587CD3610EF11036D14BC40A0EAD620F3A"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1960281,
-      "sha256": "4E44056A56050331E82506E90DCDA777ECCB2A6EF6BDA5FF462B60DF14E8C7D0"
+      "bytes": 1961784,
+      "sha256": "BEB0743D6E68524310C9A4673926280A55082C8AD1F71C320357F10A4592E0E6"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -3518,8 +3533,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/paperless.rs",
-      "bytes": 30078,
-      "sha256": "4C6789A6DE4392D729AD37EE6C8B1C8FED10FBC589295DD6FE9B7A3DA0FBCCD4"
+      "bytes": 30140,
+      "sha256": "6AB255C0A97AA450355E03368A890AF84B9309446419BA8E59715EA6CAE4E865"
     },
     {
       "path": "SRC/neothd/src/cli/parity_drift.rs",
@@ -4368,8 +4383,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "bytes": 39489,
-      "sha256": "89FD587EA020B79497A81A4405BDF10B7BDE5DBE60158545B6D3516152517934"
+      "bytes": 39635,
+      "sha256": "C616BB5125E4F7F36AF5CEAF14C1F7BEADA7B1FDA31F383C89740F60186B45F0"
     },
     {
       "path": "SRC/neothd/src/installers/n8n_workflows.rs",
@@ -4398,8 +4413,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "bytes": 73245,
-      "sha256": "BE76B76DB21046D203439BC7DB3461D7701EF6D3F27B77162FABF08378404693"
+      "bytes": 73320,
+      "sha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_readiness_tests.rs",
@@ -4743,8 +4758,8 @@
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers.rs",
-      "bytes": 63893,
-      "sha256": "C7B4C4ED8477F99B4D1C419F8EB41D387D5FDE09B13D6AFCB179BFF37B4C3121"
+      "bytes": 63916,
+      "sha256": "659C7C529E5DE612CD4B846BBB99F25B95DED0E22F540FE2E637E4E36678C23D"
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers/calendar_agenda.rs",
@@ -4783,8 +4798,8 @@
     },
     {
       "path": "SRC/neothd/src/n8n_api/server.rs",
-      "bytes": 52112,
-      "sha256": "7E837357C525805892631547DF23975521A5CAAC3A21E45392F083F7CCF2748B"
+      "bytes": 52316,
+      "sha256": "EE37E5D28B209326C956E0076D4F1F4C4027DFD0DA30DA5473320607191F47EB"
     },
     {
       "path": "SRC/neothd/src/os_tools/gate.rs",
@@ -4798,8 +4813,8 @@
     },
     {
       "path": "SRC/neothd/src/paperless/findings.rs",
-      "bytes": 16587,
-      "sha256": "A994A478374B80F1A571D493971503EE11FF4CD7820D8A67992BAF85D56A8811"
+      "bytes": 16693,
+      "sha256": "1DCFC4FAFEB4072F0245A5C1F7568A062DE96B6CFAABAD29708B3D94A8E9B816"
     },
     {
       "path": "SRC/neothd/src/paperless/mod.rs",
@@ -4808,13 +4823,13 @@
     },
     {
       "path": "SRC/neothd/src/paperless/webhook_server.rs",
-      "bytes": 24483,
-      "sha256": "85095A66AA8E31676856FA8CD1FD0BEA822D8BD6F35276D9FA62590AADA3D8EC"
+      "bytes": 24549,
+      "sha256": "6D803560CB8B1546386131E45298B5916CDFFBFE014ACF70BCC3071926CD8F11"
     },
     {
       "path": "SRC/neothd/src/paperless/webhook.rs",
-      "bytes": 19797,
-      "sha256": "376652811964B372F0190DAA1512D64632D31F0C75044E3646CC36DCCEC2DA82"
+      "bytes": 19915,
+      "sha256": "59CD22F950AAF1BEAE4E0C21AADE1E99328F873C5FE52E39319BEC4F693FFFD0"
     },
     {
       "path": "SRC/neothd/src/permissions/gate.rs",
@@ -5128,8 +5143,8 @@
     },
     {
       "path": "SRC/neothd/src/security/paperless_ingest.rs",
-      "bytes": 16001,
-      "sha256": "90439069A23EC5FEEE0896592DE6378C4A51363769BBDCFB29A6A6FDC829746B"
+      "bytes": 15955,
+      "sha256": "26D31CDBD78B6BDB58FFC1515BF70D028DA63A807AFDB62407994AECDB16BFAA"
     },
     {
       "path": "SRC/neothd/src/security/prompt_envelope.rs",

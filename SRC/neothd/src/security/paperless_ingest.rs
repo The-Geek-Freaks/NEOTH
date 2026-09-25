@@ -231,9 +231,7 @@ pub fn ingest_ocr_text_at(
                     *ts_unix,
                 )
                 .with_context(|| {
-                    format!(
-                        "paperless quarantine persistence failed for document {document_id}"
-                    )
+                    format!("paperless quarantine persistence failed for document {document_id}")
                 })?;
             }
             Err(anyhow::Error::new(error))

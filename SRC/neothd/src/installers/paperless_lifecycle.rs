@@ -1491,13 +1491,13 @@ mod tests {
     fn docker_command_uses_a_sterile_compose_environment() {
         let command =
             configured_docker_command("docker", &["compose".into()], Path::new("C:/paperless"));
-        let removed: std::collections::BTreeSet<_> = command
+        // After env_clear(), env_remove() need not retain an explicit removal
+        // entry. Inspect the configured values instead of requiring tombstones.
+        let configured: std::collections::BTreeMap<_, _> = command
             .as_std()
             .get_envs()
             .filter_map(|(name, value)| {
-                value
-                    .is_none()
-                    .then_some(name.to_string_lossy().into_owned())
+                value.map(|value| (name.to_string_lossy().into_owned(), value.to_os_string()))
             })
             .collect();
         for name in ["DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_DEFAULT_PLATFORM"]
@@ -1509,16 +1509,12 @@ mod tests {
                     .filter(|name| *name != "COMPOSE_DISABLE_ENV_FILE"),
             )
         {
-            assert!(removed.contains(name));
+            assert!(!configured.contains_key(name), "unexpected configured {name}");
         }
-        assert!(!removed.contains("PATH"));
-        let configured: std::collections::BTreeMap<_, _> = command
-            .as_std()
-            .get_envs()
-            .filter_map(|(name, value)| {
-                value.map(|value| (name.to_string_lossy().into_owned(), value.to_os_string()))
-            })
-            .collect();
+        for name in configured.keys() {
+            assert!(OS_LAUNCH_ENV.contains(&name.as_str()) || name == "COMPOSE_DISABLE_ENV_FILE");
+        }
+        assert_eq!(configured.get("PATH"), std::env::var_os("PATH").as_ref());
         assert_eq!(
             configured
                 .get("COMPOSE_DISABLE_ENV_FILE")

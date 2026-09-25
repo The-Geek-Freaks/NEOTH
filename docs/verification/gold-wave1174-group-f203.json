@@ -1,0 +1,38 @@
+{
+  "schema": "neoth-gold-hosted-partial/v1",
+  "source": "f2030a009b616511d0e6ae668c779f2f7f299340",
+  "run": 36089951615,
+  "artifacts": [
+    {
+      "digest": "d7f1262114c92489b67726c546d582dd579d8f5545a6546f38b41a3459bf7165",
+      "id": 10845930836,
+      "matches": true,
+      "name": "w190-research-lifecycle-source-f2030a009b616511d0e6ae668c779f2f7f299340",
+      "actual": "d7f1262114c92489b67726c546d582dd579d8f5545a6546f38b41a3459bf7165"
+    },
+    {
+      "digest": "0b73c71ff373c7267f78f56804b7435139f13ab294f02536dd615dfdb603fc34",
+      "id": 10845716207,
+      "matches": true,
+      "name": "w190-research-lifecycle-receipt-f2030a009b616511d0e6ae668c779f2f7f299340",
+      "actual": "0b73c71ff373c7267f78f56804b7435139f13ab294f02536dd615dfdb603fc34"
+    },
+    {
+      "digest": "4c6ea59986db6937ed986580b25ad9430634907e09a63d6cc5a6c82ae812cef1",
+      "id": 10845486480,
+      "matches": true,
+      "name": "w190-research-lifecycle-log-f2030a009b616511d0e6ae668c779f2f7f299340",
+      "actual": "4c6ea59986db6937ed986580b25ad9430634907e09a63d6cc5a6c82ae812cef1"
+    }
+  ],
+  "passed": 1604,
+  "failed": 2,
+  "missing": 0,
+  "sourceBindings": 278,
+  "failedTests": [
+    "cli::docgen::tests::cli_commands_md_is_up_to_date",
+    "installers::paperless_lifecycle::tests::docker_command_uses_a_sterile_compose_environment"
+  ],
+  "rootVerified": true,
+  "localExecutableValidationRan": false
+}

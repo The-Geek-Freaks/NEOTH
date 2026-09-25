@@ -814,7 +814,9 @@ pub async fn route(ctx: ApiRequestCtx, state: Arc<ApiState>) -> HandlerOutcome {
         ("POST", "/api/email/drafts/pending") => pending_drafts::handle(&ctx, &state),
         ("POST", "/api/permissions/audit") => permission_audit::handle(&ctx, &state).await,
         ("POST", "/api/calendar/agenda") => calendar_route::handle(&ctx, &state).await,
-        ("POST", "/api/paperless/findings/recent") => paperless_findings::handle(&ctx, &state).await,
+        ("POST", "/api/paperless/findings/recent") => {
+            paperless_findings::handle(&ctx, &state).await
+        }
         ("POST", "/api/memory/save") => memory_save(&ctx, &state).await,
         ("POST", "/api/provider/call") => provider_call(&ctx, &state).await,
         ("POST", "/api/channel/send") => channel_send(&ctx, &state).await,

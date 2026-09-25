@@ -508,12 +508,14 @@ mod tests {
             body["error_message"],
             "paperless quarantine persistence failed"
         );
-        assert!(!vault
-            .path()
-            .join("NEOTH")
-            .join("Paperless")
-            .join("persistence-failure-001.md")
-            .exists());
+        assert!(
+            !vault
+                .path()
+                .join("NEOTH")
+                .join("Paperless")
+                .join("persistence-failure-001.md")
+                .exists()
+        );
         server.shutdown().await;
     }
 
@@ -536,8 +538,10 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
-        let configured = crate::paperless::findings::recent_at(configured_home.path(), 0, 10).unwrap();
-        let supplied = crate::paperless::findings::recent_at(request_supplied_home.path(), 0, 10).unwrap();
+        let configured =
+            crate::paperless::findings::recent_at(configured_home.path(), 0, 10).unwrap();
+        let supplied =
+            crate::paperless::findings::recent_at(request_supplied_home.path(), 0, 10).unwrap();
         assert_eq!(configured.total, 1);
         assert_eq!(configured.findings[0].document_id, "configured-home-001");
         assert_eq!(supplied.total, 0);

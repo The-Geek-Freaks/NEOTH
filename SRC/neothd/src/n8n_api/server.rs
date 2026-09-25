@@ -63,7 +63,9 @@ fn required_scope_for(method: &str, path: &str) -> Option<&'static str> {
         ("POST", "/api/email/drafts/pending") => Some(api_tokens::SCOPE_DRAFTS_READ),
         ("POST", "/api/permissions/audit") => Some(api_tokens::SCOPE_PERMISSIONS_READ),
         ("POST", "/api/calendar/agenda") => Some(api_tokens::SCOPE_CALENDAR_READ),
-        ("POST", "/api/paperless/findings/recent") => Some(api_tokens::SCOPE_PAPERLESS_FINDINGS_READ),
+        ("POST", "/api/paperless/findings/recent") => {
+            Some(api_tokens::SCOPE_PAPERLESS_FINDINGS_READ)
+        }
         ("POST", "/api/memory/save") => Some(api_tokens::SCOPE_MEMORY_WRITE),
         ("POST", "/api/provider/call") => Some(api_tokens::SCOPE_PROVIDER_CALL),
         ("POST", "/api/channel/send") => Some(api_tokens::SCOPE_CHANNEL_SEND),
@@ -766,9 +768,11 @@ mod tests {
                 crate::security::paperless_ingest::OcrSource::PaperlessNgx,
                 document_id,
                 "0123456789abcdef",
-                &[crate::security::ingress_sanitizer::Finding::PromptInjectionMarker {
-                    pattern: "private-marker-must-not-export".to_owned(),
-                }],
+                &[
+                    crate::security::ingress_sanitizer::Finding::PromptInjectionMarker {
+                        pattern: "private-marker-must-not-export".to_owned(),
+                    },
+                ],
                 42,
             )
             .unwrap();
@@ -823,12 +827,23 @@ mod tests {
         let directory = home.path().join("paperless_findings");
         assert!(!directory.exists());
         std::fs::create_dir(&directory).unwrap();
-        std::fs::write(directory.join("findings-v1.json"), "private-corrupt-content").unwrap();
+        std::fs::write(
+            directory.join("findings-v1.json"),
+            "private-corrupt-content",
+        )
+        .unwrap();
         let error = post_test_http(port, path, Some(&token), r#"{"since_unix":0}"#).await;
         assert_eq!(error["_http_status"], "503");
-        assert_eq!(error["error"]["message"], "paperless_findings_store_unavailable");
+        assert_eq!(
+            error["error"]["message"],
+            "paperless_findings_store_unavailable"
+        );
         assert!(!error.to_string().contains("private-corrupt-content"));
-        assert!(!error.to_string().contains(home.path().to_string_lossy().as_ref()));
+        assert!(
+            !error
+                .to_string()
+                .contains(home.path().to_string_lossy().as_ref())
+        );
         stop_drift_http_test_server(state, writer, wal_join, server, shutdown).await;
     }
 
