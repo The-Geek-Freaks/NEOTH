@@ -1,4 +1,4 @@
-//! `neoth n8n {install,uninstall,purge,adopt,status,import-workflows,workflows}`.
+//! `neoth n8n {install,repair,uninstall,purge,adopt,status,import-workflows,workflows}`.
 //!
 //! Adoption binds an operator-supplied, already-running literal-loopback n8n
 //! instance. It never installs, starts, discovers, or owns an n8n process.
@@ -41,6 +41,8 @@ pub enum N8nAction {
         #[arg(long, conflicts_with_all = ["bootstrap_owner", "port"])]
         reuse_uninstall: Option<String>,
     },
+    /// Restore the receipt-owned container with its pinned image, retained volume and stored API key.
+    Repair,
     /// Remove the exact NEOTH-managed container and retain its data volume.
     /// Repeating an interrupted command reconciles absence without retrying deletion.
     Uninstall,
@@ -89,6 +91,7 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
             )
             .await
         }
+        N8nAction::Repair => run_repair(output).await,
         N8nAction::Uninstall => run_uninstall(output).await,
         N8nAction::Purge { uninstall, confirm } => {
             run_purge(&uninstall, confirm.as_deref(), output).await
@@ -101,6 +104,56 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
         N8nAction::ImportWorkflows => run_import_workflows(output).await,
         N8nAction::Workflows => run_workflows(output),
     }
+}
+
+async fn run_repair(output: OutputFormat) -> Result<()> {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let job =
+        crate::integrations::n8n::managed_runtime::managed_repair::repair_managed_at(&home)
+            .await?;
+    let action =
+        crate::integrations::n8n::managed_runtime::managed_repair::completed_action_at(&home, &job)
+            .map_err(anyhow::Error::msg)?;
+    if job.state == crate::integrations::JobState::Ready && action.is_none() {
+        return Err(anyhow!("n8n repair has no verified completion receipt"));
+    }
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "job_id": job.job_id,
+                "state": job.state,
+                "operation": "repair",
+                "action": action,
+                "failure_code": job.failure.as_ref().map(|failure| &failure.code),
+            })
+        ),
+        OutputFormat::Table => {
+            println!("n8n repair job: {}", job.job_id);
+            println!("state: {}", job.state);
+            if let Some(action) = action {
+                println!("action: {action}");
+            }
+            if let Some(failure) = &job.failure {
+                println!("failure: {} — {}", failure.code, failure.redacted_message);
+            }
+        }
+    }
+    if let Some(failure) = &job.failure {
+        return Err(anyhow!(
+            "n8n repair job {} failed: {}",
+            job.job_id,
+            failure.code
+        ));
+    }
+    if job.state != crate::integrations::JobState::Ready {
+        return Err(anyhow!(
+            "n8n repair job {} did not reach Ready (state: {})",
+            job.job_id,
+            job.state
+        ));
+    }
+    Ok(())
 }
 
 async fn run_uninstall(output: OutputFormat) -> Result<()> {
@@ -550,6 +603,31 @@ fn run_workflows(output: OutputFormat) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn n8n_repair_cli_uses_stored_managed_identity_without_overrides() {
+        use clap::Parser;
+        let cli = crate::cli::Cli::try_parse_from(["neoth", "n8n", "repair"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            crate::cli::Commands::N8n(N8nArgs {
+                action: N8nAction::Repair,
+            })
+        ));
+        for argument in [
+            "--container", "--image", "--port", "--volume", "--endpoint", "--job",
+            "--reuse-uninstall",
+        ] {
+            assert!(crate::cli::Cli::try_parse_from([
+                "neoth", "n8n", "repair", argument, "unowned",
+            ]).is_err());
+        }
+        for argument in ["--api-key-stdin", "--bootstrap-owner"] {
+            assert!(crate::cli::Cli::try_parse_from([
+                "neoth", "n8n", "repair", argument,
+            ]).is_err());
+        }
+    }
+
     use super::*;
 
     #[test]

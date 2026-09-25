@@ -2957,6 +2957,10 @@ Permanently delete the owned data volume retained by a completed uninstall. With
 - `--uninstall <UNINSTALL>` — Ready uninstall job whose receipt identifies the retained volume
 - `--confirm <CONFIRM>` — Exact confirmation phrase shown by this command without --confirm
 
+### `neoth n8n repair`
+
+Restore the receipt-owned container with its pinned image, retained volume and stored API key
+
 ### `neoth n8n status`
 
 Read durable adoption status. This does not make a live HTTP request

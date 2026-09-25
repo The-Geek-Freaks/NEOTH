@@ -462,6 +462,15 @@ impl N8nRestartValidator {
 
 impl RestartValidator for N8nRestartValidator {
     fn validate(&self, job: &IntegrationJob) -> RestartDecision {
+        if job.operation == JobOperation::Repair {
+            return RestartDecision::Hold {
+                failure: JobFailure::new(
+                    "n8n_repair_reconciliation_required",
+                    "The interrupted managed repair retains exact effect custody; rerun n8n repair to inspect it without repeating an uncertain effect.",
+                )
+                .expect("static failure is valid"),
+            };
+        }
         if job.operation == JobOperation::Uninstall {
             // Opening a job service never repeats an interrupted delete. The
             // explicit uninstall command reconciles its exact persisted ID.
@@ -645,6 +654,11 @@ pub(crate) fn open_n8n_job_service(home: &Path) -> Result<IntegrationJobService,
             continue;
         }
         if job.operation == JobOperation::Purge {
+            continue;
+        }
+        if job.operation == JobOperation::Repair {
+            // Repair keeps its own receipt sidecar after Ready and must never
+            // be treated as an adoption publisher or an install binding owner.
             continue;
         }
         if managed_runtime::is_managed_job(&job) {

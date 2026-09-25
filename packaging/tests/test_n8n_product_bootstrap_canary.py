@@ -455,4 +455,77 @@ class CustodyBoundaryTests(unittest.TestCase):
                 canary.clear_bootstrap_secrets("fixture")
 
 
+class ProductRepairReceiptTests(unittest.TestCase):
+    source_job = "12345678-1234-7234-8234-123456789abc"
+    repair_job = "abcdef12-1234-7234-8234-123456789abc"
+    source_manifest = "a" * 64
+    old_runtime = "b" * 64
+    new_runtime = "c" * 64
+    volume = "neoth_n8n_" + "d" * 32
+
+    def binding(self, identifier: str) -> dict:
+        return {"schema_version": 2, "job_id": self.source_job, "manifest_sha256": self.source_manifest,
+                "container_id": identifier, "phase": "Ready", "container_name": "neoth-n8n",
+                "host_port": 5681, "volume": self.volume, "image": canary.IMAGE}
+
+    def custody(self, action: str, runtime: str) -> dict:
+        value = {"schema_version": 1, "phase": "completed", "repair_job_id": self.repair_job,
+                 "repair_manifest_sha256": "e" * 64, "generation": 1, "source_install_job_id": self.source_job,
+                 "source_install_manifest_sha256": self.source_manifest, "action": action,
+                 "old_container_id": self.old_runtime, "old_binding": self.binding(self.old_runtime)}
+        if action == "recreated":
+            value.update({"new_container_id": runtime, "new_binding": self.binding(runtime)})
+        else:
+            value.update({"new_container_id": None, "new_binding": None})
+        return value
+
+    def test_repair_output_requires_exact_completed_action_and_distinct_job(self) -> None:
+        output = {"job_id": self.repair_job, "operation": "repair", "state": "ready", "action": "started", "failure_code": None}
+        self.assertEqual(canary.validate_repair_product(output, self.source_job, "started"), self.repair_job)
+        for key, value in (("action", "healthy"), ("state", "running"), ("job_id", self.source_job), ("failure_code", "private")):
+            with self.subTest(key=key):
+                changed = dict(output); changed[key] = value
+                with self.assertRaisesRegex(canary.Failure, "repair_not_ready"):
+                    canary.validate_repair_product(changed, self.source_job, "started")
+
+    def test_recreated_custody_binds_new_exact_id_but_keeps_source_authority(self) -> None:
+        custody = self.custody("recreated", self.new_runtime)
+        self.assertEqual(canary.validate_repair_custody(custody, self.repair_job, "e" * 64, self.source_job, self.source_manifest, "recreated", self.old_runtime, self.new_runtime, self.volume, 5681, self.binding(self.old_runtime)), 1)
+        custody["new_binding"]["job_id"] = self.repair_job
+        with self.assertRaisesRegex(canary.Failure, "repair_custody_invalid"):
+            canary.validate_repair_custody(custody, self.repair_job, "e" * 64, self.source_job, self.source_manifest, "recreated", self.old_runtime, self.new_runtime, self.volume, 5681, self.binding(self.old_runtime))
+
+    def test_started_custody_cannot_smuggle_a_recreated_binding(self) -> None:
+        custody = self.custody("started", self.old_runtime)
+        self.assertEqual(canary.validate_repair_custody(custody, self.repair_job, "e" * 64, self.source_job, self.source_manifest, "started", self.old_runtime, self.old_runtime, self.volume, 5681, self.binding(self.old_runtime)), 1)
+        custody["new_container_id"] = self.new_runtime
+        custody["new_binding"] = self.binding(self.new_runtime)
+        with self.assertRaisesRegex(canary.Failure, "repair_custody_invalid"):
+            canary.validate_repair_custody(custody, self.repair_job, "e" * 64, self.source_job, self.source_manifest, "started", self.old_runtime, self.old_runtime, self.volume, 5681, self.binding(self.old_runtime))
+
+    def test_repair_custody_rejects_nonpositive_generation_or_manifest_mismatch(self) -> None:
+        custody = self.custody("healthy", self.old_runtime)
+        custody["generation"] = 0
+        with self.assertRaisesRegex(canary.Failure, "repair_custody_invalid"):
+            canary.validate_repair_custody(custody, self.repair_job, "e" * 64, self.source_job, self.source_manifest, "healthy", self.old_runtime, self.old_runtime, self.volume, 5681, self.binding(self.old_runtime))
+        custody["generation"] = 1
+        with self.assertRaisesRegex(canary.Failure, "repair_custody_invalid"):
+            canary.validate_repair_custody(custody, self.repair_job, "f" * 64, self.source_job, self.source_manifest, "healthy", self.old_runtime, self.old_runtime, self.volume, 5681, self.binding(self.old_runtime))
+
+    def test_generation_sidecar_must_match_positive_custody_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            (home / "n8n-managed-repair-generation.v1.json").write_text('{"schema_version":1,"generation":3}')
+            canary.validate_repair_generation(home, 3)
+            with self.assertRaisesRegex(canary.Failure, "repair_generation_invalid"):
+                canary.validate_repair_generation(home, 2)
+
+    def test_healthy_repair_rejects_runtime_stop_and_destroy_events(self) -> None:
+        for action in ("stop", "die", "kill", "destroy", "remove"):
+            with self.subTest(action=action):
+                event = {"Action": action, "Actor": {"Attributes": {"io.neoth.n8n-job": self.source_job}}}
+                with self.assertRaisesRegex(canary.Failure, "healthy_repair_runtime_effect_event"):
+                    canary.assert_no_repair_runtime_effect_events(json.dumps(event), self.source_job)
+
+
 if __name__ == "__main__": unittest.main()

@@ -64,7 +64,7 @@ class CommandFailure(Failure):
         program = Path(argv[0]).name
         command = "other"
         if program == "neoth" and argv[1:4] == ["--output", "json", "n8n"]:
-            command = {"install": "product_install", "status": "product_status"}.get(argv[4], "other") if len(argv) > 4 else "other"
+            command = {"install": "product_install", "status": "product_status", "repair": "product_repair"}.get(argv[4], "other") if len(argv) > 4 else "other"
         elif program in {"docker", "sqlite3", "secret-tool"}:
             command = program
         self.diagnostic = {
@@ -87,6 +87,17 @@ class CommandFailure(Failure):
             "n8n_managed_container_identity_ambiguous",
             "n8n_preexisting_container_unowned_or_mismatch",
             "n8n_managed_custody_mismatch", "n8n_retained_reinstall_already_active", "n8n_docker_wait_failed",
+            "n8n_repair_binding_compare_and_set_failed", "n8n_repair_binding_missing",
+            "n8n_repair_config_custody_mismatch", "n8n_repair_conflicting_custody",
+            "n8n_repair_create_id_unwitnessed", "n8n_repair_create_outcome_uncertain",
+            "n8n_repair_custody_create_failed", "n8n_repair_custody_invalid",
+            "n8n_repair_custody_mismatch", "n8n_repair_custody_read_failed",
+            "n8n_repair_custody_write_failed", "n8n_repair_loopback_health_timeout",
+            "n8n_repair_named_container_present", "n8n_repair_receipt_mismatch",
+            "n8n_repair_receipt_stale", "n8n_repair_reconciliation_required",
+            "n8n_repair_recreated_not_running", "n8n_repair_recreated_outcome_uncertain",
+            "n8n_repair_runtime_state_unknown", "n8n_repair_source_missing",
+            "n8n_repair_source_read_failed", "n8n_repair_start_outcome_uncertain",
             "n8n_docker_output_limit", "n8n_docker_non_utf8",
             "stale integration job revision", "stale integration job state",
             "illegal integration job transition",
@@ -282,6 +293,59 @@ def validate_purge_product(value: dict, uninstall_job: str) -> str:
     job = required(value, "job_id", str)
     if not JOB.fullmatch(job) or value != {"job_id": job, "operation": "purge", "state": "ready", "disposition": "volume_removed", "uninstall_job_id": uninstall_job, "failure_code": None}: raise Failure("purge_product_invalid")
     return job
+
+def validate_repair_product(value: dict, source_job: str, action: str) -> str:
+    """Accept only the redacted, completed same-generation repair receipt."""
+    job = required(value, "job_id", str)
+    if (set(value) != {"job_id", "state", "operation", "action", "failure_code"}
+            or not JOB.fullmatch(job) or job == source_job or value.get("operation") != "repair"
+            or value.get("state") != "ready" or value.get("action") != action
+            or value.get("failure_code") is not None):
+        raise Failure("repair_not_ready")
+    return job
+
+def validate_repair_custody(value: dict, repair_job: str, repair_manifest: str,
+                            source_job: str, source_manifest: str, action: str,
+                            old_runtime_id: str, runtime_id: str, volume: str,
+                            port: int, expected_old_binding: dict) -> int:
+    """Bind a repair result to its source Ready witness and exact runtime ids."""
+    custody_manifest = required(value, "repair_manifest_sha256", str)
+    old_binding = required(value, "old_binding", dict)
+    binding = value.get("new_binding") if action == "recreated" else old_binding
+    generation = value.get("generation")
+    expected_new_binding = dict(expected_old_binding)
+    expected_new_binding.update({"container_id": runtime_id, "phase": "Ready"})
+    if (not re.fullmatch(r"[0-9a-f]{64}", custody_manifest)
+            or value.get("schema_version") != 1 or value.get("phase") != "completed"
+            or type(generation) is not int or generation < 1
+            or value.get("repair_job_id") != repair_job or custody_manifest != repair_manifest
+            or value.get("source_install_job_id") != source_job
+            or value.get("source_install_manifest_sha256") != source_manifest
+            or value.get("action") != action or value.get("old_container_id") != old_runtime_id
+            or old_binding != expected_old_binding
+            or not isinstance(binding, dict) or binding != expected_new_binding
+            or binding.get("container_id") != runtime_id or binding.get("job_id") != source_job
+            or binding.get("manifest_sha256") != source_manifest
+            or binding.get("phase") != "Ready" or binding.get("container_name") != "neoth-n8n"
+            or binding.get("host_port") != port or binding.get("volume") != volume
+            or binding.get("image") != IMAGE):
+        raise Failure("repair_custody_invalid")
+    if action == "recreated":
+        if value.get("new_container_id") != runtime_id or runtime_id == old_runtime_id:
+            raise Failure("repair_custody_invalid")
+    elif value.get("new_container_id") is not None or value.get("new_binding") is not None:
+        raise Failure("repair_custody_invalid")
+    return generation
+
+def validate_repair_generation(home: Path, expected_generation: int) -> None:
+    value = read_json(home / "n8n-managed-repair-generation.v1.json")
+    if value != {"schema_version": 1, "generation": expected_generation}:
+        raise Failure("repair_generation_invalid")
+
+def assert_runtime_running(identifier: str, expected: bool) -> None:
+    row = docker_inspect(identifier)
+    if row.get("Id") != identifier or row.get("State", {}).get("Running") is not expected:
+        raise Failure("runtime_running_state_invalid")
 def read_purge_receipt(home: Path, purge_job: str, purge_manifest: str, uninstall_job: str, volume: str) -> dict:
     path = home / f"n8n-purge-{purge_job}.receipt.json"; value = read_json(path)
     if value != {"schema_version": 1, "purge_job_id": purge_job, "purge_manifest_sha256": purge_manifest, "uninstall_job_id": uninstall_job, "volume": volume, "disposition": "volume_removed"}: raise Failure("purge_receipt_invalid")
@@ -561,6 +625,22 @@ def assert_no_rebootstrap_events(output: str, job: str) -> None:
         if action.split(":", 1)[0] in {"create", "start", "exec_create", "exec_start"}:
             raise Failure("second_call_rebootstrap_event")
 
+def assert_no_repair_runtime_effect_events(output: str, job: str) -> None:
+    """A healthy repair must not touch the owned container at all."""
+    blocked = {"create", "start", "exec_create", "exec_start", "stop", "die", "kill", "destroy", "remove"}
+    for line in output.splitlines():
+        if not line:
+            continue
+        event = json.loads(line)
+        actor = event.get("Actor", {})
+        if not isinstance(actor, dict) or actor.get("Attributes", {}).get("io.neoth.n8n-job") != job:
+            raise Failure("event_owner_mismatch")
+        action = event.get("Action")
+        if not isinstance(action, str):
+            raise Failure("event_shape_invalid")
+        if action.split(":", 1)[0] in blocked:
+            raise Failure("healthy_repair_runtime_effect_event")
+
 def main() -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("--binary", required=True); parser.add_argument("--home", required=True); parser.add_argument("--port", required=True, type=int); parser.add_argument("--receipt", required=True)
     args = parser.parse_args(); binary, home, receipt_path = Path(args.binary), Path(args.home), Path(args.receipt)
@@ -578,7 +658,7 @@ def main() -> int:
             "packaging/tests/test_n8n_product_bootstrap_canary.py",
             "SRC/neothd/src/cli/n8n.rs", "SRC/neothd/src/integrations/n8n.rs",
             "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs",
-            "SRC/neothd/src/integrations/n8n/managed_runtime.rs", "SRC/neothd/src/integrations/n8n/managed_uninstall.rs", "SRC/neothd/src/integrations/n8n/managed_purge.rs",
+            "SRC/neothd/src/integrations/n8n/managed_runtime.rs", "SRC/neothd/src/integrations/n8n/managed_repair.rs", "SRC/neothd/src/integrations/n8n/managed_repair_tests.rs", "SRC/neothd/src/integrations/n8n/managed_uninstall.rs", "SRC/neothd/src/integrations/n8n/managed_purge.rs",
             "SRC/neothd/src/integrations/n8n/bootstrap_transport.rs",
             "SRC/neothd/src/integrations/n8n/workflow_import.rs",
             "SRC/neothd/src/integrations/jobs.rs", "SRC/neothd/src/integrations/state.rs",
@@ -651,6 +731,87 @@ def main() -> int:
         if second_workflows != first_workflows or second_custody != first_custody or second_import_job != first_import_job:
             raise Failure("workflow_import_repeat_not_read_only")
         receipt["workflow_import"] = {"workflow_count": WORKFLOW_COUNT, "first_cli_sha256": hashlib.sha256(first_import_raw).hexdigest(), "workflow_set_sha256": first_workflows["workflow_set_sha256"], "custody_sha256": first_custody["sha256"], "custody_bytes": first_custody["bytes"], "job_row_sha256": first_import_job["sha256"], "job_revision": first_import_job["revision"], "repeat_read_only": True}
+        receipt["stage"] = "healthy_n8n_repair"
+        before_ns = time.time_ns()
+        before = f"{before_ns // 1_000_000_000}.{before_ns % 1_000_000_000:09d}"
+        try:
+            healthy_repair_raw = run([str(binary), "--output", "json", "n8n", "repair"])
+        finally:
+            after_ns = time.time_ns()
+            after = f"{after_ns // 1_000_000_000}.{after_ns % 1_000_000_000:09d}"
+            healthy_events = run(["docker", "events", "--since", before, "--until", after, "--format", "{{json .}}", "--filter", f"label=io.neoth.n8n-job={job}"], timeout=20).decode("utf-8", "strict")
+        if canonical_key in healthy_repair_raw:
+            raise Failure("repair_output_key_leak")
+        healthy_repair_job = validate_repair_product(read_json_bytes(healthy_repair_raw), job, "healthy")
+        healthy_repair_record = observe_exact_job(home, healthy_repair_job, "repair")
+        validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", healthy_repair_job]), healthy_repair_job, args.port)
+        healthy_runtime = read_json(home / "n8n-managed-runtime.v2.json")
+        if healthy_runtime != runtime:
+            raise Failure("healthy_repair_runtime_mutation")
+        healthy_generation = validate_repair_custody(read_json(home / "n8n-managed-repair.v1.json"), healthy_repair_job, healthy_repair_record["manifest_sha256"], job, source_install["manifest_sha256"], "healthy", runtime_id, runtime_id, volume, args.port, runtime)
+        validate_repair_generation(home, healthy_generation)
+        validate_runtime(docker_inspect(runtime_id), job, volume, runtime_id, args.port)
+        assert_runtime_running(runtime_id, True)
+        assert_no_repair_runtime_effect_events(healthy_events, job)
+        if (authenticated_probe(job, args.port) != receipt["http_probe"]
+                or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
+                or observe_exact_job(home, job, "install") != source_install
+                or observe_full_job_row(home, job, "install") != source_install_full
+                or canonical_n8n_api_key() != canonical_key):
+            raise Failure("healthy_repair_authority_or_data_mutation")
+        receipt["repair_healthy"] = {"job_id": healthy_repair_job, "job_row_sha256": healthy_repair_record["row_sha256"], "manifest_sha256": healthy_repair_record["manifest_sha256"], "generation": healthy_generation, "runtime_id": runtime_id, "volume": volume, "no_docker_effect": True, "authenticated": True, "workflows_persisted": True}
+        receipt["stage"] = "stopped_exact_id_n8n_repair"
+        run(["docker", "container", "stop", runtime_id])
+        assert_runtime_running(runtime_id, False)
+        started_repair_raw = run([str(binary), "--output", "json", "n8n", "repair"])
+        if canonical_key in started_repair_raw:
+            raise Failure("repair_output_key_leak")
+        started_repair_job = validate_repair_product(read_json_bytes(started_repair_raw), job, "started")
+        if started_repair_job == healthy_repair_job:
+            raise Failure("stopped_repair_job_reused")
+        started_repair_record = observe_exact_job(home, started_repair_job, "repair")
+        validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", started_repair_job]), started_repair_job, args.port)
+        started_generation = validate_repair_custody(read_json(home / "n8n-managed-repair.v1.json"), started_repair_job, started_repair_record["manifest_sha256"], job, source_install["manifest_sha256"], "started", runtime_id, runtime_id, volume, args.port, runtime)
+        if started_generation <= healthy_generation:
+            raise Failure("repair_generation_not_advanced")
+        validate_repair_generation(home, started_generation)
+        validate_runtime(docker_inspect(runtime_id), job, volume, runtime_id, args.port)
+        assert_runtime_running(runtime_id, True)
+        if (authenticated_probe(job, args.port) != receipt["http_probe"]
+                or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
+                or observe_exact_job(home, job, "install") != source_install
+                or observe_full_job_row(home, job, "install") != source_install_full
+                or canonical_n8n_api_key() != canonical_key):
+            raise Failure("stopped_repair_authority_or_data_mutation")
+        receipt["repair_started"] = {"job_id": started_repair_job, "job_row_sha256": started_repair_record["row_sha256"], "manifest_sha256": started_repair_record["manifest_sha256"], "generation": started_generation, "runtime_id": runtime_id, "volume": volume, "exact_stopped_id_restarted": True, "authenticated": True, "workflows_persisted": True}
+        receipt["stage"] = "missing_exact_id_n8n_repair"
+        old_runtime_id = runtime_id
+        run(["docker", "rm", "-f", old_runtime_id])
+        if not exact_absent("container", old_runtime_id):
+            raise Failure("recreate_source_runtime_absence_unproven")
+        recreated_repair_raw = run([str(binary), "--output", "json", "n8n", "repair"])
+        if canonical_key in recreated_repair_raw:
+            raise Failure("repair_output_key_leak")
+        recreated_repair_job = validate_repair_product(read_json_bytes(recreated_repair_raw), job, "recreated")
+        if recreated_repair_job in {healthy_repair_job, started_repair_job}:
+            raise Failure("recreated_repair_job_reused")
+        recreated_repair_record = observe_exact_job(home, recreated_repair_job, "repair")
+        validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", recreated_repair_job]), recreated_repair_job, args.port)
+        repaired_runtime = read_json(home / "n8n-managed-runtime.v2.json")
+        runtime_id = required(repaired_runtime, "container_id", str)
+        recreated_generation = validate_repair_custody(read_json(home / "n8n-managed-repair.v1.json"), recreated_repair_job, recreated_repair_record["manifest_sha256"], job, source_install["manifest_sha256"], "recreated", old_runtime_id, runtime_id, volume, args.port, runtime)
+        if recreated_generation <= started_generation:
+            raise Failure("repair_generation_not_advanced")
+        validate_repair_generation(home, recreated_generation)
+        validate_runtime(docker_inspect(runtime_id), job, volume, runtime_id, args.port)
+        assert_runtime_running(runtime_id, True)
+        if (authenticated_probe(job, args.port) != receipt["http_probe"]
+                or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
+                or observe_exact_job(home, job, "install") != source_install
+                or observe_full_job_row(home, job, "install") != source_install_full
+                or canonical_n8n_api_key() != canonical_key):
+            raise Failure("recreated_repair_authority_or_data_mutation")
+        receipt["repair_recreated"] = {"job_id": recreated_repair_job, "job_row_sha256": recreated_repair_record["row_sha256"], "manifest_sha256": recreated_repair_record["manifest_sha256"], "generation": recreated_generation, "old_runtime_id": old_runtime_id, "runtime_id": runtime_id, "reused_volume": volume, "authenticated": True, "workflows_persisted": True, "source_api_key_authority_preserved": True}
         receipt["stage"] = "first_product_uninstall"
         first_uninstall_raw = run([str(binary), "--output", "json", "n8n", "uninstall"])
         if canonical_key in first_uninstall_raw:

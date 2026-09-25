@@ -671,6 +671,26 @@ jobs:
           installers::paperless_lifecycle::paperless_repair::tests::stopped_webserver_uses_configured_loopback_when_runtime_ports_are_empty	neothd/src/installers/paperless_repair_tests.rs
           installers::paperless_lifecycle::paperless_repair::tests::stopped_webserver_with_invalid_configured_binding_refuses_before_effect	neothd/src/installers/paperless_repair_tests.rs
           installers::paperless_lifecycle::paperless_repair::tests::stopped_container_waits_for_eventual_authenticated_readiness_without_repeat_start	neothd/src/installers/paperless_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::healthy_repair_is_no_docker_mutation_and_preserves_persisted_source_ready	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::stopped_exact_id_starts_once_with_real_stopped_port_shape	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::missing_exact_and_name_recreates_same_volume_and_source_key	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::uncertain_create_never_effects_twice_or_adopts	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::readiness_failure_does_not_ready_repair_or_lose_binding_or_key	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::exact_image_port_and_volume_conflicts_refuse_before_start_or_create	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::binding_commit_cas_recovers_with_old_or_already_new_binding_without_redispatch	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::bootstrap_volume_owner_labels_allow_repair_and_foreign_or_missing_labels_block_effects	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::unwitnessed_create_never_adopts_a_later_matching_named_container	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::completed_repair_revalidates_a_later_stopped_runtime_instead_of_replaying_ready	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::malformed_repair_sidecar_blocks_uninstall_before_any_docker_effect	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::completed_uninstall_sidecar_with_live_binding_blocks_repair_before_recreate	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::pending_start_and_create_repair_custody_block_uninstall_before_effects	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::peer_operation_lock_reports_busy_without_repair_or_uninstall_effects	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::completed_sidecar_with_queued_or_running_repair_job_blocks_uninstall_and_purge	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::pending_and_malformed_repair_custody_block_purge_before_volume_effects	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::repair_uninstall_and_purge_complete_with_retained_owner_provenance	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::completed_repair_uninstall_reentry_returns_the_same_ready_uninstall_without_new_effect	neothd/src/integrations/n8n/managed_repair_tests.rs
+          integrations::n8n::managed_runtime::managed_repair::tests::retained_install_repair_uninstall_reinstall_and_repair_preserves_original_owner	neothd/src/integrations/n8n/managed_repair_tests.rs
+          cli::n8n::tests::n8n_repair_cli_uses_stored_managed_identity_without_overrides	neothd/src/cli/n8n.rs
           EOF
 
           # Exercise newest regressions first without dropping any selected identity.
@@ -695,7 +715,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 601 ]]; then
+          if [[ "$expected" -ne 621 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/installers/paperless_generation_rotation.rs neothd/src/installers/paperless_repair.rs neothd/src/installers/paperless_generation_auth.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"

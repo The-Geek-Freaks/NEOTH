@@ -107,6 +107,11 @@ fn read_custody(home: &Path) -> Result<Option<PurgeCustody>, &'static str> {
         .map(Some)
         .map_err(|_| "n8n_purge_custody_invalid")
 }
+
+/// A repair has no authority to overlap a retained-volume destructive path.
+pub(crate) fn repair_has_pending_custody(home: &Path) -> Result<bool, &'static str> {
+    Ok(read_custody(home)?.is_some_and(|custody| custody.phase != PurgePhase::Completed))
+}
 fn remove_custody(home: &Path) -> Result<(), &'static str> {
     let path = custody_path(home);
     if path.exists() {
@@ -514,6 +519,15 @@ pub(crate) async fn purge_retained_volume_at_with<R: ManagedDockerRunner>(
     confirmation: &str,
     runner: &mut R,
 ) -> Result<IntegrationJob> {
+    let _operation_lock = crate::util::locked_file::try_lock_file_once(
+        &super::managed_runtime::operation_lock_path(home),
+        "n8n managed runtime operation",
+    )?.ok_or_else(|| anyhow::anyhow!("n8n_managed_operation_busy"))?;
+    if super::managed_runtime::managed_repair::repair_has_pending_custody(home)
+        .map_err(anyhow::Error::msg)?
+    {
+        anyhow::bail!("n8n_purge_repair_custody_pending");
+    }
     if super::managed_runtime::has_runtime_binding(home).map_err(anyhow::Error::msg)? {
         anyhow::bail!("n8n_purge_runtime_active");
     }

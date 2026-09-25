@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "batch": "W1404-W1408",
+  "baseCommit": "15fbfd8dd5a5e87c5830864fa0b64881ec5376e1",
+  "status": "STATIC_REVIEW_HOSTED_PENDING",
+  "review": {
+    "sha256": "28A099BDFA5A3A787ACF41DC4977866DFD66AF0AF88F7A7150D981A6BE148E53",
+    "scope": "n8n repair backend and exact lifecycle crash regression",
+    "decision": "APPROVE"
+  },
+  "implementation": [
+    "Stored-identity parameterless repair with authenticated readiness",
+    "Successful recreate requires persistent exact Docker stdout ID; unknown remains held",
+    "Nonblocking shared operation lock plus reciprocal unfinished-custody fences",
+    "Generation-bound fresh repair jobs and exact Ready completion authority",
+    "Completed repair consumption in confirmed uninstall; crash-safe finalizer reentry"
+  ],
+  "tests": {
+    "grouped": 1852,
+    "windows": 621,
+    "portable": 2062,
+    "nativeNew": 20,
+    "repairBehavior": 19,
+    "cli": 1
+  },
+  "product": "Actual n8n GitHub canary extends bootstrap/import through healthy/start/recreate and existing uninstall/reinstall/purge, preserving data and key authority",
+  "paperlessClippy": {
+    "error": "clippy::obfuscated_if_else",
+    "source": "ea30c4880d47fdacb47da99f10b0c1986b87b262",
+    "scope": "test fake output only",
+    "findings": 2,
+    "hostedRerun": "pending",
+    "run": 36138775902
+  },
+  "paperlessProduct": "docs/verification/gold-wave1408-paperless-product-accepted.json",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/cli/n8n.rs",
+      "bytes": 29944,
+      "sha256": "B0866186C62A4C0502BA38D6980280ACE86CEF9FD06AD0FA6B710C1513B734EA",
+      "blob": "8e5169202f612c6d5ecc484a1b65b7a62eae359f"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n.rs",
+      "bytes": 47307,
+      "sha256": "51A020C56BF472E158EFDD8BFF849AA1C4CDC3674923DE0069FDA5AF2FCF8E0F",
+      "blob": "9ba1f4d6b408ec3a7b78587347f32d46937188e9"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "bytes": 62916,
+      "sha256": "232A52213AE9D0B3E2E903B61E4CF6A885BA967C3AE9608FF802B91F63989651",
+      "blob": "bbb8de402c480a10b806473b7e9269b0f24424aa"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_repair.rs",
+      "bytes": 27170,
+      "sha256": "47B07414B16A20AA7E4044B7207A47F6A337A8446FE633721DD6C2B8D4D0CC05",
+      "blob": "6e67a3451364dc118007c79dc1b1ebf8bdece51a"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_repair_tests.rs",
+      "bytes": 30581,
+      "sha256": "81BE50AF3AEC2E20729464CF42D31864039C9F9EBAE2008A8FDA303306F44CD2",
+      "blob": "ffbbdda306433945579dc9db4b2fa9c737c142dc"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",
+      "bytes": 36535,
+      "sha256": "49C9C0F741ADFB79E18F1F061E3BC72B2A3023150DFE791D327DE327E65591AF",
+      "blob": "c10aa7680466b0407981e74a36253b532607774c"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_purge.rs",
+      "bytes": 25816,
+      "sha256": "B7994B937A94921952D96B70451F12B01C393036880BAED5F130FA16AD0802DC",
+      "blob": "0f1cf0d57b4483a98e8fa91f236edbb6ca5f8e3b"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_repair_tests.rs",
+      "bytes": 24604,
+      "sha256": "57066E4ABAB9499A0E6495419FEA93C90856E32B480BF693F9291364D0874397",
+      "blob": "c489b5cf1ea37b91e674d932e9e80fb298f0dbd2"
+    },
+    {
+      "path": "packaging/n8n_product_bootstrap_canary.py",
+      "bytes": 72158,
+      "sha256": "3DF0CCEF8548BC05E1A484C41F132F93ADCFB9A00889FEFE263EADF2EF0AAF06",
+      "blob": "18c951f0deb9d6fe2659250059e52934e905535a"
+    },
+    {
+      "path": "packaging/tests/test_n8n_product_bootstrap_canary.py",
+      "bytes": 38143,
+      "sha256": "00205B90F93FD99F566C6124C2317DFA01DF3C3576D0E0D8BAB1F98692F61EC8",
+      "blob": "ff9777b15cbacde857c6cc6eec5bb0e49352851c"
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "roadmapClosures": 0
+}

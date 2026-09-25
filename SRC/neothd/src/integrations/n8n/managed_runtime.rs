@@ -24,12 +24,14 @@ use serde::{Deserialize, Serialize};
 
 #[path = "managed_uninstall.rs"]
 pub(crate) mod managed_uninstall;
+pub(crate) mod managed_repair;
 
 pub(crate) const MANAGED_CONTAINER_NAME: &str = "neoth-n8n";
 pub(crate) const MANAGED_LABEL_KEY: &str = "io.neoth.managed";
 pub(crate) const MANAGED_LABEL_VALUE: &str = "n8n";
 pub(crate) const DEFAULT_VOLUME: &str = "neoth_n8n_data";
 const BINDING_FILE: &str = "n8n-managed-runtime.v2.json";
+const OPERATION_LOCK_FILE: &str = "n8n-managed-runtime.operation.lock";
 // Match the existing adoption evidence plan so the extracted custody publisher
 // can complete this same durable job without a second exclusive job.
 const STEPS: [&str; 4] = [
@@ -144,6 +146,13 @@ pub(crate) struct ManagedCommandReceipt {
     pub output_sha256: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ManagedCreateReceipt {
+    pub command: ManagedCommandReceipt,
+    /// Exact 64-hex id printed by a successful Docker create response. A
+    /// missing value is deliberately ambiguous and cannot authorize adoption.
+    pub container_id: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ObservedContainer {
     pub id: String,
     pub image: String,
@@ -232,16 +241,29 @@ pub(crate) trait ManagedDockerRunner: Send {
     /// `inspect_exact`, so a renamed/recreated container cannot prove absence.
     async fn inspect_named(&mut self) -> Result<InspectOutcome, &'static str>;
     async fn inspect_exact(&mut self, id: &str) -> Result<InspectOutcome, &'static str>;
+    /// State is deliberately separate from identity inspection so existing
+    /// test runners stay conservative until a repair test opts in.
+    async fn running_exact(&mut self, _id: &str) -> Result<bool, &'static str> {
+        Err("n8n_managed_running_state_unavailable")
+    }
     async fn inspect_volume(&mut self, name: &str) -> Result<InspectVolumeOutcome, &'static str>;
     async fn remove_volume(&mut self, _name: &str) -> Result<ManagedCommandReceipt, &'static str> {
         Err("n8n_volume_remove_unavailable")
     }
     async fn create(&mut self, argv: &[String]) -> Result<ManagedCommandReceipt, &'static str>;
+    async fn create_with_exact_id(&mut self, argv: &[String]) -> Result<ManagedCreateReceipt, &'static str> {
+        Ok(ManagedCreateReceipt { command: self.create(argv).await?, container_id: None })
+    }
+    /// Starting is deliberately an exact-id operation. Existing test runners
+    /// do not acquire a new mutator merely by implementing this lifecycle.
+    async fn start_exact(&mut self, _id: &str) -> Result<ManagedCommandReceipt, &'static str> {
+        Err("n8n_managed_start_unavailable")
+    }
     async fn remove(&mut self, id: &str) -> Result<ManagedCommandReceipt, &'static str>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-enum RuntimePhase {
+pub(super) enum RuntimePhase {
     CreateIntent,
     Bound,
     Ready,
@@ -249,27 +271,30 @@ enum RuntimePhase {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RuntimeBinding {
-    schema_version: u8,
-    phase: RuntimePhase,
-    job_id: String,
-    manifest_sha256: String,
-    container_name: String,
-    container_id: Option<String>,
-    image: String,
-    host_port: u16,
-    volume: String,
+pub(super) struct RuntimeBinding {
+    pub(super) schema_version: u8,
+    pub(super) phase: RuntimePhase,
+    pub(super) job_id: String,
+    pub(super) manifest_sha256: String,
+    pub(super) container_name: String,
+    pub(super) container_id: Option<String>,
+    pub(super) image: String,
+    pub(super) host_port: u16,
+    pub(super) volume: String,
     #[serde(default)]
-    retained_reinstall: Option<RetainedReinstallSource>,
+    pub(super) retained_reinstall: Option<RetainedReinstallSource>,
     /// Present only for a first-owner bootstrap runtime. Reinstall bindings
     /// carry this same immutable owner through `retained_reinstall` instead.
     #[serde(default)]
-    bootstrap_volume_owner_job_id: Option<String>,
+    pub(super) bootstrap_volume_owner_job_id: Option<String>,
 }
 fn binding_path(home: &Path) -> PathBuf {
     home.join(BINDING_FILE)
 }
-fn read_binding(home: &Path) -> Result<Option<RuntimeBinding>, &'static str> {
+pub(super) fn operation_lock_path(home: &Path) -> PathBuf {
+    home.join(OPERATION_LOCK_FILE)
+}
+pub(super) fn read_binding(home: &Path) -> Result<Option<RuntimeBinding>, &'static str> {
     let path = binding_path(home);
     let metadata = match std::fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
@@ -299,6 +324,17 @@ fn read_binding(home: &Path) -> Result<Option<RuntimeBinding>, &'static str> {
         .map(Some)
         .map_err(|_| "n8n_runtime_binding_invalid")
 }
+/// Return the validated on-disk bytes so a sibling transaction can perform an
+/// exact pre/post publication comparison without inventing a lossy JSON
+/// canonicalization rule.
+pub(super) fn read_binding_bytes(home: &Path) -> Result<Option<Vec<u8>>, &'static str> {
+    if read_binding(home)?.is_none() {
+        return Ok(None);
+    }
+    std::fs::read(binding_path(home))
+        .map(Some)
+        .map_err(|_| "n8n_runtime_binding_read_failed")
+}
 pub(crate) fn has_runtime_binding(home: &Path) -> Result<bool, &'static str> {
     Ok(read_binding(home)?.is_some())
 }
@@ -307,7 +343,7 @@ pub(crate) fn has_runtime_binding(home: &Path) -> Result<bool, &'static str> {
 pub(crate) fn bound_container_id(home: &Path) -> Result<Option<String>, &'static str> {
     Ok(read_binding(home)?.and_then(|binding| binding.container_id))
 }
-fn write_binding(home: &Path, value: &RuntimeBinding) -> Result<(), &'static str> {
+pub(super) fn write_binding(home: &Path, value: &RuntimeBinding) -> Result<(), &'static str> {
     crate::util::atomic_write::atomic_write_private(
         &binding_path(home),
         &serde_json::to_vec(value).map_err(|_| "n8n_runtime_binding_serialize_failed")?,
@@ -367,7 +403,7 @@ fn persist_create_intent(
     })
 }
 
-fn validate_existing_identity(
+pub(super) fn validate_existing_identity(
     observed: &ObservedContainer,
     binding: Option<&RuntimeBinding>,
     request: &ManagedN8nRequest,
@@ -407,7 +443,7 @@ fn validate_existing_identity(
 pub(crate) trait ManagedReadiness: Send + Sync {
     async fn health(&self, port: u16) -> bool;
 }
-struct ProductionReadiness;
+pub(super) struct ProductionReadiness;
 #[async_trait]
 impl ManagedReadiness for ProductionReadiness {
     async fn health(&self, port: u16) -> bool {
@@ -476,7 +512,7 @@ fn fail(
 ) -> anyhow::Result<IntegrationJob> {
     Ok(service.fail(&job.job_id, job.state_revision, JobFailure::new(code, "The managed n8n runtime did not reach authenticated readiness; retry is safe after repair.").expect("static failure"))?)
 }
-fn validate_binding(
+pub(super) fn validate_binding(
     binding: &RuntimeBinding,
     job: &IntegrationJob,
 ) -> Result<ManagedN8nRequest, &'static str> {
@@ -728,6 +764,31 @@ async fn verify_retained_volume<R: ManagedDockerRunner>(
             != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA)
     {
         anyhow::bail!("n8n_retained_volume_foreign");
+    }
+    Ok(())
+}
+
+/// Repair reuses the exact persisted binding but must still prove that a
+/// retained/bootstrap volume has not been swapped before it starts or creates
+/// a process. Ordinary legacy managed volumes had no owner labels, so they
+/// retain the existing name-only ownership rule.
+pub(super) async fn verify_runtime_volume_owner<R: ManagedDockerRunner>(
+    runner: &mut R,
+    binding: &RuntimeBinding,
+) -> Result<(), &'static str> {
+    let found = match runner.inspect_volume(&binding.volume).await? {
+        InspectVolumeOutcome::Found(found) if found.name == binding.volume => found,
+        InspectVolumeOutcome::Absent => return Err("n8n_repair_volume_absent"),
+        _ => return Err("n8n_repair_volume_unknown"),
+    };
+    let expected_owner = binding.retained_reinstall.as_ref().map(|source| source.volume_owner_install_job_id.as_str()).or(binding.bootstrap_volume_owner_job_id.as_deref());
+    if let Some(owner) = expected_owner {
+        if found.labels.get(MANAGED_LABEL_KEY).map(String::as_str) != Some(MANAGED_LABEL_VALUE)
+            || found.labels.get("io.neoth.n8n-job").map(String::as_str) != Some(owner)
+            || found.labels.get("io.neoth.n8n-bootstrap").map(String::as_str) != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA)
+        {
+            return Err("n8n_repair_volume_owner_mismatch");
+        }
     }
     Ok(())
 }
@@ -1577,6 +1638,20 @@ impl ManagedDockerRunner for DockerManagedRunner {
             _ => Ok(InspectOutcome::Unknown),
         }
     }
+    async fn running_exact(&mut self, id: &str) -> Result<bool, &'static str> {
+        if !valid_container_id(id) {
+            return Err("n8n_managed_running_state_invalid_id");
+        }
+        let (ok, stdout, _) = docker(&[
+            "docker".into(), "inspect".into(), "--format".into(),
+            "{{.State.Running}}".into(), id.into(),
+        ]).await?;
+        match (ok, stdout.trim()) {
+            (true, "true") => Ok(true),
+            (true, "false") => Ok(false),
+            _ => Err("n8n_managed_running_state_unknown"),
+        }
+    }
     async fn inspect_volume(&mut self, name: &str) -> Result<InspectVolumeOutcome, &'static str> {
         inspect_volume_target(name).await
     }
@@ -1590,6 +1665,21 @@ impl ManagedDockerRunner for DockerManagedRunner {
     }
     async fn create(&mut self, argv: &[String]) -> Result<ManagedCommandReceipt, &'static str> {
         let (_, _, receipt) = docker(argv).await?;
+        Ok(receipt)
+    }
+    async fn create_with_exact_id(&mut self, argv: &[String]) -> Result<ManagedCreateReceipt, &'static str> {
+        let (_, stdout, command) = docker(argv).await?;
+        let candidate = stdout.trim();
+        Ok(ManagedCreateReceipt {
+            command,
+            container_id: valid_container_id(candidate).then(|| candidate.to_owned()),
+        })
+    }
+    async fn start_exact(&mut self, id: &str) -> Result<ManagedCommandReceipt, &'static str> {
+        if !valid_container_id(id) {
+            return Err("n8n_managed_start_invalid_id");
+        }
+        let (_, _, receipt) = docker(&["docker".into(), "container".into(), "start".into(), id.into()]).await?;
         Ok(receipt)
     }
     async fn remove(&mut self, id: &str) -> Result<ManagedCommandReceipt, &'static str> {

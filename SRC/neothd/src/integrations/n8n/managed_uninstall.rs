@@ -143,6 +143,15 @@ fn remove_custody(home: &Path) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// A repair must not run beside an incomplete exact-ID deletion transaction.
+pub(crate) fn repair_has_pending_custody(home: &Path) -> Result<bool, &'static str> {
+    // A Completed uninstall sidecar can still be paired with the live source
+    // binding after a crash before its finalizer. Only the explicit uninstall
+    // path may reconcile and retire it; repair must never recreate that
+    // possibly already-uninstalled runtime.
+    Ok(read_custody(home)?.is_some())
+}
+
 fn write_completion_receipt(home: &Path, custody: &UninstallCustody) -> Result<(), &'static str> {
     let cleanup_disposition = custody
         .cleanup_disposition
@@ -668,6 +677,13 @@ async fn uninstall_managed_at_with_restart_inspector<
     runner: &mut R,
     inspector: &I,
 ) -> Result<IntegrationJob> {
+    let _operation_lock = crate::util::locked_file::try_lock_file_once(
+        &super::operation_lock_path(home),
+        "n8n managed runtime operation",
+    )?.ok_or_else(|| anyhow::anyhow!("n8n_managed_operation_busy"))?;
+    if super::managed_repair::repair_has_pending_custody(home).map_err(anyhow::Error::msg)? {
+        anyhow::bail!("n8n_uninstall_repair_custody_pending");
+    }
     let service = open_explicit_uninstall_service_with(home, inspector)?;
     if let Some(custody) = read_custody(home).map_err(anyhow::Error::msg)?
         && custody.phase == UninstallPhase::Completed
@@ -678,7 +694,7 @@ async fn uninstall_managed_at_with_restart_inspector<
                 && job.manifest_sha256.as_str() == custody.uninstall_manifest_sha256
         })
     {
-        finalize_ready_uninstall_custody(home, &ready).map_err(anyhow::Error::msg)?;
+        finalize_ready_uninstall_custody_locked(home, &ready).map_err(anyhow::Error::msg)?;
         if read_binding(home).map_err(anyhow::Error::msg)?.is_none() {
             return Ok(ready);
         }
@@ -824,13 +840,13 @@ async fn uninstall_managed_at_with_restart_inspector<
         contract.step_plan_sha256().clone(),
     );
     let completed = service.mark_ready(&active.job_id, active.state_revision, ready)?;
-    finalize_ready_uninstall_custody(home, &completed).map_err(anyhow::Error::msg)?;
+    finalize_ready_uninstall_custody_locked(home, &completed).map_err(anyhow::Error::msg)?;
     Ok(completed)
 }
 
 /// Remove only the two exact custody sidecars after an immutable successful
 /// uninstall Ready row. The install job itself is never changed or removed.
-pub(crate) fn finalize_ready_uninstall_custody(
+fn finalize_ready_uninstall_custody_locked(
     home: &Path,
     job: &IntegrationJob,
 ) -> Result<(), &'static str> {
@@ -853,6 +869,7 @@ pub(crate) fn finalize_ready_uninstall_custody(
             {
                 return Err("n8n_uninstall_finalize_mismatch");
             }
+            super::managed_repair::retire_completed_for_uninstall(home)?;
             remove_binding(home)?;
         }
         None => {
@@ -862,6 +879,21 @@ pub(crate) fn finalize_ready_uninstall_custody(
         }
     }
     remove_custody(home)
+}
+
+/// Public finalizer used by ordinary adapter open. Explicit uninstall already
+/// holds this non-reentrant lock and calls the locked inner finalizer instead.
+pub(crate) fn finalize_ready_uninstall_custody(
+    home: &Path,
+    job: &IntegrationJob,
+) -> Result<(), &'static str> {
+    let _operation_lock = crate::util::locked_file::try_lock_file_once(
+        &super::operation_lock_path(home),
+        "n8n managed runtime operation",
+    )
+    .map_err(|_| "n8n_managed_operation_lock_failed")?
+    .ok_or("n8n_managed_operation_busy")?;
+    finalize_ready_uninstall_custody_locked(home, job)
 }
 
 pub(crate) fn disposition(job: &IntegrationJob) -> &'static str {

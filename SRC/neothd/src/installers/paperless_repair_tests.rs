@@ -153,11 +153,11 @@ impl ComposeExecutor for Fake {
             if a.iter().any(|x| x == "ls") {
                 let n = a.iter().find_map(|x| x.strip_prefix("name=")).unwrap();
                 return Ok(CommandOutput {
-                    stdout: self
-                        .volumes
-                        .contains(n)
-                        .then(|| format!("{n}\n"))
-                        .unwrap_or_default(),
+                    stdout: if self.volumes.contains(n) {
+                        format!("{n}\n")
+                    } else {
+                        String::new()
+                    },
                 });
             }
             let n = a.iter().skip_while(|x| *x != "inspect").nth(1).unwrap();
@@ -176,10 +176,11 @@ impl ComposeExecutor for Fake {
         }
         if a.iter().any(|x| x == "container") && a.iter().any(|x| x == "ls") {
             let out = if let Some(id) = a.iter().find_map(|x| x.strip_prefix("id=")) {
-                self.cs
-                    .contains_key(id)
-                    .then(|| format!("{id}\n"))
-                    .unwrap_or_default()
+                if self.cs.contains_key(id) {
+                    format!("{id}\n")
+                } else {
+                    String::new()
+                }
             } else {
                 let s = a
                     .iter()

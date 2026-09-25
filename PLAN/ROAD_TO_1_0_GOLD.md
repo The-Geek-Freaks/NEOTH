@@ -8,6 +8,33 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1408 real Paperless product accepted (2026-09-25):** Run36142673419 at
+15fbfd8d passed the compiled product lifecycle. The exact GitHub artifact ZIP,
+receipt and25 source bindings were verified. Healthy/start/recreate preserve
+all six volumes and credentials; the real PDF download remains hash-identical
+after uninstall/reinstall. Purge removes the exact old volume set, and the next
+install creates a fresh generation with a rotated authenticated token. Repeat
+operations remain stable and Docker plus isolated-home cleanup are proven.
+This is Linux/file-credential product evidence; native, Keychain and release
+coverage remain separate. W1407 inventories are2062portable, Group1852 and
+Windows621. Overall roadmap counts and open requirements remain unchanged.
+
+**W1404-1407 managed n8n repair and lifecycle recovery (2026-09-25):**
+The public parameterless n8n repair command now restores only the stored,
+Ready managed identity, using its pinned image, exact container ID, retained
+volume and saved API key. Successful recreate requires a persisted exact ID
+from Docker stdout; uncertain create remains held. A shared nonblocking lock
+and bidirectional custody checks exclude concurrent Repair/Uninstall/Purge.
+Each fresh Repair has a durable generation, so later runtime damage cannot
+replay an old Ready success. Completed custody requires its exact Repair-Ready
+witness; confirmed Uninstall consumes it before binding cleanup. Any remaining
+Uninstall custody blocks resurrection. Native regressions and the real product
+canary cover healthy/start/recreate, retained data/credentials and subsequent
+Uninstall/Reinstall/Purge. W1394 production review approved; hosted formatting,
+compile, native and real product execution remain required. W1406 also fixes
+the two exact test-only Clippy findings from Core36138775902 at ea30c488.
+No roadmap checkbox is closed and no local executable validation ran.
+
 **W1403 exact hosted fixture diagnosis (2026-09-25):** Group36140799596 at
  a2420012 exposed invalid fake runtime ports for running broker/db (null instead
  of the required map) and one renamed configured-binding test missing from the
