@@ -1,0 +1,77 @@
+{
+  "schema": "neoth-wave1190-cli-reference/v1",
+  "run": {
+    "id": 36092291662,
+    "status": "in_progress",
+    "conclusion": null,
+    "head": "0bc75aa0762d1a2ed3f3ef63f4453a260bbc59b6",
+    "workflow": ".github/workflows/cli-reference.yml"
+  },
+  "artifact": {
+    "id": 10845798940,
+    "name": "generated-cli-reference",
+    "apiDigest": "sha256:07f723f5b1b13b119ab4eddaedeabc843b4d265ddc641425ca91f44ef62f1e54",
+    "localZipSha256": "07f723f5b1b13b119ab4eddaedeabc843b4d265ddc641425ca91f44ef62f1e54",
+    "zipMatches": true,
+    "sourceHeadArtifact": "0bc75aa0762d1a2ed3f3ef63f4453a260bbc59b6",
+    "sourceHeadMatches": true
+  },
+  "generatedReference": {
+    "artifactPath": "cli-commands.md",
+    "intendedRepositoryDestination": "docs/cli-commands.md",
+    "sha256": "b7ef122a5d336bdc35570df1632724fbd5f1461ff1914fd7b4292ab187335050",
+    "sha256SumsEntry": "b7ef122a5d336bdc35570df1632724fbd5f1461ff1914fd7b4292ab187335050",
+    "checksumMatches": true,
+    "historicalCommittedDestinationSha256": "dff9a1f602010b78a46080fff62fa876793e4385d851f53fe04d8041f171bfda",
+    "matchesHistoricalCommittedDestination": false
+  },
+  "historicalPublicGeneratorInputs": [
+    {
+      "path": ".github/workflows/cli-reference.yml",
+      "blob": "6e95c1c7dada1f0d14252c5b233a4dc47c71df76",
+      "sha256": "dce2347306b93e747c87507824699c164bbc602f5321989ad406f48acabffb4b",
+      "blobMatches": true
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "blob": "f89a0cdee009703aeb423562fefea56dcf467ee6",
+      "sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+      "blobMatches": true
+    },
+    {
+      "path": "SRC/neothd/Cargo.toml",
+      "blob": "b8f5d5e3e675d73954c209ae6f6dc7299d4939c6",
+      "sha256": "31063c67df245d078107ce93ba153c11c54c32cd60295c11d14bd9c5eff798cc",
+      "blobMatches": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/mod.rs",
+      "blob": "04447fa44f5a9a7d0c0a2968c75afff5ff44f825",
+      "sha256": "dca911e2f4e5d46b68d1c92762e39df04481247068656e423b4c74fc41683514",
+      "blobMatches": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/completions.rs",
+      "blob": "856546e42646b1fa6c9105f7b5a85d45549a7964",
+      "sha256": "55bbfe6e3ce9d38dfedecfd141a17ad553b76e026baacd3d22a2506829ea7bf1",
+      "blobMatches": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/docgen.rs",
+      "blob": "b56f427938ee1464e6b3df210c33f1288bb34376",
+      "sha256": "63eedcfa5868e5c0ba3e6117cbccfe93f90052ff0dd815dc41fb5ccc6a4f7e66",
+      "blobMatches": true
+    },
+    {
+      "path": "docs/cli-commands.md",
+      "blob": "81745c380c04b4f19570169cd7702eca0e4be691",
+      "sha256": "dff9a1f602010b78a46080fff62fa876793e4385d851f53fe04d8041f171bfda",
+      "blobMatches": true
+    }
+  ],
+  "allHistoricalBindingsMatch": true,
+  "copiedToDocs": true,
+  "staged": false,
+  "localExecutableValidationRan": false,
+  "rootVerified": true
+}

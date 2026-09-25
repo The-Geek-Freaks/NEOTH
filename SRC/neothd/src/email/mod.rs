@@ -37,3 +37,4 @@ pub mod inbound;
 pub mod seen_store;
 pub mod sender_policy;
 pub mod threat_tiebreak;
+pub mod workflow_triage;

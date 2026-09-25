@@ -1,0 +1,112 @@
+{
+  "schema": "neoth-gold-email-triage-review/v1",
+  "base": "f5bdc6f323cc145ded3781418bc259d2a5d6294c",
+  "scope": "W1182 explicit-home triage; W1187 scoped HTTP; W1185 inactive IMAP starter",
+  "review": "# W1188-B — e-mail threat workflow review\n\n## Verdict: REJECT_PENDING_REPAIR\n\n### Blocking finding — request parse errors reflect caller-controlled JSON-key text\n\n- **File:** `SRC/neothd/src/n8n_api/handlers/email_threat.rs:9-12`\n- **Sink:** `SRC/neothd/src/n8n_api/handlers.rs:155-163`\n- **Issue:** `email_threat::handle` returns the generic `parse_body` error unchanged. That helper exposes `format!(\"body parse failed: {e}\")`. This request type uses `#[serde(deny_unknown_fields)]`; Serde reports an unknown field name in `e`. A client can therefore place private or control-bearing text in an extra JSON key and receive that text in the API error envelope. The endpoint is expressly handling submitted e-mail content and promises a privacy-minimal response.\n- **Required repair:** map every parsing failure in `email_threat::handle` to the same fixed `BadRequest` envelope as semantic request validation, for example `email_threat_request_invalid`; do not return the generic parse error. Add/retain a loopback assertion using a private unknown field key and assert the response omits it.\n\n## Reviewed non-blocking properties\n\n- Authentication occurs before body buffering and routing in `server::serve`; scoped requests for `POST /api/email/threat/scan` require the dedicated `email:threat:write` scope. A wrong scoped token is denied before malformed-body parsing or store access.\n- The workflow request has `deny_unknown_fields`, request-body ingress has the existing 256 KiB cap, and service limits bound source/message/sender/subject/body bytes, attachment count, and attachment-name bytes. The supplied timestamp is checked before conversion to `i64`.\n- No submitted field becomes a filesystem path. A content-bound SHA-256 id maps to a fixed digest filename. The explicit home is capability-opened, the quarantine directory and lock are bound children, a process mutex plus OS lock serializes writers, existing records are schema-canonicalized and compared, and creates use exclusive atomic persistence. A reported durability-unknown outcome is preserved rather than retried.\n- Normal 200 results expose only the opaque record id, action, score, persistence state and a false `action_allowed`; fixed 503 handling does not expose storage or request details. There is no delivery, vault, IMAP, or action-authorization call in this path.\n- The IMAP starter remains outside this frozen review and is not approved here.\n\n## Exact reviewed inputs\n\n| Path | SHA-256 |\n| --- | --- |\n| `SRC/neothd/src/email/workflow_triage.rs` | `E8E51B101241C8F17651BA34DBA5740D5820E8C730F0ED543D99801C17A4DE89` |\n| `SRC/neothd/src/n8n_api/handlers/email_threat.rs` | `1556EA48E4FA354865EBC3928F288A8B69116F44405721ADA2A52965BB725018` |\n| `SRC/neothd/src/n8n_api/email_threat_http_tests.rs` | `B3643CB270C5E34266BB6A52780C25D26AD5FA41092FE59B96F2EE7B0EBB3373` |\n| `SRC/neothd/src/email/mod.rs` | `A11921A88DA2538072133CE770DF82C109096CB89385867FDC7AFCE36308F490` |\n| `SRC/neothd/src/n8n_api/server.rs` | `C823C1450B80481D688AD4D202D30C88FFDF08E8DE1F02CF1B874DBA5E83A858` |\n| `SRC/neothd/src/n8n_api/handlers.rs` | `327EEA1D1578EC8E7896815E4605FA440A0E97428644A7D44824DE3C9D064393` |\n| `SRC/neothd/src/security/api_tokens.rs` | `75A4AD7479E8FFE970538560E1B05060CD64944FE9B7BB19E53FEF8183F7AD12` |\n\n## Verification boundary\n\n`git diff HEAD --check` passed. This review is static-only under the BSOD hold: no local compiler, parser, formatter, tests, Docker, Node, Python, GUI, or runtime command was run. Re-review the exact frozen repair and require GitHub-hosted acceptance before closure.\n---\n\n## Re-review: frozen reflection repair\n\n### Verdict: APPROVE_STATIC_ONLY for backend plus HTTP regression fixture\n\nThe endpoint-local `invalid_request()` helper now replaces both JSON-deserialization and semantic-validation failures with one fixed `BadRequest` envelope. `email_threat::handle` discards the generic `parse_body` error rather than returning it. This closes the earlier unknown-field-name reflection path.\n\n`email_threat_http_tests.rs` remains a `#[path]` child with its own `#![cfg(test)]` boundary; `server.rs` contains only the path declaration. Its frozen four-test set now sends the private unknown key `private-email-field-secret`, requires the fixed message `email_threat_request_invalid`, and asserts that the serialized response omits that key. The test helper’s directory-entry iteration uses `entry.expect(...)`, so it no longer has the `Result<DirEntry, Error>` versus `DirEntry` iterator type mismatch.\n\nThis re-review covers only the backend and its HTTP fixture. The IMAP starter workflow is deliberately deferred until its freeze notice.\n\n| Path | SHA-256 |\n| --- | --- |\n| `SRC/neothd/src/n8n_api/handlers/email_threat.rs` | `871021F0B6DE8002A632C58B1C73D48C466423705164B87427031EA73AE27C1A` |\n| `SRC/neothd/src/n8n_api/email_threat_http_tests.rs` | `3B2D5F7DCBD32E04BB96A9F20EE210B3B318054C5BE707CE47D8C8E36AA825B0` |\n| `SRC/neothd/src/n8n_api/server.rs` | `C823C1450B80481D688AD4D202D30C88FFDF08E8DE1F02CF1B874DBA5E83A858` |\n\n`git diff HEAD --check` remained **PASS**. No local runtime, parser, compiler, formatter, or tests were run under the BSOD hold. GitHub-hosted verification remains required.\n---\n\n## W1185 frozen starter review — REJECT_PENDING_TEST_REPAIR\n\nThe generated IMAP starter is otherwise coherent: it uses `emailReadImap` 2.2 with `INBOX`, `format: simple`, `downloadAttachments: false`, `postProcessAction: nothing`, no exported credentials, and stays inactive. It uses Set 3.5 for configuration and the retained six-field body. The HTTP Request is v4 and links its URL back to `$('Operator Configuration').item.json.neothBaseUrl`, which preserves the configured origin after the Retain node drops all other fields. The actual JSON body forwards only `source_key`, `message_key`, `from`, `subject`, `body`, and an empty attachment-filename array. No mailbox action, credential export, raw mail object, binary, attachment content, delivery, or vault action is present.\n\n### Blocking compatibility defect\n\n`each_starter_body_embeds_its_endpoint_in_an_http_node` at lines 564-582 still expects **every** starter URL to be `={{ $json.neothBaseUrl + '<endpoint>' }}`. The email workflow correctly uses `={{ $('Operator Configuration').item.json.neothBaseUrl + '/api/email/threat/scan' }}` because its Retain node strips `neothBaseUrl` from `$json`. The test has no email exception, therefore it will fail for the correct frozen workflow. Add the corresponding email special case, retain the method assertion, and re-freeze before publication.\n\n| Path | SHA-256 |\n| --- | --- |\n| `SRC/neothd/src/installers/n8n_starter_workflows.rs` | `03C312DEE251C26A39F4C16E05425BF90D652DC59E57A5AD236C504611FEC167` |\n\n`git diff HEAD --check` passed. Static-only; no local parser, compiler, tests, or runtime were run.\n---\n\n## W1185 final frozen starter re-review — APPROVE_STATIC_ONLY\n\nThe repaired all-starter endpoint test now selects the linked `Operator Configuration` origin only for `email_threat_quarantine`; every other starter retains the established `$json.neothBaseUrl` origin. The test still derives the endpoint from the spec and asserts the HTTP method for every starter. That resolves the compatibility defect without weakening general coverage.\n\nThe final frozen IMAP workflow remains coherent: pinned `emailReadImap` 2.2, text-only body, no attachment download, no IMAP post-process action, no embedded credentials, inactive workflow, Set 3.5 configuration plus field-retention nodes, HTTP v4 with dedicated Header Auth, and an explicit linked configuration URL that survives narrowing. Its JSON request contains exactly the six bounded service fields; no raw mail object, binary field, attachment contents, credential material, mailbox mutation, delivery, or vault effect is wired.\n\n| Path | SHA-256 |\n| --- | --- |\n| `SRC/neothd/src/installers/n8n_starter_workflows.rs` | `210457EC44F36B01A0B315BA87841AD64B1805E04A941E03AE56F0C731EBF795` |\n\n`git diff HEAD --check` passed. This is static-only under the BSOD hold; no local parser, compiler, formatter, tests, or runtime command was run. GitHub-hosted validation remains required before dynamic acceptance.",
+  "reviewSha256": "27E37F31369BBA4A77A070DC5FBC7D642B96507B18AC6900425255FADE994087",
+  "inventory": {
+    "baseline": "0bc75aa0",
+    "purpose": "Read-only inventory of newly added email/backend tests and starter-test renames relative to 0bc75aa0.",
+    "candidates": [
+      {
+        "test": "email::workflow_triage::tests::dropped_input_is_triaged_and_recorded_without_action_authority",
+        "sourcePath": "SRC/neothd/src/email/workflow_triage.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "email::workflow_triage::tests::identical_request_reuses_record_and_preserves_original_time",
+        "sourcePath": "SRC/neothd/src/email/workflow_triage.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "email::workflow_triage::tests::same_message_key_with_distinct_content_gets_distinct_evidence",
+        "sourcePath": "SRC/neothd/src/email/workflow_triage.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "email::workflow_triage::tests::explicit_homes_are_isolated",
+        "sourcePath": "SRC/neothd/src/email/workflow_triage.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "email::workflow_triage::tests::corrupt_record_and_store_file_fail_closed",
+        "sourcePath": "SRC/neothd/src/email/workflow_triage.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "email::workflow_triage::tests::symlinked_store_is_refused",
+        "sourcePath": "SRC/neothd/src/email/workflow_triage.rs",
+        "cfg": "unix",
+        "kind": "new"
+      },
+      {
+        "test": "email::workflow_triage::tests::response_redacts_request_data_and_review_or_deliver_do_not_write",
+        "sourcePath": "SRC/neothd/src/email/workflow_triage.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "email::workflow_triage::tests::validation_enforces_bounds_and_required_fields",
+        "sourcePath": "SRC/neothd/src/email/workflow_triage.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "n8n_api::server::email_threat_http_tests::scope_is_rejected_before_malformed_email_threat_body_or_quarantine_store",
+        "sourcePath": "SRC/neothd/src/n8n_api/email_threat_http_tests.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "n8n_api::server::email_threat_http_tests::strict_email_threat_request_rejects_unknown_fields_and_bounds_with_400",
+        "sourcePath": "SRC/neothd/src/n8n_api/email_threat_http_tests.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "n8n_api::server::email_threat_http_tests::quarantine_is_persisted_under_explicit_home_redacted_and_idempotent_over_http",
+        "sourcePath": "SRC/neothd/src/n8n_api/email_threat_http_tests.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "n8n_api::server::email_threat_http_tests::unavailable_quarantine_store_returns_fixed_redacted_503_without_delivery_or_vault_effect",
+        "sourcePath": "SRC/neothd/src/n8n_api/email_threat_http_tests.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "installers::n8n_starter_workflows::tests::email_threat_starter_uses_pinned_text_only_imap_contract",
+        "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+        "cfg": "universal",
+        "kind": "new"
+      }
+    ],
+    "renames": [
+      {
+        "old": "installers::n8n_starter_workflows::tests::each_starter_body_embeds_its_cron_in_a_schedule_node",
+        "new": "installers::n8n_starter_workflows::tests::scheduled_starters_embed_cron_while_email_starter_uses_imap_trigger",
+        "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+        "cfg": "universal"
+      },
+      {
+        "old": "installers::n8n_starter_workflows::tests::each_starter_body_connects_schedule_configuration_and_http",
+        "new": "installers::n8n_starter_workflows::tests::each_starter_body_has_its_required_trigger_configuration_and_http_wiring",
+        "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+        "cfg": "universal"
+      }
+    ]
+  },
+  "limitations": [
+    "Only submitted text and attachment filenames are classified; IMAP starter downloads no attachments",
+    "No mailbox flag writes, delivery or vault actions",
+    "Trigger cursor can advance before downstream success; no delivery guarantee",
+    "Hosted compiler, tests and updated 13-workflow import pending"
+  ],
+  "localExecutableValidationRan": false
+}

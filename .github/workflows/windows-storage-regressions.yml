@@ -338,9 +338,9 @@ jobs:
           installers::n8n_starter_workflows::tests::each_starter_description_fits_picker_width	neothd/src/installers/n8n_starter_workflows.rs
           installers::n8n_starter_workflows::tests::each_starter_body_is_valid_json_and_inactive	neothd/src/installers/n8n_starter_workflows.rs
           installers::n8n_starter_workflows::tests::each_starter_body_contains_its_own_name	neothd/src/installers/n8n_starter_workflows.rs
-          installers::n8n_starter_workflows::tests::each_starter_body_embeds_its_cron_in_a_schedule_node	neothd/src/installers/n8n_starter_workflows.rs
+          installers::n8n_starter_workflows::tests::scheduled_starters_embed_cron_while_email_starter_uses_imap_trigger	neothd/src/installers/n8n_starter_workflows.rs
           installers::n8n_starter_workflows::tests::each_starter_body_embeds_its_endpoint_in_an_http_node	neothd/src/installers/n8n_starter_workflows.rs
-          installers::n8n_starter_workflows::tests::each_starter_body_connects_schedule_configuration_and_http	neothd/src/installers/n8n_starter_workflows.rs
+          installers::n8n_starter_workflows::tests::each_starter_body_has_its_required_trigger_configuration_and_http_wiring	neothd/src/installers/n8n_starter_workflows.rs
           installers::n8n_starter_workflows::tests::each_starter_body_uses_generic_header_auth_and_visible_origin	neothd/src/installers/n8n_starter_workflows.rs
           installers::n8n_starter_workflows::tests::starter_bodies_are_distinct_across_workflows	neothd/src/installers/n8n_starter_workflows.rs
           installers::n8n_starter_workflows::tests::all_known_workflows_concatenates_bootstrap_then_starter	neothd/src/installers/n8n_starter_workflows.rs
@@ -469,6 +469,18 @@ jobs:
           cli::paperless::tests::production_cli_quarantine_error_redacts_private_marker_pattern	neothd/src/cli/paperless.rs
           n8n_api::server::tests::loopback_paperless_findings_requires_scope_and_returns_redacted_instance_records	neothd/src/n8n_api/server.rs
           n8n_api::server::tests::loopback_paperless_findings_distinguishes_absence_from_corrupt_evidence	neothd/src/n8n_api/server.rs
+          email::workflow_triage::tests::dropped_input_is_triaged_and_recorded_without_action_authority	neothd/src/email/workflow_triage.rs
+          email::workflow_triage::tests::identical_request_reuses_record_and_preserves_original_time	neothd/src/email/workflow_triage.rs
+          email::workflow_triage::tests::same_message_key_with_distinct_content_gets_distinct_evidence	neothd/src/email/workflow_triage.rs
+          email::workflow_triage::tests::explicit_homes_are_isolated	neothd/src/email/workflow_triage.rs
+          email::workflow_triage::tests::corrupt_record_and_store_file_fail_closed	neothd/src/email/workflow_triage.rs
+          email::workflow_triage::tests::response_redacts_request_data_and_review_or_deliver_do_not_write	neothd/src/email/workflow_triage.rs
+          email::workflow_triage::tests::validation_enforces_bounds_and_required_fields	neothd/src/email/workflow_triage.rs
+          n8n_api::server::email_threat_http_tests::scope_is_rejected_before_malformed_email_threat_body_or_quarantine_store	neothd/src/n8n_api/email_threat_http_tests.rs
+          n8n_api::server::email_threat_http_tests::strict_email_threat_request_rejects_unknown_fields_and_bounds_with_400	neothd/src/n8n_api/email_threat_http_tests.rs
+          n8n_api::server::email_threat_http_tests::quarantine_is_persisted_under_explicit_home_redacted_and_idempotent_over_http	neothd/src/n8n_api/email_threat_http_tests.rs
+          n8n_api::server::email_threat_http_tests::unavailable_quarantine_store_returns_fixed_redacted_503_without_delivery_or_vault_effect	neothd/src/n8n_api/email_threat_http_tests.rs
+          installers::n8n_starter_workflows::tests::email_threat_starter_uses_pinned_text_only_imap_contract	neothd/src/installers/n8n_starter_workflows.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -485,7 +497,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 399 ]]; then
+          if [[ "$expected" -ne 411 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"

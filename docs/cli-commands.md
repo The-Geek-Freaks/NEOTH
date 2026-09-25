@@ -465,6 +465,24 @@ List VEVENTs in the configured CalDAV calendar collection. Read-only
 
 - `--url <URL>` — Override the calendar collection URL (else `credentials.yaml::caldav_url` / `NEOTH_CALDAV_URL`)
 
+### `neoth calendar read-access`
+
+Grant, revoke, or inspect the exact CalDAV account permitted to read
+
+#### `neoth calendar read-access grant`
+
+Persist a private, instance-bound grant for the current effective account
+
+- `--yes` — Confirm the described egress without an interactive prompt
+
+#### `neoth calendar read-access revoke`
+
+Remove the local grant even when credentials are unavailable. This denies subsequent reads; an already admitted bounded read is not forcibly cancelled
+
+#### `neoth calendar read-access status`
+
+Show whether the current effective account has a usable read grant
+
 ## `neoth capabilities`
 
 GOLD-ADAPT-JV-MODE-03 — list NEOTH's own shipped capabilities (bundled skills, daemon crons, CLI + slash commands) from the self-wiki map. `--kind skill|cron|cli|slash`, `--search <keyword>`, `--output json`

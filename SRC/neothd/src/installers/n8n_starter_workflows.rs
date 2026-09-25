@@ -62,6 +62,30 @@ use super::n8n_workflows::BootstrapWorkflow;
 /// a universal container-to-host bridge.
 pub const NEOTH_HTTP_BASE: &str = "http://REPLACE_WITH_NEOTH_HOST:9744";
 
+fn build_email_threat_workflow(name: &str, endpoint: &str, method: &str) -> String {
+    let trigger_id = "email_threat_quarantine_imap";
+    let configuration_id = "email_threat_quarantine_configuration";
+    let retain_id = "email_threat_quarantine_retain_triage_fields";
+    let http_id = "email_threat_quarantine_http";
+    let url = format!("={{{{ $('Operator Configuration').item.json.neothBaseUrl + '{endpoint}' }}}}");
+
+    let body = serde_json::json!({
+        "name": name, "active": false,
+        "nodes": [
+            { "parameters": { "mailbox": "INBOX", "format": "simple", "downloadAttachments": false, "postProcessAction": "nothing", "options": { "trackLastMessageId": true } }, "id": trigger_id, "name": "Email Trigger (IMAP)", "type": "n8n-nodes-base.emailReadImap", "typeVersion": 2.2, "position": [0, 200], "notesInFlow": true, "notes": "Select the IMAP credential in n8n after import; this starter contains no credential data. mailbox is INBOX by default; change this IMAP trigger parameter when a different mailbox is required. downloadAttachments is false, so this is text-only and performs no attachment analysis. postProcessAction: nothing performs no mailbox flag writes. The node UID cursor may advance before the downstream POST; no automatic delivery guarantee is claimed." },
+            { "parameters": { "mode": "manual", "includeOtherFields": true, "assignments": { "assignments": [ { "id": "email_threat_quarantine_neoth_base_url", "name": "neothBaseUrl", "type": "string", "value": NEOTH_HTTP_BASE }, { "id": "email_threat_quarantine_source_key", "name": "sourceKey", "type": "string", "value": "work-inbox" } ] }, "options": {} }, "id": configuration_id, "name": "Operator Configuration", "type": "n8n-nodes-base.set", "typeVersion": 3.5, "position": [240, 200], "notesInFlow": true, "notes": "Set neothBaseUrl to an address reachable from the n8n runtime, sourceKey to a stable mailbox/account namespace. Never use an IMAP UID as sourceKey: a UID identifies one message, not a stable mailbox. Bind an HTTP Header Auth credential with Authorization: Bearer <NEOTH n8n API token> on the request node before activation." },
+            { "parameters": { "mode": "manual", "includeOtherFields": false, "assignments": { "assignments": [ { "id": "email_threat_quarantine_request_source_key", "name": "source_key", "type": "string", "value": "={{ $json.sourceKey }}" }, { "id": "email_threat_quarantine_request_message_key", "name": "message_key", "type": "string", "value": "={{ typeof $json.metadata?.[\"message-id\"] === 'string' && $json.metadata[\"message-id\"].trim().length > 0 ? $json.metadata[\"message-id\"].trim() : (Number.isSafeInteger($json.attributes?.uid) && $json.attributes.uid > 0 ? 'uid:' + $json.attributes.uid : '') }}" }, { "id": "email_threat_quarantine_request_from", "name": "from", "type": "string", "value": "={{ $json.from || '' }}" }, { "id": "email_threat_quarantine_request_subject", "name": "subject", "type": "string", "value": "={{ $json.subject || '' }}" }, { "id": "email_threat_quarantine_request_body", "name": "body", "type": "string", "value": "={{ $json.textPlain || $json.textHtml || '' }}" }, { "id": "email_threat_quarantine_request_attachment_filenames", "name": "attachment_filenames", "type": "array", "value": "={{ [] }}" } ] }, "options": {} }, "id": retain_id, "name": "Retain Triage Fields", "type": "n8n-nodes-base.set", "typeVersion": 3.5, "position": [480, 200], "notesInFlow": true, "notes": "Retains only the six NEOTH service fields. message_key prefers metadata[message-id], then the message-scoped uid:<UID> fallback; missing both stays empty and NEOTH rejects it. Retrying the same content is safe; operators review failures. No at-least-once or exactly-once delivery claim is made." },
+            { "parameters": { "url": url, "method": method, "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "contentType": "json", "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ source_key: $json.source_key, message_key: $json.message_key, from: $json.from, subject: $json.subject, body: $json.body, attachment_filenames: $json.attachment_filenames }) }}", "options": {} }, "id": http_id, "name": "NEOTH HTTP", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4, "position": [720, 200], "notesInFlow": true, "notes": "Implemented POST /api/email/threat/scan requires email:threat:write. It forwards only retained text triage fields; no raw mail object, binary data, credentials, or attachment contents are forwarded. The workflow stays inactive until the operator configures credentials and explicitly enables it." }
+        ],
+        "connections": {
+            "Email Trigger (IMAP)": { "main": [[ { "node": "Operator Configuration", "type": "main", "index": 0 } ]] },
+            "Operator Configuration": { "main": [[ { "node": "Retain Triage Fields", "type": "main", "index": 0 } ]] },
+            "Retain Triage Fields": { "main": [[ { "node": "NEOTH HTTP", "type": "main", "index": 0 } ]] }
+        },
+        "settings": { "executionOrder": "v1" }
+    });
+    serde_json::to_string(&body).expect("serde_json::Value always serialises")
+}
 /// Generate a real n8n-importable workflow JSON. Three nodes:
 ///
 ///   1. Schedule trigger with the operator's cron expression.
@@ -83,6 +107,9 @@ fn build_workflow_skeleton(
     endpoint: &str,
     method: &str,
 ) -> String {
+    if slug == "email_threat_quarantine" {
+        return build_email_threat_workflow(name, endpoint, method);
+    }
     let trigger_id = format!("{slug}_schedule");
     let configuration_id = format!("{slug}_configuration");
     let http_id = format!("{slug}_http");
@@ -325,9 +352,9 @@ const STARTER_SPECS: &[StarterSpec] = &[
     StarterSpec {
         slug: "email_threat_quarantine",
         name: "Email threat → review queue",
-        description: "Unavailable adapter: intended PL-05 email threat scan and review-queue workflow.",
+        description: "PL-05 IMAP text-only threat scan into the NEOTH review queue; inactive until configured and enabled.",
         cron: "*/10 * * * *",
-        endpoint: "/email/threat/scan",
+        endpoint: "/api/email/threat/scan",
         method: "POST",
     },
     StarterSpec {
@@ -507,28 +534,26 @@ mod tests {
         }
     }
 
-    /// Real-skeleton drift guard #2: every body MUST embed the
-    /// spec's cron expression in a `scheduleTrigger` node. Activation remains
-    /// an explicit operator action after import.
+    /// Scheduled starters embed their cron expression. The IMAP starter is a
+    /// trigger-driven exception and must not also schedule scans.
     #[test]
-    fn each_starter_body_embeds_its_cron_in_a_schedule_node() {
+    fn scheduled_starters_embed_cron_while_email_starter_uses_imap_trigger() {
         for (spec, w) in STARTER_SPECS.iter().zip(starter_workflows().iter()) {
             let v: serde_json::Value = serde_json::from_str(w.body).unwrap();
             let nodes = v["nodes"].as_array().expect("nodes is array");
+            if spec.slug == "email_threat_quarantine" {
+                assert!(nodes.iter().any(|n| n["type"] == "n8n-nodes-base.emailReadImap"));
+                assert!(!nodes.iter().any(|n| n["type"] == "n8n-nodes-base.scheduleTrigger"));
+                continue;
+            }
             let schedule = nodes
                 .iter()
                 .find(|n| n["type"] == "n8n-nodes-base.scheduleTrigger")
-                .unwrap_or_else(|| {
-                    panic!("no scheduleTrigger node in {:?}: {}", spec.slug, w.body,)
-                });
+                .unwrap_or_else(|| panic!("no scheduleTrigger node in {:?}: {}", spec.slug, w.body));
             let expression = schedule["parameters"]["rule"]["interval"][0]["expression"]
                 .as_str()
                 .unwrap_or_else(|| panic!("missing cron expression in {:?}", spec.slug));
-            assert_eq!(
-                expression, spec.cron,
-                "body for {:?} has wrong cron",
-                spec.slug,
-            );
+            assert_eq!(expression, spec.cron, "body for {:?} has wrong cron", spec.slug);
         }
     }
 
@@ -547,7 +572,12 @@ mod tests {
             let url = http["parameters"]["url"]
                 .as_str()
                 .unwrap_or_else(|| panic!("missing url in {:?}", spec.slug));
-            let expected = ["={{ $json.neothBaseUrl + '", spec.endpoint, "' }}"].concat();
+            let origin = if spec.slug == "email_threat_quarantine" {
+                "={{ $('Operator Configuration').item.json.neothBaseUrl + '"
+            } else {
+                "={{ $json.neothBaseUrl + '"
+            };
+            let expected = [origin, spec.endpoint, "' }}"].concat();
             assert_eq!(url, expected, "body for {:?} has wrong URL", spec.slug);
             assert_eq!(
                 http["parameters"]["method"], spec.method,
@@ -557,25 +587,21 @@ mod tests {
         }
     }
 
-    /// Real-skeleton drift guard #4: every body MUST wire the
-    /// Schedule → Configuration → NEOTH-HTTP connection so an activated
-    /// workflow carries the visible operator origin into the request.
+    /// Real-skeleton drift guard #4: scheduled starters wire Schedule →
+    /// Configuration → NEOTH-HTTP; the IMAP starter retains an explicit
+    /// narrowed payload before its request.
     #[test]
-    fn each_starter_body_connects_schedule_configuration_and_http() {
+    fn each_starter_body_has_its_required_trigger_configuration_and_http_wiring() {
         for w in starter_workflows() {
             let v: serde_json::Value = serde_json::from_str(w.body).unwrap();
-            let schedule_conn = &v["connections"]["Schedule Trigger"]["main"][0][0];
-            assert_eq!(
-                schedule_conn["node"], "Operator Configuration",
-                "{:?} Schedule→Configuration wiring missing",
-                w.slug,
-            );
-            let configuration_conn = &v["connections"]["Operator Configuration"]["main"][0][0];
-            assert_eq!(
-                configuration_conn["node"], "NEOTH HTTP",
-                "{:?} Configuration→HTTP wiring missing",
-                w.slug,
-            );
+            if w.slug == "email_threat_quarantine" {
+                assert_eq!(v["connections"]["Email Trigger (IMAP)"]["main"][0][0]["node"], "Operator Configuration");
+                assert_eq!(v["connections"]["Operator Configuration"]["main"][0][0]["node"], "Retain Triage Fields");
+                assert_eq!(v["connections"]["Retain Triage Fields"]["main"][0][0]["node"], "NEOTH HTTP");
+                continue;
+            }
+            assert_eq!(v["connections"]["Schedule Trigger"]["main"][0][0]["node"], "Operator Configuration");
+            assert_eq!(v["connections"]["Operator Configuration"]["main"][0][0]["node"], "NEOTH HTTP");
         }
     }
 
@@ -727,6 +753,15 @@ mod tests {
                         .as_str()
                         .is_some_and(|notes| notes.contains("requires drafts:read"))
                 );
+            } else if w.slug == "email_threat_quarantine" {
+                assert_eq!(http["parameters"]["method"], "POST");
+                assert_eq!(http["parameters"]["sendBody"], true);
+                assert_eq!(http["parameters"]["contentType"], "json");
+                assert_eq!(http["parameters"]["specifyBody"], "json");
+                assert!(http["notes"].as_str().is_some_and(|notes| {
+                    notes.contains("requires email:threat:write")
+                        && notes.contains("no raw mail object")
+                }));
             } else {
                 assert!(
                     http["notes"]
@@ -739,6 +774,56 @@ mod tests {
         }
     }
 
+    #[test]
+    fn email_threat_starter_uses_pinned_text_only_imap_contract() {
+        let w = find_by_slug("email_threat_quarantine").expect("email starter exists");
+        let v: serde_json::Value = serde_json::from_str(w.body).unwrap();
+        let nodes = v["nodes"].as_array().unwrap();
+        let imap = nodes.iter().find(|n| n["type"] == "n8n-nodes-base.emailReadImap").unwrap();
+        assert_eq!(imap["typeVersion"], 2.2);
+        assert_eq!(imap["parameters"]["mailbox"], "INBOX");
+        assert_eq!(imap["parameters"]["format"], "simple");
+        assert_eq!(imap["parameters"]["downloadAttachments"], false);
+        assert_eq!(imap["parameters"]["postProcessAction"], "nothing");
+        assert_eq!(imap["parameters"]["options"]["trackLastMessageId"], true);
+        assert!(imap.get("credentials").is_none(), "credential data must not be exported");
+
+        let configuration = nodes.iter().find(|n| n["name"] == "Operator Configuration").unwrap();
+        let configured = configuration["parameters"]["assignments"]["assignments"].as_array().unwrap();
+        assert_eq!(configured[0]["name"], "neothBaseUrl");
+        assert_eq!(configured[1]["name"], "sourceKey");
+        assert_eq!(configured[1]["value"], "work-inbox");
+
+        let retain = nodes.iter().find(|n| n["name"] == "Retain Triage Fields").unwrap();
+        let retained = retain["parameters"]["assignments"]["assignments"].as_array().unwrap();
+        let names: Vec<_> = retained.iter().map(|field| field["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["source_key", "message_key", "from", "subject", "body", "attachment_filenames"]);
+        assert!(retained[1]["value"].as_str().unwrap().contains("metadata?.[\"message-id\"]"));
+        assert!(retained[1]["value"].as_str().unwrap().contains("typeof $json.metadata?.[\"message-id\"] === 'string'"));
+        assert!(retained[1]["value"].as_str().unwrap().contains(".trim().length > 0"));
+        assert!(retained[1]["value"].as_str().unwrap().contains("Number.isSafeInteger($json.attributes?.uid)"));
+        assert!(retained[1]["value"].as_str().unwrap().contains("$json.attributes.uid > 0"));
+        assert!(retained[1]["value"].as_str().unwrap().contains("'uid:' + $json.attributes.uid"));
+        assert_eq!(retained[3]["value"], "={{ $json.subject || '' }}");
+        assert_eq!(retained[4]["value"], "={{ $json.textPlain || $json.textHtml || '' }}");
+        assert_eq!(retained[5]["value"], "={{ [] }}");
+
+        let http = nodes.iter().find(|n| n["type"] == "n8n-nodes-base.httpRequest").unwrap();
+        assert_eq!(http["parameters"]["authentication"], "genericCredentialType");
+        assert_eq!(http["parameters"]["genericAuthType"], "httpHeaderAuth");
+        assert_eq!(http["parameters"]["method"], "POST");
+        assert_eq!(http["parameters"]["url"], "={{ $('Operator Configuration').item.json.neothBaseUrl + '/api/email/threat/scan' }}");
+        assert_eq!(http["parameters"]["sendBody"], true);
+        assert!(http["parameters"]["url"].as_str().unwrap().contains("$('Operator Configuration').item.json.neothBaseUrl"), "HTTP URL must retain its configuration provenance after Retain Triage Fields strips other fields");
+        let json_body = http["parameters"]["jsonBody"].as_str().unwrap();
+        for field in ["source_key", "message_key", "from", "subject", "body", "attachment_filenames"] {
+            assert!(json_body.contains(field), "request body omits {field}");
+        }
+        assert!(!json_body.contains("metadata"));
+        assert!(!json_body.contains("attributes"));
+        assert!(!json_body.contains("textPlain"));
+        assert_eq!(v["active"], false);
+    }
     /// Real-skeleton drift guard #6: every body's node IDs MUST
     /// derive from the slug for stable local workflow shape; node IDs do not
     /// deduplicate public workflow POSTs.

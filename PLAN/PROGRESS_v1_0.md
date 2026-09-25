@@ -2,6 +2,30 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1192 email triage, real IMAP starter and generated CLI reference (2026-09-25):**
+POST /api/email/threat/scan now requires email:threat:write and accepts a strict,
+bounded six-field request under the configured instance home. The existing
+sanitizer/phishing scorer classifies the supplied text; blocked cases create
+private, locked, exclusive atomic quarantine records. Content-bound identity
+makes identical retries reuse the original record/time, while changed content
+gets separate evidence. Durability uncertainty is explicit. Every result keeps
+action_allowed=false; no mailbox, delivery, provider or vault action occurs.
+The inactive starter now uses pinned IMAP2.2, simple text and no attachment
+downloads. Its mailbox is set on the trigger; a separate stable source namespace
+and HTTP credential are operator-configured. A retaining Set node forwards only
+six service fields. The URL uses its linked configuration item after narrowing.
+UID cursor advancement can precede POST success; no delivery guarantee exists.
+Independent review found and repaired reflected JSON field names and the
+all-starter URL assertion; Root also repaired a stripped-origin and test-type
+error before publication. Thirteen new tests include four actual loopback HTTP
+cases and one Unix-only symlink refusal: Native1853, Linux extras62/macOS57,
+Group1635 and Windows411. Hosted behavior and fresh workflow import remain open.
+The exact0bc generated CLI reference was imported after API ZIP, source and
+inner checksum checks. Core0bc passed slim Clippy/type-check/CLI build/export;
+its known-obsolete workspace Clippy was cancelled after export. The provider
+repair is published f5bdc6f3; a consolidated current-source Core run follows.
+No roadmap checkbox closes and no local executable validation ran.
+
 **W1186/W1189 real Paperless acceptance and provider build repair (2026-09-25):**
 Root independently admitted Paperless product run36092294058 at0bc75aa0:
 API ZIP and inner receipt hashes plus12 historical source bindings match.

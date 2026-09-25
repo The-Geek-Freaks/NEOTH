@@ -63,6 +63,7 @@ fn required_scope_for(method: &str, path: &str) -> Option<&'static str> {
         ("POST", "/api/email/drafts/pending") => Some(api_tokens::SCOPE_DRAFTS_READ),
         ("POST", "/api/permissions/audit") => Some(api_tokens::SCOPE_PERMISSIONS_READ),
         ("POST", "/api/calendar/agenda") => Some(api_tokens::SCOPE_CALENDAR_READ),
+        ("POST", "/api/email/threat/scan") => Some(api_tokens::SCOPE_EMAIL_THREAT_WRITE),
         ("POST", "/api/paperless/findings/recent") => {
             Some(api_tokens::SCOPE_PAPERLESS_FINDINGS_READ)
         }
@@ -528,6 +529,9 @@ pub fn load_or_init_token(home: &std::path::Path) -> std::io::Result<String> {
     }
     Ok(token)
 }
+
+#[path = "email_threat_http_tests.rs"]
+mod email_threat_http_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1150,6 +1154,7 @@ mod tests {
             ("POST", "/api/email/drafts/pending"),
             ("POST", "/api/permissions/audit"),
             ("POST", "/api/calendar/agenda"),
+            ("POST", "/api/email/threat/scan"),
             ("POST", "/api/paperless/findings/recent"),
             ("POST", "/api/memory/save"),
             ("POST", "/api/provider/call"),
