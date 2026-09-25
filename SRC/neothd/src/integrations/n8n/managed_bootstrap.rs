@@ -1143,9 +1143,11 @@ mod tests {
     fn node_client_uses_setup_email_and_login_email_or_ldap_login_id() {
         // The managed importer stores inactive workflows and reads exact IDs.
         // No update, delete, activation or execution capability is minted.
-        assert!(NODE_CLIENT.contains(
-            "scopes:['workflow:list','workflow:create','workflow:read'],expiresAt:null"
-        ));
+        assert!(
+            NODE_CLIENT.contains(
+                "scopes:['workflow:list','workflow:create','workflow:read'],expiresAt:null"
+            )
+        );
         assert!(NODE_CLIENT.contains(
             "if(x.op==='setup')o.body=JSON.stringify({email:x.email,password:x.password"
         ));
@@ -1437,12 +1439,11 @@ mod tests {
             let expected_failure = terminal.failure.clone();
             let mut custody = custody_for(&job, BootstrapPhase::BootstrapRemoved);
 
-            let returned = complete_bootstrap_runtime_outcome_with(
-                &mut custody,
-                terminal,
-                |_, _| panic!("terminal runtime outcome must not finalize Ready custody"),
-            )
-            .unwrap();
+            let returned =
+                complete_bootstrap_runtime_outcome_with(&mut custody, terminal, |_, _| {
+                    panic!("terminal runtime outcome must not finalize Ready custody")
+                })
+                .unwrap();
 
             assert_eq!(returned.state, state);
             assert_eq!(returned.state_revision, expected_revision);
@@ -1459,26 +1460,23 @@ mod tests {
         let mut ready = job.clone();
         ready.state = crate::integrations::JobState::Ready;
         let mut custody = custody_for(&job, BootstrapPhase::BootstrapRemoved);
-        let returned = complete_bootstrap_runtime_outcome_with(
-            &mut custody,
-            ready,
-            |custody, observed| {
+        let returned =
+            complete_bootstrap_runtime_outcome_with(&mut custody, ready, |custody, observed| {
                 assert_eq!(observed.state, crate::integrations::JobState::Ready);
                 custody.phase = BootstrapPhase::Ready;
                 Ok(())
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
         assert_eq!(returned.state, crate::integrations::JobState::Ready);
         assert_eq!(custody.phase, BootstrapPhase::Ready);
 
         let mut active_custody = custody_for(&job, BootstrapPhase::BootstrapRemoved);
-        assert!(complete_bootstrap_runtime_outcome_with(
-            &mut active_custody,
-            job,
-            |_, _| panic!("active runtime outcome must not finalize Ready custody"),
-        )
-        .is_err());
+        assert!(
+            complete_bootstrap_runtime_outcome_with(&mut active_custody, job, |_, _| panic!(
+                "active runtime outcome must not finalize Ready custody"
+            ),)
+            .is_err()
+        );
         assert_eq!(active_custody.phase, BootstrapPhase::BootstrapRemoved);
     }
 

@@ -3421,7 +3421,10 @@ mod tests {
         assert_eq!(queued.operation, JobOperation::Install);
         assert_eq!(queued.state, JobState::Queued);
         assert_eq!(queued.state_revision, 0);
-        assert_eq!(queued.evidence_contract.as_ref().unwrap().step_plan_sha256, digest('e'));
+        assert_eq!(
+            queued.evidence_contract.as_ref().unwrap().step_plan_sha256,
+            digest('e')
+        );
         let failed = fetch_job(&connection, &failed_id).unwrap().unwrap();
         assert_eq!(failed.operation, JobOperation::Update);
         assert_eq!(failed.state, JobState::Failed);
@@ -3429,10 +3432,9 @@ mod tests {
         assert_eq!(failed.failure.unwrap().code, "offline");
         drop(connection);
 
-        let service = IntegrationJobService::open(&home, catalog(), &|job| {
-            resume_decision(job, 'f')
-        })
-        .unwrap();
+        let service =
+            IntegrationJobService::open(&home, catalog(), &|job| resume_decision(job, 'f'))
+                .unwrap();
         let mut import = request("managed-node");
         import.operation = JobOperation::Import;
         import.release_version = "2.1.0".into();

@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1083 Windows stdin completion and hosted formatting (2026-09-25):**
+The875 Windows301 run again reports300PASS/1FAIL at the strict closed-stdin
+case. Root verified its ZIP and failure log. Pinned Tokio1.52.3 source shows
+Windows poll_write queues the OS operation while poll_shutdown returns
+immediately. The actual Docker stdin path now awaits flush before shutdown,
+so buffered write errors reach the existing Stdin failure mapping before the
+fixture acknowledgement. The test and cancellation/time bounds are unchanged;
+fresh Windows324 verification is required. Root separately verified the621
+preflight formatting artifact (API ZIP,2 inner hashes,5 pre/postimage blobs)
+and applied exactly its5-file formatter patch. No local executable ran.
+
 **W1080 durable workflow import and outcome propagation (2026-09-25):**
 The public `neoth n8n import-workflows` command now has a separate durable
 Import job and schema-v3 migration preserving all24 columns. All13 bundled

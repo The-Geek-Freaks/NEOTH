@@ -532,7 +532,8 @@ pub(super) fn has_ready_managed_binding(
             && managed_runtime::is_managed_job(&job)
             && job.capability_id.as_str() == N8N_CAPABILITY_ID
             && expected_authenticated_probe_sha256(endpoint)
-                == job.evidence_contract
+                == job
+                    .evidence_contract
                     .as_ref()
                     .map(JobEvidenceContract::authenticated_probe_sha256)
                     .cloned()
@@ -592,10 +593,12 @@ pub(crate) async fn import_managed_workflows_at(home: &Path) -> anyhow::Result<I
     // callers sharing an already-open process. Retain this sibling lock over
     // every custody read/write and POST boundary.
     let _import_lock = crate::util::locked_file::lock_file_blocking(
-        &workflow_import::import_lock_path(home), "n8n workflow import",
+        &workflow_import::import_lock_path(home),
+        "n8n workflow import",
     )?;
     let service = open_n8n_job_service(home)?;
-    let queued = workflow_import::enqueue_managed_workflow_import(&service, home, JobRequester::Cli)?;
+    let queued =
+        workflow_import::enqueue_managed_workflow_import(&service, home, JobRequester::Cli)?;
     let job_id = queued.job.job_id.clone();
     let result = workflow_import::execute_managed_workflow_import_at(
         &service,
@@ -607,7 +610,8 @@ pub(crate) async fn import_managed_workflows_at(home: &Path) -> anyhow::Result<I
     match result {
         Ok(job) => Ok(job),
         Err(error) => {
-            let current = service.get(&job_id)?
+            let current = service
+                .get(&job_id)?
                 .ok_or_else(|| anyhow::anyhow!("n8n workflow import job disappeared"))?;
             if !workflow_import::safe_to_terminalize_import(home, &current, &error) {
                 return Err(anyhow::anyhow!(error.code));

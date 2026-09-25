@@ -248,6 +248,7 @@ impl BootstrapDockerRunner for LocalBootstrapDockerRunner {
             Box::pin(async move {
                 let result = pipe.write_all(&payload).await;
                 if result.is_ok() {
+                    pipe.flush().await?;
                     pipe.shutdown().await
                 } else {
                     result

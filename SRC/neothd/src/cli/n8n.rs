@@ -81,7 +81,10 @@ async fn run_import_workflows(output: OutputFormat) -> Result<()> {
     render_import_job(&job, output)
 }
 
-fn render_import_job(job: &crate::integrations::IntegrationJob, output: OutputFormat) -> Result<()> {
+fn render_import_job(
+    job: &crate::integrations::IntegrationJob,
+    output: OutputFormat,
+) -> Result<()> {
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
             "{}",
@@ -101,10 +104,18 @@ fn render_import_job(job: &crate::integrations::IntegrationJob, output: OutputFo
         }
     }
     if let Some(failure) = &job.failure {
-        return Err(anyhow!("n8n workflow import job {} failed: {}", job.job_id, failure.code));
+        return Err(anyhow!(
+            "n8n workflow import job {} failed: {}",
+            job.job_id,
+            failure.code
+        ));
     }
     if job.state != crate::integrations::JobState::Ready {
-        return Err(anyhow!("n8n workflow import job {} did not reach Ready (state: {})", job.job_id, job.state));
+        return Err(anyhow!(
+            "n8n workflow import job {} did not reach Ready (state: {})",
+            job.job_id,
+            job.state
+        ));
     }
     Ok(())
 }
@@ -461,14 +472,22 @@ mod tests {
     #[test]
     fn import_workflows_cli_has_no_hidden_execution_options() {
         use clap::Parser;
-        let cli = crate::cli::Cli::try_parse_from(["neoth", "n8n", "import-workflows"])
-            .unwrap();
+        let cli = crate::cli::Cli::try_parse_from(["neoth", "n8n", "import-workflows"]).unwrap();
         assert!(matches!(
             cli.command,
-            crate::cli::Commands::N8n(N8nArgs { action: N8nAction::ImportWorkflows })
+            crate::cli::Commands::N8n(N8nArgs {
+                action: N8nAction::ImportWorkflows
+            })
         ));
-        assert!(crate::cli::Cli::try_parse_from([
-            "neoth", "n8n", "import-workflows", "--endpoint", "http://127.0.0.1:5678"
-        ]).is_err());
+        assert!(
+            crate::cli::Cli::try_parse_from([
+                "neoth",
+                "n8n",
+                "import-workflows",
+                "--endpoint",
+                "http://127.0.0.1:5678"
+            ])
+            .is_err()
+        );
     }
 }
