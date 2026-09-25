@@ -8,6 +8,27 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1151 Paperless retained Compose and W1145 n8n acceptance (2026-09-25):**
+Paperless now invokes Compose through a retained directory with the exact staged
+stdin document and a cleared, explicitly populated environment. Four verified
+Docker named volumes replace daemon host-path mounts. Existing nonempty legacy
+state fails before Docker mutation; old prepared payloads remain untouched and
+require an explicit migration. Bootstrap and Compose share one dotenv parser.
+W1147 independently approved the three-file source slice; Root verified its
+hashes and actual CLI dispatch. Ten added portable regressions and two renamed
+cases give Native1803/Group1584/Windows361; platform extras remain unchanged.
+Hosted compile, behavior and real Paperless installation are still pending.
+The initial product-canary draft failed static review (path validation and
+independent image verification) and is being repaired before publication.
+Root admitted n8n product36086474604 at89ace075: all26 historical input hashes,
+API ZIP and receipt verified; real initialization/install,13 workflow imports,
+authenticated/negative HTTP controls, repeat identity and canary cleanup passed.
+This completes additional n8n evidence, not the Paperless or uninstall boundary.
+Core36087215466 at14315806 passed test type-check; workspace Clippy, Group1574
+and Windows351 are still running. Calendar read/agenda wiring is source WIP,
+not part of this publication. Claude TASK032 remains awaiting acknowledgement.
+No roadmap checkbox closes here; no local executable validation ran.
+
 **W1143 bootstrap assertion compile repair (2026-09-25):**
 Product36086474604 at89ace075 passed the real compiled n8n installation/import
 canary; its independent artifact admission is pending. Core36086473014 passed

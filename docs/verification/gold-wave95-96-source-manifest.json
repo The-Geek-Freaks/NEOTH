@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T02:38:05.1505012Z",
-  "validationStatus": "W1143 fixes exact hosted E0369 test compile error;89ace product canary success;typecheck rerun pending",
+  "capturedUtc": "2026-09-25T02:58:11.7132302Z",
+  "validationStatus": "W1151 static reviewed Paperless retained Compose; native and product hosted gates pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -118,8 +118,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 24591,
-      "sha256": "6E73BFC5AD8DF47B23FDED1A8926CD52A9585A9F5261697025BB151A6FFEF045"
+      "bytes": 24645,
+      "sha256": "CAD7B3701D02EA588F53B95D9645B53D15F460BDDB3C6F77F974A3A4386999C7"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -138,8 +138,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 63110,
-      "sha256": "130733D6142D8F9218B1DDB5E23782BBC77CCBE5CA6C92AE84E3F31714C14A2D"
+      "bytes": 64586,
+      "sha256": "5ACA4DC9AD21E16BB91EAD6C0DB7D5582483E28913D3FF7554DAA5A7B2FEEAC6"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -1427,6 +1427,16 @@
       "sha256": "8EF34F1CF86FD228E28C505F30FA26D48A14F941405EA3ED79D3378DAEBAAB0B"
     },
     {
+      "path": "docs/verification/gold-wave1145-product-success.json",
+      "bytes": 10795,
+      "sha256": "322544BBA8B2A9B5996B630C685DB3594F47DEEADD8280D1D95EBE6033EA524B"
+    },
+    {
+      "path": "docs/verification/gold-wave1147-paperless-review.json",
+      "bytes": 739,
+      "sha256": "8795092BDACDED18EC47B4392AC9638391660CE03D1C431B56B55F5450E034B8"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -2368,18 +2378,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 326739,
-      "sha256": "CAF7D5FE15246E503FE0201073749509E311A8A8DBF98E22C70F78A96F1B37C9"
+      "bytes": 328294,
+      "sha256": "3C62A08768CC9ECB3EB4CF8661B9A900EBB68328C7521229BF58C1EF95872988"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1343550,
-      "sha256": "5446EA18CE27392E3D884766EF794DBAA9D605D54809D8A5B643D567389930AA"
+      "bytes": 1345105,
+      "sha256": "48DFBF6070550ACA27EF599931963EEBDB1DA74B4342EAAC7F0629E048887240"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1953491,
-      "sha256": "419C9B976D068299A0EE6B3E53949539D1761A2ECA582D14C819A9824F1B0E31"
+      "bytes": 1955046,
+      "sha256": "E5091EB0D8163B7066AE9558AA69CDEB922A3CD48B02F6A2109EC86762343E68"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4323,13 +4333,13 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_bootstrap.rs",
-      "bytes": 26865,
-      "sha256": "6A32F9E4455E50E555D46F6930E3B38489F6CD04FA55BC0163E9686B22558B05"
+      "bytes": 27242,
+      "sha256": "FEE6F9FC80A88AF649DB6105DE9091FB7637935FD06AC88399B5C5A796E7E70B"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "bytes": 48247,
-      "sha256": "972F111D7A1E3B28061D8F04442F964578ED0CBCFED4A44D7ED5795A88010D9C"
+      "bytes": 71481,
+      "sha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_readiness_tests.rs",
@@ -4343,8 +4353,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_staging.rs",
-      "bytes": 35715,
-      "sha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0"
+      "bytes": 37562,
+      "sha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40"
     },
     {
       "path": "SRC/neothd/src/installers/paperless.rs",

@@ -32,36 +32,10 @@ impl BootstrapAdmin {
     /// literal dotenv file. Shell expansion and duplicate required keys are
     /// rejected instead of being interpreted differently by a shell later.
     pub(crate) fn from_env_bytes(bytes: &[u8]) -> Result<Self, &'static str> {
-        if bytes.len() > ENV_LIMIT {
-            return Err("paperless_bootstrap_env_too_large");
-        }
-        let text = std::str::from_utf8(bytes).map_err(|_| "paperless_bootstrap_env_invalid")?;
-        let mut values = BTreeMap::new();
-        for raw_line in text.lines() {
-            let line = raw_line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let (name, raw_value) = line
-                .split_once('=')
-                .ok_or("paperless_bootstrap_env_invalid")?;
-            let name = name.trim();
-            if name.is_empty()
-                || !name.bytes().enumerate().all(|(index, byte)| {
-                    byte == b'_'
-                        || byte.is_ascii_alphanumeric() && (index > 0 || !byte.is_ascii_digit())
-                })
-            {
-                return Err("paperless_bootstrap_env_invalid");
-            }
-            if !matches!(name, "PAPERLESS_ADMIN_USER" | "PAPERLESS_ADMIN_PASSWORD") {
-                continue;
-            }
-            if values.contains_key(name) {
-                return Err("paperless_bootstrap_env_duplicate");
-            }
-            values.insert(name, parse_dotenv_value(raw_value)?);
-        }
+        let mut values = parse_dotenv_values(
+            bytes,
+            &["PAPERLESS_ADMIN_USER", "PAPERLESS_ADMIN_PASSWORD"],
+        )?;
         let username = values
             .remove("PAPERLESS_ADMIN_USER")
             .filter(|value| !value.is_empty())
@@ -75,6 +49,45 @@ impl BootstrapAdmin {
             password: SecretString::new(password.to_string()),
         })
     }
+}
+
+/// Interpret selected dotenv assignments exactly once for both Compose and
+/// bootstrap. The caller supplies the only names whose values it will use.
+pub(crate) fn parse_dotenv_values<'a>(
+    bytes: &[u8],
+    required: &'a [&str],
+) -> Result<BTreeMap<&'a str, Zeroizing<String>>, &'static str> {
+    if bytes.len() > ENV_LIMIT {
+        return Err("paperless_bootstrap_env_too_large");
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| "paperless_bootstrap_env_invalid")?;
+    let mut values = BTreeMap::new();
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (name, raw_value) = line
+            .split_once('=')
+            .ok_or("paperless_bootstrap_env_invalid")?;
+        let name = name.trim();
+        if name.is_empty()
+            || !name.bytes().enumerate().all(|(index, byte)| {
+                byte == b'_'
+                    || byte.is_ascii_alphanumeric() && (index > 0 || !byte.is_ascii_digit())
+            })
+        {
+            return Err("paperless_bootstrap_env_invalid");
+        }
+        let Some(required_name) = required.iter().copied().find(|wanted| *wanted == name) else {
+            continue;
+        };
+        if values.contains_key(required_name) {
+            return Err("paperless_bootstrap_env_duplicate");
+        }
+        values.insert(required_name, parse_dotenv_value(raw_value)?);
+    }
+    Ok(values)
 }
 
 fn parse_dotenv_value(raw: &str) -> Result<Zeroizing<String>, &'static str> {

@@ -28,6 +28,20 @@ const COMPOSE: &str = "compose.yaml";
 const ENV_EXAMPLE: &str = "paperless.env.example";
 const OWNED_FILE_MAX_BYTES: usize = 16 * 1024;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PaperlessVolumeSpec {
+    pub(crate) logical_name: &'static str,
+    pub(crate) service: &'static str,
+    pub(crate) destination: &'static str,
+}
+
+pub(crate) const PAPERLESS_VOLUMES: [PaperlessVolumeSpec; 4] = [
+    PaperlessVolumeSpec { logical_name: "paperless_data", service: "webserver", destination: "/usr/src/paperless/data" },
+    PaperlessVolumeSpec { logical_name: "paperless_media", service: "webserver", destination: "/usr/src/paperless/media" },
+    PaperlessVolumeSpec { logical_name: "paperless_valkey", service: "broker", destination: "/data" },
+    PaperlessVolumeSpec { logical_name: "paperless_postgres", service: "db", destination: "/var/lib/postgresql" },
+];
+
 #[cfg(test)]
 thread_local! {
     static BEFORE_PUBLICATION_FOR_TEST: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
@@ -306,10 +320,9 @@ fn env_example_bytes() -> &'static [u8] {
     b"# Copy to paperless.env and set every value outside NEOTH.\nPAPERLESS_SECRET_KEY=\nPAPERLESS_DB_NAME=\nPAPERLESS_DB_USER=\nPAPERLESS_DB_PASSWORD=\nPAPERLESS_ADMIN_USER=\nPAPERLESS_ADMIN_PASSWORD=\nPAPERLESS_BIND_PORT=\n"
 }
 fn compose_bytes() -> &'static [u8] {
-    b"services:\n  webserver:\n    image: ghcr.io/paperless-ngx/paperless-ngx@sha256:5fa76604a81df6945086e0837b14b56543d137e8ce4f311cc5d9ebe907e74e79\n    env_file:\n      - ./paperless.env\n    environment:\n      PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY:?PAPERLESS_SECRET_KEY is required}\n      PAPERLESS_DBNAME: ${PAPERLESS_DB_NAME:?PAPERLESS_DB_NAME is required}\n      PAPERLESS_DBUSER: ${PAPERLESS_DB_USER:?PAPERLESS_DB_USER is required}\n      PAPERLESS_DBPASS: ${PAPERLESS_DB_PASSWORD:?PAPERLESS_DB_PASSWORD is required}\n      PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER:?PAPERLESS_ADMIN_USER is required}\n      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD:?PAPERLESS_ADMIN_PASSWORD is required}\n      PAPERLESS_REDIS: redis://broker:6379\n      PAPERLESS_DBHOST: db\n    ports:\n      - \"127.0.0.1:${PAPERLESS_BIND_PORT:?PAPERLESS_BIND_PORT is required}:8000\"\n    volumes:\n      - ./state/data:/usr/src/paperless/data\n      - ./state/media:/usr/src/paperless/media\n  broker:\n    image: registry-1.docker.io/valkey/valkey@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11\n    volumes:\n      - ./state/valkey:/data\n  db:\n    image: registry-1.docker.io/library/postgres@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae\n    env_file:\n      - ./paperless.env\n    environment:\n      POSTGRES_DB: ${PAPERLESS_DB_NAME:?PAPERLESS_DB_NAME is required}\n      POSTGRES_USER: ${PAPERLESS_DB_USER:?PAPERLESS_DB_USER is required}\n      POSTGRES_PASSWORD: ${PAPERLESS_DB_PASSWORD:?PAPERLESS_DB_PASSWORD is required}\n    volumes:\n      - ./state/postgres:/var/lib/postgresql\n"
+    b"services:\n  webserver:\n    image: ghcr.io/paperless-ngx/paperless-ngx@sha256:5fa76604a81df6945086e0837b14b56543d137e8ce4f311cc5d9ebe907e74e79\n    environment:\n      PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY:?PAPERLESS_SECRET_KEY is required}\n      PAPERLESS_DBNAME: ${PAPERLESS_DB_NAME:?PAPERLESS_DB_NAME is required}\n      PAPERLESS_DBUSER: ${PAPERLESS_DB_USER:?PAPERLESS_DB_USER is required}\n      PAPERLESS_DBPASS: ${PAPERLESS_DB_PASSWORD:?PAPERLESS_DB_PASSWORD is required}\n      PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER:?PAPERLESS_ADMIN_USER is required}\n      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD:?PAPERLESS_ADMIN_PASSWORD is required}\n      PAPERLESS_REDIS: redis://broker:6379\n      PAPERLESS_DBHOST: db\n    ports:\n      - \"127.0.0.1:${PAPERLESS_BIND_PORT:?PAPERLESS_BIND_PORT is required}:8000\"\n    volumes:\n      - paperless_data:/usr/src/paperless/data\n      - paperless_media:/usr/src/paperless/media\n  broker:\n    image: registry-1.docker.io/valkey/valkey@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11\n    volumes:\n      - paperless_valkey:/data\n  db:\n    image: registry-1.docker.io/library/postgres@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae\n    environment:\n      POSTGRES_DB: ${PAPERLESS_DB_NAME:?PAPERLESS_DB_NAME is required}\n      POSTGRES_USER: ${PAPERLESS_DB_USER:?PAPERLESS_DB_USER is required}\n      POSTGRES_PASSWORD: ${PAPERLESS_DB_PASSWORD:?PAPERLESS_DB_PASSWORD is required}\n    volumes:\n      - paperless_postgres:/var/lib/postgresql\nvolumes:\n  paperless_data:\n  paperless_media:\n  paperless_valkey:\n  paperless_postgres:\n"
 }
 
-#[cfg(windows)]
 pub(crate) fn expected_compose_bytes() -> &'static [u8] {
     compose_bytes()
 }
@@ -515,8 +528,12 @@ mod tests {
             assert!(compose.contains(image));
         }
         assert!(compose.contains("127.0.0.1:"));
-        assert!(compose.contains("- ./paperless.env"));
-        assert!(compose.contains("./state/postgres:/var/lib/postgresql"));
+        assert!(!compose.contains("env_file:"));
+        for volume in PAPERLESS_VOLUMES {
+            assert!(compose.contains(volume.logical_name));
+            assert!(compose.contains(volume.destination));
+        }
+        assert!(!compose.contains("./state/"));
         assert!(!compose.contains("/var/lib/postgresql/data"));
         assert!(
             !compose.contains("latest")
@@ -586,6 +603,24 @@ mod tests {
             fs::read(root.join("paperless.env")).unwrap(),
             b"operator-secret"
         );
+    }
+    #[test]
+    fn legacy_host_mount_compose_is_rejected_without_replacing_retained_data() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = canonical_temp_root(&parent).join("paperless");
+        prepare_at(&root).unwrap();
+        let legacy = b"services:\n  webserver:\n    volumes:\n      - ./state/data:/usr/src/paperless/data\n";
+        let retained = root.join("state").join("data").join("retained");
+        fs::write(root.join(COMPOSE), legacy).unwrap();
+        fs::create_dir_all(retained.parent().unwrap()).unwrap();
+        fs::write(&retained, b"legacy-data").unwrap();
+        assert_eq!(inspect_at(&root).status, PaperlessStagingStatus::UnownedOrMismatch);
+        assert!(matches!(
+            prepare_at(&root),
+            Err(PaperlessStagingError::UnownedOrMismatch)
+        ));
+        assert_eq!(fs::read(root.join(COMPOSE)).unwrap(), legacy);
+        assert_eq!(fs::read(retained).unwrap(), b"legacy-data");
     }
 
     #[test]

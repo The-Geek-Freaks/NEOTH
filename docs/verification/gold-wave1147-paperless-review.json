@@ -1,0 +1,12 @@
+{
+  "review": "W1147 Paperless retained Compose repair static review",
+  "verdict": "APPROVE_STATIC_ONLY",
+  "base_head": "143158066e454fc566ba65316ffac65575a7ecca",
+  "dynamic_validation": "not_run_under_bsod_hold",
+  "files": [
+    {"path": "SRC/neothd/src/installers/paperless_bootstrap.rs", "sha256": "FEE6F9FC80A88AF649DB6105DE9091FB7637935FD06AC88399B5C5A796E7E70B"},
+    {"path": "SRC/neothd/src/installers/paperless_lifecycle.rs", "sha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C"},
+    {"path": "SRC/neothd/src/installers/paperless_staging.rs", "sha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40"}
+  ],
+  "checks": {"git_diff_head_check": "clean", "local_runtime": "not_run"}
+}

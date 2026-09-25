@@ -106,7 +106,7 @@ jobs:
           installers::paperless_lifecycle::tests::receipt_matches_all_pinned_indexes_and_contains_config_proof	neothd/src/installers/paperless_lifecycle.rs
           installers::paperless_lifecycle::tests::container_validation_rejects_stopped_and_mixed_bindings	neothd/src/installers/paperless_lifecycle.rs
           installers::paperless_lifecycle::tests::image_verification_uses_engine_platform_not_windows_host	neothd/src/installers/paperless_lifecycle.rs
-          installers::paperless_lifecycle::tests::docker_command_removes_only_compose_interpolation_overrides	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::docker_command_uses_a_sterile_compose_environment	neothd/src/installers/paperless_lifecycle.rs
           installers::paperless_lifecycle::tests::windows_guarded_dispatcher_keeps_existing_token_and_binds_full_install	neothd/src/installers/paperless_lifecycle.rs
           installers::paperless_lifecycle::tests::windows_guarded_dispatcher_rejects_remote_engine_before_pull	neothd/src/installers/paperless_lifecycle.rs
           installers::paperless_lifecycle::tests::windows_guarded_dispatcher_bootstraps_missing_token_after_verified_containers	neothd/src/installers/paperless_lifecycle.rs
@@ -421,6 +421,16 @@ jobs:
           email::calendar::tests::render_event_list_appends_location_when_present	neothd/src/email/calendar.rs
           integrations::n8n::managed_runtime::tests::production_readiness_waits_for_readiness_after_liveness_is_live	neothd/src/integrations/n8n/managed_runtime_tests.rs
           n8n_api::handlers::permission_audit::tests::tampered_authenticated_typed_trust_history_fails_closed_in_reader	neothd/src/n8n_api/handlers/permission_audit.rs
+          installers::paperless_lifecycle::tests::compose_environment_matches_bootstrap_dotenv_literals	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::volume_validation_requires_exact_name_and_compose_labels	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::container_validation_rejects_missing_wrong_and_extra_volume_mounts	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::volume_listing_accepts_only_one_exact_name	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::empty_or_absent_legacy_state_is_allowed	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::nonempty_legacy_state_aborts_before_docker_mutation	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::public_executor_entrypoint_refuses_unretained_launches	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::preexisting_unowned_volume_aborts_before_compose_up	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::post_readiness_volume_mismatch_suppresses_receipt	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_staging::tests::legacy_host_mount_compose_is_rejected_without_replacing_retained_data	neothd/src/installers/paperless_staging.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -437,7 +447,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 351 ]]; then
+          if [[ "$expected" -ne 361 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -523,7 +533,7 @@ jobs:
             fi
           else
             compile_status=64
-            printf 'selection is not the required 351 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 361 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

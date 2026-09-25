@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1143 fixes exact hosted E0369 test compile error;89ace product canary success;typecheck rerun pending",
+  "status": "W1151 static reviewed Paperless retained Compose; native and product hosted gates pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 193879,
-    "sha256": "8DACD1A22FE428D98D2A9D97522B3FBFF5BF8E3F39F16C2BA52F2EC02B7D23AC"
+    "bytes": 194241,
+    "sha256": "F8FD9AE586B8CF6E3C793244F45C6DC39DBD3A469BED1A9BED9A37D6D954D751"
   },
-  "sourceInputs": 1093,
+  "sourceInputs": 1095,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -7212,25 +7212,25 @@
     {
       "test": "installers::paperless_staging::tests::renderer_is_pinned_loopback_and_secret_free",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0",
+      "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_staging::tests::prepare_is_deterministic_and_preserves_operator_env_and_state",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0",
+      "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_staging::tests::foreign_entry_after_prepare_is_rejected_without_touching_operator_env",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0",
+      "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_staging::tests::changed_owned_file_is_rejected_without_touching_operator_env",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0",
+      "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
       "junitClass": "neoth"
     },
     {
@@ -7290,13 +7290,13 @@
     {
       "test": "installers::paperless_staging::tests::competing_root_before_publication_is_preserved",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0",
+      "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_staging::tests::stage_source_swap_before_bound_publish_is_refused",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0",
+      "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
       "junitClass": "neoth"
     },
     {
@@ -7368,97 +7368,97 @@
     {
       "test": "installers::paperless_staging::tests::ownership_binds_the_exact_receipt_contract_and_coverage_boundary",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0",
+      "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_staging::tests::stale_contract_marker_is_rejected_without_touching_operator_env_or_state",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0",
+      "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_bootstrap::tests::dotenv_parser_accepts_literal_and_basic_quoted_admin_values",
       "sourcePath": "SRC/neothd/src/installers/paperless_bootstrap.rs",
-      "sourceSha256": "6A32F9E4455E50E555D46F6930E3B38489F6CD04FA55BC0163E9686B22558B05",
+      "sourceSha256": "FEE6F9FC80A88AF649DB6105DE9091FB7637935FD06AC88399B5C5A796E7E70B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_bootstrap::tests::dotenv_parser_rejects_ambiguous_or_duplicate_admin_values",
       "sourcePath": "SRC/neothd/src/installers/paperless_bootstrap.rs",
-      "sourceSha256": "6A32F9E4455E50E555D46F6930E3B38489F6CD04FA55BC0163E9686B22558B05",
+      "sourceSha256": "FEE6F9FC80A88AF649DB6105DE9091FB7637935FD06AC88399B5C5A796E7E70B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_bootstrap::tests::canonical_origin_accepts_only_literal_ipv4_loopback",
       "sourcePath": "SRC/neothd/src/installers/paperless_bootstrap.rs",
-      "sourceSha256": "6A32F9E4455E50E555D46F6930E3B38489F6CD04FA55BC0163E9686B22558B05",
+      "sourceSha256": "FEE6F9FC80A88AF649DB6105DE9091FB7637935FD06AC88399B5C5A796E7E70B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_bootstrap::tests::file_persistence_refuses_existing_token_and_preserves_url",
       "sourcePath": "SRC/neothd/src/installers/paperless_bootstrap.rs",
-      "sourceSha256": "6A32F9E4455E50E555D46F6930E3B38489F6CD04FA55BC0163E9686B22558B05",
+      "sourceSha256": "FEE6F9FC80A88AF649DB6105DE9091FB7637935FD06AC88399B5C5A796E7E70B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_bootstrap::tests::keychain_write_follows_real_pair_publication_and_rechecks_effective_state",
       "sourcePath": "SRC/neothd/src/installers/paperless_bootstrap.rs",
-      "sourceSha256": "6A32F9E4455E50E555D46F6930E3B38489F6CD04FA55BC0163E9686B22558B05",
+      "sourceSha256": "FEE6F9FC80A88AF649DB6105DE9091FB7637935FD06AC88399B5C5A796E7E70B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_bootstrap::tests::obtains_token_from_a_bounded_local_http_endpoint",
       "sourcePath": "SRC/neothd/src/installers/paperless_bootstrap.rs",
-      "sourceSha256": "6A32F9E4455E50E555D46F6930E3B38489F6CD04FA55BC0163E9686B22558B05",
+      "sourceSha256": "FEE6F9FC80A88AF649DB6105DE9091FB7637935FD06AC88399B5C5A796E7E70B",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::parses_only_a_single_literal_env_port",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "972F111D7A1E3B28061D8F04442F964578ED0CBCFED4A44D7ED5795A88010D9C",
+      "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::exact_identifier_rejects_multiple_or_spaced_container_ids",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "972F111D7A1E3B28061D8F04442F964578ED0CBCFED4A44D7ED5795A88010D9C",
+      "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::compose_never_pulls_and_uses_pinned_engine_endpoint",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "972F111D7A1E3B28061D8F04442F964578ED0CBCFED4A44D7ED5795A88010D9C",
+      "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::receipt_matches_all_pinned_indexes_and_contains_config_proof",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "972F111D7A1E3B28061D8F04442F964578ED0CBCFED4A44D7ED5795A88010D9C",
+      "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::container_validation_rejects_stopped_and_mixed_bindings",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "972F111D7A1E3B28061D8F04442F964578ED0CBCFED4A44D7ED5795A88010D9C",
+      "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::image_verification_uses_engine_platform_not_windows_host",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "972F111D7A1E3B28061D8F04442F964578ED0CBCFED4A44D7ED5795A88010D9C",
+      "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
       "junitClass": "neoth"
     },
     {
-      "test": "installers::paperless_lifecycle::tests::docker_command_removes_only_compose_interpolation_overrides",
+      "test": "installers::paperless_lifecycle::tests::docker_command_uses_a_sterile_compose_environment",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "972F111D7A1E3B28061D8F04442F964578ED0CBCFED4A44D7ED5795A88010D9C",
+      "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_bootstrap::tests::keychain_phase_two_uses_its_supplied_store_and_never_writes_after_read_failure",
       "sourcePath": "SRC/neothd/src/installers/paperless_bootstrap.rs",
-      "sourceSha256": "6A32F9E4455E50E555D46F6930E3B38489F6CD04FA55BC0163E9686B22558B05",
+      "sourceSha256": "FEE6F9FC80A88AF649DB6105DE9091FB7637935FD06AC88399B5C5A796E7E70B",
       "junitClass": "neoth"
     },
     {
@@ -7776,7 +7776,7 @@
     {
       "test": "installers::paperless_staging::tests::stage_source_swap_before_late_mutation_rebind_is_refused",
       "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-      "sourceSha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0",
+      "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
       "junitClass": "neoth"
     },
     {
@@ -10766,6 +10766,66 @@
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs",
       "sourceSha256": "ED02C39C88FC171CD421DB4856DA5EED360EB52533BC2F8D6FBC11AF6FE28A27",
       "junitClass": "neoth"
+    },
+    {
+      "test": "installers::paperless_lifecycle::tests::compose_environment_matches_bootstrap_dotenv_literals",
+      "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "installers::paperless_lifecycle::tests::volume_validation_requires_exact_name_and_compose_labels",
+      "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "installers::paperless_lifecycle::tests::container_validation_rejects_missing_wrong_and_extra_volume_mounts",
+      "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "installers::paperless_lifecycle::tests::volume_listing_accepts_only_one_exact_name",
+      "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "installers::paperless_lifecycle::tests::empty_or_absent_legacy_state_is_allowed",
+      "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "installers::paperless_lifecycle::tests::nonempty_legacy_state_aborts_before_docker_mutation",
+      "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "installers::paperless_lifecycle::tests::public_executor_entrypoint_refuses_unretained_launches",
+      "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "installers::paperless_lifecycle::tests::preexisting_unowned_volume_aborts_before_compose_up",
+      "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "installers::paperless_lifecycle::tests::post_readiness_volume_mismatch_suppresses_receipt",
+      "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "installers::paperless_staging::tests::legacy_host_mount_compose_is_rejected_without_replacing_retained_data",
+      "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
+      "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
+      "junitClass": "neoth"
     }
   ],
   "requiredGuiTests": [
@@ -12560,19 +12620,19 @@
       {
         "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_keeps_existing_token_and_binds_full_install",
         "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-        "sourceSha256": "972F111D7A1E3B28061D8F04442F964578ED0CBCFED4A44D7ED5795A88010D9C",
+        "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
         "junitClass": "neoth"
       },
       {
         "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_rejects_remote_engine_before_pull",
         "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-        "sourceSha256": "972F111D7A1E3B28061D8F04442F964578ED0CBCFED4A44D7ED5795A88010D9C",
+        "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
         "junitClass": "neoth"
       },
       {
         "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_bootstraps_missing_token_after_verified_containers",
         "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-        "sourceSha256": "972F111D7A1E3B28061D8F04442F964578ED0CBCFED4A44D7ED5795A88010D9C",
+        "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
         "junitClass": "neoth"
       },
       {
@@ -12596,13 +12656,13 @@
       {
         "test": "installers::paperless_staging::tests::requested_namespace_revalidation_composes_with_held_delete_binding",
         "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-        "sourceSha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0",
+        "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
         "junitClass": "neoth"
       },
       {
         "test": "installers::paperless_staging::tests::requested_namespace_revalidation_rejects_wrong_generation_with_held_delete_binding",
         "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-        "sourceSha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0",
+        "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
         "junitClass": "neoth"
       },
       {
@@ -12856,19 +12916,19 @@
       {
         "test": "installers::paperless_staging::tests::symlink_root_is_rejected_without_following_target",
         "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-        "sourceSha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0",
+        "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
         "junitClass": "neoth"
       },
       {
         "test": "installers::paperless_staging::tests::ancestor_swap_does_not_publish_into_replacement",
         "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-        "sourceSha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0",
+        "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
         "junitClass": "neoth"
       },
       {
         "test": "installers::paperless_staging::tests::inspection_parent_swap_reports_mismatch",
         "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-        "sourceSha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0",
+        "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
         "junitClass": "neoth"
       },
       {
@@ -12896,15 +12956,15 @@
         "junitClass": "neoth"
       },
       {
-        "test": "installers::paperless_lifecycle::tests::dispatcher_refuses_before_pull_when_compose_cannot_use_retained_capabilities",
+        "test": "installers::paperless_lifecycle::tests::unix_dispatcher_uses_retained_compose_inputs_and_records_volumes",
         "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-        "sourceSha256": "972F111D7A1E3B28061D8F04442F964578ED0CBCFED4A44D7ED5795A88010D9C",
+        "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
         "junitClass": "neoth"
       },
       {
         "test": "installers::paperless_lifecycle::tests::launch_binding_gate_prevents_remote_engine_selection_and_receipt",
         "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-        "sourceSha256": "972F111D7A1E3B28061D8F04442F964578ED0CBCFED4A44D7ED5795A88010D9C",
+        "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
         "junitClass": "neoth"
       },
       {
@@ -13218,19 +13278,19 @@
       {
         "test": "installers::paperless_staging::tests::symlink_root_is_rejected_without_following_target",
         "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-        "sourceSha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0",
+        "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
         "junitClass": "neoth"
       },
       {
         "test": "installers::paperless_staging::tests::ancestor_swap_does_not_publish_into_replacement",
         "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-        "sourceSha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0",
+        "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
         "junitClass": "neoth"
       },
       {
         "test": "installers::paperless_staging::tests::inspection_parent_swap_reports_mismatch",
         "sourcePath": "SRC/neothd/src/installers/paperless_staging.rs",
-        "sourceSha256": "89933F9F33A07861312A18EBAEBAB61EFDD2EA61172A3C2E0DF8D9BDC35975A0",
+        "sourceSha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
         "junitClass": "neoth"
       },
       {
@@ -13258,15 +13318,15 @@
         "junitClass": "neoth"
       },
       {
-        "test": "installers::paperless_lifecycle::tests::dispatcher_refuses_before_pull_when_compose_cannot_use_retained_capabilities",
+        "test": "installers::paperless_lifecycle::tests::unix_dispatcher_uses_retained_compose_inputs_and_records_volumes",
         "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-        "sourceSha256": "972F111D7A1E3B28061D8F04442F964578ED0CBCFED4A44D7ED5795A88010D9C",
+        "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
         "junitClass": "neoth"
       },
       {
         "test": "installers::paperless_lifecycle::tests::launch_binding_gate_prevents_remote_engine_selection_and_receipt",
         "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-        "sourceSha256": "972F111D7A1E3B28061D8F04442F964578ED0CBCFED4A44D7ED5795A88010D9C",
+        "sourceSha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
         "junitClass": "neoth"
       },
       {
@@ -30118,8 +30178,8 @@
       "installers::paperless_lifecycle::tests::receipt_matches_all_pinned_indexes_and_contains_config_proof",
       "installers::paperless_lifecycle::tests::container_validation_rejects_stopped_and_mixed_bindings",
       "installers::paperless_lifecycle::tests::image_verification_uses_engine_platform_not_windows_host",
-      "installers::paperless_lifecycle::tests::docker_command_removes_only_compose_interpolation_overrides",
-      "installers::paperless_lifecycle::tests::dispatcher_refuses_before_pull_when_compose_cannot_use_retained_capabilities",
+      "installers::paperless_lifecycle::tests::docker_command_uses_a_sterile_compose_environment",
+      "installers::paperless_lifecycle::tests::unix_dispatcher_uses_retained_compose_inputs_and_records_volumes",
       "installers::paperless_lifecycle::tests::launch_binding_gate_prevents_remote_engine_selection_and_receipt"
     ],
     "windowsTests": [
@@ -40545,6 +40605,96 @@
       }
     ],
     "note": "Only assert_eq(Option,None) to is_none; preserves missing-custody invariant; no new tests or production changes",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1151PaperlessRetainedCompose": {
+    "requiredTests": [
+      "installers::paperless_lifecycle::tests::compose_environment_matches_bootstrap_dotenv_literals",
+      "installers::paperless_lifecycle::tests::volume_validation_requires_exact_name_and_compose_labels",
+      "installers::paperless_lifecycle::tests::container_validation_rejects_missing_wrong_and_extra_volume_mounts",
+      "installers::paperless_lifecycle::tests::volume_listing_accepts_only_one_exact_name",
+      "installers::paperless_lifecycle::tests::empty_or_absent_legacy_state_is_allowed",
+      "installers::paperless_lifecycle::tests::nonempty_legacy_state_aborts_before_docker_mutation",
+      "installers::paperless_lifecycle::tests::public_executor_entrypoint_refuses_unretained_launches",
+      "installers::paperless_lifecycle::tests::preexisting_unowned_volume_aborts_before_compose_up",
+      "installers::paperless_lifecycle::tests::post_readiness_volume_mismatch_suppresses_receipt",
+      "installers::paperless_staging::tests::legacy_host_mount_compose_is_rejected_without_replacing_retained_data"
+    ],
+    "status": "STATIC_REVIEWED_HOSTED_PENDING",
+    "note": "Unix retained Compose stdin and named-volume custody; legacy data refuses migration; W1147 static review, real product canary pending."
+  },
+  "wave1151PaperlessSource": {
+    "base": "143158066e454fc566ba65316ffac65575a7ecca",
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 24645,
+        "sha256": "CAD7B3701D02EA588F53B95D9645B53D15F460BDDB3C6F77F974A3A4386999C7",
+        "blob": "21553e8271ac646a933f8c28db1c27ba1acaf296"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 64586,
+        "sha256": "5ACA4DC9AD21E16BB91EAD6C0DB7D5582483E28913D3FF7554DAA5A7B2FEEAC6",
+        "blob": "e9a48cf03e259a63bebdb98cbdc1a1e59d4f35f1"
+      },
+      {
+        "path": "docs/verification/gold-wave1145-product-success.json",
+        "bytes": 10795,
+        "sha256": "322544BBA8B2A9B5996B630C685DB3594F47DEEADD8280D1D95EBE6033EA524B",
+        "blob": "a6d9b28cad7e5da6079f4b7330184d8ea57fd7ce"
+      },
+      {
+        "path": "docs/verification/gold-wave1147-paperless-review.json",
+        "bytes": 739,
+        "sha256": "8795092BDACDED18EC47B4392AC9638391660CE03D1C431B56B55F5450E034B8",
+        "blob": "2ae43d9d7a36dbbfb5a1e60626b654fe3c2c7ce6"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 328294,
+        "sha256": "3C62A08768CC9ECB3EB4CF8661B9A900EBB68328C7521229BF58C1EF95872988",
+        "blob": "239de93fd79201bf7d90eb3b0413ae973631d4a4"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1345105,
+        "sha256": "48DFBF6070550ACA27EF599931963EEBDB1DA74B4342EAAC7F0629E048887240",
+        "blob": "c330b621630accb4ef7d32d89aeab9f73d3d2be3"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1955046,
+        "sha256": "E5091EB0D8163B7066AE9558AA69CDEB922A3CD48B02F6A2109EC86762343E68",
+        "blob": "89f19ef5e816aaf15a698b8fd3b281b6668da722"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_bootstrap.rs",
+        "bytes": 27242,
+        "sha256": "FEE6F9FC80A88AF649DB6105DE9091FB7637935FD06AC88399B5C5A796E7E70B",
+        "blob": "9c3746859ca27df56f693052a69ad14677fa33ab"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+        "bytes": 71481,
+        "sha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C",
+        "blob": "06e07ff667f6f4612293329ad6aeb751530b1ad0"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_staging.rs",
+        "bytes": 37562,
+        "sha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40",
+        "blob": "d39c74d147d81de21a6999a94ac948c879767e99"
+      },
+      {
+        "path": "SRC/neothd/src/updater/process_containment.rs",
+        "bytes": 53015,
+        "sha256": "CF9CBCA83388CF291B42AE6371F205CA3C5D3C11DEE69CE9D2E0A710D67A7DE5",
+        "blob": "ba3543e6e3ffbfa879ce85c9c548ddaecf4f2889"
+      }
+    ],
+    "note": "Three product files W1147 approved. W1145 n8n product admitted26inputs. No roadmap closure. Calendar WIP excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
