@@ -1,0 +1,88 @@
+{
+  "schema": "neoth-gold-group1524-root/v1",
+  "run": 36076163500,
+  "source": "f0ce9d60641c9e09bc068ca64b8eb43e7121aada",
+  "status": "ROOT_SOURCE_ADMITTED_PASS",
+  "passed": 1524,
+  "failed": 0,
+  "missingTerminal": 0,
+  "sourceBindings": 269,
+  "apiArtifacts": [
+    {
+      "id": 10839963537,
+      "digest": "sha256:2ebd934a3c6d3af1641d6de059e8b7876ccdfe28f6541b7eb431f816ac643d2c"
+    },
+    {
+      "id": 10839733761,
+      "digest": "sha256:c7ca7f7da10c72e7c6960e801453b71ae37e6882a10228a79238a8e9241dce8d"
+    },
+    {
+      "id": 10839503972,
+      "digest": "sha256:10a5b9d50d2821c26864de2f56ed905b627914f2444a4c3f67091c6c79fc1ab3"
+    }
+  ],
+  "rootZipEntryChecks": [
+    {
+      "artifact": 10839963537,
+      "entry": "fixture-identities.json",
+      "sha256": "C88C35CE387DF28308198BC9AE1895F442BCF9394C5D26BB7A61273CE7178C16"
+    },
+    {
+      "artifact": 10839963537,
+      "entry": "fixture-names.txt",
+      "sha256": "2268D62E97776F5BD2ED5C0FF67E0994B72C87BC4C8548E536895F5F5A59F1E7"
+    },
+    {
+      "artifact": 10839963537,
+      "entry": "inputs.sha256",
+      "sha256": "72572B605AC93AC956A6A46B177D1B550091EAB07F5E5FE4097B4BE4C370D0A9"
+    },
+    {
+      "artifact": 10839733761,
+      "entry": "executed-count.txt",
+      "sha256": "1C8EE08EF9A17A249CCFDA5122DDBC6687F89413BF2E2B7C7A5101A8FD3E3DF5"
+    },
+    {
+      "artifact": 10839733761,
+      "entry": "failed-fixtures.txt",
+      "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+    },
+    {
+      "artifact": 10839733761,
+      "entry": "neoth-lib-test-binary.json",
+      "sha256": "166B2CCD865A2306C8E36FCF9567CF5C15FA7C5C5ABBF17CAAA6EF25BE1A7458"
+    },
+    {
+      "artifact": 10839733761,
+      "entry": "selection.json",
+      "sha256": "4C591D11A7C72C6C43197E32DCFCAAA781768D6B63DA32138AF7F919BF53C6F8"
+    },
+    {
+      "artifact": 10839733761,
+      "entry": "source-head.txt",
+      "sha256": "95EE25629760747908FF383CB4A43FA605CAB964D07EBA62DA06C116E71B1786"
+    },
+    {
+      "artifact": 10839733761,
+      "entry": "source-ref.txt",
+      "sha256": "599BBCD7B7F94B50D9B83318BA0DD4B8E1BA9E39D1D3EE73D1FBBD70496D0F93"
+    },
+    {
+      "artifact": 10839503972,
+      "entry": "neoth-lib-test-artifacts.jsonl",
+      "sha256": "CA7A5C05F60F6F16BA72CBCF5384EC297757E0D59034F31A1CA98DEEEC6E1D8F"
+    },
+    {
+      "artifact": 10839503972,
+      "entry": "neoth-lib-test-compile.stderr.log",
+      "sha256": "763FE1DD67B3EE3947888A44C9F4F39657A46A770704675A15E7EC3C93DC42FA"
+    },
+    {
+      "artifact": 10839503972,
+      "entry": "cargo-research-lifecycle.log",
+      "sha256": "D63B5299CF8AE071F22B85E8B7B52D67DC52260C91E99857D319AEADE260E3F5"
+    }
+  ],
+  "logSha256": "D63B5299CF8AE071F22B85E8B7B52D67DC52260C91E99857D319AEADE260E3F5",
+  "boundary": "All1524 selected actual terminals passed incl17 Linux keychain+pendingdraft cases. Actual product bootstrap still fails later runtime transition. No importer/release acceptance."
+}

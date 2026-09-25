@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1069 verified Linux batch and deterministic Windows fixture (2026-09-25):**
+Root admitted Group36076163500 atf0ce9d60:1524PASS,0FAIL,0missing,269
+historical source/input bindings,3 API ZIP digests and12 extracted-entry
+hashes. All17 keychain/draft cases passed. Coref0ce also reports success.
+Receipt: docs/verification/gold-wave1062-group1524.json. The Windows stdin
+fixture now signals that its real child has closed stdin before the runner
+writes, and the child waits for acknowledgement of the actual write result.
+Only cfg(test) code changes; bounded waits, cancellation and child/capture
+cleanup remain intact. Independent W1068 review approved the exact source.
+The same test names remain selected; fresh hosted Windows proof is pending.
+Product diagnosis36077123010 continues on508bfb74. Importer/migration and
+Claude032 dream-note atomic replacement remain separate working changes.
+
 **W1066 bootstrap progressed and runtime diagnosis (2026-09-25):** The real
 f0ce product run36076160765 built successfully and reached BootstrapRemoved
 with runtime CreateIntent. Owner/key bootstrap passed its former runtime

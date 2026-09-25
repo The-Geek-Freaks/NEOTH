@@ -18,6 +18,10 @@ use zeroize::Zeroizing;
 
 const OUTPUT_LIMIT: usize = 32 * 1024;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(45);
+#[cfg(test)]
+const FIXTURE_CLOSED_STDIN_MARKER: &str = "NEOTH_BOOTSTRAP_TRANSPORT_CLOSED_STDIN_MARKER";
+#[cfg(test)]
+const FIXTURE_CLOSED_STDIN_ACK_MARKER: &str = "NEOTH_BOOTSTRAP_TRANSPORT_CLOSED_STDIN_ACK_MARKER";
 
 /// A redacted command outcome.  Do not derive `Debug`: Docker output can
 /// contain credentials returned by the in-container bootstrap client.
@@ -75,6 +79,10 @@ pub(crate) struct LocalBootstrapDockerRunner {
     pin_local_host: bool,
     #[cfg(test)]
     fixture_env: Option<(OsString, OsString)>,
+    #[cfg(test)]
+    fixture_closed_stdin_marker: Option<std::path::PathBuf>,
+    #[cfg(test)]
+    fixture_closed_stdin_ack_marker: Option<std::path::PathBuf>,
 }
 
 impl Default for LocalBootstrapDockerRunner {
@@ -91,6 +99,10 @@ impl LocalBootstrapDockerRunner {
             pin_local_host: true,
             #[cfg(test)]
             fixture_env: None,
+            #[cfg(test)]
+            fixture_closed_stdin_marker: None,
+            #[cfg(test)]
+            fixture_closed_stdin_ack_marker: None,
         }
     }
 
@@ -113,6 +125,14 @@ impl LocalBootstrapDockerRunner {
         #[cfg(test)]
         if let Some((key, value)) = &self.fixture_env {
             command.env(key, value);
+        }
+        #[cfg(test)]
+        if let Some(marker) = &self.fixture_closed_stdin_marker {
+            command.env(FIXTURE_CLOSED_STDIN_MARKER, marker);
+        }
+        #[cfg(test)]
+        if let Some(marker) = &self.fixture_closed_stdin_ack_marker {
+            command.env(FIXTURE_CLOSED_STDIN_ACK_MARKER, marker);
         }
         command
             .args(args)
@@ -138,6 +158,8 @@ impl LocalBootstrapDockerRunner {
             // Production construction cannot disable this pin.
             pin_local_host: false,
             fixture_env: None,
+            fixture_closed_stdin_marker: None,
+            fixture_closed_stdin_ack_marker: None,
         }
     }
 
@@ -153,6 +175,32 @@ impl LocalBootstrapDockerRunner {
             timeout,
             pin_local_host: false,
             fixture_env: Some((key, value)),
+            fixture_closed_stdin_marker: None,
+            fixture_closed_stdin_ack_marker: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn fixture_runner_for_closed_stdin(
+        program: OsString,
+        timeout: Duration,
+        closed_marker: std::path::PathBuf,
+        ack_marker: std::path::PathBuf,
+    ) -> Self {
+        Self {
+            program,
+            timeout,
+            pin_local_host: false,
+            fixture_env: None,
+            fixture_closed_stdin_marker: Some(closed_marker),
+            fixture_closed_stdin_ack_marker: Some(ack_marker),
+        }
+    }
+
+    #[cfg(test)]
+    fn acknowledge_closed_stdin_fixture(&self) {
+        if let Some(marker) = &self.fixture_closed_stdin_ack_marker {
+            let _ = std::fs::write(marker, b"stdin-write-complete");
         }
     }
 }
@@ -186,6 +234,14 @@ impl BootstrapDockerRunner for LocalBootstrapDockerRunner {
         let mut captures = JoinSet::new();
         captures.spawn(async move { (true, read_bounded(stdout).await) });
         captures.spawn(async move { (false, read_bounded(stderr).await) });
+        #[cfg(test)]
+        if let Some(marker) = self.fixture_closed_stdin_marker.as_deref() {
+            if let Err(failure) = wait_for_fixture_marker(marker, self.timeout, cancel).await {
+                kill_and_reap(&mut child).await;
+                abort_captures(&mut captures).await;
+                return Err(failure);
+            }
+        }
         let mut stdin_write: Option<
             std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send>>,
         > = child.stdin.take().zip(stdin).map(|(mut pipe, payload)| {
@@ -225,6 +281,8 @@ impl BootstrapDockerRunner for LocalBootstrapDockerRunner {
                 },
                 write = poll_stdin(&mut stdin_write), if stdin_write.is_some() => {
                     drop(stdin_write.take());
+                    #[cfg(test)]
+                    self.acknowledge_closed_stdin_fixture();
                     if write.is_err() {
                         kill_and_reap(&mut child).await;
                         abort_captures(&mut captures).await;
@@ -246,6 +304,8 @@ impl BootstrapDockerRunner for LocalBootstrapDockerRunner {
                 }
                 write = poll_stdin(&mut stdin_write) => {
                     drop(stdin_write.take());
+                    #[cfg(test)]
+                    self.acknowledge_closed_stdin_fixture();
                     if write.is_err() {
                         abort_captures(&mut captures).await;
                         return Err(BootstrapCommandFailure::Stdin);
@@ -308,6 +368,28 @@ async fn poll_stdin(
     match write.as_mut() {
         Some(write) => write.await,
         None => std::future::pending().await,
+    }
+}
+
+#[cfg(test)]
+async fn wait_for_fixture_marker(
+    marker: &std::path::Path,
+    timeout: Duration,
+    cancel: &mut oneshot::Receiver<()>,
+) -> Result<(), BootstrapCommandFailure> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if marker.exists() {
+            return Ok(());
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(BootstrapCommandFailure::TimedOut);
+        }
+        tokio::select! {
+            _ = &mut *cancel => return Err(BootstrapCommandFailure::Cancelled),
+            _ = tokio::time::sleep(remaining.min(Duration::from_millis(10))) => {}
+        }
     }
 }
 
@@ -391,6 +473,21 @@ mod tests {
         )
     }
 
+    fn fixture_runner_for_closed_stdin(
+        timeout: Duration,
+        closed_marker: &std::path::Path,
+        ack_marker: &std::path::Path,
+    ) -> LocalBootstrapDockerRunner {
+        LocalBootstrapDockerRunner::fixture_runner_for_closed_stdin(
+            std::env::current_exe()
+                .expect("current test executable")
+                .into_os_string(),
+            timeout,
+            closed_marker.to_path_buf(),
+            ack_marker.to_path_buf(),
+        )
+    }
+
     fn fixture_args(name: &str) -> Vec<String> {
         vec![
             "--exact".into(),
@@ -423,18 +520,22 @@ mod tests {
     #[test]
     #[ignore = "child-process fixture"]
     fn fixture_close_stdin() {
-        use std::io::Read as _;
-
-        // Consume one byte first, so the parent write is in flight before this
-        // fixture closes its inherited read end. The bounded linger gives the
-        // pending write an unambiguous BrokenPipe result before this child exits.
-        let mut start = [0_u8; 1];
-        std::io::stdin()
-            .lock()
-            .read_exact(&mut start)
-            .expect("fixture receives write start");
         close_fixture_stdin();
-        std::thread::sleep(Duration::from_millis(100));
+        let closed_marker = std::env::var_os(FIXTURE_CLOSED_STDIN_MARKER)
+            .map(PathBuf::from)
+            .expect("fixture closed-stdin marker");
+        let ack_marker = std::env::var_os(FIXTURE_CLOSED_STDIN_ACK_MARKER)
+            .map(PathBuf::from)
+            .expect("fixture closed-stdin acknowledgement marker");
+        std::fs::write(closed_marker, b"stdin-closed").expect("publish closed stdin marker");
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !ack_marker.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "parent never completed the closed-stdin write"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     fn close_fixture_stdin() {
@@ -554,8 +655,15 @@ mod tests {
 
     #[tokio::test]
     async fn closed_stdin_is_a_coarse_failure_without_a_join_panic() {
+        let marker_dir = tempfile::tempdir().unwrap();
+        let closed_marker = marker_dir.path().join("closed");
+        let ack_marker = marker_dir.path().join("acknowledged");
         let (_cancel_tx, mut cancel) = oneshot::channel();
-        let result = fixture_runner(Duration::from_secs(5))
+        let result = fixture_runner_for_closed_stdin(
+            Duration::from_secs(5),
+            &closed_marker,
+            &ack_marker,
+        )
             .run(
                 &fixture_args("integrations::n8n::bootstrap_transport::tests::fixture_close_stdin"),
                 Some(Zeroizing::new(vec![7_u8; 1024 * 1024])),
