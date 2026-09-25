@@ -2,6 +2,26 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1203 bounded Paperless question lookup (2026-09-25):**
+POST /api/paperless/consult requires its own paperless:consult:read scope and a
+strict question/limit body. It captures the accepted instance configuration;
+requests cannot choose a vault/subdirectory. The new no-follow reader bounds
+questions to4KiB, results to20, enumeration to1000entries, each document to256KiB
+and total reads to8MiB. A genuinely absent directory returns empty; malformed,
+unreadable, linked or over-budget data returns a fixed503. Blocking disk work
+uses spawn_blocking. Responses expose filename/score/excerpt, never internal paths.
+Shared legacy scoring retains full-string Unicode lowercase semantics and now
+maps match positions back to original UTF-8 boundaries; both expanding lowercase
+and Greek final-sigma regressions cover the change. Review also corrected the
+cap-std timestamp conversion and an explicit Option type before publication.
+The formerly unavailable consult starter is now an inactive manual question
+lookup. Its empty default question must be filled by the operator. It promises
+neither a new-document trigger, a draft, provider use nor mail delivery.
+Twelve added tests include five raw loopback HTTP cases and one Unix-only path
+refusal: Native1864/Group1647/Windows422, Linux extras63/macOS58. They require
+hosted verification; the prior email Group1635/Windows411 are still running.
+No additional roadmap item closes, and no local executable validation ran.
+
 **W1200 managed-install criterion accepted (2026-09-25):**
 GOLD-LF-002-09 is now accepted against the two independently reviewed compiled
 product runs: n8n36093815406 at390df51c and Paperless36092294058 at0bc75aa0.

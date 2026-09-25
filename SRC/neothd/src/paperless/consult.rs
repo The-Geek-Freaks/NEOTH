@@ -35,7 +35,10 @@
 //! optional embedding pass behind a freedom.yaml flag.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::ffi::OsStr;
+use std::path::{Component, Path, PathBuf};
+
+use anyhow::{Context, Result};
 
 /// One matched document. The body excerpt is operator-visible —
 /// kept short (~`MAX_EXCERPT_CHARS`) so the consult result fits
@@ -75,6 +78,14 @@ pub struct ConsultResult {
 /// Default cap on returned matches. Operators see the top N; deeper
 /// hits are dropped to keep the consult preview readable.
 pub const DEFAULT_MAX_MATCHES: usize = 5;
+
+/// W1194 public-reader limits. They bound both adversarial vault enumeration
+/// and total document material admitted into a single consultation.
+const MAX_BOUNDED_MATCHES: usize = 20;
+const MAX_BOUNDED_QUESTION_BYTES: usize = 4096;
+const MAX_BOUNDED_DIRECTORY_ENTRIES: usize = 1000;
+const MAX_BOUNDED_DOCUMENT_BYTES: usize = 256 * 1024;
+const MAX_BOUNDED_TOTAL_BYTES: usize = 8 * 1024 * 1024;
 
 /// Excerpt window size in chars.
 pub const MAX_EXCERPT_CHARS: usize = 200;
@@ -176,16 +187,7 @@ pub fn consult(
         let Ok(body) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let body_lc = body.to_lowercase();
-
-        let mut score = 0usize;
-        let mut first_hit_byte: Option<usize> = None;
-        for token in &query_tokens {
-            if let Some(idx) = body_lc.find(token.as_str()) {
-                score += 1;
-                first_hit_byte = Some(first_hit_byte.map_or(idx, |prev| prev.min(idx)));
-            }
-        }
+        let (score, first_hit_byte) = score_body(&body, &query_tokens);
         if score == 0 {
             continue;
         }
@@ -223,10 +225,237 @@ pub fn consult(
     }
 }
 
+/// Bounded, no-follow consultation for the scoped API adapter.
+///
+/// The root and configured subdirectory are validated before capability opens.
+/// This reader never creates a directory or file. A genuinely missing
+/// Paperless directory returns an empty result; malformed structure, links,
+/// denied reads, invalid UTF-8, and every configured budget breach fail closed.
+pub fn consult_bounded(
+    vault_root: &Path,
+    subdir: &str,
+    question: &str,
+    max_matches: usize,
+) -> Result<ConsultResult> {
+    validate_bounded_inputs(vault_root, subdir, question, max_matches)?;
+    let question = question.trim();
+    let query_tokens = extract_query_tokens(question);
+    if query_tokens.is_empty() {
+        return Ok(empty_consult_result(query_tokens));
+    }
+    let Some((directory, directory_path)) = open_bounded_paperless_dir(vault_root, subdir)? else {
+        return Ok(empty_consult_result(query_tokens));
+    };
+
+    let mut directory_entries = 0usize;
+    let mut total_bytes = 0usize;
+    let mut scanned = 0usize;
+    let mut candidates = Vec::new();
+    for entry in directory.entries().context("enumerate bounded Paperless directory")? {
+        directory_entries = directory_entries
+            .checked_add(1)
+            .context("bounded Paperless directory entry counter overflow")?;
+        anyhow::ensure!(
+            directory_entries <= MAX_BOUNDED_DIRECTORY_ENTRIES,
+            "bounded Paperless directory entry cap exceeded"
+        );
+        let name = entry
+            .context("read bounded Paperless directory entry")?
+            .file_name();
+        let filename = name
+            .to_str()
+            .context("bounded Paperless directory contains a non-UTF-8 name")?;
+        let path = directory_path.join(&name);
+        let metadata = directory
+            .symlink_metadata(&name)
+            .with_context(|| format!("inspect bounded Paperless entry {}", path.display()))?;
+        anyhow::ensure!(
+            !crate::skills::store::cap_metadata_is_link_like(&metadata),
+            "bounded Paperless directory contains a link-like entry"
+        );
+        let is_markdown = Path::new(filename).extension().and_then(|ext| ext.to_str()) == Some("md");
+        if !is_markdown {
+            continue;
+        }
+        anyhow::ensure!(
+            metadata.is_file(),
+            "bounded Paperless markdown entry is not a regular file"
+        );
+        scanned = scanned
+            .checked_add(1)
+            .context("bounded Paperless document counter overflow")?;
+        let remaining = MAX_BOUNDED_TOTAL_BYTES
+            .checked_sub(total_bytes)
+            .context("bounded Paperless aggregate byte cap exceeded")?;
+        let bytes = crate::skills::store::read_regular_file_bounded(
+            &directory,
+            &name,
+            &path,
+            remaining.min(MAX_BOUNDED_DOCUMENT_BYTES),
+        )
+        .context("read bounded Paperless markdown document")?;
+        total_bytes = total_bytes
+            .checked_add(bytes.len())
+            .context("bounded Paperless aggregate byte counter overflow")?;
+        anyhow::ensure!(
+            total_bytes <= MAX_BOUNDED_TOTAL_BYTES,
+            "bounded Paperless aggregate byte cap exceeded"
+        );
+        let body = String::from_utf8(bytes).context("bounded Paperless markdown is not UTF-8")?;
+        let (score, first_hit_byte) = score_body(&body, &query_tokens);
+        if score == 0 {
+            continue;
+        }
+        let mtime_unix = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.into_std().duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        candidates.push(ConsultMatch {
+            filename: filename.to_owned(),
+            path,
+            score,
+            excerpt: build_excerpt(&body, first_hit_byte),
+            mtime_unix,
+        });
+    }
+    sort_and_truncate_matches(&mut candidates, max_matches);
+    Ok(ConsultResult {
+        matches: candidates,
+        query_tokens,
+        scanned,
+    })
+}
+
+fn validate_bounded_inputs(
+    vault_root: &Path,
+    subdir: &str,
+    question: &str,
+    max_matches: usize,
+) -> Result<()> {
+    anyhow::ensure!(
+        vault_root.is_absolute()
+            && vault_root.components().all(|component| {
+                matches!(component, Component::Prefix(_) | Component::RootDir | Component::Normal(_))
+            }),
+        "bounded Paperless vault root must be absolute with normal descendants"
+    );
+    anyhow::ensure!(
+        !subdir.is_empty()
+            && Path::new(subdir)
+                .components()
+                .all(|component| matches!(component, Component::Normal(_))),
+        "bounded Paperless subdirectory must contain only normal components"
+    );
+    anyhow::ensure!(
+        !question.trim().is_empty() && question.trim().len() <= MAX_BOUNDED_QUESTION_BYTES,
+        "bounded Paperless question must be non-empty and within its byte cap"
+    );
+    anyhow::ensure!(
+        (1..=MAX_BOUNDED_MATCHES).contains(&max_matches),
+        "bounded Paperless match limit must be in 1..={MAX_BOUNDED_MATCHES}"
+    );
+    Ok(())
+}
+
+fn empty_consult_result(query_tokens: Vec<String>) -> ConsultResult {
+    ConsultResult {
+        matches: Vec::new(),
+        query_tokens,
+        scanned: 0,
+    }
+}
+
+fn open_bounded_paperless_dir(
+    vault_root: &Path,
+    subdir: &str,
+) -> Result<Option<(cap_std::fs::Dir, PathBuf)>> {
+    let Some(root) = crate::skills::store::open_absolute_bound_directory(
+        vault_root,
+        false,
+        "bounded Paperless vault root",
+    )?
+    else {
+        return Ok(None);
+    };
+    let mut directory = root.dir;
+    let mut display_path = root.display_path;
+    for component in Path::new(subdir).components() {
+        let name = component.as_os_str();
+        let child_path = display_path.join(name);
+        let Some(child) = crate::skills::store::open_real_child_dir_if_present(
+            &directory,
+            name,
+            &child_path,
+        )?
+        else {
+            return Ok(None);
+        };
+        directory = child;
+        display_path = child_path;
+    }
+    let paperless_path = display_path.join("Paperless");
+    let Some(paperless) = crate::skills::store::open_real_child_dir_if_present(
+        &directory,
+        OsStr::new("Paperless"),
+        &paperless_path,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some((paperless, paperless_path)))
+}
+
+fn score_body(body: &str, query_tokens: &[String]) -> (usize, Option<usize>) {
+    // Keep the legacy full-string lowercase behavior for scoring. In
+    // particular, it preserves context-sensitive Unicode mappings such as a
+    // Greek final sigma; lowercasing each character independently does not.
+    let lowered = body.to_lowercase();
+    let mut original_offsets = Vec::new();
+    let mut lowered_prefix_bytes = 0usize;
+    for (original_byte, character) in body.char_indices() {
+        original_offsets.push((lowered_prefix_bytes, original_byte));
+        // Context-sensitive Greek sigma substitutions retain their UTF-8 byte
+        // width. This supplies the folded-prefix byte boundary while the
+        // complete `body.to_lowercase()` value above remains the match source.
+        lowered_prefix_bytes += character.to_lowercase().map(char::len_utf8).sum::<usize>();
+    }
+
+    let mut score = 0usize;
+    let mut first_hit_byte: Option<usize> = None;
+    for token in query_tokens {
+        if let Some(lowered_hit) = lowered.find(token) {
+            score += 1;
+            let original_hit = original_offsets
+                .iter()
+                .rev()
+                .find(|(lowered_start, _)| *lowered_start <= lowered_hit)
+                .map(|(_, original_byte)| *original_byte)
+                .unwrap_or(0);
+            first_hit_byte = Some(first_hit_byte.map_or(original_hit, |prior| prior.min(original_hit)));
+        }
+    }
+    (score, first_hit_byte)
+}
+
+fn sort_and_truncate_matches(candidates: &mut Vec<ConsultMatch>, max_matches: usize) {
+    candidates.sort_by(|a, b| {
+        b.score
+            .cmp(&a.score)
+            .then_with(|| b.mtime_unix.cmp(&a.mtime_unix))
+            .then_with(|| a.filename.cmp(&b.filename))
+    });
+    candidates.truncate(max_matches);
+}
+
 /// Build a `MAX_EXCERPT_CHARS`-wide window around `hit_byte`. Uses
 /// char-boundary-safe slicing so multi-byte UTF-8 doesn't panic.
 fn build_excerpt(body: &str, hit_byte: Option<usize>) -> String {
-    let center = hit_byte.unwrap_or(0);
+    let mut center = hit_byte.unwrap_or(0).min(body.len());
+    while center > 0 && !body.is_char_boundary(center) {
+        center -= 1;
+    }
     // Convert byte offset to char index — work in chars from here
     // on so UTF-8 multi-byte sequences don't get sliced mid-code-point.
     let chars: Vec<char> = body.chars().collect();
@@ -491,5 +720,111 @@ mod tests {
         let r = consult(vault.path(), "NEOTH", "invoice acme", 5);
         assert_eq!(r.matches.len(), 1);
         assert_eq!(r.matches[0].score, 2);
+    }
+
+    #[test]
+    fn bounded_consult_matches_and_ranks_without_following_legacy_paths() {
+        let vault = tempfile::tempdir().unwrap();
+        let dir = vault.path().join("NEOTH").join("Paperless");
+        write_md(&dir, "one.md", "invoice invoice invoice");
+        write_md(&dir, "two.md", "invoice from acme");
+
+        let result = consult_bounded(vault.path(), "NEOTH", "invoice acme", 5).unwrap();
+        assert_eq!(result.scanned, 2);
+        assert_eq!(result.matches.len(), 2);
+        assert_eq!(result.matches[0].filename, "two.md");
+        assert_eq!(result.matches[0].score, 2);
+    }
+
+    #[test]
+    fn bounded_consult_distinguishes_missing_directory_from_file_and_corrupt_document() {
+        let missing = tempfile::tempdir().unwrap();
+        let result = consult_bounded(missing.path(), "NEOTH", "invoice", 5).unwrap();
+        assert!(result.matches.is_empty());
+        assert_eq!(result.scanned, 0);
+
+        let file_instead = tempfile::tempdir().unwrap();
+        let paperless = file_instead.path().join("NEOTH").join("Paperless");
+        std::fs::create_dir_all(paperless.parent().unwrap()).unwrap();
+        std::fs::write(&paperless, b"not-a-directory").unwrap();
+        assert!(consult_bounded(file_instead.path(), "NEOTH", "invoice", 5).is_err());
+
+        let corrupt = tempfile::tempdir().unwrap();
+        let corrupt_dir = corrupt.path().join("NEOTH").join("Paperless");
+        std::fs::create_dir_all(&corrupt_dir).unwrap();
+        std::fs::write(corrupt_dir.join("bad.md"), [0xff_u8, 0xfe]).unwrap();
+        assert!(consult_bounded(corrupt.path(), "NEOTH", "invoice", 5).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_consult_refuses_a_symlinked_document() {
+        use std::os::unix::fs::symlink;
+
+        let vault = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let dir = vault.path().join("NEOTH").join("Paperless");
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = outside.path().join("outside.md");
+        std::fs::write(&target, "invoice").unwrap();
+        symlink(target, dir.join("linked.md")).unwrap();
+        assert!(consult_bounded(vault.path(), "NEOTH", "invoice", 5).is_err());
+    }
+
+    #[test]
+    fn bounded_consult_enforces_per_document_entry_and_aggregate_budgets() {
+        let per_document = tempfile::tempdir().unwrap();
+        let per_document_dir = per_document.path().join("NEOTH").join("Paperless");
+        write_md(
+            &per_document_dir,
+            "large.md",
+            &"x".repeat(MAX_BOUNDED_DOCUMENT_BYTES + 1),
+        );
+        assert!(consult_bounded(per_document.path(), "NEOTH", "invoice", 5).is_err());
+
+        let entries = tempfile::tempdir().unwrap();
+        let entries_dir = entries.path().join("NEOTH").join("Paperless");
+        for index in 0..=MAX_BOUNDED_DIRECTORY_ENTRIES {
+            write_md(&entries_dir, &format!("entry-{index}.txt"), "ignored");
+        }
+        assert!(consult_bounded(entries.path(), "NEOTH", "invoice", 5).is_err());
+
+        let aggregate = tempfile::tempdir().unwrap();
+        let aggregate_dir = aggregate.path().join("NEOTH").join("Paperless");
+        let full_document = "x".repeat(MAX_BOUNDED_DOCUMENT_BYTES);
+        for index in 0..(MAX_BOUNDED_TOTAL_BYTES / MAX_BOUNDED_DOCUMENT_BYTES) {
+            write_md(&aggregate_dir, &format!("full-{index}.md"), &full_document);
+        }
+        write_md(&aggregate_dir, "overflow.md", "x");
+        assert!(consult_bounded(aggregate.path(), "NEOTH", "invoice", 5).is_err());
+    }
+
+    #[test]
+    fn unicode_lowercase_expansion_keeps_excerpt_on_a_valid_utf8_boundary() {
+        let vault = tempfile::tempdir().unwrap();
+        let dir = vault.path().join("NEOTH").join("Paperless");
+        write_md(&dir, "unicode.md", "İéclair invoice");
+
+        let legacy = consult(vault.path(), "NEOTH", "éclair", 5);
+        let bounded = consult_bounded(vault.path(), "NEOTH", "éclair", 5).unwrap();
+        for result in [&legacy, &bounded] {
+            assert_eq!(result.matches.len(), 1);
+            assert!(result.matches[0].excerpt.contains("éclair"));
+            assert!(std::str::from_utf8(result.matches[0].excerpt.as_bytes()).is_ok());
+        }
+    }
+
+    #[test]
+    fn unicode_greek_final_sigma_keeps_legacy_whole_string_scoring() {
+        let vault = tempfile::tempdir().unwrap();
+        let dir = vault.path().join("NEOTH").join("Paperless");
+        write_md(&dir, "greek.md", "ΛΟΓΟΣ invoice");
+
+        let legacy = consult(vault.path(), "NEOTH", "ΛΟΓΟΣ", 5);
+        let bounded = consult_bounded(vault.path(), "NEOTH", "ΛΟΓΟΣ", 5).unwrap();
+        for result in [&legacy, &bounded] {
+            assert_eq!(result.matches.len(), 1);
+            assert!(result.matches[0].excerpt.contains("ΛΟΓΟΣ"));
+        }
     }
 }

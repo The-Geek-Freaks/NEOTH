@@ -79,6 +79,8 @@ pub const SCOPE_PROPOSALS_READ: &str = "proposals:read";
 pub const SCOPE_PERMISSIONS_READ: &str = "permissions:read";
 /// Read recorded Paperless quarantine threat metadata, without OCR text.
 pub const SCOPE_PAPERLESS_FINDINGS_READ: &str = "paperless:findings:read";
+/// Read bounded excerpts from configured local Paperless notes.
+pub const SCOPE_PAPERLESS_CONSULT_READ: &str = "paperless:consult:read";
 /// Triage submitted email text and record local quarantine decisions.
 pub const SCOPE_EMAIL_THREAT_WRITE: &str = "email:threat:write";
 /// Read stats.
@@ -98,6 +100,7 @@ pub const ALL_SCOPES: &[&str] = &[
     SCOPE_DRAFTS_READ,
     SCOPE_EMAIL_THREAT_WRITE,
     SCOPE_MEMORY_WRITE,
+    SCOPE_PAPERLESS_CONSULT_READ,
     SCOPE_PAPERLESS_FINDINGS_READ,
     SCOPE_PERMISSIONS_READ,
     SCOPE_PROPOSALS_READ,

@@ -62,6 +62,20 @@ use super::n8n_workflows::BootstrapWorkflow;
 /// a universal container-to-host bridge.
 pub const NEOTH_HTTP_BASE: &str = "http://REPLACE_WITH_NEOTH_HOST:9744";
 
+fn build_paperless_consult_workflow(name: &str, endpoint: &str, method: &str) -> String {
+    let url = format!("={{{{ $json.neothBaseUrl + '{endpoint}' }}}}");
+    let body = serde_json::json!({
+        "name": name, "active": false,
+        "nodes": [
+            { "parameters": {}, "id": "paperless_invoice_consult_manual", "name": "Manual Trigger", "type": "n8n-nodes-base.manualTrigger", "typeVersion": 1, "position": [0, 200], "notesInFlow": true, "notes": "Run manually only after entering an actual question in Operator Configuration. This starter has no schedule or document-event trigger." },
+            { "parameters": { "mode": "manual", "assignments": { "assignments": [ { "id": "paperless_invoice_consult_neoth_base_url", "name": "neothBaseUrl", "type": "string", "value": NEOTH_HTTP_BASE }, { "id": "paperless_invoice_consult_question", "name": "question", "type": "string", "value": "" }, { "id": "paperless_invoice_consult_limit", "name": "limit", "type": "number", "value": 5 } ] }, "options": {} }, "id": "paperless_invoice_consult_configuration", "name": "Operator Configuration", "type": "n8n-nodes-base.set", "typeVersion": 3.5, "position": [240, 200], "notesInFlow": true, "notes": "Set neothBaseUrl to an address reachable from n8n and enter the actual Paperless question before a manual run. The empty default question is deliberately invalid. Bind an HTTP Header Auth credential with paperless:consult:read on the request node before activation." },
+            { "parameters": { "url": url, "method": method, "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendBody": true, "contentType": "json", "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ question: $json.question, limit: $json.limit }) }}", "options": {} }, "id": "paperless_invoice_consult_http", "name": "NEOTH HTTP", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4, "position": [480, 200], "notesInFlow": true, "notes": "Implemented POST /api/paperless/consult requires paperless:consult:read and performs a bounded local Paperless keyword lookup. It does not ingest documents, call Paperless-NGX or a provider, create drafts, or send mail." }
+        ],
+        "connections": { "Manual Trigger": { "main": [[ { "node": "Operator Configuration", "type": "main", "index": 0 } ]] }, "Operator Configuration": { "main": [[ { "node": "NEOTH HTTP", "type": "main", "index": 0 } ]] } },
+        "settings": { "executionOrder": "v1" }
+    });
+    serde_json::to_string(&body).expect("serde_json::Value always serialises")
+}
 fn build_email_threat_workflow(name: &str, endpoint: &str, method: &str) -> String {
     let trigger_id = "email_threat_quarantine_imap";
     let configuration_id = "email_threat_quarantine_configuration";
@@ -108,6 +122,9 @@ fn build_workflow_skeleton(
     endpoint: &str,
     method: &str,
 ) -> String {
+    if slug == "paperless_invoice_consult" {
+        return build_paperless_consult_workflow(name, endpoint, method);
+    }
     if slug == "email_threat_quarantine" {
         return build_email_threat_workflow(name, endpoint, method);
     }
@@ -344,10 +361,10 @@ struct StarterSpec {
 const STARTER_SPECS: &[StarterSpec] = &[
     StarterSpec {
         slug: "paperless_invoice_consult",
-        name: "Paperless invoice → consult + draft",
-        description: "Unavailable adapter: intended PL-02/PL-03 paperless-ngx consult and draft workflow.",
+        name: "Paperless consult (manual)",
+        description: "PL-03 manual bounded local Paperless keyword lookup; enter an actual question before running.",
         cron: "*/5 * * * *",
-        endpoint: "/paperless/consult",
+        endpoint: "/api/paperless/consult",
         method: "POST",
     },
     StarterSpec {
@@ -542,7 +559,11 @@ mod tests {
         for (spec, w) in STARTER_SPECS.iter().zip(starter_workflows().iter()) {
             let v: serde_json::Value = serde_json::from_str(w.body).unwrap();
             let nodes = v["nodes"].as_array().expect("nodes is array");
-            if spec.slug == "email_threat_quarantine" {
+            if spec.slug == "paperless_invoice_consult" {
+                assert!(nodes.iter().any(|n| n["type"] == "n8n-nodes-base.manualTrigger"));
+                assert!(!nodes.iter().any(|n| n["type"] == "n8n-nodes-base.scheduleTrigger"));
+                continue;
+            } else if spec.slug == "email_threat_quarantine" {
                 assert!(
                     nodes
                         .iter()
@@ -609,7 +630,11 @@ mod tests {
     fn each_starter_body_has_its_required_trigger_configuration_and_http_wiring() {
         for w in starter_workflows() {
             let v: serde_json::Value = serde_json::from_str(w.body).unwrap();
-            if w.slug == "email_threat_quarantine" {
+            if w.slug == "paperless_invoice_consult" {
+                assert_eq!(v["connections"]["Manual Trigger"]["main"][0][0]["node"], "Operator Configuration");
+                assert_eq!(v["connections"]["Operator Configuration"]["main"][0][0]["node"], "NEOTH HTTP");
+                continue;
+            } else if w.slug == "email_threat_quarantine" {
                 assert_eq!(
                     v["connections"]["Email Trigger (IMAP)"]["main"][0][0]["node"],
                     "Operator Configuration"
@@ -783,6 +808,13 @@ mod tests {
                         .as_str()
                         .is_some_and(|notes| notes.contains("requires drafts:read"))
                 );
+            } else if w.slug == "paperless_invoice_consult" {
+                assert_eq!(http["parameters"]["method"], "POST");
+                assert_eq!(http["parameters"]["sendBody"], true);
+                assert_eq!(http["parameters"]["contentType"], "json");
+                assert_eq!(http["parameters"]["specifyBody"], "json");
+                assert_eq!(http["parameters"]["jsonBody"], "={{ JSON.stringify({ question: $json.question, limit: $json.limit }) }}");
+                assert!(http["notes"].as_str().is_some_and(|notes| notes.contains("requires paperless:consult:read")));
             } else if w.slug == "email_threat_quarantine" {
                 assert_eq!(http["parameters"]["method"], "POST");
                 assert_eq!(http["parameters"]["sendBody"], true);
@@ -804,6 +836,24 @@ mod tests {
         }
     }
 
+    #[test]
+    fn paperless_consult_starter_is_manual_question_lookup_only() {
+        let w = find_by_slug("paperless_invoice_consult").expect("consult starter exists");
+        let v: serde_json::Value = serde_json::from_str(w.body).unwrap();
+        assert_eq!(v["active"], false);
+        let nodes = v["nodes"].as_array().unwrap();
+        assert!(nodes.iter().any(|n| n["type"] == "n8n-nodes-base.manualTrigger"));
+        assert!(!nodes.iter().any(|n| n["type"] == "n8n-nodes-base.scheduleTrigger"));
+        let configuration = nodes.iter().find(|n| n["name"] == "Operator Configuration").unwrap();
+        let fields = configuration["parameters"]["assignments"]["assignments"].as_array().unwrap();
+        assert_eq!(fields[0]["name"], "neothBaseUrl"); assert_eq!(fields[1]["name"], "question"); assert_eq!(fields[1]["value"], ""); assert_eq!(fields[2]["name"], "limit"); assert_eq!(fields[2]["value"], 5);
+        let http = nodes.iter().find(|n| n["type"] == "n8n-nodes-base.httpRequest").unwrap();
+        assert_eq!(http["parameters"]["url"], "={{ $json.neothBaseUrl + '/api/paperless/consult' }}");
+        assert_eq!(http["parameters"]["method"], "POST"); assert_eq!(http["parameters"]["authentication"], "genericCredentialType"); assert_eq!(http["parameters"]["genericAuthType"], "httpHeaderAuth");
+        assert_eq!(http["parameters"]["jsonBody"], "={{ JSON.stringify({ question: $json.question, limit: $json.limit }) }}");
+        assert!(http["notes"].as_str().unwrap().contains("requires paperless:consult:read"));
+        assert!(http["notes"].as_str().unwrap().contains("does not ingest documents"));
+    }
     #[test]
     fn email_threat_starter_uses_pinned_text_only_imap_contract() {
         let w = find_by_slug("email_threat_quarantine").expect("email starter exists");

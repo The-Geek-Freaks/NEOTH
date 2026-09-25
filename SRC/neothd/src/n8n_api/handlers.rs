@@ -59,6 +59,7 @@ pub struct MemoryDriftRequest {
 mod calendar_agenda;
 mod calendar_route;
 mod email_threat;
+mod paperless_consult;
 mod paperless_findings;
 mod pending_drafts;
 mod pending_proposals;
@@ -816,6 +817,7 @@ pub async fn route(ctx: ApiRequestCtx, state: Arc<ApiState>) -> HandlerOutcome {
         ("POST", "/api/permissions/audit") => permission_audit::handle(&ctx, &state).await,
         ("POST", "/api/calendar/agenda") => calendar_route::handle(&ctx, &state).await,
         ("POST", "/api/email/threat/scan") => email_threat::handle(&ctx, &state),
+        ("POST", "/api/paperless/consult") => paperless_consult::handle(&ctx, &state).await,
         ("POST", "/api/paperless/findings/recent") => {
             paperless_findings::handle(&ctx, &state).await
         }

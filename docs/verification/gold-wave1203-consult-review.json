@@ -1,0 +1,95 @@
+{
+  "schema": "neoth-gold-paperless-consult-review/v1",
+  "base": "06d84d2cbd3292cda1dc972bce00933cc3723293",
+  "scope": "Bounded local keyword consult + dedicated read scope + real loopback HTTP + inactive manual-question starter",
+  "review": "# W1201 — bounded Paperless consult batch, independent static review\n\n## Verdict: APPROVE_STATIC_ONLY\n\nThe new `POST /api/paperless/consult` surface is a scoped, read-only lookup. The review found no concrete authority, persistence, path, Unicode-offset, bound, response-redaction, workflow-shape, or static test-compatibility defect in the frozen source.\n\n## Backend reader\n\n`consult_bounded` validates an absolute, navigation-free vault root; a non-empty subdirectory composed only of normal path components; a trimmed non-empty question capped at 4,096 bytes; and a match limit of 1 through 20 before opening a path.\n\nIt opens root, configured children, and `Paperless` using retained no-follow directory capabilities. Missing root/subdirectory/Paperless produces an empty result. A file in place of a required directory, a link-like entry, a non-UTF-8 name/document, denied read, iterator failure, or any counter/byte-cap failure becomes an error rather than a partial or empty success.\n\nThe read cap is concrete: at most 1,000 directory entries, 256 KiB per Markdown document, and 8 MiB aggregate Markdown bytes. Every Markdown leaf is read through `read_regular_file_bounded`; no input becomes a filesystem path. The reader has no create, rename, write, provider, Paperless-NGX, or delivery operation.\n\nThe scoring helper deliberately preserves whole-string lowercase matching. Its lowercased-byte prefix map converts each hit to an original character boundary before excerpt slicing, including length-expanding Unicode lowercasing. This keeps the existing Greek-final-sigma behavior while avoiding invalid UTF-8 offsets. The static tests cover expansion and Greek-final-sigma cases.\n\n## API authority, response, and HTTP tests\n\nThe server requires `paperless:consult:read` before buffering, parsing, or routing the request. The handler uses a strict `deny_unknown_fields` request type; all parse and semantic-invalid cases return the endpoint-local fixed `paperless_consult_request_invalid` response. The caller cannot select a vault, a subdirectory, or an ambient-home fallback; those come from the current instance configuration once per accepted request.\n\nBlocking filesystem work executes in `spawn_blocking`. Response matches contain filename, score, and excerpt only; internal absolute paths and mtimes are excluded. Any reader, cap, or worker failure maps to a fixed 503. The loopback fixture covers wrong scope before malformed-body/vault access, malformed/unknown/blank/oversized/invalid-limit 400 behavior, configured-vault isolation and path redaction, absent configuration, and absent-versus-corrupt/oversized store behavior.\n\n## Manual starter\n\n`paperless_invoice_consult` is inactive and uses `Manual Trigger` → `Operator Configuration` → `NEOTH HTTP`; it has no schedule or document-event trigger. Its default question is intentionally empty, limit defaults to 5, and its actual HTTP v4 JSON payload is exactly `{ question, limit }`. The starter has Header Auth with documented `paperless:consult:read`, does not ingest documents, call Paperless-NGX or a provider, create a draft, or send mail.\n\nThe existing all-starter tests account for this manual-trigger exception while retaining URL, method, body, configuration, connection, authentication, distinct-body, node-ID, and picker-contract checks. The special workflow keeps the ordinary `$json.neothBaseUrl` URL, so it satisfies the general endpoint assertion without a linked-origin exception.\n\n## Frozen inputs\n\n| Path | SHA-256 |\n| --- | --- |\n| `SRC/neothd/src/paperless/consult.rs` | `5A299ED3A7FE2B23D1BC1ECEF35AA37E438333BFAC7DE6E55F9005BE1D679EC4` |\n| `SRC/neothd/src/n8n_api/handlers/paperless_consult.rs` | `3AB5D70B5CCD1F443E9F4FFE87D08603C6685FF3CF8A3BC067B220402A6C847F` |\n| `SRC/neothd/src/n8n_api/paperless_consult_http_tests.rs` | `9C711A5A5D741DF174DEB2C1E0393A6DCD26EACCE8DB99782B06E6E27919A1B2` |\n| `SRC/neothd/src/n8n_api/handlers.rs` | `E47B2AD5FAC4F21C3BC7984229FBD961334F585176EB1594156057A15C509FF7` |\n| `SRC/neothd/src/n8n_api/server.rs` | `5BB7D4C128D49242EDBB2237D2D962AAA9F22F16D01EC837784D40EE564E297C` |\n| `SRC/neothd/src/security/api_tokens.rs` | `51535FCB835F740BD52A6F998E095CAE1BB297559AC771AB88ADEFBA7947C6A5` |\n| `SRC/neothd/src/installers/n8n_starter_workflows.rs` | `D6A0426A85B15E7D715AE64D28B1A81B0FF805E87343D7651FE11F5009021C1B` |\n\n## Integrity and evidence boundary\n\n- Reviewed HEAD: `ff32ff861a22d1f9ce2a418df8a0880fbee21b08`\n- `git diff HEAD --check`: **PASS**.\n- Static-only under the BSOD hold. No local compiler, parser, formatter, tests, Docker, Node, Python, GUI, or runtime command ran.\n- The unexecuted focused and loopback tests require GitHub-hosted validation before dynamic acceptance. This approval neither auto-drafts an answer nor closes the global roadmap row.\n---\n\n## Publication recheck — W1201 tiny backend delta\n\n**APPROVE_STATIC_ONLY.** `score_body` now declares `first_hit_byte` as `Option<usize>` explicitly. The annotation resolves closure inference for `prior.min(original_hit)` without changing score accumulation, source-byte mapping, ranking, or excerpts. The resulting backend source is hash-bound below; the reviewed HTTP fixture remains `9C711A5A5D741DF174DEB2C1E0393A6DCD26EACCE8DB99782B06E6E27919A1B2` and still verifies the real matched response includes only filename, score, and excerpt, with no path.\n\n- Final `consult.rs` SHA-256: `5A299ED3A7FE2B23D1BC1ECEF35AA37E438333BFAC7DE6E55F9005BE1D679EC4`\n- `git diff HEAD --check`: **PASS**\n- Static-only; no local compiler, parser, formatter, test, or runtime ran.",
+  "reviewSha256": "4A0439265B4AA2DC83B097853D0C895B174EA2D0ED915D0F5C4A874328FEBBED",
+  "inventory": {
+    "baseline": "ff32ff86",
+    "purpose": "Read-only inventory of newly added bounded Paperless consult tests relative to ff32ff86.",
+    "candidates": [
+      {
+        "test": "paperless::consult::tests::bounded_consult_matches_and_ranks_without_following_legacy_paths",
+        "sourcePath": "SRC/neothd/src/paperless/consult.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "paperless::consult::tests::bounded_consult_distinguishes_missing_directory_from_file_and_corrupt_document",
+        "sourcePath": "SRC/neothd/src/paperless/consult.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "paperless::consult::tests::bounded_consult_refuses_a_symlinked_document",
+        "sourcePath": "SRC/neothd/src/paperless/consult.rs",
+        "cfg": "unix",
+        "kind": "new"
+      },
+      {
+        "test": "paperless::consult::tests::bounded_consult_enforces_per_document_entry_and_aggregate_budgets",
+        "sourcePath": "SRC/neothd/src/paperless/consult.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "paperless::consult::tests::unicode_lowercase_expansion_keeps_excerpt_on_a_valid_utf8_boundary",
+        "sourcePath": "SRC/neothd/src/paperless/consult.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "paperless::consult::tests::unicode_greek_final_sigma_keeps_legacy_whole_string_scoring",
+        "sourcePath": "SRC/neothd/src/paperless/consult.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "n8n_api::server::paperless_consult_http_tests::consult_scope_is_rejected_before_body_parse_or_vault_read",
+        "sourcePath": "SRC/neothd/src/n8n_api/paperless_consult_http_tests.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "n8n_api::server::paperless_consult_http_tests::consult_rejects_strict_invalid_requests_before_configured_vault_read",
+        "sourcePath": "SRC/neothd/src/n8n_api/paperless_consult_http_tests.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "n8n_api::server::paperless_consult_http_tests::consult_reads_only_configured_vault_and_redacts_paths_from_real_match_response",
+        "sourcePath": "SRC/neothd/src/n8n_api/paperless_consult_http_tests.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "n8n_api::server::paperless_consult_http_tests::consult_missing_configuration_returns_fixed_503",
+        "sourcePath": "SRC/neothd/src/n8n_api/paperless_consult_http_tests.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "n8n_api::server::paperless_consult_http_tests::consult_distinguishes_missing_directory_from_file_corrupt_and_oversized_store_failures",
+        "sourcePath": "SRC/neothd/src/n8n_api/paperless_consult_http_tests.rs",
+        "cfg": "universal",
+        "kind": "new"
+      },
+      {
+        "test": "installers::n8n_starter_workflows::tests::paperless_consult_starter_is_manual_question_lookup_only",
+        "sourcePath": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+        "cfg": "universal",
+        "kind": "new"
+      }
+    ],
+    "renames": []
+  },
+  "limits": {
+    "questionBytes": 4096,
+    "maxMatches": 20,
+    "directoryEntries": 1000,
+    "documentBytes": 262144,
+    "totalBytes": 8388608
+  },
+  "hosted": "PENDING",
+  "localExecutableValidationRan": false
+}
