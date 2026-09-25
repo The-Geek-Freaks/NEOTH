@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1066 bootstrap progressed and runtime diagnosis (2026-09-25):** The real
+f0ce product run36076160765 built successfully and reached BootstrapRemoved
+with runtime CreateIntent. Owner/key bootstrap passed its former runtime
+failure; the subsequent runtime transition failed with105 stderr bytes and
+no fixed category. Root admitted the ZIP and11 exact historical input hashes
+in docs/verification/gold-wave1060-product-bootstrap-diagnosis.json. The
+observer now recognizes fixed runtime/create/inspect/job-state categories;
+a new privacy fixture excludes appended secrets and dynamic revision values.
+All12 helper tests require a fresh hosted run. Group1524 reports success and
+its artifacts are being admitted. Windows290 compiled and executed290 cases
+with289PASS; the sole stdin fixture still races Windows buffering and is being
+repaired with a deterministic close-before-write handshake. Importer/migration
+W1057/W1058 remain uncommitted pending complete review and hosted checks.
+
 **W1059 grouped acceptance and hosted formatting (2026-09-25):** Root verified
 all1507 selected test terminals from run36074968299 at975d31b2:1507PASS,
 0FAIL,0missing;267 historical source/input bindings, all3 API ZIP digests

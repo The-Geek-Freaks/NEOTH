@@ -52,6 +52,30 @@ class CustodyBoundaryTests(unittest.TestCase):
         self.assertEqual(failure.diagnostic["exit_code"], 1)
         self.assertEqual(failure.diagnostic["known_error_categories"], ["n8n_bootstrap_docker_failed"])
 
+    def test_runtime_diagnosis_reports_source_markers_without_secret_suffix(self) -> None:
+        secret = "must-never-appear-in-runtime-diagnosis"
+        stderr = (
+            b"n8n_container_inspect_unknown "
+            b"n8n_managed_container_identity_ambiguous "
+            b"stale integration job revision (expected 7, current 8) "
+            + secret.encode()
+        )
+        result = canary.bounded.Result(1, b"", stderr, False, False)
+        failure = canary.CommandFailure(
+            ["SRC/target/debug/neoth", "--output", "json", "n8n", "install"], result
+        )
+        encoded = json.dumps(failure.diagnostic)
+        self.assertNotIn(secret, encoded)
+        self.assertNotIn("expected 7", encoded)
+        self.assertEqual(
+            failure.diagnostic["known_error_categories"],
+            [
+                "n8n_container_inspect_unknown",
+                "n8n_managed_container_identity_ambiguous",
+                "stale integration job revision",
+            ],
+        )
+
     def test_command_diagnosis_preserves_timeout_and_overflow_separately(self) -> None:
         result = canary.bounded.Result(-1, b"", b"private unknown failure", True, True)
         failure = canary.CommandFailure(["secret-tool", "lookup", "private-key"], result)
