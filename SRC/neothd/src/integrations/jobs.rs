@@ -4194,7 +4194,8 @@ mod tests {
     }
 
     #[test]
-    fn schema_v5_migrates_backup_history_preserves_foreign_key_indexes_and_round_trips_restore_jobs() {
+    fn schema_v5_migrates_backup_history_preserves_foreign_key_indexes_and_round_trips_restore_jobs()
+     {
         let root = tempfile::tempdir().unwrap();
         let home = home(&root);
         let database = home.join(DB_FILE_NAME);
@@ -4245,7 +4246,10 @@ mod tests {
             .unwrap();
         assert_eq!(version, 6);
         assert_eq!(
-            fetch_job(&connection, &backup_id).unwrap().unwrap().operation,
+            fetch_job(&connection, &backup_id)
+                .unwrap()
+                .unwrap()
+                .operation,
             JobOperation::Backup
         );
         assert_eq!(
@@ -4271,7 +4275,8 @@ mod tests {
     }
 
     #[test]
-    fn read_only_snapshot_reads_v5_backup_history_without_schema_writes_then_owned_open_migrates_v6() {
+    fn read_only_snapshot_reads_v5_backup_history_without_schema_writes_then_owned_open_migrates_v6()
+     {
         let root = tempfile::tempdir().unwrap();
         let home = home(&root);
         let database = home.join(DB_FILE_NAME);

@@ -128,9 +128,11 @@ impl Read for ArchiveReader {
 fn drain_zero_padding(reader: &mut ArchiveReader) -> Result<(), &'static str> {
     let mut buffer = [0_u8; 16 * 1024];
     loop {
-        let count = reader
-            .read(&mut buffer)
-            .map_err(|_| reader.read_error.unwrap_or("n8n_restore_archive_tar_invalid"))?;
+        let count = reader.read(&mut buffer).map_err(|_| {
+            reader
+                .read_error
+                .unwrap_or("n8n_restore_archive_tar_invalid")
+        })?;
         if count == 0 {
             return Ok(());
         }
@@ -179,9 +181,9 @@ fn validate_open_archive(
 }
 
 fn open_private_regular_archive(archive: &Path, expected_bytes: u64) -> Result<File, &'static str> {
-    let metadata = std::fs::symlink_metadata(archive)
-        .map_err(|_| "n8n_restore_archive_missing")?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != expected_bytes {
+    let metadata = std::fs::symlink_metadata(archive).map_err(|_| "n8n_restore_archive_missing")?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != expected_bytes
+    {
         return Err("n8n_restore_archive_mismatch");
     }
     #[cfg(windows)]
@@ -264,7 +266,9 @@ fn stream_open_archive_to_stdin(
             .map_err(|_| "n8n_restore_docker_stdin_failed")?;
         hasher.update(&buffer[..count]);
     }
-    stdin.flush().map_err(|_| "n8n_restore_docker_stdin_failed")?;
+    stdin
+        .flush()
+        .map_err(|_| "n8n_restore_docker_stdin_failed")?;
     let receipt = ManagedArchiveReceipt {
         archive_sha256: format!("{:x}", hasher.finalize()),
         archive_bytes: bytes,
@@ -370,8 +374,11 @@ fn extract_private_archive_to_exact_container_sync(
             Ok(None) => std::thread::sleep(Duration::from_millis(25)),
         }
     };
-    let receipt = stream_result
-        .unwrap_or_else(|| stream_rx.recv().unwrap_or(Err("n8n_restore_docker_stdin_failed")))?;
+    let receipt = stream_result.unwrap_or_else(|| {
+        stream_rx
+            .recv()
+            .unwrap_or(Err("n8n_restore_docker_stdin_failed"))
+    })?;
     stream_thread
         .join()
         .map_err(|_| "n8n_restore_docker_stdin_failed")?;
@@ -452,7 +459,11 @@ mod tests {
             header.set_size(0);
             header.set_mode(0o600);
             builder
-                .append_link(&mut header, "outside.sqlite", "/outside-volume/database.sqlite")
+                .append_link(
+                    &mut header,
+                    "outside.sqlite",
+                    "/outside-volume/database.sqlite",
+                )
                 .expect("link entry");
             builder.finish().expect("tar finish");
         }
@@ -461,11 +472,27 @@ mod tests {
 
     #[test]
     fn restore_contract_rejects_invalid_identity_digest_and_bounds() {
-        assert!(!archive_arguments_are_valid("A".repeat(64).as_str(), 1, &"a".repeat(64)));
-        assert!(!archive_arguments_are_valid(&"a".repeat(64), 0, &"a".repeat(64)));
-        assert!(!archive_arguments_are_valid(&"a".repeat(64), MAX_ARCHIVE_BYTES + 1, &"a".repeat(64)));
+        assert!(!archive_arguments_are_valid(
+            "A".repeat(64).as_str(),
+            1,
+            &"a".repeat(64)
+        ));
+        assert!(!archive_arguments_are_valid(
+            &"a".repeat(64),
+            0,
+            &"a".repeat(64)
+        ));
+        assert!(!archive_arguments_are_valid(
+            &"a".repeat(64),
+            MAX_ARCHIVE_BYTES + 1,
+            &"a".repeat(64)
+        ));
         assert!(!archive_arguments_are_valid(&"a".repeat(64), 1, "wrong-id"));
-        assert!(archive_arguments_are_valid(&"a".repeat(64), 1, &"b".repeat(64)));
+        assert!(archive_arguments_are_valid(
+            &"a".repeat(64),
+            1,
+            &"b".repeat(64)
+        ));
     }
 
     #[test]
@@ -473,10 +500,14 @@ mod tests {
         let bytes = regular_tar_bytes();
         let (_home, archive, digest) = private_archive_file(&bytes);
         let file = File::open(&archive).expect("single test handle");
-        let mut reader = validate_open_archive(file, &digest, bytes.len() as u64).expect("valid archive");
+        let mut reader =
+            validate_open_archive(file, &digest, bytes.len() as u64).expect("valid archive");
         assert_eq!(reader.receipt().archive_bytes, bytes.len() as u64);
         let mut replay = Vec::new();
-        reader.file.read_to_end(&mut replay).expect("same handle replay");
+        reader
+            .file
+            .read_to_end(&mut replay)
+            .expect("same handle replay");
         assert_eq!(replay, bytes);
     }
 

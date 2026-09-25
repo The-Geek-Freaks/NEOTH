@@ -538,9 +538,15 @@ async fn verified_historical_backup_archive_accepts_prior_pin_and_rejects_mismat
         })
         .unwrap()
         .job;
-    let mut active = service.start(&queued.job_id, queued.state_revision, STEPS[0]).unwrap();
-    active = service.begin_validation(&active.job_id, active.state_revision, STEPS[0]).unwrap();
-    active = service.begin_configuration(&active.job_id, active.state_revision, STEPS[2]).unwrap();
+    let mut active = service
+        .start(&queued.job_id, queued.state_revision, STEPS[0])
+        .unwrap();
+    active = service
+        .begin_validation(&active.job_id, active.state_revision, STEPS[0])
+        .unwrap();
+    active = service
+        .begin_configuration(&active.job_id, active.state_revision, STEPS[2])
+        .unwrap();
     for (index, step) in STEPS.iter().enumerate() {
         active = checkpoint(&service, &active, index as u32 + 1, step, 0).unwrap();
     }
@@ -565,19 +571,23 @@ async fn verified_historical_backup_archive_accepts_prior_pin_and_rejects_mismat
     };
     write_receipt(home.path(), &receipt).unwrap();
     let contract = active.evidence_contract.as_ref().unwrap();
-    let ready = service.mark_ready(
-        &active.job_id,
-        active.state_revision,
-        ReadyEvidence::verified(
-            active.job_id.clone(),
-            active.manifest_sha256.clone(),
-            contract.artifact_binding_sha256().clone(),
-            contract.config_binding_sha256().clone(),
-            contract.authenticated_probe_sha256().clone(),
-            contract.step_plan_sha256().clone(),
-        ),
-    ).unwrap();
-    let verified = completed_verified_archive_at(home.path(), &ready).unwrap().unwrap();
+    let ready = service
+        .mark_ready(
+            &active.job_id,
+            active.state_revision,
+            ReadyEvidence::verified(
+                active.job_id.clone(),
+                active.manifest_sha256.clone(),
+                contract.artifact_binding_sha256().clone(),
+                contract.config_binding_sha256().clone(),
+                contract.authenticated_probe_sha256().clone(),
+                contract.step_plan_sha256().clone(),
+            ),
+        )
+        .unwrap();
+    let verified = completed_verified_archive_at(home.path(), &ready)
+        .unwrap()
+        .unwrap();
     assert_eq!(verified.receipt, receipt);
     assert_eq!(verified.archive_path, archive);
     let mut mismatched = receipt;
@@ -585,14 +595,22 @@ async fn verified_historical_backup_archive_accepts_prior_pin_and_rejects_mismat
     std::fs::write(
         receipt_path(home.path(), ready.job_id.as_str()),
         serde_json::to_vec(&mismatched).unwrap(),
-    ).unwrap();
-    assert_eq!(completed_verified_archive_at(home.path(), &ready), Err("n8n_backup_receipt_mismatch"));
+    )
+    .unwrap();
+    assert_eq!(
+        completed_verified_archive_at(home.path(), &ready),
+        Err("n8n_backup_receipt_mismatch")
+    );
     mismatched.source_pinned_image = "docker.io/n8nio/n8n@sha256:not-a-digest".into();
     std::fs::write(
         receipt_path(home.path(), ready.job_id.as_str()),
         serde_json::to_vec(&mismatched).unwrap(),
-    ).unwrap();
-    assert_eq!(completed_verified_archive_at(home.path(), &ready), Err("n8n_backup_receipt_mismatch"));
+    )
+    .unwrap();
+    assert_eq!(
+        completed_verified_archive_at(home.path(), &ready),
+        Err("n8n_backup_receipt_mismatch")
+    );
     drop(runner);
 }
 

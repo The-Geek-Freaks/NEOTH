@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T17:51:18Z",
-  "validationStatus": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-09-25T17:56:01Z",
+  "validationStatus": "HOSTED_FORMAT_IMPORTED_FUNCTIONAL_GATES_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2137,6 +2137,11 @@
       "sha256": "A8601FAF2ABEA4C1EC3B944CD9240E7311081818FA0AF893B11A50DE639ADE7F"
     },
     {
+      "path": "docs/verification/gold-wave1520-restore-hosted-format.json",
+      "bytes": 835,
+      "sha256": "687105473BFC25801910AD05F9C230EA8D7561A8CE7D37C69C79BD28279953E5"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3098,18 +3103,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 414057,
-      "sha256": "EE83643007E0D5081515CFCC60C995B158D4EC3CE35592CD3C3DDF4A7705490F"
+      "bytes": 414644,
+      "sha256": "79B2E1593619B780B22C965E7D4048F12712E080D4EE7CF6AE2BCE45589F704D"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1432988,
-      "sha256": "C08E3552995ED986D7D9FE2BAD4B12D0FFBE025C4C557C0523889AD6F36366D5"
+      "bytes": 1433575,
+      "sha256": "97CC9C60549FF9CCC3EF0AB8D8DCCAFA57A0B049E01A33E706CF7A0F6B8D3AE3"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2043511,
-      "sha256": "29A97EBA0FAA6E62A7927312DC4E0C72732368742B5B129F5D54BB5644B60104"
+      "bytes": 2044098,
+      "sha256": "C111E02BB7A5CE9F0F6A3851073AB1F488A5B2D448A3E46B4AFB1A6D9E88B8E7"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5188,8 +5193,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/jobs.rs",
-      "bytes": 186034,
-      "sha256": "7422FB029DDFF47EA6DDBF80CF649A3A29B188D83D7C0F4347BA1842C752A157"
+      "bytes": 186095,
+      "sha256": "CD312163CCCE980C3F6B577FBE3B7934F3A4D697D1EC3D5F0292D7638F5F9666"
     },
     {
       "path": "SRC/neothd/src/integrations/mod.rs",
@@ -5213,13 +5218,13 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
-      "bytes": 28742,
-      "sha256": "2F302AB49767E2D0F24CD586CC454C232C6D116878E87F57E1579A9EFF4024AB"
+      "bytes": 28930,
+      "sha256": "C952337A158349B13D40511BD48724DE077DFB053674841507570FABD9AF6A78"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_backup.rs",
-      "bytes": 44324,
-      "sha256": "04135BF033760B7AC05B7E57D73DB91133ADA361A97FF3551EF859A3497E45D6"
+      "bytes": 44376,
+      "sha256": "C02A06588F66B2A2C9B9D505E6C84194B7C90A3C385289E352FFF4FD9861EF9C"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs",
@@ -5248,8 +5253,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
-      "bytes": 15131,
-      "sha256": "628032971C427117E9A1417B5109773CDC001B8F433D351462452E0EB4D0E568"
+      "bytes": 15578,
+      "sha256": "CF5164215EB0673F69FB101B06A7EC4452C16635678CC5F763D144AF37EE6744"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_restore_content.rs",
@@ -5258,13 +5263,13 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_restore_io.rs",
-      "bytes": 17856,
-      "sha256": "AEA039284AD9C9D254D528F0D900DF4071D9EE2E2641297D806848EA2F983F07"
+      "bytes": 18248,
+      "sha256": "71570971E16CA8378AE9760D5A9AF7C4998F5A0CC90289C7470B21B32667FAAB"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_restore_tests.rs",
-      "bytes": 24486,
-      "sha256": "4C66998AFB23A0AC97A3B4848B00A2A7E41BB3E88C19FDC244875AF43E7F6A05"
+      "bytes": 28657,
+      "sha256": "6F4BC59DB3425F87EB2AE1DCAB38F639ABDAE9359F75DCD17B52DF308964664A"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_restore_verify.js",
@@ -5273,8 +5278,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_restore.rs",
-      "bytes": 29503,
-      "sha256": "D39C18E68F11D87AE2124A1B561CCD10D257E08A4D63831D90349508670D4889"
+      "bytes": 32441,
+      "sha256": "F0AB777BACC93B717C8E01BAC70BFF56F272F395FC2F3B0F2451F338167DE364"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_runtime_tests.rs",
@@ -5283,8 +5288,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
-      "bytes": 90282,
-      "sha256": "DE72B0B0A708881B34A6E3A9C6767C7FBB7B9193D02C801C3B696E0309F932AE"
+      "bytes": 90294,
+      "sha256": "AC5A5463989535E165C9A575A206C891EE8186A6ED6DE8D4F7D2BDDA4524033F"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_uninstall_tests.rs",

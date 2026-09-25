@@ -8,6 +8,15 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1520 hosted Restore formatting import (2026-09-25):**
+Preflight36170087492 at0f9e62a6 reached its Rust formatting check and exported
+its exact rustfmt patch. The original artifact10880138142 ZIP digest matches
+GitHub, all internal hashes and producer HEAD match, and all eight Rust paths
+are inside W1515 ownership. Imported the formatter postimages; no local
+formatter or compiler ran. Group36170117870, Windows36170121455,
+Product36170124679 and Core36170128267 validate W1515; no gate acceptance yet.
+Portable2116/Group1906/Windows671 and ROAD1077done/245open/2partial unchanged.
+
 **W1515 managed n8n isolated Restore source publication (2026-09-25):**
 `neoth n8n restore --backup <ReadyBackupJobId>` resolves a historical verified
 archive, creates one separate labelled volume and one inert networkless

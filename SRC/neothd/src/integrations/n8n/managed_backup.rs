@@ -1096,8 +1096,15 @@ pub(crate) fn completed_verified_archive_at(
         return Ok(None);
     };
     let archive_path = archive_path(home, job.job_id.as_str())?;
-    durable_archive_matches(&archive_path, receipt.archive_bytes, &receipt.archive_sha256)?;
-    Ok(Some(VerifiedBackupArchive { receipt, archive_path }))
+    durable_archive_matches(
+        &archive_path,
+        receipt.archive_bytes,
+        &receipt.archive_sha256,
+    )?;
+    Ok(Some(VerifiedBackupArchive {
+        receipt,
+        archive_path,
+    }))
 }
 
 /// Fence all other lifecycle operations. A malformed, sidecar-only or

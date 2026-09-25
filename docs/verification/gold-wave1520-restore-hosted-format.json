@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "status": "HOSTED_FORMAT_IMPORTED_FUNCTIONAL_GATES_PENDING",
+  "run": 36170087492,
+  "producer": "0f9e62a652746f00a0ff6df034a1f5ccafd8b95a",
+  "artifact": 10880138142,
+  "zipSha256": "063f74f13a21b2e261425273ff2427797713810ff5b2c711cde6906a30c5bf76",
+  "paths": [
+    "SRC/neothd/src/integrations/jobs.rs",
+    "SRC/neothd/src/integrations/n8n/managed_backup.rs",
+    "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
+    "SRC/neothd/src/integrations/n8n/managed_restore.rs",
+    "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
+    "SRC/neothd/src/integrations/n8n/managed_restore_io.rs",
+    "SRC/neothd/src/integrations/n8n/managed_restore_tests.rs",
+    "SRC/neothd/src/integrations/n8n/managed_runtime.rs"
+  ],
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

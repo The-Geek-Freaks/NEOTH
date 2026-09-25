@@ -27,16 +27,16 @@ use serde::{Deserialize, Serialize};
 pub(crate) mod managed_backup;
 #[path = "managed_repair.rs"]
 pub(crate) mod managed_repair;
-#[path = "managed_uninstall.rs"]
-pub(crate) mod managed_uninstall;
-#[path = "managed_restore_candidate.rs"]
-pub(crate) mod managed_restore_candidate;
 #[path = "managed_restore.rs"]
 pub(crate) mod managed_restore;
-#[path = "managed_restore_io.rs"]
-mod managed_restore_io;
+#[path = "managed_restore_candidate.rs"]
+pub(crate) mod managed_restore_candidate;
 #[path = "managed_restore_content.rs"]
 mod managed_restore_content;
+#[path = "managed_restore_io.rs"]
+mod managed_restore_io;
+#[path = "managed_uninstall.rs"]
+pub(crate) mod managed_uninstall;
 
 pub(crate) const MANAGED_CONTAINER_NAME: &str = "neoth-n8n";
 pub(crate) const MANAGED_LABEL_KEY: &str = "io.neoth.managed";
@@ -2140,7 +2140,8 @@ impl ManagedDockerRunner for DockerManagedRunner {
         &mut self,
         job: &crate::integrations::state::JobId,
     ) -> Result<ManagedCommandReceipt, &'static str> {
-        let (_, _, receipt) = docker(&managed_restore_candidate::restore_volume_command(job)).await?;
+        let (_, _, receipt) =
+            docker(&managed_restore_candidate::restore_volume_command(job)).await?;
         if !receipt.succeeded {
             return Err("n8n_restore_volume_create_command_failed");
         }

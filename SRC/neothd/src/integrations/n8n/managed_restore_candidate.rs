@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::{valid_container_id, MANAGED_LABEL_KEY, MANAGED_LABEL_VALUE};
+use super::{MANAGED_LABEL_KEY, MANAGED_LABEL_VALUE, valid_container_id};
 use crate::{installers::n8n::N8N_OCI_REFERENCE, integrations::state::JobId};
 
 pub(crate) const RESTORE_CANDIDATE_TMPFS_BYTES: u64 = 64 * 1024 * 1024;
@@ -221,7 +221,10 @@ pub(crate) fn parse_observed_restore_candidate_json(
         .ok_or("n8n_restore_candidate_inspect_invalid")?;
     if JobId::parse(restore_job_id.clone()).is_err()
         || labels.get(MANAGED_LABEL_KEY).map(String::as_str) != Some(MANAGED_LABEL_VALUE)
-        || labels.get("io.neoth.n8n-restore-schema").map(String::as_str) != Some(RESTORE_SCHEMA)
+        || labels
+            .get("io.neoth.n8n-restore-schema")
+            .map(String::as_str)
+            != Some(RESTORE_SCHEMA)
         || labels.contains_key("io.neoth.n8n-job")
     {
         return Err("n8n_restore_candidate_inspect_invalid");
@@ -276,9 +279,7 @@ fn has_fixed_inert_process(config: &Config) -> bool {
     config.entrypoint.as_ref().map_or(false, |entrypoint| {
         entrypoint.len() == 1 && entrypoint[0] == INERT_ENTRYPOINT
     }) && config.command.as_ref().map_or(false, |command| {
-        command.len() == 2
-            && command[0] == "-e"
-            && command[1] == INERT_KEEPALIVE_ARGUMENT
+        command.len() == 2 && command[0] == "-e" && command[1] == INERT_KEEPALIVE_ARGUMENT
     })
 }
 
@@ -314,8 +315,14 @@ mod tests {
     #[test]
     fn restore_names_are_exact_and_not_generic() {
         let job = job();
-        assert_eq!(restore_volume_name(&job), "neoth_n8n_123e4567e89b12d3a456426614174000");
-        assert_eq!(restore_candidate_name(&job), "neoth-n8n-restore-123e4567e89b12d3a456426614174000");
+        assert_eq!(
+            restore_volume_name(&job),
+            "neoth_n8n_123e4567e89b12d3a456426614174000"
+        );
+        assert_eq!(
+            restore_candidate_name(&job),
+            "neoth-n8n-restore-123e4567e89b12d3a456426614174000"
+        );
         assert!(valid_restore_volume_name(&restore_volume_name(&job), &job));
         assert!(!valid_restore_volume_name("neoth_n8n_data", &job));
     }
@@ -330,10 +337,22 @@ mod tests {
         .expect("pinned image");
         assert!(command.windows(2).any(|pair| pair == ["--network", "none"]));
         assert!(command.windows(2).any(|pair| pair == ["--restart", "no"]));
-        assert!(command.windows(2).any(|pair| pair == ["--entrypoint", "node"]));
-        assert!(command.windows(2).any(|pair| pair == ["-e", INERT_KEEPALIVE_ARGUMENT]));
+        assert!(
+            command
+                .windows(2)
+                .any(|pair| pair == ["--entrypoint", "node"])
+        );
+        assert!(
+            command
+                .windows(2)
+                .any(|pair| pair == ["-e", INERT_KEEPALIVE_ARGUMENT])
+        );
         assert!(command.iter().any(|part| part == N8N_OCI_REFERENCE));
-        assert!(!command.iter().any(|part| part == "-p" || part == "--publish"));
+        assert!(
+            !command
+                .iter()
+                .any(|part| part == "-p" || part == "--publish")
+        );
         assert!(restore_candidate_command(RestoreCandidateSpec {
             restore_job_id: &job,
             image: "docker.io/n8nio/n8n@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -354,7 +373,11 @@ mod tests {
         assert_eq!(found.image, N8N_OCI_REFERENCE);
         assert!(!found.running);
         let running = inspected_candidate().replacen(r#""Running":false"#, r#""Running":true"#, 1);
-        assert!(parse_observed_restore_candidate_json(running.as_bytes()).unwrap().running);
+        assert!(
+            parse_observed_restore_candidate_json(running.as_bytes())
+                .unwrap()
+                .running
+        );
     }
 
     #[test]
@@ -363,12 +386,21 @@ mod tests {
         for (from, to) in [
             (r#""NetworkMode":"none"#, r#""NetworkMode":"bridge"#),
             (r#""Name":"no"#, r#""Name":"unless-stopped"#),
-            (r#""PortBindings":{}"#, r#""PortBindings":{"5678/tcp":[{"HostIp":"127.0.0.1","HostPort":"5678"}]}"#),
+            (
+                r#""PortBindings":{}"#,
+                r#""PortBindings":{"5678/tcp":[{"HostIp":"127.0.0.1","HostPort":"5678"}]}"#,
+            ),
             (r#""Entrypoint":["node"]"#, r#""Entrypoint":["n8n"]"#),
             (INERT_KEEPALIVE_ARGUMENT, "process.exit(0)"),
             (TMPFS_OPTIONS, "rw,nosuid,nodev,size=67108864"),
-            (r#""Name":"neoth_n8n_123e4567e89b12d3a456426614174000"#, r#""Name":"neoth_n8n_data"#),
-            (r#""Source":"/var/lib/docker/volumes/neoth_n8n_123e4567e89b12d3a456426614174000/_data"#, r#""Source":""#),
+            (
+                r#""Name":"neoth_n8n_123e4567e89b12d3a456426614174000"#,
+                r#""Name":"neoth_n8n_data"#,
+            ),
+            (
+                r#""Source":"/var/lib/docker/volumes/neoth_n8n_123e4567e89b12d3a456426614174000/_data"#,
+                r#""Source":""#,
+            ),
         ] {
             let invalid = baseline.replacen(from, to, 1);
             assert!(parse_observed_restore_candidate_json(invalid.as_bytes()).is_err());
