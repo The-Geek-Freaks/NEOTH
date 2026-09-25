@@ -3,6 +3,21 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1200 managed-install criterion accepted (2026-09-25):**
+GOLD-LF-002-09 is now accepted against the two independently reviewed compiled
+product runs: n8n36093815406 at390df51c and Paperless36092294058 at0bc75aa0.
+Root verified API ZIP/receipt hashes and26 n8n/12 Paperless historical inputs.
+Both services started and authenticated through the public CLI; negative controls
+failed correctly. n8n imported all13 compiled workflow graphs and repeated the
+import read-only. Paperless retained3 containers/3 images/6 volumes on repeat.
+Both isolated canaries proved cleanup. Subsequent ff32 source transport is the
+exact hash-verified hosted formatter output, not a new product runtime run.
+The criterion covers managed installation, not workflow business behavior,
+Windows/native/full-release gates, production uninstall, or other roadmap leaves.
+Roadmap1324:1077done/245open/2partial;247raw/246pre-tag blockers. WS-LF39done/79open.
+Group1635 run36094501407 and Windows411 run36094503048 now validate the published
+email batch atff32 after Core390 test type-check passed. No local executable ran.
+
 **W1196 exact hosted E-mail formatter import (2026-09-25):**
 Preflight390 failed only formatting. Root verified the API ZIP, both inner
 checksums and all four Git preimages/postimages, then imported the exact hosted
