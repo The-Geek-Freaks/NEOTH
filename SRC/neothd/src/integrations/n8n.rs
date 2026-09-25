@@ -1052,30 +1052,33 @@ pub(crate) fn status_at(
             .into_iter()
             .max_by_key(|candidate| (candidate.updated_at, candidate.job_id.clone())),
     };
-    let job = job.as_ref().map(|job| -> anyhow::Result<N8nJobStatusView> {
-        let mut view = N8nJobStatusView::from(job);
-        if job.operation == JobOperation::Uninstall {
-            view.config_cleanup = Some(
-                managed_runtime::managed_uninstall::cleanup_disposition_at(home, job)
-                    .ok()
-                    .flatten()
-                    .unwrap_or("unknown_or_preserved"),
-            );
-        }
-        if job.operation == JobOperation::Backup {
-            view.backup = managed_runtime::managed_backup::completed_receipt_at(home, job)
-                .map_err(anyhow::Error::msg)?;
-            if job.state == JobState::Ready && view.backup.is_none() {
-                anyhow::bail!("n8n backup has no verified completion receipt");
+    let job = job
+        .as_ref()
+        .map(|job| -> anyhow::Result<N8nJobStatusView> {
+            let mut view = N8nJobStatusView::from(job);
+            if job.operation == JobOperation::Uninstall {
+                view.config_cleanup = Some(
+                    managed_runtime::managed_uninstall::cleanup_disposition_at(home, job)
+                        .ok()
+                        .flatten()
+                        .unwrap_or("unknown_or_preserved"),
+                );
             }
-            view.disposition = Some(if view.backup.is_some() {
-                "archive_verified"
-            } else {
-                "reconciliation_required"
-            });
-        }
-        Ok(view)
-    }).transpose()?;
+            if job.operation == JobOperation::Backup {
+                view.backup = managed_runtime::managed_backup::completed_receipt_at(home, job)
+                    .map_err(anyhow::Error::msg)?;
+                if job.state == JobState::Ready && view.backup.is_none() {
+                    anyhow::bail!("n8n backup has no verified completion receipt");
+                }
+                view.disposition = Some(if view.backup.is_some() {
+                    "archive_verified"
+                } else {
+                    "reconciliation_required"
+                });
+            }
+            Ok(view)
+        })
+        .transpose()?;
     Ok(N8nStatusView {
         configured_endpoint,
         api_key_present,

@@ -23,12 +23,12 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+#[path = "managed_backup.rs"]
+pub(crate) mod managed_backup;
 #[path = "managed_repair.rs"]
 pub(crate) mod managed_repair;
 #[path = "managed_uninstall.rs"]
 pub(crate) mod managed_uninstall;
-#[path = "managed_backup.rs"]
-pub(crate) mod managed_backup;
 
 pub(crate) const MANAGED_CONTAINER_NAME: &str = "neoth-n8n";
 pub(crate) const MANAGED_LABEL_KEY: &str = "io.neoth.managed";
@@ -1468,21 +1468,25 @@ fn docker_inspect_sync(id: &str) -> Result<Option<ObservedContainer>, &'static s
 }
 
 fn private_archive_staging_path(destination: &Path) -> Result<PathBuf, &'static str> {
-    let parent = destination.parent().ok_or("n8n_backup_archive_destination_invalid")?;
-    let parent_metadata = std::fs::symlink_metadata(parent)
-        .map_err(|_| "n8n_backup_archive_parent_invalid")?;
+    let parent = destination
+        .parent()
+        .ok_or("n8n_backup_archive_destination_invalid")?;
+    let parent_metadata =
+        std::fs::symlink_metadata(parent).map_err(|_| "n8n_backup_archive_parent_invalid")?;
     if !parent_metadata.is_dir() || parent_metadata.file_type().is_symlink() {
         return Err("n8n_backup_archive_parent_invalid");
     }
     let name = destination
         .file_name()
         .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty() && name != "." && name != "..")
+        .filter(|name| !name.is_empty() && *name != "." && *name != "..")
         .ok_or("n8n_backup_archive_destination_invalid")?;
     Ok(parent.join(format!(".{name}.n8n-archive-staging")))
 }
 
-pub(crate) fn preflight_private_archive_destination(destination: &Path) -> Result<(), &'static str> {
+pub(crate) fn preflight_private_archive_destination(
+    destination: &Path,
+) -> Result<(), &'static str> {
     // A final path that already exists is knowable before the irreversible
     // Docker copy dispatch. `hard_link` remains the no-clobber protection for
     // a path created after this preflight.
@@ -1616,6 +1620,7 @@ fn stream_private_archive<R: Read>(
     if max_bytes == 0 {
         return Err("n8n_backup_archive_limit_invalid");
     }
+    use sha2::Digest;
     let tee = ArchiveTee {
         source,
         destination,
@@ -1663,8 +1668,7 @@ fn publish_private_archive_no_clobber(
     // `hard_link` has create-new semantics: unlike rename it cannot replace a
     // concurrently created destination. The archive remains at its private
     // staging name if publication cannot be proven.
-    std::fs::hard_link(staging, destination)
-        .map_err(|_| "n8n_backup_archive_publish_failed")?;
+    std::fs::hard_link(staging, destination).map_err(|_| "n8n_backup_archive_publish_failed")?;
     crate::util::atomic_write::sync_parent_directory_required(destination)
         .map_err(|_| "n8n_backup_archive_parent_sync_failed")?;
     std::fs::remove_file(staging).map_err(|_| "n8n_backup_archive_staging_cleanup_failed")?;
@@ -1696,8 +1700,14 @@ fn archive_exact_n8n_dir_sync(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|_| "n8n_docker_spawn_failed")?;
-    let stdout = child.stdout.take().ok_or("n8n_backup_archive_capture_failed")?;
-    let stderr = child.stderr.take().ok_or("n8n_backup_archive_capture_failed")?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("n8n_backup_archive_capture_failed")?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or("n8n_backup_archive_capture_failed")?;
     let (archive_tx, archive_rx) = std::sync::mpsc::sync_channel(1);
     let archive_thread = std::thread::spawn(move || {
         let _ = archive_tx.send(stream_private_archive(stdout, file, max_bytes));
@@ -1747,8 +1757,11 @@ fn archive_exact_n8n_dir_sync(
             Ok(None) => std::thread::sleep(Duration::from_millis(25)),
         }
     };
-    let archive = archive_result
-        .unwrap_or_else(|| archive_rx.recv().unwrap_or(Err("n8n_backup_archive_capture_failed")))?;
+    let archive = archive_result.unwrap_or_else(|| {
+        archive_rx
+            .recv()
+            .unwrap_or(Err("n8n_backup_archive_capture_failed"))
+    })?;
     archive_thread
         .join()
         .map_err(|_| "n8n_backup_archive_capture_failed")?;
@@ -2107,7 +2120,11 @@ mod docker_adapter_tests {
             header.set_size(0);
             header.set_mode(0o600);
             builder
-                .append_link(&mut header, "external.sqlite", "/outside-volume/database.sqlite")
+                .append_link(
+                    &mut header,
+                    "external.sqlite",
+                    "/outside-volume/database.sqlite",
+                )
                 .expect("symlink tar entry");
             builder.finish().expect("tar finish");
         }
@@ -2124,7 +2141,9 @@ mod docker_adapter_tests {
             root.set_mode(0o700);
             root.set_path(".").expect("root path");
             root.set_cksum();
-            builder.append(&root, std::io::empty()).expect("root tar entry");
+            builder
+                .append(&root, std::io::empty())
+                .expect("root tar entry");
             let payload = b"sqlite";
             let mut file = tar::Header::new_gnu();
             file.set_size(payload.len() as u64);
@@ -2210,7 +2229,10 @@ mod docker_adapter_tests {
             stream_private_archive(Cursor::new(regular_tar_bytes()), file, 9),
             Err("n8n_backup_archive_limit_exceeded")
         );
-        assert!(staging.exists(), "untrusted staging remains private for recovery");
+        assert!(
+            staging.exists(),
+            "untrusted staging remains private for recovery"
+        );
         assert!(!destination.exists(), "over-cap stream is never published");
     }
 
@@ -2223,7 +2245,10 @@ mod docker_adapter_tests {
             stream_private_archive(Cursor::new(symlink_tar_bytes()), file, 64 * 1024),
             Err("n8n_backup_archive_unsafe_member")
         );
-        assert!(staging.exists(), "unsafe archive stays untrusted and unpublished");
+        assert!(
+            staging.exists(),
+            "unsafe archive stays untrusted and unpublished"
+        );
         assert!(!destination.exists());
     }
 
@@ -2250,7 +2275,10 @@ mod docker_adapter_tests {
             stream_private_archive(Cursor::new(bytes), file, 64 * 1024),
             Err("n8n_backup_archive_trailing_data")
         );
-        assert!(staging.exists(), "unsafe trailing data is retained only as staging");
+        assert!(
+            staging.exists(),
+            "unsafe trailing data is retained only as staging"
+        );
         assert!(!destination.exists());
     }
 
@@ -2258,7 +2286,8 @@ mod docker_adapter_tests {
     fn private_archive_publish_never_replaces_existing_destination() {
         let home = tempfile::tempdir().expect("temporary archive parent");
         let destination = home.path().join("backup.tar");
-        let (staging, mut file) = open_private_archive_staging(&destination).expect("private staging");
+        let (staging, mut file) =
+            open_private_archive_staging(&destination).expect("private staging");
         file.write_all(b"new archive").expect("staging write");
         file.sync_all().expect("staging sync");
         drop(file);
@@ -2267,7 +2296,10 @@ mod docker_adapter_tests {
             publish_private_archive_no_clobber(&staging, &destination),
             Err("n8n_backup_archive_publish_failed")
         );
-        assert_eq!(std::fs::read(&destination).expect("existing bytes"), b"preexisting");
+        assert_eq!(
+            std::fs::read(&destination).expect("existing bytes"),
+            b"preexisting"
+        );
         assert!(staging.exists(), "failed publish retains private staging");
     }
 
@@ -2292,7 +2324,10 @@ mod docker_adapter_tests {
             archive_exact_n8n_dir_sync(&"a".repeat(64), &destination, 64),
             Err("n8n_backup_archive_destination_exists")
         );
-        assert_eq!(std::fs::read(&destination).expect("existing bytes"), b"existing archive");
+        assert_eq!(
+            std::fs::read(&destination).expect("existing bytes"),
+            b"existing archive"
+        );
         assert!(
             !home.path().join(".backup.tar.n8n-archive-staging").exists(),
             "known destination collision creates no staging file before Docker dispatch"

@@ -4020,7 +4020,13 @@ mod tests {
             )
             .unwrap();
         assert_eq!(version, 5);
-        assert_eq!(fetch_job(&connection, &parent_id).unwrap().unwrap().operation, JobOperation::Purge);
+        assert_eq!(
+            fetch_job(&connection, &parent_id)
+                .unwrap()
+                .unwrap()
+                .operation,
+            JobOperation::Purge
+        );
         assert_eq!(
             fetch_job(&connection, &retry_id).unwrap().unwrap().retry_of,
             Some(parent_id.clone())

@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1482/W1483 hosted backup format and compile repair (2026-09-25):**
+Preflight36161481934 at9e9d6bce failed formatting; original artifact10875472974,
+ZIP/API digest and internal hashes plus all seven Git pre/postimages verify.
+Authenticated rustfmt postimages are imported without a local formatter.
+Product36161519880 passed its helper tests, then failed compilation on two
+E0277 filename-reference comparisons and one missing Digest-trait E0599.
+The source now dereferences filter values and imports Digest locally. These
+are narrow compiler corrections; a new hosted build and native/product gates
+must confirm them. Older Core36155705555 was cancelled as superseded to release
+the serialized lane; Core9e9d6bce includes the earlier channel Clippy repair.
+No backup runtime acceptance or ROAD closure is claimed. No local execution.
 **W1480 managed n8n full-backup implementation (2026-09-25):**
 `neoth n8n backup` now derives its exact managed source and privately archives
 the complete stopped SQLite .n8n volume. It restores the original running state,

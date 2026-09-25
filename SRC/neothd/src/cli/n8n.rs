@@ -115,8 +115,7 @@ async fn run_backup(output: OutputFormat) -> Result<()> {
 
     let home = crate::config::FreedomConfig::default_neoth_home();
     let job = managed_backup::backup_managed_at(&home).await?;
-    let receipt = managed_backup::completed_receipt_at(&home, &job)
-        .map_err(anyhow::Error::msg)?;
+    let receipt = managed_backup::completed_receipt_at(&home, &job).map_err(anyhow::Error::msg)?;
     if job.state == crate::integrations::JobState::Ready && receipt.is_none() {
         return Err(anyhow!("n8n backup has no verified completion receipt"));
     }
@@ -678,10 +677,19 @@ mod tests {
                 action: N8nAction::Backup,
             })
         ));
-        for argument in ["--container", "--image", "--volume", "--output", "--destination", "--endpoint", "--job"] {
-            assert!(crate::cli::Cli::try_parse_from([
-                "neoth", "n8n", "backup", argument, "unowned",
-            ]).is_err());
+        for argument in [
+            "--container",
+            "--image",
+            "--volume",
+            "--output",
+            "--destination",
+            "--endpoint",
+            "--job",
+        ] {
+            assert!(
+                crate::cli::Cli::try_parse_from(["neoth", "n8n", "backup", argument, "unowned",])
+                    .is_err()
+            );
         }
         for argument in ["--follow-links", "--live", "--api-key-stdin"] {
             assert!(crate::cli::Cli::try_parse_from(["neoth", "n8n", "backup", argument]).is_err());

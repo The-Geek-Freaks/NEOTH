@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "status": "HOSTED_FORMAT_IMPORTED_COMPILE_REPAIR_PENDING",
+  "base": "9e9d6bceebae19af83114ae2a6381e8437abe1f5",
+  "format": {
+    "run": 36161481934,
+    "artifact": 10875472974,
+    "zipSha256": "061020832878937f15240ec8dcee5e6999ee300347db948d2093f97183de20ee",
+    "files": 7,
+    "hunks": 38,
+    "sourceAndPostimageGitHashesVerified": true
+  },
+  "compile": {
+    "run": 36161519880,
+    "helperTests": "passed",
+    "diagnostics": [
+      "E0277 twice: Option filter value is &&str",
+      "E0599: Digest trait not in stream constructor scope"
+    ],
+    "source": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+    "repairedSha256": "DABEA701BE80F1AED5B5A4B6A063DCBDA7F4C3C82AE1E8AA6F8D96017444F68B",
+    "confirmation": "hosted pending"
+  },
+  "localExecutableValidationRan": false
+}
