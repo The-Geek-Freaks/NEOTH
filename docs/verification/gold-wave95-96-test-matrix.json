@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1099 exact hosted three-file rustfmt patch; native/runtime pending",
+  "status": "W1101 reviewed calendar chronology+Ready fixture correction; hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 191379,
-    "sha256": "E6B5774B0BD6797B28C8162E149951A479700E9915D7DADC25F22571A9FCDAB0"
+    "bytes": 191754,
+    "sha256": "C60D9FFDF056603D7AF7D0710C03AFDEF5B711FD84ECFA19EDF0241EDEF43347"
   },
-  "sourceInputs": 1080,
+  "sourceInputs": 1082,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -10470,73 +10470,73 @@
     {
       "test": "integrations::n8n::workflow_import::tests::manifest_contains_the_exact_ordered_unique_bundle",
       "sourcePath": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
-      "sourceSha256": "56B8331B8DF50C97AD2F8519DDC955C17718685E77301D740D58FF3D856AA61C",
+      "sourceSha256": "5F3B30B13A778E99BA10E412D1E9CA11F0B5CDA2FFF072EC8BEAD87A19403ECD",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::workflow_import::tests::dto_removes_import_forbidden_fields_but_preserves_graph_and_notes",
       "sourcePath": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
-      "sourceSha256": "56B8331B8DF50C97AD2F8519DDC955C17718685E77301D740D58FF3D856AA61C",
+      "sourceSha256": "5F3B30B13A778E99BA10E412D1E9CA11F0B5CDA2FFF072EC8BEAD87A19403ECD",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::workflow_import::tests::noninactive_source_and_wrong_readback_id_fail_closed",
       "sourcePath": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
-      "sourceSha256": "56B8331B8DF50C97AD2F8519DDC955C17718685E77301D740D58FF3D856AA61C",
+      "sourceSha256": "5F3B30B13A778E99BA10E412D1E9CA11F0B5CDA2FFF072EC8BEAD87A19403ECD",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::workflow_import::tests::custody_round_trip_is_bounded_and_atomic_replace_safe",
       "sourcePath": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
-      "sourceSha256": "56B8331B8DF50C97AD2F8519DDC955C17718685E77301D740D58FF3D856AA61C",
+      "sourceSha256": "5F3B30B13A778E99BA10E412D1E9CA11F0B5CDA2FFF072EC8BEAD87A19403ECD",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::workflow_import::tests::importer_lifetime_lock_rejects_a_contender_before_dispatch",
       "sourcePath": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
-      "sourceSha256": "56B8331B8DF50C97AD2F8519DDC955C17718685E77301D740D58FF3D856AA61C",
+      "sourceSha256": "5F3B30B13A778E99BA10E412D1E9CA11F0B5CDA2FFF072EC8BEAD87A19403ECD",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::workflow_import::tests::all_thirteen_then_ready_repeat_is_read_only",
       "sourcePath": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
-      "sourceSha256": "56B8331B8DF50C97AD2F8519DDC955C17718685E77301D740D58FF3D856AA61C",
+      "sourceSha256": "5F3B30B13A778E99BA10E412D1E9CA11F0B5CDA2FFF072EC8BEAD87A19403ECD",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::workflow_import::tests::lost_post_reply_keeps_intent_and_never_posts_again",
       "sourcePath": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
-      "sourceSha256": "56B8331B8DF50C97AD2F8519DDC955C17718685E77301D740D58FF3D856AA61C",
+      "sourceSha256": "5F3B30B13A778E99BA10E412D1E9CA11F0B5CDA2FFF072EC8BEAD87A19403ECD",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::workflow_import::tests::rejected_create_after_readback_reuses_its_active_import_job",
       "sourcePath": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
-      "sourceSha256": "56B8331B8DF50C97AD2F8519DDC955C17718685E77301D740D58FF3D856AA61C",
+      "sourceSha256": "5F3B30B13A778E99BA10E412D1E9CA11F0B5CDA2FFF072EC8BEAD87A19403ECD",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::workflow_import::tests::create_id_is_durable_before_get_failure_then_resume_reads_exact_id",
       "sourcePath": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
-      "sourceSha256": "56B8331B8DF50C97AD2F8519DDC955C17718685E77301D740D58FF3D856AA61C",
+      "sourceSha256": "5F3B30B13A778E99BA10E412D1E9CA11F0B5CDA2FFF072EC8BEAD87A19403ECD",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::workflow_import::tests::drifted_readback_holds_without_a_second_post",
       "sourcePath": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
-      "sourceSha256": "56B8331B8DF50C97AD2F8519DDC955C17718685E77301D740D58FF3D856AA61C",
+      "sourceSha256": "5F3B30B13A778E99BA10E412D1E9CA11F0B5CDA2FFF072EC8BEAD87A19403ECD",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::workflow_import::tests::ready_job_without_custody_never_writes_or_posts",
       "sourcePath": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
-      "sourceSha256": "56B8331B8DF50C97AD2F8519DDC955C17718685E77301D740D58FF3D856AA61C",
+      "sourceSha256": "5F3B30B13A778E99BA10E412D1E9CA11F0B5CDA2FFF072EC8BEAD87A19403ECD",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::workflow_import::tests::running_job_without_custody_never_recreates_prepared_or_posts",
       "sourcePath": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
-      "sourceSha256": "56B8331B8DF50C97AD2F8519DDC955C17718685E77301D740D58FF3D856AA61C",
+      "sourceSha256": "5F3B30B13A778E99BA10E412D1E9CA11F0B5CDA2FFF072EC8BEAD87A19403ECD",
       "junitClass": "neoth"
     },
     {
@@ -10645,6 +10645,84 @@
       "test": "integrations::n8n::tests::local_loopback_probe_status_categories_are_redacted_and_stage_specific",
       "sourcePath": "SRC/neothd/src/integrations/n8n_tests.rs",
       "sourceSha256": "644A79AAF2142074C0CBEFEB5885B2BCF1324049E938FB857A1E53C01AEF34B3",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "email::calendar::tests::has_conflict_true_when_candidate_overlaps_start",
+      "sourcePath": "SRC/neothd/src/email/calendar.rs",
+      "sourceSha256": "392F08A4CBBF108DF135D569AB470A6C442C9DA4B72C01B9A7042740CFF03A4B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "email::calendar::tests::has_conflict_true_when_candidate_overlaps_end",
+      "sourcePath": "SRC/neothd/src/email/calendar.rs",
+      "sourceSha256": "392F08A4CBBF108DF135D569AB470A6C442C9DA4B72C01B9A7042740CFF03A4B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "email::calendar::tests::has_conflict_true_when_candidate_inside_existing",
+      "sourcePath": "SRC/neothd/src/email/calendar.rs",
+      "sourceSha256": "392F08A4CBBF108DF135D569AB470A6C442C9DA4B72C01B9A7042740CFF03A4B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "email::calendar::tests::has_conflict_false_when_back_to_back",
+      "sourcePath": "SRC/neothd/src/email/calendar.rs",
+      "sourceSha256": "392F08A4CBBF108DF135D569AB470A6C442C9DA4B72C01B9A7042740CFF03A4B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "email::calendar::tests::has_conflict_false_when_no_existing",
+      "sourcePath": "SRC/neothd/src/email/calendar.rs",
+      "sourceSha256": "392F08A4CBBF108DF135D569AB470A6C442C9DA4B72C01B9A7042740CFF03A4B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "email::calendar::tests::has_conflict_handles_mixed_offset_overlap_and_back_to_back",
+      "sourcePath": "SRC/neothd/src/email/calendar.rs",
+      "sourceSha256": "392F08A4CBBF108DF135D569AB470A6C442C9DA4B72C01B9A7042740CFF03A4B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "email::calendar::tests::has_conflict_preserves_date_only_half_open_intervals",
+      "sourcePath": "SRC/neothd/src/email/calendar.rs",
+      "sourceSha256": "392F08A4CBBF108DF135D569AB470A6C442C9DA4B72C01B9A7042740CFF03A4B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "email::calendar::tests::has_conflict_treats_invalid_or_mixed_times_as_occupied",
+      "sourcePath": "SRC/neothd/src/email/calendar.rs",
+      "sourceSha256": "392F08A4CBBF108DF135D569AB470A6C442C9DA4B72C01B9A7042740CFF03A4B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "email::calendar::tests::has_conflict_keeps_empty_lists_free_and_rejects_invalid_existing_intervals",
+      "sourcePath": "SRC/neothd/src/email/calendar.rs",
+      "sourceSha256": "392F08A4CBBF108DF135D569AB470A6C442C9DA4B72C01B9A7042740CFF03A4B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "email::calendar::tests::render_event_list_empty_returns_no_events_line",
+      "sourcePath": "SRC/neothd/src/email/calendar.rs",
+      "sourceSha256": "392F08A4CBBF108DF135D569AB470A6C442C9DA4B72C01B9A7042740CFF03A4B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "email::calendar::tests::render_event_list_sorted_by_start_time",
+      "sourcePath": "SRC/neothd/src/email/calendar.rs",
+      "sourceSha256": "392F08A4CBBF108DF135D569AB470A6C442C9DA4B72C01B9A7042740CFF03A4B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "email::calendar::tests::render_event_list_has_deterministic_mixed_time_order",
+      "sourcePath": "SRC/neothd/src/email/calendar.rs",
+      "sourceSha256": "392F08A4CBBF108DF135D569AB470A6C442C9DA4B72C01B9A7042740CFF03A4B",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "email::calendar::tests::render_event_list_appends_location_when_present",
+      "sourcePath": "SRC/neothd/src/email/calendar.rs",
+      "sourceSha256": "392F08A4CBBF108DF135D569AB470A6C442C9DA4B72C01B9A7042740CFF03A4B",
       "junitClass": "neoth"
     }
   ],
@@ -39730,6 +39808,80 @@
       }
     ],
     "note": "Root verified API ZIP+2inner hashes+3pre/postimage blobs; no local formatter; calendar WIP excluded",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1101CalendarTime": {
+    "requiredTests": [
+      "email::calendar::tests::has_conflict_true_when_candidate_overlaps_start",
+      "email::calendar::tests::has_conflict_true_when_candidate_overlaps_end",
+      "email::calendar::tests::has_conflict_true_when_candidate_inside_existing",
+      "email::calendar::tests::has_conflict_false_when_back_to_back",
+      "email::calendar::tests::has_conflict_false_when_no_existing",
+      "email::calendar::tests::has_conflict_handles_mixed_offset_overlap_and_back_to_back",
+      "email::calendar::tests::has_conflict_preserves_date_only_half_open_intervals",
+      "email::calendar::tests::has_conflict_treats_invalid_or_mixed_times_as_occupied",
+      "email::calendar::tests::has_conflict_keeps_empty_lists_free_and_rejects_invalid_existing_intervals",
+      "email::calendar::tests::render_event_list_empty_returns_no_events_line",
+      "email::calendar::tests::render_event_list_sorted_by_start_time",
+      "email::calendar::tests::render_event_list_has_deterministic_mixed_time_order",
+      "email::calendar::tests::render_event_list_appends_location_when_present"
+    ],
+    "note": "Five new regressions and eight existing conflict/rendering cases; chrono instant comparison and explicit conservative unknown semantics; hosted pending"
+  },
+  "wave1101CalendarPublication": {
+    "base": "b79d3043d8f460a94b6c96a79cf0e5bff25c4143",
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 24491,
+        "sha256": "DD829C4101B3D47B982D9D922D39D060DFE154972EADD82749BC3E7A74495CB3",
+        "blob": "eed852f0b09b80110cc72c71d3a4559ad1a01bff"
+      },
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 61892,
+        "sha256": "5EB83B7AD801EA7D5E4B17903FA54EBF285004F628953E26E9ABD66E053315E5",
+        "blob": "739fc96ed9ac9c24d31a86126757067f95c29680"
+      },
+      {
+        "path": "docs/verification/gold-wave1103-product-bootstrap-diagnosis.json",
+        "bytes": 7680,
+        "sha256": "FC5EE55661991478D2DD97EE2EB8E8D91D09232E20165ABE8A946BB0089AE89A",
+        "blob": "eadcd55c85d65617d28ae922eaca39a6352e2fd5"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 320373,
+        "sha256": "A705D4AC3F48834EBA082A9F10C474AB78E3524BBA106B830F4FB703428EFB3B",
+        "blob": "355d220e50b564af9e5be1644816b200d51ee715"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1336251,
+        "sha256": "8F20D7887073E49188527BA0C112C05176B3A0F8B6AC3E6CAEBA9720EA289C85",
+        "blob": "7780858f82462d642f1b32e14c38eb78000e8f13"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1946192,
+        "sha256": "314C1D56897AF1132ECD1CF93D8777B0CE12C78CF2C1F12A9099436D4F09E191",
+        "blob": "de38213f5409fa7d1cc0cd55cfcf754afee24edc"
+      },
+      {
+        "path": "SRC/neothd/src/email/calendar.rs",
+        "bytes": 27469,
+        "sha256": "392F08A4CBBF108DF135D569AB470A6C442C9DA4B72C01B9A7042740CFF03A4B",
+        "blob": "e9e0bac7c35e681a38468603b11511c7cf5f37a7"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
+        "bytes": 52754,
+        "sha256": "5F3B30B13A778E99BA10E412D1E9CA11F0B5CDA2FFF072EC8BEAD87A19403ECD",
+        "blob": "21bb0ecb21e6d31b4e7ccc010eb498ea122db119"
+      }
+    ],
+    "note": "5new+8existing calendar tests; original missing-custody assertions retained; cdb product404 admitted ZIP19bindings; no local execution",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

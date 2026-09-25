@@ -3,6 +3,23 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1101 calendar instant semantics and import fixture repair (2026-09-25):**
+The shared calendar renderer and conflict helper now compare actual RFC3339
+instants across offsets. Valid date-only intervals retain half-open semantics;
+malformed or incomparable times with existing events cannot imply a free
+slot. Rendering uses a total cached key. Five new regressions and eight
+existing conflict/rendering tests are registered after W1100 independent
+approval: Native1786, Group1567, Windows344. This does not introduce or claim
+a calendar n8n route. The bac Group run exposed two failures: the Ready-import
+fixture had omitted its required13/13 progress, and the generated CLI reference
+is stale. W1105 repairs only test preparation with actual service progress
+evidence; the missing-custody/no-POST assertions and production gate remain.
+Root separately verified the cdb product36081624304 ZIP and19 historical
+input hashes (W1103): public CLI and19 helper tests passed, but the first
+installation failed because its unauthenticated workflow probe received404
+after health. Pinned runtime startup is under investigation; install/import/
+repeat/cleanup remain unaccepted. Fresh source tests and CLI export pending.
+
 **W1099 exact hosted formatting (2026-09-25):**
 Root verified the cdb Preflight36081624026 formatter artifact10842286692:
 API ZIP digest, both inner hashes, source head, three preimage blobs and all

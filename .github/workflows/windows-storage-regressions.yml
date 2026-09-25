@@ -401,6 +401,19 @@ jobs:
           n8n_api::server::tests::loopback_permission_audit_requires_scope_and_replays_authenticated_subject	neothd/src/n8n_api/server.rs
           permissions::trust_ledger::tests::bounded_replay_rejects_a_second_matching_authenticated_decision	neothd/src/permissions/trust_ledger.rs
           integrations::n8n::tests::local_loopback_probe_status_categories_are_redacted_and_stage_specific	neothd/src/integrations/n8n_tests.rs
+          email::calendar::tests::has_conflict_true_when_candidate_overlaps_start	neothd/src/email/calendar.rs
+          email::calendar::tests::has_conflict_true_when_candidate_overlaps_end	neothd/src/email/calendar.rs
+          email::calendar::tests::has_conflict_true_when_candidate_inside_existing	neothd/src/email/calendar.rs
+          email::calendar::tests::has_conflict_false_when_back_to_back	neothd/src/email/calendar.rs
+          email::calendar::tests::has_conflict_false_when_no_existing	neothd/src/email/calendar.rs
+          email::calendar::tests::has_conflict_handles_mixed_offset_overlap_and_back_to_back	neothd/src/email/calendar.rs
+          email::calendar::tests::has_conflict_preserves_date_only_half_open_intervals	neothd/src/email/calendar.rs
+          email::calendar::tests::has_conflict_treats_invalid_or_mixed_times_as_occupied	neothd/src/email/calendar.rs
+          email::calendar::tests::has_conflict_keeps_empty_lists_free_and_rejects_invalid_existing_intervals	neothd/src/email/calendar.rs
+          email::calendar::tests::render_event_list_empty_returns_no_events_line	neothd/src/email/calendar.rs
+          email::calendar::tests::render_event_list_sorted_by_start_time	neothd/src/email/calendar.rs
+          email::calendar::tests::render_event_list_has_deterministic_mixed_time_order	neothd/src/email/calendar.rs
+          email::calendar::tests::render_event_list_appends_location_when_present	neothd/src/email/calendar.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -417,7 +430,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 331 ]]; then
+          if [[ "$expected" -ne 344 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -503,7 +516,7 @@ jobs:
             fi
           else
             compile_status=64
-            printf 'selection is not the required 331 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 344 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

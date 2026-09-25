@@ -17,6 +17,7 @@
 
 use std::collections::BTreeSet;
 
+use chrono::{DateTime, FixedOffset, NaiveDate};
 use serde::{Deserialize, Serialize};
 
 /// Google Calendar OAuth scopes.
@@ -233,21 +234,63 @@ use crate::util::url_encode::url_encode;
 
 // ── Slot conflict ─────────────────────────────────────────────────
 
-/// Pure helper: does `[candidate_start, candidate_end)` overlap any
-/// event in `existing`? Order-independent — each event is tested for
-/// overlap on its own, so `existing` may be in any order (no sort is
-/// performed or needed). Times are compared as strings via the RFC 3339
-/// lex property (lexicographic order == chronological order when all
-/// timestamps use the same offset / zulu form).
+// Different representations cannot be ordered on one timeline without a
+// timezone for all-day dates. Rendering groups instants, dates and invalid
+// values deterministically instead of mixing incompatible comparators.
+#[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
+enum CalendarTime {
+    Instant(DateTime<FixedOffset>),
+    Date(NaiveDate),
+    Invalid(String),
+}
+
+fn calendar_time(value: &str) -> CalendarTime {
+    if let Ok(value) = DateTime::<FixedOffset>::parse_from_rfc3339(value) {
+        CalendarTime::Instant(value)
+    } else if let Ok(value) = NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        CalendarTime::Date(value)
+    } else {
+        CalendarTime::Invalid(value.to_owned())
+    }
+}
+
+/// Does the half-open candidate interval overlap an existing event?
+/// RFC3339 timestamps compare as instants, and all-day intervals compare as
+/// dates. When existing events are present, malformed, non-positive or mixed
+/// date/timestamp intervals conservatively count as a conflict: this boolean
+/// API cannot establish a free slot from incomparable times. An empty event
+/// list has no conflict; this function does not validate candidate input.
 pub fn has_conflict(
     candidate_start: &str,
     candidate_end: &str,
     existing: &[CalendarEvent],
 ) -> bool {
+    if existing.is_empty() {
+        return false;
+    }
+    let candidate_start = calendar_time(candidate_start);
+    let candidate_end = calendar_time(candidate_end);
     for e in existing {
-        let starts_before_we_end = e.start_rfc3339.as_str() < candidate_end;
-        let ends_after_we_start = e.end_rfc3339.as_str() > candidate_start;
-        if starts_before_we_end && ends_after_we_start {
+        let start = calendar_time(&e.start_rfc3339);
+        let end = calendar_time(&e.end_rfc3339);
+        let compatible = matches!(
+            (&candidate_start, &candidate_end, &start, &end),
+            (
+                CalendarTime::Instant(_),
+                CalendarTime::Instant(_),
+                CalendarTime::Instant(_),
+                CalendarTime::Instant(_)
+            ) | (
+                CalendarTime::Date(_),
+                CalendarTime::Date(_),
+                CalendarTime::Date(_),
+                CalendarTime::Date(_)
+            )
+        );
+        if !compatible || candidate_start >= candidate_end || start >= end {
+            return true;
+        }
+        if start < candidate_end && end > candidate_start {
             return true;
         }
     }
@@ -262,7 +305,12 @@ pub fn render_event_list(events: &[CalendarEvent]) -> String {
         return "(no events in window)\n".to_string();
     }
     let mut sorted: Vec<&CalendarEvent> = events.iter().collect();
-    sorted.sort_by(|a, b| a.start_rfc3339.cmp(&b.start_rfc3339));
+    sorted.sort_by_cached_key(|event| {
+        (
+            calendar_time(&event.start_rfc3339),
+            event.start_rfc3339.clone(),
+        )
+    });
     let mut out = String::new();
     for e in sorted {
         out.push_str(&format!(
@@ -565,6 +613,41 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn has_conflict_handles_mixed_offset_overlap_and_back_to_back() {
+        let existing = vec![event("Booked", "2026-05-30T09:00:00+02:00", "2026-05-30T10:00:00+02:00")];
+        assert!(has_conflict("2026-05-30T07:30:00Z", "2026-05-30T08:30:00Z", &existing));
+        assert!(!has_conflict("2026-05-30T08:00:00Z", "2026-05-30T09:00:00Z", &existing));
+    }
+
+    #[test]
+    fn has_conflict_preserves_date_only_half_open_intervals() {
+        let existing = vec![event("All day", "2026-05-30", "2026-05-31")];
+        assert!(has_conflict("2026-05-30", "2026-05-31", &existing));
+        assert!(!has_conflict("2026-05-31", "2026-06-01", &existing));
+    }
+
+    #[test]
+    fn has_conflict_treats_invalid_or_mixed_times_as_occupied() {
+        let existing = vec![event("Booked", "2026-05-30T09:00:00Z", "2026-05-30T10:00:00Z")];
+        assert!(has_conflict("invalid", "2026-05-30T11:00:00Z", &existing));
+        assert!(has_conflict("2026-05-30", "2026-05-31", &existing));
+    }
+
+    #[test]
+    fn has_conflict_keeps_empty_lists_free_and_rejects_invalid_existing_intervals() {
+        assert!(!has_conflict("invalid", "invalid", &[]));
+        let malformed = event("Invalid", "invalid", "invalid");
+        let reversed = event("Reversed", "2026-05-30T10:00:00Z", "2026-05-30T09:00:00Z");
+        for existing in [malformed, reversed] {
+            assert!(has_conflict(
+                "2026-05-30T07:00:00Z",
+                "2026-05-30T08:00:00Z",
+                &[existing],
+            ));
+        }
+    }
+
     // ── render_event_list ─────────────────────────────────────────
 
     #[test]
@@ -580,6 +663,16 @@ mod tests {
         let early_pos = s.find("Earlier").unwrap();
         let late_pos = s.find("Later").unwrap();
         assert!(early_pos < late_pos);
+    }
+
+    #[test]
+    fn render_event_list_has_deterministic_mixed_time_order() {
+        let later = event("Later", "2026-05-30T10:00:00+02:00", "2026-05-30T11:00:00+02:00");
+        let earlier = event("Earlier", "2026-05-30T07:30:00Z", "2026-05-30T08:00:00Z");
+        let invalid = event("Invalid", "not-a-time", "also-not-a-time");
+        let rendered = render_event_list(&[invalid, later, earlier]);
+        assert!(rendered.find("Earlier").unwrap() < rendered.find("Later").unwrap());
+        assert!(rendered.find("Later").unwrap() < rendered.find("Invalid").unwrap());
     }
 
     #[test]

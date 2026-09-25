@@ -917,17 +917,53 @@ mod tests {
             )
             .unwrap();
         let contract = configuring.evidence_contract.as_ref().unwrap();
+        let job_id = configuring.job_id.clone();
+        let manifest_sha256 = configuring.manifest_sha256.clone();
+        let step_plan_sha256 = contract.step_plan_sha256().clone();
+        let artifact_binding_sha256 = contract.artifact_binding_sha256().clone();
+        let config_binding_sha256 = contract.config_binding_sha256().clone();
+        let authenticated_probe_sha256 = contract.authenticated_probe_sha256().clone();
+        let expected_revision = configuring.state_revision;
+        let expected_state = configuring.state;
+        let current_phase = "import-workflow-13".to_owned();
+        let configuring = service
+            .update_progress(
+                &job_id,
+                expected_revision,
+                expected_state,
+                JobProgress {
+                    completed_steps: IMPORT_STEPS,
+                    total_steps: IMPORT_STEPS,
+                    bytes_done: 0,
+                    bytes_total: None,
+                },
+                Some(current_phase.clone()),
+                ProgressEvidence::claimed(ProgressEvidenceClaim {
+                    job_id: job_id.clone(),
+                    manifest_sha256: manifest_sha256.clone(),
+                    step_plan_sha256: step_plan_sha256.clone(),
+                    staging_binding_sha256: sha256_parts(&[
+                        "n8n-workflow-import-ready-job-fixture-custody",
+                    ]),
+                    expected_revision,
+                    expected_state,
+                    current_phase,
+                    completed_steps: IMPORT_STEPS,
+                    bytes_done: 0,
+                }),
+            )
+            .unwrap();
         service
             .mark_ready(
                 &configuring.job_id,
                 configuring.state_revision,
                 ReadyEvidence::verified(
                     configuring.job_id.clone(),
-                    configuring.manifest_sha256.clone(),
-                    contract.artifact_binding_sha256().clone(),
-                    contract.config_binding_sha256().clone(),
-                    contract.authenticated_probe_sha256().clone(),
-                    contract.step_plan_sha256().clone(),
+                    manifest_sha256,
+                    artifact_binding_sha256,
+                    config_binding_sha256,
+                    authenticated_probe_sha256,
+                    step_plan_sha256,
                 ),
             )
             .unwrap()
