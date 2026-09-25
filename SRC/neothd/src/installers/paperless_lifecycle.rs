@@ -363,7 +363,7 @@ impl DockerExecutor {
             .await
             .map_err(|_| LifecycleError::Command("paperless_command_spawn_failed"))?;
         let output = child
-            .wait_until(tokio::time::Instant::now() + COMMAND_TIMEOUT)
+            .wait_until(std::time::Instant::now() + COMMAND_TIMEOUT)
             .await
             .map_err(|_| LifecycleError::Command("paperless_command_timeout"))?;
         if !output.status.success() {

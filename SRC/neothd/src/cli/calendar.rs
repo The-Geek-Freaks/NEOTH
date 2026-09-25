@@ -207,15 +207,24 @@ fn run_read_access(action: &CalendarReadAccessAction, output: OutputFormat) -> R
                 crate::tools::caldav_account::GrantStatus::Granted => "granted",
                 crate::tools::caldav_account::GrantStatus::Missing => "missing",
                 crate::tools::caldav_account::GrantStatus::Invalid => "invalid_or_rotated",
-                crate::tools::caldav_account::GrantStatus::CredentialsUnavailable => "credentials_unavailable",
+                crate::tools::caldav_account::GrantStatus::CredentialsUnavailable => {
+                    "credentials_unavailable"
+                }
             };
-            render_read_access(output, label, status == crate::tools::caldav_account::GrantStatus::Granted);
+            render_read_access(
+                output,
+                label,
+                status == crate::tools::caldav_account::GrantStatus::Granted,
+            );
         }
     }
     Ok(())
 }
 
-fn confirm_read_grant(yes: bool, account: &crate::tools::caldav_account::CaldavAccount) -> Result<()> {
+fn confirm_read_grant(
+    yes: bool,
+    account: &crate::tools::caldav_account::CaldavAccount,
+) -> Result<()> {
     if yes {
         return Ok(());
     }
@@ -232,7 +241,9 @@ fn confirm_read_grant(yes: bool, account: &crate::tools::caldav_account::CaldavA
     eprint!("Proceed? [y/N] ");
     std::io::stderr().flush().ok();
     let mut line = String::new();
-    std::io::stdin().read_line(&mut line).context("read CalDAV grant confirmation")?;
+    std::io::stdin()
+        .read_line(&mut line)
+        .context("read CalDAV grant confirmation")?;
     anyhow::ensure!(
         matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes"),
         "CalDAV read grant aborted"

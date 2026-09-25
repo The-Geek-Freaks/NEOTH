@@ -148,7 +148,10 @@ mod tests {
     async fn missing_grant_and_invalid_request_make_zero_transport_calls() {
         let home = tempfile::tempdir().unwrap();
         configure(home.path());
-        let reader = CountedReader { calls: AtomicUsize::new(0), fail: false };
+        let reader = CountedReader {
+            calls: AtomicUsize::new(0),
+            fail: false,
+        };
         let error = read_at(home.path(), &request(), &reader).await.unwrap_err();
         assert_eq!(error.error_code(), Some(ApiErrorCode::PermissionDenied));
         let mut invalid = request();
@@ -163,7 +166,10 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let account = configure(home.path());
         caldav_account::grant_at(home.path(), &account).unwrap();
-        let reader = CountedReader { calls: AtomicUsize::new(0), fail: false };
+        let reader = CountedReader {
+            calls: AtomicUsize::new(0),
+            fail: false,
+        };
         let result = read_at(home.path(), &request(), &reader).await.unwrap();
         assert_eq!(result.events.len(), 1);
         let json = serde_json::to_string(&result).unwrap();
@@ -179,7 +185,10 @@ mod tests {
     #[tokio::test]
     async fn transport_errors_are_redacted_and_missing_account_is_unavailable() {
         let home = tempfile::tempdir().unwrap();
-        let reader = CountedReader { calls: AtomicUsize::new(0), fail: true };
+        let reader = CountedReader {
+            calls: AtomicUsize::new(0),
+            fail: true,
+        };
         let error = read_at(home.path(), &request(), &reader).await.unwrap_err();
         assert_eq!(error.error_code(), Some(ApiErrorCode::StoreUnavailable));
         assert_eq!(reader.calls.load(Ordering::SeqCst), 0);
@@ -187,7 +196,11 @@ mod tests {
         caldav_account::grant_at(home.path(), &account).unwrap();
         let error = read_at(home.path(), &request(), &reader).await.unwrap_err();
         match error {
-            HandlerOutcome::Err { code, message, hint } => {
+            HandlerOutcome::Err {
+                code,
+                message,
+                hint,
+            } => {
                 assert_eq!(code, ApiErrorCode::UpstreamError);
                 assert_eq!(message, "calendar_agenda_read_failed_or_unsupported");
                 assert!(!hint.contains("private URL"));

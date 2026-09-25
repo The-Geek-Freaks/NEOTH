@@ -7,7 +7,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -61,7 +61,12 @@ pub(crate) fn resolve_at(home: &Path, allow_env: bool) -> Result<CaldavAccount> 
             &freedom_path,
             None,
         )
-        .with_context(|| format!("load coherent CalDAV instance at {}", freedom_path.display()))?;
+        .with_context(|| {
+            format!(
+                "load coherent CalDAV instance at {}",
+                freedom_path.display()
+            )
+        })?;
 
     let url = credentials
         .caldav_url
@@ -101,8 +106,14 @@ pub(crate) fn canonical_collection_url(raw: &str) -> Result<String> {
         "CalDAV URL must be non-empty and contain no outer whitespace"
     );
     let url = url::Url::parse(raw).context("parse CalDAV collection URL")?;
-    ensure!(url.scheme() == "https", "CalDAV read egress requires an HTTPS collection URL");
-    ensure!(url.host().is_some(), "CalDAV collection URL must contain a host");
+    ensure!(
+        url.scheme() == "https",
+        "CalDAV read egress requires an HTTPS collection URL"
+    );
+    ensure!(
+        url.host().is_some(),
+        "CalDAV collection URL must contain a host"
+    );
     ensure!(
         url.username().is_empty() && url.password().is_none(),
         "CalDAV URL must not contain credentials; use the credential fields"
@@ -130,7 +141,10 @@ fn grant_root(home: &Path, create: bool) -> Result<Option<crate::skills::store::
 fn with_grant_mutation_lock<T>(home: &Path, action: impl FnOnce() -> Result<T>) -> Result<T> {
     // Reuse the home-bound cross-process transaction lock so a revoke cannot
     // race a stale grant publication in the same instance namespace.
-    crate::config::credentials::with_coherent_pair_transaction_lock(&home.join("freedom.yaml"), action)
+    crate::config::credentials::with_coherent_pair_transaction_lock(
+        &home.join("freedom.yaml"),
+        action,
+    )
 }
 
 fn mac_for_key(key: &[u8], account: &CaldavAccount) -> Result<[u8; 32]> {
@@ -149,7 +163,9 @@ fn mac_for_key(key: &[u8], account: &CaldavAccount) -> Result<[u8; 32]> {
 
 fn existing_binding(home: &Path, account: &CaldavAccount) -> Result<Option<[u8; 32]>> {
     let key_path = home.join("wal").join("hmac.key");
-    let Some(authority) = crate::cli::security::acquire_existing_hmac_writer_authority(home, &key_path)? else {
+    let Some(authority) =
+        crate::cli::security::acquire_existing_hmac_writer_authority(home, &key_path)?
+    else {
         return Ok(None);
     };
     authority.validate_namespace_binding()?;
@@ -161,13 +177,27 @@ fn load_grant(home: &Path) -> Result<Option<Grant>> {
         return Ok(None);
     };
     let path = grant_path(home);
-    let bytes = match read_regular_file_bounded(&root.dir, OsStr::new(GRANT_NAME), &path, MAX_GRANT_BYTES) {
+    let bytes = match read_regular_file_bounded(
+        &root.dir,
+        OsStr::new(GRANT_NAME),
+        &path,
+        MAX_GRANT_BYTES,
+    ) {
         Ok(bytes) => bytes,
-        Err(error) if error.downcast_ref::<std::io::Error>().is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) => return Ok(None),
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            return Ok(None);
+        }
         Err(error) => return Err(error).context("read CalDAV read grant"),
     };
     let grant: Grant = serde_json::from_slice(&bytes).context("parse CalDAV read grant")?;
-    ensure!(grant.version == GRANT_VERSION, "unsupported CalDAV read grant version");
+    ensure!(
+        grant.version == GRANT_VERSION,
+        "unsupported CalDAV read grant version"
+    );
     ensure!(
         grant.binding.len() == 64 && grant.binding.bytes().all(|byte| byte.is_ascii_hexdigit()),
         "invalid CalDAV read grant binding"
@@ -201,7 +231,10 @@ pub(crate) fn grant_at(home: &Path, account: &CaldavAccount) -> Result<()> {
             binding: hex::encode(mac_for_key(&key, account)?),
         };
         let bytes = serde_json::to_vec(&grant).context("serialize CalDAV read grant")?;
-        ensure!(bytes.len() <= MAX_GRANT_BYTES, "CalDAV read grant exceeds its bounded format");
+        ensure!(
+            bytes.len() <= MAX_GRANT_BYTES,
+            "CalDAV read grant exceeds its bounded format"
+        );
         let root = grant_root(home, true)?.context("create CalDAV read-grant home")?;
         atomic_write_private_child(&root.dir, OsStr::new(GRANT_NAME), &grant_path(home), &bytes)
             .context("atomically write private CalDAV read grant")
@@ -215,8 +248,9 @@ pub(crate) fn revoke_at(home: &Path) -> Result<bool> {
         let Some(root) = grant_root(home, false)? else {
             return Ok(false);
         };
-        let removed = remove_child_file_if_present(&root.dir, OsStr::new(GRANT_NAME), &grant_path(home))
-            .context("remove CalDAV read grant")?;
+        let removed =
+            remove_child_file_if_present(&root.dir, OsStr::new(GRANT_NAME), &grant_path(home))
+                .context("remove CalDAV read grant")?;
         if removed {
             sync_parent_directory(&root.dir, &grant_path(home))
                 .context("durably publish CalDAV read-grant revocation")?;
@@ -300,23 +334,73 @@ mod tests {
     #[test]
     fn grant_roundtrip_revoke_and_rotation_fail_closed() {
         let home = tempfile::tempdir().unwrap();
-        let current = account("https://calendar.example.test/dav/tasks/", "alex", "app-password");
+        let current = account(
+            "https://calendar.example.test/dav/tasks/",
+            "alex",
+            "app-password",
+        );
         grant_at(home.path(), &current).unwrap();
-        assert_eq!(grant_matches(home.path(), &current).unwrap(), GrantStatus::Granted);
-        assert_eq!(grant_matches(home.path(), &account("https://calendar.example.test/dav/other/", "alex", "app-password")).unwrap(), GrantStatus::Invalid);
-        assert_eq!(grant_matches(home.path(), &account("https://calendar.example.test/dav/tasks/", "sam", "app-password")).unwrap(), GrantStatus::Invalid);
-        assert_eq!(grant_matches(home.path(), &account("https://calendar.example.test/dav/tasks/", "alex", "rotated")).unwrap(), GrantStatus::Invalid);
+        assert_eq!(
+            grant_matches(home.path(), &current).unwrap(),
+            GrantStatus::Granted
+        );
+        assert_eq!(
+            grant_matches(
+                home.path(),
+                &account(
+                    "https://calendar.example.test/dav/other/",
+                    "alex",
+                    "app-password"
+                )
+            )
+            .unwrap(),
+            GrantStatus::Invalid
+        );
+        assert_eq!(
+            grant_matches(
+                home.path(),
+                &account(
+                    "https://calendar.example.test/dav/tasks/",
+                    "sam",
+                    "app-password"
+                )
+            )
+            .unwrap(),
+            GrantStatus::Invalid
+        );
+        assert_eq!(
+            grant_matches(
+                home.path(),
+                &account(
+                    "https://calendar.example.test/dav/tasks/",
+                    "alex",
+                    "rotated"
+                )
+            )
+            .unwrap(),
+            GrantStatus::Invalid
+        );
         assert!(revoke_at(home.path()).unwrap());
-        assert_eq!(grant_matches(home.path(), &current).unwrap(), GrantStatus::Missing);
+        assert_eq!(
+            grant_matches(home.path(), &current).unwrap(),
+            GrantStatus::Missing
+        );
     }
 
     #[test]
     fn malformed_oversized_and_cross_home_grants_fail_closed() {
         let first = tempfile::tempdir().unwrap();
         let second = tempfile::tempdir().unwrap();
-        let current = account("https://calendar.example.test/dav/tasks/", "alex", "app-password");
+        let current = account(
+            "https://calendar.example.test/dav/tasks/",
+            "alex",
+            "app-password",
+        );
         grant_at(first.path(), &current).unwrap();
-        assert_eq!(grant_matches(second.path(), &current).unwrap(), GrantStatus::Missing);
+        assert_eq!(
+            grant_matches(second.path(), &current).unwrap(),
+            GrantStatus::Missing
+        );
         std::fs::write(grant_path(first.path()), b"{").unwrap();
         assert!(grant_matches(first.path(), &current).is_err());
         std::fs::write(grant_path(first.path()), vec![b'x'; MAX_GRANT_BYTES + 1]).unwrap();
@@ -326,7 +410,10 @@ mod tests {
     #[test]
     fn missing_effective_credentials_are_not_granted() {
         let home = tempfile::tempdir().unwrap();
-        assert_eq!(status_at(home.path(), false), GrantStatus::CredentialsUnavailable);
+        assert_eq!(
+            status_at(home.path(), false),
+            GrantStatus::CredentialsUnavailable
+        );
     }
 
     #[test]

@@ -56,11 +56,11 @@ pub struct MemoryDriftRequest {
     pub limit: Option<usize>,
 }
 
+mod calendar_agenda;
+mod calendar_route;
 mod pending_drafts;
 mod pending_proposals;
 mod permission_audit;
-mod calendar_agenda;
-mod calendar_route;
 
 /// `/api/stats` payload — high-level counts the n8n weekly_stats
 /// workflow renders into a markdown digest.

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T03:09:22.8702150Z",
-  "validationStatus": "W1157 reviewed calendar read agenda and Paperless canary; hosted gates pending; Windows351 and Group1574 evidence admitted",
+  "capturedUtc": "2026-09-25T03:17:52.1809911Z",
+  "validationStatus": "W1165 exact hosted E0308 and private_bounds repairs; seven exact hosted format outputs; runtime pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2413,18 +2413,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 330312,
-      "sha256": "DE4FD71956014DFA51A0E7FCD7C5E69D756DF91384DA34A9AE8D91B779758A95"
+      "bytes": 331401,
+      "sha256": "ED363B3C66ACCAA33F326E57E293D1901A3D00C262838AEEAEDDB67219F37719"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1347123,
-      "sha256": "1C2DAB38D47C33837F3E65496B794025F954799F10B7EC037664072AE27E9493"
+      "bytes": 1348212,
+      "sha256": "5A3357F46B1FF66763D208C7903D6E5CB2D3BC45951F71AC70382BF4CBBE68E0"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1957064,
-      "sha256": "C2AD30225D9FA04CE5AB378D910638974EA2706073FABD00D877AC570EEDB3BA"
+      "bytes": 1958153,
+      "sha256": "58407B7BBF2D8C06705D4C7A8B43B4A1B39EC19A1CCA805923D7F1AEFE7BB262"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -3238,8 +3238,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/calendar.rs",
-      "bytes": 22792,
-      "sha256": "073EF392ABCFFF542B70020D44EF33F3A5A529782ED0737BA8BAF2B3C2649BCF"
+      "bytes": 22923,
+      "sha256": "0534179129FF7D92B6E7202689E0CBA14D2A3F0B6486C317CB263B718A756CCE"
     },
     {
       "path": "SRC/neothd/src/cli/capabilities.rs",
@@ -4383,8 +4383,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "bytes": 72679,
-      "sha256": "BF12DF7AAA3176277B1191665E7E0540FDC520F5CD118BD424E9BF51C2DC3444"
+      "bytes": 72677,
+      "sha256": "D16E3A7F834C7C8D4CB54997735DC14B275E6EFD66023A2A17602F3501BB2767"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_readiness_tests.rs",
@@ -4729,17 +4729,17 @@
     {
       "path": "SRC/neothd/src/n8n_api/handlers.rs",
       "bytes": 63767,
-      "sha256": "8489782B5DEFE2DC04FF8027994CD4FAE88C84E87BEEA2CD421D50CBA2CADB34"
+      "sha256": "E3FCFD1691F1BA2748935C366F26222DD97996ABC45CFD2703B4C1ABD1C42597"
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers/calendar_agenda.rs",
-      "bytes": 10796,
-      "sha256": "F8A45B4F9FA148D9646FF7ECE7DC6859DA9965D171D39F246E2B05FF0A9353C8"
+      "bytes": 12468,
+      "sha256": "A25F4E3A1285175F7F062CEE856E96172F8181A53FB5A67DF71B4E05C32FB18F"
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers/calendar_route.rs",
-      "bytes": 7981,
-      "sha256": "16B312A4BC1A76FFE0E6C344E37EBB1D3A4282D20AC3368A197AF0EFEED22C6C"
+      "bytes": 8141,
+      "sha256": "07C26033E1F02C60ED9732D7D20D05DA96B334FF5F6E756501DE2BE8F4728985"
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers/pending_drafts.rs",
@@ -4763,8 +4763,8 @@
     },
     {
       "path": "SRC/neothd/src/n8n_api/server.rs",
-      "bytes": 47603,
-      "sha256": "078BC8EF6B337FA4C4B0AC703B33125CCA87A0B1E9E7563F178F83EC4EF29885"
+      "bytes": 47637,
+      "sha256": "CF6377854402879829C5498413FE61AC02F9B0EC0BD9E4F39F5DA7916A195BD1"
     },
     {
       "path": "SRC/neothd/src/os_tools/gate.rs",
@@ -5218,13 +5218,13 @@
     },
     {
       "path": "SRC/neothd/src/tools/caldav_account.rs",
-      "bytes": 15365,
-      "sha256": "5A60CC651FBC86904DCD31C918323A6182645A9A3CAE064F9E9ABCB00556EB9C"
+      "bytes": 16446,
+      "sha256": "BB8F7984646A08439EA8109C1DB908FA6F59F1AE1CB0438E316F2C42BB12C1B9"
     },
     {
       "path": "SRC/neothd/src/tools/caldav_calendar.rs",
-      "bytes": 36491,
-      "sha256": "AA586674CA3D827489B55F90F955528628D2E6274E2DE9F0D92FCB5DF83267CB"
+      "bytes": 38948,
+      "sha256": "CAA424E4E59B9C4E689561C48F7635B6211FB15E8BD0808E68729C1CAFAAF547"
     },
     {
       "path": "SRC/neothd/src/tools/caldav.rs",
@@ -5253,8 +5253,8 @@
     },
     {
       "path": "SRC/neothd/src/tools/external_http.rs",
-      "bytes": 113411,
-      "sha256": "1A8C8D376405CF6DA1E0719B6C637234127AC64CFF6332D503555D45DE494DE5"
+      "bytes": 113400,
+      "sha256": "1F0C2E561A3F162E836573AC13BB4CDF7735313BF5527E1AE2E4C65ACCA9E0FB"
     },
     {
       "path": "SRC/neothd/src/tools/jina_reader.rs",

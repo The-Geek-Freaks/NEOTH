@@ -734,7 +734,10 @@ mod tests {
         )
         .await;
         assert_eq!(no_grant["_http_status"], "403");
-        assert_eq!(no_grant["error"]["message"], "calendar_read_access_not_granted");
+        assert_eq!(
+            no_grant["error"]["message"],
+            "calendar_read_access_not_granted"
+        );
         assert!(!home.path().join("caldav_read_access.grant").exists());
         stop_drift_http_test_server(state, writer, wal_join, server, shutdown).await;
     }

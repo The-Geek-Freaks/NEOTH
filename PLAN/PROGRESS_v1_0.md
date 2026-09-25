@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1165 exact hosted build repairs (2026-09-25):**
+The first339d15ee Core and Paperless canary builds failed on the same E0308:
+ContainedChild::wait_until accepts std::time::Instant, so the retained Compose
+caller now uses that exact clock type. Timeout duration and containment behavior
+are unchanged. The earlier143 workspace Clippy found one private_bounds error;
+the cfg(test)-only ExternalHttpAuthorizer::execute helper is now module-private,
+matching its sealed permit and all existing fixture callers. No permit visibility
+or lint policy is relaxed. Root imported seven339d hosted formatter outputs after
+API ZIP/inner hashes and every Git preimage/postimage check. Paperless helper
+unit tests passed on GitHub before the CLI compile failure; Docker installation
+did not start. Group339 also failed compilation; obsolete Windows339 compilation
+was cancelled after the shared compile error was confirmed. Fresh hosted Core,
+Group1606, Windows383 and Paperless gates follow this repair. CLI reference and
+all new calendar/Paperless runtime claims remain pending. No roadmap closure.
+
 **W1157 calendar agenda, real Paperless canary and hosted results (2026-09-25):**
 The n8n calendar starter now calls POST /api/calendar/agenda with an explicit
 IANA timezone/day and dedicated calendar:read scope. It stays inactive until

@@ -815,7 +815,7 @@ impl ExternalHttpAuthorizer {
     /// The permit is cryptographically bound to the exact request. This helper
     /// exists solely for lifecycle fixtures; real outbound HTTP cannot enter
     /// through it.
-    pub(crate) async fn execute<F, Fut, T>(
+    async fn execute<F, Fut, T>(
         &self,
         request: ExternalHttpRequest,
         network: F,
