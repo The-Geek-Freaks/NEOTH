@@ -9,13 +9,14 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::{MANAGED_LABEL_KEY, MANAGED_LABEL_VALUE, valid_container_id};
-use crate::{installers::n8n::N8N_OCI_REFERENCE, integrations::state::JobId};
+use crate::integrations::state::JobId;
 
 pub(crate) const RESTORE_CANDIDATE_TMPFS_BYTES: u64 = 64 * 1024 * 1024;
 const RESTORE_SCHEMA: &str = "1";
 const INERT_ENTRYPOINT: &str = "node";
 const INERT_KEEPALIVE_ARGUMENT: &str = "setInterval(() => {}, 2147483647);";
 const TMPFS_OPTIONS: &str = "rw,noexec,nosuid,nodev,size=67108864";
+const N8N_IMAGE_PREFIX: &str = "docker.io/n8nio/n8n@sha256:";
 
 pub(crate) const CANDIDATE_INSPECT_FORMAT: &str = r#"[{"Id":{{json .Id}},"State":{"Running":{{json .State.Running}}},"Config":{"Image":{{json .Config.Image}},"Labels":{{json .Config.Labels}},"Entrypoint":{{json .Config.Entrypoint}},"Cmd":{{json .Config.Cmd}}},"HostConfig":{"NetworkMode":{{json .HostConfig.NetworkMode}},"RestartPolicy":{"Name":{{json .HostConfig.RestartPolicy.Name}}},"PortBindings":{{json .HostConfig.PortBindings}},"Tmpfs":{{json .HostConfig.Tmpfs}}},"NetworkSettings":{"Ports":{{json .NetworkSettings.Ports}}},"Mounts":{{json .Mounts}}}]"#;
 
@@ -89,7 +90,7 @@ pub(crate) fn restore_volume_command(job: &JobId) -> Vec<String> {
 pub(crate) fn restore_candidate_command(
     spec: RestoreCandidateSpec<'_>,
 ) -> Result<Vec<String>, &'static str> {
-    if spec.image != N8N_OCI_REFERENCE {
+    if !valid_n8n_image_reference(spec.image) {
         return Err("n8n_restore_candidate_image_invalid");
     }
     Ok(vec![
@@ -202,7 +203,7 @@ pub(crate) fn parse_observed_restore_candidate_json(
     }
     let observed = rows.pop().expect("length checked");
     if !valid_container_id(&observed.id)
-        || observed.config.image != N8N_OCI_REFERENCE
+        || !valid_n8n_image_reference(&observed.config.image)
         || observed.host.network_mode != "none"
         || observed.host.restart_policy.name != "no"
         || !has_fixed_inert_process(&observed.config)
@@ -297,18 +298,28 @@ fn valid_tmpfs(value: &str) -> bool {
     value == TMPFS_OPTIONS
 }
 
+/// Restore obtains this image from a completed verified backup receipt. This
+/// boundary admits canonical immutable n8n digests so historical receipts
+/// remain recoverable; the restore coordinator owns exact receipt matching.
+fn valid_n8n_image_reference(value: &str) -> bool {
+    value
+        .strip_prefix(N8N_IMAGE_PREFIX)
+        .is_some_and(super::valid_manifest_sha256)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    const JOB: &str = "123e4567-e89b-12d3-a456-426614174000";
+    use crate::installers::n8n::N8N_OCI_REFERENCE;
+    const JOB: &str = "019c6e27-e55b-73d1-87d8-4e01f1f75043";
     const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     fn job() -> JobId {
-        JobId::parse(JOB.into()).expect("fixed valid UUID")
+        JobId::parse(JOB).expect("fixed valid UUID")
     }
 
     fn inspected_candidate() -> String {
         format!(
-            r#"[{{"Id":"{ID}","State":{{"Running":false}},"Config":{{"Image":"{N8N_OCI_REFERENCE}","Labels":{{"{MANAGED_LABEL_KEY}":"{MANAGED_LABEL_VALUE}","io.neoth.n8n-restore":"{JOB}","io.neoth.n8n-restore-schema":"1"}},"Entrypoint":["node"],"Cmd":["-e","{INERT_KEEPALIVE_ARGUMENT}"]}},"HostConfig":{{"NetworkMode":"none","RestartPolicy":{{"Name":"no"}},"PortBindings":{{}},"Tmpfs":{{"/tmp":"{TMPFS_OPTIONS}"}}}},"NetworkSettings":{{"Ports":{{"5678/tcp":null}}}},"Mounts":[{{"Type":"volume","Name":"neoth_n8n_123e4567e89b12d3a456426614174000","Source":"/var/lib/docker/volumes/neoth_n8n_123e4567e89b12d3a456426614174000/_data","Destination":"/home/node/.n8n"}}]}}]"#
+            r#"[{{"Id":"{ID}","State":{{"Running":false}},"Config":{{"Image":"{N8N_OCI_REFERENCE}","Labels":{{"{MANAGED_LABEL_KEY}":"{MANAGED_LABEL_VALUE}","io.neoth.n8n-restore":"{JOB}","io.neoth.n8n-restore-schema":"1"}},"Entrypoint":["node"],"Cmd":["-e","{INERT_KEEPALIVE_ARGUMENT}"]}},"HostConfig":{{"NetworkMode":"none","RestartPolicy":{{"Name":"no"}},"PortBindings":{{}},"Tmpfs":{{"/tmp":"{TMPFS_OPTIONS}"}}}},"NetworkSettings":{{"Ports":{{"5678/tcp":null}}}},"Mounts":[{{"Type":"volume","Name":"neoth_n8n_019c6e27e55b73d187d84e01f1f75043","Source":"/var/lib/docker/volumes/neoth_n8n_019c6e27e55b73d187d84e01f1f75043/_data","Destination":"/home/node/.n8n"}}]}}]"#
         )
     }
 
@@ -317,11 +328,11 @@ mod tests {
         let job = job();
         assert_eq!(
             restore_volume_name(&job),
-            "neoth_n8n_123e4567e89b12d3a456426614174000"
+            "neoth_n8n_019c6e27e55b73d187d84e01f1f75043"
         );
         assert_eq!(
             restore_candidate_name(&job),
-            "neoth-n8n-restore-123e4567e89b12d3a456426614174000"
+            "neoth-n8n-restore-019c6e27e55b73d187d84e01f1f75043"
         );
         assert!(valid_restore_volume_name(&restore_volume_name(&job), &job));
         assert!(!valid_restore_volume_name("neoth_n8n_data", &job));
@@ -357,7 +368,23 @@ mod tests {
             restore_job_id: &job,
             image: "docker.io/n8nio/n8n@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         })
+        .is_ok());
+        assert!(restore_candidate_command(RestoreCandidateSpec {
+            restore_job_id: &job,
+            image: "docker.io/n8nio/n8n:2.40.5",
+        })
         .is_err());
+        for invalid in [
+            "n8nio/n8n@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "docker.io/n8nio/n8n@sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "docker.io/n8nio/n8n@sha256:not-a-digest",
+        ] {
+            assert!(restore_candidate_command(RestoreCandidateSpec {
+                restore_job_id: &job,
+                image: invalid,
+            })
+            .is_err());
+        }
     }
     #[test]
     fn parse_restore_candidate_accepts_real_docker_volume_mount_shape() {
@@ -368,7 +395,7 @@ mod tests {
         assert_eq!(found.volume, restore_volume_name(&job()));
         assert_eq!(
             found.volume_source,
-            "/var/lib/docker/volumes/neoth_n8n_123e4567e89b12d3a456426614174000/_data"
+            "/var/lib/docker/volumes/neoth_n8n_019c6e27e55b73d187d84e01f1f75043/_data"
         );
         assert_eq!(found.image, N8N_OCI_REFERENCE);
         assert!(!found.running);
@@ -378,6 +405,9 @@ mod tests {
                 .unwrap()
                 .running
         );
+        let historical = format!("{N8N_IMAGE_PREFIX}{}", "a".repeat(64));
+        let historical_receipt = inspected_candidate().replacen(N8N_OCI_REFERENCE, &historical, 1);
+        assert!(parse_observed_restore_candidate_json(historical_receipt.as_bytes()).is_ok());
     }
 
     #[test]
@@ -394,15 +424,24 @@ mod tests {
             (INERT_KEEPALIVE_ARGUMENT, "process.exit(0)"),
             (TMPFS_OPTIONS, "rw,nosuid,nodev,size=67108864"),
             (
-                r#""Name":"neoth_n8n_123e4567e89b12d3a456426614174000"#,
+                r#""Name":"neoth_n8n_019c6e27e55b73d187d84e01f1f75043"#,
                 r#""Name":"neoth_n8n_data"#,
             ),
             (
-                r#""Source":"/var/lib/docker/volumes/neoth_n8n_123e4567e89b12d3a456426614174000/_data"#,
+                r#""Source":"/var/lib/docker/volumes/neoth_n8n_019c6e27e55b73d187d84e01f1f75043/_data"#,
                 r#""Source":""#,
             ),
         ] {
             let invalid = baseline.replacen(from, to, 1);
+            assert!(parse_observed_restore_candidate_json(invalid.as_bytes()).is_err());
+        }
+        for image in [
+            "n8nio/n8n@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "docker.io/n8nio/n8n:2.40.5",
+            "docker.io/n8nio/n8n@sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "docker.io/n8nio/n8n@sha256:not-a-digest",
+        ] {
+            let invalid = baseline.replacen(N8N_OCI_REFERENCE, image, 1);
             assert!(parse_observed_restore_candidate_json(invalid.as_bytes()).is_err());
         }
     }
@@ -412,7 +451,7 @@ mod tests {
         let baseline = inspected_candidate();
         let duplicated_mount = baseline.replacen(
             "]}]",
-            r#",{"Type":"volume","Name":"neoth_n8n_123e4567e89b12d3a456426614174000","Source":"/var/lib/docker/volumes/other/_data","Destination":"/home/node/.n8n"}]}]"#,
+            r#",{"Type":"volume","Name":"neoth_n8n_019c6e27e55b73d187d84e01f1f75043","Source":"/var/lib/docker/volumes/other/_data","Destination":"/home/node/.n8n"}]}]"#,
             1,
         );
         assert!(parse_observed_restore_candidate_json(duplicated_mount.as_bytes()).is_err());

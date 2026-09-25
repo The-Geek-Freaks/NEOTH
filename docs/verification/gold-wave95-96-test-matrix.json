@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "HOSTED_FORMAT_IMPORTED_FUNCTIONAL_GATES_PENDING",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 231955,
-    "sha256": "8F1063AD6B5F72C1EA92E7BD71FA3E0359E5727677418CE75088F81000973C28"
+    "bytes": 232133,
+    "sha256": "21FBAC47D9974EB26C06E003FFD3D6E68C4798AA181885FFD392ABA653310527"
   },
-  "sourceInputs": 1298,
+  "sourceInputs": 1299,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -12618,31 +12618,31 @@
     {
       "test": "integrations::n8n::managed_runtime::managed_restore_candidate::tests::restore_names_are_exact_and_not_generic",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
-      "sourceSha256": "CF5164215EB0673F69FB101B06A7EC4452C16635678CC5F763D144AF37EE6744",
+      "sourceSha256": "2458CFCBAB0713C87EF912E1C396C85EB34ADEAF777E4EF0C80A46E32439753C",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_restore_candidate::tests::restore_candidate_command_is_inert_and_uses_fixed_immutable_identity",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
-      "sourceSha256": "CF5164215EB0673F69FB101B06A7EC4452C16635678CC5F763D144AF37EE6744",
+      "sourceSha256": "2458CFCBAB0713C87EF912E1C396C85EB34ADEAF777E4EF0C80A46E32439753C",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_restore_candidate::tests::parse_restore_candidate_accepts_real_docker_volume_mount_shape",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
-      "sourceSha256": "CF5164215EB0673F69FB101B06A7EC4452C16635678CC5F763D144AF37EE6744",
+      "sourceSha256": "2458CFCBAB0713C87EF912E1C396C85EB34ADEAF777E4EF0C80A46E32439753C",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_restore_candidate::tests::parse_restore_candidate_rejects_each_non_inert_or_ambiguous_shape",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
-      "sourceSha256": "CF5164215EB0673F69FB101B06A7EC4452C16635678CC5F763D144AF37EE6744",
+      "sourceSha256": "2458CFCBAB0713C87EF912E1C396C85EB34ADEAF777E4EF0C80A46E32439753C",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_restore_candidate::tests::parse_restore_candidate_rejects_duplicate_mounts_and_tmpfs",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
-      "sourceSha256": "CF5164215EB0673F69FB101B06A7EC4452C16635678CC5F763D144AF37EE6744",
+      "sourceSha256": "2458CFCBAB0713C87EF912E1C396C85EB34ADEAF777E4EF0C80A46E32439753C",
       "junitClass": "neoth"
     },
     {
@@ -48730,6 +48730,44 @@
       }
     ],
     "note": "Exact original GitHub rustfmt postimages for eight W1515 Rust sources; producer and ZIP/internal digests verified; functional gates pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1523RestoreCandidateRepair": {
+    "base": "bc11e70765a9e92defeb9bc760736f47ef491485",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1523-restore-candidate-repair.json",
+        "bytes": 828,
+        "sha256": "BCE009D8ED61442C8BDE6A2A95DF550CBA629BB469FDBA81E1B87C5A8D01F149",
+        "blob": "d5900010ce0e206ebc036e432d96ba61a0b1615a"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 415823,
+        "sha256": "971741B46DC4E6EBA4BBE208027FB479785AA888CD2396A43AEFD34E33B720C0",
+        "blob": "52b0cf06b8dc9bd99925a7b52893764634ae32b7"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1434754,
+        "sha256": "40920AF511442B9C77B2080D59C52427580DDDEEA21F5D774152D6E0109AA931",
+        "blob": "e4830d9401002c28e5d34a54eb6c168745434676"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2045277,
+        "sha256": "C14A6E48074DA8ADF10821E1ADF8D9F563AC3CA96213E2D2D9C0E47F33841003",
+        "blob": "762868620c255c23fa10a9c241e34f2659aaf8ff"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
+        "bytes": 17487,
+        "sha256": "2458CFCBAB0713C87EF912E1C396C85EB34ADEAF777E4EF0C80A46E32439753C",
+        "blob": "4255870d240c4fe596126c6fa466ace876766321"
+      }
+    ],
+    "note": "Authentic Linux/Windows test compile correction, valid UUIDv7 fixture and receipt-bound historical-image candidate support; independent review passed; hosted confirmation pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

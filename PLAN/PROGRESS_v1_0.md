@@ -2,6 +2,22 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1522/W1523/W1525/W1527 Restore candidate corrections (2026-09-25):**
+Group36170117870 and Windows36170121455 at0f9e62a6 failed before any test ran:
+E0283 in the candidate test helper. Passed the fixed string directly to JobId,
+and corrected its UUID-v1 fixture to the required v7 identity. Root also found
+that candidate creation/inspection still rejected valid historical image pins;
+those boundaries now accept canonical n8n digests while the coordinator retains
+exact binding to the verified historical Backup image. Five candidate identities
+are unchanged and now cover prior-pin acceptance and malformed-image rejection.
+Independent static review passed. Preflight36170495893 atbc11e707 was successful.
+Product36170124679 built the CLI and passed helper tests, but stopped before
+Restore at the credential observer: its bootstrap key has workflow scopes only.
+A separate canary-only credential fixture key is being prepared; production
+bootstrap privileges remain unchanged. No native/product acceptance or closure.
+ROAD1324/1077done/245open/2partial; Portable2116/Group1906/Windows671 unchanged.
+Evidence: docs/verification/gold-wave1523-restore-candidate-repair.json.
+
 **W1520 hosted Restore formatting import (2026-09-25):**
 Preflight36170087492 at0f9e62a6 reached its Rust formatting check and exported
 its exact rustfmt patch. The original artifact10880138142 ZIP digest matches

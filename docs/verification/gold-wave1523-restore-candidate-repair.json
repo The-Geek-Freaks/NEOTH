@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "base": "bc11e70765a9e92defeb9bc760736f47ef491485",
+  "failedProducer": "0f9e62a652746f00a0ff6df034a1f5ccafd8b95a",
+  "linuxRun": 36170117870,
+  "windowsRun": 36170121455,
+  "compilerError": "E0283 ambiguous JobId::parse(JOB.into())",
+  "testsExecuted": 0,
+  "repairs": [
+    "Direct &str argument for JobId::parse",
+    "Fixed UUIDv7 fixture and derived names",
+    "Historical canonical n8n image admitted by candidate constructor/parser; exact verified-backup image still enforced by coordinator"
+  ],
+  "reviewSha256": "25B9D48AF37BF4F23574F32BA6F79DD636379A69F0121951F1629254B85F2EA2",
+  "windowsDiagnosisSha256": "90CE2C5F343099725C59DCD9EAC66C7EFAF3C2C380B0F723F24AB283750DAEC6",
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}
