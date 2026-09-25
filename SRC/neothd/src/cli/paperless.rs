@@ -165,12 +165,13 @@ pub async fn run_paperless_command(args: PaperlessArgs, output: OutputFormat) ->
                 }
                 OutputFormat::Table => println!(
                     "Paperless retained-volume purge: {:?}\nremoved volumes: {}\nvolume set: {}",
-                    receipt.state, receipt.volumes.len(), receipt.volume_set_id
+                    receipt.state,
+                    receipt.volumes.len(),
+                    receipt.volume_set_id
                 ),
             }
         } else {
-            let preview = paperless_purge::preview_at(&home)
-                .map_err(anyhow::Error::new)?;
+            let preview = paperless_purge::preview_at(&home).map_err(anyhow::Error::new)?;
             match output {
                 OutputFormat::Json | OutputFormat::Jsonl => {
                     println!("{}", serde_json::to_string(&preview)?)
@@ -628,31 +629,48 @@ mod tests {
     fn paperless_purge_cli_preserves_exact_confirmation_without_target_overrides() {
         use clap::Parser;
         let preview = crate::cli::Cli::try_parse_from(["neoth", "paperless", "purge"]).unwrap();
-        assert!(matches!(preview.command,
+        assert!(matches!(
+            preview.command,
             crate::cli::Commands::Paperless(PaperlessArgs {
-                action: PaperlessAction::Purge { confirm: None }, ..
+                action: PaperlessAction::Purge { confirm: None },
+                ..
             })
         ));
         let phrase = "PURGE PAPERLESS VOLUME SET exact-receipt exact-generation ";
-        let parsed = crate::cli::Cli::try_parse_from([
-            "neoth", "paperless", "purge", "--confirm", phrase,
-        ]).unwrap();
+        let parsed =
+            crate::cli::Cli::try_parse_from(["neoth", "paperless", "purge", "--confirm", phrase])
+                .unwrap();
         assert!(matches!(parsed.command,
             crate::cli::Commands::Paperless(PaperlessArgs {
                 action: PaperlessAction::Purge { confirm: Some(value) }, ..
             }) if value == phrase
         ));
-        for argument in ["--volume", "--container", "--project", "--directory", "--endpoint", "--yes"] {
-            assert!(crate::cli::Cli::try_parse_from([
-                "neoth", "paperless", "purge", argument, "unowned",
-            ]).is_err());
+        for argument in [
+            "--volume",
+            "--container",
+            "--project",
+            "--directory",
+            "--endpoint",
+            "--yes",
+        ] {
+            assert!(
+                crate::cli::Cli::try_parse_from([
+                    "neoth",
+                    "paperless",
+                    "purge",
+                    argument,
+                    "unowned",
+                ])
+                .is_err()
+            );
         }
-        assert!(crate::cli::Cli::try_parse_from([
-            "neoth", "paperless", "purge", "--confirm",
-        ]).is_err());
-        assert!(crate::cli::Cli::try_parse_from([
-            "neoth", "paperless", "uninstall", "--purge",
-        ]).is_err());
+        assert!(
+            crate::cli::Cli::try_parse_from(["neoth", "paperless", "purge", "--confirm",]).is_err()
+        );
+        assert!(
+            crate::cli::Cli::try_parse_from(["neoth", "paperless", "uninstall", "--purge",])
+                .is_err()
+        );
     }
 
     #[test]

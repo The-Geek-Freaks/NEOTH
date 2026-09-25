@@ -118,7 +118,9 @@ pub(crate) async fn purge_at_with<E: ComposeExecutor>(
     // Docker selection.  The chain is resolved again after the lock below.
     let preview = preview_at(home)?;
     if confirmation != preview.confirmation {
-        return Err(LifecycleError::Command("paperless_purge_confirmation_mismatch"));
+        return Err(LifecycleError::Command(
+            "paperless_purge_confirmation_mismatch",
+        ));
     }
 
     let root_path = crate::config::InstancePaths::for_home(home).paperless_root;
@@ -130,7 +132,9 @@ pub(crate) async fn purge_at_with<E: ComposeExecutor>(
             .map_err(map_operation_lock_error)?;
     let resolved = resolve_purge_chain(&owned, &root_path)?;
     if confirmation != confirmation_for(&resolved) {
-        return Err(LifecycleError::Command("paperless_purge_confirmation_mismatch"));
+        return Err(LifecycleError::Command(
+            "paperless_purge_confirmation_mismatch",
+        ));
     }
     let engine = select_local_engine(executor, &owned).await?;
 
@@ -153,15 +157,8 @@ pub(crate) async fn purge_at_with<E: ComposeExecutor>(
         return read_completed_purge_receipt(&owned, &resolved);
     }
 
-    reconcile_dispatched_volume(
-        executor,
-        &engine,
-        &owned,
-        &binding,
-        &resolved,
-        &mut custody,
-    )
-    .await?;
+    reconcile_dispatched_volume(executor, &engine, &owned, &binding, &resolved, &mut custody)
+        .await?;
 
     for index in 0..custody.volumes.len() {
         if custody.volumes[index].state == PaperlessPurgeVolumeState::AbsentVerified {
@@ -184,7 +181,10 @@ pub(crate) async fn purge_at_with<E: ComposeExecutor>(
         // No --force and no retry.  The post-dispatch observation, rather
         // than Docker's exit status, decides whether this member progressed.
         let remove_result = executor
-            .run(&engine.docker("volume", &["rm", &volume.name]), &owned.display)
+            .run(
+                &engine.docker("volume", &["rm", &volume.name]),
+                &owned.display,
+            )
             .await;
         ensure_stage(&owned, &binding)?;
         if exact_volume_absent(executor, &engine, &owned, &binding, &volume.name).await? {
@@ -265,7 +265,9 @@ fn resolve_purge_chain(
     let snapshot = read_volume_set_snapshot(owned)?.ok_or(LifecycleError::Receipt)?;
     validate_volume_set_snapshot(&snapshot, &install.project)?;
     if snapshot.volume_set_id != volume_set_id {
-        return Err(LifecycleError::Command("paperless_purge_volume_set_mismatch"));
+        return Err(LifecycleError::Command(
+            "paperless_purge_volume_set_mismatch",
+        ));
     }
     let (uninstall_bytes, uninstall) = read_completed_uninstall_with_bytes(owned)?;
     validate_uninstall_custody(&uninstall)?;
@@ -278,21 +280,27 @@ fn resolve_purge_chain(
     if uninstall.project != install.project
         || uninstall.install_receipt_sha256 != install_receipt_sha256
     {
-        return Err(LifecycleError::Command("paperless_purge_volume_set_mismatch"));
+        return Err(LifecycleError::Command(
+            "paperless_purge_volume_set_mismatch",
+        ));
     }
     validate_completed_uninstall_snapshot(&uninstall, &install)?;
     if uninstall.schema_version != 2
         || uninstall.retained_volume_snapshot.len() != paperless_staging::PAPERLESS_VOLUMES.len()
-        || uninstall.retained_volume_snapshot.iter().zip(&install.volumes).any(
-            |(retained, installed)| {
+        || uninstall
+            .retained_volume_snapshot
+            .iter()
+            .zip(&install.volumes)
+            .any(|(retained, installed)| {
                 retained.logical_name != installed.logical_name
                     || retained.name != installed.name
                     || retained.project != installed.project
                     || retained.volume_set_id.as_deref() != Some(volume_set_id.as_str())
-            },
-        )
+            })
     {
-        return Err(LifecycleError::Command("paperless_purge_volume_set_mismatch"));
+        return Err(LifecycleError::Command(
+            "paperless_purge_volume_set_mismatch",
+        ));
     }
     Ok(ResolvedPurge {
         project: install.project,
@@ -454,7 +462,7 @@ fn write_or_verify_purge_receipt(
     root: &OwnedPaperlessRoot,
     receipt: &PaperlessPurgeReceipt,
 ) -> Result<(), LifecycleError> {
-    match read_optional_json(root, PURGE_RECEIPT_NAME)? {
+    match read_optional_json::<PaperlessPurgeReceipt>(root, PURGE_RECEIPT_NAME)? {
         Some(existing) if existing == *receipt => Ok(()),
         Some(_) => Err(LifecycleError::Receipt),
         None => write_json_create_new(root, PURGE_RECEIPT_NAME, receipt),
@@ -521,7 +529,9 @@ async fn preflight_all_volumes<E: ComposeExecutor>(
             observed.logical_name != expected.logical_name || observed.name != expected.name
         })
     {
-        return Err(LifecycleError::Command("paperless_purge_volume_set_mismatch"));
+        return Err(LifecycleError::Command(
+            "paperless_purge_volume_set_mismatch",
+        ));
     }
     for volume in &resolved.volumes {
         exact_volume_has_no_containers(executor, engine, root, binding, &volume.name).await?;
@@ -542,7 +552,9 @@ async fn revalidate_active_fence<E: ComposeExecutor>(
         || current.uninstall_receipt_sha256 != resolved.uninstall_receipt_sha256
         || current.volume_set_id != resolved.volume_set_id
     {
-        return Err(LifecycleError::Command("paperless_purge_volume_set_mismatch"));
+        return Err(LifecycleError::Command(
+            "paperless_purge_volume_set_mismatch",
+        ));
     }
     validate_purge_custody(custody, &current)?;
     ensure_source_containers_absent(executor, engine, root, binding, resolved).await?;
@@ -550,7 +562,9 @@ async fn revalidate_active_fence<E: ComposeExecutor>(
         match volume.state {
             PaperlessPurgeVolumeState::AbsentVerified => {
                 if !exact_volume_absent(executor, engine, root, binding, &volume.name).await? {
-                    return Err(LifecycleError::Command("paperless_purge_volume_set_mismatch"));
+                    return Err(LifecycleError::Command(
+                        "paperless_purge_volume_set_mismatch",
+                    ));
                 }
             }
             PaperlessPurgeVolumeState::Prepared => {
@@ -589,7 +603,9 @@ async fn reconcile_dispatched_volume<E: ComposeExecutor>(
         || current.uninstall_receipt_sha256 != resolved.uninstall_receipt_sha256
         || current.volume_set_id != resolved.volume_set_id
     {
-        return Err(LifecycleError::Command("paperless_purge_volume_set_mismatch"));
+        return Err(LifecycleError::Command(
+            "paperless_purge_volume_set_mismatch",
+        ));
     }
     ensure_source_containers_absent(executor, engine, root, binding, resolved).await?;
     let volume = custody.volumes[index].clone();
@@ -616,7 +632,9 @@ async fn revalidate_completed_absence<E: ComposeExecutor>(
     ensure_source_containers_absent(executor, engine, root, binding, resolved).await?;
     for volume in &custody.volumes {
         if !exact_volume_absent(executor, engine, root, binding, &volume.name).await? {
-            return Err(LifecycleError::Command("paperless_purge_volume_set_mismatch"));
+            return Err(LifecycleError::Command(
+                "paperless_purge_volume_set_mismatch",
+            ));
         }
     }
     Ok(())
@@ -626,8 +644,8 @@ fn read_completed_purge_receipt(
     root: &OwnedPaperlessRoot,
     resolved: &ResolvedPurge,
 ) -> Result<PaperlessPurgeReceipt, LifecycleError> {
-    let receipt: PaperlessPurgeReceipt = read_optional_json(root, PURGE_RECEIPT_NAME)?
-        .ok_or(LifecycleError::Receipt)?;
+    let receipt: PaperlessPurgeReceipt =
+        read_optional_json(root, PURGE_RECEIPT_NAME)?.ok_or(LifecycleError::Receipt)?;
     if receipt.schema_version != 1
         || receipt.operation != PURGE_OPERATION
         || receipt.state != PaperlessPurgeState::VolumesRemoved
@@ -660,7 +678,9 @@ async fn ensure_source_containers_absent<E: ComposeExecutor>(
 ) -> Result<(), LifecycleError> {
     let (bytes, install) = read_install_receipt_with_bytes(root)?;
     if format!("{:x}", Sha256::digest(&bytes)) != resolved.install_receipt_sha256 {
-        return Err(LifecycleError::Command("paperless_purge_volume_set_mismatch"));
+        return Err(LifecycleError::Command(
+            "paperless_purge_volume_set_mismatch",
+        ));
     }
     for container in &install.containers {
         if exact_container_present(executor, engine, &container.id, root, binding).await? {
@@ -690,12 +710,7 @@ async fn verify_bound_volume<E: ComposeExecutor>(
         .run(
             &engine.docker(
                 "volume",
-                &[
-                    "inspect",
-                    &volume.name,
-                    "--format",
-                    VOLUME_INSPECT_TEMPLATE,
-                ],
+                &["inspect", &volume.name, "--format", VOLUME_INSPECT_TEMPLATE],
             ),
             &root.display,
         )
@@ -708,7 +723,9 @@ async fn verify_bound_volume<E: ComposeExecutor>(
         &inspected.stdout,
     )?;
     if observed.name != volume.name || observed.logical_name != volume.logical_name {
-        return Err(LifecycleError::Command("paperless_purge_volume_set_mismatch"));
+        return Err(LifecycleError::Command(
+            "paperless_purge_volume_set_mismatch",
+        ));
     }
     Ok(())
 }

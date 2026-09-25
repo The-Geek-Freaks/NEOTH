@@ -75,7 +75,8 @@ impl PurgeFake {
         .replace("\\\"", "\"");
         Ok(format!(
             r#"{{"Name":"{name}","Labels":{{"com.docker.compose.project":"{}","com.docker.compose.volume":"{}"{generation}}}}}"#,
-            project_name(cwd), logical.logical_name
+            project_name(cwd),
+            logical.logical_name
         ))
     }
 }
@@ -187,7 +188,9 @@ impl ComposeExecutor for PurgeFake {
                 .iter()
                 .skip_while(|part| *part != "inspect")
                 .nth(1)
-                .ok_or(LifecycleError::Command("fake_purge_container_inspect_shape"))?;
+                .ok_or(LifecycleError::Command(
+                    "fake_purge_container_inspect_shape",
+                ))?;
             let (service, image) = self
                 .container_data
                 .get(id)
@@ -246,9 +249,16 @@ async fn preview_is_read_only_and_uses_current_completed_receipt_chain() {
     let command_count = fake.commands.len();
     let preview = paperless_purge::preview_at(home.path()).unwrap();
     assert_eq!(preview.state, PaperlessPurgeState::ConfirmationRequired);
-    assert_eq!(preview.volumes.len(), paperless_staging::PAPERLESS_VOLUMES.len());
+    assert_eq!(
+        preview.volumes.len(),
+        paperless_staging::PAPERLESS_VOLUMES.len()
+    );
     assert_eq!(preview.operation, PURGE_OPERATION);
-    assert!(preview.confirmation.contains(&preview.install_receipt_sha256));
+    assert!(
+        preview
+            .confirmation
+            .contains(&preview.install_receipt_sha256)
+    );
     assert!(preview.confirmation.ends_with(&preview.volume_set_id));
     assert_eq!(fake.commands.len(), command_count);
     assert!(!purge_custody_path(home.path()).exists());
@@ -260,7 +270,9 @@ async fn wrong_confirmation_rejects_before_lock_custody_or_docker() {
     let command_count = fake.commands.len();
     assert!(matches!(
         paperless_purge::purge_at_with(home.path(), "wrong", &mut fake).await,
-        Err(LifecycleError::Command("paperless_purge_confirmation_mismatch"))
+        Err(LifecycleError::Command(
+            "paperless_purge_confirmation_mismatch"
+        ))
     ));
     assert_eq!(fake.commands.len(), command_count);
     assert!(!purge_custody_path(home.path()).exists());
@@ -273,7 +285,8 @@ async fn owner_lock_blocks_confirmed_purge_without_docker_selection() {
     let preview = paperless_purge::preview_at(home.path()).unwrap();
     let root_path = crate::config::InstancePaths::for_home(home.path()).paperless_root;
     let owned = paperless_staging::open_owned_root_at(&root_path).unwrap();
-    let _held = paperless_operation_lock::acquire(&owned, OsStr::new(OPERATIONS_LOCK_NAME)).unwrap();
+    let _held =
+        paperless_operation_lock::acquire(&owned, OsStr::new(OPERATIONS_LOCK_NAME)).unwrap();
     assert!(matches!(
         paperless_purge::purge_at_with(home.path(), &preview.confirmation, &mut fake).await,
         Err(LifecycleError::Command("paperless_operation_in_progress"))
@@ -291,12 +304,24 @@ async fn happy_path_removes_only_six_receipt_bound_volumes_and_keeps_credentials
         .await
         .unwrap();
     assert_eq!(receipt.state, PaperlessPurgeState::VolumesRemoved);
-    assert_eq!(receipt.volumes.len(), paperless_staging::PAPERLESS_VOLUMES.len());
-    assert!(receipt
-        .volumes
-        .iter()
-        .all(|volume| volume.state == PaperlessPurgeVolumeState::AbsentVerified));
-    assert_eq!(fake.volume_remove_commands(), preview.volumes.iter().map(|v| v.name.clone()).collect::<Vec<_>>());
+    assert_eq!(
+        receipt.volumes.len(),
+        paperless_staging::PAPERLESS_VOLUMES.len()
+    );
+    assert!(
+        receipt
+            .volumes
+            .iter()
+            .all(|volume| volume.state == PaperlessPurgeVolumeState::AbsentVerified)
+    );
+    assert_eq!(
+        fake.volume_remove_commands(),
+        preview
+            .volumes
+            .iter()
+            .map(|v| v.name.clone())
+            .collect::<Vec<_>>()
+    );
     assert!(fake.volumes.is_empty());
     assert_eq!(std::fs::read(credential_path).unwrap(), credentials_before);
 }
@@ -306,9 +331,11 @@ async fn missing_or_substituted_generation_label_blocks_all_volume_removes() {
     let (home, _credentials, _install, mut fake) = completed_fixture().await;
     let preview = paperless_purge::preview_at(home.path()).unwrap();
     fake.omit_label_for = Some(preview.volumes[3].name.clone());
-    assert!(paperless_purge::purge_at_with(home.path(), &preview.confirmation, &mut fake)
-        .await
-        .is_err());
+    assert!(
+        paperless_purge::purge_at_with(home.path(), &preview.confirmation, &mut fake)
+            .await
+            .is_err()
+    );
     assert!(fake.volume_remove_commands().is_empty());
 }
 
@@ -318,9 +345,11 @@ async fn dispatched_after_effect_reconciles_absence_without_second_remove() {
     let preview = paperless_purge::preview_at(home.path()).unwrap();
     let first = preview.volumes[0].name.clone();
     fake.fail_remove_after_effect_for = Some(first.clone());
-    assert!(paperless_purge::purge_at_with(home.path(), &preview.confirmation, &mut fake)
-        .await
-        .is_err());
+    assert!(
+        paperless_purge::purge_at_with(home.path(), &preview.confirmation, &mut fake)
+            .await
+            .is_err()
+    );
     assert_eq!(fake.volume_remove_commands(), vec![first.clone()]);
     fake.fail_remove_after_effect_for = None;
     let receipt = paperless_purge::purge_at_with(home.path(), &preview.confirmation, &mut fake)

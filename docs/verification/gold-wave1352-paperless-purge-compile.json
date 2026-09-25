@@ -1,0 +1,13 @@
+{
+  "kind": "HOSTED_PAPERLESS_PURGE_COMPILE_REPAIR",
+  "run": 36128136411,
+  "source": "72c6e9fc8e9838866d3cf76136515c1ddf30f6b9",
+  "error": "E0283 ambiguous read_optional_json target in existing-receipt equality guard",
+  "repair": "read_optional_json::<PaperlessPurgeReceipt>",
+  "sourcePath": "SRC/neothd/src/installers/paperless_purge.rs",
+  "sourceSha256": "5F0A353F05DA57B32ED4D74187F0DF4F31FE386F5AF2B78AF01129DD43542BE2",
+  "reportSha256": "99C5DF65378D66B968495BC053854AC626E07BA1063C560A677483A4F892EC0E",
+  "helperTestsPassed": 25,
+  "hosted": "pending repaired source",
+  "localExecutableValidationRan": false
+}

@@ -2,6 +2,26 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1352 hosted purge build correction (2026-09-25):**
+The new product run36128136411 at72c6e9fc passed all25helper tests but its CLI
+build stopped at E0283: `read_optional_json` could not infer the purge-receipt
+type through an equality guard. The read now explicitly selects
+`PaperlessPurgeReceipt`; data handling and branches are unchanged. No real purge
+ran in that failed build. The exact repaired source needs fresh hosted gates.
+**W1348/1350 Paperless document preservation admitted and hosted formatting (2026-09-25):**
+The real compiled Paperless product run36127346215 at96dc51da is admitted.
+Artifact10860737666 matches its API ZIP digest;17historical source/input bindings
+include the producer observer, bounded transport helper and workflow. The PDF's
+metadata identity, title and download SHA survive safe uninstall/reinstall.
+Six-volume generation/snapshot identity, authenticated positive/negative controls,
+repeat behavior and complete isolated cleanup are verified. This historical run
+precedes confirmed purge and provides no purge acceptance.
+The new purge source72c6e9fc has Group1805/Windows574/Core/product runs in progress.
+Its preflight36128110756 requested formatting only; exact artifact10860683296
+supplies three Rust postimages. ZIP/receipt/preimage/postimage hashes match; all
+three are imported without a local formatter. W1349 new-install generation
+rotation remains uncommitted work. Claude063 maps remaining P2-20 acceptance
+requirements; no roadmap checkbox closure or local executable validation.
 **W1336/1340/1343-1347 confirmed Paperless purge and regression evidence (2026-09-25):**
 Paperless now exposes receipt-only `purge` preview and exact `--confirm` execution.
 The operation binds schema2 install/uninstall receipts and the six-volume

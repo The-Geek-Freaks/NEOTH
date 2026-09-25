@@ -1,0 +1,27 @@
+{
+  "kind": "EXACT_HOSTED_FORMAT_IMPORT",
+  "run": 36128110756,
+  "source": "72c6e9fc8e9838866d3cf76136515c1ddf30f6b9",
+  "artifact": 10860683296,
+  "zipDigest": "5149c1fecd49afa170ee9ef4f0706fb5cc6724339cbaa8f8334f6291148ebf12",
+  "receiptChecksumsVerified": true,
+  "paths": [
+    {
+      "path": "SRC/neothd/src/cli/paperless.rs",
+      "preimage": "c652e7287e308c8e172e4576d14004d5925b6c52",
+      "postimage": "4b4575d071ea6cf3d89bdf7fc0963a95d566dc57"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_purge.rs",
+      "preimage": "f3675c5d7ef9997c06a20e2376953ed8988a507e",
+      "postimage": "6b3478ac9088279465a439d61be655e748da3221"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_purge_tests.rs",
+      "preimage": "a92787f71549f782e14b1bf01b21115108e844a8",
+      "postimage": "825ffab9b2bb765b0b92481cc6636ec72f55b437"
+    }
+  ],
+  "allPrePostimagesVerified": true,
+  "localExecutableValidationRan": false
+}

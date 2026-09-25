@@ -1,0 +1,185 @@
+{
+  "run": 36127346215,
+  "source": "96dc51da04411676ece3f4268fc86cbfa5caf639",
+  "artifact": {
+    "id": 10860737666,
+    "api_digest": "sha256:0960af36ca540218c6c494100f52b8734d54fdcc65f8a34d35e87150e47ae640",
+    "zip_sha256": "0960af36ca540218c6c494100f52b8734d54fdcc65f8a34d35e87150e47ae640",
+    "matches": true
+  },
+  "receipt": {
+    "api": {
+      "negative_control_rejected": true,
+      "profile_authenticated": true,
+      "status_permission_required": false,
+      "version_sha256": "31af59c90c69fb80f10e2036bfac2b98cc98f5b12437211a496787e9561a131b"
+    },
+    "binary_sha256": "f4a6ec989802f4dbce8d764f99c37d9c128a4390b1a1ee9b16c53dd4acda2ef6",
+    "bounded_helper_sha256": "23118857e4655bad3fedbb702e4d0840aec9114482386aab5fee783ef688500a",
+    "cleanup_proven": true,
+    "containers": 3,
+    "credential_backend": "file",
+    "docker_cleanup_proven": true,
+    "helper_sha256": "ae9f8c5b869277fd77057e3c3a446f09d30c0ed8566aee2469becbf720a1e01d",
+    "images": 3,
+    "input_sha256": {
+      "SRC/Cargo.lock": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+      "SRC/neothd/src/cli/init.rs": "40d0f6cfa68c8588fe5d3be4968e40e7eb3700b8235243a2707d325bb6f220c8",
+      "SRC/neothd/src/cli/paperless.rs": "ca8edee9080645b51473ae3b72f90fe582e5ecc3446b5db77e243457d3692e70",
+      "SRC/neothd/src/config/credentials.rs": "101e3c4ceebdc934267338f5cd0274619f1f9e7b86efbdd379ac22747aa19062",
+      "SRC/neothd/src/config/mod.rs": "31d14a5c5764c72ae03cfd9c6cc58c308667694f95c17dd4048b6ad859191072",
+      "SRC/neothd/src/installers/paperless_bootstrap.rs": "9a1cce5fb16716d2a5bee0e89bf26772aab9e5a08103517f7ec658f1ec2cc427",
+      "SRC/neothd/src/installers/paperless_lifecycle.rs": "a0cc4943beb406062c59852ad16f56d89f8e2f5b8d8f8cd9851ccc585dc827d7",
+      "SRC/neothd/src/installers/paperless_operation_lock.rs": "532925c1408ae87d1c88017fd754c617ca56b0c3cfd7814e9d02781bb86a4f78",
+      "SRC/neothd/src/installers/paperless_readiness.rs": "7d2c9f878e285b3037c828c4ea9585c2edf3c401d0e1f006d2b9ce2094470210",
+      "SRC/neothd/src/installers/paperless_staging.rs": "c176013466cf52610f86d732b1952b0a61c96cacee6c3e82a92af4aab15c8244",
+      "SRC/neothd/src/installers/paperless_uninstall_tests.rs": "75d4ec7388700fde4d86986241cce8ed623d177fe5b8f3cd6b5bb35792fa6df3",
+      "SRC/neothd/src/updater/process_containment.rs": "cf9cbca83388cf291b42ae6371f205ca3c5d3c11dee69ce9d2e0a710d67a7de5",
+      "docs/verification/paperless-oci-v3.2.1/recursive-blob-receipt.json": "dbcb833bd3365bbce70fbc2aab2e1be50c3756e228d2cf57473350761872c8c8",
+      "packaging/tests/test_paperless_product_canary.py": "445e123acb8584d0b3a72fe201a5cbfdbf2519de623de846bc16126fa7c50404"
+    },
+    "isolated_home_removed": true,
+    "outcome": "passed",
+    "port": 18001,
+    "project_sha256": "a14895bfeeed513a6bf42e1fa2af2b8c123184ee78e42b67677b8c93b9dc7987",
+    "reinstall_api": {
+      "negative_control_rejected": true,
+      "profile_authenticated": true,
+      "status_permission_required": false,
+      "version_sha256": "31af59c90c69fb80f10e2036bfac2b98cc98f5b12437211a496787e9561a131b"
+    },
+    "repeat_api": {
+      "negative_control_rejected": true,
+      "profile_authenticated": true,
+      "status_permission_required": false,
+      "version_sha256": "31af59c90c69fb80f10e2036bfac2b98cc98f5b12437211a496787e9561a131b"
+    },
+    "repeat_install_preserved_identities": true,
+    "retained_document": {
+      "baseline_sha256": "3adce435da1073b2a1440789f61aca2cf7892b183d2b9dd991cfd893cfb90512",
+      "document_id_sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+      "download_sha256_matches": true,
+      "metadata_id_stable": true,
+      "metadata_title_stable": true,
+      "task_polls": 3,
+      "title_sha256": "0193c3e0ec61cf54e3ffa73d4b3fc6e0c41f8066ff31a8ccab0d7e6fdf3395ed"
+    },
+    "schema": 1,
+    "source_sha": "96dc51da04411676ece3f4268fc86cbfa5caf639",
+    "status_ready": true,
+    "uninstall_repeat_read_only": true,
+    "volume_set_id_sha256": "db52364c62eb0d5bdd728d03c2a443894e6cbf4fb52f42fda6f38f9369ae13f5",
+    "volume_set_snapshot_sha256": "3332721ed471e9044a323ec7c4620972b32b79cde3931d116bb945103c0d1c85",
+    "volumes": 6,
+    "workflow_sha256": "5ca4c31cc6c5fc526a86c098ad58f5d4436761bb8eeba542fbecf9a964b5aa68"
+  },
+  "input_binding_count": 17,
+  "all_bindings_match": true,
+  "bindings": [
+    {
+      "path": "SRC/Cargo.lock",
+      "matches": true,
+      "sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+      "blob": "f89a0cdee009703aeb423562fefea56dcf467ee6"
+    },
+    {
+      "path": "SRC/neothd/src/cli/init.rs",
+      "matches": true,
+      "sha256": "40d0f6cfa68c8588fe5d3be4968e40e7eb3700b8235243a2707d325bb6f220c8",
+      "blob": "2b775a1c0e05f669173c7aae21d9bd77ebd6ec5a"
+    },
+    {
+      "path": "SRC/neothd/src/cli/paperless.rs",
+      "matches": true,
+      "sha256": "ca8edee9080645b51473ae3b72f90fe582e5ecc3446b5db77e243457d3692e70",
+      "blob": "7a43722dc9bd41126a133c59b0ab4757f3806d15"
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials.rs",
+      "matches": true,
+      "sha256": "101e3c4ceebdc934267338f5cd0274619f1f9e7b86efbdd379ac22747aa19062",
+      "blob": "7b36c8cc0bdee1ebf9ee323a343c33bce382ec74"
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "matches": true,
+      "sha256": "31d14a5c5764c72ae03cfd9c6cc58c308667694f95c17dd4048b6ad859191072",
+      "blob": "e8c281a0ed2d6a51c9da602b8cd38d7e7049d607"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_bootstrap.rs",
+      "matches": true,
+      "sha256": "9a1cce5fb16716d2a5bee0e89bf26772aab9e5a08103517f7ec658f1ec2cc427",
+      "blob": "9099202a30cd6d55bdd424b57e70b0c533d7f9e9"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "matches": true,
+      "sha256": "a0cc4943beb406062c59852ad16f56d89f8e2f5b8d8f8cd9851ccc585dc827d7",
+      "blob": "800ff580e8d98d11cfd23d01c42f6e525b10f9e8"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_operation_lock.rs",
+      "matches": true,
+      "sha256": "532925c1408ae87d1c88017fd754c617ca56b0c3cfd7814e9d02781bb86a4f78",
+      "blob": "1f54bc96db97a1c0da7468cbe905dbb7fc5f1b69"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_readiness.rs",
+      "matches": true,
+      "sha256": "7d2c9f878e285b3037c828c4ea9585c2edf3c401d0e1f006d2b9ce2094470210",
+      "blob": "1f01747ed7bb246093ad846251b8a4b2f6c37f2a"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_staging.rs",
+      "matches": true,
+      "sha256": "c176013466cf52610f86d732b1952b0a61c96cacee6c3e82a92af4aab15c8244",
+      "blob": "f24b7a12918290f2cfa195f47a1dd1c088525ca1"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
+      "matches": true,
+      "sha256": "75d4ec7388700fde4d86986241cce8ed623d177fe5b8f3cd6b5bb35792fa6df3",
+      "blob": "defb633e933522aada50007bf75f1b34a74adc83"
+    },
+    {
+      "path": "SRC/neothd/src/updater/process_containment.rs",
+      "matches": true,
+      "sha256": "cf9cbca83388cf291b42ae6371f205ca3c5d3c11dee69ce9d2e0a710d67a7de5",
+      "blob": "ba3543e6e3ffbfa879ce85c9c548ddaecf4f2889"
+    },
+    {
+      "path": "docs/verification/paperless-oci-v3.2.1/recursive-blob-receipt.json",
+      "matches": true,
+      "sha256": "dbcb833bd3365bbce70fbc2aab2e1be50c3756e228d2cf57473350761872c8c8",
+      "blob": "9a5af5a63e77a32f3a941625165c8bd54feea6d9"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "matches": true,
+      "sha256": "445e123acb8584d0b3a72fe201a5cbfdbf2519de623de846bc16126fa7c50404",
+      "blob": "f6297a3fbe5f88f46f9ea0f315fff141292dc7a7"
+    },
+    {
+      "path": "packaging/n8n_bootstrap_canary.py",
+      "matches": true,
+      "sha256": "23118857e4655bad3fedbb702e4d0840aec9114482386aab5fee783ef688500a",
+      "blob": "1550e751dbc1e674062a5ce86eba846fbc2510ca"
+    },
+    {
+      "path": ".github/workflows/paperless-product.yml",
+      "matches": true,
+      "sha256": "5ca4c31cc6c5fc526a86c098ad58f5d4436761bb8eeba542fbecf9a964b5aa68",
+      "blob": "fbd9cace656a5491ad5afc5dee1af779dac17406"
+    },
+    {
+      "path": "packaging/paperless_product_canary.py",
+      "matches": true,
+      "sha256": "ae9f8c5b869277fd77057e3c3a446f09d30c0ed8566aee2469becbf720a1e01d",
+      "blob": "5be03b0af736ced16b8644513b97c7f6c64c567c"
+    }
+  ],
+  "boundary": "Historical product receipt only; no W1336 purge acceptance.",
+  "rootAdmission": "ROOT_ADMITTED_PAPERLESS_PROVENANCE_AND_REAL_PDF_RETENTION: exact historical96dc51da only, not confirmed purge or release",
+  "localExecutableValidationRan": false
+}
