@@ -3616,7 +3616,8 @@ impl Provider for AuthorizedProvider {
     }
 }
 
-#[cfg(test)]
+// The external file owns its cfg(test) boundary so source inventories also
+// recognize it as test-only without duplicating the attribute for Clippy.
 #[path = "role_dispatch_tests.rs"]
 mod role_dispatch_tests;
 

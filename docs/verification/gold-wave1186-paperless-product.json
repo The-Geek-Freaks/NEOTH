@@ -1,0 +1,145 @@
+{
+  "schema": "neoth-hosted-paperless-admission/v1",
+  "run": 36092294058,
+  "workflow": "W1146 compiled product Paperless canary",
+  "source": "0bc75aa0762d1a2ed3f3ef63f4453a260bbc59b6",
+  "run_conclusion": "success",
+  "artifact": {
+    "id": 10846034237,
+    "name": "w1146-product-paperless-36092294058-1",
+    "api_digest": "sha256:41d875d0117a4562e0f5e62355606e03516f45ac765cff9d371e7ad9b1d96726",
+    "zip_sha256": "41d875d0117a4562e0f5e62355606e03516f45ac765cff9d371e7ad9b1d96726",
+    "receipt_sha256": "51bd5a278e28ac807dd64ae58293aaa0d7b1e48b0f4a6e9efc90a548213be732"
+  },
+  "receipt": {
+    "outcome": "passed",
+    "source_sha": "0bc75aa0762d1a2ed3f3ef63f4453a260bbc59b6",
+    "source_matches_run": true,
+    "status_ready": true,
+    "repeat_install_preserved_identities": true,
+    "cleanup_proven": true,
+    "docker_cleanup_proven": true,
+    "isolated_home_removed": true,
+    "containers": 3,
+    "images": 3,
+    "volumes": 6,
+    "api": {
+      "negative_control_rejected": true,
+      "profile_authenticated": true,
+      "status_permission_required": false,
+      "version_sha256": "31af59c90c69fb80f10e2036bfac2b98cc98f5b12437211a496787e9561a131b"
+    },
+    "repeat_api": {
+      "negative_control_rejected": true,
+      "profile_authenticated": true,
+      "status_permission_required": false,
+      "version_sha256": "31af59c90c69fb80f10e2036bfac2b98cc98f5b12437211a496787e9561a131b"
+    },
+    "binary_sha256": "fdb4924778d3b399024459f024acb6e94a999bbdc34037e40d8803e3145da9c6",
+    "helper_sha256": "7ab64272afb67ca08ac47db8835660e0b6a0c4a8573b2143a4c1b724074898ff",
+    "bounded_helper_sha256": "23118857e4655bad3fedbb702e4d0840aec9114482386aab5fee783ef688500a",
+    "project_sha256": "fc473dae8066287b229274d977e0dae4c07734ded8e2ceacb9c06318804426c6"
+  },
+  "workflow_binding": {
+    "path": ".github/workflows/paperless-product.yml",
+    "historical_sha256": "5ca4c31cc6c5fc526a86c098ad58f5d4436761bb8eeba542fbecf9a964b5aa68",
+    "receipt_workflow_sha256": "5ca4c31cc6c5fc526a86c098ad58f5d4436761bb8eeba542fbecf9a964b5aa68",
+    "matches": true
+  },
+  "input_binding_count": 12,
+  "all_input_bindings_match": true,
+  "input_bindings": [
+    {
+      "path": "SRC/Cargo.lock",
+      "receipt_sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+      "git_blob": "f89a0cdee009703aeb423562fefea56dcf467ee6",
+      "historical_sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/init.rs",
+      "receipt_sha256": "40d0f6cfa68c8588fe5d3be4968e40e7eb3700b8235243a2707d325bb6f220c8",
+      "git_blob": "2b775a1c0e05f669173c7aae21d9bd77ebd6ec5a",
+      "historical_sha256": "40d0f6cfa68c8588fe5d3be4968e40e7eb3700b8235243a2707d325bb6f220c8",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/paperless.rs",
+      "receipt_sha256": "6ab255c0a97aa450355e03368a890af84b9309446419ba8e59715ea6cae4e865",
+      "git_blob": "f6bc1646e9041b99109ca4f2e699dee80bf99b6c",
+      "historical_sha256": "6ab255c0a97aa450355e03368a890af84b9309446419ba8e59715ea6cae4e865",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials.rs",
+      "receipt_sha256": "4a1291b814eab6f31d2184d242d9772ebd20003e9dc24c28f83a01aa5955a178",
+      "git_blob": "7622444dc9e1ec8ab5e7e067433ec9e750d7b43f",
+      "historical_sha256": "4a1291b814eab6f31d2184d242d9772ebd20003e9dc24c28f83a01aa5955a178",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "receipt_sha256": "31d14a5c5764c72ae03cfd9c6cc58c308667694f95c17dd4048b6ad859191072",
+      "git_blob": "e8c281a0ed2d6a51c9da602b8cd38d7e7049d607",
+      "historical_sha256": "31d14a5c5764c72ae03cfd9c6cc58c308667694f95c17dd4048b6ad859191072",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_bootstrap.rs",
+      "receipt_sha256": "9a1cce5fb16716d2a5bee0e89bf26772aab9e5a08103517f7ec658f1ec2cc427",
+      "git_blob": "9099202a30cd6d55bdd424b57e70b0c533d7f9e9",
+      "historical_sha256": "9a1cce5fb16716d2a5bee0e89bf26772aab9e5a08103517f7ec658f1ec2cc427",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "receipt_sha256": "cd74889264ee75c3e80896cf8ba0743d2b969be5dada2f22463a3a3637006711",
+      "git_blob": "38fb5fb9f0fcefb551c25531c0c84fae9b2c457a",
+      "historical_sha256": "cd74889264ee75c3e80896cf8ba0743d2b969be5dada2f22463a3a3637006711",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_readiness.rs",
+      "receipt_sha256": "7d2c9f878e285b3037c828c4ea9585c2edf3c401d0e1f006d2b9ce2094470210",
+      "git_blob": "1f01747ed7bb246093ad846251b8a4b2f6c37f2a",
+      "historical_sha256": "7d2c9f878e285b3037c828c4ea9585c2edf3c401d0e1f006d2b9ce2094470210",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_staging.rs",
+      "receipt_sha256": "b2f2c9b1d23e4ae532707d8bb1618cb15657ee11792e3ffe71a66af8665ed9bd",
+      "git_blob": "099ae9db63e6a8d976c3dddc42f8eb596df948e1",
+      "historical_sha256": "b2f2c9b1d23e4ae532707d8bb1618cb15657ee11792e3ffe71a66af8665ed9bd",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/updater/process_containment.rs",
+      "receipt_sha256": "cf9cbca83388cf291b42ae6371f205ca3c5d3c11dee69ce9d2e0a710d67a7de5",
+      "git_blob": "ba3543e6e3ffbfa879ce85c9c548ddaecf4f2889",
+      "historical_sha256": "cf9cbca83388cf291b42ae6371f205ca3c5d3c11dee69ce9d2e0a710d67a7de5",
+      "matches": true
+    },
+    {
+      "path": "docs/verification/paperless-oci-v3.2.1/recursive-blob-receipt.json",
+      "receipt_sha256": "dbcb833bd3365bbce70fbc2aab2e1be50c3756e228d2cf57473350761872c8c8",
+      "git_blob": "9a5af5a63e77a32f3a941625165c8bd54feea6d9",
+      "historical_sha256": "dbcb833bd3365bbce70fbc2aab2e1be50c3756e228d2cf57473350761872c8c8",
+      "matches": true
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "receipt_sha256": "44c40dd80b20801d3f270e925cc2f910e2fa22d92d8a6b0d9fbc9f875456af66",
+      "git_blob": "b3a94eb81bc790914036a7b83c2bb4278723f734",
+      "historical_sha256": "44c40dd80b20801d3f270e925cc2f910e2fa22d92d8a6b0d9fbc9f875456af66",
+      "matches": true
+    }
+  ],
+  "acceptance_boundary": "Historical hosted source only; no current dirty-worktree admission.",
+  "localExecutableValidationRan": false,
+  "rootVerification": {
+    "verifiedUtc": "2026-09-25T04:08:00.5494509Z",
+    "historicalInputs": 12,
+    "zipAndReceiptHashes": true,
+    "productAssertions": true
+  }
+}

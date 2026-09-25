@@ -1,0 +1,47 @@
+{
+  "schema": "neoth-gold-reviewed-repair/v1",
+  "base": "0bc75aa0762d1a2ed3f3ef63f4453a260bbc59b6",
+  "scope": "Remove duplicate outer test cfg while retaining inner test-only file marker; import one exact hosted formatter output",
+  "providerReview": "# W1188-A — provider cfg repair, static review\n\n## Verdict: APPROVE_STATIC_ONLY\n\nHistorical hosted evidence in `work/gold-20260906/wave1183-core-f203-failure/failed.txt` records GitHub workspace Clippy's `duplicated attribute` diagnostic at `role_dispatch_tests.rs:1:8`, with the first attribute at `cost_authorization.rs:3619:7` and `-D warnings` in force.\n\nThe reviewed repair removes only the outer `#[cfg(test)]` on the path module declaration in `cost_authorization.rs`. `role_dispatch_tests.rs` retains its inner `#![cfg(test)]` at line 1. The module therefore remains test-only, while precisely one test configuration attribute reaches Clippy. No production provider behavior is introduced by this wiring repair.\n\n## Frozen input hashes\n\n| Path | SHA-256 |\n| --- | --- |\n| `SRC/neothd/src/providers/cost_authorization.rs` | `ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE` |\n| `SRC/neothd/src/providers/role_dispatch_tests.rs` | `45864F9D2F9A2D6BD9FAC6FA63D898ABDFED28563F19471188E3DA2ED0433BF4` |\n| `work/gold-20260906/wave1183-core-f203-failure/failed.txt` | `4BBF78FE4A3EB8E5FABB008EFD332B6AEB86B2323A7F62BECF12F96E59FF8C81` |\n\n## Boundary\n\n`git diff HEAD --check` passed. This is a static-only review under the BSOD hold; no local compiler, parser, formatter, test, or runtime command was run. GitHub-hosted Clippy/build evidence is still required.",
+  "providerReviewSha256": "DD8177BF89356BDAB47D40A95F2917EBF721E09ACD5B5F5F27A2BB8826F497D3",
+  "formatter": {
+    "artifact": {
+      "id": 10845563111,
+      "name": "preflight-rustfmt-patch-receipt",
+      "api_digest": "sha256:2421795f6be197633657a376abcbe48ae2ce0b0f74dab72bb7f4417f7483e61d",
+      "local_sha256": "2421795f6be197633657a376abcbe48ae2ce0b0f74dab72bb7f4417f7483e61d",
+      "matches": true
+    },
+    "inner_hashes": [
+      {
+        "path": "rustfmt.patch",
+        "expected": "826625812e7745ae9c13df6af7c4e555815658f3eecb37951681e094ccd137c8",
+        "actual": "826625812e7745ae9c13df6af7c4e555815658f3eecb37951681e094ccd137c8",
+        "matches": true
+      },
+      {
+        "path": "source-head.txt",
+        "expected": "18a9443c0ce41cc6fbee012c538d2a1833dce2d2867861cab8f36c150558c2f1",
+        "actual": "18a9443c0ce41cc6fbee012c538d2a1833dce2d2867861cab8f36c150558c2f1",
+        "matches": true
+      }
+    ],
+    "source_head": "0bc75aa0762d1a2ed3f3ef63f4453a260bbc59b6",
+    "source_head_matches_run": true,
+    "touched_path_count": 1,
+    "preimages_all_match": true,
+    "entries": [
+      {
+        "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+        "patch_preimage_git_blob": "38fb5fb9f0fcefb551c25531c0c84fae9b2c457a",
+        "historical_preimage_sha256": "cd74889264ee75c3e80896cf8ba0743d2b969be5dada2f22463a3a3637006711",
+        "patch_postimage_git_blob": "465e0548396e76c884aaa5348a34ffed9ee0f68e",
+        "preimage_matches": true,
+        "postimage_object_present_locally": false
+      }
+    ],
+    "scope": "Read-only receipt recovery; no patch applied/staged."
+  },
+  "hosted": "fresh workspace Clippy pending",
+  "localExecutableValidationRan": false
+}

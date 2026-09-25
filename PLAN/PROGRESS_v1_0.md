@@ -2,6 +2,24 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1186/W1189 real Paperless acceptance and provider build repair (2026-09-25):**
+Root independently admitted Paperless product run36092294058 at0bc75aa0:
+API ZIP and inner receipt hashes plus12 historical source bindings match.
+The compiled public CLI initialized, prepared, installed and reported ready;
+authenticated API access and negative controls passed before and after repeat
+install. The same3 containers/3 images/6 named volumes were retained; exact
+Docker cleanup and isolated-home removal passed. This proves the historical
+Paperless managed-install slice. Current n8n starter changes require a fresh
+13-workflow import before the combined LF-002-09 criterion can close.
+W1188 reviewed the provider Clippy repair: only the duplicate outer cfg(test)
+is removed; the included test file retains its inner marker and all source
+inventory guards remain strict. W1184's sole hosted Paperless formatter output
+was imported after ZIP/inner/preimage/postimage verification. Core0bc passed
+slim production Clippy, test type-check, public CLI build and reference export;
+workspace Clippy is still running and contains the known unrepaired marker.
+Email triage and its real IMAP starter remain separate unpublished WIP.
+No roadmap checkbox closes here; no local executable validation ran.
+
 **W1180 hosted fixture/compile repairs and earlier reference export (2026-09-25):**
 Root admitted Group1606 run36089951615 atf2030a00 after278 source/input
 bindings and all three API ZIPs:1604PASS/2FAIL/0missing. Windows383

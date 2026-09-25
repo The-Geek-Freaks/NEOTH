@@ -1509,7 +1509,10 @@ mod tests {
                     .filter(|name| *name != "COMPOSE_DISABLE_ENV_FILE"),
             )
         {
-            assert!(!configured.contains_key(name), "unexpected configured {name}");
+            assert!(
+                !configured.contains_key(name),
+                "unexpected configured {name}"
+            );
         }
         for name in configured.keys() {
             assert!(OS_LAUNCH_ENV.contains(&name.as_str()) || name == "COMPOSE_DISABLE_ENV_FILE");

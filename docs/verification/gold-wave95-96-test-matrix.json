@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1180 reviewed exact hosted compile/fixture repairs and formatter8; verified historical partial results; fresh hosted pending",
+  "status": "W1189 reviewed provider cfg and exact hosted formatter repair; W1186 historical Paperless product passed; fresh workspace gate pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 199085,
-    "sha256": "9459BA158D505DDF108066B75F2971CB74351E6C98E56A957CCBA723DD2D054F"
+    "bytes": 199468,
+    "sha256": "45BD7BDAD77B1E8DE8CB0F2134B0CEB9D320257801A3BC5F16C77295E2821FFD"
   },
-  "sourceInputs": 1122,
+  "sourceInputs": 1124,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -984,7 +984,7 @@
     {
       "test": "providers::cost_authorization::tests::w138_retained_skill_deny_blocks_paid_provider_before_transport",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
@@ -1122,7 +1122,7 @@
     {
       "test": "providers::cost_authorization::tests::production_raw_complete_stream_surface_is_reviewed",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
@@ -1830,7 +1830,7 @@
     {
       "test": "providers::cost_authorization::tests::admitted_provider_leaf_permission_and_trust_headers_retain_session",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
@@ -2538,37 +2538,37 @@
     {
       "test": "providers::cost_authorization::tests::prompt_tax_binding_retains_exact_local_leaf",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::prompt_tax_binding_clears_changed_local_prompt",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::prompt_tax_binding_clears_changed_local_system",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::prompt_tax_binding_retains_local_model_only_change",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::prompt_tax_binding_distinguishes_missing_and_empty_local_system",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::prompt_tax_binding_also_clears_changed_paid_leaf",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
@@ -2712,13 +2712,13 @@
     {
       "test": "providers::cost_authorization::tests::production_provider_lifecycle_emitters_are_centralized",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::production_transports_cannot_override_the_safe_dispatch_entry",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
@@ -3948,55 +3948,55 @@
     {
       "test": "providers::cost_authorization::tests::operation_budget_shared_clones_aggregate_input_output_and_usd",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::operation_budget_competing_admissions_are_atomic_and_never_refund",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::operation_budget_rejects_unknown_price_and_missing_ceiling_before_dispatch",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::operation_budget_attaches_without_replacing_council_daily_cap",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::operation_budget_authorizer_wrappers_share_admission_and_block_third_dispatch",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::operation_budget_oversized_leaf_blocks_before_raw_provider_dispatch",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::operation_budget_daily_rejection_precedes_and_preserves_operation_quota",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::operation_budget_rejection_rolls_back_daily_pre_dispatch_reservation",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::operation_budget_post_dispatch_failure_keeps_conservative_reservation",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
@@ -4020,13 +4020,13 @@
     {
       "test": "providers::cost_authorization::tests::operation_budget_uses_transport_bound_not_billing_reserve",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::operation_budget_actual_mirror_long_original_blocks_before_raw_dispatch",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
@@ -4824,7 +4824,7 @@
     {
       "test": "providers::cost_authorization::tests::raw_callsite_digest_excludes_only_explicit_test_only_files",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
@@ -4878,13 +4878,13 @@
     {
       "test": "providers::cost_authorization::tests::empty_stdout_retry_gets_a_second_authorized_lifecycle",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::final_retry_receipts_close_once_and_buddy_never_marks_them_followed_up",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
@@ -4913,13 +4913,13 @@
     },
     {
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "test": "providers::cost_authorization::tests::consent_revoked_between_attempts_blocks_before_the_retry_wire",
       "junitClass": "neoth"
     },
     {
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "test": "providers::cost_authorization::tests::mixed_retry_chain_retains_origin_only_for_final_authorization_denial",
       "junitClass": "neoth"
     },
@@ -5982,43 +5982,43 @@
     {
       "test": "providers::cost_authorization::tests::direct_retry_closes_first_terminal_then_reauthorizes_before_success",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::direct_retry_untyped_failure_is_terminal_without_a_second_raw_call",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::direct_retry_typed_http_auth_is_terminal_without_a_second_raw_call",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::direct_retry_stops_at_the_shared_transient_bound",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::direct_retry_consent_revocation_blocks_the_second_raw_call",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::direct_retry_does_not_send_early_during_a_durable_quota_cooldown",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::direct_retry_honours_one_short_quota_retry_and_stops",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
@@ -6600,13 +6600,13 @@
     {
       "test": "providers::cost_authorization::tests::direct_retry_reauthorizes_a_bounded_typed_error_correction_request",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::tests::direct_retry_context_over_input_cap_is_denied_before_a_second_raw_send",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80",
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
       "junitClass": "neoth"
     },
     {
@@ -7027,25 +7027,25 @@
       "test": "providers::cost_authorization::tests::cluster_budget_rounds_positive_reserves_up_but_allows_zero_actual_cost",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
       "junitClass": "neoth",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80"
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE"
     },
     {
       "test": "providers::cost_authorization::tests::cluster_budget_quorum_leaf_dispatches_exactly_once",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
       "junitClass": "neoth",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80"
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE"
     },
     {
       "test": "providers::cost_authorization::tests::cluster_budget_no_quorum_blocks_before_raw_provider_dispatch",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
       "junitClass": "neoth",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80"
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE"
     },
     {
       "test": "providers::cost_authorization::tests::cluster_budget_unknown_price_blocks_before_raft_or_raw_provider_dispatch",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
       "junitClass": "neoth",
-      "sourceSha256": "A4E194C66CE9186CABDD6D9AA3181E4C890188C326546D3B17EE786F7E436C80"
+      "sourceSha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE"
     },
     {
       "test": "cli::cluster::tests::generic_configure_preserves_budget_policy_in_apply_and_readback_snapshot",
@@ -7416,43 +7416,43 @@
     {
       "test": "installers::paperless_lifecycle::tests::parses_only_a_single_literal_env_port",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+      "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::exact_identifier_rejects_multiple_or_spaced_container_ids",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+      "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::compose_never_pulls_and_uses_pinned_engine_endpoint",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+      "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::receipt_matches_all_pinned_indexes_and_contains_config_proof",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+      "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::container_validation_rejects_stopped_and_mixed_bindings",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+      "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::image_verification_uses_engine_platform_not_windows_host",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+      "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::docker_command_uses_a_sterile_compose_environment",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+      "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
       "junitClass": "neoth"
     },
     {
@@ -10770,55 +10770,55 @@
     {
       "test": "installers::paperless_lifecycle::tests::compose_environment_matches_bootstrap_dotenv_literals",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+      "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::volume_validation_requires_exact_name_and_compose_labels",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+      "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::container_validation_rejects_missing_wrong_and_extra_volume_mounts",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+      "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::volume_listing_accepts_only_one_exact_name",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+      "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::empty_or_absent_legacy_state_is_allowed",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+      "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::nonempty_legacy_state_aborts_before_docker_mutation",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+      "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::public_executor_entrypoint_refuses_unretained_launches",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+      "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::preexisting_unowned_volume_aborts_before_compose_up",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+      "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::tests::post_readiness_volume_mismatch_suppresses_receipt",
       "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+      "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
       "junitClass": "neoth"
     },
     {
@@ -12848,19 +12848,19 @@
       {
         "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_keeps_existing_token_and_binds_full_install",
         "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-        "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+        "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
         "junitClass": "neoth"
       },
       {
         "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_rejects_remote_engine_before_pull",
         "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-        "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+        "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
         "junitClass": "neoth"
       },
       {
         "test": "installers::paperless_lifecycle::tests::windows_guarded_dispatcher_bootstraps_missing_token_after_verified_containers",
         "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-        "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+        "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
         "junitClass": "neoth"
       },
       {
@@ -13186,13 +13186,13 @@
       {
         "test": "installers::paperless_lifecycle::tests::unix_dispatcher_uses_retained_compose_inputs_and_records_volumes",
         "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-        "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+        "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
         "junitClass": "neoth"
       },
       {
         "test": "installers::paperless_lifecycle::tests::launch_binding_gate_prevents_remote_engine_selection_and_receipt",
         "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-        "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+        "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
         "junitClass": "neoth"
       },
       {
@@ -13548,13 +13548,13 @@
       {
         "test": "installers::paperless_lifecycle::tests::unix_dispatcher_uses_retained_compose_inputs_and_records_volumes",
         "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-        "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+        "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
         "junitClass": "neoth"
       },
       {
         "test": "installers::paperless_lifecycle::tests::launch_binding_gate_prevents_remote_engine_selection_and_receipt",
         "sourcePath": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-        "sourceSha256": "CD74889264EE75C3E80896CF8BA0743D2B969BE5DADA2F22463A3A3637006711",
+        "sourceSha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
         "junitClass": "neoth"
       },
       {
@@ -41539,6 +41539,62 @@
       }
     ],
     "note": "Groupf2031604PASS2FAIL/Windowsf203382PASS1FAIL,calendar22pass both; no checkbox closure. CLI export moved before full workspace gate, all checks preserved.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1189": {
+    "base": "0bc75aa0762d1a2ed3f3ef63f4453a260bbc59b6",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1186-paperless-product.json",
+        "bytes": 6591,
+        "sha256": "FB1E0C1A295BC516451FC67A01D5944B3E5DFD1D5C66B296430DD9C49AE1A68E",
+        "blob": "f574eb230a336e67834a47536783a50568a4a8cd"
+      },
+      {
+        "path": "docs/verification/gold-wave1189-repair-review.json",
+        "bytes": 3377,
+        "sha256": "07BEAFD640255EA3D3FB268973F57F29CDB7FCB41732FEAC3EE261806BE64988",
+        "blob": "3a0a21d6621aa2ad8b0411a01a3203b3d34a3c3e"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 336322,
+        "sha256": "E7A06903A36A6CF39A99747D58614A721385D226F1F7CFBE022C548A9D385126",
+        "blob": "39c09b6ffe7202275d8f56e2b8df25d008b74209"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1353133,
+        "sha256": "BBB8D9D4A1C0247FD6D79FD724BAAE5F2A5E1FDA2657436503905F81CA9A8585",
+        "blob": "223309ffb538aef5cdd6eba31a87cccfa1443b83"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1963074,
+        "sha256": "736D27ED85E20D81859625D21F00F5655B31FB0E17329507F8A66304497E5047",
+        "blob": "c4d55e380d1ab10ac8c68d50ccf7707881138cf7"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+        "bytes": 73366,
+        "sha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478",
+        "blob": "465e0548396e76c884aaa5348a34ffed9ee0f68e"
+      },
+      {
+        "path": "SRC/neothd/src/providers/cost_authorization.rs",
+        "bytes": 358637,
+        "sha256": "ABB82CACA95AB4A8CA7355D8B6D2D6E4980EFB1665C62481B437C60FC9539AEE",
+        "blob": "2b15d8b8b001b346a5c95b00f832060e4c8d075f"
+      },
+      {
+        "path": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+        "bytes": 20805,
+        "sha256": "45864F9D2F9A2D6BD9FAC6FA63D898ABDFED28563F19471188E3DA2ED0433BF4",
+        "blob": "a1a669d53e7ce6edfc5afa33b4daac5d9f18c021"
+      }
+    ],
+    "note": "No new tests. Production provider semantics and strict inventory unchanged. Root independently admitted Paperless0bc artifact/hash/12inputs/install/status/repeat/cleanup. No roadmap closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
