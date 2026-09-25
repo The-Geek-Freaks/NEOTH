@@ -9,6 +9,32 @@ There is no volume purge or foreign-container override on this command.
 An adopted instance has no managed-container ownership and cannot be removed
 through this command. Missing or conflicting runtime ownership stops removal.
 
+## Managed repair
+
+`neoth n8n repair` is a parameterless public command for the existing NEOTH
+managed runtime. It takes no port, image, endpoint, container, volume or API-key
+override. The command derives its target from the stored successful managed
+install, durable runtime binding and stored credential authority. A healthy
+runtime is an authenticated no-op; a stopped exact container may be started;
+and a missing owned container may be recreated only when Docker returns and the
+receipt persists that exact new ID.
+
+Repair checks the pinned image, managed volume, stored binding and authenticated
+loopback readiness before publishing Ready. It uses the same nonblocking
+operation lock as uninstall and purge. An interrupted, malformed or uncertain
+repair custody record fences uninstall and purge; an uncertain create is held
+and cannot be retried by adoption or by accepting a later same-named container.
+The structured completion action is `healthy`, `started`, or `recreated` only
+when its receipt still agrees with the current source install and runtime
+binding.
+
+The implementation was independently statically reviewed. At source
+`9c01fa10f3613a139648b6e731ab2173f0ac7be6`, which corrects the repair module
+path and imports hosted formatting, native tests, compilation, and the actual
+Docker product canary reported hosted failures; diagnosis and corrected runs
+are pending. Do not treat the command as having
+hosted execution success until those gates publish evidence.
+
 ## Interrupted commands
 
 NEOTH stores the removal intent before invoking Docker. A failed command or a
@@ -126,5 +152,17 @@ name between inspection and removal is outside that lock's protection.
 
 The implementation includes focused fake-runner and configuration transaction
 regressions. Source review and registered tests are distinct from executed
-GitHub gates and an actual Docker lifecycle test. This document does not close
-the broader safe-uninstall/purge, Obsidian, or release acceptance criteria.
+GitHub gates and an actual Docker lifecycle test. The n8n repair source review
+is recorded in `docs/verification/gold-wave1407-n8n-repair.json`; its status is
+`STATIC_REVIEW_HOSTED_PENDING`, not test or product acceptance. This document
+does not close the broader safe-uninstall/purge, Obsidian, or release acceptance
+criteria.
+
+## Provenance and release boundary
+
+The managed image reference and any recorded blob checksum establish only the
+specific bytes or metadata checked. They are not upstream signatures or
+attestations. Upstream signature/attestation verification and admission remain
+open. Managed update and rollback remain open too. Neither a stored-identity
+repair receipt nor a checksum authorizes an update, rollback, or a release
+claim.

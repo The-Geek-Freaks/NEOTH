@@ -183,22 +183,22 @@ impl super::super::N8nApiProbe for Probe {
     async fn negative_control(
         &self,
         _: &crate::config::LoopbackHttpEndpoint,
-    ) -> Result<(), super::super::N8nProbeError> {
+    ) -> Result<(), super::super::super::N8nProbeError> {
         Ok(())
     }
     async fn authenticated_probe(
         &self,
         e: &crate::config::LoopbackHttpEndpoint,
         _: &SecretString,
-    ) -> Result<super::super::N8nProbeReceipt, super::super::N8nProbeError> {
+    ) -> Result<super::super::super::N8nProbeReceipt, super::super::super::N8nProbeError> {
         if self.0 {
-            super::super::parse_workflows_response(
+            super::super::super::parse_workflows_response(
                 e.clone(),
                 200,
                 br#"{"data":[],"nextCursor":null}"#,
             )
         } else {
-            Err(super::super::N8nProbeError::Unauthorized)
+            Err(super::super::super::N8nProbeError::Unauthorized)
         }
     }
 }
@@ -403,11 +403,58 @@ async fn exact_image_port_and_volume_conflicts_refuse_before_start_or_create() {
 
 #[tokio::test]
 async fn binding_commit_cas_recovers_with_old_or_already_new_binding_without_redispatch() {
-    for already_committed in [false, true] {
+    for (recovery_state, already_committed) in [
+        (JobState::Queued, false),
+        (JobState::Queued, true),
+        (JobState::Running, false),
+        (JobState::Running, true),
+        (JobState::Validating, false),
+        (JobState::Validating, true),
+        (JobState::Configuring, false),
+        (JobState::Configuring, true),
+    ] {
         let (home, mut runner, state, _source) = fixture().await;
-        let service = super::super::open_n8n_job_service(home.path()).unwrap();
+        let service = super::super::super::open_n8n_job_service(home.path()).unwrap();
         let (old_binding, source) = source_ready(&service, home.path()).unwrap();
-        let repair = enqueue_repair(&service, &old_binding, &source, 1).unwrap();
+        let queued = enqueue_repair(&service, &old_binding, &source, 1).unwrap();
+        let repair = match recovery_state {
+            JobState::Queued => queued,
+            JobState::Running => service
+                .start(&queued.job_id, queued.state_revision, "crash-before-validation")
+                .unwrap(),
+            JobState::Validating => {
+                let running = service
+                    .start(&queued.job_id, queued.state_revision, "crash-before-validation")
+                    .unwrap();
+                service
+                    .begin_validation(
+                        &running.job_id,
+                        running.state_revision,
+                        "crash-before-configuration",
+                    )
+                    .unwrap()
+            }
+            JobState::Configuring => {
+                let running = service
+                    .start(&queued.job_id, queued.state_revision, "crash-before-validation")
+                    .unwrap();
+                let validating = service
+                    .begin_validation(
+                        &running.job_id,
+                        running.state_revision,
+                        "crash-before-configuration",
+                    )
+                    .unwrap();
+                service
+                    .begin_configuration(
+                        &validating.job_id,
+                        validating.state_revision,
+                        "crash-before-ready",
+                    )
+                    .unwrap()
+            }
+            _ => unreachable!(),
+        };
         let next = expected_recreated_binding(
             &RepairCustody {
                 schema_version: 1,
@@ -459,9 +506,11 @@ async fn binding_commit_cas_recovers_with_old_or_already_new_binding_without_red
         }
         write_custody(home.path(), &custody).unwrap();
 
-        repair_managed_at_with(home.path(), key(), &mut runner, &Ready(true), &Probe(true))
-            .await
-            .unwrap();
+        let ready =
+            repair_managed_at_with(home.path(), key(), &mut runner, &Ready(true), &Probe(true))
+                .await
+                .unwrap();
+        assert_eq!(ready.state, JobState::Ready);
         assert_eq!(
             super::super::read_binding(home.path()).unwrap().unwrap(),
             next
@@ -810,7 +859,7 @@ async fn peer_operation_lock_reports_busy_without_repair_or_uninstall_effects() 
 #[tokio::test]
 async fn completed_sidecar_with_queued_or_running_repair_job_blocks_uninstall_and_purge() {
     let (home, mut runner, state, _source) = fixture().await;
-    let service = super::super::open_n8n_job_service(home.path()).unwrap();
+    let service = super::super::super::open_n8n_job_service(home.path()).unwrap();
     let (binding, source) = source_ready(&service, home.path()).unwrap();
     let repair = enqueue_repair(&service, &binding, &source, 1).unwrap();
     write_custody(
@@ -846,7 +895,7 @@ async fn completed_sidecar_with_queued_or_running_repair_job_blocks_uninstall_an
         super::super::managed_uninstall::uninstall_managed_at_with(home.path(), &mut runner)
             .await
             .unwrap();
-    let service = super::super::open_n8n_job_service(home.path()).unwrap();
+    let service = super::super::super::open_n8n_job_service(home.path()).unwrap();
     let repair = enqueue_repair(&service, &binding, &source, 1).unwrap();
     let running = service
         .start(
@@ -861,9 +910,10 @@ async fn completed_sidecar_with_queued_or_running_repair_job_blocks_uninstall_an
     )
     .unwrap();
     let plan =
-        super::super::managed_purge::prepare_purge_at(home.path(), &uninstall.job_id).unwrap();
+        super::super::super::managed_purge::prepare_purge_at(home.path(), &uninstall.job_id)
+            .unwrap();
     state.lock().unwrap().calls.clear();
-    let purge = super::super::managed_purge::purge_retained_volume_at_with(
+    let purge = super::super::super::managed_purge::purge_retained_volume_at_with(
         home.path(),
         &uninstall.job_id,
         &plan.confirmation,
@@ -903,10 +953,11 @@ async fn pending_and_malformed_repair_custody_block_purge_before_volume_effects(
             std::fs::write(home.path().join("n8n-managed-repair.v1.json"), b"not-json").unwrap();
         }
         let plan =
-            super::super::managed_purge::prepare_purge_at(home.path(), &uninstall.job_id).unwrap();
+            super::super::super::managed_purge::prepare_purge_at(home.path(), &uninstall.job_id)
+                .unwrap();
         state.lock().unwrap().calls.clear();
 
-        let failure = super::super::managed_purge::purge_retained_volume_at_with(
+        let failure = super::super::super::managed_purge::purge_retained_volume_at_with(
             home.path(),
             &uninstall.job_id,
             &plan.confirmation,
@@ -936,8 +987,9 @@ async fn repair_uninstall_and_purge_complete_with_retained_owner_provenance() {
             .await
             .unwrap();
     let plan =
-        super::super::managed_purge::prepare_purge_at(home.path(), &uninstall.job_id).unwrap();
-    let purged = super::super::managed_purge::purge_retained_volume_at_with(
+        super::super::super::managed_purge::prepare_purge_at(home.path(), &uninstall.job_id)
+            .unwrap();
+    let purged = super::super::super::managed_purge::purge_retained_volume_at_with(
         home.path(),
         &uninstall.job_id,
         &plan.confirmation,

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     HttpN8nApiProbe, IntegrationJob, IntegrationJobService, JobEvidenceContract, JobOperation,
-    JobRequester, ManagedDockerRunner, ManagedN8nRequest, N8N_CAPABILITY_ID, N8nApiProbe,
+    JobRequester, ManagedDockerRunner, N8N_CAPABILITY_ID, N8nApiProbe,
     ProductionReadiness, RuntimeBinding, RuntimePhase, is_managed_job, read_binding,
     read_binding_bytes, sha256_parts, validate_binding, validate_existing_identity, write_binding,
 };
@@ -315,7 +315,7 @@ fn verify_exact(
 
 /// Injectable complete backend seam. `api_key` is borrowed solely for the
 /// final authenticated probe and never enters custody or the repair job.
-pub(crate) async fn repair_managed_at_with<
+pub(in crate::integrations) async fn repair_managed_at_with<
     R: ManagedDockerRunner,
     H: super::ManagedReadiness,
     P: N8nApiProbe + ?Sized,
@@ -454,6 +454,9 @@ pub(crate) async fn repair_managed_at_with<
         state if state.is_active() => queued,
         _ => return Ok(queued),
     };
+    if active.state == JobState::Running {
+        active = service.begin_validation(&active.job_id, active.state_revision, STEPS[0])?;
+    }
     if active.progress.completed_steps == 0 {
         active = checkpoint(&service, &active, 1, STEPS[0])?;
     }
@@ -610,6 +613,12 @@ pub(crate) async fn repair_managed_at_with<
         write_custody(home, &custody).map_err(anyhow::Error::msg)?;
     }
     if custody.phase == RepairPhase::RuntimeVerified {
+        if active.state == JobState::Validating {
+            active = service.begin_configuration(&active.job_id, active.state_revision, STEPS[2])?;
+        }
+        if active.progress.completed_steps < 3 {
+            active = checkpoint(&service, &active, 3, STEPS[2])?;
+        }
         let deadline = Instant::now() + DEADLINE;
         while !readiness.health(custody.old_binding.host_port).await {
             if Instant::now() >= deadline {
@@ -627,6 +636,14 @@ pub(crate) async fn repair_managed_at_with<
             .map_err(|error| anyhow::anyhow!(error.code()))?;
         custody.phase = RepairPhase::ReadinessVerified;
         write_custody(home, &custody).map_err(anyhow::Error::msg)?;
+    }
+    // A crash after the readiness custody write may reopen this job while it
+    // still has the pre-publication Validating state. This guard belongs to
+    // the already-persisted readiness stage, so it uses STEPS[3] without
+    // claiming that either probe ran again. Ready is legal only from
+    // Configuring.
+    if active.state == JobState::Validating {
+        active = service.begin_configuration(&active.job_id, active.state_revision, STEPS[3])?;
     }
     if active.progress.completed_steps < 4 {
         active = checkpoint(&service, &active, 4, STEPS[3])?;

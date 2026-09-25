@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "status": "EXACT_SOURCE_NATIVE_ACCEPTED",
+  "source": "15fbfd8dd5a5e87c5830864fa0b64881ec5376e1",
+  "linux": {
+    "run": 36142677695,
+    "executed": 1832,
+    "passed": 1832,
+    "failed": 0,
+    "missingTerminal": 0,
+    "sourceBindings": 307,
+    "logSha256": "1B8D09226D734998FCCC95CB1968730DEDBB4C13D45785832EF568BA2A3616F0",
+    "receiptArtifact": 10869236421,
+    "receiptZipSha256": "a262d04bc1cdad7c3a59e795907a008b2bf59f1b6f54daaf93eb8814c2a4c4c8",
+    "logArtifact": 10868916634,
+    "logZipSha256": "6e34fad9c4ecec4a676177a2d56ceee201c12dd6b3af81160c49b92ec462beff",
+    "sourceArtifact": 10868906574,
+    "sourceZipSha256": "29d8a2f987cc7d8298830a8824f0083f7fd551bb4bf4bc44f85f413c72e90709"
+  },
+  "windows": {
+    "run": 36142682218,
+    "artifactId": 10869148996,
+    "zipSha256": "f808ebc4378fdba97f51b4532674544615fc8d9798b6fb5f6b144219df82fdfc",
+    "executed": 601,
+    "passed": 601,
+    "failed": 0,
+    "verifiedLogTerminals": 601,
+    "verifiedEvidenceAndLogHashes": 612,
+    "sourceBindings": 105
+  },
+  "boundary": "Exact producer source only. New n8n repair additions at 9c01fa10 have failed hosted gates and are not admitted by these earlier runs. P2-20, update, rollback, upstream artifact signature and release gates remain open.",
+  "localExecutableValidationRan": false
+}

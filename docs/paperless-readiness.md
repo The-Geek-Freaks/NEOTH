@@ -145,7 +145,19 @@ refuses foreign resources, a deliberate uninstall, purge or generation change.
 Its journal distinguishes restarting an exact known container from creating a
 new one: an uncertain creation is held without automatic retry or adoption.
 Interrupted receipt writes resume only from the exact recorded before/after
-bytes. Hosted native and real fault-injection acceptance remain pending.
+bytes.
+
+GitHub product run `36142673419` at source
+`15fbfd8dd5a5e87c5830864fa0b64881ec5376e1` passed the real Linux lifecycle
+canary recorded in
+`docs/verification/gold-wave1408-paperless-product-accepted.json`. It retained
+one real PDF across healthy repair, exact-ID start, recreate, uninstall and
+reinstall; verified the downloaded bytes and document metadata; then removed
+the exact six-volume generation, observed cleanup, and installed a fresh
+generation with a rotated API token. The run also proved repeat uninstall,
+purge and fresh install read-only/stable where applicable. This is exact-source
+product evidence, not a general release claim; native and other release gates
+remain separate.
 ## Explicit retained-data removal
 
 After a completed safe uninstall, `neoth paperless purge` previews the six
@@ -172,8 +184,23 @@ the expected old Paperless token; other credentials and settings are preserved.
 Concurrent token changes are rejected. Repeating installation keeps the fresh
 generation and credentials, and later generations can repeat the lifecycle.
 
-Confirmed purge has passed the real compiled-product canary with six independently
-observed absences and unchanged receipts/credentials on repeat. Fresh-generation
-rotation has independent static review. Its first real fresh-install attempt
-exposed stale-token authentication; the generation-bound token replacement and
-container repair now await their new hosted native and product gates.
+Confirmed purge and fresh-generation credential rotation passed the same exact
+source product canary: six receipt-bound volumes were independently absent,
+receipts and unrelated credentials stayed stable on repeat, and the subsequent
+generation used a different token. The acceptance receipt is the source of
+truth for that result; it does not close unrelated roadmap or release gates.
+
+## Provenance and release boundary
+
+The recursive OCI receipt records registry metadata and blob checksums. A
+checksum proves only the bytes that were checked; it is not an upstream
+signature or attestation. Upstream signature/attestation verification and
+admission remain open. Update and rollback remain open as well. The accepted
+Paperless lifecycle result above therefore does not authorize unimplemented
+update or rollback behavior, or claim artifact-signature verification.
+
+Upstream inspection of Paperless 3.2.1 and 3.2.0 found descriptor-hash-verified
+BuildKit provenance statements without embedded signatures. See
+`docs/verification/gold-wave1414-paperless-upstream-provenance.json`.
+The independently verified source-tag signature is a separate fact and does
+not authenticate either OCI image.

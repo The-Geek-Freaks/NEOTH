@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "status": "EXACT_HOSTED_FAILURES_IDENTIFIED_SOURCE_CORRECTIONS_PENDING_RERUN",
+  "source": "9c01fa10f3613a139648b6e731ab2173f0ac7be6",
+  "core": {
+    "run": 36145195896,
+    "findings": [
+      "unused ManagedN8nRequest import",
+      "private_bounds on injectable Repair seam",
+      "collapsible_if in runtime volume label checks"
+    ]
+  },
+  "linux": {
+    "run": 36145204573,
+    "selected": 1852,
+    "result": "COMPILE_ABORT_BEFORE_TESTS",
+    "receiptArtifact": 10869019412,
+    "receiptZipSha256": "3f0d21115bec74ed84cdd1078edb57178fabc4a989793e39c74f72900d0b33b9",
+    "logArtifact": 10868769464,
+    "logZipSha256": "8123abb6a30bf17bfc1e5d7abf1d46c9e3fc46ee2eac8c9e6f2458f5f29ef54c",
+    "sourceArtifact": 10868684443,
+    "sourceZipSha256": "88d0a82ddd618ab183fd6e8eb46ac30db36f8c906a9aa6b55315a9186b0f86ff"
+  },
+  "windows": {
+    "run": 36145207919,
+    "selected": 621,
+    "executed": 0,
+    "compileStatus": 101,
+    "artifactId": 10870205046,
+    "zipSha256": "4207c189bcaf493410934890faddc98a708af432e6489b2dd5a994c40bb2d8fc",
+    "sourceBindings": 93
+  },
+  "nativeCause": "Fourteen stale parent-module references in managed_repair_tests.rs; no executed test failure.",
+  "product": {
+    "run": 36145200783,
+    "artifactId": 10870170184,
+    "zipSha256": "c0c86cfdf3c1f613a2658a0631b14ccc2ac3e98847bd1e004d8ecad2733a16fa",
+    "failedStage": "healthy_n8n_repair",
+    "category": "illegal integration job transition",
+    "cause": "Repair attempted Running to Ready without Validating and Configuring",
+    "precedingSuccess": [
+      "bootstrap",
+      "unauthenticated 401",
+      "authenticated 200",
+      "13-workflow import"
+    ],
+    "dockerCleanupProven": true
+  },
+  "localExecutableValidationRan": false
+}

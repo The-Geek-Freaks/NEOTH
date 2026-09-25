@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "observed_utc": "2026-09-25",
+  "registry": "ghcr.io",
+  "repository": "paperless-ngx/paperless-ngx",
+  "method": "Each 66 KiB in-toto descriptor blob was fetched by immutable digest, byte-count and SHA-256 verified before JSON parsing. No filesystem image layer was fetched.",
+  "signature_conclusion": "All four payloads are bare in-toto Statement/v1 JSON objects. Their top-level keys are _type, predicateType, subject and predicate; no DSSE payload/payloadType or signature/signatures field exists.",
+  "statements": [
+    {
+      "tag": "3.2.1",
+      "platform": "linux/amd64",
+      "descriptor_digest": "sha256:aab74d8e7baa9f9ad6cb21b7a86b90e3b856e12c19029218a255c986380101e4",
+      "expected_and_observed_bytes": 66151,
+      "descriptor_sha256_verified": true,
+      "subject_platform_manifest": "sha256:2459d860e4e936c26c34a3ff58ede53487a9116202db78a1262c44f68f746196",
+      "statement_type": "https://in-toto.io/Statement/v1",
+      "predicate_type": "https://slsa.dev/provenance/v1",
+      "build_type": "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md",
+      "builder_id": "https://github.com/paperless-ngx/paperless-ngx/actions/runs/35539328572/attempts/1",
+      "github_run_url": "https://github.com/paperless-ngx/paperless-ngx/actions/runs/35539328572",
+      "github_run": {
+        "event": "push",
+        "head_branch": "v3.2.1",
+        "head_sha": "7575d6078227ebdb4cf443f263d53ebc7575aa37",
+        "conclusion": "success"
+      },
+      "resolved_dependencies": [
+        "pkg:docker/docker/dockerfile@1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32",
+        "pkg:docker/node@24-trixie-slim?platform=linux%2Famd64@sha256:8ec5d7557396cfe32d21c3f9c13072355ceab22b584578ca4bb28af31120cffe",
+        "pkg:docker/ghcr.io/astral-sh/uv@0.12.16-python3.14-trixie-slim?platform=linux%2Famd64@sha256:768543c09cfe47d3d08c3cbfffadead2029a96d19c3c05285c8b6c6f637aa3a8"
+      ]
+    },
+    {
+      "tag": "3.2.1",
+      "platform": "linux/arm64",
+      "descriptor_digest": "sha256:7cda1af0bf99bfc33be11a36ffa7051c9c0299e718722abcf7834fa3e20aabc0",
+      "expected_and_observed_bytes": 66160,
+      "descriptor_sha256_verified": true,
+      "subject_platform_manifest": "sha256:27fa8b70ab57b4387b9ed2cba492380eb756e62a4e2a7d0575278d5ecfd42379",
+      "statement_type": "https://in-toto.io/Statement/v1",
+      "predicate_type": "https://slsa.dev/provenance/v1",
+      "build_type": "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md",
+      "builder_id": "https://github.com/paperless-ngx/paperless-ngx/actions/runs/35539328572/attempts/1",
+      "github_run_url": "https://github.com/paperless-ngx/paperless-ngx/actions/runs/35539328572",
+      "github_run": {
+        "event": "push",
+        "head_branch": "v3.2.1",
+        "head_sha": "7575d6078227ebdb4cf443f263d53ebc7575aa37",
+        "conclusion": "success"
+      },
+      "resolved_dependencies": [
+        "pkg:docker/docker/dockerfile@1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32",
+        "pkg:docker/node@24-trixie-slim?platform=linux%2Farm64@sha256:8ec5d7557396cfe32d21c3f9c13072355ceab22b584578ca4bb28af31120cffe",
+        "pkg:docker/ghcr.io/astral-sh/uv@0.12.16-python3.14-trixie-slim?platform=linux%2Farm64@sha256:768543c09cfe47d3d08c3cbfffadead2029a96d19c3c05285c8b6c6f637aa3a8"
+      ]
+    },
+    {
+      "tag": "3.2.0",
+      "platform": "linux/amd64",
+      "descriptor_digest": "sha256:7d1a4cdccbec5a6b90ea50a096326f30c2154c9a360fca89984b1a6c96a06129",
+      "expected_and_observed_bytes": 66113,
+      "descriptor_sha256_verified": true,
+      "subject_platform_manifest": "sha256:f732cfc0bf1bbd1a1014cc7e974bca62e8a7ca4d8657ee1ab2798f9f23972ff2",
+      "statement_type": "https://in-toto.io/Statement/v1",
+      "predicate_type": "https://slsa.dev/provenance/v1",
+      "build_type": "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md",
+      "builder_id": "https://github.com/paperless-ngx/paperless-ngx/actions/runs/35415327128/attempts/1",
+      "github_run_url": "https://github.com/paperless-ngx/paperless-ngx/actions/runs/35415327128",
+      "github_run": {
+        "event": "push",
+        "head_branch": "v3.2.0",
+        "head_sha": "961f018d3e6d05d1ff6e48c2732f0cf8e430e5c2",
+        "conclusion": "success"
+      },
+      "resolved_dependencies": [
+        "pkg:docker/docker/dockerfile@1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32",
+        "pkg:docker/node@24-trixie-slim?platform=linux%2Famd64@sha256:d7b4e5c4ad20b327d7bb16fab6aecd60ac20aa50f8514eb75a2b059e89abe48e",
+        "pkg:docker/ghcr.io/astral-sh/uv@0.12.16-python3.14-trixie-slim?platform=linux%2Famd64@sha256:768543c09cfe47d3d08c3cbfffadead2029a96d19c3c05285c8b6c6f637aa3a8"
+      ]
+    },
+    {
+      "tag": "3.2.0",
+      "platform": "linux/arm64",
+      "descriptor_digest": "sha256:e37d326927a4002d336a31380d57d0a318fbe65c9a6f7e81efde81e20fc02b41",
+      "expected_and_observed_bytes": 66122,
+      "descriptor_sha256_verified": true,
+      "subject_platform_manifest": "sha256:3623e59c98c478c75f7a1f3587a1fbe945c3b4db0e4cdd6261f6d1dc054c4b5b",
+      "statement_type": "https://in-toto.io/Statement/v1",
+      "predicate_type": "https://slsa.dev/provenance/v1",
+      "build_type": "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md",
+      "builder_id": "https://github.com/paperless-ngx/paperless-ngx/actions/runs/35415327128/attempts/1",
+      "github_run_url": "https://github.com/paperless-ngx/paperless-ngx/actions/runs/35415327128",
+      "github_run": {
+        "event": "push",
+        "head_branch": "v3.2.0",
+        "head_sha": "961f018d3e6d05d1ff6e48c2732f0cf8e430e5c2",
+        "conclusion": "success"
+      },
+      "resolved_dependencies": [
+        "pkg:docker/docker/dockerfile@1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32",
+        "pkg:docker/node@24-trixie-slim?platform=linux%2Farm64@sha256:d7b4e5c4ad20b327d7bb16fab6aecd60ac20aa50f8514eb75a2b059e89abe48e",
+        "pkg:docker/ghcr.io/astral-sh/uv@0.12.16-python3.14-trixie-slim?platform=linux%2Farm64@sha256:768543c09cfe47d3d08c3cbfffadead2029a96d19c3c05285c8b6c6f637aa3a8"
+      ]
+    }
+  ],
+  "admissionStatus": "CANDIDATE_PROVENANCE_ONLY_OCI_SIGNATURE_NOT_ADMITTED",
+  "limitation": "Hashed bare BuildKit provenance and a separately GitHub-verified v3.2.1 PGP source tag do not authenticate the OCI artifact. External signature trust path remains unproven; update and rollback remain open."
+}

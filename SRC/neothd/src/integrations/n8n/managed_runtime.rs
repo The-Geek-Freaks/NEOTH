@@ -793,17 +793,16 @@ pub(super) async fn verify_runtime_volume_owner<R: ManagedDockerRunner>(
         .as_ref()
         .map(|source| source.volume_owner_install_job_id.as_str())
         .or(binding.bootstrap_volume_owner_job_id.as_deref());
-    if let Some(owner) = expected_owner {
-        if found.labels.get(MANAGED_LABEL_KEY).map(String::as_str) != Some(MANAGED_LABEL_VALUE)
+    if let Some(owner) = expected_owner
+        && (found.labels.get(MANAGED_LABEL_KEY).map(String::as_str) != Some(MANAGED_LABEL_VALUE)
             || found.labels.get("io.neoth.n8n-job").map(String::as_str) != Some(owner)
             || found
                 .labels
                 .get("io.neoth.n8n-bootstrap")
                 .map(String::as_str)
-                != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA)
-        {
-            return Err("n8n_repair_volume_owner_mismatch");
-        }
+                != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA))
+    {
+        return Err("n8n_repair_volume_owner_mismatch");
     }
     Ok(())
 }

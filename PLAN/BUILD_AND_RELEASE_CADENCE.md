@@ -3,6 +3,32 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1417-1423 exact n8n hosted failure repairs (2026-09-25):**
+Both new native gates stopped at compilation: fourteen test-only parent-module
+references were stale after extraction. The product run passed bootstrap,
+authentication and all13 workflow imports, then rejected healthy Repair's
+illegal Running-to-Ready job transition. Source corrections follow the legal
+Validating/Configuring edges and keep exact custody/effect recovery intact;
+test-module references are corrected. Core's three lint findings are corrected
+in the same batch. All require fresh hosted execution before acceptance.
+W1414 also verified four small upstream Paperless in-toto payloads against
+OCI descriptor sizes/SHA256: real BuildKit provenance, but bare unsigned
+statements. This does not satisfy the open artifact-signature gate or close
+Update/Rollback. No local executable validation and no roadmap closure.
+
+**W1409/W1415 native acceptance and W1416 Clippy correction (2026-09-25):**
+The exact 15fbfd8d source passed 1832 Linux and 601 Windows native tests.
+Original GitHub artifact ZIP digests, 307/105 source bindings, and all selected
+log terminals were verified; Windows also verified 612 evidence/log hashes.
+See docs/verification/gold-wave1409-1415-native-accepted.json. These earlier
+runs do not admit the newer n8n Repair additions: at9c01fa10, Core36145195896,
+Group36145204573, Windows36145207919 and Product36145200783 failed. The three
+Core findings are corrected by removing one unused import, narrowing the
+injectable Repair seam, and preserving all volume-label guards in a let-chain.
+The other failures are diagnosed below this checkpoint; fresh hosted gates remain
+required. Paperless and n8n lifecycle documentation now records this evidence
+boundary. Counts remain1324=1077done/245open/2partial; no checkbox was closed.
+
 **W1411-1412 hosted n8n format and module-path correction (2026-09-25):**
 Preflight36144500712 at5f67bab2 produced an authentic six-file rustfmt patch;
 its GitHub ZIP digest, source head, internal checksums and all Git pre/postimages
