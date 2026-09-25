@@ -164,11 +164,14 @@ impl N8nProbeOutcome {
     }
 }
 
-/// Probe the live n8n endpoint at `127.0.0.1:<port>`. Uses TCP
+const N8N_LIVENESS_PATH: &str = "/healthz";
+const N8N_READINESS_PATH: &str = "/healthz/readiness";
+
+/// Probe an n8n health path on the fixed loopback endpoint. Uses TCP
 /// connect (fast) — when that succeeds we ALSO try a brief HTTP
 /// handshake so a port collision (some other service holding the
 /// port) is distinguishable from a real n8n.
-pub async fn probe_n8n_endpoint(port: u16) -> N8nProbeOutcome {
+async fn probe_n8n_health_path(port: u16, path: &str) -> N8nProbeOutcome {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
 
@@ -179,7 +182,7 @@ pub async fn probe_n8n_endpoint(port: u16) -> N8nProbeOutcome {
         Ok(Ok(mut stream)) => {
             let handshake = tokio::time::timeout(Duration::from_secs(2), async {
                 let request = format!(
-                    "GET /healthz HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+                    "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
                 );
                 stream.write_all(request.as_bytes()).await?;
                 let mut response = Vec::with_capacity(256);
@@ -218,6 +221,17 @@ pub async fn probe_n8n_endpoint(port: u16) -> N8nProbeOutcome {
         Ok(Err(_)) => N8nProbeOutcome::PortClosed,
         Err(_) => N8nProbeOutcome::Timeout,
     }
+}
+
+/// Probe the n8n liveness endpoint at `127.0.0.1:<port>`.
+pub async fn probe_n8n_endpoint(port: u16) -> N8nProbeOutcome {
+    probe_n8n_health_path(port, N8N_LIVENESS_PATH).await
+}
+
+/// Probe n8n readiness at `127.0.0.1:<port>`. Unlike liveness, this waits
+/// until n8n has completed startup and mounted its application routes.
+pub(crate) async fn probe_n8n_readiness_endpoint(port: u16) -> N8nProbeOutcome {
+    probe_n8n_health_path(port, N8N_READINESS_PATH).await
 }
 
 #[cfg(test)]

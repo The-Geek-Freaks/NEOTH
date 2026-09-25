@@ -1,0 +1,26 @@
+{
+  "schema": "neoth-readiness-fix-review/v1",
+  "base": "593dcdbd0e378335efab11927d5a828e85cf9ea5",
+  "reviewVerdict": "APPROVE for hosted compile/test admission",
+  "reviewSha256": "CD8B5C91E15992DE4990D07A02B5448C57767CD1850E72109FA6CD8933E5191E",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/installers/n8n.rs",
+      "sha256": "2DDDDCED6E4C1CB8BE49742E039B9AA67B6DAD464723D5C728B06BC05E0EEFCA"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "sha256": "872FA6A7121E4F37B25C999814F68A89CE60E56EB4BA000024F46D57D1EBCEA9"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime_tests.rs",
+      "sha256": "BA16BE4DABAE9A623F2393379E98399E710FC78E719E9161D92C63B291838794"
+    }
+  ],
+  "cause": "Pinned n8n liveness becomes200 before routes; readiness gates fullyReady",
+  "behavior": "Managed install health uses /healthz/readiness; public /healthz liveness and watchdog unchanged",
+  "regression": "integrations::n8n::managed_runtime::tests::production_readiness_waits_for_readiness_after_liveness_is_live",
+  "rootVerified": true,
+  "hosted": "pending",
+  "localExecutableValidationRan": false
+}

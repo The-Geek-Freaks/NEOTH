@@ -187,6 +187,63 @@ fn key() -> crate::secret::SecretString {
     crate::secret::SecretString::from("test-n8n-key")
 }
 
+#[tokio::test]
+async fn production_readiness_waits_for_readiness_after_liveness_is_live() {
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        for (expected_path, response) in [
+            ("/healthz", "HTTP/1.1 200 OK"),
+            ("/healthz/readiness", "HTTP/1.1 503 Service Unavailable"),
+            ("/healthz/readiness", "HTTP/1.1 200 OK"),
+        ] {
+            let exchange = async {
+                let (mut stream, _) = listener.accept().await?;
+                let mut request = Vec::with_capacity(128);
+                let mut chunk = [0_u8; 128];
+                while request.len() < 512 && !request.windows(2).any(|pair| pair == b"\r\n") {
+                    let read_len = (512 - request.len()).min(chunk.len());
+                    let read = stream.read(&mut chunk[..read_len]).await?;
+                    if read == 0 {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            "fixture client closed before request line",
+                        ));
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                }
+                let saw_request_line = request.windows(2).any(|pair| pair == b"\r\n");
+                assert!(saw_request_line, "fixture request line exceeded 512 bytes");
+                let expected_request = format!("GET {expected_path} ");
+                assert!(String::from_utf8_lossy(&request).starts_with(&expected_request));
+                stream
+                    .write_all(format!("{response}\r\nContent-Length: 0\r\n\r\n").as_bytes())
+                    .await
+            };
+            tokio::time::timeout(std::time::Duration::from_secs(2), exchange)
+                .await
+                .expect("bounded fixture exchange")
+                .unwrap();
+        }
+    });
+
+    assert_eq!(
+        crate::installers::n8n::probe_n8n_endpoint(port).await,
+        crate::installers::n8n::N8nProbeOutcome::Reachable
+    );
+    assert!(!ProductionReadiness.health(port).await);
+    assert!(ProductionReadiness.health(port).await);
+    tokio::time::timeout(std::time::Duration::from_secs(2), server)
+        .await
+        .expect("bounded fixture join")
+        .unwrap();
+}
+
 #[test]
 fn managed_runtime_rejects_non_loopback_and_unpinned_requests_before_docker() {
     assert!(ManagedN8nRequest::new(5678, N8N_OCI_REFERENCE).is_ok());

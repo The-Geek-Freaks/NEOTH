@@ -1,0 +1,13 @@
+{
+  "schema": "neoth-hosted-cli-reference-recovery/v1",
+  "run": 36080855220,
+  "source": "bac22834e292c040e53a4ce400eaa801f91cf84d",
+  "logSha256": "1D8613219FD934279BB5824DF34B7A963EF3E52626E98221E4CC03A8E1873189",
+  "failureSegmentSha256": "02502E509A35C4DA55C6E095A8DD3166A78A4BCCA25120FB8C709B645C8E6963",
+  "generatedSha256": "DFF9A1F602010B78A46080FFF62FA876793E4385D851F53FE04D8041F171BFDA",
+  "method": "Actual docgen assert_eq right operand; left matches historical/current committed file; exact failure segment in Root-verified source-bound full log",
+  "cliSourcesUnchanged": true,
+  "rootVerified": true,
+  "localExecutableValidationRan": false,
+  "remaining": "Unchanged docgen anti-drift test must pass on new source"
+}

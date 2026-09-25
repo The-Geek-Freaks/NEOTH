@@ -2919,6 +2919,10 @@ Adopt an already-running n8n API at an exact literal-loopback origin
 - `--endpoint <ENDPOINT>`
 - `--api-key-stdin`
 
+### `neoth n8n import-workflows`
+
+Import all bundled inactive workflows into an already-ready managed n8n binding
+
 ### `neoth n8n install`
 
 Start the pinned, NEOTH-owned Docker n8n runtime and prove its API key

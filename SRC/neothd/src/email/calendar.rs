@@ -615,9 +615,21 @@ mod tests {
 
     #[test]
     fn has_conflict_handles_mixed_offset_overlap_and_back_to_back() {
-        let existing = vec![event("Booked", "2026-05-30T09:00:00+02:00", "2026-05-30T10:00:00+02:00")];
-        assert!(has_conflict("2026-05-30T07:30:00Z", "2026-05-30T08:30:00Z", &existing));
-        assert!(!has_conflict("2026-05-30T08:00:00Z", "2026-05-30T09:00:00Z", &existing));
+        let existing = vec![event(
+            "Booked",
+            "2026-05-30T09:00:00+02:00",
+            "2026-05-30T10:00:00+02:00",
+        )];
+        assert!(has_conflict(
+            "2026-05-30T07:30:00Z",
+            "2026-05-30T08:30:00Z",
+            &existing
+        ));
+        assert!(!has_conflict(
+            "2026-05-30T08:00:00Z",
+            "2026-05-30T09:00:00Z",
+            &existing
+        ));
     }
 
     #[test]
@@ -629,7 +641,11 @@ mod tests {
 
     #[test]
     fn has_conflict_treats_invalid_or_mixed_times_as_occupied() {
-        let existing = vec![event("Booked", "2026-05-30T09:00:00Z", "2026-05-30T10:00:00Z")];
+        let existing = vec![event(
+            "Booked",
+            "2026-05-30T09:00:00Z",
+            "2026-05-30T10:00:00Z",
+        )];
         assert!(has_conflict("invalid", "2026-05-30T11:00:00Z", &existing));
         assert!(has_conflict("2026-05-30", "2026-05-31", &existing));
     }
@@ -667,7 +683,11 @@ mod tests {
 
     #[test]
     fn render_event_list_has_deterministic_mixed_time_order() {
-        let later = event("Later", "2026-05-30T10:00:00+02:00", "2026-05-30T11:00:00+02:00");
+        let later = event(
+            "Later",
+            "2026-05-30T10:00:00+02:00",
+            "2026-05-30T11:00:00+02:00",
+        );
         let earlier = event("Earlier", "2026-05-30T07:30:00Z", "2026-05-30T08:00:00Z");
         let invalid = event("Invalid", "not-a-time", "also-not-a-time");
         let rendered = render_event_list(&[invalid, later, earlier]);

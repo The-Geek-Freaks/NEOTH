@@ -2,6 +2,28 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1112 readiness repair and hosted reference recovery (2026-09-25):**
+The real n8n install404 is traced to the pinned runtime startup: /healthz
+answers before Public API route mounting; /healthz/readiness waits for full
+startup. Managed installation now waits for readiness while public liveness,
+watchdog, deadlines and cancellation retain their behavior. W1109 independently
+approved the three-file fix; a bounded real-TCP regression covers liveness200,
+readiness503 and readiness200. Native1788, Group1569 and Windows346 now include
+that case and the reader-tamper regression; fresh hosted validation is pending. Root also recovered the
+exact generated CLI reference from the source-bound bac docgen assertion,
+verified both operands against the actual complete log, and restored the four
+missing import-workflows lines. The existing anti-drift test remains unchanged.
+The exact593 hosted calendar formatter patch was verified against its API ZIP,
+inner hashes and pre/postimage Git blobs before application. Root-admitted bac
+results are1545/1547 on Linux and323/324 on Windows; the Windows closed-stdin
+regression passed. The later b79 Group1554 has four failures: two already
+corrected CLI/Ready-fixture cases plus stale starter-contract and malformed-WAL
+fixture setup. The latter two now check the actual partial adapter contract,
+writer rejection before authentication and reader failure on tampered WAL.
+Install/import/repeat/cleanup and broader release acceptance remain open.
+Claude TASK032 is still assigned; no new ACK/result has arrived. No local
+compiler, formatter, parser, tests or runtime ran. No roadmap box is closed.
+
 **W1101 calendar instant semantics and import fixture repair (2026-09-25):**
 The shared calendar renderer and conflict helper now compare actual RFC3339
 instants across offsets. Valid date-only intervals retain half-open semantics;

@@ -1,0 +1,94 @@
+{
+  "schema": "neoth-hosted-group-partial-results/v1",
+  "source": "b79d3043d8f460a94b6c96a79cf0e5bff25c4143",
+  "rootVerified": true,
+  "artifactZipDigestsVerified": 3,
+  "innerEntriesVerified": 12,
+  "group": {
+    "run": 36081964157,
+    "workflow": "Research and loop lifecycle quality",
+    "runStatus": "completed",
+    "runConclusion": "failure",
+    "artifactZips": [
+      {
+        "id": 10842870987,
+        "name": "w190-research-lifecycle-log-b79d3043d8f460a94b6c96a79cf0e5bff25c4143",
+        "apiDigest": "sha256:b6dd6dae52b5dd0e6bd97438f6fd8e5ff1c9b1bbb68f74b041e0265c92e312fb",
+        "localZip": "group-log.zip",
+        "localSha256": "b6dd6dae52b5dd0e6bd97438f6fd8e5ff1c9b1bbb68f74b041e0265c92e312fb",
+        "matches": true
+      },
+      {
+        "id": 10842626292,
+        "name": "w190-research-lifecycle-source-b79d3043d8f460a94b6c96a79cf0e5bff25c4143",
+        "apiDigest": "sha256:a7d697af2f1714d3058ea3d8d42a099b4b5362c440f16205032a6f6eead96251",
+        "localZip": "group-source.zip",
+        "localSha256": "a7d697af2f1714d3058ea3d8d42a099b4b5362c440f16205032a6f6eead96251",
+        "matches": true
+      },
+      {
+        "id": 10842411773,
+        "name": "w190-research-lifecycle-receipt-b79d3043d8f460a94b6c96a79cf0e5bff25c4143",
+        "apiDigest": "sha256:f08d71e21378f281f1c70d5598ecaab2cb612b9f79a258f1102bedd8da59871d",
+        "localZip": "group-receipt.zip",
+        "localSha256": "f08d71e21378f281f1c70d5598ecaab2cb612b9f79a258f1102bedd8da59871d",
+        "matches": true
+      }
+    ],
+    "executed": 1554,
+    "passed": 1550,
+    "failed": 4,
+    "missingTerminal": 0,
+    "sourceBindingCount": 273,
+    "sourceBindingsVerified": true,
+    "logSha256": "3c7f72cec04f96429c882b77072bd640dc31852375cb21252312daf6be5c8162",
+    "failedTerminals": [
+      {
+        "test": "cli::docgen::tests::cli_commands_md_is_up_to_date",
+        "failure": [
+          "thread 'cli::docgen::tests::cli_commands_md_is_up_to_date' (13536) panicked at neothd/src/cli/docgen.rs:277:9:",
+          "assertion `left == right` failed: docs/cli-commands.md is STALE — the CLI changed but the generated reference was not regenerated. Run: NEOTH_REGEN_CLI_DOCS=1 cargo test -p neoth cli_commands_md_is_up_to_date"
+        ],
+        "segment": "group-failure-cli__docgen__tests__cli_commands_md_is_up_to_date.log",
+        "segmentSha256": "b5f446b0177be600023c4da4ece16c013976367f2f30386151214c1d6377ee85"
+      },
+      {
+        "test": "installers::n8n_starter_workflows::tests::each_starter_body_uses_generic_header_auth_and_visible_origin",
+        "failure": [
+          "thread 'installers::n8n_starter_workflows::tests::each_starter_body_uses_generic_header_auth_and_visible_origin' (21267) panicked at neothd/src/installers/n8n_starter_workflows.rs:632:17:",
+          "\"consent_audit_export\" must disclose unavailable adapter status"
+        ],
+        "segment": "group-failure-installers__n8n_starter_workflows__tests__each_starter_body_uses_generic_header_auth_and_visible_origin.log",
+        "segmentSha256": "5a675b7f614081ff0253cddb323a44f8d6d37be40dcb62cfecde2b15291d5e85"
+      },
+      {
+        "test": "integrations::n8n::workflow_import::tests::ready_job_without_custody_never_writes_or_posts",
+        "failure": [
+          "thread 'integrations::n8n::workflow_import::tests::ready_job_without_custody_never_writes_or_posts' (21797) panicked at neothd/src/integrations/n8n/workflow_import.rs:933:14:",
+          "called `Result::unwrap()` on an `Err` value: IncompleteProgress"
+        ],
+        "segment": "group-failure-integrations__n8n__workflow_import__tests__ready_job_without_custody_never_writes_or_posts.log",
+        "segmentSha256": "cc7af051e5f0bf9d41f2b246b863d644cd281fe504c219ba952442784451c352"
+      },
+      {
+        "test": "n8n_api::handlers::permission_audit::tests::malformed_authenticated_typed_trust_frame_fails_closed",
+        "failure": [
+          "thread 'n8n_api::handlers::permission_audit::tests::malformed_authenticated_typed_trust_frame_fails_closed' (21938) panicked at neothd/src/n8n_api/handlers/permission_audit.rs:252:14:",
+          "called `Result::unwrap()` on an `Err` value: Io(Custom { kind: InvalidData, error: \"generic TrustDecision payload is malformed or has an unsupported schema\" })"
+        ],
+        "segment": "group-failure-n8n_api__handlers__permission_audit__tests__malformed_authenticated_typed_trust_frame_fails_closed.log",
+        "segmentSha256": "8facd405306b533d0c43bcc89c965abf91ab4dba3ef57d313fc3f380d637ed08"
+      }
+    ],
+    "categoryExecution": {
+      "permissionNamedFixtures": 29,
+      "permissionAuditFixtures": 5,
+      "probeNamedFixtures": 19,
+      "permissionAuditFailure": "malformed_authenticated_typed_trust_frame_fails_closed",
+      "probeNamedFailures": 0
+    },
+    "admissionEvidence": "SOURCE_ADMITTED_PARTIAL_FAILURE",
+    "localExecutableValidationRan": false
+  },
+  "remaining": "CLI and Ready fixture corrected; starter contract and malformed-authenticated fixture under repair; no complete batch acceptance"
+}

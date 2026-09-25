@@ -395,7 +395,7 @@ jobs:
           integrations::n8n::managed_bootstrap::tests::terminal_runtime_outcomes_return_the_durable_job_without_ready_custody_mutation	neothd/src/integrations/n8n/managed_bootstrap.rs
           integrations::n8n::managed_bootstrap::tests::only_ready_runtime_outcome_finalizes_bootstrap_custody	neothd/src/integrations/n8n/managed_bootstrap.rs
           n8n_api::handlers::permission_audit::tests::authenticated_wal_subject_limit_and_time_filter_are_explicit	neothd/src/n8n_api/handlers/permission_audit.rs
-          n8n_api::handlers::permission_audit::tests::malformed_authenticated_typed_trust_frame_fails_closed	neothd/src/n8n_api/handlers/permission_audit.rs
+          n8n_api::handlers::permission_audit::tests::malformed_generic_trust_payload_is_rejected_before_authenticated_write	neothd/src/n8n_api/handlers/permission_audit.rs
           n8n_api::handlers::permission_audit::tests::online_physical_cap_fails_closed_before_sparse_oversize_payload_is_read	neothd/src/n8n_api/handlers/permission_audit.rs
           n8n_api::handlers::permission_audit::tests::live_unsealed_tail_preserves_authenticated_decision_and_reports_incomplete_prefix	neothd/src/n8n_api/handlers/permission_audit.rs
           n8n_api::server::tests::loopback_permission_audit_requires_scope_and_replays_authenticated_subject	neothd/src/n8n_api/server.rs
@@ -414,6 +414,8 @@ jobs:
           email::calendar::tests::render_event_list_sorted_by_start_time	neothd/src/email/calendar.rs
           email::calendar::tests::render_event_list_has_deterministic_mixed_time_order	neothd/src/email/calendar.rs
           email::calendar::tests::render_event_list_appends_location_when_present	neothd/src/email/calendar.rs
+          integrations::n8n::managed_runtime::tests::production_readiness_waits_for_readiness_after_liveness_is_live	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          n8n_api::handlers::permission_audit::tests::tampered_authenticated_typed_trust_history_fails_closed_in_reader	neothd/src/n8n_api/handlers/permission_audit.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -430,7 +432,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 344 ]]; then
+          if [[ "$expected" -ne 346 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -516,7 +518,7 @@ jobs:
             fi
           else
             compile_status=64
-            printf 'selection is not the required 344 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 346 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

@@ -344,7 +344,7 @@ struct ProductionReadiness;
 impl ManagedReadiness for ProductionReadiness {
     async fn health(&self, port: u16) -> bool {
         matches!(
-            crate::installers::n8n::probe_n8n_endpoint(port).await,
+            crate::installers::n8n::probe_n8n_readiness_endpoint(port).await,
             crate::installers::n8n::N8nProbeOutcome::Reachable
         )
     }

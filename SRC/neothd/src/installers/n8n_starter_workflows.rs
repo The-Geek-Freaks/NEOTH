@@ -614,6 +614,28 @@ mod tests {
                         .as_str()
                         .is_some_and(|notes| notes.contains("requires proposals:read"))
                 );
+            } else if w.slug == "consent_audit_export" {
+                assert_eq!(http["parameters"]["method"], "POST");
+                assert_eq!(http["parameters"]["sendBody"], true);
+                assert_eq!(http["parameters"]["contentType"], "json");
+                assert_eq!(http["parameters"]["specifyBody"], "json");
+                assert_eq!(
+                    http["parameters"]["jsonBody"],
+                    "={{ JSON.stringify({ subject: 'local', limit: 50 }) }}"
+                );
+                assert!(
+                    http["notes"].as_str().is_some_and(|notes| {
+                        notes.contains("requires permissions:read")
+                            && notes.contains("typed TrustDecision")
+                            && notes.contains("authenticated-prefix completeness")
+                    }),
+                    "implemented partial typed permission audit must disclose scope and coverage",
+                );
+                assert!(
+                    w.description.contains("Partial typed permission-decision audit")
+                        && w.description.contains("broader legacy consent audit"),
+                    "implemented adapter must not claim the broader consent audit",
+                );
             } else if w.slug == "drafts_pending_review" {
                 assert_eq!(http["parameters"]["method"], "POST");
                 assert_eq!(http["parameters"]["sendBody"], true);

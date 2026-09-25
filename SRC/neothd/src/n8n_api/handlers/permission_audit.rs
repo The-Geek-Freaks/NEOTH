@@ -233,7 +233,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn malformed_authenticated_typed_trust_frame_fails_closed() {
+    async fn malformed_generic_trust_payload_is_rejected_before_authenticated_write() {
         let home = tempfile::tempdir().unwrap();
         let wal = home.path().join("wal");
         std::fs::create_dir_all(&wal).unwrap();
@@ -241,7 +241,7 @@ mod tests {
             crate::wal::writer::spawn_for_home(wal.join("000001.wal"), home.path().to_path_buf())
                 .unwrap();
         let payload = b"not-json".to_vec();
-        writer
+        let error = writer
             .append_authenticated(
                 crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
                     .event_subtype(crate::wal::events::ExtendedSubtype::TrustDecision as u8)
@@ -249,9 +249,31 @@ mod tests {
                 payload,
             )
             .await
-            .unwrap();
+            .unwrap_err();
+        assert!(error.to_string().contains("generic TrustDecision payload is malformed"));
         drop(writer);
         join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn tampered_authenticated_typed_trust_history_fails_closed_in_reader() {
+        let home = tempfile::tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let segment = wal.join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn_for_home(
+            segment.clone(),
+            home.path().to_path_buf(),
+        )
+        .unwrap();
+        append_trust(&writer, "local", crate::permissions::Decision::Allow, 10).await;
+        drop(writer);
+        join.await.unwrap();
+        let mut bytes = std::fs::read(&segment).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0x01;
+        std::fs::write(&segment, bytes).unwrap();
+
         let error = read_at(
             home.path(),
             &PermissionAuditRequest {
