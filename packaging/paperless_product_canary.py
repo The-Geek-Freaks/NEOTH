@@ -473,6 +473,21 @@ def persisted_uninstall_receipt(home: Path, expected: dict) -> bytes:
     return raw
 
 
+def persisted_purge_receipt(home: Path, expected: dict) -> bytes:
+    raw = persisted_receipt_bytes(home, ".neoth-paperless-purge-receipt.v1.json", "purge_receipt_bytes_invalid")
+    if read_json_bytes(raw, "purge_receipt_bytes_invalid") != expected:
+        raise Failure("purge_receipt_bytes_invalid")
+    return raw
+
+
+def purge_artifacts_absent(home: Path) -> tuple[object, ...]:
+    for name in (".neoth-paperless-purge-custody.v1.json", ".neoth-paperless-purge-receipt.v1.json"):
+        path = home / "paperless" / "state" / name
+        if path.exists() or path.is_symlink():
+            raise Failure("purge_artifact_present")
+    return ()
+
+
 def validate_uninstall(value: dict, project: str, original_ids: tuple[str, ...], volume_names: tuple[str, ...], install_receipt_bytes: bytes, volume_set_id: str | None = None) -> None:
     schema_version = value.get("schema_version")
     if schema_version not in {1, 2} or value.get("operation") != "paperless.safe_uninstall" or value.get("project") != project or value.get("phase") != "complete" or value.get("network_retained") is not True:
@@ -523,7 +538,25 @@ def persisted_volume_set_snapshot(home: Path, project: str, volume_set_id: str) 
     return raw
 
 
-def cleanup(project: str, config_ids: dict[str, str], identities: tuple[str, ...], port: int, retired_container_ids: tuple[str, ...] = (), volume_set_id: str | None = None) -> tuple[bool, str | None]:
+def json_sha256(value: object) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def validate_purge_preview(value: dict, project: str, install_receipt_bytes: bytes, uninstall_receipt_bytes: bytes, volume_set_id: str, volume_names: tuple[str, ...]) -> str:
+    expected_volumes = [{"logical_name": logical, "name": name, "state": "prepared"} for (logical, _, _), name in zip(VOLUMES, volume_names, strict=True)]
+    phrase = f"PURGE PAPERLESS VOLUME SET {hashlib.sha256(install_receipt_bytes).hexdigest()} {volume_set_id}"
+    if set(value) != {"schema_version", "operation", "state", "project", "install_receipt_sha256", "uninstall_receipt_sha256", "volume_set_id", "volumes", "confirmation"} or value.get("schema_version") != 1 or value.get("operation") != "paperless.confirmed_purge" or value.get("state") != "confirmation_required" or value.get("project") != project or value.get("install_receipt_sha256") != hashlib.sha256(install_receipt_bytes).hexdigest() or value.get("uninstall_receipt_sha256") != hashlib.sha256(uninstall_receipt_bytes).hexdigest() or value.get("volume_set_id") != volume_set_id or value.get("volumes") != expected_volumes or value.get("confirmation") != phrase:
+        raise Failure("purge_preview_invalid")
+    return phrase
+
+
+def validate_purge_complete(value: dict, project: str, install_receipt_bytes: bytes, uninstall_receipt_bytes: bytes, volume_set_id: str, volume_names: tuple[str, ...]) -> None:
+    expected_volumes = [{"logical_name": logical, "name": name, "state": "absent_verified"} for (logical, _, _), name in zip(VOLUMES, volume_names, strict=True)]
+    if set(value) != {"schema_version", "operation", "state", "project", "install_receipt_sha256", "uninstall_receipt_sha256", "volume_set_id", "volumes"} or value.get("schema_version") != 1 or value.get("operation") != "paperless.confirmed_purge" or value.get("state") != "volumes_removed" or value.get("project") != project or value.get("install_receipt_sha256") != hashlib.sha256(install_receipt_bytes).hexdigest() or value.get("uninstall_receipt_sha256") != hashlib.sha256(uninstall_receipt_bytes).hexdigest() or value.get("volume_set_id") != volume_set_id or value.get("volumes") != expected_volumes:
+        raise Failure("purge_receipt_invalid")
+
+
+def cleanup(project: str, config_ids: dict[str, str], identities: tuple[str, ...], port: int, retired_container_ids: tuple[str, ...] = (), volume_set_id: str | None = None, volumes_already_absent: bool = False) -> tuple[bool, str | None]:
     container_ids, volume_names = identities[:3], identities[3:]
     try:
         for service, identifier in zip(IMAGES, container_ids, strict=True):
@@ -537,6 +570,9 @@ def cleanup(project: str, config_ids: dict[str, str], identities: tuple[str, ...
             if identifier not in container_ids:
                 bounded.prove_absent("container", identifier)
         for (logical, _, _), name in zip(VOLUMES, volume_names, strict=True):
+            if volumes_already_absent:
+                bounded.prove_absent("volume", name)
+                continue
             if validate_volume(docker_json(name, volume=True), project, logical, volume_set_id) != name:
                 raise Failure("volume_identity_invalid")
         for identifier in container_ids:
@@ -545,6 +581,8 @@ def cleanup(project: str, config_ids: dict[str, str], identities: tuple[str, ...
             run(["docker", "rm", "-f", identifier], timeout=45)
             bounded.prove_absent("container", identifier)
         for name in volume_names:
+            if volumes_already_absent:
+                continue
             run(["docker", "volume", "rm", name], timeout=45)
             bounded.prove_absent("volume", name)
         return True, None
@@ -560,6 +598,7 @@ def source_hashes() -> dict[str, str]:
     names = (
         "packaging/tests/test_paperless_product_canary.py", "SRC/neothd/src/cli/paperless.rs",
         "SRC/neothd/src/installers/paperless_staging.rs", "SRC/neothd/src/installers/paperless_lifecycle.rs",
+        "SRC/neothd/src/installers/paperless_purge.rs", "SRC/neothd/src/installers/paperless_purge_tests.rs",
         "SRC/neothd/src/installers/paperless_operation_lock.rs", "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
         "SRC/neothd/src/installers/paperless_readiness.rs", "SRC/neothd/src/installers/paperless_bootstrap.rs",
         "SRC/neothd/src/cli/init.rs", "SRC/neothd/src/config/credentials.rs", "SRC/Cargo.lock",
@@ -573,7 +612,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("--binary", required=True); parser.add_argument("--home", required=True); parser.add_argument("--port", required=True, type=int); parser.add_argument("--receipt", required=True)
     args = parser.parse_args(); binary, home, receipt_path = Path(args.binary), Path(args.home), Path(args.receipt)
     receipt = {"schema": 1, "source_sha": os.environ.get("GITHUB_SHA"), "port": args.port, "credential_backend": "file", "outcome": "failed", "cleanup_proven": False}
-    project = None; config_ids: dict[str, str] | None = None; identities: tuple[str, ...] | None = None; retired_ids: tuple[str, ...] = (); volume_set_id: str | None = None
+    project = None; config_ids: dict[str, str] | None = None; identities: tuple[str, ...] | None = None; retired_ids: tuple[str, ...] = (); volume_set_id: str | None = None; volumes_purged = False
     try:
         hosted_paths(home, receipt_path)
         if not 1 <= args.port <= 65535 or not binary.is_file():
@@ -650,6 +689,58 @@ def main() -> int:
         }
         if survived_id != baseline_id or survived_title != baseline_title or survived_sha256 != baseline_sha256:
             raise Failure("retained_document_mismatch")
+        final_removed = read_json_bytes(run([str(binary), "--output", "json", "paperless", "uninstall"], timeout=900), "uninstall_json_invalid")
+        final_ids = identities[:3]
+        retired_ids = final_ids
+        validate_uninstall(final_removed, project, final_ids, volume_names, install_receipt_bytes, volume_set_id)
+        final_uninstall_receipt_bytes = persisted_uninstall_receipt(home, final_removed)
+        retained_volumes(project, volume_names, volume_set_id)
+        for identifier in final_ids:
+            bounded.prove_absent("container", identifier)
+        history_before_purge = (
+            install_receipt_bytes, final_uninstall_receipt_bytes, volume_set_snapshot_bytes,
+            (home / "freedom.yaml").read_bytes(), (home / "credentials.yaml").read_bytes(),
+            tuple(json_sha256(docker_json(name, volume=True)) for name in volume_names), purge_artifacts_absent(home),
+        )
+        preview_raw = run([str(binary), "--output", "json", "paperless", "purge"])
+        phrase = validate_purge_preview(read_json_bytes(preview_raw, "purge_preview_invalid"), project, install_receipt_bytes, final_uninstall_receipt_bytes, volume_set_id, volume_names)
+        wrong = bounded.run([str(binary), "--output", "json", "paperless", "purge", "--confirm", phrase + " wrong"], timeout=180)
+        if wrong.code == 0 or wrong.timed_out or wrong.overflow or b"paperless_purge_confirmation_mismatch" not in wrong.stderr:
+            raise Failure("purge_wrong_confirmation_unproven")
+        retained_volumes(project, volume_names, volume_set_id)
+        if history_before_purge != (
+            persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port), persisted_uninstall_receipt(home, final_removed), persisted_volume_set_snapshot(home, project, volume_set_id),
+            (home / "freedom.yaml").read_bytes(), (home / "credentials.yaml").read_bytes(),
+            tuple(json_sha256(docker_json(name, volume=True)) for name in volume_names), purge_artifacts_absent(home),
+        ):
+            raise Failure("purge_wrong_confirmation_mutated_history")
+        purge_raw = run([str(binary), "--output", "json", "paperless", "purge", "--confirm", phrase], timeout=900)
+        purge = read_json_bytes(purge_raw, "purge_receipt_invalid")
+        validate_purge_complete(purge, project, install_receipt_bytes, final_uninstall_receipt_bytes, volume_set_id, volume_names)
+        purge_custody_bytes = persisted_receipt_bytes(home, ".neoth-paperless-purge-custody.v1.json", "purge_custody_bytes_invalid")
+        purge_receipt_bytes = persisted_purge_receipt(home, purge)
+        for name in volume_names:
+            bounded.prove_absent("volume", name)
+        if (persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port), persisted_uninstall_receipt(home, final_removed), persisted_volume_set_snapshot(home, project, volume_set_id), (home / "freedom.yaml").read_bytes(), (home / "credentials.yaml").read_bytes()) != history_before_purge[:5]:
+            raise Failure("purge_mutated_persisted_history")
+        history_after_purge = history_before_purge[:5] + (purge_custody_bytes, purge_receipt_bytes)
+        repeat_purge_raw = run([str(binary), "--output", "json", "paperless", "purge", "--confirm", phrase], timeout=900)
+        if repeat_purge_raw != purge_raw:
+            raise Failure("purge_repeat_mutation")
+        repeat_purge = read_json_bytes(repeat_purge_raw, "purge_receipt_invalid")
+        validate_purge_complete(repeat_purge, project, install_receipt_bytes, final_uninstall_receipt_bytes, volume_set_id, volume_names)
+        if persisted_purge_receipt(home, repeat_purge) != purge_receipt_bytes:
+            raise Failure("purge_repeat_mutation")
+        if history_after_purge != (
+            persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port), persisted_uninstall_receipt(home, final_removed), persisted_volume_set_snapshot(home, project, volume_set_id),
+            (home / "freedom.yaml").read_bytes(), (home / "credentials.yaml").read_bytes(),
+            persisted_receipt_bytes(home, ".neoth-paperless-purge-custody.v1.json", "purge_custody_bytes_invalid"), persisted_purge_receipt(home, repeat_purge),
+        ):
+            raise Failure("purge_repeat_mutation")
+        for name in volume_names:
+            bounded.prove_absent("volume", name)
+        volumes_purged = True
+        receipt["purge"] = {"install_receipt_sha256": hashlib.sha256(install_receipt_bytes).hexdigest(), "final_uninstall_receipt_sha256": hashlib.sha256(final_uninstall_receipt_bytes).hexdigest(), "volume_set_id_sha256": hashlib.sha256(volume_set_id.encode()).hexdigest(), "volumes_absent": True, "repeat_read_only": True}
         receipt.update({"project_sha256": hashlib.sha256(project.encode()).hexdigest(), "volume_set_id_sha256": hashlib.sha256(volume_set_id.encode()).hexdigest(), "volume_set_snapshot_sha256": hashlib.sha256(volume_set_snapshot_bytes).hexdigest(), "images": len(config_ids), "containers": 3, "volumes": 6, "repeat_install_preserved_identities": True, "uninstall_repeat_read_only": True, "status_ready": True})
         receipt["outcome"] = "passed"
     except Exception as error:
@@ -659,7 +750,7 @@ def main() -> int:
     finally:
         cleaned, cleanup_failure = (False, None)
         if project and config_ids and identities:
-            cleaned, cleanup_failure = cleanup(project, config_ids, identities, args.port, retired_ids, volume_set_id)
+            cleaned, cleanup_failure = cleanup(project, config_ids, identities, args.port, retired_ids, volume_set_id, volumes_purged)
         receipt["docker_cleanup_proven"] = cleaned
         if cleanup_failure is not None:
             receipt["cleanup_failure_stage"] = cleanup_failure

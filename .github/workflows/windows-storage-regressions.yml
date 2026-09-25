@@ -636,6 +636,14 @@ jobs:
           installers::paperless_staging::tests::volume_set_renderer_labels_each_canonical_volume_with_one_opaque_generation	neothd/src/installers/paperless_staging.rs
           installers::paperless_lifecycle::paperless_uninstall_tests::legacy_unlabelled_install_receipt_remains_safe_uninstall_compatible	neothd/src/installers/paperless_uninstall_tests.rs
           installers::paperless_lifecycle::tests::completed_generation_with_missing_volume_rejects_before_compose	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::paperless_purge::tests::preview_is_read_only_and_uses_current_completed_receipt_chain	neothd/src/installers/paperless_purge_tests.rs
+          installers::paperless_lifecycle::paperless_purge::tests::wrong_confirmation_rejects_before_lock_custody_or_docker	neothd/src/installers/paperless_purge_tests.rs
+          installers::paperless_lifecycle::paperless_purge::tests::owner_lock_blocks_confirmed_purge_without_docker_selection	neothd/src/installers/paperless_purge_tests.rs
+          installers::paperless_lifecycle::paperless_purge::tests::happy_path_removes_only_six_receipt_bound_volumes_and_keeps_credentials	neothd/src/installers/paperless_purge_tests.rs
+          installers::paperless_lifecycle::paperless_purge::tests::missing_or_substituted_generation_label_blocks_all_volume_removes	neothd/src/installers/paperless_purge_tests.rs
+          installers::paperless_lifecycle::paperless_purge::tests::dispatched_after_effect_reconciles_absence_without_second_remove	neothd/src/installers/paperless_purge_tests.rs
+          installers::paperless_lifecycle::paperless_purge::tests::repeat_completed_purge_reobserves_absence_but_never_removes_again	neothd/src/installers/paperless_purge_tests.rs
+          cli::paperless::tests::paperless_purge_cli_preserves_exact_confirmation_without_target_overrides	neothd/src/cli/paperless.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -652,10 +660,10 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 566 ]]; then
+          if [[ "$expected" -ne 574 ]]; then
             selection_valid=0
           fi
-          sha256sum Cargo.lock neothd/Cargo.toml neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
+          sha256sum Cargo.lock neothd/Cargo.toml neothd/src/installers/paperless_purge.rs neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
 
           artifact_log="$evidence/neoth-lib-test-artifacts.jsonl"
           binary_receipt="$evidence/neoth-lib-test-binary.json"

@@ -3258,3 +3258,6 @@ use tests::reinstall_for_uninstall_test;
 #[cfg(test)]
 #[path = "paperless_uninstall_tests.rs"]
 mod paperless_uninstall_tests;
+
+#[path = "paperless_purge.rs"]
+pub(crate) mod paperless_purge;

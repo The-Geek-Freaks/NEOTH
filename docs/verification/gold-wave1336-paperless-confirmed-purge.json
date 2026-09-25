@@ -1,0 +1,58 @@
+{
+  "kind": "PAPERLESS_CONFIRMED_PURGE_SOURCE_REVIEW",
+  "base": "96dc51da04411676ece3f4268fc86cbfa5caf639",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_purge.rs",
+      "sha256": "57CDBB7DA552CC354F911A03C2A2365DE3EEDAFA15BF422D80E733E5BDE7187C"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_purge_tests.rs",
+      "sha256": "6F9E848515FF98036B6D11C0C7C8BF35C30E73400EC2DD9FE07E29423B5D818E"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sha256": "D7C12D658EB28FDF6863C39D760C655E8DBC337674C30CB9A1F0A09D8E07BA3C"
+    },
+    {
+      "path": "SRC/neothd/src/cli/paperless.rs",
+      "sha256": "8247288C4B8C86AFCE534EE6FD95BC92D3C75BFB05BF8C1494364A7D5F16F668"
+    },
+    {
+      "path": "packaging/paperless_product_canary.py",
+      "sha256": "715D381E9E9444E1E4C393EED64CF6DB9632727BC7282E041941728ACE2454C2"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "sha256": "33FD2E6B830A5706FB07600E7477C473313060D185056D83790D2786EFE9845C"
+    }
+  ],
+  "reviews": [
+    {
+      "path": "work/gold-20260906/wave1343-paperless-purge-review/REVIEW.md",
+      "sha256": "DB67871CE59C0AF1E0CC69FBF0D54CD13E99A021B4BBAADF8A3ED9E646225661"
+    },
+    {
+      "path": "work/gold-20260906/wave1340-paperless-purge-canary/REVIEW.md",
+      "sha256": "7752D1B8748F459C1B3032AE391C59F08686232281E1E3CFD87BD35B82AC542F"
+    },
+    {
+      "path": "work/gold-20260906/wave1346-paperless-purge-inventory/additions.json",
+      "sha256": "7D0ECD940264C5F2CD2BE0756715122423C358627CAD3CB7618E70824E99EE6D"
+    }
+  ],
+  "newNativeTests": 8,
+  "universalNative": 2015,
+  "group": 1805,
+  "windows": 574,
+  "helperTests": 25,
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "scope": "Receipt-only preview; exact confirmation; shared lock/rebinding; six proven-generation volume removals with durable per-member single-dispatch; unchanged config/credentials/receipts; expanded real product canary including final uninstall and repeat full-history custody witness.",
+  "pending": [
+    "Exact new source hosted native/CLI/core gates",
+    "Real six-volume purge acceptance",
+    "Fresh install generation rotation after completed purge"
+  ],
+  "claude": "TASK062 source-backed rotation proposal read; source/API corrections and durable-transition requirement returned in FEEDBACK062",
+  "localExecutableValidationRan": false
+}

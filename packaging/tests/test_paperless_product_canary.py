@@ -191,6 +191,36 @@ class CustodyTests(unittest.TestCase):
         with self.assertRaises(canary.Failure):
             canary.validate_uninstall(receipt, installed["project"], ids, volumes, install_raw, generation)
 
+    def test_purge_preview_and_completion_bind_both_receipts_generation_and_six_volumes(self) -> None:
+        project, generation = "neoth-paperless-abcdef123456", "12345678-1234-4234-8234-123456789abc"
+        install_raw, uninstall_raw = b"install-custody", b"final-uninstall-custody"
+        names = tuple(f"{project}_{logical}" for logical, _, _ in canary.VOLUMES)
+        phrase = f"PURGE PAPERLESS VOLUME SET {hashlib.sha256(install_raw).hexdigest()} {generation}"
+        preview = {"schema_version": 1, "operation": "paperless.confirmed_purge", "state": "confirmation_required", "project": project, "install_receipt_sha256": hashlib.sha256(install_raw).hexdigest(), "uninstall_receipt_sha256": hashlib.sha256(uninstall_raw).hexdigest(), "volume_set_id": generation, "volumes": [{"logical_name": logical, "name": name, "state": "prepared"} for (logical, _, _), name in zip(canary.VOLUMES, names, strict=True)], "confirmation": phrase}
+        self.assertEqual(canary.validate_purge_preview(preview, project, install_raw, uninstall_raw, generation, names), phrase)
+        completed = dict(preview); completed.pop("confirmation"); completed["state"] = "volumes_removed"; completed["volumes"] = [{"logical_name": logical, "name": name, "state": "absent_verified"} for (logical, _, _), name in zip(canary.VOLUMES, names, strict=True)]
+        canary.validate_purge_complete(completed, project, install_raw, uninstall_raw, generation, names)
+        completed["volumes"][0]["state"] = "prepared"
+        with self.assertRaises(canary.Failure):
+            canary.validate_purge_complete(completed, project, install_raw, uninstall_raw, generation, names)
+
+    def test_wrong_confirmation_witness_requires_no_purge_custody_or_terminal_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); state = home / "paperless" / "state"; state.mkdir(parents=True)
+            self.assertEqual(canary.purge_artifacts_absent(home), ())
+            for name in (".neoth-paperless-purge-custody.v1.json", ".neoth-paperless-purge-receipt.v1.json"):
+                path = state / name; path.write_text("{}")
+                with self.subTest(name=name), self.assertRaises(canary.Failure):
+                    canary.purge_artifacts_absent(home)
+                path.unlink()
+
+    def test_cleanup_after_confirmed_purge_proves_absence_without_volume_remove(self) -> None:
+        project, generation = "neoth-paperless-abcdef123456", "12345678-1234-4234-8234-123456789abc"
+        identities = ("a" * 64, "b" * 64, "c" * 64) + tuple(f"{project}_{logical}" for logical, _, _ in canary.VOLUMES)
+        with patch.object(canary.bounded, "prove_absent"), patch.object(canary, "docker_json") as inspect, patch.object(canary, "run") as command:
+            self.assertEqual(canary.cleanup(project, {"webserver": "d", "broker": "e", "db": "f"}, identities, 18001, identities[:3], generation, True), (True, None))
+        inspect.assert_not_called(); command.assert_not_called()
+
     def test_persisted_install_receipt_requires_exact_expected_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory); state = home / "paperless" / "state"; state.mkdir(parents=True)

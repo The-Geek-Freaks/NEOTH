@@ -1,0 +1,52 @@
+{
+  "schema": "neoth-windows566-hosted-admission-candidate/v1",
+  "candidateOnly": false,
+  "rootAdmissionClaim": "ROOT_ADMITTED_WINDOWS566_PASS at exact historical fdb186fe; no new Paperless purge/release claim",
+  "run": {
+    "id": 36125275633,
+    "source": "fdb186fef79b9a922ae5b4e2c9b5b4cc29167688",
+    "status": "completed",
+    "conclusion": "success",
+    "updatedAt": "2026-09-25T11:01:18Z"
+  },
+  "artifact": {
+    "id": 10860476487,
+    "apiZipDigest": "sha256:7ca23b560d804f8d785328e2c4d9cd22b4e8749339f4f504e744d29dcf52b50d",
+    "localZipSha256": "7ca23b560d804f8d785328e2c4d9cd22b4e8749339f4f504e744d29dcf52b50d",
+    "digestMatches": true,
+    "artifactSourceMatchesRun": true
+  },
+  "compile": {
+    "status": 0,
+    "candidateCount": 1,
+    "selectedLibTarget": "neothd",
+    "selectedExecutable": "neothd-6c7ce2ac0c7e63cd.exe"
+  },
+  "required566": {
+    "expected": 566,
+    "selectionValid": true,
+    "selectedRows": 566,
+    "uniqueSelected": 566,
+    "terminalRows": 566,
+    "uniqueTerminal": 566,
+    "passed": 566,
+    "failed": 0,
+    "missing": 0,
+    "extra": 0
+  },
+  "sourceBindings": {
+    "bindingRows": 566,
+    "uniquePaths": 88,
+    "commit": "fdb186fef79b9a922ae5b4e2c9b5b4cc29167688",
+    "gitBlobSha256Matches": 88,
+    "gitBlobSha256Mismatches": 0,
+    "verificationFile": "git-blob-sha256-checks.json"
+  },
+  "logs": {
+    "hashedFiles": 567,
+    "sha256Matches": 567,
+    "sha256Mismatches": 0,
+    "verificationFile": "log-sha256-checks.json"
+  },
+  "artifactPath": "windows566-evidence"
+}

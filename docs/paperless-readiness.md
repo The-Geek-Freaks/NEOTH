@@ -110,8 +110,27 @@ same generation before reusing the volumes. Earlier schema-1 installations with
 unlabelled volumes keep their normal install and safe-uninstall behavior; they
 receive no generation retroactively. A corrupt or lost generation record, or a
 missing member of an already completed volume set, stops reinstall before it
-can recreate volumes. Paperless does not yet expose a purge command.
+can recreate volumes.
 
 The implementation and regression tests are reviewed; hosted native and real
 retained-document acceptance remain separate gates. Do not treat a successful
 volume-name inspection as proof that document bytes survived.
+## Explicit retained-data removal
+
+After a completed safe uninstall, `neoth paperless purge` previews the six
+receipt-bound volumes and prints an exact confirmation phrase. Running
+`neoth paperless purge --confirm "<phrase from the preview>"` permanently removes
+that volume set. The preview and a wrong confirmation do not select Docker or
+write purge custody. Schema-1 legacy installations are ineligible for this action.
+
+Purge requires all original containers absent, matching generation labels on
+all six volumes, and no attached containers. Each removal is recorded before
+Docker dispatch. After an uncertain result, recovery only advances when that
+exact volume is observed absent; it never repeats an uncertain removal.
+Configuration, credentials, snapshots and lifecycle receipts remain preserved.
+Repeating a completed purge rechecks absence and returns the existing receipt.
+
+A fresh installation after purge still requires the separate generation-rotation
+follow-up; the current installer refuses to recreate the deleted completed set.
+The purge source has independent static review. Native execution and the real
+six-volume product canary remain pending for this change.

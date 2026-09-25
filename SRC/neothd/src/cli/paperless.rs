@@ -50,6 +50,8 @@ use crate::security::paperless_ingest::{
 // serde_json used for quarantine show serialisation.
 use serde_json;
 
+use crate::installers::paperless_lifecycle::paperless_purge;
+
 #[derive(Args, Debug, Clone)]
 pub struct PaperlessArgs {
     #[command(subcommand)]
@@ -77,6 +79,12 @@ pub enum PaperlessAction {
     Install,
     /// Remove receipt-bound containers while retaining all data volumes and staged files.
     Uninstall,
+    /// Preview permanent removal of the six volumes retained by a completed safe uninstall.
+    Purge {
+        /// Exact phrase from the preview; without it, no data is removed.
+        #[arg(long, value_name = "PHRASE")]
+        confirm: Option<String>,
+    },
     /// Ingest one OCR document through the SC-16 sanitizer + write
     /// the Obsidian note under `<vault>/<subdir>/Paperless/<id>.md`.
     Ingest {
@@ -144,6 +152,41 @@ pub async fn run_paperless_command(args: PaperlessArgs, output: OutputFormat) ->
             "{}",
             render_paperless_status(&status, uninstall.as_ref(), output)?
         );
+        Ok(())
+    } else if let PaperlessAction::Purge { confirm } = &args.action {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        if let Some(confirmation) = confirm {
+            let receipt = paperless_purge::purge_at(&home, confirmation)
+                .await
+                .map_err(anyhow::Error::new)?;
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::to_string(&receipt)?)
+                }
+                OutputFormat::Table => println!(
+                    "Paperless retained-volume purge: {:?}\nremoved volumes: {}\nvolume set: {}",
+                    receipt.state, receipt.volumes.len(), receipt.volume_set_id
+                ),
+            }
+        } else {
+            let preview = paperless_purge::preview_at(&home)
+                .map_err(anyhow::Error::new)?;
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::to_string(&preview)?)
+                }
+                OutputFormat::Table => {
+                    println!("Paperless retained-volume purge: {:?}", preview.state);
+                    for volume in &preview.volumes {
+                        println!("  {}: {}", volume.logical_name, volume.name);
+                    }
+                    println!(
+                        "No data was removed. To permanently remove these volumes:\nneoth paperless purge --confirm \"{}\"",
+                        preview.confirmation
+                    );
+                }
+            }
+        }
         Ok(())
     } else if matches!(
         args.action,
@@ -285,6 +328,9 @@ pub fn run_paperless(args: PaperlessArgs) -> Result<()> {
         }
         PaperlessAction::Uninstall => {
             anyhow::bail!("Paperless uninstall requires the asynchronous CLI entry")
+        }
+        PaperlessAction::Purge { .. } => {
+            anyhow::bail!("Paperless purge requires the asynchronous CLI entry")
         }
         PaperlessAction::Quarantine { action } => {
             let neoth_home = neoth_home_path();
@@ -576,6 +622,37 @@ mod tests {
                 ..
             }) if path == std::path::Path::new("D:/operator/paperless")
         ));
+    }
+
+    #[test]
+    fn paperless_purge_cli_preserves_exact_confirmation_without_target_overrides() {
+        use clap::Parser;
+        let preview = crate::cli::Cli::try_parse_from(["neoth", "paperless", "purge"]).unwrap();
+        assert!(matches!(preview.command,
+            crate::cli::Commands::Paperless(PaperlessArgs {
+                action: PaperlessAction::Purge { confirm: None }, ..
+            })
+        ));
+        let phrase = "PURGE PAPERLESS VOLUME SET exact-receipt exact-generation ";
+        let parsed = crate::cli::Cli::try_parse_from([
+            "neoth", "paperless", "purge", "--confirm", phrase,
+        ]).unwrap();
+        assert!(matches!(parsed.command,
+            crate::cli::Commands::Paperless(PaperlessArgs {
+                action: PaperlessAction::Purge { confirm: Some(value) }, ..
+            }) if value == phrase
+        ));
+        for argument in ["--volume", "--container", "--project", "--directory", "--endpoint", "--yes"] {
+            assert!(crate::cli::Cli::try_parse_from([
+                "neoth", "paperless", "purge", argument, "unowned",
+            ]).is_err());
+        }
+        assert!(crate::cli::Cli::try_parse_from([
+            "neoth", "paperless", "purge", "--confirm",
+        ]).is_err());
+        assert!(crate::cli::Cli::try_parse_from([
+            "neoth", "paperless", "uninstall", "--purge",
+        ]).is_err());
     }
 
     #[test]

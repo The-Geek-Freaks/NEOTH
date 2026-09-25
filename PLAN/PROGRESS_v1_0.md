@@ -2,6 +2,28 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1336/1340/1343-1347 confirmed Paperless purge and regression evidence (2026-09-25):**
+Paperless now exposes receipt-only `purge` preview and exact `--confirm` execution.
+The operation binds schema2 install/uninstall receipts and the six-volume
+snapshot, shares the install/uninstall OS lock, rebinds under that lock, requires
+all source containers absent and every volume unattached with matching labels.
+Durable per-volume dispatch custody precedes each non-force removal; uncertain
+removals are never resent, and recovery advances only after exact absence.
+Configuration, credentials and lifecycle receipts stay intact. Completion/repeat
+rechecks all six absences and preserves the terminal receipt. Seven native cases
+plus the CLI argument regression expand Group1805/Windows574, native catalog2015.
+The product canary keeps the real PDF survival witness, then checks second safe
+uninstall, preview/wrong-confirm no-write boundaries, all six removals, preserved
+current lifecycle/configuration files, immutable purge custody/receipt on repeat,
+and isolated cleanup. Independent static review is complete; hosted native and
+real-product purge validation are pending. Fresh generation rotation after purge
+is still open; Claude062's source-backed proposal feeds that separate follow-up.
+Historical Group1797 run36125273233 atfdb186fe is admitted1797PASS/0FAIL/0missing
+with301source bindings. Windows566 run36125275633 is admitted566PASS/0FAIL/0missing,
+88historical source blobs and567log hashes. Both cover all four prior regression
+failures repaired in W1329/W1330. These historical passes do not prove the new
+Paperless purge. The W1342 observer repair is published96dc51da; its real-product
+run36127346215 succeeded; exact artifact admission is underway. No roadmap checkbox closure or local execution.
 **W1341-1342 real n8n purge and bounded Paperless inspection (2026-09-25):**
 The real Linux product run36125280461 atfdb186fe is admitted: install and13
 workflow imports, retained uninstall/reinstall, second safe uninstall, preview
