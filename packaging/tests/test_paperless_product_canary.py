@@ -52,6 +52,17 @@ def uninstall_receipt() -> dict:
 
 
 class CustodyTests(unittest.TestCase):
+    def test_docker_inspect_uses_bounded_validator_projection_without_env(self) -> None:
+        expected = container()
+        with patch.object(canary, "run", return_value=json.dumps(expected).encode("utf-8")) as command:
+            observed = canary.docker_json("a" * 64)
+        canary.validate_container(observed, "neoth-paperless-abcdef123456", "webserver", "b" * 64, 18001)
+        argv = command.call_args.args[0]
+        self.assertEqual(argv[:4], ["docker", "container", "inspect", "--format"])
+        self.assertNotIn("Env", argv[4])
+        self.assertIn("Mounts", argv[4])
+        self.assertIn("NetworkSettings", argv[4])
+
     def test_container_rejects_foreign_label_mount_and_port(self) -> None:
         row = container()
         self.assertEqual(canary.validate_container(row, "neoth-paperless-abcdef123456", "webserver", "b" * 64, 18001), "a" * 64)

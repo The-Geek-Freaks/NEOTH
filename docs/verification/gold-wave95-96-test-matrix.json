@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "EXACT_HOSTED_FORMAT_IMPORTED_CURRENT_LIFECYCLE_GATES_PENDING",
+  "status": "W1341 real n8n purge admitted; W1342 projection source-reviewed, hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 216538,
-    "sha256": "3FBE1A6AA6312BA9A9D005DC422189C5103D98B57882046E6C4ED96BC4C6101B"
+    "bytes": 216946,
+    "sha256": "BC12AEE747DECEDEEE15BCBB80FEC7465C2A3260F4253F031E57ED47D6D8BE4B"
   },
-  "sourceInputs": 1217,
+  "sourceInputs": 1219,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -45294,6 +45294,56 @@
       }
     ],
     "note": "Four fdb186fe exact rustfmt postimages; historical Corec6cf complete; Claude061 docs imported. W1336newfiles untracked excluded; all5 lifecycle hosted runs remain on fdb186fe.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "w1342BoundedPaperlessInspect": {
+    "base": "cefdff3b21a8f0657ce089d788033d95c3bdad60",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1341-n8n-purge-product.json",
+        "bytes": 8103,
+        "sha256": "BF0952DFC0DCEB9E2F920DB14E2E944AF3A1A4A2D7F02D35CD19538F9B616242",
+        "blob": "e91b3b891bbd4635e35ecc03fd0583a718cd6039"
+      },
+      {
+        "path": "docs/verification/gold-wave1342-paperless-inspect-projection.json",
+        "bytes": 1377,
+        "sha256": "ADD057E4DFB32D31F633449FD85540CA05D405CFCF02302D4335E27FCC6AE365",
+        "blob": "c87eede4d1354691ad44006cb7d40ebc96f98bf5"
+      },
+      {
+        "path": "packaging/paperless_product_canary.py",
+        "bytes": 41229,
+        "sha256": "AE9F8C5B869277FD77057E3C3A446F09D30C0ED8566AEE2469BECBF720A1E01D",
+        "blob": "5be03b0af736ced16b8644513b97c7f6c64c567c"
+      },
+      {
+        "path": "packaging/tests/test_paperless_product_canary.py",
+        "bytes": 22602,
+        "sha256": "445E123ACB8584D0B3A72FE201A5CBFDBF2519DE623DE846BC16126FA7C50404",
+        "blob": "f6297a3fbe5f88f46f9ea0f315fff141292dc7a7"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 374487,
+        "sha256": "C360DD0F7CA265CB401309B99675F8B0FEB7F2A2C1D87FDB478869402F80BAB0",
+        "blob": "086bd71d5dfeda100e90f6a9ab83a6bdd9ba5816"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1393418,
+        "sha256": "EBCED028A45FF7CDAE4EDC8E1A9C20B9746739796153612848E0F32EF1487399",
+        "blob": "7780fe252bd33f7ee81d81c2425a558a0a2548db"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2003941,
+        "sha256": "7AE4B55688856D6856D597B72C3858698FEA366F46B43B55C00D3FD937FD7249",
+        "blob": "ee49e9a938ac58d074c8454f7a5836691b53ad24"
+      }
+    ],
+    "note": "Exact staged packaging postimages only; separate W1336/W1340 purge WIP excluded; no local executable validation, no checkbox closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

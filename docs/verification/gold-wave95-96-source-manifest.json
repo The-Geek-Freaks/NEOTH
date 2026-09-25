@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T10:43:46Z",
-  "validationStatus": "EXACT_HOSTED_FORMAT_IMPORTED_CURRENT_LIFECYCLE_GATES_PENDING",
+  "capturedUtc": "2026-09-25T11:01:05Z",
+  "validationStatus": "W1341 real n8n purge admitted; W1342 projection source-reviewed, hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1832,6 +1832,16 @@
       "sha256": "2050C68E4617B1A53EE1AD42D98505528B66A2A244102FF0F45BDB4847E7399D"
     },
     {
+      "path": "docs/verification/gold-wave1341-n8n-purge-product.json",
+      "bytes": 8103,
+      "sha256": "BF0952DFC0DCEB9E2F920DB14E2E944AF3A1A4A2D7F02D35CD19538F9B616242"
+    },
+    {
+      "path": "docs/verification/gold-wave1342-paperless-inspect-projection.json",
+      "bytes": 1377,
+      "sha256": "ADD057E4DFB32D31F633449FD85540CA05D405CFCF02302D4335E27FCC6AE365"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -2698,8 +2708,8 @@
     },
     {
       "path": "packaging/paperless_product_canary.py",
-      "bytes": 40490,
-      "sha256": "7DE76E57E22442AFD30FD531FBED9CA878381AA36C271DAB551FFF4D405C6A19"
+      "bytes": 41229,
+      "sha256": "AE9F8C5B869277FD77057E3C3A446F09D30C0ED8566AEE2469BECBF720A1E01D"
     },
     {
       "path": "packaging/rust-license-snapshots.json",
@@ -2733,8 +2743,8 @@
     },
     {
       "path": "packaging/tests/test_paperless_product_canary.py",
-      "bytes": 21963,
-      "sha256": "53AC110326BD4F3D3CAAE2DB3E457451D9B4ECA607C1933695E38485488D4A2A"
+      "bytes": 22602,
+      "sha256": "445E123ACB8584D0B3A72FE201A5CBFDBF2519DE623DE846BC16126FA7C50404"
     },
     {
       "path": "packaging/tests/test_preview_windows_workflow_contract.py",
@@ -2788,18 +2798,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 373055,
-      "sha256": "77D2EEC786AC30B01D8F4099D882C95F24D87DA0C0D63EE2BB818C78A57D3F98"
+      "bytes": 374487,
+      "sha256": "C360DD0F7CA265CB401309B99675F8B0FEB7F2A2C1D87FDB478869402F80BAB0"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1391986,
-      "sha256": "5675423608685C3F64EF20F306145BBB5B1314B0D1108E97EA9B9ADF319C695E"
+      "bytes": 1393418,
+      "sha256": "EBCED028A45FF7CDAE4EDC8E1A9C20B9746739796153612848E0F32EF1487399"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2002509,
-      "sha256": "C1F0B185EE927E8A451CA49A3502B93069414B71B4CEBF1A4A5750E0B89CEEAE"
+      "bytes": 2003941,
+      "sha256": "7AE4B55688856D6856D597B72C3858698FEA366F46B43B55C00D3FD937FD7249"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

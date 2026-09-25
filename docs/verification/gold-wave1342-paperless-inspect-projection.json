@@ -1,0 +1,28 @@
+{
+  "kind": "PAPERLESS_PRODUCT_OBSERVER_PROJECTION_REPAIR",
+  "base": "cefdff3b21a8f0657ce089d788033d95c3bdad60",
+  "failedRun": 36125278020,
+  "failedSource": "fdb186fef79b9a922ae5b4e2c9b5b4cc29167688",
+  "failedArtifact": 10858784394,
+  "failedZipDigest": "4cc111ecb3301ce3cd86b6ec065c164b68f613c47a56ac8de21c40d665eb690e",
+  "failure": "docker inspect exit0; stdout16385 overflow true; cleanup also unproven",
+  "postimages": [
+    {
+      "path": "packaging/paperless_product_canary.py",
+      "preimage": "ae773e6eb3de0f507c48317cb483f0149e3e7a0e",
+      "postimage": "5be03b0af736ced16b8644513b97c7f6c64c567c",
+      "sha256": "AE9F8C5B869277FD77057E3C3A446F09D30C0ED8566AEE2469BECBF720A1E01D"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "preimage": "1fef8ac5f9e6e401efff49116995ee4da48f1aad",
+      "postimage": "f6297a3fbe5f88f46f9ea0f315fff141292dc7a7",
+      "sha256": "445E123ACB8584D0B3A72FE201A5CBFDBF2519DE623DE846BC16126FA7C50404"
+    }
+  ],
+  "reviewSha256": "926A56D2400DC2B1DC3D817C2CB7F86225CC8CD5475F92F6E569526074FE5C99",
+  "staticReview": "APPROVE exact staged patch only",
+  "localExecutableValidationRan": false,
+  "hosted": "pending exact published repair",
+  "scope": "Fixed Docker --format field projections preserve16KiB cap and exclude Env; separate Paperless purge worktree edits deliberately excluded."
+}

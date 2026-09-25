@@ -189,15 +189,20 @@ def write_env_fixture(root: Path, port: int) -> None:
 
 
 def docker_json(identifier: str, volume: bool = False) -> dict:
-    argv = ["docker", "volume", "inspect", identifier] if volume else ["docker", "container", "inspect", identifier]
+    if volume:
+        projection = r'{"Name":{{json .Name}},"Labels":{"com.docker.compose.project":{{json (index .Labels "com.docker.compose.project")}},"com.docker.compose.volume":{{json (index .Labels "com.docker.compose.volume")}},"io.neoth.paperless.volume-set-id":{{json (index .Labels "io.neoth.paperless.volume-set-id")}}}}'
+        argv = ["docker", "volume", "inspect", "--format", projection, identifier]
+    else:
+        projection = r'{"Id":{{json .Id}},"Image":{{json .Image}},"State":{"Running":{{json .State.Running}}},"Config":{"Labels":{"com.docker.compose.project":{{json (index .Config.Labels "com.docker.compose.project")}},"com.docker.compose.service":{{json (index .Config.Labels "com.docker.compose.service")}}}},"NetworkSettings":{"Ports":{{json .NetworkSettings.Ports}}},"Mounts":{{json .Mounts}}}'
+        argv = ["docker", "container", "inspect", "--format", projection, identifier]
     raw = run(argv, timeout=45)
     try:
         value = json.loads(raw)
     except Exception as error:
         raise Failure("docker_inspect_invalid") from error
-    if not isinstance(value, list) or len(value) != 1 or not isinstance(value[0], dict):
+    if not isinstance(value, dict):
         raise Failure("docker_inspect_invalid")
-    return value[0]
+    return value
 
 
 def validate_container(row: dict, project: str, service: str, image_id: str, port: int) -> str:

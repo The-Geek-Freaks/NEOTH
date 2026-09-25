@@ -2,6 +2,24 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1341-1342 real n8n purge and bounded Paperless inspection (2026-09-25):**
+The real Linux product run36125280461 atfdb186fe is admitted: install and13
+workflow imports, retained uninstall/reinstall, second safe uninstall, preview
+and wrong-confirmation preservation, confirmed exact-volume deletion, read-only
+repeat and isolated cleanup all passed. Artifact10859029401, its API ZIP digest,
+receipt and28historical source/input blobs are verified. Credentials and job/import
+history remain preserved. This does not prove workflow execution or release readiness.
+Paperless run36125278020 reached an observer failure: successful Docker inspection
+returned16385bytes and crossed the16KiB capture bound. W1342 requests only the
+container/volume fields required by the existing validators using Docker's JSON
+format projection; it excludes environment data and preserves the capture limit.
+The independently reviewed minimal helper repair adds one focused helper test.
+Paperless generation/PDF/purge acceptance still requires a new hosted product run.
+Group1797 atfdb186fe completed successfully; exact artifact admission is underway.
+Windows566 and current Core remain pending. W1336 confirmed Paperless purge has
+static review only and is excluded from this publication. No checkbox closure;
+no local executable validation. Claude TASK062 covers safe post-purge generation
+rotation while Root continues code and hosted verification.
 **W1337-1338 hosted Core completion and formatting (2026-09-25):**
 Core run36121166582 atc6cf2231 is now fully successful: production Clippy,
 core-test typecheck, CLI build/export and Linux workspace Clippy all passed.

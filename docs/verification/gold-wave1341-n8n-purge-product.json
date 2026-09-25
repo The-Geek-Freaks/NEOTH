@@ -1,0 +1,196 @@
+{
+  "schema": "neoth-root-hosted-admission/v1",
+  "kind": "ROOT_ADMITTED_N8N_CONFIRMED_RETAINED_VOLUME_PURGE",
+  "source": "fdb186fef79b9a922ae5b4e2c9b5b4cc29167688",
+  "run": 36125280461,
+  "artifact": 10859029401,
+  "apiDigest": "sha256:0b81ac41f2c89d6ed98f9be578d3630cefe255c57a94bfed8082a0cb7aa308a0",
+  "zipSha256": "0B81AC41F2C89D6ED98F9BE578D3630CEFE255C57A94BFED8082A0CB7AA308A0",
+  "receiptSha256": "96C8C2A8A424199FA97F1218B90EFF6921F3A0FB4E9B22E4B88B10AC0E728722",
+  "historicalInputs": [
+    {
+      "path": ".github/workflows/n8n-product-bootstrap.yml",
+      "blob": "46689506492ce9c8f4c8c3209e1aacd8d5890837",
+      "sha256": "E61DB5CCDE0CC3DFE6EE103031E40A6025DAC328977C24BBF2ABC376FF258D60",
+      "bytes": 4618
+    },
+    {
+      "path": "packaging/n8n_bootstrap_canary.py",
+      "blob": "1550e751dbc1e674062a5ce86eba846fbc2510ca",
+      "sha256": "23118857E4655BAD3FEDBB702E4D0840AEC9114482386AAB5FEE783EF688500A",
+      "bytes": 33214
+    },
+    {
+      "path": "packaging/n8n_product_bootstrap_canary.py",
+      "blob": "d837ea8173d7d45458844c46643a98d38cca9919",
+      "sha256": "2690CD803AF68B0FA363D4F849F50A286DD9C55F6F35D2B0B58E151D8A5BEAD9",
+      "bytes": 59651
+    },
+    {
+      "path": "packaging/tests/test_n8n_product_bootstrap_canary.py",
+      "blob": "6b30ed458cdf258783d6c92c7d9b3f544688e301",
+      "sha256": "B5A8A441D0D8EE21C97ED8EE5B5E014F939F6869F7BF937D34AC877BD47B4439",
+      "bytes": 32756
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "blob": "f89a0cdee009703aeb423562fefea56dcf467ee6",
+      "sha256": "EAF75EAF1045B7736010227542DAC09D0FA0711E59F9338FEFB057F711322B56",
+      "bytes": 385403
+    },
+    {
+      "path": "SRC/neothd/assets/n8n_workflows/daily_summary.json",
+      "blob": "114da8333f1733f43692d5e7d49be0dd447f44aa",
+      "sha256": "1F4087959463BBFF751F8D9BE6BEB5F6DD1B2EB55D85A662F01CD8E2EC0562C7",
+      "bytes": 5377
+    },
+    {
+      "path": "SRC/neothd/assets/n8n_workflows/morning_brief.json",
+      "blob": "d6742615a8c4f478fa23cb4eb1b4ba179cb056f8",
+      "sha256": "35C68F9F5A05BB9AF17A46E8B0A8D48E4E5A10E2742BEC24AA4831400A9B44D0",
+      "bytes": 5483
+    },
+    {
+      "path": "SRC/neothd/assets/n8n_workflows/weekly_stats.json",
+      "blob": "f122c72624db63558f07fc550cf02f00ea54b486",
+      "sha256": "F16326F0E1ED99946438A1AEA69AB0F8E0FCB8E2A6ACB7E267418AF0C53B6328",
+      "bytes": 7612
+    },
+    {
+      "path": "SRC/neothd/src/cli/credential.rs",
+      "blob": "b10d29f476aaf759e842ac5a708db868ce79eac0",
+      "sha256": "869EE22DA169E1A1E1EF839052225B1A9D2D1F9032D8312DA7FD404B0164DFCD",
+      "bytes": 72119
+    },
+    {
+      "path": "SRC/neothd/src/cli/init.rs",
+      "blob": "2b775a1c0e05f669173c7aae21d9bd77ebd6ec5a",
+      "sha256": "40D0F6CFA68C8588FE5D3BE4968E40E7EB3700B8235243A2707D325BB6F220C8",
+      "bytes": 136189
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/io.rs",
+      "blob": "d7646518596245a7c86137fd46f6e7619a73cc90",
+      "sha256": "CBF51FE4243D9F218D2EDF416630F435D0AB6532F8B7AC499A8C1E50FC17305B",
+      "bytes": 73804
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/steps_provider.rs",
+      "blob": "425868fd09b61d7a2df443d5a60ca5cc545236c3",
+      "sha256": "334FC5957650ADFF66D11A6EFE6429E8D099C56B123B275BBA89F1EF40B32817",
+      "bytes": 33305
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/types.rs",
+      "blob": "497ac95ced4af7f542b5734753c5dca20fa8a2f4",
+      "sha256": "5A938F592F1DBAF6D142C69FA85A5F8A67566093E6ED6E8AD4C64C0E7E748297",
+      "bytes": 37986
+    },
+    {
+      "path": "SRC/neothd/src/cli/n8n.rs",
+      "blob": "aaf02d6436a954e60c564d17dad35f4d5bbc4aa0",
+      "sha256": "694F9BE57FB376A664798D4E72F9956B33D9FAED74AA59A3F76547E5B2972A30",
+      "bytes": 27097
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials.rs",
+      "blob": "7b36c8cc0bdee1ebf9ee323a343c33bce382ec74",
+      "sha256": "101E3C4CEEBDC934267338F5CD0274619F1F9E7B86EFBDD379AC22747AA19062",
+      "bytes": 424841
+    },
+    {
+      "path": "SRC/neothd/src/config/keychain.rs",
+      "blob": "4027f4882543303f08b7c14575a10bd0cc921f8e",
+      "sha256": "1B83B306AAE415AC8EDAA39256271E779BEE5F3181A7B8F796079CFCF8B87D0F",
+      "bytes": 83606
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "blob": "e8c281a0ed2d6a51c9da602b8cd38d7e7049d607",
+      "sha256": "31D14A5C5764C72AE03CFD9C6CC58C308667694F95C17DD4048B6AD859191072",
+      "bytes": 185409
+    },
+    {
+      "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+      "blob": "d3c5b264b3bfd24e01c5ea007b0c964eddc6a9a0",
+      "sha256": "5D8AB67490CEE0A05225D8BA62EC1DBD5E4CFF1C98CA6C773ADAC76589DB770B",
+      "bytes": 64825
+    },
+    {
+      "path": "SRC/neothd/src/installers/n8n_workflows.rs",
+      "blob": "7e0f040bbf3ab5dd2e301ff7f7b428df15368460",
+      "sha256": "F3E7FB2F481CFCE01CE9D865CD700A9E180855A176B5218501F57A3FA395E846",
+      "bytes": 7302
+    },
+    {
+      "path": "SRC/neothd/src/integrations/jobs.rs",
+      "blob": "922f881812b007a80476ee3d3b2247ba95b968d3",
+      "sha256": "4BFB5DE7566A64D773D0CCB5DB522431DA112E44AD55A0E79DA5298C9064194F",
+      "bytes": 163880
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n.rs",
+      "blob": "c96afd39b802ac33f92db48819ed307f550fcd1e",
+      "sha256": "5B10D87FD01513870BB528A780E9C963A0F5B4A8992A8EB24EA6CE2AD0DB8AE9",
+      "bytes": 46622
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/bootstrap_transport.rs",
+      "blob": "e9bd63f07a664ae6988ed3d5872c25f13a169c67",
+      "sha256": "EFEDFB5665CA6D3AB1C6A7BF9C9C2339D7F17BE0C79BFD58C40A1D20D12BBA38",
+      "bytes": 25169
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs",
+      "blob": "c790987fce3c29981c9842f05e1660ac1f89d772",
+      "sha256": "6B981FB13FE15D597C437A1799E98E5B82DE78F3D508153395E76FB54294042A",
+      "bytes": 72133
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_purge.rs",
+      "blob": "7d9ba23264047edbf18d4c13c0254535a728e13f",
+      "sha256": "F01CAF7530D9D7559F1B8129B2B2D8D634AE3FB17C5DF6ED3C5B7C1AC0724257",
+      "bytes": 25128
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "blob": "b1168c2bfb9b11434ddfc6c355ea8efbb836e46b",
+      "sha256": "4F7F77663C273B204097C93E843895B8BD8033140C767BB381E4CABE9A423AEF",
+      "bytes": 58341
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",
+      "blob": "4c5089f9a8d43f2a876afc903953b5ed18d3f6db",
+      "sha256": "66815B14A283EEAE17D88AA2B5EC3B31EB605EF9F39104CC59964DFBB354141C",
+      "bytes": 34982
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
+      "blob": "21bb0ecb21e6d31b4e7ccc010eb498ea122db119",
+      "sha256": "5F3B30B13A778E99BA10E412D1E9CA11F0B5CDA2FFF072EC8BEAD87A19403ECD",
+      "bytes": 52754
+    },
+    {
+      "path": "SRC/neothd/src/integrations/state.rs",
+      "blob": "f94f95d7892b9e4f8db7c8d4c2b5887f184fc526",
+      "sha256": "744F96BD8BE0F6789E587730A63D09BBCF11609C718620572E3CE296A179FB18",
+      "bytes": 45813
+    }
+  ],
+  "purge": {
+    "canonical_api_key_preserved": true,
+    "job_row_sha256": "a575ee6eec3745ed6e415b9cb4318c0d0efb12384c7490d8264fa00b7d56b5bd",
+    "purge_job_sha256": "794377f0020c584ecac505d206bdfcd9439b7fa8c84d81b7569d579975d61e4a",
+    "receipt_bytes": 308,
+    "receipt_sha256": "23e3830576742af6aa0b2f22c8d357a41302619b2db89d2f2cf73d74aaf54591",
+    "repeat_read_only": true,
+    "source_uninstall_job_sha256": "646a83e0a3d804000f86f2943041bcfa8e78e6ad1397b93d971492f6420971a7",
+    "target_sha256": "f5130156cf947f580d7479a471a7516673ff8ee39e91008f19699990938f6902",
+    "volume_absent": true
+  },
+  "workflowCount": 13,
+  "retainedReinstall": true,
+  "cleanupProven": true,
+  "scope": "Real isolated Linux compiled-product path: install,13workflow imports, safe uninstall, retained reinstall, second safe uninstall, preview/wrong-confirm history preservation, confirmed exact volume deletion, readonly repeat; credentials/history retained. No Paperless purge or Windows release acceptance implied.",
+  "localExecutableValidationRan": false
+}
