@@ -61,6 +61,7 @@ fn required_scope_for(method: &str, path: &str) -> Option<&'static str> {
         ("POST", "/api/memory/drift") => Some(api_tokens::SCOPE_RECALL_READ),
         ("POST", "/api/proactive/proposals/pending") => Some(api_tokens::SCOPE_PROPOSALS_READ),
         ("POST", "/api/email/drafts/pending") => Some(api_tokens::SCOPE_DRAFTS_READ),
+        ("POST", "/api/permissions/audit") => Some(api_tokens::SCOPE_PERMISSIONS_READ),
         ("POST", "/api/memory/save") => Some(api_tokens::SCOPE_MEMORY_WRITE),
         ("POST", "/api/provider/call") => Some(api_tokens::SCOPE_PROVIDER_CALL),
         ("POST", "/api/channel/send") => Some(api_tokens::SCOPE_CHANNEL_SEND),
@@ -726,6 +727,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn loopback_permission_audit_requires_scope_and_replays_authenticated_subject() {
+        let home = tempfile::tempdir().unwrap();
+        let (permission_record, permission_token) = api_tokens::create_token(
+            "permission-reader", vec![api_tokens::SCOPE_PERMISSIONS_READ.to_owned()], None,
+        ).unwrap();
+        let (wrong_record, wrong_token) = api_tokens::create_token(
+            "recall-reader", vec![api_tokens::SCOPE_RECALL_READ.to_owned()], None,
+        ).unwrap();
+        api_tokens::save_store(home.path(), &[permission_record, wrong_record]).unwrap();
+
+        // The endpoint replays `<home>/wal/*`, unlike this test module's
+        // drift-only request-audit writer. Seed a real authenticated prefix
+        // before the HTTP server starts so the loopback assertion reaches the
+        // same provenance path as production.
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let (trust_writer, trust_join) = crate::wal::writer::spawn_for_home(
+            wal.join("000001.wal"),
+            home.path().to_path_buf(),
+        ).unwrap();
+        let event = crate::permissions::trust_ledger::TrustEvent::from_gate(
+            &crate::permissions::Action::Read,
+            crate::permissions::AutonomyLevel::Standard,
+            &crate::permissions::Decision::Allow,
+            Some("local"), None, None, None, 10,
+        ).unwrap();
+        crate::permissions::trust_ledger::append_to_writer(&trust_writer, &event)
+            .await
+            .unwrap();
+        drop(trust_writer);
+        trust_join.await.unwrap();
+
+        let (state, writer, wal_join, server, shutdown, port) =
+            start_drift_http_test_server(home.path()).await;
+        let path = "/api/permissions/audit";
+        let denied = post_test_http(port, path, Some(&wrong_token), "{not-json").await;
+        assert_eq!(denied["_http_status"], "403");
+        let allowed = post_test_http(port, path, Some(&permission_token), r#"{"subject":"local","limit":1,"from_ns":10}"#).await;
+        assert_eq!(allowed["_http_status"], "200");
+        assert_eq!(allowed["data"]["coverage"], "typed_trust_decisions_only");
+        assert_eq!(allowed["data"]["subject"], "local");
+        assert_eq!(allowed["data"]["total"], 1);
+        assert_eq!(allowed["data"]["decisions"].as_array().unwrap().len(), 1);
+        assert_eq!(allowed["data"]["decisions"][0]["decided_at_ns"], 10);
+        stop_drift_http_test_server(state, writer, wal_join, server, shutdown).await;
+    }
+
+    #[tokio::test]
     async fn loopback_pending_drafts_requires_dedicated_scope_and_returns_metadata() {
         let home = tempfile::tempdir().unwrap();
         let draft = crate::email::draft::build_draft(
@@ -931,6 +980,7 @@ mod tests {
             ("POST", "/api/memory/drift"),
             ("POST", "/api/proactive/proposals/pending"),
             ("POST", "/api/email/drafts/pending"),
+            ("POST", "/api/permissions/audit"),
             ("POST", "/api/memory/save"),
             ("POST", "/api/provider/call"),
             ("POST", "/api/channel/send"),

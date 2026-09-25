@@ -2,6 +2,27 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1095 bounded typed audit and actionable runtime diagnosis (2026-09-25):**
+The new authenticated POST /api/permissions/audit requires permissions:read
+before body access and reads actual authenticated home-WAL TrustDecision
+records. Replay runs on the blocking executor with8MiB physical/16MiB
+logical,64-segment,256-directory-entry and256-matching-decision ceilings;
+limit caps output at100 and from_ns inclusively filters decided_at_ns.
+Malformed evidence or exhausted bounds fail closed. Real WAL, live-tail,
+loopback scope, time-filter and positive/negative cap fixtures are registered.
+The inactive starter explicitly describes partial typed coverage; broader
+KF-06 consent export remains open. W1088 independently approved the corrected
+six-file implementation after fixture, scope-order and time-contract repairs.
+W1094 also splits the generic install probe failure into fixed stage-specific
+HTTP/status and JSON/envelope/cursor categories. Probe authentication, proxy,
+redirect, size and timeout behavior is unchanged. W1097 found and Root fixed
+a transitive fixture reference before approval. The product canary recognises
+the fixed categories and its19th helper test excludes private response text.
+Seven new native cases yield Native1773, Group1554 and Windows331. Source
+review and registration are complete; fresh hosted execution remains required.
+The preceding bac22834 Preflight and Code Quality passed; its native gates
+are still running. No roadmap checkbox is closed from this publication.
+
 **W1093 hosted failure repair and exact product diagnosis (2026-09-25):**
 The e3 Core36080132883 and Group36080135291 both stopped before tests at
 one restart-validator closure in the v2 migration fixture. Its argument now

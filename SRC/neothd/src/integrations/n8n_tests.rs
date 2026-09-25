@@ -38,15 +38,23 @@ fn parses_documented_workflows_shape_without_invented_identity_fields() {
 #[test]
 fn rejects_non_documented_or_unbounded_workflows_shapes() {
     let endpoint = LoopbackHttpEndpoint::parse("http://[::1]:5678").unwrap();
+    for body in [br#"{}"#.as_slice(), br#"{"data":{}}"#.as_slice()] {
+        assert_eq!(
+            parse_workflows_response(endpoint.clone(), 200, body),
+            Err(N8nProbeError::ResponseEnvelopeInvalid)
+        );
+    }
+    assert_eq!(
+        parse_workflows_response(endpoint.clone(), 200, b"not json"),
+        Err(N8nProbeError::ResponseJsonInvalid)
+    );
     for body in [
-        br#"{}"#.as_slice(),
-        br#"{"data":{}}"#.as_slice(),
         br#"{"data":[],"nextCursor":12}"#.as_slice(),
         br#"{"data":[],"nextCursor":"\n"}"#.as_slice(),
     ] {
         assert_eq!(
             parse_workflows_response(endpoint.clone(), 200, body),
-            Err(N8nProbeError::InvalidResponse)
+            Err(N8nProbeError::ResponseCursorInvalid)
         );
     }
 }
@@ -68,8 +76,47 @@ async fn generic_200_workflows_envelope_without_key_rejection_is_not_adoption_ev
     ]).await;
     assert_eq!(
         HttpN8nApiProbe.negative_control(&endpoint).await,
-        Err(N8nProbeError::InvalidResponse)
+        Err(N8nProbeError::NegativeControlUnexpectedSuccess)
     );
+}
+
+#[tokio::test]
+async fn local_loopback_probe_status_categories_are_redacted_and_stage_specific() {
+    for (response, expected) in [
+        (
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n",
+            N8nProbeError::NegativeControlNotFound,
+        ),
+        (
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n",
+            N8nProbeError::NegativeControlServerError,
+        ),
+    ] {
+        let endpoint = scripted_loopback(vec![response]).await;
+        assert_eq!(HttpN8nApiProbe.negative_control(&endpoint).await, Err(expected));
+    }
+    for (response, expected) in [
+        (
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n",
+            N8nProbeError::AuthenticatedNotFound,
+        ),
+        (
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n",
+            N8nProbeError::AuthenticatedServerError,
+        ),
+        (
+            "HTTP/1.1 418 I'm a teapot\r\nContent-Length: 0\r\n\r\n",
+            N8nProbeError::AuthenticatedUnexpectedStatus,
+        ),
+    ] {
+        let endpoint = scripted_loopback(vec![response]).await;
+        assert_eq!(
+            HttpN8nApiProbe
+                .authenticated_probe(&endpoint, &SecretString::from("test-n8n-key"))
+                .await,
+            Err(expected)
+        );
+    }
 }
 
 #[tokio::test]

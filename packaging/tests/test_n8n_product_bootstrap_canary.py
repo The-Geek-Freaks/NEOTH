@@ -136,6 +136,32 @@ class CustodyBoundaryTests(unittest.TestCase):
         self.assertEqual(observation, {"state": "failed", "error_code": "n8n_loopback_health_timeout"})
         self.assertNotIn("private", json.dumps(observation))
 
+    def test_probe_failure_categories_are_exact_and_do_not_leak_server_text(self) -> None:
+        codes = (
+            "n8n_negative_control_unexpected_success", "n8n_negative_control_not_found",
+            "n8n_negative_control_server_error", "n8n_negative_control_unexpected_status",
+            "n8n_authenticated_not_found", "n8n_authenticated_server_error",
+            "n8n_authenticated_unexpected_status", "n8n_response_json_invalid",
+            "n8n_response_envelope_invalid", "n8n_response_cursor_invalid",
+        )
+        job = "12345678-1234-1234-1234-123456789abc"
+        secret = "private-response-key-value"
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            (home / "n8n-managed-bootstrap.v2.json").write_text(json.dumps({
+                "schema_version": 2, "phase": "BootstrapRemoved", "job_id": job,
+            }))
+            for code in codes:
+                with self.subTest(code=code):
+                    result = canary.bounded.Result(1, b"", f"{code}: {secret}".encode(), False, False)
+                    failure = canary.CommandFailure(["neoth", "--output", "json", "n8n", "install"], result)
+                    self.assertEqual(failure.diagnostic["known_error_categories"], [code])
+                    self.assertNotIn(secret, json.dumps(failure.diagnostic))
+                    with patch.object(canary, "run", return_value=f"failed|{code}\n".encode()):
+                        self.assertEqual(canary.observe_failed_install_job(home), {"state": "failed", "error_code": code})
+                    with patch.object(canary, "run", return_value=f"failed|{code}-{secret}\n".encode()):
+                        self.assertEqual(canary.observe_failed_install_job(home), {"state": "failed", "error_code": "unclassified"})
+
     def test_command_diagnosis_reveals_only_fixed_categories(self) -> None:
         secret = "must-never-appear-in-receipt"
         result = canary.bounded.Result(1, secret.encode(), b"Error: n8n_bootstrap_docker_failed " + secret.encode(), False, False)

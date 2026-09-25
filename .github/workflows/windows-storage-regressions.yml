@@ -394,6 +394,13 @@ jobs:
           cli::n8n::tests::import_workflows_cli_has_no_hidden_execution_options	neothd/src/cli/n8n.rs
           integrations::n8n::managed_bootstrap::tests::terminal_runtime_outcomes_return_the_durable_job_without_ready_custody_mutation	neothd/src/integrations/n8n/managed_bootstrap.rs
           integrations::n8n::managed_bootstrap::tests::only_ready_runtime_outcome_finalizes_bootstrap_custody	neothd/src/integrations/n8n/managed_bootstrap.rs
+          n8n_api::handlers::permission_audit::tests::authenticated_wal_subject_limit_and_time_filter_are_explicit	neothd/src/n8n_api/handlers/permission_audit.rs
+          n8n_api::handlers::permission_audit::tests::malformed_authenticated_typed_trust_frame_fails_closed	neothd/src/n8n_api/handlers/permission_audit.rs
+          n8n_api::handlers::permission_audit::tests::online_physical_cap_fails_closed_before_sparse_oversize_payload_is_read	neothd/src/n8n_api/handlers/permission_audit.rs
+          n8n_api::handlers::permission_audit::tests::live_unsealed_tail_preserves_authenticated_decision_and_reports_incomplete_prefix	neothd/src/n8n_api/handlers/permission_audit.rs
+          n8n_api::server::tests::loopback_permission_audit_requires_scope_and_replays_authenticated_subject	neothd/src/n8n_api/server.rs
+          permissions::trust_ledger::tests::bounded_replay_rejects_a_second_matching_authenticated_decision	neothd/src/permissions/trust_ledger.rs
+          integrations::n8n::tests::local_loopback_probe_status_categories_are_redacted_and_stage_specific	neothd/src/integrations/n8n_tests.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -410,7 +417,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 324 ]]; then
+          if [[ "$expected" -ne 331 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -496,7 +503,7 @@ jobs:
             fi
           else
             compile_status=64
-            printf 'selection is not the required 324 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 331 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

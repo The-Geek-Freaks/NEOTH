@@ -73,6 +73,8 @@ pub const SCOPE_DRAFTS_READ: &str = "drafts:read";
 pub const SCOPE_RECALL_READ: &str = "recall:read";
 /// Read pending proactive proposal metadata.
 pub const SCOPE_PROPOSALS_READ: &str = "proposals:read";
+/// Read authenticated permission-decision audit metadata.
+pub const SCOPE_PERMISSIONS_READ: &str = "permissions:read";
 /// Read stats.
 pub const SCOPE_STATS_READ: &str = "stats:read";
 /// Write to memory (POST /api/memory/save). Implies recall:read.
@@ -88,6 +90,7 @@ pub const ALL_SCOPES: &[&str] = &[
     SCOPE_CHANNEL_SEND,
     SCOPE_DRAFTS_READ,
     SCOPE_MEMORY_WRITE,
+    SCOPE_PERMISSIONS_READ,
     SCOPE_PROPOSALS_READ,
     SCOPE_PROVIDER_CALL,
     SCOPE_RECALL_READ,

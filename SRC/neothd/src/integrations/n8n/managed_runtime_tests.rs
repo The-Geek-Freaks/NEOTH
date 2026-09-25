@@ -170,7 +170,7 @@ impl super::super::N8nApiProbe for Probe {
                 br#"{"data":[],"nextCursor":null}"#,
             ),
             AuthPlan::Unauthorized => Err(super::super::N8nProbeError::Unauthorized),
-            AuthPlan::Invalid => Err(super::super::N8nProbeError::InvalidResponse),
+            AuthPlan::Invalid => Err(super::super::N8nProbeError::ResponseEnvelopeInvalid),
             AuthPlan::HangAndCancel => {
                 if let Some(sender) = self.cancel.lock().unwrap().take() {
                     let _ = sender.send(());

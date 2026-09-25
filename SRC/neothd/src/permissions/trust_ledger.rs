@@ -590,12 +590,35 @@ impl TrustLedger {
     /// Replay every retained home-WAL segment, fail closed on malformed typed
     /// frames or WAL integrity errors, then return only this exact subject.
     pub fn replay_subject_at_home(home: &Path, subject: &str) -> Result<Self> {
+        Self::replay_subject_at_home_with_limits(
+            home,
+            subject,
+            crate::wal::scan::supported_home_scan_limits(),
+            usize::MAX,
+        )
+    }
+
+    /// Replay a bounded authenticated WAL prefix for a read-only projection.
+    ///
+    /// Callers that expose this path online must supply their own I/O and
+    /// matching-entry ceilings. Reaching either ceiling is an error rather than
+    /// evidence that no further decision exists.
+    pub(crate) fn replay_subject_at_home_with_limits(
+        home: &Path,
+        subject: &str,
+        limits: crate::wal::scan::HomeWalScanLimits,
+        max_matching_entries: usize,
+    ) -> Result<Self> {
         validate_label("trust ledger subject filter", subject, MAX_SUBJECT_BYTES)?;
+        ensure!(
+            max_matching_entries > 0,
+            "trust ledger matching-entry ceiling must be positive"
+        );
         let mut entries = Vec::new();
         let mut frame_identities = BTreeSet::new();
         let scan = crate::wal::scan::for_each_authenticated_prefix_frame_at_home(
             home,
-            crate::wal::scan::supported_home_scan_limits(),
+            limits,
             |_, frame| {
                 if frame.header.event_type != EVENT_TYPE_EXTENDED
                     || frame.header.event_subtype != ExtendedSubtype::TrustDecision as u8
@@ -615,6 +638,10 @@ impl TrustLedger {
                     "typed trust ledger contains a duplicate immutable frame identity"
                 );
                 if event.subject == subject {
+                    ensure!(
+                        entries.len() < max_matching_entries,
+                        "trust ledger matching-entry ceiling exceeded"
+                    );
                     entries.push(TrustLedgerEntry {
                         event_id: frame.header.event_id.0,
                         hlc_physical_ns: frame.header.hlc.physical_ns(),
@@ -1023,6 +1050,48 @@ mod tests {
         assert_eq!(ledger.entries.len(), 2);
         assert_eq!(ledger.entries[0].event_id, ledger.entries[1].event_id);
         assert_ne!(ledger.entries[0].hlc_logical, ledger.entries[1].hlc_logical);
+    }
+
+    #[tokio::test]
+    async fn bounded_replay_rejects_a_second_matching_authenticated_decision() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let (writer, join) =
+            spawn_for_home(wal.join("000001.wal"), home.path().to_path_buf()).unwrap();
+        for decided_at_ns in [10, 20] {
+            let event = TrustEvent::from_gate(
+                &Action::Read,
+                AutonomyLevel::Standard,
+                &Decision::Allow,
+                Some("bounded-subject"),
+                None,
+                None,
+                None,
+                decided_at_ns,
+            )
+            .unwrap();
+            append_to_writer(&writer, &event).await.unwrap();
+        }
+        drop(writer);
+        join.await.unwrap();
+
+        let accepted = TrustLedger::replay_subject_at_home_with_limits(
+            home.path(),
+            "bounded-subject",
+            crate::wal::scan::HomeWalScanLimits::default(),
+            2,
+        )
+        .unwrap();
+        assert_eq!(accepted.entries.len(), 2);
+        let error = TrustLedger::replay_subject_at_home_with_limits(
+            home.path(),
+            "bounded-subject",
+            crate::wal::scan::HomeWalScanLimits::default(),
+            1,
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("matching-entry ceiling exceeded"));
     }
 
     #[tokio::test]

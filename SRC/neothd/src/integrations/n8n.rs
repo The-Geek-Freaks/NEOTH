@@ -90,7 +90,16 @@ pub(in crate::integrations) enum N8nProbeError {
     Timeout,
     Redirect,
     ResponseTooLarge,
-    InvalidResponse,
+    NegativeControlUnexpectedSuccess,
+    NegativeControlNotFound,
+    NegativeControlServerError,
+    NegativeControlUnexpectedStatus,
+    AuthenticatedNotFound,
+    AuthenticatedServerError,
+    AuthenticatedUnexpectedStatus,
+    ResponseJsonInvalid,
+    ResponseEnvelopeInvalid,
+    ResponseCursorInvalid,
     Transport,
 }
 
@@ -101,9 +110,40 @@ impl N8nProbeError {
             Self::Timeout => "n8n_probe_timeout",
             Self::Redirect => "n8n_redirect_rejected",
             Self::ResponseTooLarge => "n8n_response_too_large",
-            Self::InvalidResponse => "n8n_invalid_response",
+            Self::NegativeControlUnexpectedSuccess => "n8n_negative_control_unexpected_success",
+            Self::NegativeControlNotFound => "n8n_negative_control_not_found",
+            Self::NegativeControlServerError => "n8n_negative_control_server_error",
+            Self::NegativeControlUnexpectedStatus => "n8n_negative_control_unexpected_status",
+            Self::AuthenticatedNotFound => "n8n_authenticated_not_found",
+            Self::AuthenticatedServerError => "n8n_authenticated_server_error",
+            Self::AuthenticatedUnexpectedStatus => "n8n_authenticated_unexpected_status",
+            Self::ResponseJsonInvalid => "n8n_response_json_invalid",
+            Self::ResponseEnvelopeInvalid => "n8n_response_envelope_invalid",
+            Self::ResponseCursorInvalid => "n8n_response_cursor_invalid",
             Self::Transport => "n8n_probe_transport",
         }
+    }
+}
+
+fn negative_control_status_error(status: reqwest::StatusCode) -> N8nProbeError {
+    if status.is_success() {
+        N8nProbeError::NegativeControlUnexpectedSuccess
+    } else if status == reqwest::StatusCode::NOT_FOUND {
+        N8nProbeError::NegativeControlNotFound
+    } else if status.is_server_error() {
+        N8nProbeError::NegativeControlServerError
+    } else {
+        N8nProbeError::NegativeControlUnexpectedStatus
+    }
+}
+
+fn authenticated_status_error(status: reqwest::StatusCode) -> N8nProbeError {
+    if status == reqwest::StatusCode::NOT_FOUND {
+        N8nProbeError::AuthenticatedNotFound
+    } else if status.is_server_error() {
+        N8nProbeError::AuthenticatedServerError
+    } else {
+        N8nProbeError::AuthenticatedUnexpectedStatus
     }
 }
 
@@ -144,7 +184,7 @@ impl N8nApiProbe for HttpN8nApiProbe {
         {
             Ok(())
         } else {
-            Err(N8nProbeError::InvalidResponse)
+            Err(negative_control_status_error(response.status()))
         }
     }
 
@@ -177,7 +217,7 @@ impl N8nApiProbe for HttpN8nApiProbe {
             return Err(N8nProbeError::Unauthorized);
         }
         if !response.status().is_success() {
-            return Err(N8nProbeError::InvalidResponse);
+            return Err(authenticated_status_error(response.status()));
         }
         if response
             .content_length()
@@ -222,12 +262,14 @@ fn parse_workflows_response(
     body: &[u8],
 ) -> Result<N8nProbeReceipt, N8nProbeError> {
     let value: serde_json::Value =
-        serde_json::from_slice(body).map_err(|_| N8nProbeError::InvalidResponse)?;
-    let object = value.as_object().ok_or(N8nProbeError::InvalidResponse)?;
+        serde_json::from_slice(body).map_err(|_| N8nProbeError::ResponseJsonInvalid)?;
+    let object = value
+        .as_object()
+        .ok_or(N8nProbeError::ResponseEnvelopeInvalid)?;
     let rows = object
         .get("data")
         .and_then(serde_json::Value::as_array)
-        .ok_or(N8nProbeError::InvalidResponse)?;
+        .ok_or(N8nProbeError::ResponseEnvelopeInvalid)?;
     let has_next_cursor = match object.get("nextCursor") {
         None | Some(serde_json::Value::Null) => false,
         Some(serde_json::Value::String(cursor))
@@ -237,9 +279,10 @@ fn parse_workflows_response(
         {
             true
         }
-        _ => return Err(N8nProbeError::InvalidResponse),
+        _ => return Err(N8nProbeError::ResponseCursorInvalid),
     };
-    let workflow_rows = u32::try_from(rows.len()).map_err(|_| N8nProbeError::InvalidResponse)?;
+    let workflow_rows =
+        u32::try_from(rows.len()).map_err(|_| N8nProbeError::ResponseEnvelopeInvalid)?;
     Ok(N8nProbeReceipt {
         endpoint,
         http_status,

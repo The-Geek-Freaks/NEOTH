@@ -135,6 +135,21 @@ fn build_workflow_skeleton(
             }),
             "Implemented POST /api/email/drafts/pending requires drafts:read and returns pending draft reminder metadata at least 48 hours old. Recipient address, brief, signature and snippets stay in NEOTH; this workflow does not review, send or discard drafts.",
         )
+    } else if slug == "consent_audit_export" {
+        (
+            serde_json::json!({
+                "url": url,
+                "method": method,
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpHeaderAuth",
+                "sendBody": true,
+                "contentType": "json",
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify({ subject: 'local', limit: 50 }) }}",
+                "options": {}
+            }),
+            "Implemented POST /api/permissions/audit requires permissions:read and replays authenticated typed TrustDecision WAL evidence for the explicit subject local. Change subject only to an exact authorised subject identifier. The response contains decision metadata and explicit authenticated-prefix completeness; it does not export raw WAL payloads or secrets.",
+        )
     } else {
         (
             serde_json::json!({
@@ -311,10 +326,10 @@ const STARTER_SPECS: &[StarterSpec] = &[
     },
     StarterSpec {
         slug: "consent_audit_export",
-        name: "Consent audit export",
-        description: "Unavailable adapter: intended KF-06 permission-decision audit export workflow.",
+        name: "Typed permission-decision audit export",
+        description: "Partial typed permission-decision audit: read authenticated TrustDecision metadata for one explicit subject. This does not export the broader legacy consent audit.",
         cron: "0 20 * * 0",
-        endpoint: "/permissions/audit/export",
+        endpoint: "/api/permissions/audit",
         method: "POST",
     },
     StarterSpec {
