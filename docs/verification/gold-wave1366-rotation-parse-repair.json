@@ -1,0 +1,11 @@
+{
+  "kind": "HOSTED_ROTATION_TEST_PARSE_REPAIR",
+  "source": "78bc0a25999b914c0f9eb16be33490a870ff2d41",
+  "run": 36132959815,
+  "error": "unexpected closing delimiter at paperless_generation_rotation_tests.rs:17:797",
+  "repair": "Add missing closing # to webserver ports raw JSON string",
+  "path": "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
+  "sha256": "67446EDD863278648441D4096CF3A7911DA45B7A2A4BF3574E4FDC62E604433D",
+  "status": "SOURCE_FIXED_HOSTED_PENDING",
+  "localExecutableValidationRan": false
+}

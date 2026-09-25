@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T12:01:34Z",
-  "validationStatus": "W1362_STATIC_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-09-25T12:07:38Z",
+  "validationStatus": "W1366_PARSE_REPAIRED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1907,6 +1907,11 @@
       "sha256": "9AA2817012CCFB59D2275E54307DC334B6280946C284F2F9154A3789B8BDA6C3"
     },
     {
+      "path": "docs/verification/gold-wave1366-rotation-parse-repair.json",
+      "bytes": 534,
+      "sha256": "E974F55AE302FBC44CF6767F49F5E3543F9726BFC49BD3B52C87A30921E31447"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -2863,18 +2868,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 380654,
-      "sha256": "B3C94199A0C1B41A4B8A750ED50272C75A78A5E0F350C034EABB9B6175D0CEEE"
+      "bytes": 381188,
+      "sha256": "51EB0990FE87A7CD79FAE61C3D55FF30B6C2DA9CA0A695B56590D04FED95630E"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1399585,
-      "sha256": "277F69F2826B6CADF6E934B782796809E45439B6F1BABDF3CBC9F952B08E8B6B"
+      "bytes": 1400119,
+      "sha256": "96055142EC5F1A27DF68FD72CFFE2C654849529BD12FB1F93D46AAEA643D09D6"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2010108,
-      "sha256": "52E23C987E29CAFF86067A9A2A4CAF0BD7EEFB75E0A45248D730DBA100FAF557"
+      "bytes": 2010642,
+      "sha256": "48138A11E014FE9249FB6E6867327D5BA2AF8BFFA230083289E6CF7404E8053F"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4868,8 +4873,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
-      "bytes": 10828,
-      "sha256": "774F176ABF34B158A0EEEED095E275CF0716E8FF5FA325FCFB19FF52F9B6B028"
+      "bytes": 10829,
+      "sha256": "67446EDD863278648441D4096CF3A7911DA45B7A2A4BF3574E4FDC62E604433D"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_generation_rotation.rs",

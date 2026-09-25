@@ -8,6 +8,13 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1366 hosted rotation-test parse correction (2026-09-25):**
+W1362 is published at78bc0a25. Hosted Preflight36132959815 exposed a missing
+raw-string terminator in the test-double port JSON; the one-character fix leaves
+fixture behavior unchanged. Group36132984167 failed; Windows36132987115 and
+Core36132992260 were stopped to avoid redundant work on the same parse failure.
+Product36132989719 remains independent and active. Fresh hosted parse/format,
+native and Core proof follows; no new completion or local execution is claimed.
 **W1349/1353/1357-1362 generation rotation, real purge and exact regression results (2026-09-25):**
 Real Paperless purge is admitted: run36130019262 at450a9d60, artifact10861793011,
 API ZIP/receipt and19historical source/input bindings match. The full product
