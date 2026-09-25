@@ -2,19 +2,41 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1135/W1136/W1137 install preflight and real n8n acceptance (2026-09-25):**
+Root admitted product run36085493669 at9be25dd3 after checking the GitHub API
+ZIP digest, its receipt,26 historical source/input bindings and the completed
+hosted log. The compiled public CLI initialized its isolated home, installed
+and authenticated n8n, imported all13 inactive workflows, then reused the same
+install job and repeated imports without mutation. Both HTTP checks gave
+200 with authentication and401 without it; isolated canary Docker, secret and
+home cleanup passed. This is the n8n portion of LF-002-09, not Paperless or
+production uninstall acceptance; the parent remains open.
+The new-install preflight now rejects missing/invalid configuration before a
+new integration job or Docker operation. It retains the existing coherent
+config transaction recovery and configured credential reads. Unconfirmed
+adoption rollback retains the active job and absence custody while reporting
+both fixed error categories. W1134 independently reviewed the four-file slice.
+Five new regressions are selected: Native1793/Group1574/Windows351.
+Core36084719866 at120c5aeb failed on five PathBuf/string comparisons in test
+assertions. W1137 uses borrowed Path operands without changing the assertions;
+Root removed test-only imports from production scope and W1134 reviewed both
+files. Fresh hosted type-check, Clippy and native behavior remain pending.
+Claude032/033 have no ACK/result; Paperless Unix implementation is underway.
+No local compiler, formatter, parser, tests, Docker or product runtime ran.
+
 **W1129 managed-install initialization preflight (2026-09-25):**
-The direct managed n8n install now loads the coherent effective config pair
-read-only before opening the job service. Missing `freedom.yaml` stops with
-`n8n_managed_home_uninitialized`; malformed or unreadable effective state
-stops with `n8n_managed_home_invalid`. Both are fixed redacted codes and occur
-before enqueue, runtime custody, Docker, or authenticated probe. The prepared
-bootstrap/resume path remains outside this new-install gate. After a proven
-runtime absence, an unconfirmed adoption rollback now records the original
-fixed failure code as terminal and retains `AbsentVerified` custody for repair,
-instead of replacing it with cleanup failure or leaving a validating job.
-Three focused source tests cover missing/invalid homes and the cleanup case.
-Static diff validation passed; GitHub validation and roadmap closure remain
-pending under the local BSOD hold.
+The direct managed n8n install and fresh bootstrap now validate the coherent
+effective config pair before opening a new integration job or creating new
+bootstrap secrets. Missing configuration returns
+`n8n_managed_home_uninitialized`; invalid effective state returns
+`n8n_managed_home_invalid`. The existing reader takes transaction/legacy locks,
+may recover a previously prepared config/credential publication, and may read
+the configured keychain. It does not initialize fresh defaults. Existing
+bootstrap custody/resume remains outside this new-install gate.
+Unconfirmed adoption rollback retains the active job and `AbsentVerified`
+custody; its redacted error preserves both fixed primary and cleanup codes.
+Five focused source tests cover missing/invalid direct and bootstrap homes
+plus retained custody. Static review passed; hosted validation remains pending.
 
 **W1133 initialized product canary and green native batches (2026-09-25):**
 Root admitted a050 Group1569 run36083867168:1569PASS/0FAIL/0missing,

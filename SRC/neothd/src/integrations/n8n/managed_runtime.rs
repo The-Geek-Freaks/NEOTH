@@ -472,8 +472,11 @@ fn terminal_after_absence(
     if cancelling && !current.cancel_requested {
         current = service.request_cancel(&current.job_id, current.state_revision)?;
     }
-    super::rollback_adoption_if_prepared(home, &current.job_id, custody_may_exist)
-        .map_err(|_| anyhow::anyhow!("adoption_cleanup_failed"))?;
+    if super::rollback_adoption_if_prepared(home, &current.job_id, custody_may_exist).is_err() {
+        // Keep the active job and its absence custody until compensation is
+        // proven. Both terms are fixed redacted codes for caller diagnosis.
+        anyhow::bail!("{code}:adoption_cleanup_failed");
+    }
     let terminal = if current.state == super::JobState::Cancelled {
         current
     } else if current.cancel_requested {
@@ -569,6 +572,7 @@ pub(in crate::integrations) async fn install_managed_at_with<
     probe: &P,
     cancel: &mut tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<IntegrationJob> {
+    super::ensure_initialized_home_for_new_managed_install(home)?;
     let service = super::open_n8n_job_service(home)?;
     install_managed_in_service_with(
         &service, home, request, api_key, runner, readiness, probe, cancel,

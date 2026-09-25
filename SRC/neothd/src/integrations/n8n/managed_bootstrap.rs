@@ -745,6 +745,7 @@ async fn install_bootstrap_at_with<R: BootstrapDockerRunner>(
         !custody_path(home).exists() && !home.join("n8n-managed-runtime.v2.json").exists(),
         "n8n_managed_instance_already_owned"
     );
+    super::ensure_initialized_home_for_new_managed_install(home)?;
     // The integration job is durable before any Docker/volume mutation.  Its
     // ID is the only correlation label used by both containers and the volume.
     let nonce = uuid::Uuid::now_v7().to_string();
@@ -1177,6 +1178,45 @@ mod tests {
         > {
             panic!("recovery must not call Docker")
         }
+    }
+
+    fn assert_new_bootstrap_preflight_has_no_effects(home: &Path) {
+        assert!(
+            crate::integrations::IntegrationJobService::read_only_snapshot(home)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(read_custody(home).unwrap(), None);
+        assert!(!home.join("n8n-managed-runtime.v2.json").exists());
+        assert!(!home.join("setup.db").exists());
+        assert!(!home.join("credentials.yaml").exists());
+    }
+
+    #[tokio::test]
+    async fn bootstrap_uninitialized_home_rejects_before_job_secret_or_docker() {
+        let home = tempfile::tempdir().unwrap();
+        let (_cancel_tx, mut cancel) = tokio::sync::oneshot::channel();
+
+        let error = install_bootstrap_at_with(home.path(), 5678, &mut PanicRunner, &mut cancel)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), "n8n_managed_home_uninitialized");
+        assert_new_bootstrap_preflight_has_no_effects(home.path());
+    }
+
+    #[tokio::test]
+    async fn bootstrap_invalid_home_rejects_before_job_secret_or_docker() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join("freedom.yaml"), "not: [valid").unwrap();
+        let (_cancel_tx, mut cancel) = tokio::sync::oneshot::channel();
+
+        let error = install_bootstrap_at_with(home.path(), 5678, &mut PanicRunner, &mut cancel)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), "n8n_managed_home_invalid");
+        assert_new_bootstrap_preflight_has_no_effects(home.path());
     }
 
     fn recovery_job(home: &Path) -> crate::integrations::IntegrationJob {

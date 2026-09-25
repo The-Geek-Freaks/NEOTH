@@ -3,6 +3,28 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1135/W1136/W1137 install preflight and real n8n acceptance (2026-09-25):**
+Root admitted product run36085493669 at9be25dd3 after checking the GitHub API
+ZIP digest, its receipt,26 historical source/input bindings and the completed
+hosted log. The compiled public CLI initialized its isolated home, installed
+and authenticated n8n, imported all13 inactive workflows, then reused the same
+install job and repeated imports without mutation. Both HTTP checks gave
+200 with authentication and401 without it; isolated canary Docker, secret and
+home cleanup passed. This is the n8n portion of LF-002-09, not Paperless or
+production uninstall acceptance; the parent remains open.
+The new-install preflight now rejects missing/invalid configuration before a
+new integration job or Docker operation. It retains the existing coherent
+config transaction recovery and configured credential reads. Unconfirmed
+adoption rollback retains the active job and absence custody while reporting
+both fixed error categories. W1134 independently reviewed the four-file slice.
+Five new regressions are selected: Native1793/Group1574/Windows351.
+Core36084719866 at120c5aeb failed on five PathBuf/string comparisons in test
+assertions. W1137 uses borrowed Path operands without changing the assertions;
+Root removed test-only imports from production scope and W1134 reviewed both
+files. Fresh hosted type-check, Clippy and native behavior remain pending.
+Claude032/033 have no ACK/result; Paperless Unix implementation is underway.
+No local compiler, formatter, parser, tests, Docker or product runtime ran.
+
 **W1133 initialized product canary and green native batches (2026-09-25):**
 Root admitted a050 Group1569 run36083867168:1569PASS/0FAIL/0missing,
 274 historical inputs and all three API artifact ZIPs. Root also admitted

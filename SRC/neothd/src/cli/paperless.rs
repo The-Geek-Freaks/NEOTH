@@ -476,7 +476,7 @@ mod tests {
             crate::cli::Commands::Paperless(PaperlessArgs {
                 action: PaperlessAction::Prepare { directory: Some(path) },
                 ..
-            }) if path == "D:/operator/paperless"
+            }) if path == std::path::Path::new("D:/operator/paperless")
         ));
     }
 

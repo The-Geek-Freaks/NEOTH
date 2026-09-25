@@ -1,0 +1,45 @@
+{
+  "review": "W1134_W1137",
+  "diff_base": "9be25dd309c840ce933597cd2f750b14084bd23b",
+  "reviewed_source_files": [
+    {
+      "path": "SRC/neothd/src/integrations/n8n.rs",
+      "sha256": "FB30123DA3CDEB2377ADA2591D2E7269FADD362E822D757D09E8E063048FDF25"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs",
+      "sha256": "B4091BBBCB098A784FDB32D6FB02C80B0F8882E563209A263371E8CA30F159EA"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "sha256": "165FD44FDD483631C662A11DB4E6A287D1E8AB0EDCDF0D1DACDE8F24C93FBBA2"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime_tests.rs",
+      "sha256": "A0D6D4F314268F5F2A6D79E96E9755D7A8C57EC7482AABF097D333A9923E6855"
+    },
+    {
+      "path": "SRC/neothd/src/cli/eval.rs",
+      "sha256": "323A1FACE38C868758074E5CB2210674DACD00AF228FCE4CCF6BBFE51033FA1A"
+    },
+    {
+      "path": "SRC/neothd/src/cli/paperless.rs",
+      "sha256": "86D3DB5243B2725EE95C1FD85D2E51EE7CA26148FE1F8BE4796FCC6AEA1F6EAA"
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "sha256": "31D14A5C5764C72AE03CFD9C6CC58C308667694F95C17DD4048B6AD859191072"
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials.rs",
+      "sha256": "B70F8AF2F79C8F62DA6CCE65EE22179B64680B11CDAE0B4F55ACD6912582E332"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/jobs.rs",
+      "sha256": "EBAB8E1BE541406E7D09007F5988EB3CCA0CE20A5308A0A7C78C3D32ECAAED8A"
+    }
+  ],
+  "dynamic_verification": "not_run_under_bsod_hold",
+  "rootVerified": true,
+  "scope": "W1135 initialization and custody guard; W1137 five typed path assertions. Static only; hosted pending. Existing coherent locks, prepared-transaction recovery and keychain reads retained."
+}

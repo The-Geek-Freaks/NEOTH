@@ -627,6 +627,21 @@ pub(crate) fn open_n8n_job_service(home: &Path) -> Result<IntegrationJobService,
     Ok(service)
 }
 
+/// Check the ordinary managed-install prerequisite before it can create a job
+/// or process custody. The coherent reader takes config locks and may recover
+/// an already prepared config transaction; it does not initialize a fresh home.
+/// Initialization remains an explicit `neoth init` operation.
+pub(super) fn ensure_initialized_home_for_new_managed_install(home: &Path) -> anyhow::Result<()> {
+    match crate::config::load_optional_runtime_config_pair_read_only_with_store_from_path(
+        &home.join("freedom.yaml"),
+        None,
+    ) {
+        Ok((Some(_), _)) => Ok(()),
+        Ok((None, _)) => anyhow::bail!("n8n_managed_home_uninitialized"),
+        Err(_) => anyhow::bail!("n8n_managed_home_invalid"),
+    }
+}
+
 /// Import all bundled inactive workflows through an independent durable Import
 /// job. It only consumes an already published n8n binding and has no Docker
 /// process ownership.

@@ -213,6 +213,8 @@ jobs:
           cli::bg_session::tests::post_mint_background_failures_never_surface_provider_or_canary_content	neothd/src/cli/bg_session.rs
           daemon::doc_ingest_cron::tests::locked_state_commit_revalidates_held_lock_with_readonly_identity_probe	neothd/src/daemon/doc_ingest_cron.rs
           integrations::n8n::managed_runtime::tests::managed_runtime_rejects_non_loopback_and_unpinned_requests_before_docker	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::uninitialized_home_rejects_managed_install_before_job_custody_or_docker	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::invalid_home_rejects_managed_install_before_job_custody_or_docker	neothd/src/integrations/n8n/managed_runtime_tests.rs
           integrations::n8n::managed_runtime::tests::managed_success_is_one_ready_job_with_bound_runtime_and_persisted_adoption	neothd/src/integrations/n8n/managed_runtime_tests.rs
           integrations::n8n::managed_runtime::tests::precommit_failure_removes_exact_container_and_restores_config_before_terminal_failure	neothd/src/integrations/n8n/managed_runtime_tests.rs
           integrations::n8n::managed_runtime::tests::postcommit_failure_removes_exact_container_and_restores_published_config	neothd/src/integrations/n8n/managed_runtime_tests.rs
@@ -230,6 +232,9 @@ jobs:
           integrations::n8n::managed_runtime::tests::active_bound_custody_refuses_finalization	neothd/src/integrations/n8n/managed_runtime_tests.rs
           integrations::n8n::managed_runtime::tests::postwrite_create_intent_error_keeps_queued_job_recoverable_without_docker	neothd/src/integrations/n8n/managed_runtime_tests.rs
           integrations::n8n::managed_runtime::tests::queued_foreign_create_intent_stays_fail_closed_without_docker_inspection	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_runtime::tests::terminal_after_absence_retains_active_job_and_reports_primary_cleanup_codes	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::n8n::managed_bootstrap::tests::bootstrap_uninitialized_home_rejects_before_job_secret_or_docker	neothd/src/integrations/n8n/managed_bootstrap.rs
+          integrations::n8n::managed_bootstrap::tests::bootstrap_invalid_home_rejects_before_job_secret_or_docker	neothd/src/integrations/n8n/managed_bootstrap.rs
           integrations::n8n::managed_runtime::docker_adapter_tests::stopped_container_uses_host_config_port_binding_for_exact_identity	neothd/src/integrations/n8n/managed_runtime.rs
           integrations::n8n::managed_runtime::docker_adapter_tests::running_network_binding_must_match_durable_host_config	neothd/src/integrations/n8n/managed_runtime.rs
           integrations::n8n::managed_runtime::docker_adapter_tests::extra_host_port_is_rejected_before_ownership_is_granted	neothd/src/integrations/n8n/managed_runtime.rs
@@ -432,7 +437,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 346 ]]; then
+          if [[ "$expected" -ne 351 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -518,7 +523,7 @@ jobs:
             fi
           else
             compile_status=64
-            printf 'selection is not the required 346 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 351 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

@@ -187,6 +187,86 @@ fn key() -> crate::secret::SecretString {
     crate::secret::SecretString::from("test-n8n-key")
 }
 
+struct PanicProbe;
+#[async_trait::async_trait]
+impl super::super::N8nApiProbe for PanicProbe {
+    async fn negative_control(
+        &self,
+        _: &crate::config::LoopbackHttpEndpoint,
+    ) -> Result<(), super::super::N8nProbeError> {
+        panic!("preflight must reject before a probe")
+    }
+
+    async fn authenticated_probe(
+        &self,
+        _: &crate::config::LoopbackHttpEndpoint,
+        _: &crate::secret::SecretString,
+    ) -> Result<super::super::N8nProbeReceipt, super::super::N8nProbeError> {
+        panic!("preflight must reject before a probe")
+    }
+}
+
+#[tokio::test]
+async fn uninitialized_home_rejects_managed_install_before_job_custody_or_docker() {
+    let home = tempfile::tempdir().unwrap();
+    let (mut runner, state) = FakeRunner::fresh();
+    let (_cancel_tx, mut cancel) = tokio::sync::oneshot::channel();
+
+    let error = install_managed_at_with(
+        home.path(),
+        request(),
+        key(),
+        &mut runner,
+        &Ready,
+        &PanicProbe,
+        &mut cancel,
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(error.to_string(), "n8n_managed_home_uninitialized");
+    assert!(state.lock().unwrap().calls.is_empty());
+    assert!(
+        super::super::IntegrationJobService::read_only_snapshot(home.path())
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(read_binding(home.path()).unwrap(), None);
+    assert!(!home.path().join("setup.db").exists());
+    assert!(!home.path().join("credentials.yaml").exists());
+}
+
+#[tokio::test]
+async fn invalid_home_rejects_managed_install_before_job_custody_or_docker() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(home.path().join("freedom.yaml"), "not: [valid").unwrap();
+    let (mut runner, state) = FakeRunner::fresh();
+    let (_cancel_tx, mut cancel) = tokio::sync::oneshot::channel();
+
+    let error = install_managed_at_with(
+        home.path(),
+        request(),
+        key(),
+        &mut runner,
+        &Ready,
+        &PanicProbe,
+        &mut cancel,
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(error.to_string(), "n8n_managed_home_invalid");
+    assert!(state.lock().unwrap().calls.is_empty());
+    assert!(
+        super::super::IntegrationJobService::read_only_snapshot(home.path())
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(read_binding(home.path()).unwrap(), None);
+    assert!(!home.path().join("setup.db").exists());
+    assert!(!home.path().join("credentials.yaml").exists());
+}
+
 #[tokio::test]
 async fn production_readiness_waits_for_readiness_after_liveness_is_live() {
     use tokio::{
@@ -537,6 +617,44 @@ fn bound_binding(job: &super::super::IntegrationJob, id: String) -> RuntimeBindi
         host_port: 5678,
         volume: DEFAULT_VOLUME.into(),
     }
+}
+
+#[test]
+fn terminal_after_absence_retains_active_job_and_reports_primary_cleanup_codes() {
+    let home = tempfile::tempdir().unwrap();
+    initialize_home(home.path());
+    let service = super::super::open_n8n_job_service(home.path()).unwrap();
+    let queued = enqueue_prepared(&service, &request()).unwrap();
+    let running = service
+        .start(&queued.job_id, queued.state_revision, STEPS[0])
+        .unwrap();
+    let mut binding = bound_binding(&running, "c".repeat(64));
+    binding.phase = RuntimePhase::AbsentVerified;
+    write_binding(home.path(), &binding).unwrap();
+
+    let error = terminal_after_absence(
+        &service,
+        &running,
+        home.path(),
+        &binding,
+        "adoption_prepare_failed",
+        false,
+        true,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "adoption_prepare_failed:adoption_cleanup_failed"
+    );
+    assert_eq!(
+        super::super::IntegrationJobService::read_only_snapshot(home.path()).unwrap()[0].state,
+        super::super::JobState::Running
+    );
+    assert_eq!(
+        read_binding(home.path()).unwrap().unwrap().phase,
+        RuntimePhase::AbsentVerified
+    );
 }
 
 #[tokio::test]

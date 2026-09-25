@@ -738,8 +738,8 @@ mod tests {
         assert!(matches!(
             capture.command,
             Some(EvalCommand::Capture(crate::cli::workflow_replay::WorkflowReplayCaptureArgs { input, out }))
-                if input == "input.json"
-                    && out == "corpus.json"
+                if input == std::path::Path::new("input.json")
+                    && out == std::path::Path::new("corpus.json")
         ));
 
         let run = Cli::try_parse_from([
@@ -758,8 +758,8 @@ mod tests {
         assert!(matches!(
             run.command,
             Some(EvalCommand::Run(crate::cli::workflow_replay::WorkflowReplayRunArgs { corpus, out_dir: Some(out_dir), json: true }))
-                if corpus == "corpus.json"
-                    && out_dir == "reports"
+                if corpus == std::path::Path::new("corpus.json")
+                    && out_dir == std::path::Path::new("reports")
         ));
     }
 
