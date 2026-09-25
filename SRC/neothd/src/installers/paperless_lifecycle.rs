@@ -1392,9 +1392,17 @@ mod tests {
         );
         assert!(verify_volume(expected, "project", &good).is_ok());
         for invalid in [
-            format!(r#"{{"Name":"foreign","Labels":{{"com.docker.compose.project":"project","com.docker.compose.volume":"{}"}}}}"#, expected.logical_name),
-            format!(r#"{{"Name":"{name}","Labels":{{"com.docker.compose.project":"other","com.docker.compose.volume":"{}"}}}}"#, expected.logical_name),
-            format!(r#"{{"Name":"{name}","Labels":{{"com.docker.compose.project":"project","com.docker.compose.volume":"other"}}}}"#),
+            format!(
+                r#"{{"Name":"foreign","Labels":{{"com.docker.compose.project":"project","com.docker.compose.volume":"{}"}}}}"#,
+                expected.logical_name
+            ),
+            format!(
+                r#"{{"Name":"{name}","Labels":{{"com.docker.compose.project":"other","com.docker.compose.volume":"{}"}}}}"#,
+                expected.logical_name
+            ),
+            format!(
+                r#"{{"Name":"{name}","Labels":{{"com.docker.compose.project":"project","com.docker.compose.volume":"other"}}}}"#
+            ),
             "not-json".to_owned(),
         ] {
             assert!(verify_volume(expected, "project", &invalid).is_err());

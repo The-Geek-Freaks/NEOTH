@@ -8,6 +8,19 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1218 historical Linux/Windows admission and exact formatter (2026-09-25):**
+Root verified all1635 Group terminal identities and284 historical source bindings
+atff32:1634passed/1failed/0missing. Windows compiled and yielded410passed/1failed
+with411 unique named terminals and72 historical bindings. Both failures are the
+same Paperless volume fixture corrected in20f89c3c; neither result proves that
+later repair. All API ZIP hashes were checked. Preflight20f89 required only one
+file's formatting; its exact hosted postimage is now imported after inner and
+Git pre/postimage checks. No local formatter, compiler or runtime ran.
+Dream checked storage, attributed scoped API, HTTP cases and its inactive starter
+are being built as one subsequent batch. Claude034's live periodic reflection
+correction is retained; Claude035 now requests the new checked writer's review.
+No roadmap checkbox closes. Counts remain1077done/245open/2partial.
+
 **W1212 hosted regression repair and current product evidence (2026-09-25):**
 Group1635 atff32 completed with a Paperless volume-validation fixture failure:
 its fixed paperless_data receipt no longer matched the first declared volume,

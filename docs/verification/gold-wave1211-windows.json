@@ -1,0 +1,54 @@
+{
+  "schema": "neoth-wave1211-windows-ff32/v1",
+  "run": {
+    "id": 36094503048,
+    "status": "completed",
+    "conclusion": "failure",
+    "headSha": "ff32ff861a22d1f9ce2a418df8a0880fbee21b08",
+    "workflow": "Windows storage regressions",
+    "htmlUrl": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36094503048"
+  },
+  "artifact": {
+    "id": 10846963291,
+    "apiDigest": "sha256:2ade4b571291bdcd8a2ae86aa332604d443ef51094638908032c2decf61ee16a",
+    "localSha256": "2ade4b571291bdcd8a2ae86aa332604d443ef51094638908032c2decf61ee16a",
+    "matches": true
+  },
+  "innerEvidenceHashCount": 10,
+  "innerEvidenceHashesAllMatch": true,
+  "runnerCounts": {
+    "missing": 0,
+    "passed": 410,
+    "selection_valid": 1,
+    "total": 411,
+    "listed": 411,
+    "expected": 411,
+    "failed": 1,
+    "compile_status": 0
+  },
+  "parsedTerminalCounts": {
+    "passed": 410,
+    "failed": 1,
+    "missing": 0
+  },
+  "sourceBindingCount": 72,
+  "allSourceBindingsMatch": true,
+  "terminalLogCount": 411,
+  "terminalLogsAllMatch": true,
+  "compileLogSha256": "044de92dd046eba9b2b9f364f65ab999856167927b8297d1ffcaee1141c0a568",
+  "failedTerminals": [
+    {
+      "index": 353,
+      "test": "installers::paperless_lifecycle::tests::volume_validation_requires_exact_name_and_compose_labels",
+      "path": "neothd/src/installers/paperless_lifecycle.rs",
+      "panic": "thread 'installers::paperless_lifecycle::tests::volume_validation_requires_exact_name_and_compose_labels' (7684) panicked at neothd\\src\\installers\\paperless_lifecycle.rs:1389:9:\nassertion failed: verify_volume(expected, \"project\", good).is_ok()",
+      "message": "assertion failed: verify_volume(expected, \"project\", good).is_ok()",
+      "logFile": "windows411-evidence/logs/353.log",
+      "logSha256": "4ee3ca9bac97e37e49c4f9ade2ab45943c051eb6c34a16cfa401c7f0156babef"
+    }
+  ],
+  "admissionEvidence": "ROOT_ADMITTED_HISTORICAL_410_PASS_1_FAILURE",
+  "rootVerified": true,
+  "localExecutableValidationRan": false,
+  "actualTerminalParsing": "411 unique list identities, actual named result and exactly-one-test pass/fail summaries verified by Root"
+}

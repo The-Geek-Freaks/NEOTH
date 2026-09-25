@@ -1,0 +1,53 @@
+{
+  "schema": "neoth-hosted-artifact-verification/v1",
+  "run": 36094501407,
+  "source": "ff32ff861a22d1f9ce2a418df8a0880fbee21b08",
+  "apiArtifactListSha256": "817A66D95A84CC1FA6E7012511CABBF89721F7925291E847E7B44A203C649BA1",
+  "apiArtifactCount": 3,
+  "archives": [
+    {
+      "id": 10847546855,
+      "name": "w190-research-lifecycle-log-ff32ff861a22d1f9ce2a418df8a0880fbee21b08",
+      "archive": "log.zip",
+      "sha256": "EF0AB18FE6FD84FC8756D7F56DBC4A402FF3FBB15F5E25B4291B50C20A560A3A",
+      "apiMatchCount": 1,
+      "apiSizeBytes": 116955,
+      "expired": false
+    },
+    {
+      "id": 10847437225,
+      "name": "w190-research-lifecycle-receipt-ff32ff861a22d1f9ce2a418df8a0880fbee21b08",
+      "archive": "receipt.zip",
+      "sha256": "AC9520FC76687B8CB22E7A2CB6005B6C49FC49E941F4F0C2E59ADE8698895B01",
+      "apiMatchCount": 1,
+      "apiSizeBytes": 1216,
+      "expired": false
+    },
+    {
+      "id": 10847107554,
+      "name": "w190-research-lifecycle-source-ff32ff861a22d1f9ce2a418df8a0880fbee21b08",
+      "archive": "source.zip",
+      "sha256": "8E9AB87946B311C0B9A2D7D46838ABF652B6628B7575ED55B0B2426F5D44C023",
+      "apiMatchCount": 1,
+      "apiSizeBytes": 101069,
+      "expired": false
+    }
+  ],
+  "receipt": {
+    "terminalCount": 1635,
+    "requiredCount": 1635,
+    "failed": 1,
+    "executed": 1635,
+    "missingTerminal": 0,
+    "passed": 1634,
+    "selectedCount": 1635
+  },
+  "historicalSourceBindings": 284,
+  "failureInventory": [
+    "installers::paperless_lifecycle::tests::volume_validation_requires_exact_name_and_compose_labels"
+  ],
+  "admissionSha256": "9AE6B541AC335C794EF9B8FB14070F613406ABE4944CA0CB89B2D773534CC63D",
+  "logSha256": "23166267EC93B9C1944F5C58E99DC4A3DBF65BF6933F325B9DB65291FE23BFA0",
+  "localExecutableValidationRan": false,
+  "rootAdmission": "ROOT_ADMITTED_HISTORICAL_PARTIAL_FAILURE; all284 historical source bindings,1635 named terminals and API ZIP digests verified"
+}

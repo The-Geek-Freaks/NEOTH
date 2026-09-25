@@ -1,0 +1,41 @@
+{
+  "schema": "neoth-format-receipt/v1",
+  "run": 36095901857,
+  "source": "20f89c3c54d211923769ddef67e1d02f7c645cdf",
+  "failure_step": "Check Rust formatting without compiling",
+  "artifact": {
+    "id": 10847228359,
+    "api_digest": "sha256:57114949720aea02fc4139c9e1938cc5b0f1bd34f00f8079fd39da0a1c5fedcb",
+    "zip_sha256": "57114949720aea02fc4139c9e1938cc5b0f1bd34f00f8079fd39da0a1c5fedcb",
+    "matches": true
+  },
+  "inner_hashes": [
+    {
+      "path": "rustfmt.patch",
+      "expected": "640a2d9d4e0996c2b42c0a0f6c37b446272fba63f13047ceac84aca81c16697f",
+      "actual": "640a2d9d4e0996c2b42c0a0f6c37b446272fba63f13047ceac84aca81c16697f",
+      "matches": true
+    },
+    {
+      "path": "source-head.txt",
+      "expected": "7d6c78f75ab6ee3017a1af840767581eb6d2e7c4ebb885bc5cd34bb7200f9114",
+      "actual": "7d6c78f75ab6ee3017a1af840767581eb6d2e7c4ebb885bc5cd34bb7200f9114",
+      "matches": true
+    }
+  ],
+  "receipt_source": "20f89c3c54d211923769ddef67e1d02f7c645cdf",
+  "receipt_source_matches_run": true,
+  "touched_path_count": 1,
+  "preimages_all_match": true,
+  "entries": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "preimage_blob": "5cf41f7c930580bb492335ec1692a21dedbe416a",
+      "historical_sha256": "27d6ae775512354f201ca3b43cb053cffd6b85b0d5d3dbc885e2fe6637907928",
+      "postimage_blob": "856fd5286dde0e39fc8104bfeef54b59bc6ef361",
+      "preimage_matches": true,
+      "postimage_present": false
+    }
+  ],
+  "scope": "Root imported exact hosted formatter postimage; no semantic or test count changes; no local formatter"
+}
