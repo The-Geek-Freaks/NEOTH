@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "admission": "accepted",
+  "run": {
+    "id": 36155709239,
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36155709239",
+    "source_head": "32df8d26b55b8c9827d858acd534e50e4cf5e3d2",
+    "branch": "main",
+    "workflow": "W1018 compiled product n8n bootstrap and workflow-import canary"
+  },
+  "final_verifier": {
+    "job_id": 108139620228,
+    "status": "completed",
+    "conclusion": "success",
+    "canary_step": "Run isolated compiled product bootstrap and workflow import",
+    "canary_step_conclusion": "success",
+    "ongoing_session": false
+  },
+  "artifact": {
+    "id": 10873264807,
+    "github_zip_sha256": "c7bbc30b38f84ade02e5c5ae3a1c5e8ea1afbb13d4f7db4206172486febe597d",
+    "downloaded_zip_sha256": "c7bbc30b38f84ade02e5c5ae3a1c5e8ea1afbb13d4f7db4206172486febe597d",
+    "receipt_sha256": "ed045eaee319f76936d8acce1ab0759fcf84fd4a96c051428d7d5661cb38cd12"
+  },
+  "source_bindings": {
+    "receipt_entries": 26,
+    "verified_raw_git_blobs": 26,
+    "mismatches": 0
+  },
+  "credential_backend": {
+    "configured": "keychain",
+    "exercised": "Secret Service via secret-tool",
+    "file_backend_exercised": false
+  },
+  "lifecycle": {
+    "bootstrap_ready": true,
+    "authenticated_probe": 200,
+    "negative_probe": 401,
+    "workflow_count": 13,
+    "workflow_reimport_read_only": true,
+    "repair_healthy": {
+      "generation": 1,
+      "no_docker_effect": true
+    },
+    "repair_started": {
+      "generation": 2,
+      "exact_stopped_id_restarted": true
+    },
+    "repair_recreated": {
+      "generation": 3,
+      "same_volume": true,
+      "source_api_key_authority_preserved": true,
+      "workflows_persisted": true
+    },
+    "uninstall": {
+      "runtime_absent": true,
+      "volume_retained": true,
+      "repeat_read_only": true
+    },
+    "retained_reinstall": {
+      "workflows_persisted": true,
+      "canonical_api_key_preserved": true,
+      "repeat_pre_effect_rejected": true
+    },
+    "purge": {
+      "volume_absent": true,
+      "canonical_api_key_preserved": true,
+      "repeat_read_only": true
+    }
+  },
+  "cleanup": {
+    "docker_cleanup_proven": true,
+    "bootstrap_secrets_cleared": true,
+    "isolated_home_removed": true,
+    "cleanup_proven": true
+  },
+  "limits": [
+    "n8n product canary only",
+    "no BCD/crash/native/other-platform/other-connector admission"
+  ],
+  "sourceCarry": {
+    "through": "7a32b32f5f2fdfa60dce6f228c74982afc2f3b10",
+    "formatReceipt": "docs/verification/gold-wave1459-n8n-hosted-format.json",
+    "boundary": "Producer remains32df8d26; later repair changes are verified hosted rustfmt only. Native recovery and Windows gates remain separate."
+  },
+  "localExecutableValidationRan": false
+}

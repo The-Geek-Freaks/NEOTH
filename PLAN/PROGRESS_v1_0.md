@@ -2,6 +2,23 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1462/W1464 channel and real-product acceptance (2026-09-25):**
+Channel36154654992 at80091494 is admitted: all11 selected/discovered/executed
+cases pass, eight source/workflow bindings and all three original ZIP digests
+match. Its raw-quarantine and helper-guard cases prove distinct custody paths;
+this is hermetic live-registry coverage, not external provider acceptance.
+Product36155709239 at32df8d26 is separately admitted with26 exact Git source
+bindings, original ZIP/receipt hashes, real Linux Secret Service credentials,
+bootstrap/API401+200,13-workflow import/reimport, healthy/start/recreate repair,
+retained reinstall, purge and complete Docker/home/secret cleanup. Subsequent
+n8n edits are authenticated hosted formatting only. Native Group1857/Windows622
+and Core32df remain pending; current-source crash recovery is not yet accepted.
+Preflight36156121855 and CodeQL36156121680 at7a32b32f both passed. W1463 backup
+design now proceeds as a separate schema/stream/custody implementation batch;
+backup/restore/update/rollback and P1-14/P2-20 remain open. ROAD stays1324 total,
+1077done/245open/2partial. No local executable validation ran.
+Evidence: gold-wave1462-channel11-accepted.json and gold-wave1464-n8n-product-accepted.json.
+
 **W1459 hosted n8n formatting and fresh gates (2026-09-25):**
 Authentic Preflight36155678179 rustfmt postimages at32df8d26 are imported
 for n8n repair and its regression file after ZIP, internal digest, source

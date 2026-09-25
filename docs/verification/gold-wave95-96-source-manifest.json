@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T15:41:05Z",
-  "validationStatus": "HOSTED_FORMAT_IMPORTED_N8N_NATIVE_CORE_PRODUCT_PENDING",
+  "capturedUtc": "2026-09-25T15:57:36Z",
+  "validationStatus": "SOURCE_ADMISSIONS_NATIVE_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2047,6 +2047,16 @@
       "sha256": "CA32DB5E5B433922B5FD7169151A703439C0E467BB1A0F7218AC6C14D082E21C"
     },
     {
+      "path": "docs/verification/gold-wave1462-channel11-accepted.json",
+      "bytes": 3619,
+      "sha256": "E8F61B2E913C59E1B8C3EC1EB7AF189A7138703C4134D6B29ADA63AECE6624BE"
+    },
+    {
+      "path": "docs/verification/gold-wave1464-n8n-product-accepted.json",
+      "bytes": 2720,
+      "sha256": "8DC1C1E1165869915F019458A28D90270FB1BF5B2BB1FD6308D3D057E964F30E"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3003,18 +3013,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 402228,
-      "sha256": "8FEE65AB31902DCB0BCE1EFC0BD88CD4C2C01F14786CA91721E02AAB7B59888A"
+      "bytes": 403475,
+      "sha256": "D4DF27F36BC30EE5A4C5864329692E28EA4CCE47B5465FB3DF114FE07DBBDFE1"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1421159,
-      "sha256": "9AC5B74E90ED75FC4FC264546E285566C54F0851D1DDE06262818BF49D6EB73C"
+      "bytes": 1422406,
+      "sha256": "45405D630CC8D168ED0591560F78F4B735EFB04885739FE466A915B4314408B5"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2031682,
-      "sha256": "E1484E8363CAD83884F6FBB1BCFDAB779F0415A5E78610E56425D07402FF8860"
+      "bytes": 2032929,
+      "sha256": "365FA442F5A1FD804ADDB1116ED57256C89C0A86FCAF6ABA35C3B66B95A3F914"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

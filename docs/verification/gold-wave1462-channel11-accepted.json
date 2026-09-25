@@ -1,0 +1,121 @@
+{
+  "schema": "neoth-wave1462-channel11-admission/v1",
+  "run": {
+    "id": 36154654992,
+    "status": "completed",
+    "conclusion": "success",
+    "source": "80091494ca13935cb9b69f13ad50902ecf5433ed"
+  },
+  "artifacts": [
+    {
+      "id": 10873582289,
+      "role": "source",
+      "zip_sha256": "dd726ca10cdadf0951e6413b974f49721d9bdd54d36304f86ac470af6e6de926",
+      "safe_entries": 2
+    },
+    {
+      "id": 10873467787,
+      "role": "receipt",
+      "zip_sha256": "85315112dce9055d0b535238e9e46ac9116c526c79a51e88fdce22245813743c",
+      "safe_entries": 4
+    },
+    {
+      "id": 10873264172,
+      "role": "logs",
+      "zip_sha256": "88b563333f26df629dc24328203cedc5ee10c73833f2e7e2a4de502ce07bff0c",
+      "safe_entries": 22
+    }
+  ],
+  "integrity": {
+    "all_api_zip_digests_verified": true,
+    "all_archives_safe_to_extract": true,
+    "source_head_verified": true,
+    "source_workflow_binding_count": 8,
+    "source_workflow_binding_mismatches": 0
+  },
+  "counts": {
+    "selected": 11,
+    "discovered": 11,
+    "executed": 11,
+    "passed": 11,
+    "failed": 0,
+    "failed_file_bytes": 0,
+    "actual_terminal_logs": 11,
+    "ordinal_chain_valid": true
+  },
+  "cases": [
+    {
+      "ordinal": 1,
+      "name": "gchat_connection_bound_delivery_uses_the_published_instance_for_both_aliases",
+      "terminal": "passed"
+    },
+    {
+      "ordinal": 2,
+      "name": "gchat_missing_or_revoked_live_instance_is_sidecar_only_without_send",
+      "terminal": "passed"
+    },
+    {
+      "ordinal": 3,
+      "name": "plan_delivery_gchat_feature_on_requires_complete_canonical_config",
+      "terminal": "passed"
+    },
+    {
+      "ordinal": 4,
+      "name": "google_chat_proactivity_uses_only_the_published_live_instance",
+      "terminal": "passed"
+    },
+    {
+      "ordinal": 5,
+      "name": "gchat_account_bound_recovery_uses_exact_published_handle_once",
+      "terminal": "passed"
+    },
+    {
+      "ordinal": 6,
+      "name": "gchat_account_bound_recovery_rejects_foreign_stale_and_revoked_handles",
+      "terminal": "passed"
+    },
+    {
+      "ordinal": 7,
+      "name": "gchat_account_bound_recovery_policy_denial_never_sends",
+      "terminal": "passed"
+    },
+    {
+      "ordinal": 8,
+      "name": "default_connection_bound_account_recovery_delivers_once_and_never_replays",
+      "terminal": "passed"
+    },
+    {
+      "ordinal": 9,
+      "name": "default_connection_bound_account_recovery_refuses_nonmatching_or_denied_state",
+      "terminal": "passed"
+    },
+    {
+      "ordinal": 10,
+      "name": "invalid_persisted_live_channel_sealed_binding_is_quarantined_before_dispatch",
+      "terminal": "passed"
+    },
+    {
+      "ordinal": 11,
+      "name": "live_channel_sealed_binding_guard_rejects_before_egress_and_preserves_valid_queue",
+      "terminal": "passed"
+    }
+  ],
+  "admission": {
+    "accepted": true,
+    "scope": "Hosted regression evidence for the eleven selected channel cases.",
+    "limit": "Fixture/live-registry behavior and handle counts do not establish external Google Chat provider acceptance."
+  },
+  "mutations": {
+    "source": false,
+    "docs": false,
+    "plan": false,
+    "index": false,
+    "ci": false
+  },
+  "sourceCarry": {
+    "through": "7a32b32f5f2fdfa60dce6f228c74982afc2f3b10",
+    "formatReceipt": "docs/verification/gold-wave1457-channel-hosted-format.json",
+    "boundary": "Producer remains80091494. The two changed channel files carry only verified hosted rustfmt postimages; later n8n work has its own pending gates. This is not a full-current-head or provider acceptance claim."
+  },
+  "localExecutableValidationRan": false
+}
