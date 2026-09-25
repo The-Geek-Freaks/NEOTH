@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T17:02:18Z",
-  "validationStatus": "HOSTED_CLI_REFERENCE_IMPORTED_NATIVE_RERUN_PENDING",
+  "capturedUtc": "2026-09-25T17:12:25Z",
+  "validationStatus": "STATIC_REVIEWED_COMPLETE_HISTORY_SNAPSHOT_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2107,6 +2107,11 @@
       "sha256": "CC04FB2305C72A426D8E2D937B0998C5CE55D9F8268BB345B039FBECC09912A5"
     },
     {
+      "path": "docs/verification/gold-wave1498-backup-snapshot-repair.json",
+      "bytes": 1155,
+      "sha256": "658D2BAD48028B3C5A4871E63F18EA21173445251B6A709B7D2E7E3FDBA0135E"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -2963,8 +2968,8 @@
     },
     {
       "path": "packaging/n8n_product_bootstrap_canary.py",
-      "bytes": 86244,
-      "sha256": "B93DFC1F7A7BB4E38705CD59760E4F5F6BD3D0D872A4A37BB5D3213ECA4FBEC0"
+      "bytes": 86394,
+      "sha256": "527139FCB81AF5039BB76ED2EC4288B0ABEEFE9CD3B5A778069625A3FCF14B9C"
     },
     {
       "path": "packaging/n8n_template_execution_canary.py",
@@ -3003,8 +3008,8 @@
     },
     {
       "path": "packaging/tests/test_n8n_product_bootstrap_canary.py",
-      "bytes": 47807,
-      "sha256": "D375C5710741FE5EFBAFA16B7103F67DB687BA43FF89D22174ED9357CB877A43"
+      "bytes": 50615,
+      "sha256": "8802501C8A7CA277DDC9693E8C1471C963B358DE7D0B970E5629D585873AAD62"
     },
     {
       "path": "packaging/tests/test_paperless_product_canary.py",
@@ -3063,18 +3068,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 410260,
-      "sha256": "192546EEAAE8199D494ACE0257D5F17D303915CA699FE978C55AE6E66093B88C"
+      "bytes": 411342,
+      "sha256": "B749FA03BE9489B208577089071DE8B5E98B144066303CA7D32BF2FE72919818"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1429191,
-      "sha256": "59663BA93DA0DA470B8539C18AD18F4184912D63D62DEAC719AB78970C126E44"
+      "bytes": 1430273,
+      "sha256": "3828244C134C2B9A54AF0642E16F73A7EC860C1C86036655599F0B62CDBBE258"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2039714,
-      "sha256": "CF2F1FD331E414BC46D9B524577B5665442FF56AFF2B29706DE7D9DA2425D93A"
+      "bytes": 2040796,
+      "sha256": "0968AF422D11068F0B309C58E20CA6C536961A7ED9691C1D675559C4D6D5CD5A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

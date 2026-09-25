@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "HOSTED_CLI_REFERENCE_IMPORTED_NATIVE_RERUN_PENDING",
+  "status": "STATIC_REVIEWED_COMPLETE_HISTORY_SNAPSHOT_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 229309,
-    "sha256": "0FE6B100842A917E2E8A269375CD4344032AE12AAF3185BA1DED9EC33D1981C1"
+    "bytes": 229509,
+    "sha256": "F1630BCBD955E7520478F4245900CB1F34FCFBAF310B2F0A7CF6B718A1329AC3"
   },
-  "sourceInputs": 1284,
+  "sourceInputs": 1285,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -48165,6 +48165,50 @@
       }
     ],
     "note": "Exact-source generated reference imported from original GitHub artifact; only backup section added; Group1877 rerun pending. Restore WIP excluded.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1498BackupSnapshotRepair": {
+    "base": "a276a0c4a16367f985e290ee985586b297174faa",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1498-backup-snapshot-repair.json",
+        "bytes": 1155,
+        "sha256": "658D2BAD48028B3C5A4871E63F18EA21173445251B6A709B7D2E7E3FDBA0135E",
+        "blob": "8426bd5c256766b4429bf2a925873c8af0254ae8"
+      },
+      {
+        "path": "packaging/n8n_product_bootstrap_canary.py",
+        "bytes": 86394,
+        "sha256": "527139FCB81AF5039BB76ED2EC4288B0ABEEFE9CD3B5A778069625A3FCF14B9C",
+        "blob": "e9484be98299d1d299829dbe152dd5d9cd393413"
+      },
+      {
+        "path": "packaging/tests/test_n8n_product_bootstrap_canary.py",
+        "bytes": 50615,
+        "sha256": "8802501C8A7CA277DDC9693E8C1471C963B358DE7D0B970E5629D585873AAD62",
+        "blob": "ea694c60eca3ffed40a1cd87f08048085bec7e47"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 411342,
+        "sha256": "B749FA03BE9489B208577089071DE8B5E98B144066303CA7D32BF2FE72919818",
+        "blob": "9105b6a54555d5f16b4a18a30d6c6d0c79b11362"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1430273,
+        "sha256": "3828244C134C2B9A54AF0642E16F73A7EC860C1C86036655599F0B62CDBBE258",
+        "blob": "e7fbba756abb3a0c2a57617836f4a57fb58a2fed"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2040796,
+        "sha256": "0968AF422D11068F0B309C58E20CA6C536961A7ED9691C1D675559C4D6D5CD5A",
+        "blob": "41e985e25176df042a256040ecb3c5f7a6125bb4"
+      }
+    ],
+    "note": "Complete ordered job-history snapshot digested inside read-only SQLite; product regression and gates pending. Restore WIP excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

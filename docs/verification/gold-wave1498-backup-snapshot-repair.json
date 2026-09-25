@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "status": "STATIC_REVIEWED_COMPLETE_HISTORY_SNAPSHOT_HOSTED_PENDING",
+  "base": "a276a0c4a16367f985e290ee985586b297174faa",
+  "diagnosis": {
+    "run": 36163818879,
+    "source": "64b172b6d6db8242b35a8e925f06aeb9278c9ae5",
+    "zipSha256": "fd52643c96288cc52b8cf885042186b8088a9c25f6ef89c67399b35d3cd7a434",
+    "receiptSha256": "825d2d0ddd3f45d917b6e3bbdda7d09d2211bbde5912ebce64e9610d1dc57b4c",
+    "sourceBindings": 32,
+    "runningBackupCompleted": true,
+    "stoppedBackupCompleted": true,
+    "failure": "All-job JSON snapshot exceeded 16KiB; final purge precondition/cleanup not completed",
+    "dockerCleanupProven": true,
+    "cleanupProven": false
+  },
+  "repair": "Read-only atomic sha3_query of every ordered row and column; strict digest output; no capture-limit increase",
+  "regression": "Hosted real sqlite3 database >17KiB, stable snapshot and field/add/delete mutation coverage; malformed digest rejection",
+  "review": {
+    "scope": "STATIC_ONLY",
+    "reportSha256": "C6159C2814D1019931D6A996651CB63834E452588492B7F454D66B65DAB25F28"
+  },
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

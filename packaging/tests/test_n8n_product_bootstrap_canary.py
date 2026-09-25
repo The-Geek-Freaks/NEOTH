@@ -5,6 +5,7 @@ import sys
 import json
 import http.server
 import os
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -14,6 +15,65 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import n8n_product_bootstrap_canary as canary
+
+
+class AllJobSnapshotTests(unittest.TestCase):
+    def test_content_free_snapshot_covers_each_complete_ordered_row(self) -> None:
+        """Exercise the real shell route with data too large for the old JSON capture."""
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            database = home / "setup.db"
+            large_note = "x" * (17 * 1024)
+            script = """\
+CREATE TABLE integration_jobs (
+    job_id TEXT PRIMARY KEY,
+    operation TEXT NOT NULL,
+    state TEXT NOT NULL,
+    state_revision INTEGER NOT NULL,
+    private_note TEXT NOT NULL
+);
+INSERT INTO integration_jobs VALUES ('00000000-0000-7000-8000-000000000001', 'install', 'ready', 1, '%s');
+INSERT INTO integration_jobs VALUES ('00000000-0000-7000-8000-000000000002', 'backup', 'ready', 2, 'second row');
+""" % large_note
+            subprocess.run(
+                ["sqlite3", str(database)], input=script.encode("utf-8"),
+                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+
+            initial = canary.observe_all_job_rows(home)
+            self.assertRegex(initial, r"^[0-9a-f]{64}$")
+            self.assertEqual(initial, canary.observe_all_job_rows(home))
+
+            def change(statement: str) -> str:
+                subprocess.run(
+                    ["sqlite3", str(database), statement], check=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                return canary.observe_all_job_rows(home)
+
+            changed_field = change(
+                "UPDATE integration_jobs SET private_note='changed' "
+                "WHERE job_id='00000000-0000-7000-8000-000000000002';"
+            )
+            self.assertNotEqual(initial, changed_field)
+            with_added_row = change(
+                "INSERT INTO integration_jobs VALUES "
+                "('00000000-0000-7000-8000-000000000003', 'repair', 'ready', 3, 'third row');"
+            )
+            self.assertNotEqual(changed_field, with_added_row)
+            after_delete = change(
+                "DELETE FROM integration_jobs "
+                "WHERE job_id='00000000-0000-7000-8000-000000000003';"
+            )
+            self.assertNotEqual(with_added_row, after_delete)
+            self.assertEqual(changed_field, after_delete)
+
+    def test_all_job_snapshot_rejects_malformed_shell_digest(self) -> None:
+        invalid_outputs = (b"", b"A" * 64 + b"\n", b"a" * 65, b"a" * 64 + b"\n" + b"b" * 64 + b"\n")
+        for output in invalid_outputs:
+            with self.subTest(output=output), patch.object(canary, "run", return_value=output):
+                with self.assertRaisesRegex(canary.Failure, "all_job_rows_digest_invalid"):
+                    canary.observe_all_job_rows(Path("fixture"))
 
 
 class ProductReceiptTests(unittest.TestCase):

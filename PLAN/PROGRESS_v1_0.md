@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1497/W1498/W1499 complete-history backup canary repair (2026-09-25):**
+Product36163818879 at64b172b6 completed real running and stopped source backups,
+all three repairs and uninstall/reinstall. Original ZIP/API/receipt hashes and
+32 source/input bindings verify. The final purge precondition failed because
+valid accumulated job JSON exceeded the observer's16KiB stdout cap; Docker
+cleanup passed but final home/secret cleanup was not reached. The observer now
+uses SQLite-shell sha3_query on the full ordered SELECT * snapshot, returning
+only a validated digest without relaxing capture limits or omitting columns.
+Regression covers >17KiB data, stable reads, field/add/delete changes and bad
+digest outputs. Independent static review passed; hosted confirmation is pending.
+Group36164834715, Windows36162833661 and Core36162836957 remain in progress.
+Restore schema/IO/candidate work stays unpublished; Claude TASK080 covers the
+offline count/decrypt gate. No ROAD closure or local executable validation.
+Evidence: docs/verification/gold-wave1498-backup-snapshot-repair.json.
 **W1494/W1496 native backup coverage and generated CLI reference (2026-09-25):**
 Group36162830661 atfeb848a3 compiled and executed all1877 selected tests;
 1876 passed and only cli::docgen::tests::cli_commands_md_is_up_to_date failed.

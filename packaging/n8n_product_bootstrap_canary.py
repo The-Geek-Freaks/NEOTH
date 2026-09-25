@@ -255,11 +255,15 @@ def observe_full_job_row(home: Path, job: str, operation: str) -> str:
         raise Failure("full_job_row_invalid")
     return hashlib.sha256(rows[0]).hexdigest()
 def observe_all_job_rows(home: Path) -> str:
-    output = run(["sqlite3", "-readonly", "-json", str(home / "setup.db"), "SELECT * FROM integration_jobs ORDER BY job_id;"])
-    try: value = json.loads(output)
-    except Exception as error: raise Failure("all_job_rows_invalid") from error
-    if not isinstance(value, list) or any(not isinstance(row, dict) or not isinstance(row.get("job_id"), str) for row in value): raise Failure("all_job_rows_invalid")
-    return hashlib.sha256(output).hexdigest()
+    # `sha3_query` is included in SQLite's command-line shell.  It consumes
+    # every column from one ordered, read-only snapshot without returning any
+    # row data to the Canary's bounded stdout capture.
+    query = "SELECT lower(hex(sha3_query('SELECT * FROM integration_jobs ORDER BY job_id',256)));"
+    output = run(["sqlite3", "-readonly", str(home / "setup.db"), query])
+    if not re.fullmatch(rb"[0-9a-f]{64}\n?", output):
+        raise Failure("all_job_rows_digest_invalid")
+    digest = output.rstrip(b"\n")
+    return hashlib.sha256(b"neoth-n8n-all-job-snapshot-v1\0" + digest).hexdigest()
 def purge_artifacts_absent(home: Path) -> tuple[str, ...]:
     custody = home / "n8n-managed-purge.v1.json"
     if custody.exists() or custody.is_symlink(): raise Failure("purge_custody_present")
