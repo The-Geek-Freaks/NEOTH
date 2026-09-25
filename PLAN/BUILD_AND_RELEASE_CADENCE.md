@@ -3,6 +3,21 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1383-1385 hosted formatting and exact compiler/fixture repairs (2026-09-25):**
+W1380 was published at 28b1b2c4, and all seven verified GitHub rustfmt postimages
+at bc170f39. Its Preflight passed and the product-canary helper gate passed.
+The product build and Group run then exposed E0308 at the new repair image
+verifier; the call now borrows its expected image. Group also exposed an unused
+fake argument, now explicitly ignored. Earlier native runs at 904c8e failed the
+same rotation fixture: it accepted only an anchored Docker name filter whereas
+the producer also emits an unanchored exact name. The fixture now models both;
+production behavior and assertions are unchanged. The verified Windows artifact
+had 579/580 passes; this is failed historical evidence, not acceptance. Core904
+passed production Clippy, test typecheck and CLI export, but its unfinished
+workspace check was cancelled after supersession. Current native/Core/product
+reruns remain required; ROAD totals and P2-20 stay open. Claude068 and queued
+upstream-signature research069 await actual ACK/results. No local executable
+validation ran.
 **W1368-1380 Paperless repair and fresh-generation authentication (2026-09-25):**
 The actual CLI now routes `paperless repair` to a receipt-bound backend. All three
 services and all six volumes are validated before effects; healthy is an

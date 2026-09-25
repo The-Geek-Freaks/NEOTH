@@ -204,7 +204,7 @@ impl RetainedComposeExecutor for Fake {
     async fn run_retained(
         &mut self,
         a: &[String],
-        root: &OwnedPaperlessRoot,
+        _root: &OwnedPaperlessRoot,
         _: &EnvBinding,
     ) -> Result<CommandOutput, LifecycleError> {
         self.retained.push(a.to_vec());

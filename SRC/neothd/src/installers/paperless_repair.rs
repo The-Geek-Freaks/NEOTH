@@ -582,7 +582,7 @@ async fn verify_receipt_images<E: ComposeExecutor>(
             )
             .await?;
         ensure_stage(root, binding)?;
-        let image = verify_image(expected, &engine.platform, &raw.stdout)?;
+        let image = verify_image(&expected, &engine.platform, &raw.stdout)?;
         if image.config_id != stored.config_id {
             return Err(LifecycleError::Image("paperless_repair_version_drift"));
         }

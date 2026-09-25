@@ -70,7 +70,10 @@ impl ComposeExecutor for Fake {
             if a.iter().any(|x| x == "ls") {
                 let n = a
                     .iter()
-                    .find_map(|x| x.strip_prefix("name=^").and_then(|x| x.strip_suffix('$')))
+                    .find_map(|x| {
+                        x.strip_prefix("name=")
+                            .map(|x| x.trim_start_matches('^').trim_end_matches('$'))
+                    })
                     .unwrap();
                 return Ok(CommandOutput {
                     stdout: if self.volumes.contains(n) {

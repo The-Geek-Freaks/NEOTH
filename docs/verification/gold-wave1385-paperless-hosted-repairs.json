@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "batch": "W1384-W1385",
+  "baseCommit": "bc170f39b45902c75708655d31496e8efcf2151a",
+  "status": "HOSTED_FAILURE_REPAIRED_RERUN_PENDING",
+  "sourceBindings": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
+      "sha256": "06125D840C0ED1EB1A812764CC09EFF2A93A0B97B339F00A3ED285A7B3F3E38E"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_repair.rs",
+      "sha256": "3C3456179AF6CB024F2957AF40792FEDDDFA9CAF174A24FD356DFA1FBB81FA56"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_repair_tests.rs",
+      "sha256": "A726AC4D696A6816C18ACFBE6BC4FE6847466875FD8A9E317267410FCCDBDC08"
+    }
+  ],
+  "hostedFailureRuns": [
+    36137431675,
+    36137423044
+  ],
+  "compilerError": "E0308: verify_image requires a borrowed ExpectedImage",
+  "testWarning": "unused fake root argument explicitly renamed _root",
+  "historicalNativeDiagnosis": {
+    "schema": "neoth-wave1381-terminal-diagnosis/v1",
+    "source": "904c8eac67383c0dd47e6cbe7ca8532e8a3dadb1",
+    "collectedUtc": "2026-09-25T12:52:36.1812962Z",
+    "group1811": {
+      "run": 36135155211,
+      "job": 108071359384,
+      "workflow": "Research and loop lifecycle quality",
+      "status": "completed",
+      "conclusion": "failure",
+      "fixture": "installers::paperless_lifecycle::paperless_generation_rotation::tests::normal_missing_volume_refuses_and_second_generation_can_rotate",
+      "failure": "called `Option::unwrap()` on a `None` value",
+      "location": "neothd\\\\src\\\\installers\\\\paperless_generation_rotation_tests.rs:74:22",
+      "scope": "Hosted fixture failure; this evidence alone does not establish a broader runtime root cause."
+    },
+    "windows580": {
+      "run": 36135158496,
+      "job": 108071370402,
+      "workflow": "Windows storage regressions",
+      "status": "completed",
+      "conclusion": "failure",
+      "artifact_id": 10865447385,
+      "artifact_name": "windows-storage-regressions-904c8eac67383c0dd47e6cbe7ca8532e8a3dadb1",
+      "zip_sha256": "7c5f408e2a4aac9e24184e9a230a42c41fdffcb685813722b66ecf342f6eeedc",
+      "expected_zip_sha256": "7c5f408e2a4aac9e24184e9a230a42c41fdffcb685813722b66ecf342f6eeedc",
+      "source_head_verified": true,
+      "counts": {
+        "expected": 580,
+        "passed": 579,
+        "failed": 1,
+        "missing": 0
+      },
+      "failed_tests": [
+        {
+          "ordinal": 580,
+          "name": "installers::paperless_lifecycle::paperless_generation_rotation::tests::normal_missing_volume_refuses_and_second_generation_can_rotate",
+          "source_path": "neothd/src/installers/paperless_generation_rotation_tests.rs",
+          "panic": "called `Option::unwrap()` on a `None` value",
+          "location": "neothd\\\\src\\\\installers\\\\paperless_generation_rotation_tests.rs:74:22"
+        }
+      ],
+      "source_binding_unique_files": 90,
+      "source_binding_mismatches": 0,
+      "log_manifest_entries": 581,
+      "log_hash_mismatches": 0
+    },
+    "core": {
+      "run": 36135161520,
+      "status": "not_polled_after_parent_instruction",
+      "note": "Earlier snapshot only: in_progress."
+    },
+    "mutations": {
+      "source": false,
+      "plans": false,
+      "git": false,
+      "ci": false,
+      "dispatch": false,
+      "admission_decision": false
+    }
+  },
+  "fixtureRepair": "accept both producer Docker volume name-filter forms; no production or assertion change",
+  "formatEvidence": "gold-wave1383-paperless-hosted-format.json",
+  "preflight": {
+    "run": 36137401913,
+    "source": "bc170f39b45902c75708655d31496e8efcf2151a",
+    "outcome": "success"
+  },
+  "core904": {
+    "run": 36135161520,
+    "outcome": "cancelled_superseded",
+    "passed": [
+      "production Clippy",
+      "test typecheck",
+      "CLI build",
+      "CLI reference export"
+    ],
+    "workspaceClippy": "unfinished_not_accepted"
+  },
+  "localExecutableValidationRan": false,
+  "roadmapClosures": 0
+}
