@@ -26,7 +26,7 @@ use crate::{
         jobs::{EnqueueIntegrationJob, RestartValidator},
         state::{
             JobFailure, JobProgress, JobState, ProgressEvidence, ProgressEvidenceClaim,
-            ReadyEvidence, RestartDecision,
+            ReadyEvidence, RecoveryDispositionEvidence, RestartDecision, ResumeEvidence,
         },
     },
     secret::SecretString,
@@ -43,17 +43,26 @@ const STEPS: [&str; 5] = [
 ];
 const DEADLINE: Duration = Duration::from_secs(45);
 
-struct ExplicitRepairRestartValidator;
+struct ExplicitRepairRestartValidator {
+    home: PathBuf,
+}
 impl RestartValidator for ExplicitRepairRestartValidator {
-    fn validate(&self, _job: &IntegrationJob) -> RestartDecision {
-        RestartDecision::Hold { failure: JobFailure::new("n8n_repair_reconciliation_required", "The interrupted managed repair retains exact effect custody; rerun n8n repair to inspect it without repeating an uncertain effect.").expect("static") }
+    fn validate(&self, job: &IntegrationJob) -> RestartDecision {
+        let hold = || RestartDecision::Hold { failure: JobFailure::new("n8n_repair_reconciliation_required", "The interrupted managed repair retains exact effect custody; rerun n8n repair to inspect it without repeating an uncertain effect.").expect("static") };
+        let Ok(Some(custody)) = read_custody(&self.home) else { return hold(); };
+        if !restart_binding_commit_proven(&self.home, &custody, job) { return hold(); }
+        let Some(contract) = job.evidence_contract.as_ref() else { return hold(); };
+        RestartDecision::Resume {
+            evidence: ResumeEvidence::verified(job.job_id.clone(), job.manifest_sha256.clone(), contract.step_plan_sha256().clone(), sha256_parts(&["n8n-repair-binding-commit-reconcile"])),
+            disposition: RecoveryDispositionEvidence::verified(job.job_id.clone(), job.manifest_sha256.clone(), contract.step_plan_sha256().clone(), job.state_revision, sha256_parts(&["n8n-repair-no-redispatch"]), sha256_parts(&["n8n-repair-binding-commit-retained"])),
+        }
     }
 }
 fn open_repair_service(home: &Path) -> Result<IntegrationJobService> {
     Ok(IntegrationJobService::open(
         home,
         super::super::n8n_catalog(),
-        &ExplicitRepairRestartValidator,
+        &ExplicitRepairRestartValidator { home: home.to_owned() },
     )?)
 }
 
@@ -160,6 +169,79 @@ fn write_custody(home: &Path, custody: &RepairCustody) -> Result<(), &'static st
         &serde_json::to_vec(custody).map_err(|_| "n8n_repair_custody_serialize_failed")?,
     )
     .map_err(|_| "n8n_repair_custody_write_failed")
+}
+/// Startup can resume only the post-create binding commit: the exact new id
+/// was already receipt-witnessed and both raw binding byte alternatives are
+/// durable. All earlier effect-dispatch phases remain held, and resume itself
+/// performs no Docker operation; normal repair later rechecks exact runtime
+/// identity/readiness before publishing Ready.
+fn restart_binding_commit_proven(home: &Path, custody: &RepairCustody, job: &IntegrationJob) -> bool {
+    if custody.schema_version != 1
+        || custody.phase != RepairPhase::BindingCommitDispatched
+        || custody.repair_job_id != job.job_id.as_str()
+        || custody.repair_manifest_sha256 != job.manifest_sha256.as_str()
+        || custody.generation == 0
+        || custody.action.as_deref() != Some("recreated")
+        || custody.old_binding.phase != RuntimePhase::Ready
+        || custody.new_container_id.as_deref().is_none_or(|id| !super::valid_container_id(id))
+        || custody.new_binding.as_ref().is_none_or(|binding| binding.container_id.as_deref() != custody.new_container_id.as_deref())
+        || custody.old_binding_bytes.is_empty()
+        || custody.new_binding_bytes.as_deref().is_none_or(|bytes| bytes.is_empty())
+    {
+        return false;
+    }
+    let Ok(jobs) = IntegrationJobService::read_only_snapshot(home) else {
+        return false;
+    };
+    let Some(source) = jobs.into_iter().find(|candidate| {
+        candidate.job_id.as_str() == custody.source_install_job_id
+            && candidate.manifest_sha256.as_str() == custody.source_install_manifest_sha256
+    }) else {
+        return false;
+    };
+    if job.operation != JobOperation::Repair
+        || source.operation != JobOperation::Install
+        || source.state != JobState::Ready
+        || !is_managed_job(&source)
+        || validate_custody(custody, job, &source).is_err()
+        || job.manifest_sha256 != repair_manifest(&custody.old_binding, &source, custody.generation)
+        || validate_binding(&custody.old_binding, &source).is_err()
+    {
+        return false;
+    }
+    let Ok(old_bytes_binding) = serde_json::from_slice::<RuntimeBinding>(&custody.old_binding_bytes) else {
+        return false;
+    };
+    let Some(new_binding) = custody.new_binding.as_ref() else {
+        return false;
+    };
+    let Some(new_bytes) = custody.new_binding_bytes.as_deref() else {
+        return false;
+    };
+    let Ok(new_bytes_binding) = serde_json::from_slice::<RuntimeBinding>(new_bytes) else {
+        return false;
+    };
+    let Some(new_id) = custody.new_container_id.as_ref() else {
+        return false;
+    };
+    if old_bytes_binding != custody.old_binding
+        || new_bytes_binding != *new_binding
+        || *new_binding != expected_recreated_binding(custody, new_id.clone())
+    {
+        return false;
+    }
+    let Ok(Some(current_bytes)) = read_binding_bytes(home) else {
+        return false;
+    };
+    if current_bytes == custody.old_binding_bytes {
+        serde_json::from_slice::<RuntimeBinding>(&current_bytes)
+            .is_ok_and(|binding| binding == custody.old_binding)
+    } else if Some(current_bytes.as_slice()) == custody.new_binding_bytes.as_deref() {
+        serde_json::from_slice::<RuntimeBinding>(&current_bytes)
+            .is_ok_and(|binding| binding == *new_binding)
+    } else {
+        false
+    }
 }
 fn create_custody(home: &Path, custody: &RepairCustody) -> Result<(), &'static str> {
     crate::util::atomic_write::write_private_create_new_durable(

@@ -1,0 +1,33 @@
+{
+  "schema": "neoth-wave1458-n8n-restart-cas/v1",
+  "base": "80091494ca13935cb9b69f13ad50902ecf5433ed",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_repair.rs",
+      "sha256": "0479F5AFCBFA4D822A069E3AB64BF3BC0D9CD3A27D35187DD23F49F918E0C03D"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_repair_tests.rs",
+      "sha256": "F1318DC6F1026AFEAA4F9F4304E6E176A5A51584A0FCDE5B8648CB301F2E723E"
+    }
+  ],
+  "review": "APPROVE_STATIC_FINAL_ASSERTIONS_INCLUDED",
+  "scope": "Resume only witnessed BindingCommitDispatched repair; exact source Install/Ready job, current Repair role, recomputed generation manifest, old Ready binding, derived recreated binding and retained raw byte alternatives. All mismatches remain held; no repeated Docker create/start.",
+  "regressions": [
+    "Existing eight owned-reopen combinations: Queued/Running/Validating/Configuring with old or already-new live bytes",
+    "New positive-control and eight independently altered custody cases",
+    "Synchronized Bound old-binding/custody/live bytes yields typed RecoveryHold, retains active job and no create/start calls"
+  ],
+  "selection": {
+    "portable": 2067,
+    "group": 1857,
+    "windows": 622,
+    "combinedFeatures": 11
+  },
+  "format": "W1457 authentic rustfmt postimages for channel dispatcher/egress from Preflight36154627434 at80091494, preserving reviewed behavior",
+  "validation": "New Linux, Windows, core and actual n8n product gates required. Earlier native BCD failures remain recorded.",
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false,
+  "reviewSha256": "A0AE8678167449FEA39629661EBF659ADAFAC6C2924C119C3AFC67D6763F0E43"
+}

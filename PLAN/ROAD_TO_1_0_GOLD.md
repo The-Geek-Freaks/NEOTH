@@ -8,6 +8,23 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1451/W1452/W1457/W1458 exact n8n restart recovery (2026-09-25):**
+The authenticated BCD failure was a product restart bug: the repair opener
+held every active job even after a witnessed create and durable binding CAS.
+The reviewed correction admits only BindingCommitDispatched custody with the
+complete Install/Ready source, Repair role, recomputed generation manifest,
+old Ready binding, derived recreated binding and matching semantic/raw old/new
+alternatives. Earlier or inconsistent states remain Hold; recovery adds no
+Docker create/start. The existing eight positive reentry cases are retained.
+A new tampering matrix includes a valid control and synchronized Bound source
+custody; owned reopen must return typed RecoveryHold and retain the active job.
+Source review approved; hosted execution is pending. Selections are now2067
+portable, Group1857, Windows622 and11 combined channel feature cases.
+W1457 imports authenticated channel-only rustfmt from Preflight36154627434
+at80091494; source/ZIP/internal digests and exact Git pre/postimages verified.
+Corea0b090fe and channel11@80091494 remain separate in-flight gates; none is
+new-source acceptance. P1-14/P2-20 and ROAD totals remain unchanged.
+No local executable validation ran. See gold-wave1458-n8n-restart-cas.json.
 **W1447-1456 recovery evidence and corrected channel tests (2026-09-25):**
 Core36147550725 at6c997a7b is now fully admitted: slim production Clippy,
 core-test typecheck, public CLI build/export, and strict Linux workspace

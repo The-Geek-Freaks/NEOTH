@@ -10285,7 +10285,11 @@ mod tests {
         let mut routing = crate::channels::routing::ChannelRouting::default();
         routing.destinations.irc_channel = Some("#private-target".to_string());
         routing
-            .save_to(&home.path().join(crate::channels::routing::CHANNEL_ROUTING_FILE))
+            .save_to(
+                &home
+                    .path()
+                    .join(crate::channels::routing::CHANNEL_ROUTING_FILE),
+            )
             .unwrap();
         let fingerprint = *crate::cli::serve_tasks::channel_account_fingerprints(
             &config,
@@ -10297,7 +10301,9 @@ mod tests {
         .unwrap();
         let registry = Arc::new(crate::daemon::channel_live_registry::ChannelLiveRegistry::new());
         let channel = Arc::new(CountingChannel::new());
-        let lease = registry.begin_replacement(channel_ref.clone(), fingerprint).await;
+        let lease = registry
+            .begin_replacement(channel_ref.clone(), fingerprint)
+            .await;
         assert!(registry.publish(&lease, channel.clone()).await);
         let permit = registry.acquire(&channel_ref, fingerprint).await.unwrap();
         let live_generation = permit.generation();
@@ -10383,8 +10389,8 @@ mod tests {
             "terminal v6 recovery must be exactly-once"
         );
         for now_unix in [161, 162] {
-            let queue = ProactiveQueue::load_from(&home.path().join("proactive_queue.json"))
-                .unwrap();
+            let queue =
+                ProactiveQueue::load_from(&home.path().join("proactive_queue.json")).unwrap();
             assert!(queue.entry_generation("v6-armed-recovery").is_none());
             assert!(queue.is_empty());
             assert_eq!(queue.budget_left(now_unix), 2, "one terminal budget charge");

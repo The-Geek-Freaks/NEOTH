@@ -3131,7 +3131,10 @@ mod tests {
             join.await.unwrap().unwrap();
 
             let queue = ProactiveQueue::load_from(&queue_path).unwrap();
-            assert!(queue.is_empty(), "{channel} malformed item must be quarantined");
+            assert!(
+                queue.is_empty(),
+                "{channel} malformed item must be quarantined"
+            );
             assert!(
                 queue.entry_generation(&dedup_key).is_none(),
                 "{channel} quarantined item must not retain egress generation authority",
@@ -3201,9 +3204,7 @@ mod tests {
             let fingerprint = *channel_fingerprints.get(&channel_ref).unwrap();
             let registry = empty_live_channels();
             let live_channel = Arc::new(CountingConnectionChannel::new(channel));
-            let lease = registry
-                .begin_replacement(channel_ref, fingerprint)
-                .await;
+            let lease = registry.begin_replacement(channel_ref, fingerprint).await;
             assert!(registry.publish(&lease, live_channel.clone()).await);
 
             let wal_dir = tmp.path().join("wal");
@@ -3507,7 +3508,10 @@ mod tests {
             0,
         );
         let queue_after_first = ProactiveQueue::load_from(&queue_path).unwrap();
-        assert!(queue_after_first.is_empty(), "transport failure must settle the queued item");
+        assert!(
+            queue_after_first.is_empty(),
+            "transport failure must settle the queued item"
+        );
         assert_eq!(queue_after_first.stats(1_700_000_000).budget_left, 2);
         assert_eq!(
             run_proactive_delivery_tick(
@@ -3525,7 +3529,10 @@ mod tests {
             "terminal transport failure must not retry a normal later tick",
         );
         let queue_after_second = ProactiveQueue::load_from(&queue_path).unwrap();
-        assert!(queue_after_second.is_empty(), "terminal item must remain settled");
+        assert!(
+            queue_after_second.is_empty(),
+            "terminal item must remain settled"
+        );
         assert_eq!(queue_after_second.stats(1_700_000_001).budget_left, 2);
         drop(writer);
         join.await.unwrap().unwrap();
