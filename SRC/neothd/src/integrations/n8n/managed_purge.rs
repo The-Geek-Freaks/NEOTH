@@ -522,7 +522,8 @@ pub(crate) async fn purge_retained_volume_at_with<R: ManagedDockerRunner>(
     let _operation_lock = crate::util::locked_file::try_lock_file_once(
         &super::managed_runtime::operation_lock_path(home),
         "n8n managed runtime operation",
-    )?.ok_or_else(|| anyhow::anyhow!("n8n_managed_operation_busy"))?;
+    )?
+    .ok_or_else(|| anyhow::anyhow!("n8n_managed_operation_busy"))?;
     if super::managed_runtime::managed_repair::repair_has_pending_custody(home)
         .map_err(anyhow::Error::msg)?
     {

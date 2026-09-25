@@ -109,8 +109,7 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
 async fn run_repair(output: OutputFormat) -> Result<()> {
     let home = crate::config::FreedomConfig::default_neoth_home();
     let job =
-        crate::integrations::n8n::managed_runtime::managed_repair::repair_managed_at(&home)
-            .await?;
+        crate::integrations::n8n::managed_runtime::managed_repair::repair_managed_at(&home).await?;
     let action =
         crate::integrations::n8n::managed_runtime::managed_repair::completed_action_at(&home, &job)
             .map_err(anyhow::Error::msg)?;
@@ -614,17 +613,23 @@ mod tests {
             })
         ));
         for argument in [
-            "--container", "--image", "--port", "--volume", "--endpoint", "--job",
+            "--container",
+            "--image",
+            "--port",
+            "--volume",
+            "--endpoint",
+            "--job",
             "--reuse-uninstall",
         ] {
-            assert!(crate::cli::Cli::try_parse_from([
-                "neoth", "n8n", "repair", argument, "unowned",
-            ]).is_err());
+            assert!(
+                crate::cli::Cli::try_parse_from(["neoth", "n8n", "repair", argument, "unowned",])
+                    .is_err()
+            );
         }
         for argument in ["--api-key-stdin", "--bootstrap-owner"] {
-            assert!(crate::cli::Cli::try_parse_from([
-                "neoth", "n8n", "repair", argument,
-            ]).is_err());
+            assert!(
+                crate::cli::Cli::try_parse_from(["neoth", "n8n", "repair", argument,]).is_err()
+            );
         }
     }
 

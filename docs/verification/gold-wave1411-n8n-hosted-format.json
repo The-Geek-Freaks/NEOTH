@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "run": 36144500712,
+  "source": "5f67bab29e248c4e3e96f5629364038f7c46237f",
+  "artifactId": 10868737556,
+  "zipSha256": "77a78d34cceabe6b2e6f9170c9c5333e569eb9f4c7194a867e30e4ddc36526b5",
+  "patchSha256": "5DEFD778E526B9C34A045A3A84BA1E652057AEFD154E6CDE7B8D78A8A41509D6",
+  "paths": [
+    {
+      "path": "SRC/neothd/src/cli/n8n.rs",
+      "preimage": "8e5169202f612c6d5ecc484a1b65b7a62eae359f",
+      "postimage": "58c1dd60fbbd1dfccf25f9f824683e6e7166067c"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_purge.rs",
+      "preimage": "0f1cf0d57b4483a98e8fa91f236edbb6ca5f8e3b",
+      "postimage": "adf9a166e934e35b28593a16fd74071f383d8efb"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_repair.rs",
+      "preimage": "6e67a3451364dc118007c79dc1b1ebf8bdece51a",
+      "postimage": "1b514d62ce46df8f640185e368f8f06175b88908"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_repair_tests.rs",
+      "preimage": "ffbbdda306433945579dc9db4b2fa9c737c142dc",
+      "postimage": "dfe0feba0dcba4e0e8c09d11666d4ae6f53db1f7"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "preimage": "bbb8de402c480a10b806473b7e9269b0f24424aa",
+      "postimage": "07c57a4941beaa6f113ad8d8417be44da7b2ee69"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",
+      "preimage": "c10aa7680466b0407981e74a36253b532607774c",
+      "postimage": "c1fc5dca6d6cf868993090809c528623e911f465"
+    }
+  ],
+  "status": "AUTHENTIC_HOSTED_FORMAT_IMPORTED",
+  "localFormatterRan": false,
+  "followupModulePathRepair": {
+    "run": 36144502152,
+    "source": "5f67bab29e248c4e3e96f5629364038f7c46237f",
+    "diagnostic": "E0583",
+    "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+    "change": "Explicit path attribute for sibling managed_repair.rs",
+    "hosted": "pending"
+  }
+}

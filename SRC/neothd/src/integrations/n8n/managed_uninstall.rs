@@ -680,7 +680,8 @@ async fn uninstall_managed_at_with_restart_inspector<
     let _operation_lock = crate::util::locked_file::try_lock_file_once(
         &super::operation_lock_path(home),
         "n8n managed runtime operation",
-    )?.ok_or_else(|| anyhow::anyhow!("n8n_managed_operation_busy"))?;
+    )?
+    .ok_or_else(|| anyhow::anyhow!("n8n_managed_operation_busy"))?;
     if super::managed_repair::repair_has_pending_custody(home).map_err(anyhow::Error::msg)? {
         anyhow::bail!("n8n_uninstall_repair_custody_pending");
     }

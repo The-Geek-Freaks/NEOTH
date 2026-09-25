@@ -3,6 +3,14 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1411-1412 hosted n8n format and module-path correction (2026-09-25):**
+Preflight36144500712 at5f67bab2 produced an authentic six-file rustfmt patch;
+its GitHub ZIP digest, source head, internal checksums and all Git pre/postimages
+were verified before import. Product36144502152 then exposed E0583: the new
+Repair module lacked its explicit sibling-file path attribute. That one
+attribute now matches the neighboring extracted Uninstall module. No local
+formatter or compiler ran. Native/Core/product verification remains pending.
+
 **W1408 real Paperless product accepted (2026-09-25):** Run36142673419 at
 15fbfd8d passed the compiled product lifecycle. The exact GitHub artifact ZIP,
 receipt and25 source bindings were verified. Healthy/start/recreate preserve

@@ -22,9 +22,10 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+#[path = "managed_repair.rs"]
+pub(crate) mod managed_repair;
 #[path = "managed_uninstall.rs"]
 pub(crate) mod managed_uninstall;
-pub(crate) mod managed_repair;
 
 pub(crate) const MANAGED_CONTAINER_NAME: &str = "neoth-n8n";
 pub(crate) const MANAGED_LABEL_KEY: &str = "io.neoth.managed";
@@ -251,8 +252,14 @@ pub(crate) trait ManagedDockerRunner: Send {
         Err("n8n_volume_remove_unavailable")
     }
     async fn create(&mut self, argv: &[String]) -> Result<ManagedCommandReceipt, &'static str>;
-    async fn create_with_exact_id(&mut self, argv: &[String]) -> Result<ManagedCreateReceipt, &'static str> {
-        Ok(ManagedCreateReceipt { command: self.create(argv).await?, container_id: None })
+    async fn create_with_exact_id(
+        &mut self,
+        argv: &[String],
+    ) -> Result<ManagedCreateReceipt, &'static str> {
+        Ok(ManagedCreateReceipt {
+            command: self.create(argv).await?,
+            container_id: None,
+        })
     }
     /// Starting is deliberately an exact-id operation. Existing test runners
     /// do not acquire a new mutator merely by implementing this lifecycle.
@@ -781,11 +788,19 @@ pub(super) async fn verify_runtime_volume_owner<R: ManagedDockerRunner>(
         InspectVolumeOutcome::Absent => return Err("n8n_repair_volume_absent"),
         _ => return Err("n8n_repair_volume_unknown"),
     };
-    let expected_owner = binding.retained_reinstall.as_ref().map(|source| source.volume_owner_install_job_id.as_str()).or(binding.bootstrap_volume_owner_job_id.as_deref());
+    let expected_owner = binding
+        .retained_reinstall
+        .as_ref()
+        .map(|source| source.volume_owner_install_job_id.as_str())
+        .or(binding.bootstrap_volume_owner_job_id.as_deref());
     if let Some(owner) = expected_owner {
         if found.labels.get(MANAGED_LABEL_KEY).map(String::as_str) != Some(MANAGED_LABEL_VALUE)
             || found.labels.get("io.neoth.n8n-job").map(String::as_str) != Some(owner)
-            || found.labels.get("io.neoth.n8n-bootstrap").map(String::as_str) != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA)
+            || found
+                .labels
+                .get("io.neoth.n8n-bootstrap")
+                .map(String::as_str)
+                != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA)
         {
             return Err("n8n_repair_volume_owner_mismatch");
         }
@@ -1643,9 +1658,13 @@ impl ManagedDockerRunner for DockerManagedRunner {
             return Err("n8n_managed_running_state_invalid_id");
         }
         let (ok, stdout, _) = docker(&[
-            "docker".into(), "inspect".into(), "--format".into(),
-            "{{.State.Running}}".into(), id.into(),
-        ]).await?;
+            "docker".into(),
+            "inspect".into(),
+            "--format".into(),
+            "{{.State.Running}}".into(),
+            id.into(),
+        ])
+        .await?;
         match (ok, stdout.trim()) {
             (true, "true") => Ok(true),
             (true, "false") => Ok(false),
@@ -1667,7 +1686,10 @@ impl ManagedDockerRunner for DockerManagedRunner {
         let (_, _, receipt) = docker(argv).await?;
         Ok(receipt)
     }
-    async fn create_with_exact_id(&mut self, argv: &[String]) -> Result<ManagedCreateReceipt, &'static str> {
+    async fn create_with_exact_id(
+        &mut self,
+        argv: &[String],
+    ) -> Result<ManagedCreateReceipt, &'static str> {
         let (_, stdout, command) = docker(argv).await?;
         let candidate = stdout.trim();
         Ok(ManagedCreateReceipt {
@@ -1679,7 +1701,13 @@ impl ManagedDockerRunner for DockerManagedRunner {
         if !valid_container_id(id) {
             return Err("n8n_managed_start_invalid_id");
         }
-        let (_, _, receipt) = docker(&["docker".into(), "container".into(), "start".into(), id.into()]).await?;
+        let (_, _, receipt) = docker(&[
+            "docker".into(),
+            "container".into(),
+            "start".into(),
+            id.into(),
+        ])
+        .await?;
         Ok(receipt)
     }
     async fn remove(&mut self, id: &str) -> Result<ManagedCommandReceipt, &'static str> {
