@@ -962,13 +962,38 @@ mod tests {
         assert_eq!(value["active"], false);
         assert_eq!(value["settings"]["timezone"], "UTC");
         let nodes = value["nodes"].as_array().unwrap();
-        let schedule = nodes.iter().find(|node| node["type"] == "n8n-nodes-base.scheduleTrigger").unwrap();
-        assert_eq!(schedule["parameters"]["rule"]["interval"][0]["expression"], "0 19 * * 0");
-        let http = nodes.iter().find(|node| node["type"] == "n8n-nodes-base.httpRequest").unwrap();
-        assert_eq!(http["parameters"]["url"], "={{ $json.neothBaseUrl + '/api/reflections/weekly/obsidian/sync' }}");
-        assert_eq!(http["parameters"]["jsonBody"], "={{ JSON.stringify({ week: $now.toUTC().toFormat(\"kkkk-'W'WW\") }) }}");
-        assert!(http["notes"].as_str().unwrap().contains("does not generate reflections"));
-        assert!(http["notes"].as_str().unwrap().contains("published_durability_unknown"));
+        let schedule = nodes
+            .iter()
+            .find(|node| node["type"] == "n8n-nodes-base.scheduleTrigger")
+            .unwrap();
+        assert_eq!(
+            schedule["parameters"]["rule"]["interval"][0]["expression"],
+            "0 19 * * 0"
+        );
+        let http = nodes
+            .iter()
+            .find(|node| node["type"] == "n8n-nodes-base.httpRequest")
+            .unwrap();
+        assert_eq!(
+            http["parameters"]["url"],
+            "={{ $json.neothBaseUrl + '/api/reflections/weekly/obsidian/sync' }}"
+        );
+        assert_eq!(
+            http["parameters"]["jsonBody"],
+            "={{ JSON.stringify({ week: $now.toUTC().toFormat(\"kkkk-'W'WW\") }) }}"
+        );
+        assert!(
+            http["notes"]
+                .as_str()
+                .unwrap()
+                .contains("does not generate reflections")
+        );
+        assert!(
+            http["notes"]
+                .as_str()
+                .unwrap()
+                .contains("published_durability_unknown")
+        );
         assert!(http.get("retryOnFail").is_none());
     }
 

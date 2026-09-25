@@ -462,8 +462,14 @@ fn parse_intent(bytes: &[u8], expected_week: &str) -> Result<WeeklyArchiveIntent
 
 /// Check a producer-owned archive record against its persisted immutable
 /// intent. This read-only consumer boundary never creates producer state.
-pub(crate) fn validate_archived_weekly_intent(bytes: &[u8], record: &WeeklyReflection) -> Result<()> {
-    anyhow::ensure!(bytes.len() <= MAX_INTENT_BYTES, "weekly intent exceeds its byte limit");
+pub(crate) fn validate_archived_weekly_intent(
+    bytes: &[u8],
+    record: &WeeklyReflection,
+) -> Result<()> {
+    anyhow::ensure!(
+        bytes.len() <= MAX_INTENT_BYTES,
+        "weekly intent exceeds its byte limit"
+    );
     let intent = parse_intent(bytes, &record.iso_week_tag)?;
     anyhow::ensure!(
         intent.to_reflection() == *record,

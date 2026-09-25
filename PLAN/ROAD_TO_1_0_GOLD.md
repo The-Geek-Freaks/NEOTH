@@ -8,6 +8,23 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1251 hosted formatting and workspace timeout correction (2026-09-25):**
+Seven exact d4836aa4 formatter postimages were imported after API/ZIP, inner
+hash, historical/current preimage and final Git-blob checks. No local formatter
+ran. Consumer Group1730/Windows500/n8n checks retain their d483 source identity.
+Core309 passed slim Clippy, test-target typecheck and CLI build/export, but its
+workspace Clippy exceeded the30-minute limit without a compiler diagnostic.
+The previously passing Core614 workspace step took28m20s. This hosted-only
+step now has45minutes; command, features, -D warnings and job bound stay intact.
+Core204 remains running. The queued d483 CLI-only dispatch36102684561 was
+cancelled and will be replaced with explicitly enabled slim/workspace gates on
+the formatted publication. No full Core309 pass is claimed. Claude040 found no
+static blocker within its declared helper boundaries; FEEDBACK040 retains them.
+Consumer Groupd483 stopped during identity binding: the newly selected existing
+route-map test lacked its native source record. Root added the missing record;
+no product code or test expectation changed. No tests ran in that failed lane.
+Counts:ROAD1077done/245open/2partial;Native1941/Group1730/Windows500.
+
 **W1245 weekly archive export and W1247 producer acceptance (2026-09-25):**
 The dedicated POST /api/reflections/weekly/obsidian/sync exports exactly one
 canonical ISO week into the accepted configuration's vault. It uses its own

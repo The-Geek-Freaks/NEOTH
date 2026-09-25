@@ -12,16 +12,15 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::skills::store::{
-    atomic_write_private_child_reported, open_absolute_bound_directory, open_bound_regular_file,
-    open_or_create_private_child_dir, open_real_child_dir_if_present, read_regular_file_bounded,
-    PrivateChildCommit,
+    PrivateChildCommit, atomic_write_private_child_reported, open_absolute_bound_directory,
+    open_bound_regular_file, open_or_create_private_child_dir, open_real_child_dir_if_present,
+    read_regular_file_bounded,
 };
 
-use super::weekly_archive::{
-    validate_archived_weekly_intent, validate_iso_week_tag,
-    validate_weekly_reflection_producer_key,
-};
 use super::WeeklyReflection;
+use super::weekly_archive::{
+    validate_archived_weekly_intent, validate_iso_week_tag, validate_weekly_reflection_producer_key,
+};
 
 const REFLECTIONS_DIR: &str = "reflections";
 const OBSIDIAN_REFLECTIONS_DIR: &str = "Reflections";
@@ -73,7 +72,8 @@ pub(crate) fn sync_week_checked(
         .join(OBSIDIAN_REFLECTIONS_DIR)
         .join(format!("{iso_week_tag}.md"));
 
-    let Some(home) = open_absolute_bound_directory(home, false, "weekly reflection sync home")? else {
+    let Some(home) = open_absolute_bound_directory(home, false, "weekly reflection sync home")?
+    else {
         return Ok(quiet_outcome(iso_week_tag, target_path));
     };
     let reflections_display = home.display_path.join(REFLECTIONS_DIR);
@@ -81,7 +81,8 @@ pub(crate) fn sync_week_checked(
         &home.dir,
         OsStr::new(REFLECTIONS_DIR),
         &reflections_display,
-    )? else {
+    )?
+    else {
         return Ok(quiet_outcome(iso_week_tag, target_path));
     };
     let source_bytes = match read_regular_file_bounded(
@@ -91,7 +92,9 @@ pub(crate) fn sync_week_checked(
         MAX_SOURCE_BYTES,
     ) {
         Ok(bytes) => bytes,
-        Err(error) if error_is_not_found(&error) => return Ok(quiet_outcome(iso_week_tag, target_path)),
+        Err(error) if error_is_not_found(&error) => {
+            return Ok(quiet_outcome(iso_week_tag, target_path));
+        }
         Err(error) => return Err(error).context("read checked weekly reflection JSONL"),
     };
     let reflections = parse_checked_reflections(&source_bytes, iso_week_tag)?;
@@ -112,11 +115,8 @@ pub(crate) fn sync_week_checked(
     let vault = open_absolute_bound_directory(vault, true, "Obsidian vault")?
         .context("create or open explicit Obsidian vault")?;
     let subdir_display = vault.display_path.join(subdir);
-    let subdir_dir = open_or_create_private_child_dir(
-        &vault.dir,
-        OsStr::new(subdir),
-        &subdir_display,
-    )?;
+    let subdir_dir =
+        open_or_create_private_child_dir(&vault.dir, OsStr::new(subdir), &subdir_display)?;
     let target_dir_display = subdir_display.join(OBSIDIAN_REFLECTIONS_DIR);
     let target_dir = open_or_create_private_child_dir(
         &subdir_dir,
@@ -154,8 +154,14 @@ pub(crate) fn sync_week_checked(
 }
 
 fn validate_inputs(home: &Path, vault: &Path, subdir: &str, iso_week_tag: &str) -> Result<()> {
-    anyhow::ensure!(home.is_absolute(), "weekly reflection sync home must be an explicit absolute path");
-    anyhow::ensure!(vault.is_absolute(), "Obsidian vault must be an explicit absolute path");
+    anyhow::ensure!(
+        home.is_absolute(),
+        "weekly reflection sync home must be an explicit absolute path"
+    );
+    anyhow::ensure!(
+        vault.is_absolute(),
+        "Obsidian vault must be an explicit absolute path"
+    );
     validate_iso_week_tag(iso_week_tag)?;
     validate_subdir(subdir)
 }
@@ -193,11 +199,14 @@ fn parse_checked_reflections(bytes: &[u8], requested_week: &str) -> Result<Vec<W
         bytes.ends_with(b"\n"),
         "weekly reflection JSONL has a truncated final record"
     );
-    let source = std::str::from_utf8(bytes).context("weekly reflection JSONL must be valid UTF-8")?;
+    let source =
+        std::str::from_utf8(bytes).context("weekly reflection JSONL must be valid UTF-8")?;
     let mut reflections = Vec::new();
     let mut producer_keys = HashSet::new();
     for (index, raw) in source.split_inclusive('\n').enumerate() {
-        let line = raw.strip_suffix('\n').expect("split_inclusive retains delimiter");
+        let line = raw
+            .strip_suffix('\n')
+            .expect("split_inclusive retains delimiter");
         let line = line.strip_suffix('\r').unwrap_or(line);
         anyhow::ensure!(
             !line.is_empty() && line.len() <= MAX_LINE_BYTES,
@@ -236,20 +245,24 @@ fn validate_producer_owned_record(
     reflections_display: &Path,
     iso_week_tag: &str,
 ) -> Result<()> {
-    let Some(record) = reflections.iter().find(|record| record.producer_key.is_some()) else {
+    let Some(record) = reflections
+        .iter()
+        .find(|record| record.producer_key.is_some())
+    else {
         return Ok(());
     };
     anyhow::ensure!(
-        reflections.iter().filter(|record| record.producer_key.is_some()).count() == 1,
+        reflections
+            .iter()
+            .filter(|record| record.producer_key.is_some())
+            .count()
+            == 1,
         "weekly reflection JSONL must contain at most one producer-owned record"
     );
     let intents_display = reflections_display.join(INTENTS_DIR);
-    let intents_dir = open_real_child_dir_if_present(
-        reflections_dir,
-        OsStr::new(INTENTS_DIR),
-        &intents_display,
-    )?
-    .context("weekly producer record requires its immutable intent directory")?;
+    let intents_dir =
+        open_real_child_dir_if_present(reflections_dir, OsStr::new(INTENTS_DIR), &intents_display)?
+            .context("weekly producer record requires its immutable intent directory")?;
     let intent_leaf = format!("{iso_week_tag}.json");
     let intent_bytes = read_regular_file_bounded(
         &intents_dir,
@@ -311,7 +324,10 @@ fn ensure_single_hard_link(file: &cap_std::fs::File) -> Result<()> {
     {
         use cap_std::fs::MetadataExt as _;
 
-        let links = file.metadata().context("read weekly Obsidian target link count")?.nlink();
+        let links = file
+            .metadata()
+            .context("read weekly Obsidian target link count")?
+            .nlink();
         anyhow::ensure!(
             links == 1,
             "existing weekly Obsidian target has {links} hard links; exactly one is required"
@@ -333,7 +349,9 @@ fn ensure_single_hard_link(file: &cap_std::fs::File) -> Result<()> {
         // SAFETY: `std_file` owns the no-follow-opened handle and Windows
         // initializes the complete structure when the call succeeds.
         anyhow::ensure!(
-            unsafe { GetFileInformationByHandle(std_file.as_raw_handle() as _, information.as_mut_ptr()) } != 0,
+            unsafe {
+                GetFileInformationByHandle(std_file.as_raw_handle() as _, information.as_mut_ptr())
+            } != 0,
             "read no-follow weekly Obsidian target link count: {}",
             std::io::Error::last_os_error()
         );
@@ -405,8 +423,8 @@ mod tests {
     }
 
     fn write_canonical_producer_source(home: &Path, week: &str) -> WeeklyReflection {
-        let mut session = crate::reflection::weekly_archive::open_weekly_archive_session(home, week)
-            .unwrap();
+        let mut session =
+            crate::reflection::weekly_archive::open_weekly_archive_session(home, week).unwrap();
         let intent = session
             .load_or_create_intent(crate::reflection::weekly_archive::WeeklyArchiveCandidate {
                 generated_ts_unix: 1_700_000_000,
@@ -428,7 +446,10 @@ mod tests {
         write_source_reflections(
             home.path(),
             week,
-            &[reflection(week, "first body"), reflection(week, "second body")],
+            &[
+                reflection(week, "first body"),
+                reflection(week, "second body"),
+            ],
         );
 
         let first = sync_week_checked(home.path(), vault.path(), "NEOTH", week).unwrap();
@@ -476,7 +497,11 @@ mod tests {
     #[test]
     fn malformed_source_and_limits_fail_closed_without_replacing_target() {
         let week = "2026-W21";
-        for bytes in [b"{bad json}\n".as_slice(), b"\xff\n".as_slice(), b"\n".as_slice()] {
+        for bytes in [
+            b"{bad json}\n".as_slice(),
+            b"\xff\n".as_slice(),
+            b"\n".as_slice(),
+        ] {
             let home = tempdir().unwrap();
             let vault = tempdir().unwrap();
             let target = target_file(vault.path(), week);
@@ -527,7 +552,11 @@ mod tests {
         let home = tempdir().unwrap();
         let vault = tempdir().unwrap();
         write_canonical_producer_source(home.path(), week);
-        assert!(sync_week_checked(home.path(), vault.path(), "NEOTH", week).unwrap().written);
+        assert!(
+            sync_week_checked(home.path(), vault.path(), "NEOTH", week)
+                .unwrap()
+                .written
+        );
 
         let mutations: [fn(&mut WeeklyReflection); 3] = [
             |record: &mut WeeklyReflection| record.generated_ts_unix += 1,
@@ -576,7 +605,11 @@ mod tests {
         let vault = tempdir().unwrap();
         let week = "2026-W21";
         let line = serde_json::to_string(&reflection(week, "body")).unwrap();
-        write_source_bytes(home.path(), week, format!("{}\n", line).repeat(MAX_REFLECTIONS + 1).as_bytes());
+        write_source_bytes(
+            home.path(),
+            week,
+            format!("{}\n", line).repeat(MAX_REFLECTIONS + 1).as_bytes(),
+        );
         assert!(sync_week_checked(home.path(), vault.path(), "NEOTH", week).is_err());
         assert!(sync_week_checked(home.path(), vault.path(), "../NEOTH", week).is_err());
         assert!(sync_week_checked(home.path(), vault.path(), "NEOTH", "2026-W54").is_err());
@@ -585,7 +618,10 @@ mod tests {
 
     #[test]
     fn durability_tags_serialize_in_snake_case() {
-        assert_eq!(serde_json::to_string(&ReflectionSyncDurability::NotWritten).unwrap(), "\"not_written\"");
+        assert_eq!(
+            serde_json::to_string(&ReflectionSyncDurability::NotWritten).unwrap(),
+            "\"not_written\""
+        );
         assert_eq!(
             serde_json::to_string(&ReflectionSyncDurability::PublishedAndSynced).unwrap(),
             "\"published_and_synced\""
@@ -686,7 +722,10 @@ mod tests {
         let outcome = sync_week_checked(home.path(), vault.path(), "NEOTH", week).unwrap();
 
         assert!(outcome.written);
-        assert_eq!(outcome.durability, ReflectionSyncDurability::PublishedDurabilityUnknown);
+        assert_eq!(
+            outcome.durability,
+            ReflectionSyncDurability::PublishedDurabilityUnknown
+        );
         assert!(std::fs::read_to_string(target).unwrap().contains("body"));
     }
 }

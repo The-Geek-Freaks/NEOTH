@@ -573,14 +573,31 @@ mod tests {
         let (record, token) = make_token(&[SCOPE_REFLECTIONS_WEEKLY_OBSIDIAN_WRITE]);
         let mut records = vec![record];
         assert!(matches!(
-            verify_token_for_scope(&mut records, &token, SCOPE_REFLECTIONS_WEEKLY_OBSIDIAN_WRITE),
+            verify_token_for_scope(
+                &mut records,
+                &token,
+                SCOPE_REFLECTIONS_WEEKLY_OBSIDIAN_WRITE
+            ),
             VerifyResult::Ok { .. }
         ));
-        for scope in [SCOPE_DREAMS_OBSIDIAN_WRITE, SCOPE_RECALL_READ, SCOPE_MEMORY_WRITE, SCOPE_PROVIDER_CALL, SCOPE_CHANNEL_SEND] {
-            assert!(matches!(verify_token_for_scope(&mut records, &token, scope), VerifyResult::InsufficientScope { .. }));
+        for scope in [
+            SCOPE_DREAMS_OBSIDIAN_WRITE,
+            SCOPE_RECALL_READ,
+            SCOPE_MEMORY_WRITE,
+            SCOPE_PROVIDER_CALL,
+            SCOPE_CHANNEL_SEND,
+        ] {
+            assert!(matches!(
+                verify_token_for_scope(&mut records, &token, scope),
+                VerifyResult::InsufficientScope { .. }
+            ));
             let (other, other_token) = make_token(&[scope]);
             assert!(matches!(
-                verify_token_for_scope(&mut [other], &other_token, SCOPE_REFLECTIONS_WEEKLY_OBSIDIAN_WRITE),
+                verify_token_for_scope(
+                    &mut [other],
+                    &other_token,
+                    SCOPE_REFLECTIONS_WEEKLY_OBSIDIAN_WRITE
+                ),
                 VerifyResult::InsufficientScope { .. }
             ));
         }

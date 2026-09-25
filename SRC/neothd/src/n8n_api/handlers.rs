@@ -59,13 +59,13 @@ pub struct MemoryDriftRequest {
 mod calendar_agenda;
 mod calendar_route;
 mod dream_obsidian_sync;
-mod reflection_weekly_obsidian_sync;
 mod email_threat;
 mod paperless_consult;
 mod paperless_findings;
 mod pending_drafts;
 mod pending_proposals;
 mod permission_audit;
+mod reflection_weekly_obsidian_sync;
 
 /// `/api/stats` payload — high-level counts the n8n weekly_stats
 /// workflow renders into a markdown digest.

@@ -113,7 +113,9 @@ jobs:
 
       - name: Check exact Linux-quality workspace Clippy
         if: ${{ inputs.workspace_clippy }}
-        timeout-minutes: 30
+        # The successful Core614 gate took 28m20s; Core309 hit 30m without
+        # compiler diagnostics. Keep the same check with enough hosted time.
+        timeout-minutes: 45
         working-directory: SRC
         run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -D warnings
 

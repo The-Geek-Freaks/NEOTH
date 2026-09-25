@@ -1,0 +1,9 @@
+{
+  "schema": "neoth-group-selection-repair/v1",
+  "run": 36102657276,
+  "source": "d4836aa47b8b1ede1451895ba46508966b933666",
+  "failure": "Missing native source identity for existing required_scope_for_all_mapped_routes_return_some",
+  "repair": "Add existing test to universal native matrix1941;Group1730 unchanged",
+  "testExecution": false,
+  "localExecutableValidationRan": false
+}

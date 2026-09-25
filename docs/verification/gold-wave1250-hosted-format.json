@@ -1,0 +1,59 @@
+{
+  "schema": "neoth-gold-hosted-format/v1",
+  "run": 36102634027,
+  "source": "d4836aa47b8b1ede1451895ba46508966b933666",
+  "zipSha256": "f7e272010cbc32185184514ed216ac2aed8fc9dc847dbe60e534a65e74b52efc",
+  "files": [
+    {
+      "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+      "preimage_blob": "7aeb45e50c0b621d9addac5174f91eaf9e9b65c0",
+      "historical_sha256": "3697601b8566810a01802038719c989ebba871a9c2721cdc386af701471da6ff",
+      "postimage_blob": "d3c5b264b3bfd24e01c5ea007b0c964eddc6a9a0",
+      "preimage_matches": true
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers.rs",
+      "preimage_blob": "7e02cfd2196f5dc8323d8e499e4ee651da9be18e",
+      "historical_sha256": "36851f5e87c93b98e340ad500190df64affe0bec2608ad9bb7879405a2e0dd0e",
+      "postimage_blob": "87561717fb5bdaeb5eb9b05bcbc66f59c24cee0d",
+      "preimage_matches": true
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers/reflection_weekly_obsidian_worker_tests.rs",
+      "preimage_blob": "6dc9ed7b435e52a3368515408425519feda9909b",
+      "historical_sha256": "a7d2420be683c137c6d88763291fb8ba23c17507b9cdde1986f1ad763012a1cb",
+      "postimage_blob": "af119b91f46c5d981a6b783627166d35a889e265",
+      "preimage_matches": true
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/reflection_weekly_obsidian_http_tests.rs",
+      "preimage_blob": "05daeebfba02990c71f11e18c166bbe8565dee37",
+      "historical_sha256": "8babdb60c473add1d89e3878c6dfcd9af7aa3dc6bd3f0e7ea26a4fb86f920b18",
+      "postimage_blob": "34b49fae117b25b2c00211f2dc1e932ae5cef8dc",
+      "preimage_matches": true
+    },
+    {
+      "path": "SRC/neothd/src/reflection/weekly_archive.rs",
+      "preimage_blob": "4ba866a7bace40fc756b0b252d0500a44c1bbc23",
+      "historical_sha256": "aac599d4957a940cd77c96e056b1461a931941b19ac4edd49431d8d37c19a0a8",
+      "postimage_blob": "9f79c405ac6d19f494bf9b616912cb8dbe04459a",
+      "preimage_matches": true
+    },
+    {
+      "path": "SRC/neothd/src/reflection/weekly_obsidian.rs",
+      "preimage_blob": "987d7382eda74e57a96d59e9c95555c8e3b8c4b7",
+      "historical_sha256": "7166eb1aeacdef750cafd2647e3ca6dcab81bcc65aa47b2bad2b0124a3e1ba00",
+      "postimage_blob": "9e2aa00a439dabbb12359c314453bbc3a5ca425c",
+      "preimage_matches": true
+    },
+    {
+      "path": "SRC/neothd/src/security/api_tokens.rs",
+      "preimage_blob": "001bb0f1eaad40c73c0a8afbbadaf2f95e0a0b7d",
+      "historical_sha256": "ddd8485d83b4e98bdd5ed023428a9e62446ed04abd323705071b09fc1b90d29a",
+      "postimage_blob": "2132d8f9d999855f51349af30ce29404b582a284",
+      "preimage_matches": true
+    }
+  ],
+  "status": "ROOT_APPLIED_EXACT_HOSTED_POSTIMAGES",
+  "localFormatterRan": false
+}
