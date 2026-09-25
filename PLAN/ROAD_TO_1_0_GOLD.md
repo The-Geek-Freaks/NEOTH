@@ -8,6 +8,23 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1524 real Restore-canary credential-scope repair (2026-09-25):**
+Product36170124679 at0f9e62a6 reached Ready install and13 real imported workflows,
+but failed at the initial credential-list observer before any Restore command.
+Original artifact10878944907 ZIP/API digest, receipt and39 source/input bindings
+verify. Docker cleanup passed; full home/secret cleanup did not. The canonical
+NEOTH key intentionally has only workflow:list/create/read; the new observer
+requires credential:list and its dummy fixture requires credential:create.
+The canary now mints a separate fixture-only key through the existing owned
+owner session, with bounded loopback requests and stdin-only secrets. Product
+bootstrap scopes are unchanged, canonical key preservation is rechecked, and
+all credential-helper operations use only the fixture key. Expanded helper
+cases cover exact secret references, request shape and malformed responses.
+Hosted product rerun required. Native corrected-source Group36171648346 and
+Windows36171651908 run at5bc24162; Core36171655499 is queued after Backup Core.
+ROAD and all selections unchanged; no local executable validation or closure.
+Evidence: docs/verification/gold-wave1524-restore-canary-scopes.json.
+
 **W1522/W1523/W1525/W1527 Restore candidate corrections (2026-09-25):**
 Group36170117870 and Windows36170121455 at0f9e62a6 failed before any test ran:
 E0283 in the candidate test helper. Passed the fixed string directly to JobId,

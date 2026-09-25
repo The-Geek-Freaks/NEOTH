@@ -1,0 +1,19 @@
+{
+  "run": 36170124679,
+  "source": "0f9e62a652746f00a0ff6df034a1f5ccafd8b95a",
+  "artifact": 10878944907,
+  "zipSha256": "1e3f58df62a0a89d33ac8f55c0bcd2f3327addb4c716ad8d505866b38e061c9d",
+  "receiptSha256": "243100D3EA9DECC089FFB232D44DE2C65CF3EEEB52433091DB521CEC2F49E40E",
+  "sourceBindings": 39,
+  "stage": "managed_n8n_zero_credential_stopped_backup",
+  "failure": "workflow_observer_request_failed",
+  "restoreCommandsExecuted": 0,
+  "dockerCleanupProven": true,
+  "cleanupProven": false,
+  "diagnosis": "Bootstrap key has workflow list/create/read only, whereas credential list/create require separate scopes. Restore did not run.",
+  "status": "STATIC_REVIEWED_CANARY_FIX_HOSTED_PENDING",
+  "repair": "Fixture-only credential:list/create key minted through exact owned owner session; production bootstrap scopes and canonical key unchanged; credentials never logged or persisted by helper",
+  "reviewSha256": "2BAD4D8006AC9AE7CBC3258CBAB0BB732B31AF859C2CB94C77C1F853C918F42D",
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

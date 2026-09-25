@@ -18,6 +18,7 @@ PRODUCT_CONFIG_MAX = 256 * 1024
 RESTORE_CREDENTIAL_NAME = "neoth-restore-decrypt-fixture"
 RESTORE_CREDENTIAL_HEADER = "X-NEOTH-Restore-Fixture"
 RESTORE_CREDENTIAL_VALUE = "neoth-restore-dummy"
+RESTORE_API_KEY_CLIENT = r"""const fs=require('fs');(async()=>{const x=JSON.parse(fs.readFileSync(0,'utf8'));if(!['login','mint'].includes(x.op))throw Error('op');let p=x.op==='login'?'/rest/login':'/rest/api-keys';let h={'content-type':'application/json','browser-id':x.browserId};if(x.cookie)h.cookie=x.cookie;let o={method:'POST',headers:h,redirect:'manual'};if(x.op==='login')o.body=JSON.stringify({emailOrLdapLoginId:x.email,password:x.password});if(x.op==='mint')o.body=JSON.stringify({label:x.label,scopes:['credential:list','credential:create'],expiresAt:null});let ac=new AbortController(),t=setTimeout(()=>ac.abort(),5000),r=await fetch('http://127.0.0.1:5678'+p,{...o,signal:ac.signal}),rd=r.body.getReader(),a=[],n=0;for(;;){let q=await rd.read();if(q.done)break;n+=q.value.length;if(n>8192)throw Error('body');a.push(q.value)}clearTimeout(t);let b=Buffer.concat(a).toString('utf8');process.stdout.write(JSON.stringify({status:r.status,cookie:r.headers.get('set-cookie')||'',body:JSON.parse(b)}));})().catch(()=>process.exit(23));"""
 INSTALL_FAILURE_CODES = (
     "n8n_bootstrap_runtime_finalize_unproven", "n8n_loopback_health_timeout",
     "n8n_adoption_cancelled", "n8n_postcommit_probe_failed", "n8n_probe_timeout",
@@ -562,6 +563,54 @@ def create_restore_fixture_credential(port: int, key: bytes) -> None:
             or any(ord(character) < 32 or ord(character) == 127 for character in identifier)):
         raise Failure("credential_fixture_create_invalid")
 
+def bootstrap_secret(job: str, kind: str) -> str:
+    if not JOB.fullmatch(job) or kind not in {"owner-password", "browser-id"}:
+        raise Failure("restore_scope_secret_reference_invalid")
+    value = run(["secret-tool", "lookup", "neoth-key", f"n8n-bootstrap.{kind}.{job}"], timeout=10).rstrip(b"\n")
+    if not 8 <= len(value) <= 8192 or any(byte < 32 or byte == 127 for byte in value):
+        raise Failure("restore_scope_secret_unavailable")
+    try:
+        return value.decode("utf-8", "strict")
+    except UnicodeDecodeError as error:
+        raise Failure("restore_scope_secret_unavailable") from error
+
+def restore_scope_reply(runtime_id: str, payload: dict) -> dict:
+    if not ID.fullmatch(runtime_id) or payload.get("op") not in {"login", "mint"}:
+        raise Failure("restore_scope_request_invalid")
+    raw = run_with_payload(
+        ["docker", "exec", "-i", "-u", "node", runtime_id, "node", "--no-warnings", "-e", RESTORE_API_KEY_CLIENT],
+        json.dumps(payload, separators=(",", ":")).encode("utf-8"), timeout=20,
+    )
+    value = read_json_bytes(raw)
+    if set(value) != {"status", "cookie", "body"} or value.get("status") != 200 or not isinstance(value.get("cookie"), str) or not isinstance(value.get("body"), dict) or "data" not in value["body"]:
+        raise Failure("restore_scope_response_invalid")
+    return value
+
+def mint_restore_credential_key(job: str, runtime_id: str) -> bytes:
+    password = bootstrap_secret(job, "owner-password")
+    browser = bootstrap_secret(job, "browser-id")
+    login = restore_scope_reply(runtime_id, {
+        "op": "login", "browserId": browser,
+        "email": f"owner-{job[:8]}@invalid.test", "password": password,
+    })
+    cookie = login["cookie"].split(";", 1)[0]
+    if not cookie.startswith("n8n-auth=") or len(cookie) > 8192:
+        raise Failure("restore_scope_session_invalid")
+    minted = restore_scope_reply(runtime_id, {
+        "op": "mint", "browserId": browser, "cookie": cookie,
+        "label": f"neoth-restore-credential-{job}",
+    })
+    data = minted["body"].get("data")
+    if not isinstance(data, dict):
+        raise Failure("restore_scope_mint_invalid")
+    raw = data.get("rawApiKey")
+    if not isinstance(raw, str):
+        raise Failure("restore_scope_mint_invalid")
+    key = raw.encode("utf-8")
+    if not 8 <= len(key) <= 8192 or any(byte < 32 or byte == 127 for byte in key):
+        raise Failure("restore_scope_mint_invalid")
+    return key
+
 def restore_volume_name(job: str) -> str:
     if not JOB.fullmatch(job):
         raise Failure("restore_job_invalid")
@@ -986,6 +1035,10 @@ def main() -> int:
         canonical_key = canonical_n8n_api_key()
         if canonical_key != key:
             raise Failure("canonical_n8n_key_mismatch")
+        receipt["stage"] = "managed_n8n_restore_credential_key"
+        credential_key = mint_restore_credential_key(job, runtime_id)
+        if canonical_n8n_api_key() != canonical_key:
+            raise Failure("canonical_n8n_key_changed")
         first_workflows = observe_imported_workflows(args.port, key, templates)
         first_custody = observe_workflow_custody(home, import_job, first_workflows["entries"])
         first_import_job = observe_import_job(home, import_job)
@@ -1005,7 +1058,7 @@ def main() -> int:
         # zero-credential restore case before adding the disposable decrypt
         # fixture used by the later non-empty archive.
         receipt["stage"] = "managed_n8n_zero_credential_stopped_backup"
-        if observe_credential_count(args.port, canonical_key) != 0:
+        if observe_credential_count(args.port, credential_key) != 0:
             raise Failure("zero_credential_source_not_empty")
         run(["docker", "container", "stop", runtime_id])
         assert_runtime_running(runtime_id, False)
@@ -1035,7 +1088,7 @@ def main() -> int:
         assert_runtime_running(runtime_id, True)
         if (authenticated_probe(job, args.port) != receipt["http_probe"]
                 or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
-                or observe_credential_count(args.port, canonical_key) != 0):
+                or observe_credential_count(args.port, credential_key) != 0):
             raise Failure("zero_backup_api_or_workflow_persistence_unproven")
         receipt["backup_zero_credential"] = {
             "job_id": zero_backup_job, "job_row_sha256": zero_backup_record["row_sha256"],
@@ -1079,8 +1132,8 @@ def main() -> int:
             "restore_volume_sha256": hashlib.sha256(zero_restore_volume.encode()).hexdigest(),
         }
         receipt["stage"] = "managed_n8n_restore_fixture_credential"
-        create_restore_fixture_credential(args.port, canonical_key)
-        if observe_credential_count(args.port, canonical_key) != 1:
+        create_restore_fixture_credential(args.port, credential_key)
+        if observe_credential_count(args.port, credential_key) != 1:
             raise Failure("credential_fixture_count_invalid")
         receipt["stage"] = "managed_n8n_full_backup"
         backup_raw = run([str(binary), "--output", "json", "n8n", "backup"])
@@ -1146,7 +1199,7 @@ def main() -> int:
                 or canonical_n8n_api_key() != canonical_key
                 or authenticated_probe(job, args.port) != receipt["http_probe"]
                 or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
-                or observe_credential_count(args.port, canonical_key) != 1):
+                or observe_credential_count(args.port, credential_key) != 1):
             raise Failure("restore_live_mutation")
         receipt["restore_credential"] = {
             "job_id": restore_job, "job_row_sha256": restore_record["row_sha256"],

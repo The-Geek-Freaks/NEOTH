@@ -137,6 +137,67 @@ class ProductRestoreReceiptTests(unittest.TestCase):
         )
 
 
+class RestoreCredentialKeyTests(unittest.TestCase):
+    job = "12345678-1234-7234-8234-123456789abc"
+    runtime = "a" * 64
+
+    def test_mints_only_a_bounded_credential_scoped_owner_key(self) -> None:
+        login = {"status": 200, "cookie": "n8n-auth=session; Path=/; HttpOnly", "body": {"data": {}}}
+        minted = {"status": 200, "cookie": "", "body": {"data": {"rawApiKey": "restore-key"}}}
+        with patch.object(canary, "run", side_effect=[b"owner-password\n", b"browser-id\n"]) as lookup, patch.object(
+            canary, "run_with_payload", side_effect=[json.dumps(login).encode(), json.dumps(minted).encode()]
+        ) as client:
+            self.assertEqual(canary.mint_restore_credential_key(self.job, self.runtime), b"restore-key")
+
+        self.assertEqual(
+            [entry.args[0] for entry in lookup.call_args_list],
+            [
+                ["secret-tool", "lookup", "neoth-key", f"n8n-bootstrap.owner-password.{self.job}"],
+                ["secret-tool", "lookup", "neoth-key", f"n8n-bootstrap.browser-id.{self.job}"],
+            ],
+        )
+        login_payload = json.loads(client.call_args_list[0].args[1])
+        mint_payload = json.loads(client.call_args_list[1].args[1])
+        self.assertEqual(login_payload, {
+            "op": "login", "browserId": "browser-id",
+            "email": "owner-12345678@invalid.test", "password": "owner-password",
+        })
+        self.assertEqual(mint_payload, {
+            "op": "mint", "browserId": "browser-id", "cookie": "n8n-auth=session",
+            "label": f"neoth-restore-credential-{self.job}",
+        })
+        self.assertIn("/rest/login", canary.RESTORE_API_KEY_CLIENT)
+        self.assertIn("/rest/api-keys", canary.RESTORE_API_KEY_CLIENT)
+        self.assertIn("['credential:list','credential:create']", canary.RESTORE_API_KEY_CLIENT)
+        self.assertIn("expiresAt:null", canary.RESTORE_API_KEY_CLIENT)
+
+    def test_mint_rejects_invalid_session_or_key(self) -> None:
+        cases = (
+            ({"status": 200, "cookie": "other=session", "body": {"data": {}}}, None, "restore_scope_session_invalid"),
+            ({"status": 200, "cookie": "n8n-auth=session", "body": {"data": {}}}, {"status": 200, "cookie": "", "body": {"data": {}}}, "restore_scope_mint_invalid"),
+            ({"status": 200, "cookie": "n8n-auth=session", "body": {"data": {}}}, {"status": 200, "cookie": "", "body": {"data": []}}, "restore_scope_mint_invalid"),
+            ({"status": 200, "cookie": "n8n-auth=session", "body": {"data": {}}}, {"status": 200, "cookie": "", "body": {"data": {"rawApiKey": "short"}}}, "restore_scope_mint_invalid"),
+        )
+        for login, minted, error in cases:
+            with self.subTest(error=error), patch.object(canary, "bootstrap_secret", side_effect=["owner-password", "browser-id"]), patch.object(
+                canary, "restore_scope_reply", side_effect=[login] if minted is None else [login, minted]
+            ):
+                with self.assertRaisesRegex(canary.Failure, error):
+                    canary.mint_restore_credential_key(self.job, self.runtime)
+
+    def test_restore_scope_reply_rejects_wrong_status_or_shape(self) -> None:
+        valid_payload = {"op": "login", "browserId": "browser", "email": "owner@example.invalid", "password": "password"}
+        invalid = (
+            {"status": 201, "cookie": "n8n-auth=session", "body": {"data": {}}},
+            {"status": 200, "cookie": "n8n-auth=session", "body": []},
+            {"status": 200, "cookie": "n8n-auth=session", "body": {}},
+        )
+        for reply in invalid:
+            with self.subTest(reply=reply), patch.object(canary, "run_with_payload", return_value=json.dumps(reply).encode()):
+                with self.assertRaisesRegex(canary.Failure, "restore_scope_response_invalid"):
+                    canary.restore_scope_reply(self.runtime, valid_payload)
+
+
 class ProductReceiptTests(unittest.TestCase):
     def test_product_output_requires_ready_and_nonempty_job(self) -> None:
         job = "12345678-1234-7234-8234-123456789abc"
