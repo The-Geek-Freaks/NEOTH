@@ -40,7 +40,7 @@ use crate::installers::{
     paperless_staging::{PaperlessStagingView, prepare_at},
 };
 use crate::paperless::{self, OcrSyncOutcome, consult::consult, quarantine};
-use crate::security::paperless_ingest::{IngestError, OcrSource, ingest_ocr_text};
+use crate::security::paperless_ingest::{IngestError, OcrSource, ingest_ocr_text, ingest_ocr_text_at};
 
 // serde_json used for quarantine show serialisation.
 use serde_json;
@@ -295,7 +295,8 @@ pub fn run_paperless(args: PaperlessArgs) -> Result<()> {
                 }
             };
             let source = parse_source(&source)?;
-            let outcome = ingest_to_vault(&doc_id, &raw_text, source, &vault, &args.subdir)?;
+            let home = neoth_home_path();
+            let outcome = ingest_to_vault_at(&home, &doc_id, &raw_text, source, &vault, &args.subdir)?;
             println!(
                 "ingested {doc_id} → {} ({} bytes)",
                 outcome.target_path.display(),
@@ -352,6 +353,26 @@ pub fn ingest_to_vault(
     Ok(outcome)
 }
 
+/// Home-bound production entry point. A sanitizer quarantine with a threat
+/// finding is durably recorded under this exact NEOTH instance before the
+/// quarantine reaches the operator; a persistence failure returns before any
+/// vault write is attempted.
+pub fn ingest_to_vault_at(
+    home: &std::path::Path,
+    doc_id: &str,
+    raw_text: &str,
+    source: OcrSource,
+    vault: &std::path::Path,
+    subdir: &str,
+) -> Result<OcrSyncOutcome> {
+    let payload = ingest_ocr_text_at(home, raw_text, source, doc_id)
+        .map_err(format_production_ingest_error)
+        .context("SC-16 sanitizer gate")?;
+    let outcome = paperless::sync_ocr_to_obsidian(&payload, vault, subdir)
+        .with_context(|| format!("write vault note for {doc_id}"))?;
+    Ok(outcome)
+}
+
 fn format_ingest_error(e: IngestError) -> anyhow::Error {
     match e {
         IngestError::Quarantined {
@@ -359,11 +380,32 @@ fn format_ingest_error(e: IngestError) -> anyhow::Error {
             document_id,
             findings,
             raw_input_hash,
+            ..
         } => anyhow::anyhow!(
             "quarantined doc {document_id} from {} (hash {}): {findings:?}",
             ocr_source.as_str(),
             raw_input_hash,
         ),
+    }
+}
+
+fn format_production_ingest_error(error: anyhow::Error) -> anyhow::Error {
+    match error.downcast::<IngestError>() {
+        Ok(IngestError::Quarantined {
+            ocr_source,
+            document_id,
+            findings,
+            raw_input_hash,
+            ..
+        }) => {
+            let tags = crate::security::paperless_ingest::redacted_finding_kinds(&findings);
+            anyhow::anyhow!(
+                "quarantined doc {document_id} from {} (hash {raw_input_hash}): {}",
+                ocr_source.as_str(),
+                tags.join(", "),
+            )
+        }
+        Err(_) => anyhow::anyhow!("paperless quarantine persistence failed"),
     }
 }
 
@@ -658,6 +700,44 @@ mod tests {
         let body = std::fs::read_to_string(&outcome.target_path).unwrap();
         assert!(body.contains("doc_id: \"doc-001\""));
         assert!(body.contains("Acme Co"));
+    }
+
+    #[test]
+    fn explicit_home_clean_vault_ingest_creates_no_finding() {
+        let home = tempfile::tempdir().unwrap();
+        let vault = tempfile::tempdir().unwrap();
+        let outcome = ingest_to_vault_at(
+            home.path(),
+            "clean-producer-001",
+            "Invoice text from Acme Co",
+            OcrSource::PaperlessNgx,
+            vault.path(),
+            "NEOTH",
+        )
+        .expect("clean production ingest");
+        assert!(outcome.target_path.exists());
+
+        let recent = crate::paperless::findings::recent_at(home.path(), 0, 10).unwrap();
+        assert_eq!(recent.total, 0);
+        assert!(recent.findings.is_empty());
+        assert!(!recent.truncated);
+    }
+
+    #[test]
+    fn production_cli_quarantine_error_redacts_private_marker_pattern() {
+        const PRIVATE_PATTERN: &str = "PRIVATE-OCR-MARKER-DO-NOT-EMIT";
+        let error = format_production_ingest_error(anyhow::Error::new(IngestError::Quarantined {
+            ocr_source: OcrSource::PaperlessNgx,
+            document_id: "redaction-cli-001".to_string(),
+            findings: vec![crate::security::ingress_sanitizer::Finding::PromptInjectionMarker {
+                pattern: PRIVATE_PATTERN.to_string(),
+            }],
+            raw_input_hash: "0123456789abcdef".to_string(),
+            ts_unix: 1,
+        }));
+        let rendered = error.to_string();
+        assert!(rendered.contains("prompt_injection_marker"));
+        assert!(!rendered.contains(PRIVATE_PATTERN));
     }
 
     #[test]

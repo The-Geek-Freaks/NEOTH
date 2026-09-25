@@ -63,6 +63,7 @@ fn required_scope_for(method: &str, path: &str) -> Option<&'static str> {
         ("POST", "/api/email/drafts/pending") => Some(api_tokens::SCOPE_DRAFTS_READ),
         ("POST", "/api/permissions/audit") => Some(api_tokens::SCOPE_PERMISSIONS_READ),
         ("POST", "/api/calendar/agenda") => Some(api_tokens::SCOPE_CALENDAR_READ),
+        ("POST", "/api/paperless/findings/recent") => Some(api_tokens::SCOPE_PAPERLESS_FINDINGS_READ),
         ("POST", "/api/memory/save") => Some(api_tokens::SCOPE_MEMORY_WRITE),
         ("POST", "/api/provider/call") => Some(api_tokens::SCOPE_PROVIDER_CALL),
         ("POST", "/api/channel/send") => Some(api_tokens::SCOPE_CHANNEL_SEND),
@@ -743,6 +744,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn loopback_paperless_findings_requires_scope_and_returns_redacted_instance_records() {
+        let home = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let (record, token) = api_tokens::create_token(
+            "findings-reader",
+            vec![api_tokens::SCOPE_PAPERLESS_FINDINGS_READ.to_owned()],
+            None,
+        )
+        .unwrap();
+        let (wrong_record, wrong_token) = api_tokens::create_token(
+            "recall-reader",
+            vec![api_tokens::SCOPE_RECALL_READ.to_owned()],
+            None,
+        )
+        .unwrap();
+        api_tokens::save_store(home.path(), &[record, wrong_record]).unwrap();
+        for (instance, document_id) in [(home.path(), "local-doc"), (other.path(), "other-doc")] {
+            crate::paperless::findings::record_quarantine_at(
+                instance,
+                crate::security::paperless_ingest::OcrSource::PaperlessNgx,
+                document_id,
+                "0123456789abcdef",
+                &[crate::security::ingress_sanitizer::Finding::PromptInjectionMarker {
+                    pattern: "private-marker-must-not-export".to_owned(),
+                }],
+                42,
+            )
+            .unwrap();
+        }
+        let (state, writer, wal_join, server, shutdown, port) =
+            start_drift_http_test_server(home.path()).await;
+        let path = "/api/paperless/findings/recent";
+        let denied = post_test_http(port, path, Some(&wrong_token), "{not-json").await;
+        assert_eq!(denied["_http_status"], "403");
+        let allowed = post_test_http(port, path, Some(&token), r#"{"since_unix":42}"#).await;
+        assert_eq!(allowed["_http_status"], "200");
+        assert_eq!(allowed["data"]["coverage"], "recorded_quarantines_only");
+        assert_eq!(allowed["data"]["total"], 1);
+        assert_eq!(allowed["data"]["truncated"], false);
+        assert_eq!(allowed["data"]["findings"][0]["document_id"], "local-doc");
+        assert_eq!(
+            allowed["data"]["findings"][0]["finding_kinds"],
+            serde_json::json!(["prompt_injection_marker"])
+        );
+        let serialized = allowed.to_string();
+        assert!(!serialized.contains("private-marker"));
+        assert!(!serialized.contains("other-doc"));
+        for body in [
+            "{not-json",
+            r#"{}"#,
+            r#"{"since_unix":0,"limit":0}"#,
+            r#"{"since_unix":0,"limit":101}"#,
+            r#"{"since_unix":0,"home":"other-instance"}"#,
+        ] {
+            let invalid = post_test_http(port, path, Some(&token), body).await;
+            assert_eq!(invalid["_http_status"], "400", "{body}");
+        }
+        stop_drift_http_test_server(state, writer, wal_join, server, shutdown).await;
+    }
+
+    #[tokio::test]
+    async fn loopback_paperless_findings_distinguishes_absence_from_corrupt_evidence() {
+        let home = tempfile::tempdir().unwrap();
+        let (record, token) = api_tokens::create_token(
+            "findings-reader",
+            vec![api_tokens::SCOPE_PAPERLESS_FINDINGS_READ.to_owned()],
+            None,
+        )
+        .unwrap();
+        api_tokens::save_store(home.path(), &[record]).unwrap();
+        let (state, writer, wal_join, server, shutdown, port) =
+            start_drift_http_test_server(home.path()).await;
+        let path = "/api/paperless/findings/recent";
+        let empty = post_test_http(port, path, Some(&token), r#"{"since_unix":0}"#).await;
+        assert_eq!(empty["_http_status"], "200");
+        assert_eq!(empty["data"]["total"], 0);
+        let directory = home.path().join("paperless_findings");
+        assert!(!directory.exists());
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(directory.join("findings-v1.json"), "private-corrupt-content").unwrap();
+        let error = post_test_http(port, path, Some(&token), r#"{"since_unix":0}"#).await;
+        assert_eq!(error["_http_status"], "503");
+        assert_eq!(error["error"]["message"], "paperless_findings_store_unavailable");
+        assert!(!error.to_string().contains("private-corrupt-content"));
+        assert!(!error.to_string().contains(home.path().to_string_lossy().as_ref()));
+        stop_drift_http_test_server(state, writer, wal_join, server, shutdown).await;
+    }
+
+    #[tokio::test]
     async fn loopback_pending_proposals_requires_dedicated_scope() {
         let home = tempfile::tempdir().unwrap();
         let (proposal_record, proposal_token) = api_tokens::create_token(
@@ -1045,6 +1135,7 @@ mod tests {
             ("POST", "/api/email/drafts/pending"),
             ("POST", "/api/permissions/audit"),
             ("POST", "/api/calendar/agenda"),
+            ("POST", "/api/paperless/findings/recent"),
             ("POST", "/api/memory/save"),
             ("POST", "/api/provider/call"),
             ("POST", "/api/channel/send"),

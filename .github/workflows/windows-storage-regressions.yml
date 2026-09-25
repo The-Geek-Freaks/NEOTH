@@ -453,6 +453,22 @@ jobs:
           n8n_api::handlers::calendar_route::tests::granted_account_reads_once_and_revocation_denies_next_request	neothd/src/n8n_api/handlers/calendar_route.rs
           n8n_api::handlers::calendar_route::tests::transport_errors_are_redacted_and_missing_account_is_unavailable	neothd/src/n8n_api/handlers/calendar_route.rs
           n8n_api::server::tests::loopback_calendar_agenda_requires_scope_before_body_and_account_grant	neothd/src/n8n_api/server.rs
+          paperless::findings::tests::clean_and_non_threat_findings_do_not_create_a_store	neothd/src/paperless/findings.rs
+          paperless::findings::tests::durable_bytes_and_response_are_redacted	neothd/src/paperless/findings.rs
+          paperless::findings::tests::records_are_isolated_by_explicit_home	neothd/src/paperless/findings.rs
+          paperless::findings::tests::concurrent_writers_do_not_lose_records	neothd/src/paperless/findings.rs
+          paperless::findings::tests::corrupt_or_unknown_store_fails_closed	neothd/src/paperless/findings.rs
+          paperless::findings::tests::enforces_cap_and_query_limits_without_eviction	neothd/src/paperless/findings.rs
+          paperless::findings::tests::recent_filter_is_inclusive_and_newest_first_with_a_stable_tie_breaker	neothd/src/paperless/findings.rs
+          paperless::webhook::tests::production_webhook_quarantine_redacts_private_marker_pattern	neothd/src/paperless/webhook.rs
+          paperless::webhook_server::tests::quarantine_persistence_failure_returns_fixed_500_and_writes_no_vault_note	neothd/src/paperless/webhook_server.rs
+          paperless::webhook_server::tests::webhook_request_cannot_choose_a_different_findings_home	neothd/src/paperless/webhook_server.rs
+          security::paperless_ingest::tests::explicit_home_production_helper_records_prompt_injection_quarantine	neothd/src/security/paperless_ingest.rs
+          security::paperless_ingest::tests::redacted_finding_kind_tags_never_include_private_marker_patterns	neothd/src/security/paperless_ingest.rs
+          cli::paperless::tests::explicit_home_clean_vault_ingest_creates_no_finding	neothd/src/cli/paperless.rs
+          cli::paperless::tests::production_cli_quarantine_error_redacts_private_marker_pattern	neothd/src/cli/paperless.rs
+          n8n_api::server::tests::loopback_paperless_findings_requires_scope_and_returns_redacted_instance_records	neothd/src/n8n_api/server.rs
+          n8n_api::server::tests::loopback_paperless_findings_distinguishes_absence_from_corrupt_evidence	neothd/src/n8n_api/server.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -469,7 +485,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 383 ]]; then
+          if [[ "$expected" -ne 399 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -555,7 +571,7 @@ jobs:
             fi
           else
             compile_status=64
-            printf 'selection is not the required 383 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 399 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

@@ -77,6 +77,8 @@ pub const SCOPE_RECALL_READ: &str = "recall:read";
 pub const SCOPE_PROPOSALS_READ: &str = "proposals:read";
 /// Read authenticated permission-decision audit metadata.
 pub const SCOPE_PERMISSIONS_READ: &str = "permissions:read";
+/// Read recorded Paperless quarantine threat metadata, without OCR text.
+pub const SCOPE_PAPERLESS_FINDINGS_READ: &str = "paperless:findings:read";
 /// Read stats.
 pub const SCOPE_STATS_READ: &str = "stats:read";
 /// Write to memory (POST /api/memory/save). Implies recall:read.
@@ -93,6 +95,7 @@ pub const ALL_SCOPES: &[&str] = &[
     SCOPE_CHANNEL_SEND,
     SCOPE_DRAFTS_READ,
     SCOPE_MEMORY_WRITE,
+    SCOPE_PAPERLESS_FINDINGS_READ,
     SCOPE_PERMISSIONS_READ,
     SCOPE_PROPOSALS_READ,
     SCOPE_PROVIDER_CALL,

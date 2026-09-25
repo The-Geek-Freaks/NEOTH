@@ -35,7 +35,12 @@ pub(crate) struct PaperlessVolumeSpec {
     pub(crate) destination: &'static str,
 }
 
-pub(crate) const PAPERLESS_VOLUMES: [PaperlessVolumeSpec; 4] = [
+pub(crate) const PAPERLESS_VOLUMES: [PaperlessVolumeSpec; 6] = [
+    PaperlessVolumeSpec {
+        logical_name: "paperless_consume",
+        service: "webserver",
+        destination: "/usr/src/paperless/consume",
+    },
     PaperlessVolumeSpec {
         logical_name: "paperless_data",
         service: "webserver",
@@ -45,6 +50,11 @@ pub(crate) const PAPERLESS_VOLUMES: [PaperlessVolumeSpec; 4] = [
         logical_name: "paperless_media",
         service: "webserver",
         destination: "/usr/src/paperless/media",
+    },
+    PaperlessVolumeSpec {
+        logical_name: "paperless_export",
+        service: "webserver",
+        destination: "/usr/src/paperless/export",
     },
     PaperlessVolumeSpec {
         logical_name: "paperless_valkey",
@@ -336,7 +346,7 @@ fn env_example_bytes() -> &'static [u8] {
     b"# Copy to paperless.env and set every value outside NEOTH.\nPAPERLESS_SECRET_KEY=\nPAPERLESS_DB_NAME=\nPAPERLESS_DB_USER=\nPAPERLESS_DB_PASSWORD=\nPAPERLESS_ADMIN_USER=\nPAPERLESS_ADMIN_PASSWORD=\nPAPERLESS_BIND_PORT=\n"
 }
 fn compose_bytes() -> &'static [u8] {
-    b"services:\n  webserver:\n    image: ghcr.io/paperless-ngx/paperless-ngx@sha256:5fa76604a81df6945086e0837b14b56543d137e8ce4f311cc5d9ebe907e74e79\n    environment:\n      PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY:?PAPERLESS_SECRET_KEY is required}\n      PAPERLESS_DBNAME: ${PAPERLESS_DB_NAME:?PAPERLESS_DB_NAME is required}\n      PAPERLESS_DBUSER: ${PAPERLESS_DB_USER:?PAPERLESS_DB_USER is required}\n      PAPERLESS_DBPASS: ${PAPERLESS_DB_PASSWORD:?PAPERLESS_DB_PASSWORD is required}\n      PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER:?PAPERLESS_ADMIN_USER is required}\n      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD:?PAPERLESS_ADMIN_PASSWORD is required}\n      PAPERLESS_REDIS: redis://broker:6379\n      PAPERLESS_DBHOST: db\n    ports:\n      - \"127.0.0.1:${PAPERLESS_BIND_PORT:?PAPERLESS_BIND_PORT is required}:8000\"\n    volumes:\n      - paperless_data:/usr/src/paperless/data\n      - paperless_media:/usr/src/paperless/media\n  broker:\n    image: registry-1.docker.io/valkey/valkey@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11\n    volumes:\n      - paperless_valkey:/data\n  db:\n    image: registry-1.docker.io/library/postgres@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae\n    environment:\n      POSTGRES_DB: ${PAPERLESS_DB_NAME:?PAPERLESS_DB_NAME is required}\n      POSTGRES_USER: ${PAPERLESS_DB_USER:?PAPERLESS_DB_USER is required}\n      POSTGRES_PASSWORD: ${PAPERLESS_DB_PASSWORD:?PAPERLESS_DB_PASSWORD is required}\n    volumes:\n      - paperless_postgres:/var/lib/postgresql\nvolumes:\n  paperless_data:\n  paperless_media:\n  paperless_valkey:\n  paperless_postgres:\n"
+    b"services:\n  webserver:\n    image: ghcr.io/paperless-ngx/paperless-ngx@sha256:5fa76604a81df6945086e0837b14b56543d137e8ce4f311cc5d9ebe907e74e79\n    environment:\n      PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY:?PAPERLESS_SECRET_KEY is required}\n      PAPERLESS_DBNAME: ${PAPERLESS_DB_NAME:?PAPERLESS_DB_NAME is required}\n      PAPERLESS_DBUSER: ${PAPERLESS_DB_USER:?PAPERLESS_DB_USER is required}\n      PAPERLESS_DBPASS: ${PAPERLESS_DB_PASSWORD:?PAPERLESS_DB_PASSWORD is required}\n      PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER:?PAPERLESS_ADMIN_USER is required}\n      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD:?PAPERLESS_ADMIN_PASSWORD is required}\n      PAPERLESS_REDIS: redis://broker:6379\n      PAPERLESS_DBHOST: db\n    ports:\n      - \"127.0.0.1:${PAPERLESS_BIND_PORT:?PAPERLESS_BIND_PORT is required}:8000\"\n    volumes:\n      - paperless_consume:/usr/src/paperless/consume\n      - paperless_data:/usr/src/paperless/data\n      - paperless_media:/usr/src/paperless/media\n      - paperless_export:/usr/src/paperless/export\n  broker:\n    image: registry-1.docker.io/valkey/valkey@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11\n    volumes:\n      - paperless_valkey:/data\n  db:\n    image: registry-1.docker.io/library/postgres@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae\n    environment:\n      POSTGRES_DB: ${PAPERLESS_DB_NAME:?PAPERLESS_DB_NAME is required}\n      POSTGRES_USER: ${PAPERLESS_DB_USER:?PAPERLESS_DB_USER is required}\n      POSTGRES_PASSWORD: ${PAPERLESS_DB_PASSWORD:?PAPERLESS_DB_PASSWORD is required}\n    volumes:\n      - paperless_postgres:/var/lib/postgresql\nvolumes:\n  paperless_consume:\n  paperless_data:\n  paperless_media:\n  paperless_export:\n  paperless_valkey:\n  paperless_postgres:\n"
 }
 
 pub(crate) fn expected_compose_bytes() -> &'static [u8] {

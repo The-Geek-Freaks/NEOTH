@@ -74,9 +74,11 @@ pub async fn run_webhook(args: WebhookArgs) -> Result<()> {
                 );
             }
             let vault_root = vault.unwrap_or_else(default_vault_path);
+            let home = neoth_home_path();
             let handle = spawn_webhook_server(WebhookServerConfig {
                 bind_addr: bind,
                 vault_root: vault_root.clone(),
+                home,
                 bearer_token,
             })
             .await
@@ -103,6 +105,20 @@ fn default_vault_path() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
     home.join("Documents").join("NEOTH-Vault")
+}
+
+/// Resolve the daemon instance once at startup. The webhook request schema
+/// intentionally has no home field, so every quarantine record stays bound to
+/// this configured instance.
+fn neoth_home_path() -> PathBuf {
+    if let Ok(path) = std::env::var("NEOTH_HOME") {
+        return PathBuf::from(path);
+    }
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    home.join(".neoth")
 }
 
 #[cfg(test)]

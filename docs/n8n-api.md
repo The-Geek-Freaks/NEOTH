@@ -64,6 +64,8 @@ Enforcement layers (all active by default):
 | `/api/stats` | GET | — | `{events_total, provider_requests, channel_inbound, channel_outbound}` |
 | `/api/memory/drift` | POST | `{limit?}` | `{drifting: [...], imminent_count, at_risk_count, stable_count}` |
 | `/api/proactive/proposals/pending` | POST | `{limit?, min_age_secs?}` | `{pending: [...], total}` (pending proposal metadata only) |
+| `/api/calendar/agenda` | POST | `{timezone, day, limit?}` | Supported local-day events, conflicts and explicit truncation |
+| `/api/paperless/findings/recent` | POST | `{since_unix, limit?}` | `{coverage, since_unix, findings: [...], total, truncated}` |
 | `/api/memory/save` | POST | `{kind, body, tags?}` | `{stored, bytes}` (writes a RAW_TEXT WAL frame) |
 | `/api/provider/call` | POST | `{prompt, system?, model?, incognito?}` | `{completion, model}` (authenticated operator communication profile + authorized provider leaf) |
 | `/api/channel/send` | POST | `{channel, recipient, text}` | `{queued}` (writes a CHANNEL_EGRESS WAL frame; adapter dispatch via the broker) |
@@ -75,8 +77,8 @@ text, so a scoped token needs `recall:read`; `stats:read` alone is insufficient.
 The handler does not create or migrate a database. A missing projection returns
 `StoreUnavailable` (503). The usual HTTP request audit still applies.
 
-The inactive `memory_decay_report` starter uses this route. The other eight
-generated starters still disclose their unavailable adapters; their presence
+The inactive `memory_decay_report` starter uses this route. Starters whose
+adapters remain unavailable disclose that limitation; their presence
 in the thirteen-workflow catalog does not prove those routes work. Use an n8n
 HTTP Header Auth credential containing the appropriate bearer token.
 
@@ -92,6 +94,45 @@ Draft configuration, rationale and operator notes stay out of this API. The
 inactive `proposal_review_reminder` starter selects proposals at least 24 hours
 old. Reading a reminder does not approve or apply a proposal. Tokens for recall
 or statistics do not grant access to this endpoint.
+
+`/api/calendar/agenda` requires `calendar:read` and a separate account-bound
+CalDAV read grant, managed with `neoth calendar read-access grant`, `status`
+and `revoke`. The grant binds the configured collection, username and password;
+changing any of those values requires a new grant. This route reads the API
+instance's credentials without environment fallback. Revocation denies later
+read admissions; a bounded read already admitted may finish.
+
+Supply an IANA timezone such as `Europe/Berlin`, a day such as `2026-09-25`,
+and an optional limit from 1 to 100 (default 20). Supported UTC/offset and
+all-day events are projected onto that local day. Recurring, floating and TZID
+events fail explicitly instead of producing an incomplete agenda. The inactive
+`calendar_morning_agenda` starter includes an editable `calendarTimezone`.
+
+`/api/paperless/findings/recent` requires `paperless:findings:read` and reads
+only the current API instance's recorded threat quarantines. `since_unix` is
+an inclusive Unix timestamp in seconds. `limit` defaults to 20 and must be
+between 1 and 100. Results are newest first with deterministic tie ordering;
+`total` counts all matches before truncation. Unknown request fields, including
+a supplied `home`, are rejected.
+
+Records contain `occurred_unix`, `document_id`, `ocr_source`, `raw_input_hash`
+and fixed `finding_kinds`. OCR text and sanitizer marker patterns are omitted.
+Only `prompt_injection_marker` and `persona_override_attempt` are retained.
+The coverage value is always `recorded_quarantines_only`: this is not a scan
+of historical documents or an inventory of every sanitizer diagnostic.
+
+The CLI and webhook record these findings before returning a threat quarantine.
+A storage failure prevents a vault write; the webhook returns a fixed 500
+diagnostic. The private store has a hard cap of 1,000 records and 1 MiB, with
+no automatic eviction. A missing store reads as empty without creation;
+corrupt existing evidence returns `StoreUnavailable` (503). Reaching capacity
+requires local operator attention and is not silently treated as successful
+recording.
+
+The inactive `paperless_threat_alert` starter reads the last 15 minutes with
+a limit of 20. Its name does not imply alert delivery: it only reads metadata.
+It has no delivery cursor or replay guarantee; missed runs and truncated
+responses require operator review.
 
 ---
 

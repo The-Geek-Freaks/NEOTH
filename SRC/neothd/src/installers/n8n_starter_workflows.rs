@@ -150,6 +150,17 @@ fn build_workflow_skeleton(
             }),
             "Implemented POST /api/email/drafts/pending requires drafts:read and returns pending draft reminder metadata at least 48 hours old. Recipient address, brief, signature and snippets stay in NEOTH; this workflow does not review, send or discard drafts.",
         )
+    } else if slug == "paperless_threat_alert" {
+        (
+            serde_json::json!({
+                "url": url, "method": method,
+                "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth",
+                "sendBody": true, "contentType": "json", "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify({ since_unix: Math.floor($now.minus({ minutes: 15 }).toSeconds()), limit: 20 }) }}",
+                "options": {}
+            }),
+            "Implemented POST /api/paperless/findings/recent requires paperless:findings:read and returns recorded_quarantines_only since the explicit 15-minute cutoff. This inactive scheduled read does not alert, deliver, quarantine, or take any automatic action; it does not guarantee full historical coverage or delivery.",
+        )
     } else if slug == "consent_audit_export" {
         (
             serde_json::json!({
@@ -370,10 +381,10 @@ const STARTER_SPECS: &[StarterSpec] = &[
     StarterSpec {
         slug: "paperless_threat_alert",
         name: "Paperless prompt-injection alert",
-        description: "Unavailable adapter: intended PL-04 paperless prompt-injection alert workflow.",
+        description: "Read recorded Paperless quarantines from the last 15 minutes; inactive by default and does not send alerts or take action.",
         cron: "*/15 * * * *",
-        endpoint: "/paperless/findings/recent",
-        method: "GET",
+        endpoint: "/api/paperless/findings/recent",
+        method: "POST",
     },
     StarterSpec {
         slug: "drafts_pending_review",
@@ -664,6 +675,14 @@ mod tests {
                         .as_str()
                         .is_some_and(|notes| notes.contains("requires proposals:read"))
                 );
+            } else if w.slug == "paperless_threat_alert" {
+                assert_eq!(http["parameters"]["method"], "POST");
+                assert_eq!(http["parameters"]["sendBody"], true);
+                assert_eq!(http["parameters"]["contentType"], "json");
+                assert_eq!(http["parameters"]["specifyBody"], "json");
+                assert_eq!(http["parameters"]["jsonBody"], "={{ JSON.stringify({ since_unix: Math.floor($now.minus({ minutes: 15 }).toSeconds()), limit: 20 }) }}");
+                assert_eq!(v["active"], false);
+                assert!(http["notes"].as_str().is_some_and(|notes| notes.contains("requires paperless:findings:read") && notes.contains("recorded_quarantines_only") && notes.contains("does not alert")));
             } else if w.slug == "consent_audit_export" {
                 assert_eq!(http["parameters"]["method"], "POST");
                 assert_eq!(http["parameters"]["sendBody"], true);

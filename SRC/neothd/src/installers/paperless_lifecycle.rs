@@ -1417,6 +1417,13 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join(",");
+        assert_eq!(
+            paperless_staging::PAPERLESS_VOLUMES
+                .iter()
+                .filter(|volume| volume.service == image.service)
+                .count(),
+            4
+        );
         let inspect = |mounts: &str| {
             format!(
                 r#"{{"Id":"id","Image":"sha256:config","State":{{"Running":true}},"Config":{{"Labels":{{"com.docker.compose.project":"project","com.docker.compose.service":"webserver"}}}},"NetworkSettings":{{"Ports":{{"8000/tcp":[{{"HostIp":"127.0.0.1","HostPort":"18000"}}]}}}},"Mounts":[{mounts}]}}"#
@@ -1430,6 +1437,17 @@ mod tests {
                 "project",
                 18000,
                 &inspect(&valid_mounts.replacen("project_paperless_data", "foreign", 1)),
+            )
+            .is_err()
+        );
+        assert!(
+            verify_container(
+                &image,
+                "project",
+                18000,
+                &inspect(&format!(
+                    r#"{valid_mounts},{{"Type":"volume","Name":"anonymous-image-volume","Destination":"/usr/src/paperless/consume"}}"#
+                )),
             )
             .is_err()
         );

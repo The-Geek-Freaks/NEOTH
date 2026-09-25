@@ -1,0 +1,60 @@
+{
+  "schema": "neoth-gold-static-review/v1",
+  "base": "f2030a009b616511d0e6ae668c779f2f7f299340",
+  "wave": "W1172",
+  "review": "W1169 APPROVE_STATIC_ONLY, root verified every current source hash",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/paperless/findings.rs",
+      "workingTreeSha256": "A994A478374B80F1A571D493971503EE11FF4CD7820D8A67992BAF85D56A8811"
+    },
+    {
+      "path": "SRC/neothd/src/paperless/mod.rs",
+      "workingTreeSha256": "1F2110359C751ED152DA9CE63D51CEA194064CF35F2A8B1499F5AD42EF9DA13C"
+    },
+    {
+      "path": "SRC/neothd/src/paperless/webhook.rs",
+      "workingTreeSha256": "376652811964B372F0190DAA1512D64632D31F0C75044E3646CC36DCCEC2DA82"
+    },
+    {
+      "path": "SRC/neothd/src/paperless/webhook_server.rs",
+      "workingTreeSha256": "85095A66AA8E31676856FA8CD1FD0BEA822D8BD6F35276D9FA62590AADA3D8EC"
+    },
+    {
+      "path": "SRC/neothd/src/security/paperless_ingest.rs",
+      "workingTreeSha256": "90439069A23EC5FEEE0896592DE6378C4A51363769BBDCFB29A6A6FDC829746B"
+    },
+    {
+      "path": "SRC/neothd/src/cli/paperless.rs",
+      "workingTreeSha256": "4C6789A6DE4392D729AD37EE6C8B1C8FED10FBC589295DD6FE9B7A3DA0FBCCD4"
+    },
+    {
+      "path": "SRC/neothd/src/cli/webhook.rs",
+      "workingTreeSha256": "E4CF9E203C5C7AB892CB2C2FE3A853046E15506A00578D7883B54D051EF4916A"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers/paperless_findings.rs",
+      "workingTreeSha256": "94910105A95F31BB4ADE1BF972AC893562D708D7D8AB5A2001CA656BE329858C"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers.rs",
+      "workingTreeSha256": "C7B4C4ED8477F99B4D1C419F8EB41D387D5FDE09B13D6AFCB179BFF37B4C3121"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/server.rs",
+      "workingTreeSha256": "7E837357C525805892631547DF23975521A5CAAC3A21E45392F083F7CCF2748B"
+    },
+    {
+      "path": "SRC/neothd/src/security/api_tokens.rs",
+      "workingTreeSha256": "9D1F7AE512B5F3278A85D1172F550B69631DBF8399B42A91EB1AAB1FB914F8A3"
+    },
+    {
+      "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+      "workingTreeSha256": "A3AE20A57A2CE76A47FC5CB9FB25D3DB753BE39085C2B4DFF6C9860C8DBB3759"
+    }
+  ],
+  "newPortableTests": 16,
+  "scope": "Threat-only durable metadata; explicit instance-home producers; redacted quarantine responses; scoped recent read API and inactive n8n starter",
+  "hosted": "pending",
+  "localExecutableValidationRan": false
+}

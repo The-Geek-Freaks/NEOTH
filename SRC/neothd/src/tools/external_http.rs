@@ -815,11 +815,7 @@ impl ExternalHttpAuthorizer {
     /// The permit is cryptographically bound to the exact request. This helper
     /// exists solely for lifecycle fixtures; real outbound HTTP cannot enter
     /// through it.
-    async fn execute<F, Fut, T>(
-        &self,
-        request: ExternalHttpRequest,
-        network: F,
-    ) -> Result<T>
+    async fn execute<F, Fut, T>(&self, request: ExternalHttpRequest, network: F) -> Result<T>
     where
         F: FnOnce(ExternalHttpPermit) -> Fut,
         Fut: Future<Output = Result<T>>,

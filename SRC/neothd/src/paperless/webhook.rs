@@ -25,7 +25,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::sync_ocr_to_obsidian;
-use crate::security::paperless_ingest::{IngestError, OcrSource, ingest_ocr_text};
+use crate::security::paperless_ingest::{IngestError, OcrSource, ingest_ocr_text, ingest_ocr_text_at, redacted_finding_kinds};
 
 /// JSON body of `POST /paperless/ingest`. n8n + future channel
 /// adapters serialise this verbatim.
@@ -61,6 +61,9 @@ pub enum IngestStatus {
     /// Caller-side error — unknown source, unsafe doc_id, etc.
     /// `error_kind = "bad_request"`.
     BadRequest,
+    /// The sanitizer quarantined a threat payload, but its mandatory finding
+    /// record could not be persisted. No vault output was written.
+    PersistenceFailed,
 }
 
 /// JSON response from `POST /paperless/ingest`.
@@ -117,6 +120,17 @@ impl IngestResponse {
             findings,
         }
     }
+
+    pub fn persistence_failed(doc_id: String) -> Self {
+        Self {
+            status: IngestStatus::PersistenceFailed,
+            doc_id,
+            target_path: None,
+            error_kind: Some("quarantine_persistence_failed".to_string()),
+            error_message: Some("paperless quarantine persistence failed".to_string()),
+            findings: Vec::new(),
+        }
+    }
 }
 
 /// Parse the snake_case source tag into the typed enum.
@@ -154,7 +168,10 @@ pub fn handle_ingest(request: &IngestRequest, vault_root: &Path) -> IngestRespon
             document_id,
             ..
         }) => {
-            let finding_strs: Vec<String> = findings.iter().map(|f| format!("{f:?}")).collect();
+            let finding_strs = redacted_finding_kinds(&findings)
+                .into_iter()
+                .map(str::to_string)
+                .collect();
             return IngestResponse::quarantined(
                 document_id,
                 "SC-16 sanitizer halted the payload".to_string(),
@@ -171,6 +188,56 @@ pub fn handle_ingest(request: &IngestRequest, vault_root: &Path) -> IngestRespon
         Err(e) => {
             IngestResponse::bad_request(request.doc_id.clone(), format!("vault write failed: {e}"))
         }
+    }
+}
+
+/// Home-bound webhook producer. Unlike [`handle_ingest`], this production
+/// helper records a threat quarantine under the configured instance home.
+/// The home is supplied by daemon configuration, never by request JSON.
+pub fn handle_ingest_at(
+    request: &IngestRequest,
+    vault_root: &Path,
+    home: &Path,
+) -> IngestResponse {
+    if request.doc_id.is_empty() {
+        return IngestResponse::bad_request(request.doc_id.clone(), "doc_id is required");
+    }
+    if request.text.is_empty() {
+        return IngestResponse::bad_request(request.doc_id.clone(), "text is required");
+    }
+
+    let source = match parse_source(&request.source) {
+        Ok(source) => source,
+        Err(error) => return IngestResponse::bad_request(request.doc_id.clone(), error),
+    };
+    let payload = match ingest_ocr_text_at(home, &request.text, source, request.doc_id.clone()) {
+        Ok(payload) => payload,
+        Err(error) => match error.downcast::<IngestError>() {
+            Ok(IngestError::Quarantined {
+                findings,
+                document_id,
+                ..
+            }) => IngestResponse::quarantined(
+                document_id,
+                "SC-16 sanitizer halted the payload".to_string(),
+                redacted_finding_kinds(&findings)
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+            ),
+            Err(_) => IngestResponse::persistence_failed(request.doc_id.clone()),
+        },
+    };
+
+    match sync_ocr_to_obsidian(&payload, vault_root, &request.subdir) {
+        Ok(outcome) => IngestResponse::ok(
+            outcome.doc_id,
+            outcome.target_path.to_string_lossy().to_string(),
+        ),
+        Err(error) => IngestResponse::bad_request(
+            request.doc_id.clone(),
+            format!("vault write failed: {error}"),
+        ),
     }
 }
 
@@ -319,6 +386,24 @@ mod tests {
         // No vault dir created.
         let paperless_dir = vault.path().join("NEOTH").join("Paperless");
         assert!(!paperless_dir.exists());
+    }
+
+    #[test]
+    fn production_webhook_quarantine_redacts_private_marker_pattern() {
+        const PRIVATE_PATTERN: &str = "PRIVATE-OCR-MARKER-DO-NOT-EMIT";
+        let response = IngestResponse::quarantined(
+            "redaction-webhook-001".to_string(),
+            "SC-16 sanitizer halted the payload".to_string(),
+            redacted_finding_kinds(&[crate::security::ingress_sanitizer::Finding::PromptInjectionMarker {
+                pattern: PRIVATE_PATTERN.to_string(),
+            }])
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        );
+        let encoded = serde_json::to_string(&response).unwrap();
+        assert!(encoded.contains("prompt_injection_marker"));
+        assert!(!encoded.contains(PRIVATE_PATTERN));
     }
 
     #[test]

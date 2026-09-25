@@ -1,0 +1,32 @@
+{
+  "schema": "neoth-gold-static-review/v1",
+  "base": "f2030a009b616511d0e6ae668c779f2f7f299340",
+  "wave": "W1170-W1173",
+  "review": "W1173 APPROVE_STATIC_ONLY, root verified every current source hash",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_staging.rs",
+      "workingTreeSha256": "B2F2C9B1D23E4AE532707D8BB1618CB15657EE11792E3FFE71A66AF8665ED9BD"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "workingTreeSha256": "BE76B76DB21046D203439BC7DB3461D7701EF6D3F27B77162FABF08378404693"
+    },
+    {
+      "path": "packaging/paperless_product_canary.py",
+      "workingTreeSha256": "7AB64272AFB67CA08AC47DB8835660E0B6A0C4A8573B2143A4C1B724074898FF"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "workingTreeSha256": "44C40DD80B20801D3F270E925CC2F910E2FA22D92D8A6B0D9FBC9F875456AF66"
+    }
+  ],
+  "failureRun": 36089956116,
+  "failureArtifact": 10845094108,
+  "failureZipSha256": "32A734C8B63C19FEE2CB23672501BA2815B80484F87512AB344C3A1F8408320C",
+  "historicalInputsVerified": 12,
+  "outcome": "prior run failed public install mount validation; cleanup not proven",
+  "repair": "All six expected volumes explicitly owned; exact mount verification unchanged; canary full-six-volume acceptance and duplicate/missing rejection",
+  "hosted": "pending",
+  "localExecutableValidationRan": false
+}

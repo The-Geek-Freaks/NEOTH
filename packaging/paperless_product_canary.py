@@ -27,8 +27,10 @@ IMAGES = {
     "db": "registry-1.docker.io/library/postgres@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae",
 }
 VOLUMES = (
+    ("paperless_consume", "webserver", "/usr/src/paperless/consume"),
     ("paperless_data", "webserver", "/usr/src/paperless/data"),
     ("paperless_media", "webserver", "/usr/src/paperless/media"),
+    ("paperless_export", "webserver", "/usr/src/paperless/export"),
     ("paperless_valkey", "broker", "/data"),
     ("paperless_postgres", "db", "/var/lib/postgresql"),
 )
@@ -211,7 +213,7 @@ def validate_install(value: dict, port: int) -> tuple[str, dict[str, str], tuple
     if value.get("schema_version") != 1 or value.get("operation") != "install" or value.get("loopback_port") != port or value.get("authenticated_api_ready") is not True:
         raise Failure("install_json_invalid")
     images, containers, volumes = require(value, "images", list), require(value, "containers", list), require(value, "volumes", list)
-    if len(images) != 3 or len(containers) != 3 or len(volumes) != 4:
+    if len(images) != len(IMAGES) or len(containers) != len(IMAGES) or len(volumes) != len(VOLUMES):
         raise Failure("install_json_shape_invalid")
     config_ids: dict[str, str] = {}
     for item in images:
@@ -223,14 +225,17 @@ def validate_install(value: dict, port: int) -> tuple[str, dict[str, str], tuple
         if not isinstance(item, dict) or item.get("service") not in config_ids or not isinstance(item.get("id"), str) or not IDENTIFIER.fullmatch(item["id"]) or item.get("image_id") != config_ids[item["service"]]:
             raise Failure("container_receipt_invalid")
         ids.append(item["id"])
-    names = []
+    expected_logical_names = {logical for logical, _, _ in VOLUMES}
+    names: dict[str, str] = {}
     for item in volumes:
-        if not isinstance(item, dict) or item.get("logical_name") not in {x[0] for x in VOLUMES} or item.get("project") != project or not isinstance(item.get("name"), str):
+        logical_name = item.get("logical_name") if isinstance(item, dict) else None
+        name = item.get("name") if isinstance(item, dict) else None
+        if not isinstance(item, dict) or not isinstance(logical_name, str) or logical_name not in expected_logical_names or logical_name in names or item.get("project") != project or not isinstance(name, str) or name != f"{project}_{logical_name}":
             raise Failure("volume_receipt_invalid")
-        names.append(item["name"])
-    if len(set(ids)) != 3 or len(set(names)) != 4 or len(config_ids) != 3:
+        names[logical_name] = name
+    if len(set(ids)) != len(IMAGES) or len(config_ids) != len(IMAGES) or set(names) != expected_logical_names:
         raise Failure("lifecycle_identity_duplicate")
-    return project, config_ids, tuple(ids + names)
+    return project, config_ids, tuple(ids + [names[logical] for logical, _, _ in VOLUMES])
 
 
 def admitted_images() -> dict[str, tuple[str, str]]:
@@ -398,7 +403,7 @@ def main() -> int:
         if (second_project, second_configs, second_ids) != (project, config_ids, identities):
             raise Failure("repeat_install_changed_identities")
         receipt["repeat_api"] = verify_api(args.port, configured_token(home))
-        receipt.update({"project_sha256": hashlib.sha256(project.encode()).hexdigest(), "images": len(config_ids), "containers": 3, "volumes": 4, "repeat_install_preserved_identities": True, "status_ready": True})
+        receipt.update({"project_sha256": hashlib.sha256(project.encode()).hexdigest(), "images": len(config_ids), "containers": 3, "volumes": 6, "repeat_install_preserved_identities": True, "status_ready": True})
         receipt["outcome"] = "passed"
     except Exception as error:
         receipt["failure_stage"] = str(error) if isinstance(error, Failure) else "unexpected"

@@ -2,6 +2,35 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1172 durable Paperless findings and owned image volumes (2026-09-25):**
+Paperless CLI/webhook ingestion now records threat quarantines in a private,
+instance-bound atomic store before returning quarantine. Only fixed threat
+categories, document ID, source, time and the existing input hash are retained;
+OCR text and marker patterns are excluded. Clean inputs create no findings
+store. Capacity is bounded to1,000 records/1MiB without silent eviction;
+corruption or a failed write remains an error and prevents vault output.
+POST /api/paperless/findings/recent requires paperless:findings:read, accepts
+strict since_unix/limit input and reads only the configured API home. Its
+coverage is recorded_quarantines_only. The inactive n8n starter reads the
+last15minutes; it supplies neither alert delivery nor historical replay.
+W1169 independent review caught and repaired the move/borrow pattern and
+producer diagnostic leakage.16 new portable regressions cover persistence,
+redaction, concurrent writers, home isolation, HTTP scope and corrupt state:
+Native1841/Group1622/Windows399; existing platform extras remain unchanged.
+Root verified all12 historical input hashes plus the API ZIP for real
+Paperless run36089956116@f2030a00. It reached public installation but failed
+paperless_container_volume_mount_mismatch; cleanup was not proven. The pinned
+image declares consume/export as well as data/media. W1170 now explicitly owns
+all four webserver volumes plus Valkey/Postgres (six total), preserving exact
+mount rejection and old-preparation migration refusal. W1173 caught and repaired
+a stale four-volume canary guard; the helper validates the exact six identities.
+W1166 imports the sole external_http formatter change after source/ZIP/inner
+hash checks. Group36089951615 failed on stale generated CLI documentation;
+the existing Core exporter is still running and its actual output is required.
+All new behavioral and real-install claims await fresh GitHub gates. Claude032
+remains assigned without ACK/result. No roadmap checkbox closes, and no local
+compiler, formatter, parser, tests, Docker or product runtime ran.
+
 **W1165 exact hosted build repairs (2026-09-25):**
 The first339d15ee Core and Paperless canary builds failed on the same E0308:
 ContainedChild::wait_until accepts std::time::Instant, so the retained Compose
