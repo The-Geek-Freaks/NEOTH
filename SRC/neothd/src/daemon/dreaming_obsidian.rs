@@ -346,7 +346,7 @@ fn error_is_not_found(error: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    use crate::test_env::canonical_tempdir as tempdir;
 
     fn dream(day: &str, theme: &str, summary: &str) -> super::super::dreaming::Dream {
         super::super::dreaming::Dream {

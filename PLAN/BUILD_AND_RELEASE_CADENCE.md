@@ -3,6 +3,29 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1236 canonical weekly archive and restart reconciliation (2026-09-25):**
+The real weekly cron now freezes one immutable intent before archive/queue effects,
+atomically appends its producer-keyed WeeklyReflection while preserving legacy
+bytes, and saves the weekly admission receipt together with the queue item.
+Receipts survive drain/drop; retries do not recreate already admitted items.
+Missing/changed current topics cannot replace established input. Oldest unfinished
+intents are recovered before the cadence gate, including Sunday-to-Monday/year
+rollover, with one bounded queue read and one recovery per tick. The archive lock
+spans intent/archive/queue/state; no queue lock is held across archive I/O.
+Malformed/truncated/linked input, conflicts and record/read budgets fail closed;
+published durability-unknown stops before queue and is reconciled by a fresh read.
+Independent staging remains best effort; admission does not claim channel delivery.
+W1231's rollover blocker is fixed and statically re-reviewed; Claude038 reproduced
+it independently and039 requests the repair check. Ten real cron-path tests cover
+failure/recovery, drain, legacy conflict, no-source/window and fresh staging.
+Thirty new cases (28universal/2unix), plus three previously unselected Group
+legacy cases:Native1919/Group1706/Windows478; Linux extras67/macOS62. Root also
+uses the existing canonical private temp helper in checked weekly/Dream tests.
+Hosted execution is pending; no weekly sync endpoint or roadmap closure claimed.
+Docs: docs/weekly-reflection-archive.md; gold-wave1236-weekly-review.json.
+Core614 completed successfully; its artifact admission is pending. Core309 runs.
+Road remains1077done/245open/2partial; no local executable validation ran.
+
 **W1235 Dream hosted behavior and product acceptance (2026-09-25):**
 Root independently admitted Group1673 at3099747e:1673passed/0failed/0missing,
 290 historical bindings and all ordered actual test terminals. Windows446 at

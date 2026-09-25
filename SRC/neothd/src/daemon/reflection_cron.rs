@@ -94,6 +94,7 @@ fn read_bounded_state_file(
         }
         Err(error) => Err(format!("read {label} {}: {error:#}", path.display())),
     }
+
 }
 
 // ── GOLD-ADAPT-OH-07: SubconsciousTickState ──────────────────────────────────
@@ -278,9 +279,48 @@ pub fn run_reflection_tick_once(
 ) -> Result<bool, String> {
     use crate::proactive::ProactiveQueue;
     use crate::reflection::{build_reflection_item, top_topics_last_7_days};
+    use crate::reflection::weekly_archive::{
+        open_weekly_archive_session, WeeklyArchiveAppendOutcome, WeeklyArchiveCandidate,
+    };
 
-    // GOLD-ADAPT-OH-07: window gate — suppress if we emitted recently.
-    if min_window_secs > 0 {
+    let iso_week_tag = iso_week_tag_from_unix(now_unix);
+    // One retained archive guard serializes rollover recovery through archive,
+    // queue receipt and state publication without holding the queue lock over
+    // archive I/O.
+    let mut archive = open_weekly_archive_session(home, &iso_week_tag)
+        .map_err(|error| format!("open weekly reflection archive session: {error:#}"))?;
+    let queue_path = home.join("proactive_queue.json");
+    let established_intents = archive
+        .list_established_intents_through(&iso_week_tag)
+        .map_err(|error| format!("inventory weekly reflection intents: {error:#}"))?;
+    // Inspect all receipts in one bounded queue load. The queue guard is
+    // released before selecting or writing an archive record.
+    let pending_week = if established_intents.is_empty() {
+        None
+    } else {
+        ProactiveQueue::modify(&queue_path, |queue| {
+            let pending = (|| -> anyhow::Result<Option<String>> {
+                for candidate in &established_intents {
+                    let item = candidate.to_proactive_item(candidate.generated_ts_unix);
+                    if !queue.weekly_reflection_receipt_matches(&item, &candidate.producer_key)? {
+                        return Ok(Some(candidate.iso_week_tag.clone()));
+                    }
+                }
+                Ok(None)
+            })();
+            (false, pending)
+        })
+        .map_err(|error| format!("read weekly reflection receipts: {error:#}"))?
+        .map_err(|error| format!("validate weekly reflection receipts: {error:#}"))?
+    };
+    let rollover = pending_week
+        .as_deref()
+        .map(|week| archive.select_established_week_through(week, &iso_week_tag))
+        .transpose()
+        .map_err(|error| format!("select weekly reflection recovery intent: {error:#}"))?;
+
+    // Existing backlog is recovery authority and bypasses the cadence window.
+    if rollover.is_none() && min_window_secs > 0 {
         let state = load_tick_state(home)?;
         if state.last_emitted_unix > 0 {
             let elapsed = now_unix.saturating_sub(state.last_emitted_unix) as u64;
@@ -290,39 +330,70 @@ pub fn run_reflection_tick_once(
         }
     }
 
-    let views_path = home.join("views.db");
-    if !views_path.exists() {
-        // Fresh install — no episodes yet, nothing to reflect on.
-        // Quiet no-op so the cron doesn't spam the log every tick
-        // during the wizard's first week.
-        return Ok(false);
-    }
-    let conn = crate::memory::store::open(&views_path)
-        .map_err(|e| format!("views.db open failed: {e}"))?;
-    let now_ns = now_unix.saturating_mul(1_000_000_000);
-    let topics = top_topics_last_7_days(&conn, now_ns, 3)
-        .map_err(|e| format!("top_topics query failed: {e}"))?;
+    let established = rollover.or(archive
+        .load_existing_intent()
+        .map_err(|error| format!("load weekly reflection intent: {error:#}"))?);
 
-    let iso_week_tag = iso_week_tag_from_unix(now_unix);
-    let item = match build_reflection_item(&iso_week_tag, &topics, now_unix) {
-        Some(i) => i,
-        None => {
-            // Empty topics → no vacuous nudge. Return cleanly.
+    let (intent, current_topics) = if let Some(intent) = established {
+        // Staging is independent from durable weekly settlement. A missing or
+        // unreadable current source cannot block an established intent retry.
+        let current_topics = if home.join("views.db").exists() {
+            match crate::memory::store::open(&home.join("views.db")).and_then(|conn| {
+                top_topics_last_7_days(&conn, now_unix.saturating_mul(1_000_000_000), 3)
+            }) {
+                Ok(topics) => Some(topics),
+                Err(error) => {
+                    warn!(error = %error, "reflection cron: staged-observation topic read failed (non-fatal)");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        (intent, current_topics)
+    } else {
+        let views_path = home.join("views.db");
+        if !views_path.exists() {
             return Ok(false);
         }
+        let conn = crate::memory::store::open(&views_path)
+            .map_err(|error| format!("views.db open failed: {error}"))?;
+        let now_ns = now_unix.saturating_mul(1_000_000_000);
+        let topics = top_topics_last_7_days(&conn, now_ns, 3)
+            .map_err(|error| format!("top_topics query failed: {error}"))?;
+        let Some(item) = build_reflection_item(&iso_week_tag, &topics, now_unix) else {
+            return Ok(false);
+        };
+        let intent = archive
+            .load_or_create_intent(WeeklyArchiveCandidate {
+                generated_ts_unix: now_unix,
+                topics: topics.clone(),
+                body: item.body,
+            })
+            .map_err(|error| format!("persist weekly reflection intent: {error:#}"))?;
+        (intent, Some(topics))
     };
 
-    let queue_path = home.join("proactive_queue.json");
-    // Always persist (dirty=true) — same as the old code which called save_to
-    // unconditionally regardless of whether enqueue deduped the item.
-    let enqueued = ProactiveQueue::modify(&queue_path, |queue| {
-        let result = queue.enqueue(item);
-        (result.is_ok(), result)
+    let archive_outcome = archive
+        .append_once(&intent)
+        .map_err(|error| format!("append weekly reflection archive: {error:#}"))?;
+    if matches!(archive_outcome, WeeklyArchiveAppendOutcome::ArchivedDurabilityUnknown) {
+        return Err(
+            "weekly reflection archive publication durability is unknown; retry must rescan the established intent".to_string(),
+        );
+    }
+    let item = intent.to_proactive_item(intent.generated_ts_unix);
+    let enqueued = ProactiveQueue::modify(&queue_path, |queue| match queue
+        .enqueue_weekly_reflection_once(&item, &intent.producer_key)
+    {
+        Ok(inserted) => (inserted, Ok(inserted)),
+        Err(error) => (false, Err(error)),
     })
-    .map_err(|e| format!("queue load/save failed: {e}"))?
-    .map_err(|e| format!("reflection proactive enqueue rejected: {e:#}"))?;
+    .map_err(|error| format!("weekly reflection queue reconcile failed: {error:#}"))?
+    .map_err(|error| format!("weekly reflection queue conflict: {error:#}"))?;
 
-    // Queue persistence is the delivery commit. Persist the replay gate even
+    // Queue persistence is durable producer admission, not external delivery.
+    // Persist the replay gate even
     // when enqueue deduped: that is the recovery path after a crash/error
     // between the prior queue save and tick-state save. Requiring a fresh
     // insertion here would leave state missing forever and recompute every tick.
@@ -338,8 +409,9 @@ pub fn run_reflection_tick_once(
     // when the queue dedup already has this week's item (the observation is
     // an independent surface-only record, not a delivery-queue item). The
     // operator reads staged observations via `neoth proactive intelligence`.
-    if let Some(obs) =
-        crate::reflection::build_reflection_observation(&iso_week_tag, &topics, now_unix)
+    if let Some(obs) = current_topics.as_ref().and_then(|topics| {
+        crate::reflection::build_reflection_observation(&iso_week_tag, topics, now_unix)
+    })
         && let Err(e) = crate::reflection::append_staged_observation(home, &obs)
     {
         warn!(
@@ -2182,3 +2254,6 @@ mod tests {
         );
     }
 }
+
+#[path = "reflection_cron_weekly_tests.rs"]
+mod weekly_archive_tests;

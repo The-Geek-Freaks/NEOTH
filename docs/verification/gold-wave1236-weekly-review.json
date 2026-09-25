@@ -1,0 +1,57 @@
+{
+  "schema": "neoth-weekly-archive-review/v1",
+  "base": "3219228c5fee5b7cb61007c9f87efa3cd6a85626",
+  "status": "ROOT_AND_INDEPENDENT_STATIC_REVIEWED_HOSTED_PENDING",
+  "reviewPath": "work/gold-20260906/wave1231-weekly-review/REPORT.md",
+  "reviewSha256": "96AB88D695F73FA021296174D98B98AB89B714F3DF4EA3CC90F5A208905D4B2F",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/reflection/weekly_archive.rs",
+      "sha256": "A9A8C40E1FB91ADCB41A56F083F6068614FE4C8AEC2EC917022F7C50269DECCB"
+    },
+    {
+      "path": "SRC/neothd/src/reflection/mod.rs",
+      "sha256": "D730844EA6FC30827796B71F4108CC6CCB9304934B22A4BB185E611654BFB9B0"
+    },
+    {
+      "path": "SRC/neothd/src/proactive/mod.rs",
+      "sha256": "A472B2C1D9804AF18DFE00815D6C202356EC8537034EC9331A2140D9C5FE2583"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/reflection_cron.rs",
+      "sha256": "98FF754AB08BD7DD62A90CA28E7301526862509CBA9510E6CFDC33990FAF5845"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/reflection_cron_weekly_tests.rs",
+      "sha256": "266888D8183E58CA68A4C0DC5F91984CC03526FCC3A9994EBE361B4218FD13D2"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/dreaming_obsidian.rs",
+      "sha256": "9C4B4BD0FA7C176E7902492D2BE576B7598E5EDE98ED3E356D9B60BBA0E7EA17"
+    }
+  ],
+  "reviewResolutions": [
+    "Rollover gap fixed: bounded oldest existing intent before cadence, one queue receipt read, same archive session through settlement",
+    "Record limit checked before append; persisted intent must equal archive input",
+    "Frozen scheduled timestamp and independent best-effort staging preserved",
+    "Queue receipt atomically saved with enqueue and retained after drain/drop; admission does not prove delivery",
+    "Root corrected borrowed sentinel PathBuf and confined raw receipt lookup to tests",
+    "After independent review Root replaced temporary-directory aliases in weekly/Dream checked tests with existing canonical private helper for Windows/macOS path compatibility; no production delta"
+  ],
+  "tests": {
+    "groupedSelected": 1706,
+    "newUnix": 2,
+    "windowsSelected": 478,
+    "universalNative": 1919,
+    "actualCronCases": 10,
+    "new": 30,
+    "newUniversal": 28
+  },
+  "claude": {
+    "result038": "Independently reproduced missing rollover; Root treated as blocker and repaired",
+    "result039": "Narrow repair re-review requested; no response yet",
+    "result037": "Corrected false PeriodKind::Weekly claim"
+  },
+  "scope": "Weekly producer/archive/queue prerequisite only. No weekly n8n/Obsidian endpoint, no release or roadmap acceptance. Runtime tests pending on GitHub.",
+  "localExecutableValidationRan": false
+}

@@ -516,6 +516,38 @@ jobs:
           daemon::dreaming::tests::ob01_sync_overwrites_stale_existing_file	neothd/src/daemon/dreaming.rs
           daemon::dreaming::tests::ob01_sync_writes_atomic_no_dotfile_lingers	neothd/src/daemon/dreaming.rs
           daemon::dreaming::tests::ob01_sync_byte_count_matches_file_size	neothd/src/daemon/dreaming.rs
+          reflection::weekly_archive::tests::freezes_once_and_archives_once_with_legacy_records_preserved	neothd/src/reflection/weekly_archive.rs
+          reflection::weekly_archive::tests::preexisting_intent_is_recovery_authority	neothd/src/reflection/weekly_archive.rs
+          reflection::weekly_archive::tests::malformed_or_truncated_archive_fails_closed_without_rewrite	neothd/src/reflection/weekly_archive.rs
+          reflection::weekly_archive::tests::wrong_week_and_duplicate_producer_key_fail_closed	neothd/src/reflection/weekly_archive.rs
+          reflection::weekly_archive::tests::archive_record_cap_allows_replay_at_limit_but_rejects_a_new_line	neothd/src/reflection/weekly_archive.rs
+          reflection::weekly_archive::tests::published_unknowns_recover_by_reading_canonical_bytes	neothd/src/reflection/weekly_archive.rs
+          reflection::weekly_archive::tests::invalid_weeks_and_bounded_candidates_are_rejected	neothd/src/reflection/weekly_archive.rs
+          reflection::weekly_archive::tests::inventory_is_oldest_first_ignores_foreign_and_selects_without_relocking	neothd/src/reflection/weekly_archive.rs
+          reflection::weekly_archive::tests::inventory_rejects_malformed_owned_intent_and_oversized_read	neothd/src/reflection/weekly_archive.rs
+          reflection::weekly_archive::tests::inventory_enforces_aggregate_budget	neothd/src/reflection/weekly_archive.rs
+          daemon::reflection_cron::weekly_archive_tests::weekly_first_tick_archives_queues_and_persists_state	neothd/src/daemon/reflection_cron_weekly_tests.rs
+          daemon::reflection_cron::weekly_archive_tests::weekly_intent_only_retry_succeeds_without_database	neothd/src/daemon/reflection_cron_weekly_tests.rs
+          daemon::reflection_cron::weekly_archive_tests::weekly_archive_before_queue_failure_retries_frozen_intent_after_topics_change	neothd/src/daemon/reflection_cron_weekly_tests.rs
+          daemon::reflection_cron::weekly_archive_tests::weekly_queue_then_state_failure_recovers_after_drain_without_duplicate	neothd/src/daemon/reflection_cron_weekly_tests.rs
+          daemon::reflection_cron::weekly_archive_tests::weekly_legacy_same_key_body_conflict_preserves_queued_item	neothd/src/daemon/reflection_cron_weekly_tests.rs
+          daemon::reflection_cron::weekly_archive_tests::weekly_oldest_sunday_intent_recovers_on_monday_without_current_candidate_or_database	neothd/src/daemon/reflection_cron_weekly_tests.rs
+          daemon::reflection_cron::weekly_archive_tests::weekly_malformed_oldest_intent_cannot_be_bypassed_by_current_week	neothd/src/daemon/reflection_cron_weekly_tests.rs
+          daemon::reflection_cron::weekly_archive_tests::weekly_matching_old_receipt_skips_to_current_week_production	neothd/src/daemon/reflection_cron_weekly_tests.rs
+          daemon::reflection_cron::weekly_archive_tests::weekly_no_source_no_topics_and_window_suppression_preserve_weekly_data	neothd/src/daemon/reflection_cron_weekly_tests.rs
+          daemon::reflection_cron::weekly_archive_tests::weekly_repeat_writes_independent_fresh_staged_observation_without_duplicate_queue	neothd/src/daemon/reflection_cron_weekly_tests.rs
+          proactive::tests::weekly_receipt_roundtrip_survives_drain_and_blocks_retry	neothd/src/proactive/mod.rs
+          proactive::tests::weekly_receipt_lookup_is_read_only_and_checks_full_identity	neothd/src/proactive/mod.rs
+          proactive::tests::weekly_receipt_modify_commits_enqueue_and_retry_as_one_queue_state	neothd/src/proactive/mod.rs
+          proactive::tests::weekly_matching_pending_item_gets_receipt_without_replacing_route_policy	neothd/src/proactive/mod.rs
+          proactive::tests::weekly_pending_receipt_is_persisted_even_when_admission_returns_false	neothd/src/proactive/mod.rs
+          proactive::tests::weekly_receipt_and_pending_conflicts_fail_closed	neothd/src/proactive/mod.rs
+          proactive::tests::weekly_receipt_legacy_queue_defaults_and_migrates_on_admission	neothd/src/proactive/mod.rs
+          proactive::tests::weekly_receipt_capacity_rejects_new_admission_without_pruning_replay_history	neothd/src/proactive/mod.rs
+          reflection::tests::ob02_append_and_load_roundtrip	neothd/src/reflection/mod.rs
+          reflection::tests::ob02_sync_overwrites_stale_existing_file	neothd/src/reflection/mod.rs
+          daemon::reflection_cron::tests::period_tick_archives_and_is_idempotent_per_tag	neothd/src/daemon/reflection_cron.rs
+          proactive::tests::enqueue_dedups_on_key	neothd/src/proactive/mod.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -532,7 +564,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 446 ]]; then
+          if [[ "$expected" -ne 478 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"

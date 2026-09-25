@@ -141,8 +141,73 @@ const MAX_QUEUE_ITEMS: usize = 10_000;
 const MAX_DRAIN_HISTORY: usize = 100_000;
 const MAX_SETTLED_EGRESS_INTENTS: usize = 4_096;
 const MAX_SPECIALIST_ADVISOR_COOLDOWNS: usize = 64;
+/// Durable replay receipts for the weekly reflection producer. These are not
+/// pruned on drain or operator drop: forgetting an old receipt would permit a
+/// historical producer replay to create a second weekly reflection.
+const MAX_WEEKLY_REFLECTION_RECEIPTS: usize = 4_096;
 const MAX_QUARANTINED_ITEMS: usize = MAX_QUEUE_ITEMS;
 const QUARANTINED_ITEM_VERSION: u8 = 1;
+
+fn is_canonical_weekly_reflection_key(value: &str) -> bool {
+    let Some(week) = value.strip_prefix("reflection:weekly:") else {
+        return false;
+    };
+    let bytes = week.as_bytes();
+    if bytes.len() != 8
+        || bytes[4] != b'-'
+        || bytes[5] != b'W'
+        || !bytes[..4].iter().all(u8::is_ascii_digit)
+        || !bytes[6..].iter().all(u8::is_ascii_digit)
+    {
+        return false;
+    }
+    let Ok(year) = week[..4].parse::<u16>() else {
+        return false;
+    };
+    let Ok(week_number) = week[6..].parse::<u8>() else {
+        return false;
+    };
+    year != 0 && (1..=53).contains(&week_number)
+}
+
+fn is_canonical_weekly_reflection_producer_key(value: &str) -> bool {
+    value.len() == 64 && value.as_bytes().iter().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+}
+
+fn validate_weekly_reflection_admission(item: &ProactiveItem, producer_key: &str) -> Result<()> {
+    item.validate()
+        .map_err(anyhow::Error::new)
+        .context("validate weekly reflection proactive item")?;
+    anyhow::ensure!(
+        item.priority == 50
+            && item.channel.is_empty()
+            && item.account_id.is_none()
+            && item.account_binding.is_none()
+            && item.source == "g_01_mini"
+            && !item.is_failure
+            && item.expires_unix == 0
+            && is_canonical_weekly_reflection_key(&item.dedup_key),
+        "weekly reflection item violates its canonical queue identity"
+    );
+    anyhow::ensure!(
+        is_canonical_weekly_reflection_producer_key(producer_key),
+        "weekly reflection producer key is not canonical lowercase SHA-256"
+    );
+    Ok(())
+}
+
+fn ensure_matching_weekly_reflection_item(
+    queued: &ProactiveItem,
+    expected: &ProactiveItem,
+) -> Result<()> {
+    anyhow::ensure!(
+        queued.body == expected.body
+            && queued.source == expected.source
+            && queued.scheduled_for_unix == expected.scheduled_for_unix,
+        "weekly reflection queued item conflicts with immutable receipt identity"
+    );
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -327,6 +392,11 @@ pub struct ProactiveQueue {
     /// be re-enqueued by tomorrow's tick.
     #[serde(default)]
     specialist_advisor_cooldowns: BTreeMap<String, i64>,
+    /// Durable weekly reflection producer receipt, keyed by the canonical
+    /// weekly dedup identity. The opaque value is the producer's canonical
+    /// archive identity and makes conflicting attempts fail closed.
+    #[serde(default)]
+    weekly_reflection_receipts: BTreeMap<String, String>,
     /// Bounded forensic ring for parseable-but-invalid persisted items. This
     /// lets one malformed item be removed durably without discarding or
     /// starving the valid remainder of the queue.
@@ -337,6 +407,11 @@ pub struct ProactiveQueue {
     /// on every tick. Never serialized.
     #[serde(skip)]
     normalization_dirty: bool,
+    /// A matching pre-existing weekly item gains its receipt without being a
+    /// newly inserted queue item. `modify` must still persist that successful
+    /// mutation even though the public admission result is `false`.
+    #[serde(skip)]
+    weekly_receipt_dirty: bool,
 }
 
 /// Review H-1 (2026-07-03) — process-global lock serialising every
@@ -377,7 +452,7 @@ impl ProactiveQueue {
         let mut queue = Self::load_from(path)?;
         let normalization_dirty = std::mem::take(&mut queue.normalization_dirty);
         let (persist, out) = f(&mut queue);
-        if persist || normalization_dirty {
+        if persist || normalization_dirty || queue.weekly_receipt_dirty {
             queue.save_to(path)?;
         }
         Ok(out)
@@ -391,8 +466,10 @@ impl ProactiveQueue {
             settled_egress_intents: BTreeSet::new(),
             item_generations: BTreeMap::new(),
             specialist_advisor_cooldowns: BTreeMap::new(),
+            weekly_reflection_receipts: BTreeMap::new(),
             quarantined_items: Vec::new(),
             normalization_dirty: false,
+            weekly_receipt_dirty: false,
         }
     }
 
@@ -417,6 +494,20 @@ impl ProactiveQueue {
             self.specialist_advisor_cooldowns.len() <= MAX_SPECIALIST_ADVISOR_COOLDOWNS,
             "specialist advisor cooldown count exceeds limit"
         );
+        anyhow::ensure!(
+            self.weekly_reflection_receipts.len() <= MAX_WEEKLY_REFLECTION_RECEIPTS,
+            "weekly reflection receipt count exceeds limit"
+        );
+        for (dedup_key, producer_key) in &self.weekly_reflection_receipts {
+            anyhow::ensure!(
+                is_canonical_weekly_reflection_key(dedup_key),
+                "weekly reflection receipt has a non-canonical dedup key"
+            );
+            anyhow::ensure!(
+                is_canonical_weekly_reflection_producer_key(producer_key),
+                "weekly reflection receipt has a non-canonical producer key"
+            );
+        }
         for intent_id in &self.settled_egress_intents {
             let parsed = uuid::Uuid::parse_str(intent_id)
                 .context("parse proactive queue settlement intent id")?;
@@ -545,6 +636,94 @@ impl ProactiveQueue {
             .insert(item.dedup_key.clone(), uuid::Uuid::now_v7().to_string());
         self.items.push(item);
         Ok(true)
+    }
+
+    /// Atomically admit one canonical weekly reflection producer receipt and,
+    /// when necessary, its queue item. Call this inside [`Self::modify`] so
+    /// the receipt and enqueue share the queue's single durable save.
+    ///
+    /// Receipts intentionally survive both drain and operator drop. A replay
+    /// after either terminal path must stay a no-op rather than recreate an
+    /// old weekly reflection.
+    pub(crate) fn enqueue_weekly_reflection_once(
+        &mut self,
+        item: &ProactiveItem,
+        producer_key: &str,
+    ) -> Result<bool> {
+        validate_weekly_reflection_admission(item, producer_key)?;
+        if self.weekly_reflection_receipt_matches(item, producer_key)? {
+            return Ok(false);
+        }
+
+        let existing_item = self
+            .items
+            .iter()
+            .find(|queued| queued.dedup_key == item.dedup_key);
+        if let Some(queued) = existing_item {
+            ensure_matching_weekly_reflection_item(queued, item)?;
+            anyhow::ensure!(
+                self.weekly_reflection_receipts.len() < MAX_WEEKLY_REFLECTION_RECEIPTS,
+                "weekly reflection receipt capacity is exhausted"
+            );
+            self.weekly_reflection_receipts
+                .insert(item.dedup_key.clone(), producer_key.to_owned());
+            self.weekly_receipt_dirty = true;
+            return Ok(false);
+        }
+
+        anyhow::ensure!(
+            self.weekly_reflection_receipts.len() < MAX_WEEKLY_REFLECTION_RECEIPTS,
+            "weekly reflection receipt capacity is exhausted"
+        );
+        // No receipt is written before enqueue succeeds. `modify` then saves
+        // both mutations together, so an enqueue/save failure leaves no
+        // reservation that could suppress the producer's retry.
+        anyhow::ensure!(
+            self.enqueue(item.clone())?,
+            "weekly reflection dedup key unexpectedly existed during enqueue"
+        );
+        self.weekly_reflection_receipts
+            .insert(item.dedup_key.clone(), producer_key.to_owned());
+        Ok(true)
+    }
+
+    /// Read-only crossover check for a producer that has already archived its
+    /// weekly record but has not yet decided whether the queue admission was
+    /// committed. It never writes a receipt, touches the pending item, or
+    /// changes persistence state. Call inside [`Self::modify`] with
+    /// `persist=false` to share the queue lock with a subsequent recovery
+    /// decision.
+    pub(crate) fn weekly_reflection_receipt_matches(
+        &self,
+        item: &ProactiveItem,
+        producer_key: &str,
+    ) -> Result<bool> {
+        validate_weekly_reflection_admission(item, producer_key)?;
+        let Some(receipt) = self.weekly_reflection_receipts.get(&item.dedup_key) else {
+            return Ok(false);
+        };
+        anyhow::ensure!(
+            receipt == producer_key,
+            "weekly reflection receipt conflicts with producer key"
+        );
+        if let Some(queued) = self
+            .items
+            .iter()
+            .find(|queued| queued.dedup_key == item.dedup_key)
+        {
+            ensure_matching_weekly_reflection_item(queued, item)?;
+        }
+        Ok(true)
+    }
+
+    /// Narrow raw lookup for diagnostics that already hold the queue lock.
+    /// Recovery callers should prefer [`Self::weekly_reflection_receipt_matches`]
+    /// so the producer and any pending item are checked as one identity.
+    #[cfg(test)]
+    fn weekly_reflection_receipt(&self, dedup_key: &str) -> Option<&str> {
+        self.weekly_reflection_receipts
+            .get(dedup_key)
+            .map(String::as_str)
     }
 
     /// Cross-process-safe enqueue for the common one-item producer path.
@@ -1583,5 +1762,219 @@ mod tests {
         assert_eq!(q.prune_expired(200), 1);
         let keys: Vec<&str> = q.peek().iter().map(|i| i.dedup_key.as_str()).collect();
         assert_eq!(keys, vec!["evergreen", "alive"]);
+    }
+
+    fn weekly_item(week: &str, scheduled_for_unix: i64) -> ProactiveItem {
+        ProactiveItem {
+            priority: 50,
+            dedup_key: format!("reflection:weekly:{week}"),
+            channel: String::new(),
+            account_id: None,
+            account_binding: None,
+            source: "g_01_mini".to_owned(),
+            body: format!("weekly reflection {week}"),
+            scheduled_for_unix,
+            is_failure: false,
+            expires_unix: 0,
+        }
+    }
+
+    fn weekly_producer_key() -> String {
+        "a".repeat(64)
+    }
+
+    #[test]
+    fn weekly_receipt_roundtrip_survives_drain_and_blocks_retry() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("proactive_queue.json");
+        let item = weekly_item("2026-W21", 7);
+        let producer_key = weekly_producer_key();
+        let mut queue = ProactiveQueue::new();
+        assert!(queue
+            .enqueue_weekly_reflection_once(&item, &producer_key)
+            .unwrap());
+        queue.save_to(&path).unwrap();
+        assert_eq!(queue.drain(7, 1), vec![item.clone()]);
+        queue.save_to(&path).unwrap();
+
+        let mut reloaded = ProactiveQueue::load_from(&path).unwrap();
+        assert!(reloaded.peek().is_empty());
+        assert!(!reloaded
+            .enqueue_weekly_reflection_once(&item, &producer_key)
+            .unwrap());
+        assert!(reloaded.peek().is_empty(), "drained receipt must not requeue");
+    }
+
+    #[test]
+    fn weekly_receipt_lookup_is_read_only_and_checks_full_identity() {
+        let item = weekly_item("2026-W27", 14);
+        let producer_key = weekly_producer_key();
+        let mut queue = ProactiveQueue::new();
+        assert!(!queue
+            .weekly_reflection_receipt_matches(&item, &producer_key)
+            .unwrap());
+        assert!(queue
+            .enqueue_weekly_reflection_once(&item, &producer_key)
+            .unwrap());
+        let before = serde_json::to_vec(&queue).unwrap();
+        assert!(queue
+            .weekly_reflection_receipt_matches(&item, &producer_key)
+            .unwrap());
+        assert_eq!(
+            queue.weekly_reflection_receipt(&item.dedup_key),
+            Some(producer_key.as_str())
+        );
+        assert_eq!(serde_json::to_vec(&queue).unwrap(), before);
+
+        let mut conflicting = item.clone();
+        conflicting.scheduled_for_unix += 1;
+        assert!(queue
+            .weekly_reflection_receipt_matches(&conflicting, &producer_key)
+            .is_err());
+    }
+
+    #[test]
+    fn weekly_receipt_modify_commits_enqueue_and_retry_as_one_queue_state() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("proactive_queue.json");
+        let item = weekly_item("2026-W22", 8);
+        let producer_key = weekly_producer_key();
+        let first = ProactiveQueue::modify(&path, |queue| {
+            match queue.enqueue_weekly_reflection_once(&item, &producer_key) {
+                Ok(inserted) => (true, Ok(inserted)),
+                Err(error) => (false, Err(error)),
+            }
+        })
+        .unwrap()
+        .unwrap();
+        assert!(first);
+        let retry = ProactiveQueue::modify(&path, |queue| {
+            match queue.enqueue_weekly_reflection_once(&item, &producer_key) {
+                Ok(inserted) => (inserted, Ok(inserted)),
+                Err(error) => (false, Err(error)),
+            }
+        })
+        .unwrap()
+        .unwrap();
+        assert!(!retry);
+        assert_eq!(ProactiveQueue::load_from(&path).unwrap().peek(), &[item]);
+    }
+
+    #[test]
+    fn weekly_matching_pending_item_gets_receipt_without_replacing_route_policy() {
+        let item = weekly_item("2026-W23", 9);
+        let producer_key = weekly_producer_key();
+        let mut queue = ProactiveQueue::new();
+        let mut routed = item.clone();
+        routed.channel = "telegram".to_owned();
+        routed.priority = 99;
+        queue.enqueue(routed.clone()).unwrap();
+
+        assert!(!queue
+            .enqueue_weekly_reflection_once(&item, &producer_key)
+            .unwrap());
+        assert_eq!(queue.peek(), &[routed]);
+        assert_eq!(
+            queue.weekly_reflection_receipts.get(&item.dedup_key),
+            Some(&producer_key)
+        );
+    }
+
+    #[test]
+    fn weekly_pending_receipt_is_persisted_even_when_admission_returns_false() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("proactive_queue.json");
+        let item = weekly_item("2026-W26", 13);
+        let producer_key = weekly_producer_key();
+        let mut queue = ProactiveQueue::new();
+        queue.enqueue(item.clone()).unwrap();
+        queue.save_to(&path).unwrap();
+
+        let inserted = ProactiveQueue::modify(&path, |queue| {
+            match queue.enqueue_weekly_reflection_once(&item, &producer_key) {
+                Ok(inserted) => (inserted, Ok(inserted)),
+                Err(error) => (false, Err(error)),
+            }
+        })
+        .unwrap()
+        .unwrap();
+        assert!(!inserted);
+        let reloaded = ProactiveQueue::load_from(&path).unwrap();
+        assert_eq!(
+            reloaded.weekly_reflection_receipts.get(&item.dedup_key),
+            Some(&producer_key),
+            "receipt-only adoption must use the same modify save"
+        );
+    }
+
+    #[test]
+    fn weekly_receipt_and_pending_conflicts_fail_closed() {
+        let item = weekly_item("2026-W24", 10);
+        let producer_key = weekly_producer_key();
+        let mut queue = ProactiveQueue::new();
+        assert!(queue
+            .enqueue_weekly_reflection_once(&item, &producer_key)
+            .unwrap());
+        let conflicting_producer = "b".repeat(64);
+        assert!(queue
+            .enqueue_weekly_reflection_once(&item, &conflicting_producer)
+            .is_err());
+
+        let mut conflicting_item = item.clone();
+        conflicting_item.body.push_str(" changed");
+        assert!(queue
+            .enqueue_weekly_reflection_once(&conflicting_item, &producer_key)
+            .is_err());
+    }
+
+    #[test]
+    fn weekly_receipt_legacy_queue_defaults_and_migrates_on_admission() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("proactive_queue.json");
+        std::fs::write(
+            &path,
+            br#"{"items":[],"drained_at":[],"config":{"max_per_day":3}}"#,
+        )
+        .unwrap();
+        let item = weekly_item("2026-W25", 11);
+        let producer_key = weekly_producer_key();
+        let inserted = ProactiveQueue::modify(&path, |queue| {
+            match queue.enqueue_weekly_reflection_once(&item, &producer_key) {
+                Ok(inserted) => (true, Ok(inserted)),
+                Err(error) => (false, Err(error)),
+            }
+        })
+        .unwrap()
+        .unwrap();
+        assert!(inserted);
+        let reloaded = ProactiveQueue::load_from(&path).unwrap();
+        assert_eq!(
+            reloaded.weekly_reflection_receipts.get(&item.dedup_key),
+            Some(&producer_key)
+        );
+    }
+
+    #[test]
+    fn weekly_receipt_capacity_rejects_new_admission_without_pruning_replay_history() {
+        let mut queue = ProactiveQueue::new();
+        let producer_key = weekly_producer_key();
+        for index in 0..MAX_WEEKLY_REFLECTION_RECEIPTS {
+            let year = (index / 53) + 1;
+            let week = (index % 53) + 1;
+            queue.weekly_reflection_receipts.insert(
+                format!("reflection:weekly:{year:04}-W{week:02}"),
+                producer_key.clone(),
+            );
+        }
+        let incoming = weekly_item("0099-W01", 12);
+        assert!(queue
+            .enqueue_weekly_reflection_once(&incoming, &producer_key)
+            .is_err());
+        assert_eq!(
+            queue.weekly_reflection_receipts.len(),
+            MAX_WEEKLY_REFLECTION_RECEIPTS,
+            "overflow must retain all historical replay receipts"
+        );
+        assert!(queue.peek().is_empty());
     }
 }

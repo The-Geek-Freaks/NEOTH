@@ -51,6 +51,10 @@ pub mod hygiene;
 /// operator-facing integration remain outside this foundation.
 pub mod hygiene_store;
 
+/// Capability-bound, crash-safe canonical weekly producer archive. The cron
+/// owns topic sampling, queue reconciliation, and tick-state publication.
+pub(crate) mod weekly_archive;
+
 use crate::proactive::ProactiveItem;
 
 const NS_PER_DAY: i64 = 86_400 * 1_000_000_000;
@@ -341,6 +345,10 @@ pub struct WeeklyReflection {
     /// Operator-supplied or auto-derived tags. Empty by default.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Stable key for a production-owned canonical weekly record. Historical
+    /// records remain keyless and may coexist in insertion order.
+    #[serde(default)]
+    pub producer_key: Option<String>,
 }
 
 impl WeeklyReflection {
@@ -525,6 +533,7 @@ pub fn build_weekly_reflection(
         topics: topics.to_vec(),
         body,
         tags: Vec::new(),
+        producer_key: None,
     })
 }
 
@@ -687,6 +696,7 @@ mod tests {
             topics: topics.iter().map(|s| (*s).to_string()).collect(),
             body: "Du hast diese Woche an rust und memory gearbeitet.".to_string(),
             tags: Vec::new(),
+            producer_key: None,
         }
     }
 
