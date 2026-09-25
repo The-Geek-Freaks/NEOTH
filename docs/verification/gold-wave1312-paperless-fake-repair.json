@@ -1,0 +1,21 @@
+{
+  "kind": "PAPERLESS_STRICT_FAKE_COMMAND_REPAIR",
+  "source": "be003a46a8a70b2f4dcc01e6683858b86d3dcaf2",
+  "run": 36115884957,
+  "artifact": 10855657436,
+  "apiDigest": "sha256:ba75426669a49cfb41bfeb9c11823ce8f389d8fd24a33277b5de8d4c2260f1de",
+  "observed": {
+    "selected": 542,
+    "executed": 542,
+    "compiled": true,
+    "failed": 8,
+    "missing": 0,
+    "passed": 534
+  },
+  "cause": "Fixture required container rm; actual bound production adapter uses rm -f <id>.",
+  "repair": "Match exact three-argument rm suffix and receipt-known id. Preserve failure injections and all assertions.",
+  "file": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
+  "postimage": "5e0bfad2a4170d0a39100d1a2ebe7cb8c7f6dd06",
+  "validation": "Root source comparison and static diff check; hosted rerun required",
+  "localExecutableValidationRan": false
+}

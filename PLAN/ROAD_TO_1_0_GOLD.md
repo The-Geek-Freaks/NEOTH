@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1312 strict Paperless uninstall fixture correction (2026-09-25):**
+Windows542 run36115884957 atbe003 compiled and executed all542 selected tests:
+534PASS,8FAIL,0missing. The eight failures all came from the uninstall fake
+requiring `container rm` while the production adapter emits `rm -f <exact-id>`.
+The fake now accepts exactly that three-argument removal suffix and only IDs
+from its original receipt; negative injections and recovery assertions remain.
+The artifact digest,87unique source blobs and543log hashes were checked.
+This corrects the fixture; a new hosted native run must establish the result.
+W1306Preflight at61c73 passed. n8n Purge W1308-1310 is separate unpublished work.
+No roadmap closure or local executable validation.
+
 **W1306 retained-product evidence and Windows preservation test (2026-09-25):**
 Root admits Paperless36115888159 and n8n36115891074 at exact source
 be003a46 after independent API/ZIP/receipt and historical Git-byte checks

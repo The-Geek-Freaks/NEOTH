@@ -118,8 +118,14 @@ impl ComposeExecutor for UninstallFake {
                     .unwrap_or_default(),
             });
         }
-        if argv.iter().any(|part| part == "container") && argv.iter().any(|part| part == "rm") {
+        if let Some(remove) = argv.iter().position(|part| part == "rm") {
+            if argv.len() != remove + 3 || argv[remove + 1] != "-f" {
+                return Err(LifecycleError::Command("fake_remove_shape"));
+            }
             let id = argv.last().unwrap().clone();
+            if !self.ids.contains_key(&id) {
+                return Err(LifecycleError::Command("fake_remove_id"));
+            }
             if self.fail_rm_while_present_for.contains(&id) {
                 return Err(LifecycleError::Command("fake_rm_failure"));
             }

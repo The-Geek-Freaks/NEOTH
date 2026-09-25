@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1306_LINUX_PRODUCT_LIFECYCLES_ADMITTED_WINDOWS_SMOKE_AUTHORED_NATIVE_PENDING",
+  "status": "W1312_STRICT_PAPERLESS_FIXTURE_REPAIR_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 213765,
-    "sha256": "60127D6C12CBD700E5561559403D1E1FF4959A28820481C9CF604C2590B11DF4"
+    "bytes": 213932,
+    "sha256": "42F89655226FDBB8B29E287E8F50C1D9F284128A57EC0A812ED004BC32B9C114"
   },
-  "sourceInputs": 1202,
+  "sourceInputs": 1203,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -11802,79 +11802,79 @@
     {
       "test": "installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_success_removes_owned_stopped_containers_and_retains_six_volumes",
       "sourcePath": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
-      "sourceSha256": "3794922FDB410EC7BBFE45774911A8417CEE9AE458909E673D9E95871213E416",
+      "sourceSha256": "00AE7EF5E29C26D33501E66FFC0952450E22F5D7DD3B795C90F7F8E3688DB21A",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_uninstall_tests::completed_custody_tampering_rejects_before_docker_or_mutation",
       "sourcePath": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
-      "sourceSha256": "3794922FDB410EC7BBFE45774911A8417CEE9AE458909E673D9E95871213E416",
+      "sourceSha256": "00AE7EF5E29C26D33501E66FFC0952450E22F5D7DD3B795C90F7F8E3688DB21A",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_uninstall_tests::prepared_custody_with_late_wrong_service_id_pair_rejects_before_any_remove",
       "sourcePath": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
-      "sourceSha256": "3794922FDB410EC7BBFE45774911A8417CEE9AE458909E673D9E95871213E416",
+      "sourceSha256": "00AE7EF5E29C26D33501E66FFC0952450E22F5D7DD3B795C90F7F8E3688DB21A",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_uninstall_tests::status_rejects_malformed_and_foreign_custody_without_rewriting_it",
       "sourcePath": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
-      "sourceSha256": "3794922FDB410EC7BBFE45774911A8417CEE9AE458909E673D9E95871213E416",
+      "sourceSha256": "00AE7EF5E29C26D33501E66FFC0952450E22F5D7DD3B795C90F7F8E3688DB21A",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_uninstall_tests::completed_uninstall_repeat_is_read_only_and_does_not_select_docker",
       "sourcePath": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
-      "sourceSha256": "3794922FDB410EC7BBFE45774911A8417CEE9AE458909E673D9E95871213E416",
+      "sourceSha256": "00AE7EF5E29C26D33501E66FFC0952450E22F5D7DD3B795C90F7F8E3688DB21A",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_missing_original_id_rejects_before_any_remove",
       "sourcePath": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
-      "sourceSha256": "3794922FDB410EC7BBFE45774911A8417CEE9AE458909E673D9E95871213E416",
+      "sourceSha256": "00AE7EF5E29C26D33501E66FFC0952450E22F5D7DD3B795C90F7F8E3688DB21A",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_listing_error_is_not_treated_as_observed_absence",
       "sourcePath": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
-      "sourceSha256": "3794922FDB410EC7BBFE45774911A8417CEE9AE458909E673D9E95871213E416",
+      "sourceSha256": "00AE7EF5E29C26D33501E66FFC0952450E22F5D7DD3B795C90F7F8E3688DB21A",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_foreign_original_id_rejects_before_any_remove",
       "sourcePath": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
-      "sourceSha256": "3794922FDB410EC7BBFE45774911A8417CEE9AE458909E673D9E95871213E416",
+      "sourceSha256": "00AE7EF5E29C26D33501E66FFC0952450E22F5D7DD3B795C90F7F8E3688DB21A",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_failed_remove_after_actual_absence_reopens_without_second_remove",
       "sourcePath": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
-      "sourceSha256": "3794922FDB410EC7BBFE45774911A8417CEE9AE458909E673D9E95871213E416",
+      "sourceSha256": "00AE7EF5E29C26D33501E66FFC0952450E22F5D7DD3B795C90F7F8E3688DB21A",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_failed_remove_with_present_container_holds_without_second_remove",
       "sourcePath": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
-      "sourceSha256": "3794922FDB410EC7BBFE45774911A8417CEE9AE458909E673D9E95871213E416",
+      "sourceSha256": "00AE7EF5E29C26D33501E66FFC0952450E22F5D7DD3B795C90F7F8E3688DB21A",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_uninstall_tests::install_is_blocked_while_uninstall_custody_is_pending",
       "sourcePath": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
-      "sourceSha256": "3794922FDB410EC7BBFE45774911A8417CEE9AE458909E673D9E95871213E416",
+      "sourceSha256": "00AE7EF5E29C26D33501E66FFC0952450E22F5D7DD3B795C90F7F8E3688DB21A",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_uninstall_tests::completed_custody_does_not_apply_to_a_fresh_install_generation",
       "sourcePath": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
-      "sourceSha256": "3794922FDB410EC7BBFE45774911A8417CEE9AE458909E673D9E95871213E416",
+      "sourceSha256": "00AE7EF5E29C26D33501E66FFC0952450E22F5D7DD3B795C90F7F8E3688DB21A",
       "junitClass": "neoth"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_uninstall_tests::uninstall_partial_sequence_recovery_does_not_redelete_earlier_container",
       "sourcePath": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
-      "sourceSha256": "3794922FDB410EC7BBFE45774911A8417CEE9AE458909E673D9E95871213E416",
+      "sourceSha256": "00AE7EF5E29C26D33501E66FFC0952450E22F5D7DD3B795C90F7F8E3688DB21A",
       "junitClass": "neoth"
     },
     {
@@ -44628,6 +44628,44 @@
       }
     ],
     "note": "Paperless17/n8n27exact input bindings admitted at be003. Exact CLI artifact imported; one hosted format postimage. Windows byte-preservation smoke source reviewed, release installer runtime pending. No checkbox closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1312": {
+    "base": "61c73c116c06e137f892093f787d91aaac994827",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1312-paperless-fake-repair.json",
+        "bytes": 857,
+        "sha256": "16DB347C24B5CA86C4B8AA74C134BC4EE91FD057F51ACC0E7053ACA00DC1E291",
+        "blob": "acf2edc98a48a86ad9423b2881558119995c3e01"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 366872,
+        "sha256": "603214A0D6102EDA9C02E19FAAA2B120415EFDEC1D01E41EB68B5E4A3175AA15",
+        "blob": "5fa21dfbd8f5584a0dc1de17967f0824655603de"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1385803,
+        "sha256": "CAF931607E19C38F09970776FDEB894D7A77BEA81E0FFF8679B70AB33D95C938",
+        "blob": "2176c824146e8f2e2c70ded677f6c1fbf4be6eb5"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1996326,
+        "sha256": "FF7390FD6F4EA13106B8B073825AD4D1D48EAB45DE62501B1592E79D9A805B34",
+        "blob": "120b127aab8416a0aeeb657fa537eb491390a683"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
+        "bytes": 19978,
+        "sha256": "00AE7EF5E29C26D33501E66FFC0952450E22F5D7DD3B795C90F7F8E3688DB21A",
+        "blob": "5e0bfad2a4170d0a39100d1a2ebe7cb8c7f6dd06"
+      }
+    ],
+    "note": "Windows542534PASS8FAIL all fake mismatch. Strict rm -f receiptid fix preserves all assertions. Separate n8n Purge work not included.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
