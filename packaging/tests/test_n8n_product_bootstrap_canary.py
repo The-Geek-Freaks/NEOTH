@@ -363,6 +363,19 @@ class CustodyBoundaryTests(unittest.TestCase):
         self.assertEqual(failure.diagnostic["exit_code"], 1)
         self.assertEqual(failure.diagnostic["known_error_categories"], ["n8n_bootstrap_docker_failed"])
 
+    def test_inner_transport_category_is_distinct_from_outer_helper_timeout(self) -> None:
+        secret = "private-transport-output"
+        for suffix in ("empty_command", "spawn_failed", "stdin_failed", "capture_failed",
+                       "wait_failed", "timeout", "cancelled", "output_limit"):
+            code = "n8n_bootstrap_docker_" + suffix
+            with self.subTest(code=code):
+                result = canary.bounded.Result(1, secret.encode(), f"{code}: {secret}".encode(), False, False)
+                failure = canary.CommandFailure(["neoth", "--output", "json", "n8n", "install", secret], result)
+                self.assertEqual(failure.diagnostic["known_error_categories"], [code])
+                self.assertFalse(failure.diagnostic["timed_out"])
+                self.assertFalse(failure.diagnostic["overflow"])
+                self.assertNotIn(secret, json.dumps(failure.diagnostic))
+
     def test_runtime_diagnosis_reports_source_markers_without_secret_suffix(self) -> None:
         secret = "must-never-appear-in-runtime-diagnosis"
         stderr = (

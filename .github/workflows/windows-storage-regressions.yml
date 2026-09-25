@@ -627,6 +627,15 @@ jobs:
           integrations::n8n::managed_purge::tests::intent_with_durable_inspection_checkpoint_recovers_and_removes_once	neothd/src/integrations/n8n/managed_purge_tests.rs
           integrations::n8n::managed_purge::tests::completed_custody_with_receipt_before_ready_recovers_without_remove	neothd/src/integrations/n8n/managed_purge_tests.rs
           integrations::n8n::managed_purge::tests::absent_verified_custody_before_configuration_recovers_without_remove	neothd/src/integrations/n8n/managed_purge_tests.rs
+          integrations::n8n::managed_bootstrap::tests::docker_transport_failures_preserve_inner_category_without_retry_or_secret_output	neothd/src/integrations/n8n/managed_bootstrap.rs
+          installers::paperless_lifecycle::tests::legacy_unlabelled_set_remains_repeat_install_compatible	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::corrupted_receipt_without_snapshot_rejects_before_compose	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::completed_generation_with_lost_snapshot_rejects_before_compose	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::interrupted_fresh_generation_with_matching_partial_set_resumes	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_lifecycle::tests::owned_snapshot_and_mixed_volume_labels_are_distinguished	neothd/src/installers/paperless_lifecycle.rs
+          installers::paperless_staging::tests::volume_set_renderer_labels_each_canonical_volume_with_one_opaque_generation	neothd/src/installers/paperless_staging.rs
+          installers::paperless_lifecycle::paperless_uninstall_tests::legacy_unlabelled_install_receipt_remains_safe_uninstall_compatible	neothd/src/installers/paperless_uninstall_tests.rs
+          installers::paperless_lifecycle::tests::completed_generation_with_missing_volume_rejects_before_compose	neothd/src/installers/paperless_lifecycle.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -643,7 +652,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 557 ]]; then
+          if [[ "$expected" -ne 566 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"

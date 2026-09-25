@@ -85,6 +85,7 @@ const OS_LAUNCH_ENV: [&str; 13] = [
 const RECEIPT_NAME: &str = ".neoth-paperless-lifecycle-receipt.v1.json";
 const RECEIPT_DIR: &str = "state";
 const UNINSTALL_RECEIPT_NAME: &str = ".neoth-paperless-uninstall-custody.v1.json";
+const VOLUME_SET_NAME: &str = ".neoth-paperless-volume-set.v1.json";
 const RECEIPT_READ_LIMIT: usize = 64 * 1024;
 const OPERATIONS_LOCK_NAME: &str = ".neoth-paperless-operations.lock";
 const RECEIPT_BYTES: &str =
@@ -146,6 +147,7 @@ pub struct PaperlessLifecycleReceipt {
     pub images: Vec<VerifiedImage>,
     pub containers: Vec<VerifiedContainer>,
     pub volumes: Vec<VerifiedVolume>,
+    pub volume_set_id: Option<String>,
     pub authenticated_api_ready: bool,
 }
 
@@ -159,6 +161,8 @@ struct StoredPaperlessInstallReceipt {
     images: Vec<StoredVerifiedImage>,
     containers: Vec<StoredVerifiedContainer>,
     volumes: Vec<StoredVerifiedVolume>,
+    #[serde(default)]
+    volume_set_id: Option<String>,
     authenticated_api_ready: bool,
 }
 #[derive(Debug, Clone, Deserialize)]
@@ -181,6 +185,8 @@ struct StoredVerifiedVolume {
     logical_name: String,
     name: String,
     project: String,
+    #[serde(default)]
+    volume_set_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -199,6 +205,8 @@ pub struct PaperlessUninstallReceipt {
     pub phase: PaperlessUninstallPhase,
     pub containers: Vec<PaperlessUninstallContainer>,
     pub retained_volumes: Vec<String>,
+    #[serde(default)]
+    pub retained_volume_snapshot: Vec<PaperlessRetainedVolume>,
     pub network_retained: bool,
     #[serde(default)]
     pub original_container_ids: Vec<String>,
@@ -233,6 +241,25 @@ pub struct VerifiedVolume {
     pub logical_name: &'static str,
     pub name: String,
     pub project: String,
+    #[serde(default)]
+    pub volume_set_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaperlessRetainedVolume {
+    pub logical_name: String,
+    pub name: String,
+    pub project: String,
+    #[serde(default)]
+    pub volume_set_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PaperlessVolumeSetSnapshot {
+    schema_version: u8,
+    project: String,
+    volume_set_id: String,
+    logical_volumes: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -423,12 +450,17 @@ impl DockerExecutor {
         for (name, value) in compose_environment(binding)? {
             command.env(name, value);
         }
+        let compose_input = match binding.volume_set_id.as_deref() {
+            Some(volume_set_id) => paperless_staging::render_compose_with_volume_set_id(volume_set_id)
+                .ok_or(LifecycleError::LaunchBinding)?,
+            None => paperless_staging::legacy_compose_bytes().to_vec(),
+        };
         let mut child =
             crate::updater::process_containment::ContainedChild::spawn_in_retained_directory(
                 command,
                 &root.root,
                 &root.display,
-                paperless_staging::expected_compose_bytes(),
+                &compose_input,
                 OUTPUT_LIMIT,
             )
             .await
@@ -520,7 +552,7 @@ async fn install_at_with_readiness<E: RetainedComposeExecutor, R: ReadinessVerif
     }
     let owned = paperless_staging::open_owned_root_at(&root_path)
         .map_err(|_| LifecycleError::UnownedOrMismatch)?;
-    let binding = read_binding(&owned)?;
+    let mut binding = read_binding(&owned)?;
     reject_legacy_state(&owned)?;
     compose_environment(&binding)?;
     validate_credentials_origin(credentials, &binding.origin)?;
@@ -540,7 +572,8 @@ async fn install_at_with_readiness<E: RetainedComposeExecutor, R: ReadinessVerif
     let expected = expected_images()?;
     let project = project_name(&root_path);
     let engine = select_local_engine(executor, &owned).await?;
-    preflight_existing_volumes(executor, &engine, &project, &owned, &binding).await?;
+    binding.volume_set_id =
+        preflight_existing_volumes(executor, &engine, &project, &owned, &binding).await?;
     for image in &expected {
         ensure_stage(&owned, &binding)?;
         executor
@@ -607,7 +640,15 @@ async fn install_at_with_readiness<E: RetainedComposeExecutor, R: ReadinessVerif
         }
         containers.push(observed);
     }
-    let volumes = inspect_owned_volumes(executor, &engine, &project, &owned, &binding).await?;
+    let volumes = inspect_owned_volumes(
+        executor,
+        &engine,
+        &project,
+        binding.volume_set_id.as_deref(),
+        &owned,
+        &binding,
+    )
+    .await?;
     let effective = match valid_token(credentials.paperless_token.as_ref()) {
         Some(token) => token.clone(),
         None => {
@@ -659,7 +700,15 @@ async fn install_at_with_readiness<E: RetainedComposeExecutor, R: ReadinessVerif
         }
     }
     let final_volumes =
-        inspect_owned_volumes(executor, &engine, &project, &owned, &binding).await?;
+        inspect_owned_volumes(
+            executor,
+            &engine,
+            &project,
+            binding.volume_set_id.as_deref(),
+            &owned,
+            &binding,
+        )
+        .await?;
     if final_volumes != volumes {
         return Err(LifecycleError::Container(
             "paperless_volume_changed_after_readiness",
@@ -667,7 +716,7 @@ async fn install_at_with_readiness<E: RetainedComposeExecutor, R: ReadinessVerif
     }
     ensure_stage(&owned, &binding)?;
     let receipt = PaperlessLifecycleReceipt {
-        schema_version: 1,
+        schema_version: if binding.volume_set_id.is_some() { 2 } else { 1 },
         operation: "install",
         contract_id: paperless_staging::OCI_CONTRACT_ID,
         project,
@@ -675,6 +724,7 @@ async fn install_at_with_readiness<E: RetainedComposeExecutor, R: ReadinessVerif
         images: verified,
         containers,
         volumes,
+        volume_set_id: binding.volume_set_id.clone(),
         authenticated_api_ready: true,
     };
     write_receipt(&owned, &receipt)?;
@@ -731,7 +781,7 @@ pub async fn uninstall_at_with<E: ComposeExecutor>(
     let install_receipt_sha256 = format!("{:x}", Sha256::digest(&installed_bytes));
     let mut custody =
         read_uninstall_receipt(&owned)?.unwrap_or_else(|| PaperlessUninstallReceipt {
-            schema_version: 1,
+            schema_version: if installed.volume_set_id.is_some() { 2 } else { 1 },
             operation: "paperless.safe_uninstall".to_owned(),
             project: installed.project.clone(),
             phase: PaperlessUninstallPhase::Prepared,
@@ -745,6 +795,7 @@ pub async fn uninstall_at_with<E: ComposeExecutor>(
                 })
                 .collect(),
             retained_volumes: Vec::new(),
+            retained_volume_snapshot: Vec::new(),
             network_retained: true,
             original_container_ids: installed
                 .containers
@@ -789,7 +840,7 @@ pub async fn uninstall_at_with<E: ComposeExecutor>(
             return Err(LifecycleError::UnownedOrMismatch);
         }
         custody = PaperlessUninstallReceipt {
-            schema_version: 1,
+            schema_version: if installed.volume_set_id.is_some() { 2 } else { 1 },
             operation: "paperless.safe_uninstall".to_owned(),
             project: installed.project.clone(),
             phase: PaperlessUninstallPhase::Prepared,
@@ -803,6 +854,7 @@ pub async fn uninstall_at_with<E: ComposeExecutor>(
                 })
                 .collect(),
             retained_volumes: Vec::new(),
+            retained_volume_snapshot: Vec::new(),
             network_retained: true,
             original_container_ids: installed_ids.clone(),
             dispatched_id: None,
@@ -818,11 +870,19 @@ pub async fn uninstall_at_with<E: ComposeExecutor>(
         return Err(LifecycleError::UnownedOrMismatch);
     }
     if custody.phase == PaperlessUninstallPhase::Complete {
+        validate_completed_uninstall_snapshot(&custody, &installed)?;
         return Ok(custody);
     }
     let engine = select_local_engine(executor, &owned).await?;
-    let retained =
-        inspect_owned_volumes(executor, &engine, &installed.project, &owned, &binding).await?;
+    let retained = inspect_owned_volumes(
+        executor,
+        &engine,
+        &installed.project,
+        installed.volume_set_id.as_deref(),
+        &owned,
+        &binding,
+    )
+    .await?;
     if retained.len() != paperless_staging::PAPERLESS_VOLUMES.len() {
         return Err(LifecycleError::UnownedOrMismatch);
     }
@@ -903,10 +963,26 @@ pub async fn uninstall_at_with<E: ComposeExecutor>(
         return Err(LifecycleError::Command("paperless_uninstall_incomplete"));
     }
     custody.phase = PaperlessUninstallPhase::ContainersRemoved;
-    custody.retained_volumes = retained.into_iter().map(|volume| volume.name).collect();
+    custody.retained_volumes = retained.iter().map(|volume| volume.name.clone()).collect();
+    custody.retained_volume_snapshot = retained
+        .iter()
+        .map(|volume| PaperlessRetainedVolume {
+            logical_name: volume.logical_name.to_owned(),
+            name: volume.name.clone(),
+            project: volume.project.clone(),
+            volume_set_id: volume.volume_set_id.clone(),
+        })
+        .collect();
     write_uninstall_receipt(&owned, &custody)?;
-    let final_volumes =
-        inspect_owned_volumes(executor, &engine, &installed.project, &owned, &binding).await?;
+    let final_volumes = inspect_owned_volumes(
+        executor,
+        &engine,
+        &installed.project,
+        installed.volume_set_id.as_deref(),
+        &owned,
+        &binding,
+    )
+    .await?;
     if final_volumes
         .iter()
         .map(|volume| &volume.name)
@@ -915,6 +991,25 @@ pub async fn uninstall_at_with<E: ComposeExecutor>(
     {
         return Err(LifecycleError::Container(
             "paperless_uninstall_volume_changed",
+        ));
+    }
+    if final_volumes
+        .iter()
+        .map(|volume| (volume.logical_name, &volume.name, &volume.project, &volume.volume_set_id))
+        .collect::<Vec<_>>()
+        != custody
+            .retained_volume_snapshot
+            .iter()
+            .map(|volume| (
+                volume.logical_name.as_str(),
+                &volume.name,
+                &volume.project,
+                &volume.volume_set_id,
+            ))
+            .collect::<Vec<_>>()
+    {
+        return Err(LifecycleError::Container(
+            "paperless_uninstall_volume_snapshot_changed",
         ));
     }
     custody.phase = PaperlessUninstallPhase::Complete;
@@ -957,6 +1052,36 @@ fn read_install_receipt_with_bytes(
     let receipt = serde_json::from_slice(&bytes).map_err(|_| LifecycleError::Receipt)?;
     Ok((bytes, receipt))
 }
+/// A missing receipt is the only admissible incomplete-first-install state.
+/// Any present but malformed or invalid receipt is evidence of custody drift.
+fn read_completed_install_for_volume_set(
+    root: &OwnedPaperlessRoot,
+) -> Result<Option<StoredPaperlessInstallReceipt>, LifecycleError> {
+    ensure_bound(root)?;
+    let state = lifecycle_state_dir(root)?;
+    match crate::skills::store::read_regular_file_bounded(
+        &state,
+        OsStr::new(RECEIPT_NAME),
+        &root.display.join(RECEIPT_DIR).join(RECEIPT_NAME),
+        RECEIPT_READ_LIMIT,
+    ) {
+        Ok(bytes) => {
+            let receipt: StoredPaperlessInstallReceipt =
+                serde_json::from_slice(&bytes).map_err(|_| LifecycleError::Receipt)?;
+            validate_install_receipt(&receipt, &root.display)?;
+            Ok(Some(receipt))
+        }
+        Err(error)
+            if error
+                .root_cause()
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|cause| cause.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            Ok(None)
+        }
+        Err(_) => Err(LifecycleError::Receipt),
+    }
+}
 fn read_uninstall_receipt(
     root: &OwnedPaperlessRoot,
 ) -> Result<Option<PaperlessUninstallReceipt>, LifecycleError> {
@@ -988,6 +1113,65 @@ fn read_uninstall_receipt(
         Err(_) => Err(LifecycleError::Receipt),
     }
 }
+fn read_volume_set_snapshot(
+    root: &OwnedPaperlessRoot,
+) -> Result<Option<PaperlessVolumeSetSnapshot>, LifecycleError> {
+    ensure_bound(root)?;
+    let state = lifecycle_state_dir(root)?;
+    match crate::skills::store::read_regular_file_bounded(
+        &state,
+        OsStr::new(VOLUME_SET_NAME),
+        &root.display.join(RECEIPT_DIR).join(VOLUME_SET_NAME),
+        RECEIPT_READ_LIMIT,
+    ) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|_| LifecycleError::Receipt),
+        Err(error)
+            if error
+                .root_cause()
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|cause| cause.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            Ok(None)
+        }
+        Err(_) => Err(LifecycleError::Receipt),
+    }
+}
+fn validate_volume_set_snapshot(
+    snapshot: &PaperlessVolumeSetSnapshot,
+    project: &str,
+) -> Result<(), LifecycleError> {
+    if snapshot.schema_version != 1
+        || snapshot.project != project
+        || !paperless_staging::valid_volume_set_id(&snapshot.volume_set_id)
+        || snapshot.logical_volumes
+            != paperless_staging::PAPERLESS_VOLUMES
+                .iter()
+                .map(|volume| volume.logical_name.to_owned())
+                .collect::<Vec<_>>()
+    {
+        return Err(LifecycleError::Receipt);
+    }
+    Ok(())
+}
+fn write_volume_set_snapshot_create_new(
+    root: &OwnedPaperlessRoot,
+    snapshot: &PaperlessVolumeSetSnapshot,
+) -> Result<(), LifecycleError> {
+    validate_volume_set_snapshot(snapshot, &snapshot.project)?;
+    ensure_bound(root)?;
+    let state = lifecycle_state_dir(root)?;
+    let bytes = serde_json::to_vec(snapshot).map_err(|_| LifecycleError::Io)?;
+    crate::skills::store::atomic_write_private_child_create_new(
+        &state,
+        OsStr::new(VOLUME_SET_NAME),
+        &root.display.join(RECEIPT_DIR).join(VOLUME_SET_NAME),
+        &bytes,
+    )
+    .map_err(|_| LifecycleError::Io)?;
+    ensure_bound(root)
+}
 fn write_uninstall_receipt(
     root: &OwnedPaperlessRoot,
     receipt: &PaperlessUninstallReceipt,
@@ -1008,7 +1192,7 @@ fn validate_install_receipt(
     receipt: &StoredPaperlessInstallReceipt,
     root: &Path,
 ) -> Result<(), LifecycleError> {
-    if receipt.schema_version != 1
+    if !matches!(receipt.schema_version, 1 | 2)
         || receipt.operation != "install"
         || receipt.contract_id != paperless_staging::OCI_CONTRACT_ID
         || !receipt.authenticated_api_ready
@@ -1054,10 +1238,23 @@ fn validate_install_receipt(
             return Err(LifecycleError::Receipt);
         }
     }
+    match (&receipt.volume_set_id, receipt.schema_version) {
+        (Some(volume_set_id), 2) if paperless_staging::valid_volume_set_id(volume_set_id) => {
+            if receipt
+                .volumes
+                .iter()
+                .any(|volume| volume.volume_set_id.as_deref() != Some(volume_set_id))
+            {
+                return Err(LifecycleError::Receipt);
+            }
+        }
+        (None, 1) => {}
+        _ => return Err(LifecycleError::Receipt),
+    }
     Ok(())
 }
 fn validate_uninstall_custody(custody: &PaperlessUninstallReceipt) -> Result<(), LifecycleError> {
-    if custody.schema_version != 1
+    if !matches!(custody.schema_version, 1 | 2)
         || custody.operation != "paperless.safe_uninstall"
         || custody.project.is_empty()
         || custody.install_receipt_sha256.len() != 64
@@ -1156,6 +1353,46 @@ fn validate_uninstall_custody(custody: &PaperlessUninstallReceipt) -> Result<(),
                 }
             }
         }
+    }
+    if (custody.schema_version == 2
+        && custody.phase == PaperlessUninstallPhase::Complete
+        && custody.retained_volume_snapshot.len() != paperless_staging::PAPERLESS_VOLUMES.len())
+        || (!custody.retained_volume_snapshot.is_empty()
+        && (custody.retained_volume_snapshot.len() != paperless_staging::PAPERLESS_VOLUMES.len()
+            || custody
+                .retained_volume_snapshot
+                .iter()
+                .zip(paperless_staging::PAPERLESS_VOLUMES)
+                .any(|(actual, expected)| {
+                    actual.logical_name != expected.logical_name
+                        || actual.name != volume_name(&custody.project, expected.logical_name)
+                        || actual.project != custody.project
+                        || actual
+                            .volume_set_id
+                            .as_deref()
+                            .is_some_and(|id| !paperless_staging::valid_volume_set_id(id))
+                }))
+    ) {
+        return Err(LifecycleError::Receipt);
+    }
+    Ok(())
+}
+fn validate_completed_uninstall_snapshot(
+    custody: &PaperlessUninstallReceipt,
+    installed: &StoredPaperlessInstallReceipt,
+) -> Result<(), LifecycleError> {
+    if custody.schema_version == 1 {
+        return Ok(());
+    }
+    if custody.retained_volume_snapshot.len() != installed.volumes.len()
+        || custody.retained_volume_snapshot.iter().zip(&installed.volumes).any(|(actual, expected)| {
+            actual.logical_name != expected.logical_name
+                || actual.name != expected.name
+                || actual.project != expected.project
+                || actual.volume_set_id != expected.volume_set_id
+        })
+    {
+        return Err(LifecycleError::Receipt);
     }
     Ok(())
 }
@@ -1341,6 +1578,7 @@ struct EnvBinding {
     port: u16,
     origin: String,
     env: Zeroizing<Vec<u8>>,
+    volume_set_id: Option<String>,
 }
 fn read_binding(root: &OwnedPaperlessRoot) -> Result<EnvBinding, LifecycleError> {
     ensure_bound(root)?;
@@ -1358,6 +1596,7 @@ fn read_binding(root: &OwnedPaperlessRoot) -> Result<EnvBinding, LifecycleError>
         port,
         origin: format!("http://127.0.0.1:{port}"),
         env,
+        volume_set_id: None,
     })
 }
 fn dotenv_port(env: &[u8]) -> Result<u16, LifecycleError> {
@@ -1376,7 +1615,7 @@ fn compose_environment(binding: &EnvBinding) -> Result<Vec<(String, String)>, Li
         &PAPERLESS_INTERPOLATION_ENV,
     )
     .map_err(|_| LifecycleError::Credentials)?;
-    PAPERLESS_INTERPOLATION_ENV
+    let mut environment: Vec<_> = PAPERLESS_INTERPOLATION_ENV
         .iter()
         .map(|name| {
             values
@@ -1385,7 +1624,14 @@ fn compose_environment(binding: &EnvBinding) -> Result<Vec<(String, String)>, Li
                 .map(|value| ((*name).to_owned(), value.to_string()))
                 .ok_or(LifecycleError::Credentials)
         })
-        .collect()
+        .collect::<Result<_, _>>()?;
+    if let Some(volume_set_id) = &binding.volume_set_id {
+        environment.push((
+            "NEOTH_PAPERLESS_VOLUME_SET_ID".to_owned(),
+            volume_set_id.clone(),
+        ));
+    }
+    Ok(environment)
 }
 fn ensure_stage(root: &OwnedPaperlessRoot, expected: &EnvBinding) -> Result<(), LifecycleError> {
     let observed = read_binding(root)?;
@@ -1635,7 +1881,8 @@ async fn preflight_existing_volumes<E: ComposeExecutor>(
     project: &str,
     root: &OwnedPaperlessRoot,
     binding: &EnvBinding,
-) -> Result<(), LifecycleError> {
+) -> Result<Option<String>, LifecycleError> {
+    let mut present = Vec::with_capacity(paperless_staging::PAPERLESS_VOLUMES.len());
     for expected in paperless_staging::PAPERLESS_VOLUMES {
         ensure_stage(root, binding)?;
         let expected_name = volume_name(project, expected.logical_name);
@@ -1655,32 +1902,89 @@ async fn preflight_existing_volumes<E: ComposeExecutor>(
             )
             .await?;
         ensure_stage(root, binding)?;
-        if listed_expected_volume(&listed.stdout, &expected_name)? {
+        present.push((expected, listed_expected_volume(&listed.stdout, &expected_name)?));
+    }
+    let completed_install = read_completed_install_for_volume_set(root)?;
+    let snapshot = read_volume_set_snapshot(root)?;
+    if let Some(snapshot) = snapshot {
+        validate_volume_set_snapshot(&snapshot, project)?;
+        // A snapshot is written before the first `compose up`.  A crash can
+        // therefore leave zero or a strict prefix/subset of its correctly
+        // labelled volumes; that is recoverable only before any valid install
+        // receipt exists.  After a completed install, a missing member is a
+        // substituted retained set and must not be recreated.
+        if let Some(installed) = &completed_install
+            && installed.volume_set_id.as_deref() != Some(snapshot.volume_set_id.as_str())
+        {
+            return Err(LifecycleError::UnownedOrMismatch);
+        }
+        if completed_install.is_some() && present.iter().any(|(_, exists)| !exists) {
+            return Err(LifecycleError::UnownedOrMismatch);
+        }
+        for (expected, exists) in present {
+            if !exists {
+                continue;
+            }
+            let expected_name = volume_name(project, expected.logical_name);
             let inspected = executor
                 .run(
                     &engine.docker(
                         "volume",
-                        &[
-                            "inspect",
-                            &expected_name,
-                            "--format",
-                            VOLUME_INSPECT_TEMPLATE,
-                        ],
+                        &["inspect", &expected_name, "--format", VOLUME_INSPECT_TEMPLATE],
                     ),
                     &root.display,
                 )
                 .await?;
             ensure_stage(root, binding)?;
-            verify_volume(expected, project, &inspected.stdout)
+            verify_volume(expected, project, Some(&snapshot.volume_set_id), &inspected.stdout)
                 .map_err(|_| LifecycleError::UnownedOrMismatch)?;
         }
+        return Ok(Some(snapshot.volume_set_id));
     }
-    Ok(())
+    if completed_install
+        .as_ref()
+        .is_some_and(|installed| installed.volume_set_id.is_some())
+    {
+        return Err(LifecycleError::UnownedOrMismatch);
+    }
+    if present.iter().any(|(_, exists)| *exists) {
+        if present.iter().any(|(_, exists)| !exists) {
+            return Err(LifecycleError::UnownedOrMismatch);
+        }
+        for (expected, _) in present {
+            let expected_name = volume_name(project, expected.logical_name);
+            let inspected = executor
+                .run(
+                    &engine.docker(
+                        "volume",
+                        &["inspect", &expected_name, "--format", VOLUME_INSPECT_TEMPLATE],
+                    ),
+                    &root.display,
+                )
+                .await?;
+            ensure_stage(root, binding)?;
+            verify_volume(expected, project, None, &inspected.stdout)
+                .map_err(|_| LifecycleError::UnownedOrMismatch)?;
+        }
+        return Ok(None);
+    }
+    let snapshot = PaperlessVolumeSetSnapshot {
+        schema_version: 1,
+        project: project.to_owned(),
+        volume_set_id: uuid::Uuid::new_v4().to_string(),
+        logical_volumes: paperless_staging::PAPERLESS_VOLUMES
+            .iter()
+            .map(|volume| volume.logical_name.to_owned())
+            .collect(),
+    };
+    write_volume_set_snapshot_create_new(root, &snapshot)?;
+    Ok(Some(snapshot.volume_set_id))
 }
 async fn inspect_owned_volumes<E: ComposeExecutor>(
     executor: &mut E,
     engine: &Engine,
     project: &str,
+    volume_set_id: Option<&str>,
     root: &OwnedPaperlessRoot,
     binding: &EnvBinding,
 ) -> Result<Vec<VerifiedVolume>, LifecycleError> {
@@ -1703,13 +2007,14 @@ async fn inspect_owned_volumes<E: ComposeExecutor>(
             )
             .await?;
         ensure_stage(root, binding)?;
-        volumes.push(verify_volume(expected, project, &inspected.stdout)?);
+        volumes.push(verify_volume(expected, project, volume_set_id, &inspected.stdout)?);
     }
     Ok(volumes)
 }
 fn verify_volume(
     expected: paperless_staging::PaperlessVolumeSpec,
     project: &str,
+    expected_volume_set_id: Option<&str>,
     raw: &str,
 ) -> Result<VerifiedVolume, LifecycleError> {
     let actual: DockerVolume = serde_json::from_str(raw)
@@ -1718,6 +2023,8 @@ fn verify_volume(
     if actual.name != expected_name
         || actual.labels.get("com.docker.compose.project") != Some(&project.to_owned())
         || actual.labels.get("com.docker.compose.volume") != Some(&expected.logical_name.to_owned())
+        || expected_volume_set_id
+            .is_some_and(|set_id| actual.labels.get("io.neoth.paperless.volume-set-id") != Some(&set_id.to_owned()))
     {
         return Err(LifecycleError::Container(
             "paperless_volume_ownership_mismatch",
@@ -1727,6 +2034,7 @@ fn verify_volume(
         logical_name: expected.logical_name,
         name: actual.name,
         project: project.to_owned(),
+        volume_set_id: actual.labels.get("io.neoth.paperless.volume-set-id").cloned(),
     })
 }
 fn local_docker_endpoint(endpoint: &str) -> bool {
@@ -1808,7 +2116,7 @@ fn acquire_launch_guard(
         .map_err(|_| LifecycleError::LaunchBinding)?;
     let env = hold_approved_import_file(&root_guard, Path::new("paperless.env"), ENV_LIMIT)
         .map_err(|_| LifecycleError::LaunchBinding)?;
-    if compose.bytes() != paperless_staging::expected_compose_bytes()
+    if !paperless_staging::recognized_compose_bytes(compose.bytes())
         || env.bytes() != binding.env.as_slice()
     {
         return Err(LifecycleError::LaunchBinding);
@@ -1850,7 +2158,7 @@ fn acquire_launch_guard(
         ENV_LIMIT,
     )
     .map_err(|_| LifecycleError::LaunchBinding)?;
-    if compose != paperless_staging::expected_compose_bytes() || env != binding.env.as_slice() {
+    if !paperless_staging::recognized_compose_bytes(&compose) || env != binding.env.as_slice() {
         return Err(LifecycleError::LaunchBinding);
     }
     root.root
@@ -1947,6 +2255,7 @@ mod tests {
                 port: 18000,
                 origin: "http://127.0.0.1:18000".to_owned(),
                 env: Zeroizing::new(env),
+                volume_set_id: None,
             };
             let environment = compose_environment(&binding).unwrap();
             let value = |name: &str| -> &str {
@@ -2031,7 +2340,7 @@ mod tests {
             r#"{{"Name":"{name}","Labels":{{"com.docker.compose.project":"project","com.docker.compose.volume":"{}"}}}}"#,
             expected.logical_name
         );
-        assert!(verify_volume(expected, "project", &good).is_ok());
+        assert!(verify_volume(expected, "project", None, &good).is_ok());
         for invalid in [
             format!(
                 r#"{{"Name":"foreign","Labels":{{"com.docker.compose.project":"project","com.docker.compose.volume":"{}"}}}}"#,
@@ -2046,7 +2355,7 @@ mod tests {
             ),
             "not-json".to_owned(),
         ] {
-            assert!(verify_volume(expected, "project", &invalid).is_err());
+            assert!(verify_volume(expected, "project", None, &invalid).is_err());
         }
     }
     #[test]
@@ -2187,7 +2496,9 @@ mod tests {
         uninstall_test_container_seed: u8,
         container_inspects: Option<std::sync::Arc<AtomicUsize>>,
         volume_list_response: Option<String>,
+        volume_list_responses: std::collections::VecDeque<String>,
         volume_inspect_responses: std::collections::VecDeque<String>,
+        volume_inspect_default_count: usize,
         retained_compose_inputs: Vec<Vec<u8>>,
     }
     #[async_trait]
@@ -2247,7 +2558,11 @@ mod tests {
             if argv.iter().any(|part| part == "volume") {
                 if argv.iter().any(|part| part == "ls") {
                     return Ok(CommandOutput {
-                        stdout: self.volume_list_response.clone().unwrap_or_default(),
+                        stdout: self
+                            .volume_list_responses
+                            .pop_front()
+                            .or_else(|| self.volume_list_response.clone())
+                            .unwrap_or_default(),
                     });
                 }
                 let name = argv
@@ -2259,11 +2574,24 @@ mod tests {
                     .iter()
                     .find(|volume| name.ends_with(volume.logical_name))
                     .ok_or(LifecycleError::Container("fake_volume"))?;
-                return Ok(CommandOutput {
-                    stdout: self.volume_inspect_responses.pop_front().unwrap_or_else(|| format!(
-                        r#"{{"Name":"{name}","Labels":{{"com.docker.compose.project":"{}","com.docker.compose.volume":"{}"}}}}"#,
+                let volume_set_label = std::fs::read(cwd.join(RECEIPT_DIR).join(VOLUME_SET_NAME))
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice::<PaperlessVolumeSetSnapshot>(&bytes).ok())
+                    .map(|snapshot| format!(r#",\"io.neoth.paperless.volume-set-id\":\"{}\""#, snapshot.volume_set_id))
+                .unwrap_or_default()
+                .replace("\\\"", "\"");
+                let default = format!(
+                        r#"{{"Name":"{name}","Labels":{{"com.docker.compose.project":"{}","com.docker.compose.volume":"{}"{volume_set_label}}}}}"#,
                         project_name(cwd), logical_name.logical_name
-                    )),
+                    );
+                let stdout = if self.volume_inspect_default_count > 0 {
+                    self.volume_inspect_default_count -= 1;
+                    default
+                } else {
+                    self.volume_inspect_responses.pop_front().unwrap_or(default)
+                };
+                return Ok(CommandOutput {
+                    stdout,
                 });
             }
             if argv.iter().any(|part| part == "ps") {
@@ -2347,8 +2675,10 @@ mod tests {
             binding: &EnvBinding,
         ) -> Result<CommandOutput, LifecycleError> {
             compose_environment(binding)?;
-            self.retained_compose_inputs
-                .push(paperless_staging::expected_compose_bytes().to_vec());
+            self.retained_compose_inputs.push(match binding.volume_set_id.as_deref() {
+                Some(id) => paperless_staging::render_compose_with_volume_set_id(id).unwrap(),
+                None => paperless_staging::legacy_compose_bytes().to_vec(),
+            });
             self.run(argv, &root.display).await
         }
     }
@@ -2416,9 +2746,12 @@ mod tests {
         home: &Path,
         credentials: &Credentials,
     ) -> Result<PaperlessLifecycleReceipt, LifecycleError> {
+        let root = crate::config::InstancePaths::for_home(home).paperless_root;
+        let project = project_name(&root);
         let mut executor = FakeExecutor {
             exact_container_ids: true,
             uninstall_test_container_seed: 1,
+            volume_list_responses: all_existing_volume_list_responses(&project),
             ..Default::default()
         };
         let ready = EventuallyReady(AtomicUsize::new(0));
@@ -2473,6 +2806,23 @@ mod tests {
             receipt.volumes.len(),
             paperless_staging::PAPERLESS_VOLUMES.len()
         );
+        let set_id = receipt.volume_set_id.as_deref().unwrap();
+        assert!(paperless_staging::valid_volume_set_id(set_id));
+        assert!(receipt
+            .volumes
+            .iter()
+            .all(|volume| volume.volume_set_id.as_deref() == Some(set_id)));
+        let snapshot: PaperlessVolumeSetSnapshot = serde_json::from_slice(
+            &std::fs::read(
+                crate::config::InstancePaths::for_home(home.path())
+                    .paperless_root
+                    .join(RECEIPT_DIR)
+                    .join(VOLUME_SET_NAME),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(snapshot.volume_set_id, set_id);
         assert!(
             executor
                 .commands
@@ -2484,7 +2834,8 @@ mod tests {
             executor
                 .retained_compose_inputs
                 .iter()
-                .all(|input| input.as_slice() == paperless_staging::expected_compose_bytes())
+                .all(|input| std::str::from_utf8(input)
+                    .is_ok_and(|input| input.contains("io.neoth.paperless.volume-set-id:")))
         );
         for command in executor
             .commands
@@ -2527,18 +2878,165 @@ mod tests {
         );
         assert!(!lifecycle_receipt_path(home.path()).exists());
     }
+    fn all_existing_volume_list_responses(project: &str) -> std::collections::VecDeque<String> {
+        paperless_staging::PAPERLESS_VOLUMES
+            .iter()
+            .map(|volume| format!("{}\n", volume_name(project, volume.logical_name)))
+            .collect()
+    }
+    #[tokio::test]
+    async fn legacy_unlabelled_set_remains_repeat_install_compatible() {
+        let (home, credentials) = staged_home();
+        let root = crate::config::InstancePaths::for_home(home.path()).paperless_root;
+        let project = project_name(&root);
+        let ready = EventuallyReady(AtomicUsize::new(0));
+        let mut first = FakeExecutor {
+            volume_list_responses: all_existing_volume_list_responses(&project),
+            exact_container_ids: true,
+            ..Default::default()
+        };
+        let receipt = install_at_with_readiness(home.path(), &credentials, &mut first, &ready)
+            .await
+            .unwrap();
+        assert_eq!(receipt.schema_version, 1);
+        assert!(receipt.volume_set_id.is_none());
+        let ready = EventuallyReady(AtomicUsize::new(0));
+        let mut second = FakeExecutor {
+            volume_list_responses: all_existing_volume_list_responses(&project),
+            exact_container_ids: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            install_at_with_readiness(home.path(), &credentials, &mut second, &ready)
+                .await
+                .unwrap()
+                .schema_version,
+            1
+        );
+    }
+    #[tokio::test]
+    async fn corrupted_receipt_without_snapshot_rejects_before_compose() {
+        let (home, credentials) = staged_home();
+        std::fs::write(lifecycle_receipt_path(home.path()), b"not-json").unwrap();
+        let mut executor = FakeExecutor::default();
+        let ready = EventuallyReady(AtomicUsize::new(0));
+        assert!(matches!(
+            install_at_with_readiness(home.path(), &credentials, &mut executor, &ready).await,
+            Err(LifecycleError::Receipt)
+        ));
+        assert!(!executor.commands.iter().any(|command| command.iter().any(|part| part == "compose")));
+    }
+    #[tokio::test]
+    async fn completed_generation_with_lost_snapshot_rejects_before_compose() {
+        let (home, credentials) = staged_home();
+        let mut initial = FakeExecutor {
+            exact_container_ids: true,
+            ..Default::default()
+        };
+        let ready = EventuallyReady(AtomicUsize::new(0));
+        install_at_with_readiness(home.path(), &credentials, &mut initial, &ready)
+            .await
+            .unwrap();
+        let root = crate::config::InstancePaths::for_home(home.path()).paperless_root;
+        std::fs::remove_file(root.join(RECEIPT_DIR).join(VOLUME_SET_NAME)).unwrap();
+        let mut retry = FakeExecutor::default();
+        let ready = EventuallyReady(AtomicUsize::new(0));
+        assert!(matches!(
+            install_at_with_readiness(home.path(), &credentials, &mut retry, &ready).await,
+            Err(LifecycleError::UnownedOrMismatch)
+        ));
+        assert!(!retry.commands.iter().any(|command| command.iter().any(|part| part == "compose")));
+    }
+    #[tokio::test]
+    async fn completed_generation_with_missing_volume_rejects_before_compose() {
+        let (home, credentials) = staged_home();
+        let mut initial = FakeExecutor {
+            exact_container_ids: true,
+            ..Default::default()
+        };
+        let ready = EventuallyReady(AtomicUsize::new(0));
+        install_at_with_readiness(home.path(), &credentials, &mut initial, &ready)
+            .await
+            .unwrap();
+        let root = crate::config::InstancePaths::for_home(home.path()).paperless_root;
+        let project = project_name(&root);
+        let mut lists = all_existing_volume_list_responses(&project);
+        lists.pop_back();
+        lists.push_back(String::new());
+        let mut retry = FakeExecutor {
+            volume_list_responses: lists,
+            ..Default::default()
+        };
+        let ready = EventuallyReady(AtomicUsize::new(0));
+        assert!(matches!(
+            install_at_with_readiness(home.path(), &credentials, &mut retry, &ready).await,
+            Err(LifecycleError::UnownedOrMismatch)
+        ));
+        assert!(!retry.commands.iter().any(|command| command.iter().any(|part| part == "compose")));
+    }
+    #[tokio::test]
+    async fn interrupted_fresh_generation_with_matching_partial_set_resumes() {
+        let (home, credentials) = staged_home();
+        let root = crate::config::InstancePaths::for_home(home.path()).paperless_root;
+        let project = project_name(&root);
+        let snapshot = PaperlessVolumeSetSnapshot {
+            schema_version: 1,
+            project: project.clone(),
+            volume_set_id: "9f1f4b33-8c76-4d42-a0a5-2ee785fa8df0".to_owned(),
+            logical_volumes: paperless_staging::PAPERLESS_VOLUMES
+                .iter()
+                .map(|volume| volume.logical_name.to_owned())
+                .collect(),
+        };
+        let owned = paperless_staging::open_owned_root_at(&root).unwrap();
+        write_volume_set_snapshot_create_new(&owned, &snapshot).unwrap();
+        let mut lists = std::collections::VecDeque::new();
+        lists.push_back(format!(
+            "{}\n",
+            volume_name(&project, paperless_staging::PAPERLESS_VOLUMES[0].logical_name)
+        ));
+        for _ in 1..paperless_staging::PAPERLESS_VOLUMES.len() {
+            lists.push_back(String::new());
+        }
+        let mut executor = FakeExecutor {
+            volume_list_responses: lists,
+            ..Default::default()
+        };
+        let ready = EventuallyReady(AtomicUsize::new(0));
+        let receipt = install_at_with_readiness(home.path(), &credentials, &mut executor, &ready)
+            .await
+            .unwrap();
+        assert_eq!(receipt.volume_set_id.as_deref(), Some(snapshot.volume_set_id.as_str()));
+    }
+    #[test]
+    fn owned_snapshot_and_mixed_volume_labels_are_distinguished() {
+        let project = "paperless-test";
+        let set_id = "9f1f4b33-8c76-4d42-a0a5-2ee785fa8df0";
+        let snapshot = PaperlessVolumeSetSnapshot {
+            schema_version: 1,
+            project: project.to_owned(),
+            volume_set_id: set_id.to_owned(),
+            logical_volumes: paperless_staging::PAPERLESS_VOLUMES
+                .iter()
+                .map(|volume| volume.logical_name.to_owned())
+                .collect(),
+        };
+        assert!(validate_volume_set_snapshot(&snapshot, project).is_ok());
+        let expected = paperless_staging::PAPERLESS_VOLUMES[0];
+        let raw = format!(
+            r#"{{\"Name\":\"{}\",\"Labels\":{{\"com.docker.compose.project\":\"{project}\",\"com.docker.compose.volume\":\"{}\",\"io.neoth.paperless.volume-set-id\":\"other\"}}}}"#,
+            volume_name(project, expected.logical_name),
+            expected.logical_name,
+        )
+        .replace("\\\"", "\"");
+        assert!(verify_volume(expected, project, Some(set_id), &raw).is_err());
+    }
     #[tokio::test]
     async fn post_readiness_volume_mismatch_suppresses_receipt() {
         let (home, credentials) = staged_home();
         let root = crate::config::InstancePaths::for_home(home.path()).paperless_root;
         let project = project_name(&root);
-        let mut responses = paperless_staging::PAPERLESS_VOLUMES
-            .iter()
-            .map(|volume| format!(
-                r#"{{"Name":"{}","Labels":{{"com.docker.compose.project":"{project}","com.docker.compose.volume":"{}"}}}}"#,
-                volume_name(&project, volume.logical_name), volume.logical_name
-            ))
-            .collect::<std::collections::VecDeque<_>>();
+        let mut responses = std::collections::VecDeque::new();
         let first = paperless_staging::PAPERLESS_VOLUMES[0];
         responses.push_back(format!(
             r#"{{"Name":"{}","Labels":{{"com.docker.compose.project":"foreign","com.docker.compose.volume":"{}"}}}}"#,
@@ -2546,6 +3044,7 @@ mod tests {
         ));
         let mut executor = FakeExecutor {
             volume_inspect_responses: responses,
+            volume_inspect_default_count: paperless_staging::PAPERLESS_VOLUMES.len(),
             ..Default::default()
         };
         let ready = EventuallyReady(AtomicUsize::new(0));
@@ -2555,6 +3054,7 @@ mod tests {
                 "paperless_volume_ownership_mismatch"
             ))
         ));
+        assert!(ready.0.load(Ordering::SeqCst) > 0);
         assert!(!lifecycle_receipt_path(home.path()).exists());
     }
     #[cfg(not(windows))]

@@ -287,8 +287,15 @@ fn validate_custody(
         // crash in that narrow interval is still pre-dispatch and must resume
         // by re-inspecting labels before the first and only remove attempt.
         || (custody.phase == PurgePhase::IntentPersisted && job.progress.completed_steps > 2)
-        || (matches!(custody.phase, PurgePhase::RemoveDispatched | PurgePhase::AbsentVerified) && job.progress.completed_steps < 2)
-        || (custody.phase == PurgePhase::Completed && job.progress.completed_steps < 3)
+        // Restart recovery may deliberately reset a valid interrupted job's
+        // progress to zero while preserving its separately validated custody.
+        // A nonzero value still has to be compatible with the persisted phase.
+        || (custody.phase == PurgePhase::RemoveDispatched
+            && !matches!(job.progress.completed_steps, 0 | 2))
+        || (custody.phase == PurgePhase::AbsentVerified
+            && !matches!(job.progress.completed_steps, 0 | 2 | 3))
+        || (custody.phase == PurgePhase::Completed
+            && !matches!(job.progress.completed_steps, 0 | 3 | 4))
     {
         Err("n8n_purge_custody_mismatch")
     } else {

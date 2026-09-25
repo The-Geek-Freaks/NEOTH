@@ -12,6 +12,7 @@ struct UninstallFake {
     fail_rm_after_remove_for: BTreeSet<String>,
     fail_rm_while_present_for: BTreeSet<String>,
     listing_error_ids: BTreeSet<String>,
+    volume_set_id: Option<String>,
 }
 
 impl UninstallFake {
@@ -41,6 +42,7 @@ impl UninstallFake {
             fail_rm_after_remove_for: BTreeSet::new(),
             fail_rm_while_present_for: BTreeSet::new(),
             listing_error_ids: BTreeSet::new(),
+            volume_set_id: value["volume_set_id"].as_str().map(str::to_owned),
         }
     }
 
@@ -90,9 +92,14 @@ impl ComposeExecutor for UninstallFake {
                 .unwrap();
             return Ok(CommandOutput {
                 stdout: format!(
-                    r#"{{"Name":"{name}","Labels":{{"com.docker.compose.project":"{}","com.docker.compose.volume":"{}"}}}}"#,
+                    r#"{{"Name":"{name}","Labels":{{"com.docker.compose.project":"{}","com.docker.compose.volume":"{}"{}}}}}"#,
                     project_name(cwd),
-                    logical.logical_name
+                    logical.logical_name,
+                    self.volume_set_id
+                        .as_deref()
+                        .map(|id| format!(r#",\"io.neoth.paperless.volume-set-id\":\"{id}\""#))
+                        .unwrap_or_default()
+                        .replace("\\\"", "\""),
                 ),
             });
         }
@@ -205,7 +212,7 @@ fn wrong_operation(value: &mut serde_json::Value) {
     value["operation"] = serde_json::Value::String("other.operation".into());
 }
 fn wrong_schema(value: &mut serde_json::Value) {
-    value["schema_version"] = serde_json::Value::from(2);
+    value["schema_version"] = serde_json::Value::from(3);
 }
 fn wrong_hash(value: &mut serde_json::Value) {
     value["install_receipt_sha256"] = serde_json::Value::String("0".repeat(64));
@@ -259,6 +266,34 @@ async fn uninstall_success_removes_owned_stopped_containers_and_retains_six_volu
             .any(|command| command.iter().any(|part| part == "volume")
                 && command.iter().any(|part| part == "rm"))
     );
+}
+
+#[tokio::test]
+async fn legacy_unlabelled_install_receipt_remains_safe_uninstall_compatible() {
+    let (home, credentials, original) = installed_home_for_uninstall_test().await;
+    let mut legacy: serde_json::Value = serde_json::from_slice(&original).unwrap();
+    legacy["schema_version"] = serde_json::Value::from(1);
+    legacy.as_object_mut().unwrap().remove("volume_set_id");
+    for volume in legacy["volumes"].as_array_mut().unwrap() {
+        volume.as_object_mut().unwrap().remove("volume_set_id");
+    }
+    let legacy = serde_json::to_vec(&legacy).unwrap();
+    std::fs::write(lifecycle_receipt_path(home.path()), &legacy).unwrap();
+    std::fs::remove_file(
+        crate::config::InstancePaths::for_home(home.path())
+            .paperless_root
+            .join(RECEIPT_DIR)
+            .join(VOLUME_SET_NAME),
+    )
+    .unwrap();
+    let mut fake = UninstallFake::from_receipt(&legacy);
+    let receipt = uninstall_at_with(home.path(), &credentials, &mut fake)
+        .await
+        .unwrap();
+    assert_eq!(receipt.schema_version, 1);
+    assert_eq!(receipt.phase, PaperlessUninstallPhase::Complete);
+    assert!(receipt.retained_volume_snapshot.iter().all(|volume| volume.volume_set_id.is_none()));
+    assert!(fake.present.is_empty());
 }
 
 #[tokio::test]

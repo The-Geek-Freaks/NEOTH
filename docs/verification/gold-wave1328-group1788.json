@@ -1,0 +1,37 @@
+{
+  "kind": "EXACT_SOURCE_GROUPED_PARTIAL_FAILURE",
+  "source": "571573e7144d38c9b1f79dc3b348ca0c993afa1b",
+  "run": 36122591399,
+  "expected": 1788,
+  "executed": 1788,
+  "passed": 1784,
+  "failed": 4,
+  "missingTerminal": 0,
+  "historicalSourceBindings": 301,
+  "artifacts": [
+    {
+      "n": "w190-research-lifecycle-source-571573e7144d38c9b1f79dc3b348ca0c993afa1b",
+      "a": "b79d7a6e816d35ba4bba95b866c30ed59560a88916bc56907d2eb52f0f41dc76",
+      "match": true,
+      "d": "b79d7a6e816d35ba4bba95b866c30ed59560a88916bc56907d2eb52f0f41dc76",
+      "id": 10859615576
+    },
+    {
+      "n": "w190-research-lifecycle-receipt-571573e7144d38c9b1f79dc3b348ca0c993afa1b",
+      "a": "ae41256df28c091c18b011fdd27d9e2f92295e1388fcc045c2d7771481edafdc",
+      "match": true,
+      "d": "ae41256df28c091c18b011fdd27d9e2f92295e1388fcc045c2d7771481edafdc",
+      "id": 10859470704
+    },
+    {
+      "n": "w190-research-lifecycle-log-571573e7144d38c9b1f79dc3b348ca0c993afa1b",
+      "a": "b3ef92c14285b778ded72f2f55c72457219f68455ecafd5ccfcdc045ed1f03b9",
+      "match": true,
+      "d": "b3ef92c14285b778ded72f2f55c72457219f68455ecafd5ccfcdc045ed1f03b9",
+      "id": 10859210793
+    }
+  ],
+  "admissionSha256": "74693320734D78FBE7EFDE4B04B68FC1FB66890E97A28C6D23BEB9EF638A30F6",
+  "scope": "All1788 exact tests executed. One schema migration fixture mismatch and three purge restart checkpoint failures; repaired source requires fresh hosted gates.",
+  "localExecutableValidationRan": false
+}

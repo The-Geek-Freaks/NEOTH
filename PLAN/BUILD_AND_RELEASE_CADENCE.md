@@ -3,6 +3,34 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1322/1325 and W1328-1335 retained-volume provenance and hosted repairs (2026-09-25):**
+Paperless records one opaque generation before creating its six volumes and
+binds it through real Docker labels, install receipts and safe-uninstall custody.
+Retained reinstall preserves that generation. Exact legacy Compose input and
+schema1 receipts remain compatible without gaining destructive authority.
+Corrupt receipts, lost generation snapshots and missing members of a completed
+set reject automatic recreation; interrupted first creation may resume only
+with matching existing labels. Eight new native cases protect these boundaries.
+The real-product canary now requires schema2, all six labels and stable snapshot
+bytes across repeat/install/uninstall/reinstall while retaining the PDF witness.
+
+Group1788 run36122591399 at571573e7 executed1788:1784PASS/4FAIL/0missing,
+with301historical source bindings. Windows557 run36122594409 at the same source
+executed557:553PASS/4FAIL/0missing,88source blobs and558log hashes verified.
+Both found the same four failures. W1329 repairs legitimate reset-to-zero job
+progress after validated restart while preserving durable single-dispatch purge
+custody. W1330 aligns the migration test fixture with its actual resume witness.
+The product run36122597092 failed at the first bootstrap container dispatch;
+VolumeBound plus an approximately48-second step suggests an inner45-second
+transport timeout, but the old coarse error does not prove the cause. W1331
+preserves all8typed redacted transport categories and adds one no-retry native
+case plus a helper redaction test. No timeout or retry semantics were loosened.
+Fresh hosted selections are Group1797/Windows566; native catalog2007. Their
+runtime results, the new Paperless provenance canary, and n8n real purge remain
+pending. Claude060 proposed the next Paperless purge CLI contract; Root corrected
+its uncertain-delete retry wording. No Paperless purge action is shipped here,
+no roadmap checkbox is closed, and no local executable validation ran.
+
 **W1323-1324 purge product-observer repair and CLI reference (2026-09-25):**
 Corec6cf production-Clippy, native-test typecheck and CLI build/export passed;
 workspace-Clippy continues. Exact CLI artifact10858567568 is checksum-verified

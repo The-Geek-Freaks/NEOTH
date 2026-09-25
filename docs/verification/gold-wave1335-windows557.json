@@ -1,0 +1,65 @@
+{
+  "kind": "EXACT_SOURCE_WINDOWS_PARTIAL_FAILURE",
+  "source": "571573e7144d38c9b1f79dc3b348ca0c993afa1b",
+  "run": 36122594409,
+  "artifact": {
+    "id": 10859651677,
+    "apiZipDigest": "sha256:8c46a83c1e210d47542de2346556837fa97a954cc7e6b9d02abd1efb4626fd66",
+    "localZipSha256": "8c46a83c1e210d47542de2346556837fa97a954cc7e6b9d02abd1efb4626fd66",
+    "digestMatches": true,
+    "artifactSourceMatchesRun": true
+  },
+  "compile": {
+    "status": 0,
+    "candidateCount": 1,
+    "selectedLibTarget": "neothd",
+    "selectedExecutable": "neothd-6c7ce2ac0c7e63cd.exe"
+  },
+  "terminals": {
+    "expected": 557,
+    "selectionValid": true,
+    "selectedRows": 557,
+    "uniqueSelected": 557,
+    "terminalRows": 557,
+    "uniqueTerminal": 557,
+    "passed": 553,
+    "failed": 4,
+    "missing": 0,
+    "extra": 0
+  },
+  "failures": [
+    {
+      "ordinal": 543,
+      "test": "integrations::jobs::tests::schema_v3_migrates_representative_history_and_round_trips_purge_jobs",
+      "path": "SRC/neothd/src/integrations/jobs.rs",
+      "line": 3724,
+      "assertion": "RecoveryDispositionMismatch"
+    },
+    {
+      "ordinal": 550,
+      "test": "integrations::n8n::managed_purge::tests::dispatched_purge_reconciles_only_by_later_absence_without_a_second_remove",
+      "path": "SRC/neothd/src/integrations/n8n/managed_purge_tests.rs",
+      "line": 418,
+      "assertion": "n8n_purge_custody_mismatch"
+    },
+    {
+      "ordinal": 556,
+      "test": "integrations::n8n::managed_purge::tests::completed_custody_with_receipt_before_ready_recovers_without_remove",
+      "path": "SRC/neothd/src/integrations/n8n/managed_purge_tests.rs",
+      "line": 666,
+      "assertion": "n8n_purge_custody_mismatch"
+    },
+    {
+      "ordinal": 557,
+      "test": "integrations::n8n::managed_purge::tests::absent_verified_custody_before_configuration_recovers_without_remove",
+      "path": "SRC/neothd/src/integrations/n8n/managed_purge_tests.rs",
+      "line": 718,
+      "assertion": "n8n_purge_custody_mismatch"
+    }
+  ],
+  "historicalSourceBindings": 88,
+  "verifiedLogHashes": 558,
+  "admissionSha256": "D30EF27469D655FCA8889094B4086B253D187BAABE722987936A7D0FAB78762F",
+  "scope": "Same four failures as Group1788. W1329 actual recovery checkpoint repair and W1330 fixture witness repair require fresh hosted verification.",
+  "localExecutableValidationRan": false
+}

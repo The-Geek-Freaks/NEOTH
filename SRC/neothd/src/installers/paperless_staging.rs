@@ -339,6 +339,9 @@ fn expected_files() -> [(&'static str, &'static [u8]); 3] {
         (ENV_EXAMPLE, env_example_bytes()),
     ]
 }
+pub(crate) fn recognized_compose_bytes(bytes: &[u8]) -> bool {
+    bytes == compose_bytes() || bytes == legacy_compose_bytes()
+}
 fn ownership_bytes() -> &'static [u8] {
     b"{\"schema\":2,\"release\":\"3.2.1\",\"receipt_sha256\":\"3c8cabbaae8b77ae48e707447fe6440c9511711f199ff924bda1094801309931\",\"contract_id\":\"paperless-oci-v1-3c8cabbaae8b77ae\",\"provenance_coverage\":\"index_and_child_metadata_only\",\"source_commit\":\"96f86a92c526275a97b2c1e44c3040ba3af55f43\"}\n"
 }
@@ -346,11 +349,30 @@ fn env_example_bytes() -> &'static [u8] {
     b"# Copy to paperless.env and set every value outside NEOTH.\nPAPERLESS_SECRET_KEY=\nPAPERLESS_DB_NAME=\nPAPERLESS_DB_USER=\nPAPERLESS_DB_PASSWORD=\nPAPERLESS_ADMIN_USER=\nPAPERLESS_ADMIN_PASSWORD=\nPAPERLESS_BIND_PORT=\n"
 }
 fn compose_bytes() -> &'static [u8] {
+    b"services:\n  webserver:\n    image: ghcr.io/paperless-ngx/paperless-ngx@sha256:5fa76604a81df6945086e0837b14b56543d137e8ce4f311cc5d9ebe907e74e79\n    environment:\n      PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY:?PAPERLESS_SECRET_KEY is required}\n      PAPERLESS_DBNAME: ${PAPERLESS_DB_NAME:?PAPERLESS_DB_NAME is required}\n      PAPERLESS_DBUSER: ${PAPERLESS_DB_USER:?PAPERLESS_DB_USER is required}\n      PAPERLESS_DBPASS: ${PAPERLESS_DB_PASSWORD:?PAPERLESS_DB_PASSWORD is required}\n      PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER:?PAPERLESS_ADMIN_USER is required}\n      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD:?PAPERLESS_ADMIN_PASSWORD is required}\n      PAPERLESS_REDIS: redis://broker:6379\n      PAPERLESS_DBHOST: db\n    ports:\n      - \"127.0.0.1:${PAPERLESS_BIND_PORT:?PAPERLESS_BIND_PORT is required}:8000\"\n    volumes:\n      - paperless_consume:/usr/src/paperless/consume\n      - paperless_data:/usr/src/paperless/data\n      - paperless_media:/usr/src/paperless/media\n      - paperless_export:/usr/src/paperless/export\n  broker:\n    image: registry-1.docker.io/valkey/valkey@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11\n    volumes:\n      - paperless_valkey:/data\n  db:\n    image: registry-1.docker.io/library/postgres@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae\n    environment:\n      POSTGRES_DB: ${PAPERLESS_DB_NAME:?PAPERLESS_DB_NAME is required}\n      POSTGRES_USER: ${PAPERLESS_DB_USER:?PAPERLESS_DB_USER is required}\n      POSTGRES_PASSWORD: ${PAPERLESS_DB_PASSWORD:?PAPERLESS_DB_PASSWORD is required}\n    volumes:\n      - paperless_postgres:/var/lib/postgresql\nvolumes:\n  paperless_consume:\n    labels:\n      io.neoth.paperless.volume-set-id: ${NEOTH_PAPERLESS_VOLUME_SET_ID:-}\n  paperless_data:\n    labels:\n      io.neoth.paperless.volume-set-id: ${NEOTH_PAPERLESS_VOLUME_SET_ID:-}\n  paperless_media:\n    labels:\n      io.neoth.paperless.volume-set-id: ${NEOTH_PAPERLESS_VOLUME_SET_ID:-}\n  paperless_export:\n    labels:\n      io.neoth.paperless.volume-set-id: ${NEOTH_PAPERLESS_VOLUME_SET_ID:-}\n  paperless_valkey:\n    labels:\n      io.neoth.paperless.volume-set-id: ${NEOTH_PAPERLESS_VOLUME_SET_ID:-}\n  paperless_postgres:\n    labels:\n      io.neoth.paperless.volume-set-id: ${NEOTH_PAPERLESS_VOLUME_SET_ID:-}\n"
+}
+pub(crate) fn legacy_compose_bytes() -> &'static [u8] {
     b"services:\n  webserver:\n    image: ghcr.io/paperless-ngx/paperless-ngx@sha256:5fa76604a81df6945086e0837b14b56543d137e8ce4f311cc5d9ebe907e74e79\n    environment:\n      PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY:?PAPERLESS_SECRET_KEY is required}\n      PAPERLESS_DBNAME: ${PAPERLESS_DB_NAME:?PAPERLESS_DB_NAME is required}\n      PAPERLESS_DBUSER: ${PAPERLESS_DB_USER:?PAPERLESS_DB_USER is required}\n      PAPERLESS_DBPASS: ${PAPERLESS_DB_PASSWORD:?PAPERLESS_DB_PASSWORD is required}\n      PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER:?PAPERLESS_ADMIN_USER is required}\n      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD:?PAPERLESS_ADMIN_PASSWORD is required}\n      PAPERLESS_REDIS: redis://broker:6379\n      PAPERLESS_DBHOST: db\n    ports:\n      - \"127.0.0.1:${PAPERLESS_BIND_PORT:?PAPERLESS_BIND_PORT is required}:8000\"\n    volumes:\n      - paperless_consume:/usr/src/paperless/consume\n      - paperless_data:/usr/src/paperless/data\n      - paperless_media:/usr/src/paperless/media\n      - paperless_export:/usr/src/paperless/export\n  broker:\n    image: registry-1.docker.io/valkey/valkey@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11\n    volumes:\n      - paperless_valkey:/data\n  db:\n    image: registry-1.docker.io/library/postgres@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae\n    environment:\n      POSTGRES_DB: ${PAPERLESS_DB_NAME:?PAPERLESS_DB_NAME is required}\n      POSTGRES_USER: ${PAPERLESS_DB_USER:?PAPERLESS_DB_USER is required}\n      POSTGRES_PASSWORD: ${PAPERLESS_DB_PASSWORD:?PAPERLESS_DB_PASSWORD is required}\n    volumes:\n      - paperless_postgres:/var/lib/postgresql\nvolumes:\n  paperless_consume:\n  paperless_data:\n  paperless_media:\n  paperless_export:\n  paperless_valkey:\n  paperless_postgres:\n"
 }
 
-pub(crate) fn expected_compose_bytes() -> &'static [u8] {
-    compose_bytes()
+/// Render the only generation-bearing Compose variant. The value is lifecycle
+/// custody, never a CLI or ambient-environment input.
+pub(crate) fn render_compose_with_volume_set_id(volume_set_id: &str) -> Option<Vec<u8>> {
+    if !valid_volume_set_id(volume_set_id) {
+        return None;
+    }
+    let source = std::str::from_utf8(compose_bytes()).ok()?;
+    let rendered = source.replace("${NEOTH_PAPERLESS_VOLUME_SET_ID:-}", volume_set_id);
+    (rendered.matches("io.neoth.paperless.volume-set-id:").count() == PAPERLESS_VOLUMES.len())
+        .then_some(rendered.into_bytes())
+}
+
+pub(crate) fn valid_volume_set_id(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => byte.is_ascii_hexdigit(),
+        })
 }
 
 /// A byte-validated, capability-bound Paperless root. It is crate-internal so
@@ -411,7 +433,7 @@ pub(crate) fn open_owned_root_at(root: &Path) -> Result<OwnedPaperlessRoot, Pape
             OWNED_FILE_MAX_BYTES,
         )
         .map_err(|_| PaperlessStagingError::UnownedOrMismatch)?;
-        if bytes != expected {
+        if bytes != expected && !(name == COMPOSE && recognized_compose_bytes(&bytes)) {
             return Err(PaperlessStagingError::UnownedOrMismatch);
         }
     }
@@ -476,7 +498,7 @@ fn inspect_owned(root: &Path) -> Result<bool, PaperlessStagingError> {
             OWNED_FILE_MAX_BYTES,
         )
         .map_err(|_| PaperlessStagingError::UnownedOrMismatch)?;
-        if bytes != expected {
+        if bytes != expected && !(name == COMPOSE && recognized_compose_bytes(&bytes)) {
             return Err(PaperlessStagingError::UnownedOrMismatch);
         }
     }
@@ -566,6 +588,21 @@ mod tests {
                 && !compose.contains("curl")
                 && !compose.contains("password=")
         );
+    }
+
+    #[test]
+    fn volume_set_renderer_labels_each_canonical_volume_with_one_opaque_generation() {
+        let set_id = "9f1f4b33-8c76-4d42-a0a5-2ee785fa8df0";
+        let rendered = String::from_utf8(render_compose_with_volume_set_id(set_id).unwrap()).unwrap();
+        assert_eq!(
+            rendered
+                .matches("io.neoth.paperless.volume-set-id:")
+                .count(),
+            PAPERLESS_VOLUMES.len()
+        );
+        assert_eq!(rendered.matches(set_id).count(), PAPERLESS_VOLUMES.len());
+        assert!(!rendered.contains("${NEOTH_PAPERLESS_VOLUME_SET_ID"));
+        assert!(render_compose_with_volume_set_id("operator-supplied").is_none());
     }
 
     #[test]

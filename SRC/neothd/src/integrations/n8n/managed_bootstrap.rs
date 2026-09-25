@@ -19,7 +19,9 @@ use crate::{
     integrations::state::ResumeEvidence, secret::SecretString,
 };
 
-use super::bootstrap_transport::{BootstrapDockerRunner, LocalBootstrapDockerRunner};
+use super::bootstrap_transport::{
+    BootstrapCommandFailure, BootstrapDockerRunner, LocalBootstrapDockerRunner,
+};
 use super::managed_runtime::{self, ManagedN8nRequest};
 use super::sha256_parts;
 
@@ -245,9 +247,21 @@ async fn docker<R: BootstrapDockerRunner>(
     let output = runner
         .run(argv, stdin, cancel)
         .await
-        .map_err(|_| anyhow!("n8n_bootstrap_docker_unavailable"))?;
+        .map_err(|failure| anyhow!(bootstrap_transport_failure_code(failure)))?;
     ensure!(output.succeeded, "n8n_bootstrap_docker_failed");
     Ok(output.stdout)
+}
+fn bootstrap_transport_failure_code(failure: BootstrapCommandFailure) -> &'static str {
+    match failure {
+        BootstrapCommandFailure::EmptyCommand => "n8n_bootstrap_docker_empty_command",
+        BootstrapCommandFailure::Spawn => "n8n_bootstrap_docker_spawn_failed",
+        BootstrapCommandFailure::Stdin => "n8n_bootstrap_docker_stdin_failed",
+        BootstrapCommandFailure::Capture => "n8n_bootstrap_docker_capture_failed",
+        BootstrapCommandFailure::Wait => "n8n_bootstrap_docker_wait_failed",
+        BootstrapCommandFailure::TimedOut => "n8n_bootstrap_docker_timeout",
+        BootstrapCommandFailure::Cancelled => "n8n_bootstrap_docker_cancelled",
+        BootstrapCommandFailure::OutputLimit => "n8n_bootstrap_docker_output_limit",
+    }
 }
 async fn docker_secret_exec<R: BootstrapDockerRunner>(
     runner: &mut R,
@@ -1094,6 +1108,51 @@ mod tests {
         collections::VecDeque,
         sync::{Arc, Mutex},
     };
+    #[tokio::test]
+    async fn docker_transport_failures_preserve_inner_category_without_retry_or_secret_output() {
+        struct FailingRunner {
+            failure: BootstrapCommandFailure,
+            calls: usize,
+        }
+        #[async_trait::async_trait]
+        impl BootstrapDockerRunner for FailingRunner {
+            async fn run(
+                &mut self,
+                _args: &[String],
+                _stdin: Option<Zeroizing<Vec<u8>>>,
+                _cancel: &mut tokio::sync::oneshot::Receiver<()>,
+            ) -> std::result::Result<
+                super::super::bootstrap_transport::BootstrapCommandOutput,
+                BootstrapCommandFailure,
+            > {
+                self.calls += 1;
+                Err(self.failure)
+            }
+        }
+        for (failure, expected) in [
+            (BootstrapCommandFailure::EmptyCommand, "n8n_bootstrap_docker_empty_command"),
+            (BootstrapCommandFailure::Spawn, "n8n_bootstrap_docker_spawn_failed"),
+            (BootstrapCommandFailure::Stdin, "n8n_bootstrap_docker_stdin_failed"),
+            (BootstrapCommandFailure::Capture, "n8n_bootstrap_docker_capture_failed"),
+            (BootstrapCommandFailure::Wait, "n8n_bootstrap_docker_wait_failed"),
+            (BootstrapCommandFailure::TimedOut, "n8n_bootstrap_docker_timeout"),
+            (BootstrapCommandFailure::Cancelled, "n8n_bootstrap_docker_cancelled"),
+            (BootstrapCommandFailure::OutputLimit, "n8n_bootstrap_docker_output_limit"),
+        ] {
+            let mut runner = FailingRunner { failure, calls: 0 };
+            let (_sender, mut cancel) = tokio::sync::oneshot::channel();
+            let error = docker(
+                &mut runner,
+                &["docker".into(), "private-argument".into()],
+                Some(Zeroizing::new(b"private-secret-input".to_vec())),
+                &mut cancel,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error.to_string(), expected);
+            assert_eq!(runner.calls, 1);
+        }
+    }
     #[test]
     fn bootstrap_command_is_networkless_unpublished_and_secret_free() {
         let c = BootstrapCustody {

@@ -1,0 +1,71 @@
+{
+  "kind": "RETAINED_VOLUME_PROVENANCE_AND_HOSTED_RECOVERY_REPAIRS",
+  "base": "571573e7144d38c9b1f79dc3b348ca0c993afa1b",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sha256": "05E414F6E8C23F74324DC7F7274CFA8E5650C0CF44002978F754FC6C636D8C3E"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_staging.rs",
+      "sha256": "41802FC13CF0925E4BF68BD4739697A09A675FDC15181631151CEFB7E4C0EE59"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
+      "sha256": "5D7DB89F43373D67FA02B5999B62B77D2967585647310CB8B15AB3270F52C745"
+    },
+    {
+      "path": "packaging/paperless_product_canary.py",
+      "sha256": "7DE76E57E22442AFD30FD531FBED9CA878381AA36C271DAB551FFF4D405C6A19"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "sha256": "53AC110326BD4F3D3CAAE2DB3E457451D9B4ECA607C1933695E38485488D4A2A"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs",
+      "sha256": "6B981FB13FE15D597C437A1799E98E5B82DE78F3D508153395E76FB54294042A"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_purge.rs",
+      "sha256": "F01CAF7530D9D7559F1B8129B2B2D8D634AE3FB17C5DF6ED3C5B7C1AC0724257"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/jobs.rs",
+      "sha256": "4BFB5DE7566A64D773D0CCB5DB522431DA112E44AD55A0E79DA5298C9064194F"
+    },
+    {
+      "path": "packaging/n8n_product_bootstrap_canary.py",
+      "sha256": "BEC0BB8C34997429C077BA04197AC5FCC0CEBB4DBBEC441C116753AE013B1A63"
+    },
+    {
+      "path": "packaging/tests/test_n8n_product_bootstrap_canary.py",
+      "sha256": "C31CA97DF59DE04D83B37D8030927B461529F6691897287B9FF1DA179CF1B100"
+    }
+  ],
+  "paperlessNativeAdded": 8,
+  "bootstrapDiagnosticNativeAdded": 1,
+  "nativeTotal": 2007,
+  "grouped": 1797,
+  "windows": 566,
+  "paperlessPurgeImplemented": false,
+  "runtimeAcceptance": "PENDING_EXACT_SOURCE_HOSTED_GATES",
+  "localExecutableValidationRan": false,
+  "reviews": [
+    {
+      "path": "work/gold-20260906/wave1326-paperless-provenance-review/REVIEW.md",
+      "sha256": "C9459BF9A54531E76731F8EDE894760F09514F63908B5288D009915848097679",
+      "scope": "Independent static review; hosted gates pending"
+    },
+    {
+      "path": "work/gold-20260906/wave1325-paperless-provenance-canary/REVIEW.md",
+      "sha256": "F40706A262638880FE4B001D8962680EC38DCF81B466286A8B15C9E7FB53E9E7",
+      "scope": "Independent static review; hosted gates pending"
+    },
+    {
+      "path": "work/gold-20260906/wave1333-n8n-hosted-repair-review/REVIEW.md",
+      "sha256": "FD862018E81DBBDEFAD9C90B2451CF0B4A89907D6E2BC5B7112C625A04BB0060",
+      "scope": "Independent static review; hosted gates pending"
+    }
+  ]
+}

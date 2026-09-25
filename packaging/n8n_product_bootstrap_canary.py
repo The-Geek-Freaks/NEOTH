@@ -76,6 +76,10 @@ class CommandFailure(Failure):
         # arbitrary stderr, JSON error text, arguments or credential values.
         known = (
             "n8n_bootstrap_docker_unavailable", "n8n_bootstrap_docker_failed",
+            "n8n_bootstrap_docker_empty_command", "n8n_bootstrap_docker_spawn_failed",
+            "n8n_bootstrap_docker_stdin_failed", "n8n_bootstrap_docker_capture_failed",
+            "n8n_bootstrap_docker_wait_failed", "n8n_bootstrap_docker_timeout",
+            "n8n_bootstrap_docker_cancelled", "n8n_bootstrap_docker_output_limit",
             "n8n_bootstrap_volume_mismatch", "n8n_bootstrap_http_unknown",
             "n8n_bootstrap_http_rejected", "n8n_managed_instance_already_owned",
             "n8n_runtime_binding_write_failed", "n8n_managed_prepared_job_not_active",

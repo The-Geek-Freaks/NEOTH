@@ -20,16 +20,19 @@ def container(service: str = "webserver") -> dict:
     return {"Id": "a" * 64, "Image": "b" * 64, "State": {"Running": True}, "Config": {"Labels": {"com.docker.compose.project": project, "com.docker.compose.service": service}}, "NetworkSettings": {"Ports": {"8000/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18001"}]} if service == "webserver" else {}}, "Mounts": mounts}
 
 
-def install_receipt() -> dict:
+def install_receipt(schema_version: int = 1, volume_set_id: str | None = None) -> dict:
     project = "neoth-paperless-abcdef123456"
     configs = {service: f"sha256:{index:064x}" for index, service in enumerate(canary.IMAGES, start=1)}
-    return {
-        "schema_version": 1, "operation": "install", "project": project,
+    receipt = {
+        "schema_version": schema_version, "operation": "install", "project": project,
         "loopback_port": 18001, "authenticated_api_ready": True,
         "images": [{"service": service, "reference": reference, "config_id": configs[service]} for service, reference in canary.IMAGES.items()],
         "containers": [{"service": service, "id": f"{index:064x}", "image_id": configs[service]} for index, service in enumerate(canary.IMAGES, start=10)],
-        "volumes": [{"logical_name": logical, "name": f"{project}_{logical}", "project": project} for logical, _, _ in canary.VOLUMES],
+        "volumes": [{"logical_name": logical, "name": f"{project}_{logical}", "project": project, "volume_set_id": volume_set_id} for logical, _, _ in canary.VOLUMES],
     }
+    if schema_version == 2:
+        receipt["volume_set_id"] = volume_set_id
+    return receipt
 
 
 def install_receipt_bytes() -> bytes:
@@ -64,10 +67,19 @@ class CustodyTests(unittest.TestCase):
         row["Labels"]["com.docker.compose.project"] = "foreign"
         with self.assertRaises(canary.Failure): canary.validate_volume(row, "neoth-paperless-abcdef123456", "paperless_data")
 
+    def test_generated_volume_requires_matching_generation_label(self) -> None:
+        generation = "12345678-1234-4234-8234-123456789abc"
+        row = {"Name": "neoth-paperless-abcdef123456_paperless_data", "Labels": {"com.docker.compose.project": "neoth-paperless-abcdef123456", "com.docker.compose.volume": "paperless_data", "io.neoth.paperless.volume-set-id": generation}}
+        self.assertEqual(canary.validate_volume(row, "neoth-paperless-abcdef123456", "paperless_data", generation), row["Name"])
+        row["Labels"]["io.neoth.paperless.volume-set-id"] = "abcdef12-1234-4234-8234-123456789abc"
+        with self.assertRaises(canary.Failure):
+            canary.validate_volume(row, "neoth-paperless-abcdef123456", "paperless_data", generation)
+
     def test_install_receipt_accepts_exact_six_volumes_and_rejects_duplicate_or_missing(self) -> None:
         receipt = install_receipt()
-        project, _, identities = canary.validate_install(receipt, 18001)
+        project, _, identities, volume_set_id = canary.validate_install(receipt, 18001)
         self.assertEqual(project, "neoth-paperless-abcdef123456")
+        self.assertIsNone(volume_set_id)
         self.assertEqual(len(identities), len(canary.IMAGES) + len(canary.VOLUMES))
         duplicate = install_receipt()
         duplicate["volumes"][-1] = duplicate["volumes"][0].copy()
@@ -75,6 +87,19 @@ class CustodyTests(unittest.TestCase):
         missing = install_receipt()
         missing["volumes"] = missing["volumes"][:-1]
         with self.assertRaises(canary.Failure): canary.validate_install(missing, 18001)
+
+    def test_schema_two_install_requires_one_canonical_volume_generation_per_volume(self) -> None:
+        generation = "12345678-1234-4234-8234-123456789abc"
+        receipt = install_receipt(2, generation)
+        self.assertEqual(canary.validate_install(receipt, 18001)[3], generation)
+        for mutate in (
+            lambda value: value.__setitem__("volume_set_id", "not-a-uuid"),
+            lambda value: value["volumes"][0].__setitem__("volume_set_id", "abcdef12-1234-4234-8234-123456789abc"),
+            lambda value: value["volumes"][0].pop("volume_set_id"),
+        ):
+            invalid = install_receipt(2, generation); mutate(invalid)
+            with self.subTest(mutate=mutate), self.assertRaises(canary.Failure):
+                canary.validate_install(invalid, 18001)
 
     def test_command_failure_is_redacted(self) -> None:
         secret = "must-never-appear-in-a-receipt"
@@ -140,6 +165,21 @@ class CustodyTests(unittest.TestCase):
         hash_mismatch = uninstall_receipt(); hash_mismatch["install_receipt_sha256"] = "0" * 64
         with self.assertRaises(canary.Failure): canary.validate_uninstall(hash_mismatch, installed["project"], ids, volumes, install_receipt_bytes())
 
+    def test_generated_uninstall_requires_ordered_generation_bound_snapshot(self) -> None:
+        generation = "12345678-1234-4234-8234-123456789abc"
+        installed = install_receipt(2, generation)
+        ids = tuple(row["id"] for row in installed["containers"])
+        volumes = tuple(row["name"] for row in installed["volumes"])
+        receipt = uninstall_receipt()
+        receipt["schema_version"] = 2
+        receipt["install_receipt_sha256"] = hashlib.sha256(json.dumps(installed, sort_keys=True).encode("utf-8")).hexdigest()
+        receipt["retained_volume_snapshot"] = [{"logical_name": logical, "name": name, "project": installed["project"], "volume_set_id": generation} for (logical, _, _), name in zip(canary.VOLUMES, volumes, strict=True)]
+        install_raw = json.dumps(installed, sort_keys=True).encode("utf-8")
+        canary.validate_uninstall(receipt, installed["project"], ids, volumes, install_raw, generation)
+        receipt["retained_volume_snapshot"][0]["volume_set_id"] = "abcdef12-1234-4234-8234-123456789abc"
+        with self.assertRaises(canary.Failure):
+            canary.validate_uninstall(receipt, installed["project"], ids, volumes, install_raw, generation)
+
     def test_persisted_install_receipt_requires_exact_expected_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory); state = home / "paperless" / "state"; state.mkdir(parents=True)
@@ -149,6 +189,17 @@ class CustodyTests(unittest.TestCase):
             mutated = install_receipt(); mutated["project"] = "foreign"
             path.write_bytes(json.dumps(mutated, sort_keys=True).encode("utf-8"))
             with self.assertRaises(canary.Failure): canary.persisted_install_receipt(home, expected, 18001)
+
+    def test_persisted_volume_set_snapshot_requires_exact_project_generation_and_six_names(self) -> None:
+        project, generation = "neoth-paperless-abcdef123456", "12345678-1234-4234-8234-123456789abc"
+        snapshot = {"schema_version": 1, "project": project, "volume_set_id": generation, "logical_volumes": [logical for logical, _, _ in canary.VOLUMES]}
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); state = home / "paperless" / "state"; state.mkdir(parents=True)
+            path = state / ".neoth-paperless-volume-set.v1.json"; path.write_text(json.dumps(snapshot))
+            self.assertEqual(canary.persisted_volume_set_snapshot(home, project, generation), path.read_bytes())
+            snapshot["logical_volumes"].reverse(); path.write_text(json.dumps(snapshot))
+            with self.assertRaises(canary.Failure):
+                canary.persisted_volume_set_snapshot(home, project, generation)
 
     def test_persisted_complete_custody_bytes_must_remain_identical_on_repeat(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

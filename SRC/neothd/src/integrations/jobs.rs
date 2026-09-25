@@ -3717,7 +3717,7 @@ mod tests {
         let mut purge = request("managed-node");
         purge.operation = JobOperation::Purge;
         purge.release_version = "4.0.0".into();
-        purge.manifest_sha256 = digest('f');
+        purge.manifest_sha256 = digest('a');
         let purged = service.enqueue(purge).unwrap().job;
         assert_eq!(purged.operation, JobOperation::Purge);
         drop(service);

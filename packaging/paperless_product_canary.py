@@ -38,6 +38,7 @@ VOLUMES = (
 )
 SHA256 = re.compile(r"[0-9a-f]{64}")
 IDENTIFIER = re.compile(r"[0-9a-f]{64}")
+VOLUME_SET_ID = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}")
 API_LIMIT = 32 * 1024
 CONFIG_LIMIT = 256 * 1024
 DOWNLOAD_LIMIT = 2 * 1024 * 1024
@@ -218,17 +219,23 @@ def validate_container(row: dict, project: str, service: str, image_id: str, por
     return identifier
 
 
-def validate_volume(row: dict, project: str, logical: str) -> str:
+def validate_volume(row: dict, project: str, logical: str, volume_set_id: str | None = None) -> str:
     name = row.get("Name")
     labels = row.get("Labels", {})
-    if not isinstance(name, str) or name != f"{project}_{logical}" or labels.get("com.docker.compose.project") != project or labels.get("com.docker.compose.volume") != logical:
+    if not isinstance(name, str) or name != f"{project}_{logical}" or labels.get("com.docker.compose.project") != project or labels.get("com.docker.compose.volume") != logical or (volume_set_id is not None and labels.get("io.neoth.paperless.volume-set-id") != volume_set_id):
         raise Failure("volume_identity_invalid")
     return name
 
 
-def validate_install(value: dict, port: int) -> tuple[str, dict[str, str], tuple[str, ...]]:
+def validate_install(value: dict, port: int) -> tuple[str, dict[str, str], tuple[str, ...], str | None]:
     project = require(value, "project", str)
-    if value.get("schema_version") != 1 or value.get("operation") != "install" or value.get("loopback_port") != port or value.get("authenticated_api_ready") is not True:
+    schema_version = value.get("schema_version")
+    volume_set_id = value.get("volume_set_id")
+    if schema_version not in {1, 2} or value.get("operation") != "install" or value.get("loopback_port") != port or value.get("authenticated_api_ready") is not True:
+        raise Failure("install_json_invalid")
+    if schema_version == 1 and volume_set_id is not None:
+        raise Failure("install_json_invalid")
+    if schema_version == 2 and (not isinstance(volume_set_id, str) or not VOLUME_SET_ID.fullmatch(volume_set_id)):
         raise Failure("install_json_invalid")
     images, containers, volumes = require(value, "images", list), require(value, "containers", list), require(value, "volumes", list)
     if len(images) != len(IMAGES) or len(containers) != len(IMAGES) or len(volumes) != len(VOLUMES):
@@ -250,12 +257,12 @@ def validate_install(value: dict, port: int) -> tuple[str, dict[str, str], tuple
     for item in volumes:
         logical_name = item.get("logical_name") if isinstance(item, dict) else None
         name = item.get("name") if isinstance(item, dict) else None
-        if not isinstance(item, dict) or not isinstance(logical_name, str) or logical_name not in expected_logical_names or logical_name in names or item.get("project") != project or not isinstance(name, str) or name != f"{project}_{logical_name}":
+        if not isinstance(item, dict) or not isinstance(logical_name, str) or logical_name not in expected_logical_names or logical_name in names or item.get("project") != project or not isinstance(name, str) or name != f"{project}_{logical_name}" or item.get("volume_set_id") != volume_set_id:
             raise Failure("volume_receipt_invalid")
         names[logical_name] = name
     if len(set(ids)) != len(IMAGES) or len(config_ids) != len(IMAGES) or container_services != set(IMAGES) or set(names) != expected_logical_names:
         raise Failure("lifecycle_identity_duplicate")
-    return project, config_ids, tuple(ids + [names[logical] for logical, _, _ in VOLUMES])
+    return project, config_ids, tuple(ids + [names[logical] for logical, _, _ in VOLUMES]), volume_set_id
 
 
 def admitted_images() -> dict[str, tuple[str, str]]:
@@ -447,7 +454,7 @@ def persisted_receipt_bytes(home: Path, name: str, code: str) -> bytes:
     return path.read_bytes()
 
 
-def persisted_install_receipt(home: Path, expected: tuple[str, dict[str, str], tuple[str, ...]], port: int) -> bytes:
+def persisted_install_receipt(home: Path, expected: tuple[str, dict[str, str], tuple[str, ...], str | None], port: int) -> bytes:
     raw = persisted_receipt_bytes(home, ".neoth-paperless-lifecycle-receipt.v1.json", "install_receipt_bytes_invalid")
     if validate_install(read_json_bytes(raw, "install_receipt_bytes_invalid"), port) != expected:
         raise Failure("install_receipt_bytes_invalid")
@@ -461,8 +468,11 @@ def persisted_uninstall_receipt(home: Path, expected: dict) -> bytes:
     return raw
 
 
-def validate_uninstall(value: dict, project: str, original_ids: tuple[str, ...], volume_names: tuple[str, ...], install_receipt_bytes: bytes) -> None:
-    if value.get("schema_version") != 1 or value.get("operation") != "paperless.safe_uninstall" or value.get("project") != project or value.get("phase") != "complete" or value.get("network_retained") is not True:
+def validate_uninstall(value: dict, project: str, original_ids: tuple[str, ...], volume_names: tuple[str, ...], install_receipt_bytes: bytes, volume_set_id: str | None = None) -> None:
+    schema_version = value.get("schema_version")
+    if schema_version not in {1, 2} or value.get("operation") != "paperless.safe_uninstall" or value.get("project") != project or value.get("phase") != "complete" or value.get("network_retained") is not True:
+        raise Failure("uninstall_receipt_invalid")
+    if (volume_set_id is None and schema_version != 1) or (volume_set_id is not None and schema_version != 2):
         raise Failure("uninstall_receipt_invalid")
     ids = value.get("original_container_ids")
     retained = value.get("retained_volumes")
@@ -479,16 +489,36 @@ def validate_uninstall(value: dict, project: str, original_ids: tuple[str, ...],
     if seen_ids != set(original_ids) or seen_services != expected_services:
         raise Failure("uninstall_receipt_invalid")
 
+    snapshot = value.get("retained_volume_snapshot")
+    if volume_set_id is None:
+        if snapshot not in (None, []):
+            raise Failure("uninstall_receipt_invalid")
+        return
+    expected_snapshot = [
+        {"logical_name": logical, "name": name, "project": project, "volume_set_id": volume_set_id}
+        for (logical, _, _), name in zip(VOLUMES, volume_names, strict=True)
+    ]
+    if snapshot != expected_snapshot:
+        raise Failure("uninstall_receipt_invalid")
 
-def retained_volumes(project: str, volume_names: tuple[str, ...]) -> None:
+
+def retained_volumes(project: str, volume_names: tuple[str, ...], volume_set_id: str | None = None) -> None:
     if len(volume_names) != len(VOLUMES):
         raise Failure("retained_volume_count_invalid")
     for (logical, _, _), name in zip(VOLUMES, volume_names, strict=True):
-        if validate_volume(docker_json(name, volume=True), project, logical) != name:
+        if validate_volume(docker_json(name, volume=True), project, logical, volume_set_id) != name:
             raise Failure("retained_volume_identity_invalid")
 
 
-def cleanup(project: str, config_ids: dict[str, str], identities: tuple[str, ...], port: int, retired_container_ids: tuple[str, ...] = ()) -> tuple[bool, str | None]:
+def persisted_volume_set_snapshot(home: Path, project: str, volume_set_id: str) -> bytes:
+    raw = persisted_receipt_bytes(home, ".neoth-paperless-volume-set.v1.json", "volume_set_snapshot_invalid")
+    value = read_json_bytes(raw, "volume_set_snapshot_invalid")
+    if value != {"schema_version": 1, "project": project, "volume_set_id": volume_set_id, "logical_volumes": [logical for logical, _, _ in VOLUMES]}:
+        raise Failure("volume_set_snapshot_invalid")
+    return raw
+
+
+def cleanup(project: str, config_ids: dict[str, str], identities: tuple[str, ...], port: int, retired_container_ids: tuple[str, ...] = (), volume_set_id: str | None = None) -> tuple[bool, str | None]:
     container_ids, volume_names = identities[:3], identities[3:]
     try:
         for service, identifier in zip(IMAGES, container_ids, strict=True):
@@ -502,7 +532,7 @@ def cleanup(project: str, config_ids: dict[str, str], identities: tuple[str, ...
             if identifier not in container_ids:
                 bounded.prove_absent("container", identifier)
         for (logical, _, _), name in zip(VOLUMES, volume_names, strict=True):
-            if validate_volume(docker_json(name, volume=True), project, logical) != name:
+            if validate_volume(docker_json(name, volume=True), project, logical, volume_set_id) != name:
                 raise Failure("volume_identity_invalid")
         for identifier in container_ids:
             if identifier in retired_container_ids:
@@ -538,7 +568,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("--binary", required=True); parser.add_argument("--home", required=True); parser.add_argument("--port", required=True, type=int); parser.add_argument("--receipt", required=True)
     args = parser.parse_args(); binary, home, receipt_path = Path(args.binary), Path(args.home), Path(args.receipt)
     receipt = {"schema": 1, "source_sha": os.environ.get("GITHUB_SHA"), "port": args.port, "credential_backend": "file", "outcome": "failed", "cleanup_proven": False}
-    project = None; config_ids: dict[str, str] | None = None; identities: tuple[str, ...] | None = None; retired_ids: tuple[str, ...] = ()
+    project = None; config_ids: dict[str, str] | None = None; identities: tuple[str, ...] | None = None; retired_ids: tuple[str, ...] = (); volume_set_id: str | None = None
     try:
         hosted_paths(home, receipt_path)
         if not 1 <= args.port <= 65535 or not binary.is_file():
@@ -548,7 +578,10 @@ def main() -> int:
         prepared = read_json_bytes(run([str(binary), "--output", "json", "paperless", "prepare"]), "prepare_json_invalid"); validate_prepare(prepared)
         write_env_fixture(home / "paperless", args.port)
         first = read_json_bytes(run([str(binary), "--output", "json", "paperless", "install"], timeout=900), "install_json_invalid")
-        project, reported_configs, identities = validate_install(first, args.port)
+        project, reported_configs, identities, volume_set_id = validate_install(first, args.port)
+        if volume_set_id is None:
+            raise Failure("fresh_volume_set_required")
+        volume_set_snapshot_bytes = persisted_volume_set_snapshot(home, project, volume_set_id)
         admitted = admitted_images()
         config_ids = {}
         for service, (reference, config_id) in admitted.items():
@@ -561,16 +594,17 @@ def main() -> int:
         for service, identifier in zip(IMAGES, identities[:3], strict=True):
             validate_container(docker_json(identifier), project, service, config_ids[service], args.port)
         for (logical, _, _), name in zip(VOLUMES, identities[3:], strict=True):
-            validate_volume(docker_json(name, volume=True), project, logical)
+            validate_volume(docker_json(name, volume=True), project, logical, volume_set_id)
         status = read_json_bytes(run([str(binary), "--output", "json", "paperless", "status"]), "status_json_invalid")
         if status.get("status") != "authenticated_api_ready" or status.get("authenticated_api_ready") is not True or status.get("staging") not in {"prepared_pinned", "already_prepared"}:
             raise Failure("product_status_invalid")
         receipt["api"] = verify_api(args.port, configured_token(home))
         repeated = read_json_bytes(run([str(binary), "--output", "json", "paperless", "install"], timeout=900), "install_json_invalid")
-        repeated_project, repeated_configs, repeated_ids = validate_install(repeated, args.port)
-        if (repeated_project, repeated_configs, repeated_ids) != (project, config_ids, identities):
+        repeated_project, repeated_configs, repeated_ids, repeated_volume_set_id = validate_install(repeated, args.port)
+        if (repeated_project, repeated_configs, repeated_ids, repeated_volume_set_id) != (project, config_ids, identities, volume_set_id) or persisted_volume_set_snapshot(home, project, volume_set_id) != volume_set_snapshot_bytes:
             raise Failure("repeat_install_changed_identities")
-        install_receipt_bytes = persisted_install_receipt(home, (project, config_ids, identities), args.port)
+        retained_volumes(project, identities[3:], volume_set_id)
+        install_receipt_bytes = persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port)
         receipt["repeat_api"] = verify_api(args.port, configured_token(home))
         token = configured_token(home)
         document_id, task_polls = task_document_id(args.port, token, upload_marker(args.port, token))
@@ -578,25 +612,25 @@ def main() -> int:
         removed = read_json_bytes(run([str(binary), "--output", "json", "paperless", "uninstall"], timeout=900), "uninstall_json_invalid")
         retired_ids = identities[:3]
         volume_names = identities[3:]
-        validate_uninstall(removed, project, retired_ids, volume_names, install_receipt_bytes)
+        validate_uninstall(removed, project, retired_ids, volume_names, install_receipt_bytes, volume_set_id)
         uninstall_receipt_bytes = persisted_uninstall_receipt(home, removed)
-        retained_volumes(project, volume_names)
+        retained_volumes(project, volume_names, volume_set_id)
         for identifier in retired_ids:
             bounded.prove_absent("container", identifier)
         repeated_uninstall = read_json_bytes(run([str(binary), "--output", "json", "paperless", "uninstall"], timeout=900), "uninstall_json_invalid")
-        validate_uninstall(repeated_uninstall, project, retired_ids, volume_names, install_receipt_bytes)
-        if persisted_uninstall_receipt(home, repeated_uninstall) != uninstall_receipt_bytes or persisted_install_receipt(home, (project, config_ids, identities), args.port) != install_receipt_bytes:
+        validate_uninstall(repeated_uninstall, project, retired_ids, volume_names, install_receipt_bytes, volume_set_id)
+        if persisted_uninstall_receipt(home, repeated_uninstall) != uninstall_receipt_bytes or persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port) != install_receipt_bytes or persisted_volume_set_snapshot(home, project, volume_set_id) != volume_set_snapshot_bytes:
             raise Failure("repeat_uninstall_mutated_custody")
-        retained_volumes(project, volume_names)
+        retained_volumes(project, volume_names, volume_set_id)
         for identifier in retired_ids:
             bounded.prove_absent("container", identifier)
         reinstalled = read_json_bytes(run([str(binary), "--output", "json", "paperless", "install"], timeout=900), "install_json_invalid")
-        reinstall_project, reinstall_configs, reinstall_ids = validate_install(reinstalled, args.port)
-        if reinstall_project != project or reinstall_configs != config_ids or reinstall_ids[3:] != volume_names or set(reinstall_ids[:3]) & set(retired_ids):
+        reinstall_project, reinstall_configs, reinstall_ids, reinstall_volume_set_id = validate_install(reinstalled, args.port)
+        if reinstall_project != project or reinstall_configs != config_ids or reinstall_ids[3:] != volume_names or reinstall_volume_set_id != volume_set_id or set(reinstall_ids[:3]) & set(retired_ids) or persisted_volume_set_snapshot(home, project, volume_set_id) != volume_set_snapshot_bytes:
             raise Failure("reinstall_retained_data_identity_invalid")
         for service, identifier in zip(IMAGES, reinstall_ids[:3], strict=True):
             validate_container(docker_json(identifier), project, service, config_ids[service], args.port)
-        retained_volumes(project, volume_names)
+        retained_volumes(project, volume_names, volume_set_id)
         identities = reinstall_ids
         receipt["reinstall_api"] = verify_api(args.port, configured_token(home))
         survived_id, survived_title, survived_sha256 = marker_metadata(args.port, configured_token(home), document_id)
@@ -611,7 +645,7 @@ def main() -> int:
         }
         if survived_id != baseline_id or survived_title != baseline_title or survived_sha256 != baseline_sha256:
             raise Failure("retained_document_mismatch")
-        receipt.update({"project_sha256": hashlib.sha256(project.encode()).hexdigest(), "images": len(config_ids), "containers": 3, "volumes": 6, "repeat_install_preserved_identities": True, "uninstall_repeat_read_only": True, "status_ready": True})
+        receipt.update({"project_sha256": hashlib.sha256(project.encode()).hexdigest(), "volume_set_id_sha256": hashlib.sha256(volume_set_id.encode()).hexdigest(), "volume_set_snapshot_sha256": hashlib.sha256(volume_set_snapshot_bytes).hexdigest(), "images": len(config_ids), "containers": 3, "volumes": 6, "repeat_install_preserved_identities": True, "uninstall_repeat_read_only": True, "status_ready": True})
         receipt["outcome"] = "passed"
     except Exception as error:
         receipt["failure_stage"] = str(error) if isinstance(error, Failure) else "unexpected"
@@ -620,7 +654,7 @@ def main() -> int:
     finally:
         cleaned, cleanup_failure = (False, None)
         if project and config_ids and identities:
-            cleaned, cleanup_failure = cleanup(project, config_ids, identities, args.port, retired_ids)
+            cleaned, cleanup_failure = cleanup(project, config_ids, identities, args.port, retired_ids, volume_set_id)
         receipt["docker_cleanup_proven"] = cleaned
         if cleanup_failure is not None:
             receipt["cleanup_failure_stage"] = cleanup_failure
