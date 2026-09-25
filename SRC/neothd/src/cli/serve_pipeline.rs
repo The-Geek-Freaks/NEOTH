@@ -11426,14 +11426,20 @@ mod tests {
                     .expect("headless W137 delegated channel returns final reply");
                 assert_eq!(reply.text, "ordinary delegated channel final");
                 assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
-                let requests = provider.requests.lock().expect("read delegated provider requests");
-                assert_eq!(requests.len(), 2, "tool results return to the delegated provider");
-                let initial_system = requests[0]
-                    .system
-                    .clone()
-                    .unwrap_or_else(|| "<absent delegated initial system>".to_owned());
-                let denied_metadata = canonical_channel_tool_error_metadata(&requests[1].prompt);
-                drop(requests);
+                let (initial_system, denied_metadata) = {
+                    let requests = provider
+                        .requests
+                        .lock()
+                        .expect("read delegated provider requests");
+                    assert_eq!(requests.len(), 2, "tool results return to the delegated provider");
+                    (
+                        requests[0]
+                            .system
+                            .clone()
+                            .unwrap_or_else(|| "<absent delegated initial system>".to_owned()),
+                        canonical_channel_tool_error_metadata(&requests[1].prompt),
+                    )
+                };
 
                 drop(handler);
                 drop(writer);

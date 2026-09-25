@@ -3176,18 +3176,29 @@ mod tests {
             run_prepared_chat_turn(&mut fresh, &fresh_provider, &fresh_writer, &fresh_segment, &mut fresh_sink)
                 .await
                 .expect("fresh W137 session accepts authorized B");
-            let fresh_requests = fresh_provider.requests.lock().expect("read W137 fresh-session request");
-            assert_eq!(fresh_requests.len(), 1);
-            let fresh_request = &fresh_requests[0];
-            let fresh_system = fresh_request.system.as_deref().expect("fresh W137 system");
+            let (fresh_system, fresh_model, fresh_thinking_budget) = {
+                let fresh_requests = fresh_provider
+                    .requests
+                    .lock()
+                    .expect("read W137 fresh-session request");
+                assert_eq!(fresh_requests.len(), 1);
+                let fresh_request = &fresh_requests[0];
+                (
+                    fresh_request
+                        .system
+                        .clone()
+                        .expect("fresh W137 system"),
+                    fresh_request.model.clone(),
+                    fresh_request.thinking_budget,
+                )
+            };
             assert!(fresh_system.contains(W137_SELECTED_B_BODY), "a later session must resolve B body");
             assert!(!fresh_system.contains(W137_SELECTED_A_BODY), "a later session must not reuse A body");
-            assert_eq!(fresh_request.model.as_deref(), Some("w137-b-model"), "a later session must resolve B model");
-            assert_eq!(fresh_request.thinking_budget, Some(1_024), "a later session must resolve B effort");
-            let registry_b = retained_skill_registry_context(fresh_system);
+            assert_eq!(fresh_model.as_deref(), Some("w137-b-model"), "a later session must resolve B model");
+            assert_eq!(fresh_thinking_budget, Some(1_024), "a later session must resolve B effort");
+            let registry_b = retained_skill_registry_context(&fresh_system);
             assert!(registry_b.contains("W137 selected B registry description"));
             assert_ne!(registry_b, registry_a, "a later session must acquire the newly authorized B registry generation");
-            drop(fresh_requests);
             drop(fresh_writer);
             fresh_completion.wait().await.expect("drain W137 B WAL");
         });

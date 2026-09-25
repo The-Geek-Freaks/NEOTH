@@ -18356,7 +18356,7 @@ modes:
         )
         .with_usage_home(measured_home.path())
         .with_prompt_tax(
-            bundle.prompt_tax.clone(),
+            bundle.prompt_tax,
             &bundle.prompt,
             bundle.system.as_deref(),
         );

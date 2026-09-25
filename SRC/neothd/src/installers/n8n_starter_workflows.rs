@@ -632,7 +632,8 @@ mod tests {
                     "implemented partial typed permission audit must disclose scope and coverage",
                 );
                 assert!(
-                    w.description.contains("Partial typed permission-decision audit")
+                    w.description
+                        .contains("Partial typed permission-decision audit")
                         && w.description.contains("broader legacy consent audit"),
                     "implemented adapter must not claim the broader consent audit",
                 );

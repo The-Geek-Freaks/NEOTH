@@ -2951,7 +2951,7 @@ mod tests {
             let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
             cursor += frame.header.total_len as usize;
             if frame.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST {
-                return serde_json::from_slice(&frame.payload).unwrap();
+                return serde_json::from_slice(frame.payload).unwrap();
             }
         }
         panic!("allowed Cerebellum call must write a provider-request lifecycle frame");

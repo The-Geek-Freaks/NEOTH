@@ -760,12 +760,12 @@ mod tests {
 
     #[test]
     fn v42_registry_and_fresh_schema_have_only_additive_default_deny_state() {
-        assert!(store::SCHEMA_VERSION >= 42);
         let migration = migrations::MIGRATIONS
             .iter()
             .find(|migration| (migration.from, migration.to) == (41, 42))
             .expect("the additive W208 migration remains registered");
         assert_eq!((migration.from, migration.to), (41, 42));
+        assert!(store::SCHEMA_VERSION >= migration.to);
         let dir = tempfile::tempdir().unwrap();
         let conn = store::open(&dir.path().join("views.db")).unwrap();
         for table in [

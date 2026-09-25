@@ -1665,7 +1665,7 @@ mod tests {
             panic!("second materializer did not observe the held package lock before timeout");
         }
         super::super::bundled_resources::release_stage_hook_for_test(&release);
-        let paths = vec![
+        let paths = [
             first
                 .join()
                 .expect("first materializer panic")

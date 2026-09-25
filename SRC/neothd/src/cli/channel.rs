@@ -7777,7 +7777,7 @@ mod tests {
                     report: ChannelTestResult {
                         channel: "slack".into(),
                         account: Some(ChannelAccountId::new("ops_a").unwrap()),
-                        status: "ok".into(),
+                        status: "ok",
                         detail: "accepted".into(),
                     },
                     verified_team_id: Some("TWORK123".into()),
@@ -7840,7 +7840,7 @@ mod tests {
                         report: ChannelTestResult {
                             channel: "slack".into(),
                             account: Some(ChannelAccountId::new("ops_a").unwrap()),
-                            status: if scenario == 2 { "fail" } else { "ok" }.into(),
+                            status: if scenario == 2 { "fail" } else { "ok" },
                             detail: "accepted".into(),
                         },
                         verified_team_id: match scenario {
@@ -7912,7 +7912,7 @@ mod tests {
                     report: ChannelTestResult {
                         channel: "slack".into(),
                         account: Some(ChannelAccountId::new("ops_a").unwrap()),
-                        status: "ok".into(),
+                        status: "ok",
                         detail: "accepted".into(),
                     },
                     verified_team_id: Some("TWORK123".into()),

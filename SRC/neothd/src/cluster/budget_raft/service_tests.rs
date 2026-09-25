@@ -32,6 +32,8 @@ const FIXTURE_EPOCH: u64 = 41;
 const FIXTURE_WINDOW: i64 = 20_260_923;
 const LEADER_WAIT: Duration = Duration::from_secs(15);
 
+type FixtureRpcResult<T> = Result<T, Box<BudgetRpcError>>;
+
 #[derive(Clone)]
 struct FixtureMembershipValidator {
     config: BudgetClusterConfig,
@@ -146,31 +148,31 @@ impl FixtureCarrierRegistry {
         &self,
         origin: u64,
         route: &BudgetPeerRoute,
-    ) -> Result<Arc<BudgetRaftService>, BudgetRpcError> {
+    ) -> FixtureRpcResult<Arc<BudgetRaftService>> {
         if self
             .blocked_links
             .lock()
             .unwrap()
             .contains(&(origin, route.node_id))
         {
-            return Err(unreachable_rpc("fixture partition drops this target"));
+            return Err(Box::new(unreachable_rpc("fixture partition drops this target")));
         }
         self.services
             .lock()
             .unwrap()
             .get(&route.node_id)
             .and_then(Weak::upgrade)
-            .ok_or_else(|| unreachable_rpc("fixture target is absent or restarted"))
+            .ok_or_else(|| Box::new(unreachable_rpc("fixture target is absent or restarted")))
     }
 
-    fn authenticated_sender(&self, origin: u64) -> Result<AuthenticatedBudgetPeer, BudgetRpcError> {
+    fn authenticated_sender(&self, origin: u64) -> FixtureRpcResult<AuthenticatedBudgetPeer> {
         let (stable_node_id, transport_identity) = self
             .config
             .voters
             .iter()
             .find(|(stable_node_id, _)| self.config.raft_node_id(stable_node_id) == Some(origin))
             .ok_or_else(|| {
-                unreachable_rpc("fixture origin is not an exact frozen voter binding")
+                Box::new(unreachable_rpc("fixture origin is not an exact frozen voter binding"))
             })?;
         Ok(AuthenticatedBudgetPeer::from_revalidated_peer_session(
             stable_node_id.clone(),
@@ -193,18 +195,18 @@ impl FixtureCarrier {
         Self { origin, registry }
     }
 
-    fn target(&self, route: &BudgetPeerRoute) -> Result<Arc<BudgetRaftService>, BudgetRpcError> {
+    fn target(&self, route: &BudgetPeerRoute) -> FixtureRpcResult<Arc<BudgetRaftService>> {
         if self.registry.config.voters.get(&route.stable_node_id) != Some(&route.transport_identity)
             || self.registry.config.raft_node_id(&route.stable_node_id) != Some(route.node_id)
         {
-            return Err(unreachable_rpc(
+            return Err(Box::new(unreachable_rpc(
                 "fixture route is not an exact frozen voter binding",
-            ));
+            )));
         }
         self.registry.target(self.origin, route)
     }
 
-    fn peer(&self) -> Result<AuthenticatedBudgetPeer, BudgetRpcError> {
+    fn peer(&self) -> FixtureRpcResult<AuthenticatedBudgetPeer> {
         self.registry.authenticated_sender(self.origin)
     }
 }
@@ -217,9 +219,10 @@ impl BudgetRaftCarrier for FixtureCarrier {
         command: super::types::BudgetCommand,
         _deadline: Duration,
     ) -> Result<super::types::BudgetReply, BudgetRpcError> {
-        let peer = self.peer()?;
+        let peer = self.peer().map_err(|error| *error)?;
         let reply = self
-            .target(route)?
+            .target(route)
+            .map_err(|error| *error)?
             .command_from_authenticated_peer(&peer, command)
             .await
             .map_err(inbound_rpc)?;
@@ -241,8 +244,9 @@ impl BudgetRaftCarrier for FixtureCarrier {
         _option: RPCOption,
         _deadline: Duration,
     ) -> Result<AppendEntriesResponse<u64>, BudgetRpcError> {
-        let peer = self.peer()?;
-        self.target(route)?
+        let peer = self.peer().map_err(|error| *error)?;
+        self.target(route)
+            .map_err(|error| *error)?
             .append_entries_from_authenticated_peer(&peer, request)
             .await
             .map_err(inbound_rpc)
@@ -274,8 +278,9 @@ impl BudgetRaftCarrier for FixtureCarrier {
         _option: RPCOption,
         _deadline: Duration,
     ) -> Result<VoteResponse<u64>, BudgetRpcError> {
-        let peer = self.peer()?;
-        self.target(route)?
+        let peer = self.peer().map_err(|error| *error)?;
+        self.target(route)
+            .map_err(|error| *error)?
             .vote_from_authenticated_peer(&peer, request)
             .await
             .map_err(inbound_rpc)
@@ -382,10 +387,8 @@ impl ThreeNodeFixture {
                 for service in &self.services {
                     leaders.insert(service.current_leader_node().await);
                 }
-                if leaders.len() == 1 {
-                    if let Some(leader) = *leaders.first().unwrap() {
-                        return leader;
-                    }
+                if leaders.len() == 1 && let Some(leader) = *leaders.first().unwrap() {
+                    return leader;
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }

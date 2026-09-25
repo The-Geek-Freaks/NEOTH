@@ -426,9 +426,9 @@ mod tests {
         assert!(canonical_bootstrap_origin("http://localhost:18000").is_err());
         assert!(canonical_bootstrap_origin("http://127.0.0.1:0").is_err());
         assert!(canonical_bootstrap_origin("http://127.0.0.1:18000/base").is_err());
-        assert!(
-            is_json_content_type(Some(&header::HeaderValue::from_static("text/plain"))) == false
-        );
+        assert!(!is_json_content_type(Some(&header::HeaderValue::from_static(
+            "text/plain"
+        ))));
         assert!(is_json_content_type(Some(
             &header::HeaderValue::from_static("application/problem+json; charset=utf-8")
         )));

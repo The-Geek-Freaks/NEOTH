@@ -1555,35 +1555,36 @@ mod tests {
             .expect("hostile role text remains data for an admitted Left worker");
         assert_eq!(report.pass_count, 1);
         assert_eq!(raw.script.calls.load(Ordering::SeqCst), 2);
-        let requests = raw.requests.lock().unwrap();
-        assert_eq!(
-            requests.len(),
-            2,
-            "primary and QA use the actual worker transport"
-        );
-        let primary_envelope_start = requests[0]
-            .0
-            .find("{\"schema\":")
-            .expect("primary carries a typed prompt envelope");
-        let primary_envelope: serde_json::Value =
-            serde_json::from_str(&requests[0].0[primary_envelope_start..])
-                .expect("decode primary typed envelope");
-        assert_eq!(primary_envelope["trust"], "untrusted_data_only");
-        assert_eq!(
-            primary_envelope["fields"][0]["data"], hostile_context,
-            "the hostile task survives only as the typed operator-task value"
-        );
-        assert!(
-            !requests[0]
+        {
+            let requests = raw.requests.lock().unwrap();
+            assert_eq!(
+                requests.len(),
+                2,
+                "primary and QA use the actual worker transport"
+            );
+            let primary_envelope_start = requests[0]
                 .0
-                .contains(&closing_xml_like_field_delimiter("operator_task")),
-            "the delimiter-like override is escaped inside the primary envelope"
-        );
-        assert!(
-            requests[0].1.contains(&hostile_system),
-            "the configured system text reaches the worker as text, never as dispatch authority"
-        );
-        drop(requests);
+                .find("{\"schema\":")
+                .expect("primary carries a typed prompt envelope");
+            let primary_envelope: serde_json::Value =
+                serde_json::from_str(&requests[0].0[primary_envelope_start..])
+                    .expect("decode primary typed envelope");
+            assert_eq!(primary_envelope["trust"], "untrusted_data_only");
+            assert_eq!(
+                primary_envelope["fields"][0]["data"], hostile_context,
+                "the hostile task survives only as the typed operator-task value"
+            );
+            assert!(
+                !requests[0]
+                    .0
+                    .contains(&closing_xml_like_field_delimiter("operator_task")),
+                "the delimiter-like override is escaped inside the primary envelope"
+            );
+            assert!(
+                requests[0].1.contains(&hostile_system),
+                "the configured system text reaches the worker as text, never as dispatch authority"
+            );
+        }
         drop(report);
         drop(writer);
         join.await.expect("drain W308 allowed WAL");

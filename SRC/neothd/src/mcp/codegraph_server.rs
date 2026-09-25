@@ -4741,7 +4741,6 @@ fn root() { alpha(); beta(); }
         let mut session = StdioSession {
             initialize_seen: true,
             ready: true,
-            ..Default::default()
         };
         let runtime = RequestedContextRuntime::from_policy(w59_requested_policy());
         let response = handle_stdio_message_with_runtimes(
@@ -4801,7 +4800,6 @@ fn root() { alpha(); beta(); }
         let mut session = StdioSession {
             initialize_seen: true,
             ready: true,
-            ..Default::default()
         };
         let runtime = RequestedContextRuntime::from_policy(w59_requested_policy());
         let response = handle_stdio_message_with_runtimes(

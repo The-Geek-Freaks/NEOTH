@@ -8,6 +8,27 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1123 hosted-Clippy repair batch (2026-09-25):**
+The bac Core36080853403 failed on56 actual workspace-Clippy diagnostics,
+not a timeout; slim production Clippy and core test type-check had passed.
+The29 affected source files address those diagnostics with bounded test
+lock scopes, equivalent assertions/values, private fixture aliases/error boxing,
+and narrower test-helper visibility. Five function-scoped lock allowances keep
+required process-wide environment isolation. Root corrected the replay NUL+42
+literal and requires both WAL join/drain results; no production guard or test
+failure may be silently discarded. W1122 independently approved all29 source
+hashes; fresh GitHub gates remain the acceptance boundary. The a050 product
+36083865145 now fails with adoption_cleanup_failed and a validating job;
+W1125 binds its API ZIP and19 historical inputs. Install/import/repeat remain
+open. Group1569 run36083867168 and Windows346 run36083869020 are running.
+Root admitted the preceding b79 Windows331 results:328PASS/3FAIL/0missing,
+60 historical inputs and331 actual terminal logs; all three failures have
+source fixes ina050. The exact a050 two-file hosted formatter patch is applied
+after API ZIP, inner-hash, source-head and pre/postimage verification.
+Native1788/Group1569/Windows346 counts remain unchanged. Claude032 still has
+no new acknowledgement. No local compiler, formatter, tests or runtime ran;
+no roadmap box is closed.
+
 **W1112 readiness repair and hosted reference recovery (2026-09-25):**
 The real n8n install404 is traced to the pinned runtime startup: /healthz
 answers before Public API route mounting; /healthz/readiness waits for full

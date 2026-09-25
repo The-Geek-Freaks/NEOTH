@@ -4062,14 +4062,15 @@ mod lifecycle_tests {
             lease.started().await.is_err(),
             "Started requires the real WAL ACK"
         );
-        let state = runtime.state.lock().await;
-        let turn = state.turns.get(&turn_id).expect("fixture turn remains");
-        assert!(matches!(
-            turn.effects.get(&1).map(|effect| effect.phase),
-            Some(EffectPhase::Indeterminate)
-        ));
-        assert!(turn.cancellation.check_open("assert closed").is_err());
-        drop(state);
+        {
+            let state = runtime.state.lock().await;
+            let turn = state.turns.get(&turn_id).expect("fixture turn remains");
+            assert!(matches!(
+                turn.effects.get(&1).map(|effect| effect.phase),
+                Some(EffectPhase::Indeterminate)
+            ));
+            assert!(turn.cancellation.check_open("assert closed").is_err());
+        }
         let later_binding = "b".repeat(64);
         assert!(
             crate::providers::ChatTurnEffectGate::intent(
@@ -4105,16 +4106,17 @@ mod lifecycle_tests {
             .err()
             .expect("a revoked post-Intent authority must not issue a transport lease");
         assert!(error.to_string().contains("live consent"));
-        let state = runtime.state.lock().await;
-        assert!(matches!(
-            state
-                .turns
-                .get(&turn_id)
-                .and_then(|turn| turn.effects.get(&1))
-                .map(|effect| effect.phase),
-            Some(EffectPhase::Aborted)
-        ));
-        drop(state);
+        {
+            let state = runtime.state.lock().await;
+            assert!(matches!(
+                state
+                    .turns
+                    .get(&turn_id)
+                    .and_then(|turn| turn.effects.get(&1))
+                    .map(|effect| effect.phase),
+                Some(EffectPhase::Aborted)
+            ));
+        }
 
         let phases = lifecycle_phases_from_real_wal(&home.path().join("wal").join("000001.wal"));
         assert_eq!(
@@ -4274,16 +4276,17 @@ mod lifecycle_tests {
         })
         .await
         .is_err();
-        let state = runtime.state.lock().await;
-        assert!(matches!(
-            state
-                .turns
-                .get(&turn_id)
-                .and_then(|turn| turn.effects.get(&1))
-                .map(|effect| effect.phase),
-            Some(EffectPhase::Aborted)
-        ));
-        drop(state);
+        {
+            let state = runtime.state.lock().await;
+            assert!(matches!(
+                state
+                    .turns
+                    .get(&turn_id)
+                    .and_then(|turn| turn.effects.get(&1))
+                    .map(|effect| effect.phase),
+                Some(EffectPhase::Aborted)
+            ));
+        }
         drop(pending);
         std::fs::remove_file(crate::cli::consent_outbox::journal_path(home.path()))
             .expect("remove fixture journal");
@@ -4378,16 +4381,17 @@ mod lifecycle_tests {
         })
         .await
         .is_err();
-        let state = runtime.state.lock().await;
-        assert!(matches!(
-            state
-                .turns
-                .get(&turn_id)
-                .and_then(|turn| turn.effects.get(&1))
-                .map(|effect| effect.phase),
-            Some(EffectPhase::Aborted)
-        ));
-        drop(state);
+        {
+            let state = runtime.state.lock().await;
+            assert!(matches!(
+                state
+                    .turns
+                    .get(&turn_id)
+                    .and_then(|turn| turn.effects.get(&1))
+                    .map(|effect| effect.phase),
+                Some(EffectPhase::Aborted)
+            ));
+        }
         drop(pending);
         std::fs::remove_file(crate::cli::consent_outbox::journal_path(home.path()))
             .expect("remove fixture journal");
@@ -4444,15 +4448,16 @@ mod lifecycle_tests {
 
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
-                let state = runtime.state.lock().await;
-                let closed = state
-                    .turns
-                    .get(&turn_id)
-                    .expect("fixture turn remains")
-                    .cancellation
-                    .check_open("observe cancel admission closure")
-                    .is_err();
-                drop(state);
+                let closed = {
+                    let state = runtime.state.lock().await;
+                    state
+                        .turns
+                        .get(&turn_id)
+                        .expect("fixture turn remains")
+                        .cancellation
+                        .check_open("observe cancel admission closure")
+                        .is_err()
+                };
                 if closed {
                     return;
                 }
@@ -4605,12 +4610,13 @@ mod lifecycle_tests {
     #[tokio::test]
     async fn webchat_turn_grant_cannot_attach_native_gui_surfaces() {
         let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;
-        let mut state = runtime.state.lock().await;
-        let turn = state.turns.get_mut(&turn_id).expect("fixture turn");
-        turn.origin_surface = GuiChatSurface::WebChat;
-        turn.surface_account_id =
-            Some(crate::channels::registry::ChannelAccountId::default_account());
-        drop(state);
+        {
+            let mut state = runtime.state.lock().await;
+            let turn = state.turns.get_mut(&turn_id).expect("fixture turn");
+            turn.origin_surface = GuiChatSurface::WebChat;
+            turn.surface_account_id =
+                Some(crate::channels::registry::ChannelAccountId::default_account());
+        }
         let request = |surface| GuiChatAttachExchangeRequest {
             schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
             expected_boot_id: "fixture-boot".into(),
@@ -4673,12 +4679,13 @@ mod lifecycle_tests {
     #[tokio::test]
     async fn webchat_exchange_capability_authorizes_real_runtime_status() {
         let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;
-        let mut state = runtime.state.lock().await;
-        let turn = state.turns.get_mut(&turn_id).expect("fixture turn");
-        turn.origin_surface = GuiChatSurface::WebChat;
-        turn.surface_account_id =
-            Some(crate::channels::registry::ChannelAccountId::default_account());
-        drop(state);
+        {
+            let mut state = runtime.state.lock().await;
+            let turn = state.turns.get_mut(&turn_id).expect("fixture turn");
+            turn.origin_surface = GuiChatSurface::WebChat;
+            turn.surface_account_id =
+                Some(crate::channels::registry::ChannelAccountId::default_account());
+        }
         assert!(
             runtime
                 .status(GuiChatStatusRequest {
@@ -4724,12 +4731,13 @@ mod lifecycle_tests {
     #[tokio::test]
     async fn webchat_replay_orders_missing_frames_and_advances_cursor() {
         let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;
-        let mut state = runtime.state.lock().await;
-        let turn = state.turns.get_mut(&turn_id).expect("fixture turn");
-        turn.origin_surface = GuiChatSurface::WebChat;
-        turn.surface_account_id =
-            Some(crate::channels::registry::ChannelAccountId::default_account());
-        drop(state);
+        {
+            let mut state = runtime.state.lock().await;
+            let turn = state.turns.get_mut(&turn_id).expect("fixture turn");
+            turn.origin_surface = GuiChatSurface::WebChat;
+            turn.surface_account_id =
+                Some(crate::channels::registry::ChannelAccountId::default_account());
+        }
         let exchange = runtime
             .exchange_attach(GuiChatAttachExchangeRequest {
                 schema_version: GUI_CHAT_V1_SCHEMA_VERSION,

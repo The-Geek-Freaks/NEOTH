@@ -1728,7 +1728,10 @@ mod tests {
             1
         );
         drop(corrected_writer);
-        corrected_join.await.unwrap();
+        corrected_join
+            .await
+            .expect("join corrected WAL writer")
+            .expect("drain corrected WAL");
     }
 
     #[tokio::test]

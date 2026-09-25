@@ -235,12 +235,12 @@ impl BootstrapDockerRunner for LocalBootstrapDockerRunner {
         captures.spawn(async move { (true, read_bounded(stdout).await) });
         captures.spawn(async move { (false, read_bounded(stderr).await) });
         #[cfg(test)]
-        if let Some(marker) = self.fixture_closed_stdin_marker.as_deref() {
-            if let Err(failure) = wait_for_fixture_marker(marker, self.timeout, cancel).await {
-                kill_and_reap(&mut child).await;
-                abort_captures(&mut captures).await;
-                return Err(failure);
-            }
+        if let Some(marker) = self.fixture_closed_stdin_marker.as_deref()
+            && let Err(failure) = wait_for_fixture_marker(marker, self.timeout, cancel).await
+        {
+            kill_and_reap(&mut child).await;
+            abort_captures(&mut captures).await;
+            return Err(failure);
         }
         let mut stdin_write: Option<
             std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send>>,

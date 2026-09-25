@@ -1,0 +1,148 @@
+{
+  "review": "W1122",
+  "base_commit": "a0509158c608a45dcb0328e7ecad213a30f327b3",
+  "hosted_run": "36080853403",
+  "hosted_diagnostic_locations": 56,
+  "reviewed_source_files": [
+    {
+      "path": "SRC/neothd/src/analytics/specialist_advisor.rs",
+      "sha256": "25A06B527FD3EBFADC638350FF9CB01DE0311A7DCA852D994E644B403068BD67"
+    },
+    {
+      "path": "SRC/neothd/src/cli/channel.rs",
+      "sha256": "0B8F8F4CBF1466984A3D006ED699A4BEDA415013BE361677A4A0C3698A4E5461"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "sha256": "0A7B2154136F2B756C75DBEE67E380DB3C2DC03B3CC4FFB764D0564075318A69"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "sha256": "CE3667C9363A96912044BD0C3FD03421F7724D6698F6BA245B595675AE54569C"
+    },
+    {
+      "path": "SRC/neothd/src/cli/computer_use.rs",
+      "sha256": "6F2DD169561D3A6D8A7C31DC1320EFA2BD8182E5E426392FA3D9D959E370E00F"
+    },
+    {
+      "path": "SRC/neothd/src/cli/eval.rs",
+      "sha256": "BEC1525E78D43485DBC403ED498A9299BB88BF21508A376C160734948CEDF6B9"
+    },
+    {
+      "path": "SRC/neothd/src/cli/paperless.rs",
+      "sha256": "4185F02B3F7FFDB8E6B97727187781E23FD90AF2FAAD47BE4784FFC49E758215"
+    },
+    {
+      "path": "SRC/neothd/src/cli/research.rs",
+      "sha256": "1A7F501F68EE1C1E903027525A534898EEAE48500DE11C54A3D74EAD3E1C3C48"
+    },
+    {
+      "path": "SRC/neothd/src/cli/self_improve.rs",
+      "sha256": "D37CF0B52B318FB166BAA35D3A5455FF7A330BF7E65E04B1794E84EF86BE6526"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "sha256": "9B8A3C751A07DF2B1DDF934E22B1A3F4C1948C58DBA3EBB3D440772DE97A7E5B"
+    },
+    {
+      "path": "SRC/neothd/src/cli/workflow_replay.rs",
+      "sha256": "C19970FA0992E2D087FD2BCF44B8DA5CA607DCBB6C89335FE7A4FC447577385B"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/budget_raft/service_tests.rs",
+      "sha256": "465648B56A93D8740B939AC8BD37AA6FCEBCAA10D637C4DA93FE4A8B1373D5DF"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/budget_raft/store_tests.rs",
+      "sha256": "6182DCF7A0170588B73602637559A51E48A41DB2856F8725304E96A82168BEEA"
+    },
+    {
+      "path": "SRC/neothd/src/coding/service.rs",
+      "sha256": "287096CC37487F8C54DB81D1B103A5DC5E58EF5A9D96D11B3FA2913C6530862F"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
+      "sha256": "4E762D58DA4251E5F1AD38E54B582999FA3C82893814A44F911A48E09C27F0D3"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/local_models.rs",
+      "sha256": "076D3A96D3C4225CAAAB35FF2FA1A58DB8E43B7AEA26CD4D52CC2E3109FDD8F8"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "sha256": "1BF68A186D26A059EDEBEC193FB3C1640599C9AF532AB959ED7017F24D51B8F1"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_bootstrap.rs",
+      "sha256": "FE7FEA7680673AC3E3FAE66B95B77E8FC598B7B1AB83544A3D6C27C8962BECD5"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sha256": "93F142959E160A7C87239756A9DBE926C2C11E4DE16A011A340E05553C5AD71C"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/bootstrap_transport.rs",
+      "sha256": "EFEDFB5665CA6D3AB1C6A7BF9C9C2339D7F17BE0C79BFD58C40A1D20D12BBA38"
+    },
+    {
+      "path": "SRC/neothd/src/mcp/codegraph_server.rs",
+      "sha256": "3095B0D4938566D207061C983DF3703038F3290D0E301E36FAAE3D1086A81E8C"
+    },
+    {
+      "path": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "sha256": "5CB85A138AA7CDF61312343BEA106CE5DBAD69698E4A86CB8BA2D1BC70A57D35"
+    },
+    {
+      "path": "SRC/neothd/src/memory/counterparty_consent.rs",
+      "sha256": "6CE16BD6FA12913FCE0DC49DA459489F8E262BDF4F1EFA9D367914A23F481978"
+    },
+    {
+      "path": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+      "sha256": "C805A70AC4EFBD509B502AC6CB38E50F637A1E3A07D48E08AEBB910E3C9785E6"
+    },
+    {
+      "path": "SRC/neothd/src/skills/bundled_resources.rs",
+      "sha256": "7B5910FCBAFE6D7232841B8DED132CDC89E5DBB1A4590D7843A3676C0826D604"
+    },
+    {
+      "path": "SRC/neothd/src/skills/loader.rs",
+      "sha256": "F9456FA6A8ADA8EE92E27499AEE4EDFDD316FDA588D2B8CD3DA43224033E44C7"
+    },
+    {
+      "path": "SRC/neothd/src/sub_agents/runtime.rs",
+      "sha256": "7BAC277085CC6C9727447894B5173ED2F5C06DFC45A848D4C2EF36E487D52035"
+    },
+    {
+      "path": "SRC/neothd/src/tools/external_http.rs",
+      "sha256": "592855A598155DEAD5309853EB9198258F94C2ED8BF67EC90C9B75B25875E4B7"
+    },
+    {
+      "path": "SRC/neothd/src/updater/process_containment.rs",
+      "sha256": "CF9CBCA83388CF291B42AE6371F205CA3C5D3C11DEE69CE9D2E0A710D67A7DE5"
+    }
+  ],
+  "reviewed_input_artifacts": [
+    {
+      "path": "work/gold-20260906/wave1115-core-failure/clippy-summary.json",
+      "sha256": "7A2ED75755F49759B65B4522D8F37A41F4283CCEA2C9340CE57FB70732E3FB28"
+    },
+    {
+      "path": "work/gold-20260906/wave1115-core-failure/failed-job.log",
+      "sha256": "1A0A5181BC87AD6DAA7C7FDFFFC56305DA40DDC3C39989F32C4AB0D0731E462C"
+    },
+    {
+      "path": "work/gold-20260906/wave1116-cli-clippy/REPORT.md",
+      "sha256": "7866ADA1924613C522892FF752CA0CD337A5C10894034B76DA85B0B00A6C0BE6"
+    },
+    {
+      "path": "work/gold-20260906/wave1117-runtime-clippy/REPORT.md",
+      "sha256": "CBFA9ACC81FF14E8DE5CB35DB5CEC7F16C7F9410FCC01003576B0B195E980AAF"
+    },
+    {
+      "path": "work/gold-20260906/wave1118-test-clippy/REPORT.md",
+      "sha256": "C31C579E149306A19A29F1FA2E4A53224BD20DCDAF2BB1090ABFFC108A81BB22"
+    }
+  ],
+  "rootVerified": true,
+  "scope": "56 actual hosted lint locations repaired; source review only; dynamic rerun pending"
+}

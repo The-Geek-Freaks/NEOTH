@@ -1448,6 +1448,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Process-global NEOTH_HOME must remain isolated across review and accept awaits.
     async fn w275_cli_run_review_exact_digest_accept_readback_and_corpus_drift_refuses_before_mutation()
      {
         let _env = crate::test_env::lock();

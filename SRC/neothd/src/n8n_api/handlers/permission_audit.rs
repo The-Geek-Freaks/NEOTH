@@ -250,7 +250,11 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert!(error.to_string().contains("generic TrustDecision payload is malformed"));
+        assert!(
+            error
+                .to_string()
+                .contains("generic TrustDecision payload is malformed")
+        );
         drop(writer);
         join.await.unwrap();
     }
@@ -261,11 +265,8 @@ mod tests {
         let wal = home.path().join("wal");
         std::fs::create_dir_all(&wal).unwrap();
         let segment = wal.join("000001.wal");
-        let (writer, join) = crate::wal::writer::spawn_for_home(
-            segment.clone(),
-            home.path().to_path_buf(),
-        )
-        .unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         append_trust(&writer, "local", crate::permissions::Decision::Allow, 10).await;
         drop(writer);
         join.await.unwrap();

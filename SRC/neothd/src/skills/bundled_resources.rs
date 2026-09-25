@@ -337,24 +337,21 @@ pub(crate) fn drawio_package_digest_for_test() -> String {
 }
 
 #[cfg(test)]
+type W192StageRelease = std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>;
+
+#[cfg(test)]
+type W192StageHook = (PathBuf, std::sync::mpsc::Sender<()>, W192StageRelease);
+
+#[cfg(test)]
+type W192StageHookSlot = std::sync::Mutex<Option<W192StageHook>>;
+
+#[cfg(test)]
 static W192_STAGE_HOOK: std::sync::OnceLock<
-    std::sync::Mutex<
-        Option<(
-            PathBuf,
-            std::sync::mpsc::Sender<()>,
-            std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
-        )>,
-    >,
+    W192StageHookSlot,
 > = std::sync::OnceLock::new();
 
 #[cfg(test)]
-pub(crate) fn set_stage_hook_for_test(
-    value: Option<(
-        PathBuf,
-        std::sync::mpsc::Sender<()>,
-        std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
-    )>,
-) {
+pub(crate) fn set_stage_hook_for_test(value: Option<W192StageHook>) {
     *W192_STAGE_HOOK
         .get_or_init(|| std::sync::Mutex::new(None))
         .lock()
@@ -381,7 +378,7 @@ fn pause_after_stage_created_for_test(skill_path: &Path) {
 
 #[cfg(test)]
 pub(crate) fn release_stage_hook_for_test(
-    release: &std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    release: &W192StageRelease,
 ) {
     let (state, wake) = &**release;
     *state.lock().expect("W192 stage release lock") = true;
@@ -389,14 +386,18 @@ pub(crate) fn release_stage_hook_for_test(
 }
 
 #[cfg(test)]
+type W192LockContentionHook = (PathBuf, std::sync::mpsc::Sender<()>);
+
+#[cfg(test)]
+type W192LockContentionHookSlot = std::sync::Mutex<Option<W192LockContentionHook>>;
+
+#[cfg(test)]
 static W192_LOCK_CONTENTION_HOOK: std::sync::OnceLock<
-    std::sync::Mutex<Option<(PathBuf, std::sync::mpsc::Sender<()>)>>,
+    W192LockContentionHookSlot,
 > = std::sync::OnceLock::new();
 
 #[cfg(test)]
-pub(crate) fn set_lock_contention_hook_for_test(
-    value: Option<(PathBuf, std::sync::mpsc::Sender<()>)>,
-) {
+pub(crate) fn set_lock_contention_hook_for_test(value: Option<W192LockContentionHook>) {
     *W192_LOCK_CONTENTION_HOOK
         .get_or_init(|| std::sync::Mutex::new(None))
         .lock()

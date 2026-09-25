@@ -832,7 +832,7 @@ mod tests {
         insert_episode_with_channel(&conn, 2, "scope b", 0.5, 2_000_000_000, Some("telegram"));
         let telegram = crate::channels::registry::ChannelId::Telegram;
         let work = crate::channels::registry::ChannelRef::new(
-            telegram.clone(),
+            telegram,
             crate::channels::registry::ChannelAccountId::new("work").unwrap(),
         );
         let personal = crate::channels::registry::ChannelRef::default_account(telegram);

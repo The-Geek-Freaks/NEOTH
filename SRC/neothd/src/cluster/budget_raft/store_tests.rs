@@ -162,7 +162,7 @@ async fn applied_index_ledger_and_snapshot_survive_one_restart_together() {
                 payload: EntryPayload::Membership(initial_membership),
             },
             Entry {
-                log_id: log.clone(),
+                log_id: log,
                 payload: EntryPayload::Normal(command),
             },
         ])
@@ -178,7 +178,7 @@ async fn applied_index_ledger_and_snapshot_survive_one_restart_together() {
 
     let mut recovered = open(&path, ledger("cluster-a", 100)).unwrap();
     assert_eq!(
-        Some(log.clone()),
+        Some(log),
         recovered.applied_state().await.unwrap().0
     );
     assert_eq!(
@@ -253,7 +253,7 @@ async fn truncation_and_purge_keep_the_log_boundary_durable() {
     drop(conn);
 
     let mut store = open(&path, ledger("cluster-a", 100)).unwrap();
-    store.truncate(log.clone()).await.unwrap();
+    store.truncate(log).await.unwrap();
     drop(store);
     let conn = rusqlite::Connection::open(&path).unwrap();
     let count: i64 = conn
@@ -274,7 +274,7 @@ async fn truncation_and_purge_keep_the_log_boundary_durable() {
     )
     .unwrap();
     let membership = StoredMembership::new(
-        Some(log.clone()),
+        Some(log),
         Membership::from(initial.config().raft_voters()),
     );
     conn.execute(

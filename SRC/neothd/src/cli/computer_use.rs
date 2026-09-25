@@ -495,7 +495,7 @@ mod tests {
 
         let custom_allowed = vec!["click".to_string()];
         let (_, missing_capabilities, aliases, extra) =
-            classify_advertised_tools(&custom_allowed, &vec!["click".to_string()]);
+            classify_advertised_tools(&custom_allowed, &["click".to_string()]);
         assert!(missing_capabilities.is_empty());
         assert!(aliases.is_empty());
         assert!(extra.is_empty());

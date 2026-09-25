@@ -476,7 +476,7 @@ mod tests {
             crate::cli::Commands::Paperless(PaperlessArgs {
                 action: PaperlessAction::Prepare { directory: Some(path) },
                 ..
-            }) if path == PathBuf::from("D:/operator/paperless")
+            }) if path == "D:/operator/paperless"
         ));
     }
 

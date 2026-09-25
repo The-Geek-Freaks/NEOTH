@@ -1,0 +1,163 @@
+{
+  "schema": "neoth-product-canary-failure/v1",
+  "run": 36083865145,
+  "source": "a0509158c608a45dcb0328e7ecad213a30f327b3",
+  "artifact": 10843516343,
+  "apiZipSha256": "92954e27d18394761debbb2493985f58df8020d1ca785c53576ac12bae8ada7b",
+  "rootVerified": true,
+  "sourceInputCount": 19,
+  "sourceInputs": [
+    {
+      "path": "SRC/neothd/src/installers/n8n_workflows.rs",
+      "blob": "7e0f040bbf3ab5dd2e301ff7f7b428df15368460",
+      "sha256": "F3E7FB2F481CFCE01CE9D865CD700A9E180855A176B5218501F57A3FA395E846"
+    },
+    {
+      "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+      "blob": "bade90f462a12dd35b62beb499724b3738275357",
+      "sha256": "920CBEF5453670EEC9937F328B851E1E54928F46829CD2297A453928DBBEBC34"
+    },
+    {
+      "path": "SRC/neothd/assets/n8n_workflows/weekly_stats.json",
+      "blob": "f122c72624db63558f07fc550cf02f00ea54b486",
+      "sha256": "F16326F0E1ED99946438A1AEA69AB0F8E0FCB8E2A6ACB7E267418AF0C53B6328"
+    },
+    {
+      "path": "packaging/n8n_product_bootstrap_canary.py",
+      "blob": "2ff5d4ce9b350d7ab184cfe82f1e26faf68fa49c",
+      "sha256": "8ECDE2746DA48C52368CB2156FD9B10695D762CBB507043DF10081625FF99C96"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs",
+      "blob": "e782bb536e4b61e62e364abab18df1e2a0ee32a5",
+      "sha256": "A10754CFB7B9B8ABC1F6BED2D1BBAC8BBE90258A9F55692DE15EFFA63E3C574E"
+    },
+    {
+      "path": ".github/workflows/n8n-product-bootstrap.yml",
+      "blob": "46689506492ce9c8f4c8c3209e1aacd8d5890837",
+      "sha256": "E61DB5CCDE0CC3DFE6EE103031E40A6025DAC328977C24BBF2ABC376FF258D60"
+    },
+    {
+      "path": "SRC/neothd/src/cli/n8n.rs",
+      "blob": "cb0c236e3cc36fe8ba35da387df0fb2be71330cd",
+      "sha256": "0932BD9FF3CCB73E4F7832FBDA81D45DE6974B37AB5984FC886BEA65C5C55BEC"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/bootstrap_transport.rs",
+      "blob": "1467ac55de3276e52b8f75708fd26f35f9384db4",
+      "sha256": "39DA51B19B86B4DBD66820DFAE1B566C847DBF6A9C9C1DF57549769A44190947"
+    },
+    {
+      "path": "SRC/neothd/assets/n8n_workflows/daily_summary.json",
+      "blob": "114da8333f1733f43692d5e7d49be0dd447f44aa",
+      "sha256": "1F4087959463BBFF751F8D9BE6BEB5F6DD1B2EB55D85A662F01CD8E2EC0562C7"
+    },
+    {
+      "path": "SRC/neothd/src/config/keychain.rs",
+      "blob": "4027f4882543303f08b7c14575a10bd0cc921f8e",
+      "sha256": "1B83B306AAE415AC8EDAA39256271E779BEE5F3181A7B8F796079CFCF8B87D0F"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/state.rs",
+      "blob": "5b785cb45b3a93f87a406342a5011acdaf583d7f",
+      "sha256": "1D87B3036CEE8DDC68277265238801EBFA44AF0EF779B41D11EB3DD83E196F93"
+    },
+    {
+      "path": "packaging/tests/test_n8n_product_bootstrap_canary.py",
+      "blob": "c3dd07affe42401d4a27e1d5938973a6c1ea5cc2",
+      "sha256": "382FA949D147A07567B9688625483C096B310EAE26D014F70D33DAF3D4B134EB"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "blob": "051ce50d942354f12a878027787fe309e00a6142",
+      "sha256": "872FA6A7121E4F37B25C999814F68A89CE60E56EB4BA000024F46D57D1EBCEA9"
+    },
+    {
+      "path": "SRC/neothd/assets/n8n_workflows/morning_brief.json",
+      "blob": "d6742615a8c4f478fa23cb4eb1b4ba179cb056f8",
+      "sha256": "35C68F9F5A05BB9AF17A46E8B0A8D48E4E5A10E2742BEC24AA4831400A9B44D0"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n.rs",
+      "blob": "fc7446984e573fc85f30c821c7da4f4c421c56c1",
+      "sha256": "4B437C6AB36A17BC7C642CD333BCCBA5BBC0A1D18BFCD74313E5376302EE8A29"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/jobs.rs",
+      "blob": "257a91e995990c4c9ab6b19ceab6ff8520890939",
+      "sha256": "EBAB8E1BE541406E7D09007F5988EB3CCA0CE20A5308A0A7C78C3D32ECAAED8A"
+    },
+    {
+      "path": "packaging/n8n_bootstrap_canary.py",
+      "blob": "1550e751dbc1e674062a5ce86eba846fbc2510ca",
+      "sha256": "23118857E4655BAD3FEDBB702E4D0840AEC9114482386AAB5FEE783EF688500A"
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "blob": "f89a0cdee009703aeb423562fefea56dcf467ee6",
+      "sha256": "EAF75EAF1045B7736010227542DAC09D0FA0711E59F9338FEFB057F711322B56"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
+      "blob": "21bb0ecb21e6d31b4e7ccc010eb498ea122db119",
+      "sha256": "5F3B30B13A778E99BA10E412D1E9CA11F0B5CDA2FFF072EC8BEAD87A19403ECD"
+    }
+  ],
+  "productReceipt": {
+    "binary_sha256": "1782f0897b1117c8ce30283887d11fb2e0ba76782a96a274f400033c9d2821f3",
+    "bounded_helper_sha256": "23118857e4655bad3fedbb702e4d0840aec9114482386aab5fee783ef688500a",
+    "cargo_lock_sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+    "cleanup_proven": false,
+    "command_failure": {
+      "command": "product_install",
+      "exit_code": 1,
+      "known_error_categories": [
+        "adoption_cleanup_failed"
+      ],
+      "overflow": false,
+      "stderr_bytes": 105,
+      "stdout_bytes": 0,
+      "timed_out": false
+    },
+    "docker_cleanup_proven": false,
+    "failure_stage": "command_failed",
+    "helper_sha256": "8ecde2746da48c52368cb2156fd9b10695d762cbb507043df10081625ff99c96",
+    "input_sha256": {
+      "SRC/neothd/assets/n8n_workflows/daily_summary.json": "1f4087959463bbff751f8d9be6beb5f6dd1b2eb55d85a662f01cd8e2ec0562c7",
+      "SRC/neothd/assets/n8n_workflows/morning_brief.json": "35c68f9f5a05bb9af17a46e8b0a8d48e4e5a10e2742bec24aa4831400a9b44d0",
+      "SRC/neothd/assets/n8n_workflows/weekly_stats.json": "f16326f0e1ed99946438a1aea69ab0f8e0fcb8e2a6acb7e267418af0c53b6328",
+      "SRC/neothd/src/cli/n8n.rs": "0932bd9ff3ccb73e4f7832fbda81d45de6974b37ab5984fc886bea65c5c55bec",
+      "SRC/neothd/src/config/keychain.rs": "1b83b306aae415ac8edaa39256271e779bee5f3181a7b8f796079cfcf8b87d0f",
+      "SRC/neothd/src/installers/n8n_starter_workflows.rs": "920cbef5453670eec9937f328b851e1e54928f46829cd2297a453928dbbebc34",
+      "SRC/neothd/src/installers/n8n_workflows.rs": "f3e7fb2f481cfce01ce9d865cd700a9e180855a176b5218501f57a3fa395e846",
+      "SRC/neothd/src/integrations/jobs.rs": "ebab8e1be541406e7d09007f5988eb3cca0ce20a5308a0a7c78c3d32ecaaed8a",
+      "SRC/neothd/src/integrations/n8n.rs": "4b437c6ab36a17bc7c642cd333bccba5bbc0a1d18bfcd74313e5376302ee8a29",
+      "SRC/neothd/src/integrations/n8n/bootstrap_transport.rs": "39da51b19b86b4dbd66820dfae1b566c847dbf6a9c9c1df57549769a44190947",
+      "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs": "a10754cfb7b9b8abc1f6bed2d1bbac8bbe90258a9f55692de15effa63e3c574e",
+      "SRC/neothd/src/integrations/n8n/managed_runtime.rs": "872fa6a7121e4f37b25c999814f68a89ce60e56eb4ba000024f46d57d1ebcea9",
+      "SRC/neothd/src/integrations/n8n/workflow_import.rs": "5f3b30b13a778e99ba10e412d1e9ca11f0b5cda2fff072ec8bead87a19403ecd",
+      "SRC/neothd/src/integrations/state.rs": "1d87b3036cee8ddc68277265238801ebfa44af0ef779b41d11eb3dd83e196f93",
+      "packaging/tests/test_n8n_product_bootstrap_canary.py": "382fa949d147a07567b9688625483c096b310eae26d014f70d33daf3d4b134eb"
+    },
+    "install_job": {
+      "error_code": "unclassified",
+      "state": "validating"
+    },
+    "n8n-managed-bootstrap.v2.json": {
+      "exists": true,
+      "phase": "BootstrapRemoved"
+    },
+    "n8n-managed-runtime.v2.json": {
+      "exists": true,
+      "phase": "AbsentVerified"
+    },
+    "outcome": "failed",
+    "port": 5681,
+    "schema": 1,
+    "source_sha": "a0509158c608a45dcb0328e7ecad213a30f327b3",
+    "stage": "first_product_install",
+    "workflow_sha256": "e61db5ccde0cc3dfe6ee103031e40a6025dac328977c24bbf2abc376ff258d60"
+  },
+  "remaining": "First product install exits adoption_cleanup_failed while job remains validating; importer/repeat/cleanup not reached; no product acceptance",
+  "localExecutableValidationRan": false
+}

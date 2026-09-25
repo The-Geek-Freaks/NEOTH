@@ -1742,9 +1742,10 @@ pub(crate) mod loopback_fixture {
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_owned)
             });
-        let mut guard = state.lock().await;
-        guard.requests.push(request.to_string());
-        let (status, body, streaming) = match (method, path) {
+        let (status, body, streaming) = {
+            let mut guard = state.lock().await;
+            guard.requests.push(request.to_string());
+            match (method, path) {
             ("GET", "/api/tags") if guard.oversized_response => {
                 (200, "x".repeat(super::MAX_STATE_BYTES + 1), false)
             }
@@ -1757,12 +1758,11 @@ pub(crate) mod loopback_fixture {
                 (200, serde_json::json!({"models":models}).to_string(), false)
             }
             ("POST", "/api/chat") if guard.script.chat_succeeds => {
-                if guard.script.chat_marks_requested_loaded {
-                    if let Some(requested) = request_model.as_deref() {
-                        if let Some(model) = guard.models.get_mut(requested) {
-                            model.loaded = true;
-                        }
-                    }
+                if guard.script.chat_marks_requested_loaded
+                    && let Some(requested) = request_model.as_deref()
+                    && let Some(model) = guard.models.get_mut(requested)
+                {
+                    model.loaded = true;
                 }
                 let model = request_model.unwrap_or_else(|| "missing".to_owned());
                 let model = if guard.script.chat_returns_requested_model {
@@ -1800,9 +1800,9 @@ pub(crate) mod loopback_fixture {
                     (404, r#"{"error":"missing exact target"}"#.to_owned(), false)
                 }
             }
-            _ => (404, r#"{"error":"missing"}"#.to_owned(), false),
+                _ => (404, r#"{"error":"missing"}"#.to_owned(), false),
+            }
         };
-        drop(guard);
         let headers = if streaming {
             format!(
                 "HTTP/1.1 {status} OK\r\ncontent-type: application/json\r\nconnection: keep-alive\r\n\r\n"

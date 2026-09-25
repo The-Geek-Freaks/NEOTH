@@ -1,0 +1,44 @@
+{
+  "schema": "neoth-hosted-windows-partial-results/v1",
+  "rootVerified": true,
+  "run": 36081966199,
+  "source": "b79d3043d8f460a94b6c96a79cf0e5bff25c4143",
+  "artifact": 10843211544,
+  "zipDigest": "sha256:60edc1683386ce2335f0711b214541d4b738f0f47d85fc33c9e19f9e13103da7",
+  "innerEntriesVerified": 343,
+  "sourceInputsVerified": 60,
+  "terminalsVerified": 331,
+  "passed": 328,
+  "failed": 3,
+  "missing": 0,
+  "failedTerminals": [
+    {
+      "index": 267,
+      "test": "installers::n8n_starter_workflows::tests::each_starter_body_uses_generic_header_auth_and_visible_origin",
+      "path": "neothd/src/installers/n8n_starter_workflows.rs",
+      "panic": "thread 'installers::n8n_starter_workflows::tests::each_starter_body_uses_generic_header_auth_and_visible_origin' (7472) panicked at neothd\\src\\installers\\n8n_starter_workflows.rs:632:17:\n\"consent_audit_export\" must disclose unavailable adapter status",
+      "message": "\"consent_audit_export\" must disclose unavailable adapter status",
+      "logFile": "windows331-evidence/logs/267.log",
+      "logSha256": "dfe8f67b0c39136e2f88f52c0f42c28f929ad785d04a9623c293c079b70a8ed1"
+    },
+    {
+      "index": 312,
+      "test": "integrations::n8n::workflow_import::tests::ready_job_without_custody_never_writes_or_posts",
+      "path": "neothd/src/integrations/n8n/workflow_import.rs",
+      "panic": "thread 'integrations::n8n::workflow_import::tests::ready_job_without_custody_never_writes_or_posts' (2760) panicked at neothd\\src\\integrations\\n8n\\workflow_import.rs:933:14:\ncalled `Result::unwrap()` on an `Err` value: IncompleteProgress",
+      "message": "called `Result::unwrap()` on an `Err` value: IncompleteProgress",
+      "logFile": "windows331-evidence/logs/312.log",
+      "logSha256": "8f25a239a772e31acc56d6d81eab6a176049f88c524c608ef1e8371a309e78af"
+    },
+    {
+      "index": 326,
+      "test": "n8n_api::handlers::permission_audit::tests::malformed_authenticated_typed_trust_frame_fails_closed",
+      "path": "neothd/src/n8n_api/handlers/permission_audit.rs",
+      "panic": "thread 'n8n_api::handlers::permission_audit::tests::malformed_authenticated_typed_trust_frame_fails_closed' (2736) panicked at neothd\\src\\n8n_api\\handlers\\permission_audit.rs:252:14:\ncalled `Result::unwrap()` on an `Err` value: Io(Custom { kind: InvalidData, error: \"generic TrustDecision payload is malformed or has an unsupported schema\" })",
+      "message": "called `Result::unwrap()` on an `Err` value: Io(Custom { kind: InvalidData, error: \"generic TrustDecision payload is malformed or has an unsupported schema\" })",
+      "logFile": "windows331-evidence/logs/326.log",
+      "logSha256": "21ac16ba68c7e98d293b0d916a0347031b2c264d6dc79df8568ba8164ea65b75"
+    }
+  ],
+  "localExecutableValidationRan": false
+}

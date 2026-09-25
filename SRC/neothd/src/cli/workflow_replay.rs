@@ -708,7 +708,7 @@ mod tests {
     #[test]
     fn config_fingerprint_uses_actual_nul_field_separators() {
         let expected =
-            sha256(b"workflow-replay-config-v1\0provider\0model\042\0contains-v1\0deny_all");
+            sha256(b"workflow-replay-config-v1\0provider\0model\x0042\0contains-v1\0deny_all");
         assert_eq!(config_fingerprint("provider", "model", 42), expected);
     }
 

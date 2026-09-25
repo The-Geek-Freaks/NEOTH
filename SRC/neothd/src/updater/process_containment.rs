@@ -1249,6 +1249,10 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    #[allow(
+        clippy::await_holding_lock,
+        reason = "the test-wide environment lock prevents concurrent mutation of process environment"
+    )]
     async fn retained_directory_cwd_survives_namespace_rename_before_spawn() {
         let _environment = ENVIRONMENT.lock().unwrap();
         let tempdir = tempfile::tempdir().unwrap();

@@ -191,10 +191,6 @@ impl ExternalHttpPermit {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub fn request_id(&self) -> &str {
-        &self.request_id
-    }
 }
 
 impl fmt::Debug for ExternalHttpPermit {
@@ -820,7 +816,11 @@ impl ExternalHttpAuthorizer {
     /// The permit is cryptographically bound to the exact request. This helper
     /// exists solely for lifecycle fixtures; real outbound HTTP cannot enter
     /// through it.
-    pub async fn execute<F, Fut, T>(&self, request: ExternalHttpRequest, network: F) -> Result<T>
+    pub(crate) async fn execute<F, Fut, T>(
+        &self,
+        request: ExternalHttpRequest,
+        network: F,
+    ) -> Result<T>
     where
         F: FnOnce(ExternalHttpPermit) -> Fut,
         Fut: Future<Output = Result<T>>,
@@ -1386,11 +1386,12 @@ mod tests {
             .await
             .unwrap();
         assert!(allowed_network.load(Ordering::SeqCst));
-        let events = allow_sink.events.lock().unwrap();
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].0, ExtendedSubtype::ExternalHttpIntent);
-        assert_eq!(events[1].0, ExtendedSubtype::ExternalHttpResult);
-        drop(events);
+        {
+            let events = allow_sink.events.lock().unwrap();
+            assert_eq!(events.len(), 2);
+            assert_eq!(events[0].0, ExtendedSubtype::ExternalHttpIntent);
+            assert_eq!(events[1].0, ExtendedSubtype::ExternalHttpResult);
+        }
 
         for (autonomy, deny_external_http) in [
             (crate::permissions::AutonomyLevel::Standard, false),

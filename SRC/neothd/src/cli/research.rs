@@ -829,6 +829,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Process-global NEOTH_HOME must remain isolated across dispatch awaits.
     async fn operator_lifecycle_dispatches_create_approve_run_pause_resume_cancel_show_and_list_with_exact_revisions()
      {
         // The public research dispatcher deliberately resolves NEOTH_HOME at
@@ -977,6 +978,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Process-global provider and home configuration remain isolated across awaits.
     async fn successful_lifecycle_dispatches_real_authorized_producer_and_decodes_wal_terminals_without_replay()
      {
         let _env = crate::test_env::lock();
@@ -1100,6 +1102,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Controlled search environment must remain serialized through the async lifecycle.
     async fn interrupted_lifecycle_decodes_started_wal_and_refuses_replay_after_terminal_failure() {
         let _env = crate::test_env::lock();
         let home = tempfile::tempdir().expect("create isolated interrupted lifecycle home");
