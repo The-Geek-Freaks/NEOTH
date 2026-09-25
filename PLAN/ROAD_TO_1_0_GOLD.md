@@ -8,6 +8,15 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1528 candidate test formatting import (2026-09-25):**
+Imported only two hosted rustfmt assertion wraps from Preflight36171647648
+at5bc24162; original ZIP/API/internal hashes, producer and exact pre/post Git
+blobs verify. Product36171981875 atfa758e0e checks the repaired fixture key;
+Group36171648346 and Windows36171651908 continue on the corrected native source.
+No functional acceptance or ROAD closure yet. Rollback schema preparation is
+separate unpublished WIP; Restore source and fixture fixes remain this scope.
+Evidence: docs/verification/gold-wave1528-restore-format.json.
+
 **W1524 real Restore-canary credential-scope repair (2026-09-25):**
 Product36170124679 at0f9e62a6 reached Ready install and13 real imported workflows,
 but failed at the initial credential-list observer before any Restore command.

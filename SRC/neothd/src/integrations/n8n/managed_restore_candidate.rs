@@ -369,21 +369,25 @@ mod tests {
             image: "docker.io/n8nio/n8n@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         })
         .is_ok());
-        assert!(restore_candidate_command(RestoreCandidateSpec {
-            restore_job_id: &job,
-            image: "docker.io/n8nio/n8n:2.40.5",
-        })
-        .is_err());
+        assert!(
+            restore_candidate_command(RestoreCandidateSpec {
+                restore_job_id: &job,
+                image: "docker.io/n8nio/n8n:2.40.5",
+            })
+            .is_err()
+        );
         for invalid in [
             "n8nio/n8n@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "docker.io/n8nio/n8n@sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
             "docker.io/n8nio/n8n@sha256:not-a-digest",
         ] {
-            assert!(restore_candidate_command(RestoreCandidateSpec {
-                restore_job_id: &job,
-                image: invalid,
-            })
-            .is_err());
+            assert!(
+                restore_candidate_command(RestoreCandidateSpec {
+                    restore_job_id: &job,
+                    image: invalid,
+                })
+                .is_err()
+            );
         }
     }
     #[test]

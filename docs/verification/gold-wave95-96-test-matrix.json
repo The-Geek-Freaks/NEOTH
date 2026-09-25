@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "STATIC_REVIEWED_CANARY_FIX_HOSTED_PENDING",
+  "status": "HOSTED_FORMAT_IMPORTED_FUNCTIONAL_GATES_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 232337,
-    "sha256": "E069A50AB612484DD7C0432F7F65B593080A2F3BC190BE2B9D341B9688C76C09"
+    "bytes": 232528,
+    "sha256": "0664231D82D7A956FA65BB371BA12F8021B39D4DC48FF9B5FCB4B84EB75B8651"
   },
-  "sourceInputs": 1300,
+  "sourceInputs": 1301,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -12618,31 +12618,31 @@
     {
       "test": "integrations::n8n::managed_runtime::managed_restore_candidate::tests::restore_names_are_exact_and_not_generic",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
-      "sourceSha256": "2458CFCBAB0713C87EF912E1C396C85EB34ADEAF777E4EF0C80A46E32439753C",
+      "sourceSha256": "946BBF19A21357D63DD0EE427317A0EBC9BE98ED0D6DBF91FEBB68C35EA190EE",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_restore_candidate::tests::restore_candidate_command_is_inert_and_uses_fixed_immutable_identity",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
-      "sourceSha256": "2458CFCBAB0713C87EF912E1C396C85EB34ADEAF777E4EF0C80A46E32439753C",
+      "sourceSha256": "946BBF19A21357D63DD0EE427317A0EBC9BE98ED0D6DBF91FEBB68C35EA190EE",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_restore_candidate::tests::parse_restore_candidate_accepts_real_docker_volume_mount_shape",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
-      "sourceSha256": "2458CFCBAB0713C87EF912E1C396C85EB34ADEAF777E4EF0C80A46E32439753C",
+      "sourceSha256": "946BBF19A21357D63DD0EE427317A0EBC9BE98ED0D6DBF91FEBB68C35EA190EE",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_restore_candidate::tests::parse_restore_candidate_rejects_each_non_inert_or_ambiguous_shape",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
-      "sourceSha256": "2458CFCBAB0713C87EF912E1C396C85EB34ADEAF777E4EF0C80A46E32439753C",
+      "sourceSha256": "946BBF19A21357D63DD0EE427317A0EBC9BE98ED0D6DBF91FEBB68C35EA190EE",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_restore_candidate::tests::parse_restore_candidate_rejects_duplicate_mounts_and_tmpfs",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
-      "sourceSha256": "2458CFCBAB0713C87EF912E1C396C85EB34ADEAF777E4EF0C80A46E32439753C",
+      "sourceSha256": "946BBF19A21357D63DD0EE427317A0EBC9BE98ED0D6DBF91FEBB68C35EA190EE",
       "junitClass": "neoth"
     },
     {
@@ -48812,6 +48812,44 @@
       }
     ],
     "note": "Original failed product producer admitted for diagnosis; fixture-only narrowly scoped credential key repairs observer without changing productive bootstrap privilege.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1528RestoreCandidateFormat": {
+    "base": "fa758e0e12d2933ab0753bb4c9d4c36ae1110ca2",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1528-restore-format.json",
+        "bytes": 598,
+        "sha256": "E0E465D0E2C6D5742430574AF7236F92984CB21ED5813D7FB3A1F1123375860B",
+        "blob": "af626450be5930e38ac21053d2838bbbb7465ecc"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 417639,
+        "sha256": "4B7DB0C34B9295E935CC9018A05D2E63925A427C50438AAA67B56E9B0E8F0952",
+        "blob": "f12eaceeff4ad403fc7a6acd1b145a54ab2d7ff7"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1436570,
+        "sha256": "8781CB3370027F41F0658FB80F39AC2176C4104886CBB398CFA81CCA66B1EA90",
+        "blob": "8e18a47cfd475e251720a87bdbac6abe9a3c3b2d"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2047093,
+        "sha256": "3ABC826F9532D1B1863172C77C700B276DA0ED391A50BF0F75795772C5A55C8B",
+        "blob": "8a9c7ece918e5587e206ffd4210ba617c97552a8"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
+        "bytes": 17571,
+        "sha256": "946BBF19A21357D63DD0EE427317A0EBC9BE98ED0D6DBF91FEBB68C35EA190EE",
+        "blob": "7f58a236d5b7cc2a3164f8bd0d9211e346019253"
+      }
+    ],
+    "note": "Two exact original hosted rustfmt assertion wraps only; pre/post blobs verified; current native and product runs pending.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
