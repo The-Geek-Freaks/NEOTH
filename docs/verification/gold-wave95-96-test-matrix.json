@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "HOSTED_FAILURE_REPAIRED_RERUN_PENDING",
+  "status": "HOSTED_LINT_REPAIRED_RERUN_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 222051,
-    "sha256": "9C0B80983CC377B87093D676489CCD801309B1E288180785A49C53883B99FBE7"
+    "bytes": 222235,
+    "sha256": "20C1B6783358522DE3FAA0EE3BFCC8532B0D241A4AD1B94AE1BF4F87DF685073"
   },
-  "sourceInputs": 1246,
+  "sourceInputs": 1247,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -46346,6 +46346,44 @@
       }
     ],
     "note": "Exact E0308 borrow, unused test argument and Docker name-filter fixture fixes from hosted failures; no assertion weakening; fresh native/Core/product gates required.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1387PaperlessClippy": {
+    "base": "46a037d0277aa1be5a328669cbdf19449593db43",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1387-paperless-clippy.json",
+        "bytes": 655,
+        "sha256": "4B718C4A64B2D37B98DAF368B4B42D532981A0AE6867089E9FB2C2D593453BEA",
+        "blob": "6b666cf7073c1643991919e4884e0034e2aae162"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 386099,
+        "sha256": "9A539A6DB06B059AA5AF60F16207078D1D0846FDD8F57589E94EDCBC74C2135B",
+        "blob": "61b930e338b126be37b346017c133e0ec2520da6"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1405030,
+        "sha256": "83B5578908C4C7BF560F12C11E4D3DCC6AB46050534AD71B1E84B9BAEBAD95A4",
+        "blob": "2fb79930d4023fe4f87cb464714c64e712636302"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2015553,
+        "sha256": "539AE1E2E38D44B85580884C93E125FE16747D42D9ACF4A35EC7CE54CD09EF38",
+        "blob": "edbff95480a6ed381583bdf9176b433918d45ec8"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_repair.rs",
+        "bytes": 32314,
+        "sha256": "98A94A59926E2D9D4A1A5DE394AAC08A1481951F3436CFB025F81E61BE9AA985",
+        "blob": "c06a7afc1f99ce73efe86975a63d5d07fee507e7"
+      }
+    ],
+    "note": "Exact production Clippy collapsible-if correction, preserving optional receipt comparison and error semantics; hosted revalidation required.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

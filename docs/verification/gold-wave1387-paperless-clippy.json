@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "source": "46a037d0277aa1be5a328669cbdf19449593db43",
+  "failedRun": 36138113865,
+  "failedGate": "slim-core production Clippy",
+  "diagnostic": "clippy::collapsible_if at paperless_repair.rs:807",
+  "change": "collapse nested optional-after-receipt comparison into the equivalent let-chain; preserve evaluation order and error propagation",
+  "sourceSha256": "98A94A59926E2D9D4A1A5DE394AAC08A1481951F3436CFB025F81E61BE9AA985",
+  "hostedLogSha256": "8449E6D9AAF1A9BF68E5385A941F570700F2E9C5E44380238C34FD369073804B",
+  "status": "REPAIRED_HOSTED_RERUN_REQUIRED",
+  "localExecutableValidationRan": false,
+  "roadmapClosures": 0
+}

@@ -2,6 +2,12 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1387 production lint follow-up (2026-09-25):** Core36138113865 at
+46a037d0 now type-checked the repair code and rejected one collapsible nested
+receipt comparison. The equivalent let-chain preserves evaluation order and
+error propagation; no lint suppression is added. Native and product runs at
+46a037d0 remain active; current-source Core revalidation is required.
+
 **W1383-1385 hosted formatting and exact compiler/fixture repairs (2026-09-25):**
 W1380 was published at 28b1b2c4, and all seven verified GitHub rustfmt postimages
 at bc170f39. Its Preflight passed and the product-canary helper gate passed.

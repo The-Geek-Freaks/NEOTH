@@ -804,10 +804,10 @@ fn validate_repair_journal(
             }
         }
     }
-    if let Some(after) = journal.after_receipt_bytes.as_deref() {
-        if replacement_receipt_bytes(journal)?.as_slice() != after {
-            return Err(LifecycleError::Receipt);
-        }
+    if let Some(after) = journal.after_receipt_bytes.as_deref()
+        && replacement_receipt_bytes(journal)?.as_slice() != after
+    {
+        return Err(LifecycleError::Receipt);
     }
     let valid_current = match journal.phase {
         RepairPhase::ReceiptCommitDispatched => {
