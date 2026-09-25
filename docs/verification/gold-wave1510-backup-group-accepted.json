@@ -1,0 +1,57 @@
+{
+  "schema": "neoth-group1877-hosted-admission/v1",
+  "decision": "admitted",
+  "scope": "native GitHub-hosted Group1877 fixture cohort only",
+  "limitations": [
+    "Not a product-canary, release, deployment, or cross-platform result.",
+    "Not a broad NEOTH-completion claim.",
+    "No local compiler, Rust test, formatter, XML parser, Node, Python, Docker, or runtime execution was performed."
+  ],
+  "run": {
+    "repository": "The-Geek-Freaks/NEOTH",
+    "id": 36164834715,
+    "jobId": 108169948316,
+    "jobName": "Research and loop lifecycle quality",
+    "headSha": "a276a0c4a16367f985e290ee985586b297174faa",
+    "sourceRef": "refs/heads/main",
+    "finalStatus": "completed",
+    "finalConclusion": "success"
+  },
+  "artifacts": [
+    {"role": "grouped-cargo-log", "id": 10877808591, "sha256": "d69d0a4339a3ca2f4167eeb0cef3cb6b6f503cfd7ef032c5038e80f32aa257e0", "apiDigestMatchesLocalZip": true},
+    {"role": "grouped-source-identities", "id": 10877808587, "sha256": "3ed6fd56c8de8c5130cbcc61acf9574a2a171d631c0cf85fb3e31163a1fdf55e", "apiDigestMatchesLocalZip": true},
+    {"role": "grouped-lifecycle-receipt", "id": 10877144141, "sha256": "6b7d010e6c20025371a8bdcefac8df73e58a02e28f9facd9b33f3e52ae71fc6f", "apiDigestMatchesLocalZip": true}
+  ],
+  "zipSafety": {"entries": 12, "duplicateEntries": 0, "unsafeEntries": 0},
+  "cohort": {
+    "discovered": 1877,
+    "selected": 1877,
+    "executed": 1877,
+    "passed": 1877,
+    "failed": 0,
+    "duplicateFixtureTests": 0,
+    "duplicateFixtureNames": 0,
+    "selectionEqualsDiscovery": true,
+    "uniqueSourcePaths": 299,
+    "uniqueSourcePathHashPairs": 299,
+    "unsafeSourcePaths": 0,
+    "sourceGitBlobHashesChecked": 299,
+    "sourceGitBlobHashMismatches": 0,
+    "inputGitBlobHashesChecked": 10,
+    "inputGitBlobHashMismatches": 0,
+    "unsafeInputPaths": 0
+  },
+  "logEvidence": {
+    "runHeaders": 1877,
+    "runningOneTestEntries": 1877,
+    "onePassedZeroFailedSummaries": 1877,
+    "failedTestLines": 0,
+    "failedSummaries": 0,
+    "failureSections": 0,
+    "panicLines": 0,
+    "logSha256": "95bd3949ca82bbfcc863e4bd5385eda45bb3b43578a1064c32f5a74a85cd8670",
+    "compileStderrBytes": 973,
+    "compileStderrSha256": "d456bd204cc3294cb7d6b3b940822467663751660b3a7a93aa81fc73c7a43d5c",
+    "compileErrorLines": 0
+  }
+}

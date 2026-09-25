@@ -1,0 +1,64 @@
+{
+  "schema": "neoth-wave1503-windows642-admission/v1",
+  "run": {
+    "id": 36162833661,
+    "name": "Windows storage regressions",
+    "status": "completed",
+    "conclusion": "success",
+    "producer": "feb848a3342392a260aa1653cfd08c9e47fe5b06"
+  },
+  "artifact": {
+    "id": 10877681746,
+    "name": "windows-storage-regressions-feb848a3342392a260aa1653cfd08c9e47fe5b06",
+    "api_digest": "sha256:20e2f3ae9f13a556a846bc6b19faa8166fd91ccbaa2b1017b780790288d0438b",
+    "zip_sha256": "20e2f3ae9f13a556a846bc6b19faa8166fd91ccbaa2b1017b780790288d0438b",
+    "safe_entries": 654,
+    "unsafe_entries": 0
+  },
+  "integrity": {
+    "evidence_manifest_entries": 10,
+    "evidence_hash_mismatches": 0,
+    "ordered_log_manifest_entries": 643,
+    "log_hash_mismatches": 0,
+    "source_workflow_bindings": 94,
+    "source_workflow_binding_mismatches": 0,
+    "input_bindings": 13,
+    "input_binding_mismatches": 0
+  },
+  "counts": {
+    "selected": 642,
+    "discovered": 642,
+    "executed": 642,
+    "passed": 642,
+    "failed": 0,
+    "missing": 0,
+    "selection_to_result_identity_mismatches": 0
+  },
+  "current_source_difference": {
+    "producer_to_worktree_tracked_paths_after_restore_exclusion": [
+      "SRC/neothd/src/integrations/jobs.rs",
+      "SRC/neothd/src/integrations/n8n/managed_backup.rs",
+      "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
+      "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "SRC/neothd/src/integrations/state.rs"
+    ],
+    "restore_wip": "Excluded from acceptance scope; no managed_restore path occurred in the producer-to-current tracked diff."
+  },
+  "admission": {
+    "accepted": true,
+    "scope": "The exact hosted Windows642 selection only.",
+    "limits": [
+      "Does not claim Group/Core/product admission.",
+      "Does not include Restore WIP.",
+      "Does not prove behavior for later current-source changes."
+    ]
+  },
+  "mutations": {
+    "public_docs": false,
+    "plan": false,
+    "inventory": false,
+    "source": false,
+    "git": false,
+    "ci": false
+  }
+}

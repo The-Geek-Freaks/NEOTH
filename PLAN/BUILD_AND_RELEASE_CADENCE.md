@@ -3,6 +3,22 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1503/W1508/W1510 backup native and product acceptance (2026-09-25):**
+Group36164834715 ata276a0c4 passed1877/1877 selected/discovered/executed fixtures;
+299 source and10 input Git bindings plus all three original ZIP digests verify.
+Windows36162833661 atfeb848a3 passed642/642 with0missing/failed,94 source/workflow
+and13 input bindings,10 evidence hashes and643 ordered log hashes verified.
+Product36165909980 at73be6266 passed both real Backup scenarios (running source
+true->true; stopped false->false),13-workflow persistence, all three Repairs,
+retained reinstall, confirmed Purge and full Docker/secret/home cleanup. Original
+ZIP/API/receipt hashes and32 exact producer bindings verify. These are separate
+producer-scoped admissions; Restore remains unpublished WIP with its own gates.
+Core36162836957 failed only two nonminimal_bool warnings in the backup test fake;
+its earlier slim Clippy, test typecheck, CLI build and reference export succeeded.
+The narrow lint correction requires a fresh full-Core run. ROAD stays1324 total,
+1077done/245open/2partial; no release closure and no local executable validation.
+Evidence: gold-wave1503-backup-windows-accepted.json,
+gold-wave1508-backup-product-accepted.json, gold-wave1510-backup-group-accepted.json.
 **W1497/W1498/W1499 complete-history backup canary repair (2026-09-25):**
 Product36163818879 at64b172b6 completed real running and stopped source backups,
 all three repairs and uninstall/reinstall. Original ZIP/API/receipt hashes and

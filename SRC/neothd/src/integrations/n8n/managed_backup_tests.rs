@@ -145,7 +145,7 @@ impl super::super::ManagedDockerRunner for Runner {
     ) -> Result<super::super::ManagedCommandReceipt, &'static str> {
         let mut s = self.0.lock().unwrap();
         s.calls.push(format!("start:{id}"));
-        if !s.container.as_ref().is_some_and(|c| c.id == id) {
+        if s.container.as_ref().is_none_or(|c| c.id != id) {
             return Err("wrong_start");
         }
         s.running = true;
@@ -161,7 +161,7 @@ impl super::super::ManagedDockerRunner for Runner {
     ) -> Result<super::super::ManagedCommandReceipt, &'static str> {
         let mut s = self.0.lock().unwrap();
         s.calls.push(format!("stop:{id}"));
-        if !s.container.as_ref().is_some_and(|c| c.id == id) {
+        if s.container.as_ref().is_none_or(|c| c.id != id) {
             return Err("wrong_stop");
         }
         s.running = false;

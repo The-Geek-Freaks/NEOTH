@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "decision": "accepted",
+  "scope": "W1508 hosted n8n product-bootstrap producer admission only",
+  "producer": {
+    "repository": "The-Geek-Freaks/NEOTH",
+    "run_id": 36165909980,
+    "job_id": 108173483954,
+    "workflow": "W1018 compiled product n8n bootstrap and workflow-import canary",
+    "source_sha": "73be6266fc55a05a5bad2acb50c0834db9778fb0",
+    "event": "workflow_dispatch",
+    "ref": "main",
+    "runner": "ubuntu-24.04",
+    "conclusion": "success",
+    "completed_at": "2026-09-25T17:23:17Z"
+  },
+  "artifact": {
+    "id": 10877918537,
+    "name": "w1018-product-n8n-bootstrap-36165909980-1",
+    "api_digest": "sha256:22c33407e27bd99bac47728e443c730c9d2257046a1d72e021cdb3c8d0ad9129",
+    "downloaded_zip_sha256": "22c33407e27bd99bac47728e443c730c9d2257046a1d72e021cdb3c8d0ad9129",
+    "zip_members": ["receipt.json"],
+    "receipt_sha256": "79212748dfadaeed7b97955732324312c730f7a5174041eaa2bfb4eeef7e19f1"
+  },
+  "bindings": {
+    "declared_input_count": 28,
+    "additional_binding_count": 4,
+    "total_count": 32,
+    "matched_count": 32,
+    "mismatched_count": 0,
+    "helper_sha256": "527139fcb81af5039bb76ed2ec4288b0abeefe9cd3b5a778069625a3fcf14b9c",
+    "bounded_helper_sha256": "23118857e4655bad3fedbb702e4d0840aec9114482386aab5fee783ef688500a",
+    "workflow_sha256": "e61db5ccde0cc3dfe6ee103031e40a6025dac328977c24bbf2abc376ff258d60",
+    "cargo_lock_sha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+    "detail": "source-bindings.json"
+  },
+  "receipt": {
+    "outcome": "passed",
+    "stage": "confirmed_retained_volume_purge",
+    "status_ready": true,
+    "workflow_count": 13,
+    "running_backup": {"original_running_state": true, "restored_running_state": true, "archive_bytes": 5707264, "safe_header_count": 10},
+    "stopped_backup": {"original_running_state": false, "restored_running_state": false, "archive_bytes": 5708800, "safe_header_count": 11},
+    "repair": {"healthy": true, "stopped_exact_id_restarted": true, "missing_id_recreated": true},
+    "reinstall": {"retained_volume_reused": true, "final_runtime_absent": true},
+    "purge": {"volume_absent": true, "repeat_read_only": true},
+    "cleanup": {"docker": true, "bootstrap_secrets": true, "isolated_home": true, "complete": true}
+  },
+  "limits": [
+    "Applies only to this successful producer run and source SHA, not to Restore WIP or a later producer.",
+    "Evidence is one Ubuntu 24.04 hosted run of the pinned n8n image and 13-workflow fixture.",
+    "The redacted artifact contains the receipt only; it does not preserve raw backup archives, databases, Docker logs, or complete job rows.",
+    "The workflow builds the public CLI and executes its helper tests, but it is not a cross-platform release test.",
+    "No local executable validation was performed during this admission because of the BSOD hold."
+  ]
+}
