@@ -2,6 +2,22 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1432 actual n8n lifecycle accepted (2026-09-25):**
+Run36147557520 at6c997a7b passed the compiled product lifecycle with Linux
+Secret Service Keychain credentials. Original artifact ZIP/receipt hashes and
+all26 source bindings are verified. Healthy Repair has no Docker effect;
+exact stopped-ID start and witnessed recreate preserve volume, API-key
+authority and all13 workflows. Retained uninstall/reinstall and confirmed
+purge pass, repeated operations preserve their documented behavior, and
+Docker plus isolated-home cleanup are proven. Native suites remain running;
+this does not close other platforms, Update/Rollback, upstream signatures,
+P2-20 or the release. See gold-wave1432-n8n-product-accepted.json.
+W1431 imports the authentic one-file GChat hosted-format patch from
+Preflight36148186329 at e9f81999 with verified Git pre/postimages. W1433 is
+implementing the same persisted-account recovery for IRC/Twitch/Nostr through
+one shared connection-bound path, separately from this accepted product result.
+No local compiler, formatter, tests or product runtime ran.
+
 **W1424-1428 Google Chat queued-account recovery (2026-09-25):**
 A durable queued Google Chat item with a selected account now reacquires only
 that exact current fingerprinted ready live handle. Previously this early

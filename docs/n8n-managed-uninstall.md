@@ -28,12 +28,15 @@ The structured completion action is `healthy`, `started`, or `recreated` only
 when its receipt still agrees with the current source install and runtime
 binding.
 
-The implementation was independently statically reviewed. At source
-`9c01fa10f3613a139648b6e731ab2173f0ac7be6`, which corrects the repair module
-path and imports hosted formatting, native tests, compilation, and the actual
-Docker product canary reported hosted failures; diagnosis and corrected runs
-are pending. Do not treat the command as having
-hosted execution success until those gates publish evidence.
+The actual compiled-product lifecycle passed GitHub run `36147557520` at
+`6c997a7b19a8a87eb02f817f5d8a0238c6441a62`. Its original artifact digest,
+receipt and all 26 source bindings were verified. The Linux Secret Service
+keychain run proves authenticated healthy/start/recreate repair, preserved
+volume and 13 workflows, retained-data uninstall/reinstall and confirmed
+purge, including repeated-operation behavior and Docker/home cleanup.
+See `docs/verification/gold-wave1432-n8n-product-accepted.json`. This is
+exact-source product acceptance; native, other-platform and release gates
+remain separate.
 
 ## Interrupted commands
 
@@ -153,8 +156,9 @@ name between inspection and removal is outside that lock's protection.
 The implementation includes focused fake-runner and configuration transaction
 regressions. Source review and registered tests are distinct from executed
 GitHub gates and an actual Docker lifecycle test. The n8n repair source review
-is recorded in `docs/verification/gold-wave1407-n8n-repair.json`; its status is
-`STATIC_REVIEW_HOSTED_PENDING`, not test or product acceptance. This document
+is recorded historically in `docs/verification/gold-wave1407-n8n-repair.json`; its status is
+`STATIC_REVIEW_HOSTED_PENDING`; the later exact-source product acceptance is
+recorded separately in the W1432 receipt above. This document
 does not close the broader safe-uninstall/purge, Obsidian, or release acceptance
 criteria.
 

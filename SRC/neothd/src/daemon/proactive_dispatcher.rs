@@ -1343,13 +1343,15 @@ pub(crate) async fn run_proactive_delivery_tick_with_accepted(
                                 .await?,
                             }
                         }
-                        _ => crate::daemon::proactive_egress::record_sidecar_only_once(
-                            &egress,
-                            item,
-                            &queue_generation,
-                            &target_channel,
-                        )
-                        .await?,
+                        _ => {
+                            crate::daemon::proactive_egress::record_sidecar_only_once(
+                                &egress,
+                                item,
+                                &queue_generation,
+                                &target_channel,
+                            )
+                            .await?
+                        }
                     }
                 }
             } else {
@@ -2654,11 +2656,9 @@ mod tests {
             let wal_dir = tmp.path().join("wal");
             std::fs::create_dir_all(&wal_dir).unwrap();
             let segment = wal_dir.join("000001.wal");
-            let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
-                segment.clone(),
-                tmp.path().to_path_buf(),
-            )
-            .unwrap();
+            let (writer, join, ready) =
+                crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
+                    .unwrap();
             ready.wait().await.unwrap();
             assert_eq!(
                 run_proactive_delivery_tick(
@@ -2720,9 +2720,7 @@ mod tests {
         .unwrap();
         let registry = empty_live_channels();
         let gchat = Arc::new(CountingConnectionChannel::new("gchat"));
-        let lease = registry
-            .begin_replacement(gchat_ref, fingerprint)
-            .await;
+        let lease = registry.begin_replacement(gchat_ref, fingerprint).await;
         assert!(registry.publish(&lease, gchat.clone()).await);
 
         let wal_dir = tmp.path().join("wal");
@@ -2749,7 +2747,11 @@ mod tests {
         drop(writer);
         join.await.unwrap().unwrap();
 
-        assert_eq!(gchat.sends(), 0, "policy denial must precede live acquisition/send");
+        assert_eq!(
+            gchat.sends(),
+            0,
+            "policy denial must precede live acquisition/send"
+        );
         let history = crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(

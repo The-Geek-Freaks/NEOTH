@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "status": "EXACT_SOURCE_PRODUCT_ACCEPTED",
+  "run": 36147557520,
+  "source": "6c997a7b19a8a87eb02f817f5d8a0238c6441a62",
+  "artifactId": 10869678340,
+  "zipSha256": "eb8bc5615b5a656533cb42d482791d8a00f0d890bdd93bfccca0f2aafcf68958",
+  "receiptSha256": "D738CF815A2C79B4B48CC28CC003B960E7C1B7A4D200D359E5BE2F15C6C3D6ED",
+  "verifiedSourceBindings": 26,
+  "credentialBackend": "Linux Secret Service keychain",
+  "repairHealthy": {
+    "authenticated": true,
+    "generation": 1,
+    "job_id": "01a0d8fd-0f24-7091-9a31-8d0880091dd4",
+    "job_row_sha256": "e1a5d44cbe189ca38cdb95c4c97c213b2b27bd370e66b0826f718b96ac2d696b",
+    "manifest_sha256": "41908ee8e4d84009532cbaf782479fbb10bf6d8da45cb32fd3c957760034a18c",
+    "no_docker_effect": true,
+    "runtime_id": "68b2489c4887f66533be34fc8be61e0e4739d3ca89b55ba6c47cfc44a3f51814",
+    "volume": "neoth_n8n_01a0d8fb744075c29d3c7f1fd78b6b88",
+    "workflows_persisted": true
+  },
+  "repairStarted": {
+    "authenticated": true,
+    "exact_stopped_id_restarted": true,
+    "generation": 2,
+    "job_id": "01a0d8fd-1be0-7c11-a205-9347876b7e8d",
+    "job_row_sha256": "55619fa5f953737ac3652f59f82462e758b67808c1f03bee09371eafddc77c57",
+    "manifest_sha256": "8330b1d99c0e74a4850f9c4d7c1d88ecd1ebac964190c57a027a2b32a412d8c7",
+    "runtime_id": "68b2489c4887f66533be34fc8be61e0e4739d3ca89b55ba6c47cfc44a3f51814",
+    "volume": "neoth_n8n_01a0d8fb744075c29d3c7f1fd78b6b88",
+    "workflows_persisted": true
+  },
+  "repairRecreated": {
+    "authenticated": true,
+    "generation": 3,
+    "job_id": "01a0d8fd-45f9-7352-862c-32e00eca92b9",
+    "job_row_sha256": "14dbe3f2f4da83b0d4c4636b199f0b6b73fb3608c6afbd0635bf7936dea6cd1f",
+    "manifest_sha256": "90a7b62f34d17fbc1d06d1283a006f05335ab3b57d751d10d6299f4687503cd0",
+    "old_runtime_id": "68b2489c4887f66533be34fc8be61e0e4739d3ca89b55ba6c47cfc44a3f51814",
+    "reused_volume": "neoth_n8n_01a0d8fb744075c29d3c7f1fd78b6b88",
+    "runtime_id": "f7aae5adcb4578d00274b326efd357d971f28cee40deacb2a4f43549041b442e",
+    "source_api_key_authority_preserved": true,
+    "workflows_persisted": true
+  },
+  "workflowImport": {
+    "custody_bytes": 4838,
+    "custody_sha256": "4d37040fbca6f4cb108eb39016e1831e898d64dcac15e9d8670e9d146284c3e5",
+    "first_cli_sha256": "3cdc21446289ba5a66a050cdb527d47eba962ff4e68238902f82d455f58d627d",
+    "job_revision": 17,
+    "job_row_sha256": "22fb633ec42e89225330b1d2fd3b46e8f9531a4b047429beb368786f6387d1d5",
+    "repeat_read_only": true,
+    "workflow_count": 13,
+    "workflow_set_sha256": "e5ab1bf6017aab96fadbdf751465dc9a4badc53c279ad59e42110570f1802003"
+  },
+  "uninstall": {
+    "active_sidecars_removed": true,
+    "canonical_api_key_preserved": true,
+    "completion_receipt_bytes": 802,
+    "completion_receipt_sha256": "b3961111c57ac2ff3c604e1358656d8558e5392f7c6b16454618fc8578ecd2bb",
+    "config_cleanup": "preserved_unproven",
+    "data_volume_policy": "retain",
+    "disposition": "container_removed_data_volume_retained",
+    "full_job_row_sha256": "1d369019eb673a9d767f94d70232022bbc560f8b42be74f0f768c4f53d01fa09",
+    "job_id": "01a0d8fd-8d87-7bc1-a3df-46631dc437d7",
+    "job_manifest_sha256": "89cb620a6c22a1c16686e92259f18fa1becee3a7e40f1a01c6e8cd348e24816e",
+    "job_row_sha256": "96d4f8271af710ec41ea4910d8b983c226e5c1b2bceb8f69ffb2c1d532412db1",
+    "repeat_read_only": true,
+    "runtime_absent": true,
+    "volume_retained": true
+  },
+  "reinstall": {
+    "canonical_api_key_preserved": true,
+    "final_completion_receipt_bytes": 1208,
+    "final_completion_receipt_sha256": "f2784f3012af50099d32d36afde26ebd57f351f3bef878bc581b2c5ed614fbdb",
+    "final_runtime_absent": true,
+    "final_uninstall_full_row_sha256": "928512e06a52865f5cf5fedeb331ac1961d944d678e57064cb324d12a0f3697d",
+    "final_uninstall_job_id": "01a0d8fd-f273-79a0-838a-4f322f9933b9",
+    "final_uninstall_row_sha256": "ec963a85554152ca421d009657dbdcc88abf9166d1a58c57bbc2775ce0c199b8",
+    "full_job_row_sha256": "36a094b2ab8ac1a39a72408ee77af56a846f7e3d89c2d05f793c4099fa7fadd1",
+    "job_id": "01a0d8fd-98f0-7d91-b201-6b5554c2c0f6",
+    "job_row_sha256": "63cb508ca25e4addcc3d8ae994324746063f999a87ba6dd4bb24a75cb1ee235d",
+    "repeat": {
+      "exit_code": 1,
+      "reason": "active_runtime_pre_effect_rejection"
+    },
+    "reused_volume": "neoth_n8n_01a0d8fb744075c29d3c7f1fd78b6b88",
+    "runtime_id": "f21f6f3ee407a4c9d043783ec576788100b3b638ca16247649704e10e6139d76",
+    "volume_retained": true,
+    "workflows_persisted": true
+  },
+  "purge": {
+    "canonical_api_key_preserved": true,
+    "job_row_sha256": "35299591dd3be252525c59e57f22149bc150d9b6e07708f5ff9b981aa54d6c3f",
+    "purge_job_sha256": "49dd4f1a3aad4d12a902ddddf1050f27cf9f4b357760167656733cf6eb52bd07",
+    "receipt_bytes": 308,
+    "receipt_sha256": "282c10b398e1fa30c865df5ece2930bc7d8e284c140659cb0c37fe382c6c7ca9",
+    "repeat_read_only": true,
+    "source_uninstall_job_sha256": "8448458e459b354eadf090237e0c1c9fa5df0b73783c1b3496684b45d9fac195",
+    "target_sha256": "68525916d1ec37b123f7aa55f9d4920a1a3aaa6abef1b68a48b664040f909fbd",
+    "volume_absent": true
+  },
+  "cleanup": {
+    "docker": true,
+    "isolatedHome": true,
+    "bootstrapSecrets": true,
+    "complete": true
+  },
+  "boundary": "Exact Linux/Keychain n8n product lifecycle. Native regression suites, other platforms, update/rollback, upstream artifact signatures and overall release acceptance remain separate.",
+  "localExecutableValidationRan": false
+}

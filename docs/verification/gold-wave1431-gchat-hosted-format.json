@@ -1,0 +1,41 @@
+{
+  "schema": "neoth-wave1431-hosted-format-admission/v1",
+  "run": 36148186329,
+  "source": "e9f81999eb0d420ce368f3bf28ee7d2ba1bcb0c8",
+  "artifact": {
+    "id": 10870149049,
+    "name": "hosted-format.zip",
+    "api_digest": "sha256:311b014833a75d0d3bf48798134c912e407e8f3c36280ed9de3b57fb3572519d",
+    "zip_sha256": "311b014833a75d0d3bf48798134c912e407e8f3c36280ed9de3b57fb3572519d",
+    "size_bytes": 1403
+  },
+  "archive_manifest": {
+    "file": "SHA256SUMS",
+    "verified": true,
+    "entries": 2,
+    "source_head": "e9f81999eb0d420ce368f3bf28ee7d2ba1bcb0c8"
+  },
+  "patch": {
+    "file": "rustfmt.patch",
+    "scope": [
+      "SRC/neothd/src/daemon/proactive_dispatcher.rs"
+    ],
+    "hunks": 4,
+    "pre": {
+      "git_blob_sha1": "25db48a1621b63492568fab435dc01086f07f561",
+      "sha256": "fed745dd73c26e6ec62fd3a3bb4dc5d4b9dd3c965d4b5c164ca1e34f292a0ce5"
+    },
+    "post": {
+      "git_blob_sha1": "8428240dcca5cc1fca99437657675272beb94f9e",
+      "sha256": "6f3bcc26fe49862ff848af33520a9455f539db4d2e0e020737b516672bf07957"
+    },
+    "git_preimage_verified": true,
+    "in_memory_postimage_matches_patch_index": true
+  },
+  "action": {
+    "patch_applied": true,
+    "patch_staged": false,
+    "source_modified": true
+  },
+  "admission": "AUTHENTIC_HOSTED_FORMAT_IMPORTED; Root verified Git preimage and resulting Git/SHA256 postimage"
+}
