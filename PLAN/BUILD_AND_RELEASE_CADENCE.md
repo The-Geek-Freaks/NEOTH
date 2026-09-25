@@ -3,6 +3,27 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1368-1380 Paperless repair and fresh-generation authentication (2026-09-25):**
+The actual CLI now routes `paperless repair` to a receipt-bound backend. All three
+services and all six volumes are validated before effects; healthy is an
+authenticated no-op, exact stopped IDs restart, and missing owned services are
+recreated without changing pinned images or retained volumes. Unknown create
+outcomes remain held. Durable receipt-commit intent handles before/after CAS
+crashes without repeating Docker effects. W1374's journal/argument-count findings
+are resolved; hosted formatting and execution remain required.
+Fresh post-purge install now uses a generation/snapshot-bound auth marker to obtain
+and compare-and-set a new database-backed token. Other credentials are preserved;
+File/Keychain conflicts and overrides refuse. Marker retirement follows readiness
+and exact install receipt; a post-credential or post-receipt crash can resume.
+Root integrated an injectable bootstrap provider and actual disk credential
+witness into existing lifecycle fixtures. W1376 reviewed the actual integration.
+The native inventory adds 12 repair cases, 5 auth cases and 1 CLI case: 2039 portable,
+Group 1829 and Windows 598. The real canary adds healthy/start/recreate/healthy repair
+with authenticated identical PDF readback, 6 volumes and immutable repair credentials;
+fresh post-purge token-only replacement, marker retirement and stable repeat are
+required. Its 30 helper tests and final independent review precede hosted execution.
+Claude066 informed the design but its ambiguous label-adoption rule was rejected.
+Unacknowledged Claude067 source ownership was withdrawn; Claude068 has a read-only review assignment; no ACK/RESULT was observed. No roadmap closure or local executable checks are claimed.
 **W1375 exact hosted rotation compile repair (2026-09-25):**
 Preflight and CodeQL passed at8d8760b5. Group36134217841 then identified the
 undefined fixture binding `sources`; the local collection now has that exact

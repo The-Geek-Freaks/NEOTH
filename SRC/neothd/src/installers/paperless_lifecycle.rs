@@ -375,6 +375,19 @@ pub struct DockerExecutor;
 trait ReadinessVerifier: Send + Sync {
     async fn ready(&self, home: &Path, credentials: &Credentials) -> bool;
 }
+#[async_trait]
+trait BootstrapTokenProvider: Send + Sync {
+    async fn obtain(&self, root: &OwnedPaperlessRoot, binding: &EnvBinding)
+    -> Result<SecretString, LifecycleError>;
+}
+struct ConfiguredBootstrapToken;
+#[async_trait]
+impl BootstrapTokenProvider for ConfiguredBootstrapToken {
+    async fn obtain(&self, root: &OwnedPaperlessRoot, binding: &EnvBinding)
+    -> Result<SecretString, LifecycleError> {
+        obtain_bootstrap_token(root, binding).await
+    }
+}
 struct ConfiguredReadiness;
 #[async_trait]
 impl ReadinessVerifier for ConfiguredReadiness {
@@ -546,6 +559,20 @@ async fn install_at_with_readiness<E: RetainedComposeExecutor, R: ReadinessVerif
     executor: &mut E,
     readiness: &R,
 ) -> Result<PaperlessLifecycleReceipt, LifecycleError> {
+    install_at_with_readiness_and_bootstrap(
+        home, credentials, executor, readiness, &ConfiguredBootstrapToken,
+    ).await
+}
+
+async fn install_at_with_readiness_and_bootstrap<
+    E: RetainedComposeExecutor, R: ReadinessVerifier, B: BootstrapTokenProvider,
+>(
+    home: &Path,
+    credentials: &Credentials,
+    executor: &mut E,
+    readiness: &R,
+    bootstrap: &B,
+) -> Result<PaperlessLifecycleReceipt, LifecycleError> {
     let root_path = crate::config::InstancePaths::for_home(home).paperless_root;
     match paperless_staging::inspect_at(&root_path).status {
         PaperlessStagingStatus::PreparedPinned | PaperlessStagingStatus::AlreadyPrepared => {}
@@ -578,6 +605,16 @@ async fn install_at_with_readiness<E: RetainedComposeExecutor, R: ReadinessVerif
         executor, &engine, &owned, &binding,
     )
     .await?;
+    let fresh_credentials = if paperless_generation_auth::has_pending_marker(&owned)? {
+        let current = Credentials::load_effective(&home.join("credentials.yaml"), configured_backend(home)?)
+            .map_err(|_| LifecycleError::Bootstrap("paperless_generation_auth_config_invalid"))?;
+        if let Some(token) = valid_token(current.paperless_token.as_ref()) {
+            paperless_generation_auth::retire_if_completed_receipt_matches(&owned, token)?;
+        }
+        Some(current)
+    } else {
+        None
+    };
     binding.volume_set_id =
         preflight_existing_volumes(executor, &engine, &project, &owned, &binding).await?;
     for image in &expected {
@@ -655,22 +692,46 @@ async fn install_at_with_readiness<E: RetainedComposeExecutor, R: ReadinessVerif
         &binding,
     )
     .await?;
-    let effective = match valid_token(credentials.paperless_token.as_ref()) {
-        Some(token) => token.clone(),
-        None => {
-            let token = obtain_bootstrap_token(&owned, &binding).await?;
+    let current_credentials = fresh_credentials.as_ref().unwrap_or(credentials);
+    let fresh_grant = if fresh_credentials.is_some() {
+        paperless_generation_auth::begin_fresh_generation_token(
+            &owned, configured_backend(home)?, current_credentials.paperless_url.as_deref(),
+            &binding.origin, current_credentials.paperless_token.as_ref(),
+        ).map_err(LifecycleError::Bootstrap)?
+    } else {
+        None
+    };
+    let effective = if let Some(grant) = fresh_grant {
+        let current = valid_token(current_credentials.paperless_token.as_ref())
+            .ok_or(LifecycleError::Bootstrap("paperless_generation_auth_old_token_missing"))?;
+        if paperless_generation_auth::token_is_persisted_new(&owned, &grant, current)
+            .map_err(LifecycleError::Bootstrap)?
+        {
+            current.clone()
+        } else {
+            let token = bootstrap.obtain(&owned, &binding).await?;
             ensure_stage(&owned, &binding)?;
-            paperless_bootstrap::persist_bootstrap_at(
-                home,
-                bootstrap_backend.ok_or(LifecycleError::Bootstrap(
-                    "paperless_bootstrap_config_invalid",
-                ))?,
-                credentials.paperless_url.as_deref(),
-                &binding.origin,
-                &token,
-            )
-            .map_err(LifecycleError::Bootstrap)?;
+            paperless_generation_auth::record_new_token_fingerprint(&owned, &grant, &token)
+                .map_err(LifecycleError::Bootstrap)?;
+            paperless_generation_auth::persist_fresh_generation_token_at(home, &owned, &grant, &token)
+                .map_err(LifecycleError::Bootstrap)?;
             token
+        }
+    } else {
+        match valid_token(current_credentials.paperless_token.as_ref()) {
+            Some(token) => token.clone(),
+            None => {
+                let token = bootstrap.obtain(&owned, &binding).await?;
+                ensure_stage(&owned, &binding)?;
+                paperless_bootstrap::persist_bootstrap_at(
+                    home,
+                    bootstrap_backend.ok_or(LifecycleError::Bootstrap("paperless_bootstrap_config_invalid"))?,
+                    current_credentials.paperless_url.as_deref(),
+                    &binding.origin,
+                    &token,
+                ).map_err(LifecycleError::Bootstrap)?;
+                token
+            }
         }
     };
     let mut readiness_credentials = credentials.clone();
@@ -737,6 +798,7 @@ async fn install_at_with_readiness<E: RetainedComposeExecutor, R: ReadinessVerif
         authenticated_api_ready: true,
     };
     write_receipt(&owned, &receipt)?;
+    paperless_generation_auth::retire_after_authenticated_receipt(&owned, &receipt)?;
     Ok(receipt)
 }
 
@@ -2773,9 +2835,18 @@ mod tests {
         credentials.paperless_token = Some(SecretString::from("existing-token"));
         (home, credentials)
     }
+    struct FixtureBootstrapToken;
+    #[async_trait]
+    impl BootstrapTokenProvider for FixtureBootstrapToken {
+        async fn obtain(&self, _root: &OwnedPaperlessRoot, _binding: &EnvBinding)
+        -> Result<SecretString, LifecycleError> {
+            Ok(SecretString::from("fresh-generation-fixture-token"))
+        }
+    }
     pub(super) async fn installed_home_for_uninstall_test()
     -> (tempfile::TempDir, Credentials, Vec<u8>) {
         let (home, credentials) = staged_home();
+        std::fs::write(home.path().join("credentials.yaml"), serde_yaml::to_string(&credentials).unwrap()).unwrap();
         let mut executor = FakeExecutor {
             exact_container_ids: true,
             ..Default::default()
@@ -2820,7 +2891,7 @@ mod tests {
             ..Default::default()
         };
         let ready = EventuallyReady(AtomicUsize::new(0));
-        install_at_with_readiness(home, credentials, &mut executor, &ready).await
+        install_at_with_readiness_and_bootstrap(home, credentials, &mut executor, &ready, &FixtureBootstrapToken).await
     }
     #[test]
     fn empty_or_absent_legacy_state_is_allowed() {
@@ -3267,3 +3338,8 @@ mod paperless_uninstall_tests;
 mod paperless_generation_rotation;
 #[path = "paperless_purge.rs"]
 pub(crate) mod paperless_purge;
+
+#[path = "paperless_generation_auth.rs"]
+mod paperless_generation_auth;
+#[path = "paperless_repair.rs"]
+pub(crate) mod paperless_repair;

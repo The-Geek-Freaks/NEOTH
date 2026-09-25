@@ -129,6 +129,14 @@ class CustodyTests(unittest.TestCase):
         self.assertIn("paperless_volume_ownership_mismatch", encoded)
         self.assertIn("paperless_legacy_state_migration_required", encoded)
 
+    def test_command_failure_allowlists_repair_and_generation_auth_markers_without_output(self) -> None:
+        secret = "untrusted-command-output"
+        result = canary.bounded.Result(1, secret.encode(), ("paperless_repair_start_outcome_ambiguous paperless_generation_auth_token_conflict " + secret).encode(), False, False)
+        encoded = json.dumps(canary.CommandFailure(["neoth", "--output", "json", "paperless", "repair"], result).diagnostic)
+        self.assertNotIn(secret, encoded)
+        self.assertIn("paperless_repair_start_outcome_ambiguous", encoded)
+        self.assertIn("paperless_generation_auth_token_conflict", encoded)
+
     def test_independent_image_admission_rejects_wrong_digest_or_config(self) -> None:
         reference, config = canary.admitted_images()["webserver"]
         image = {"Id": config, "RepoDigests": [reference], "Os": "linux", "Architecture": "amd64"}
@@ -275,6 +283,30 @@ class CustodyTests(unittest.TestCase):
             (state / ".neoth-paperless-generation-rotation.v1.json").write_text("{}")
             with self.assertRaises(canary.Failure):
                 canary.rotation_journal_absent(home)
+
+    def test_repair_receipt_requires_exact_services_actions_ids_and_generation(self) -> None:
+        project, generation = "neoth-paperless-abcdef123456", "12345678-1234-4234-8234-123456789abc"
+        ids = tuple(f"{index:064x}" for index in range(1, 4))
+        expected = tuple((service, "healthy", identifier, identifier) for service, identifier in zip(canary.IMAGES, ids, strict=True))
+        receipt = {"schema_version": 1, "operation": "paperless.repair", "project": project, "volume_set_id": generation, "services": [{"service": service, "action": action, "prior_id": prior, "current_id": current} for service, action, prior, current in expected]}
+        canary.validate_repair(receipt, project, generation, expected)
+        for mutate in (lambda value: value["services"].pop(), lambda value: value["services"][0].update({"action": "recreated"}), lambda value: value["services"][0].update({"current_id": "f" * 64}), lambda value: value.__setitem__("volume_set_id", "abcdef12-1234-4234-8234-123456789abc")):
+            invalid = json.loads(json.dumps(receipt)); mutate(invalid)
+            with self.subTest(mutate=mutate), self.assertRaises(canary.Failure):
+                canary.validate_repair(invalid, project, generation, expected)
+
+    def test_fresh_credentials_allow_only_a_token_value_change_and_auth_marker_must_retire(self) -> None:
+        before = b"unknown: retained\npaperless_token: old-token\npaperless_url: http://127.0.0.1:18001\n"
+        after = b"unknown: retained\npaperless_token: new-token\npaperless_url: http://127.0.0.1:18001\n"
+        self.assertEqual(canary.credentials_token_only_replaced(before, after), ("old-token", "new-token"))
+        with self.assertRaises(canary.Failure):
+            canary.credentials_token_only_replaced(before, after.replace(b"unknown: retained", b"unknown: changed"))
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); state = home / "paperless" / "state"; state.mkdir(parents=True)
+            canary.generation_auth_marker_absent(home)
+            (state / ".neoth-paperless-generation-auth.v1.json").write_text("{}")
+            with self.assertRaises(canary.Failure):
+                canary.generation_auth_marker_absent(home)
 
     def test_marker_task_requires_one_matching_success_document(self) -> None:
         task_id = "12345678-1234-1234-1234-123456789abc"

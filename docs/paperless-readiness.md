@@ -78,8 +78,8 @@ a reported version do not attest the running image digest or an owned managed
 installation. Recursive OCI config and compressed layer bytes are already
 hash-verified (see the recursive-blob receipt above); what P2-20 still requires is
 artifact signature admission and binding verified artifacts to
-install/update/repair/rollback/data-preserving-uninstall jobs — the update, repair
-and rollback jobs are not yet implemented. The older TCP scan now reports
+install/update/repair/rollback/data-preserving-uninstall jobs. Managed repair is
+implemented with hosted acceptance pending; update and rollback remain open. The older TCP scan now reports
 `port_open_unverified` and cannot mark Paperless as already running.
 
 W515 source review covers the actual async CLI entry, the shared stored-credential
@@ -128,6 +128,21 @@ can recreate volumes.
 The implementation and regression tests are reviewed; hosted native and real
 retained-document acceptance remain separate gates. Do not treat a successful
 volume-name inspection as proof that document bytes survived.
+## Managed container repair
+
+`neoth paperless repair` restores containers belonging to an existing managed
+installation using the same pinned images and six retained data volumes. It
+checks every service and volume before changing anything. Healthy installations
+are authenticated no-ops; stopped containers retain their exact IDs, while a
+missing owned container receives a newly verified ID. The JSON result reports
+all three services as `healthy`, `started`, or `recreated`.
+
+Repair preserves document data, the volume generation and credentials. It
+refuses foreign resources, a deliberate uninstall, purge or generation change.
+Its journal distinguishes restarting an exact known container from creating a
+new one: an uncertain creation is held without automatic retry or adoption.
+Interrupted receipt writes resume only from the exact recorded before/after
+bytes. Hosted native and real fault-injection acceptance remain pending.
 ## Explicit retained-data removal
 
 After a completed safe uninstall, `neoth paperless purge` previews the six
@@ -147,10 +162,15 @@ After a completed confirmed purge, `neoth paperless install` creates a fresh
 six-volume generation. It archives the exact old lifecycle records before
 retiring their active authority. An interrupted transition resumes from its
 verified journal and archives; a partial or uncertain purge cannot authorize it.
-Normal volume checks still run before installation. Repeating installation keeps
-the new generation, and later generations can go through the same lifecycle.
+Normal volume checks still run before installation. Because purge also removes
+the database-backed API token, the new generation obtains a new token through
+the existing local admin bootstrap. A generation-bound journal replaces only
+the expected old Paperless token; other credentials and settings are preserved.
+Concurrent token changes are rejected. Repeating installation keeps the fresh
+generation and credentials, and later generations can repeat the lifecycle.
 
 Confirmed purge has passed the real compiled-product canary with six independently
 observed absences and unchanged receipts/credentials on repeat. Fresh-generation
-rotation has independent static review; its native and real-product execution
-remain pending for this change.
+rotation has independent static review. Its first real fresh-install attempt
+exposed stale-token authentication; the generation-bound token replacement and
+container repair now await their new hosted native and product gates.

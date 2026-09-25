@@ -105,6 +105,17 @@ class CommandFailure(Failure):
             "paperless_docker_context_invalid", "paperless_docker_context_endpoint_invalid",
             "paperless_remote_docker_context_rejected", "paperless_docker_host_override_rejected",
             "paperless_bootstrap_config_invalid", "paperless_bootstrap_transport", "paperless_bootstrap_timeout",
+            "paperless_repair_create_outcome_ambiguous", "paperless_repair_created_id_invalid",
+            "paperless_repair_created_id_missing", "paperless_repair_custody_present",
+            "paperless_repair_held", "paperless_repair_start_id_changed",
+            "paperless_repair_start_id_missing", "paperless_repair_start_outcome_ambiguous",
+            "paperless_repair_token_required", "paperless_repair_uninstall_present",
+            "paperless_repair_version_drift", "paperless_generation_auth_binding_changed",
+            "paperless_generation_auth_config_invalid", "paperless_generation_auth_keychain",
+            "paperless_generation_auth_new_token_changed", "paperless_generation_auth_new_token_unbound",
+            "paperless_generation_auth_old_token_missing", "paperless_generation_auth_persist",
+            "paperless_generation_auth_receipt", "paperless_generation_auth_token_conflict",
+            "paperless_generation_auth_token_invalid", "paperless_generation_auth_url_changed",
         )
         self.diagnostic = {
             "command": command, "exit_code": result.code, "timed_out": result.timed_out,
@@ -326,6 +337,24 @@ def configured_token(home: Path) -> str:
     return token.decode("utf-8", "strict")
 
 
+def credentials_token_only_replaced(before: bytes, after: bytes) -> tuple[str, str]:
+    pattern = re.compile(rb"(?m)^paperless_token:\s*(?:\"([^\"]+)\"|'([^']+)'|([^\s#]+))\s*$")
+    old_match, new_match = pattern.search(before), pattern.search(after)
+    if old_match is None or new_match is None:
+        raise Failure("fresh_credentials_token_invalid")
+    old_index = next((index for index, value in enumerate(old_match.groups(), start=1) if value is not None), None)
+    new_index = next((index for index, value in enumerate(new_match.groups(), start=1) if value is not None), None)
+    if old_index is None or old_index != new_index:
+        raise Failure("fresh_credentials_non_token_mutation")
+    old_token, new_token = old_match.group(old_index), new_match.group(new_index)
+    if old_token == new_token or before[:old_match.start(old_index)] != after[:new_match.start(new_index)] or before[old_match.end(old_index):] != after[new_match.end(new_index):]:
+        raise Failure("fresh_credentials_non_token_mutation")
+    try:
+        return old_token.decode("utf-8", "strict"), new_token.decode("utf-8", "strict")
+    except UnicodeDecodeError as error:
+        raise Failure("fresh_credentials_token_invalid") from error
+
+
 def paperless_api_bytes(port: int, token: str | None, path: str, expected: set[int], *, method: str = "GET", data: bytes | None = None, extra_headers: dict[str, str] | None = None, limit: int = API_LIMIT) -> tuple[int, bytes]:
     headers = {"Authorization": f"Token {token}"} if token is not None else {}
     if extra_headers:
@@ -503,6 +532,24 @@ def rotation_journal_absent(home: Path) -> None:
         raise Failure("rotation_journal_present")
 
 
+def generation_auth_marker_absent(home: Path) -> None:
+    path = home / "paperless" / "state" / ".neoth-paperless-generation-auth.v1.json"
+    if path.exists() or path.is_symlink():
+        raise Failure("generation_auth_marker_present")
+
+
+def validate_repair(value: dict, project: str, volume_set_id: str, expected: tuple[tuple[str, str, str, str], ...]) -> None:
+    if set(value) != {"schema_version", "operation", "project", "volume_set_id", "services"} or value.get("schema_version") != 1 or value.get("operation") != "paperless.repair" or value.get("project") != project or value.get("volume_set_id") != volume_set_id or not isinstance(value.get("services"), list) or len(value["services"]) != len(IMAGES):
+        raise Failure("repair_receipt_invalid")
+    actual = []
+    for item in value["services"]:
+        if not isinstance(item, dict) or set(item) != {"service", "action", "prior_id", "current_id"} or item.get("service") not in IMAGES or item.get("action") not in {"healthy", "started", "recreated"} or not isinstance(item.get("prior_id"), str) or not IDENTIFIER.fullmatch(item["prior_id"]) or not isinstance(item.get("current_id"), str) or not IDENTIFIER.fullmatch(item["current_id"]):
+            raise Failure("repair_receipt_invalid")
+        actual.append((item["service"], item["action"], item["prior_id"], item["current_id"]))
+    if tuple(actual) != expected:
+        raise Failure("repair_receipt_invalid")
+
+
 def purge_artifacts_absent(home: Path) -> tuple[object, ...]:
     for name in (".neoth-paperless-purge-custody.v1.json", ".neoth-paperless-purge-receipt.v1.json"):
         path = home / "paperless" / "state" / name
@@ -623,6 +670,8 @@ def source_hashes() -> dict[str, str]:
         "SRC/neothd/src/installers/paperless_staging.rs", "SRC/neothd/src/installers/paperless_lifecycle.rs",
         "SRC/neothd/src/installers/paperless_purge.rs", "SRC/neothd/src/installers/paperless_purge_tests.rs",
         "SRC/neothd/src/installers/paperless_generation_rotation.rs", "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
+        "SRC/neothd/src/installers/paperless_repair.rs", "SRC/neothd/src/installers/paperless_repair_tests.rs",
+        "SRC/neothd/src/installers/paperless_generation_auth.rs", "SRC/neothd/src/installers/paperless_generation_auth_tests.rs",
         "SRC/neothd/src/installers/paperless_operation_lock.rs", "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
         "SRC/neothd/src/installers/paperless_readiness.rs", "SRC/neothd/src/installers/paperless_bootstrap.rs",
         "SRC/neothd/src/cli/init.rs", "SRC/neothd/src/config/credentials.rs", "SRC/Cargo.lock",
@@ -677,6 +726,52 @@ def main() -> int:
         token = configured_token(home)
         document_id, task_polls = task_document_id(args.port, token, upload_marker(args.port, token))
         baseline_id, baseline_title, baseline_sha256 = marker_metadata(args.port, token, document_id)
+        credentials_before_repair = (home / "credentials.yaml").read_bytes()
+        repair_volume_snapshot_bytes = persisted_volume_set_snapshot(home, project, volume_set_id)
+        healthy_repair = read_json_bytes(run([str(binary), "--output", "json", "paperless", "repair"], timeout=900), "repair_json_invalid")
+        validate_repair(healthy_repair, project, volume_set_id, tuple((service, "healthy", identifier, identifier) for service, identifier in zip(IMAGES, identities[:3], strict=True)))
+        if persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port) != install_receipt_bytes or persisted_volume_set_snapshot(home, project, volume_set_id) != repair_volume_snapshot_bytes or (home / "credentials.yaml").read_bytes() != credentials_before_repair:
+            raise Failure("repair_healthy_mutated_history")
+        retained_volumes(project, identities[3:], volume_set_id)
+        verify_api(args.port, configured_token(home)); marker_metadata(args.port, configured_token(home), document_id)
+        webserver_id = identities[0]
+        run(["docker", "container", "stop", webserver_id], timeout=45)
+        started_repair = read_json_bytes(run([str(binary), "--output", "json", "paperless", "repair"], timeout=900), "repair_json_invalid")
+        validate_repair(started_repair, project, volume_set_id, tuple((service, "started" if service == "webserver" else "healthy", identifier, identifier) for service, identifier in zip(IMAGES, identities[:3], strict=True)))
+        install_receipt_bytes = persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port)
+        if persisted_volume_set_snapshot(home, project, volume_set_id) != repair_volume_snapshot_bytes or (home / "credentials.yaml").read_bytes() != credentials_before_repair:
+            raise Failure("repair_started_mutated_history")
+        retained_volumes(project, identities[3:], volume_set_id)
+        verify_api(args.port, configured_token(home)); marker_metadata(args.port, configured_token(home), document_id)
+        run(["docker", "container", "stop", webserver_id], timeout=45)
+        run(["docker", "container", "rm", webserver_id], timeout=45)
+        recreated_repair = read_json_bytes(run([str(binary), "--output", "json", "paperless", "repair"], timeout=900), "repair_json_invalid")
+        recreated = recreated_repair.get("services")
+        if not isinstance(recreated, list):
+            raise Failure("repair_receipt_invalid")
+        recreated_webserver = next((item.get("current_id") for item in recreated if isinstance(item, dict) and item.get("service") == "webserver"), None)
+        if not isinstance(recreated_webserver, str) or not IDENTIFIER.fullmatch(recreated_webserver) or recreated_webserver == webserver_id:
+            raise Failure("repair_receipt_invalid")
+        validate_repair(recreated_repair, project, volume_set_id, tuple((service, "recreated" if service == "webserver" else "healthy", identifier, recreated_webserver if service == "webserver" else identifier) for service, identifier in zip(IMAGES, identities[:3], strict=True)))
+        repair_install = read_json_bytes(persisted_receipt_bytes(home, ".neoth-paperless-lifecycle-receipt.v1.json", "repair_install_receipt_invalid"), "repair_install_receipt_invalid")
+        repair_project, repair_configs, repair_ids, repair_volume_set_id = validate_install(repair_install, args.port)
+        if repair_project != project or repair_configs != config_ids or repair_volume_set_id != volume_set_id or repair_ids[0] != recreated_webserver or repair_ids[1:] != identities[1:]:
+            raise Failure("repair_recreated_install_receipt_invalid")
+        identities = repair_ids
+        install_receipt_bytes = persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port)
+        if persisted_volume_set_snapshot(home, project, volume_set_id) != repair_volume_snapshot_bytes or (home / "credentials.yaml").read_bytes() != credentials_before_repair:
+            raise Failure("repair_recreated_mutated_history")
+        for service, identifier in zip(IMAGES, identities[:3], strict=True):
+            validate_container(docker_json(identifier), project, service, config_ids[service], args.port)
+        retained_volumes(project, identities[3:], volume_set_id)
+        verify_api(args.port, configured_token(home)); marker_metadata(args.port, configured_token(home), document_id)
+        repair_repeat = read_json_bytes(run([str(binary), "--output", "json", "paperless", "repair"], timeout=900), "repair_json_invalid")
+        validate_repair(repair_repeat, project, volume_set_id, tuple((service, "healthy", identifier, identifier) for service, identifier in zip(IMAGES, identities[:3], strict=True)))
+        if persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port) != install_receipt_bytes or persisted_volume_set_snapshot(home, project, volume_set_id) != repair_volume_snapshot_bytes or (home / "credentials.yaml").read_bytes() != credentials_before_repair:
+            raise Failure("repair_repeat_mutated_history")
+        retained_volumes(project, identities[3:], volume_set_id)
+        verify_api(args.port, configured_token(home)); marker_metadata(args.port, configured_token(home), document_id)
+        receipt["repair"] = {"healthy_noop": True, "started_same_id": True, "recreated_new_id": True, "credentials_preserved": True, "volumes_preserved": True, "marker_preserved": True}
         removed = read_json_bytes(run([str(binary), "--output", "json", "paperless", "uninstall"], timeout=900), "uninstall_json_invalid")
         retired_ids = identities[:3]
         volume_names = identities[3:]
@@ -773,6 +868,7 @@ def main() -> int:
         )
         retired_volume_set_id = volume_set_id
         credentials_before_fresh_install = (home / "credentials.yaml").read_bytes()
+        old_fresh_token = configured_token(home)
         fresh = read_json_bytes(run([str(binary), "--output", "json", "paperless", "install"], timeout=900), "post_purge_install_json_invalid")
         fresh_project, fresh_configs, fresh_ids, fresh_volume_set_id = validate_install(fresh, args.port)
         if fresh_project != project or fresh_configs != config_ids or fresh_volume_set_id is None or fresh_volume_set_id == retired_volume_set_id:
@@ -789,24 +885,27 @@ def main() -> int:
             raise Failure("post_purge_status_invalid")
         fresh_token = configured_token(home)
         fresh_api = verify_api(args.port, fresh_token)
-        if (home / "credentials.yaml").read_bytes() != credentials_before_fresh_install:
-            raise Failure("post_purge_credentials_mutated")
+        credentials_after_fresh_install = (home / "credentials.yaml").read_bytes()
+        if fresh_token == old_fresh_token or credentials_token_only_replaced(credentials_before_fresh_install, credentials_after_fresh_install) != (old_fresh_token, fresh_token):
+            raise Failure("post_purge_credentials_invalid")
         for marker_path in (f"/api/documents/{document_id}/", f"/api/documents/{document_id}/download/?original=true"):
             status_code, _ = paperless_api_bytes(args.port, fresh_token, marker_path, {404}, extra_headers={"Accept": "application/json; version=10"})
             if status_code != 404:
                 raise Failure("post_purge_marker_present")
         retained_retired_authority(home, retired_volume_set_id, retired_authority)
         rotation_journal_absent(home)
+        generation_auth_marker_absent(home)
         fresh_repeat = read_json_bytes(run([str(binary), "--output", "json", "paperless", "install"], timeout=900), "post_purge_repeat_install_json_invalid")
         repeat_project, repeat_configs, repeat_ids, repeat_volume_set_id = validate_install(fresh_repeat, args.port)
         if (repeat_project, repeat_configs, repeat_ids, repeat_volume_set_id) != (project, config_ids, identities, volume_set_id) or persisted_volume_set_snapshot(home, project, volume_set_id) != fresh_snapshot_bytes or persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port) != fresh_install_receipt_bytes:
             raise Failure("post_purge_repeat_install_changed_generation")
         retained_volumes(project, identities[3:], volume_set_id)
-        if (home / "credentials.yaml").read_bytes() != credentials_before_fresh_install:
+        if (home / "credentials.yaml").read_bytes() != credentials_after_fresh_install:
             raise Failure("post_purge_repeat_credentials_mutated")
         retained_retired_authority(home, retired_volume_set_id, retired_authority)
         rotation_journal_absent(home)
-        receipt["post_purge_generation"] = {"retired_volume_set_id_sha256": hashlib.sha256(retired_volume_set_id.encode()).hexdigest(), "fresh_volume_set_id_sha256": hashlib.sha256(volume_set_id.encode()).hexdigest(), "fresh_volume_set_changed": True, "archives_retained": True, "rotation_journal_retired": True, "marker_absent": True, "credentials_preserved": True, "repeat_install_stable": True, "api": fresh_api}
+        generation_auth_marker_absent(home)
+        receipt["post_purge_generation"] = {"retired_volume_set_id_sha256": hashlib.sha256(retired_volume_set_id.encode()).hexdigest(), "fresh_volume_set_id_sha256": hashlib.sha256(volume_set_id.encode()).hexdigest(), "fresh_volume_set_changed": True, "archives_retained": True, "rotation_journal_retired": True, "generation_auth_marker_retired": True, "marker_absent": True, "token_rotated": True, "credentials_preserved": True, "repeat_install_stable": True, "api": fresh_api}
         receipt.update({"project_sha256": hashlib.sha256(project.encode()).hexdigest(), "volume_set_id_sha256": hashlib.sha256(volume_set_id.encode()).hexdigest(), "volume_set_snapshot_sha256": hashlib.sha256(fresh_snapshot_bytes).hexdigest(), "images": len(config_ids), "containers": 3, "volumes": 6, "repeat_install_preserved_identities": True, "uninstall_repeat_read_only": True, "status_ready": True})
         receipt["outcome"] = "passed"
     except Exception as error:

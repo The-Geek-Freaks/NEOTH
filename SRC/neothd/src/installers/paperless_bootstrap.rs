@@ -369,7 +369,7 @@ fn store_token_if_absent(
         .map_err(|_| anyhow::anyhow!("paperless_bootstrap_keychain"))
 }
 
-fn canonical_bootstrap_origin(origin: &str) -> Result<String, &'static str> {
+pub(crate) fn canonical_bootstrap_origin(origin: &str) -> Result<String, &'static str> {
     let url = Url::parse(origin).map_err(|_| "paperless_bootstrap_origin_invalid")?;
     if url.scheme() != "http"
         || url.host_str() != Some("127.0.0.1")

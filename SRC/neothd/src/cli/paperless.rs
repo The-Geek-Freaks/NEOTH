@@ -50,7 +50,7 @@ use crate::security::paperless_ingest::{
 // serde_json used for quarantine show serialisation.
 use serde_json;
 
-use crate::installers::paperless_lifecycle::paperless_purge;
+use crate::installers::paperless_lifecycle::{paperless_purge, paperless_repair};
 
 #[derive(Args, Debug, Clone)]
 pub struct PaperlessArgs {
@@ -77,6 +77,8 @@ pub enum PaperlessAction {
     Status,
     /// Pull and start the exact prepared Paperless contract, then bind API readiness to its Compose containers.
     Install,
+    /// Restore receipt-owned containers using the same pinned images and retained data volumes.
+    Repair,
     /// Remove receipt-bound containers while retaining all data volumes and staged files.
     Uninstall,
     /// Preview permanent removal of the six volumes retained by a completed safe uninstall.
@@ -185,6 +187,26 @@ pub async fn run_paperless_command(args: PaperlessArgs, output: OutputFormat) ->
                         "No data was removed. To permanently remove these volumes:\nneoth paperless purge --confirm \"{}\"",
                         preview.confirmation
                     );
+                }
+            }
+        }
+        Ok(())
+    } else if matches!(args.action, PaperlessAction::Repair) {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        let (_, credentials) =
+            crate::config::load_optional_runtime_config_pair_from_path(&home.join("freedom.yaml"))
+                .map_err(|_| anyhow::anyhow!("Paperless repair could not read the configured credentials"))?;
+        let receipt = paperless_repair::repair_at(&home, &credentials)
+            .await
+            .map_err(anyhow::Error::new)?;
+        match output {
+            OutputFormat::Json | OutputFormat::Jsonl => {
+                println!("{}", serde_json::to_string(&receipt)?)
+            }
+            OutputFormat::Table => {
+                println!("Paperless repair\nvolume set: {}", receipt.volume_set_id);
+                for service in &receipt.services {
+                    println!("  {}: {:?}", service.service, service.action);
                 }
             }
         }
@@ -326,6 +348,9 @@ pub fn run_paperless(args: PaperlessArgs) -> Result<()> {
         }
         PaperlessAction::Install => {
             anyhow::bail!("Paperless install requires the asynchronous CLI entry")
+        }
+        PaperlessAction::Repair => {
+            anyhow::bail!("Paperless repair requires the asynchronous CLI entry")
         }
         PaperlessAction::Uninstall => {
             anyhow::bail!("Paperless uninstall requires the asynchronous CLI entry")
@@ -625,6 +650,23 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn paperless_repair_cli_uses_managed_identity_without_target_overrides() {
+        use clap::Parser;
+        let cli = crate::cli::Cli::try_parse_from(["neoth", "paperless", "repair"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            crate::cli::Commands::Paperless(PaperlessArgs {
+                action: PaperlessAction::Repair,
+                ..
+            })
+        ));
+        for argument in ["--container", "--volume", "--image", "--project", "--directory", "--token"] {
+            assert!(crate::cli::Cli::try_parse_from([
+                "neoth", "paperless", "repair", argument, "unowned",
+            ]).is_err());
+        }
+    }
     #[test]
     fn paperless_purge_cli_preserves_exact_confirmation_without_target_overrides() {
         use clap::Parser;

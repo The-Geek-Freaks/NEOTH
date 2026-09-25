@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "batch": "W1368-W1380",
+  "baseCommit": "904c8eac67383c0dd47e6cbe7ca8532e8a3dadb1",
+  "capturedUtc": "2026-09-25T12:45:19Z",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_repair.rs",
+      "bytes": 23935,
+      "sha256": "1A2C467CD28A05C64C5ECE571749BC3CC8163CAEB0327AA350DB5B581F92027E"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_repair_tests.rs",
+      "bytes": 14936,
+      "sha256": "A49A510AC412B56EC38FD21B0898EA1EB9E4E84390BF6CA09E0A106518516702"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_generation_auth.rs",
+      "bytes": 19580,
+      "sha256": "2BA7C7005FC761801BCF827AE328C3449141CB5F9B8723892F4ED0268948849C"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_generation_auth_tests.rs",
+      "bytes": 6126,
+      "sha256": "D40C85011ADE69EA5D07D5868DFAEE9E2575BF80F4E9AA52EB8A15FAB6D74BE0"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "bytes": 126465,
+      "sha256": "6E62085B0107484E4CA3D6A316BC2B0B84AF72A5312C5853AF003736C3707525"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_generation_rotation.rs",
+      "bytes": 17337,
+      "sha256": "76287DA1389DB0C89728EFAF053F2648121BF2D6813E55CB05502BB6FAF592F1"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_bootstrap.rs",
+      "bytes": 27230,
+      "sha256": "73285C1D16B44647172D1E1BA12FA909362C207A4C66A4C4275CC9DFD7B20D8B"
+    },
+    {
+      "path": "SRC/neothd/src/cli/paperless.rs",
+      "bytes": 37929,
+      "sha256": "3C9741ACDFEB672084FECAA5145F9F9C65CA2BD6BC347F25B7B7399B662499EC"
+    },
+    {
+      "path": "packaging/paperless_product_canary.py",
+      "bytes": 64755,
+      "sha256": "114379B1C9643F6793D193C8401948987F533C312F3032A8DA16551A28F5F23E"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "bytes": 30067,
+      "sha256": "71AF6CEC4EB6E842C744F07F3EBCA1E546A803DA724A3FEBE4859E7C8C444699"
+    }
+  ],
+  "reviews": [
+    {
+      "path": "work/gold-20260906/wave1374-repair-review/REVIEW.md",
+      "sha256": "9BD41E4D2FEC4CE48A5EE856A731B7E8E3E2E088D90C6A9E99BDAB803AD034E1"
+    },
+    {
+      "path": "work/gold-20260906/wave1376-auth-review/REVIEW.md",
+      "sha256": "7DC8FFBF5A8768F5CE5345F41A8DCB9E1C726B3D6315034EA1F81DF076677AAA"
+    },
+    {
+      "path": "work/gold-20260906/wave1379-repair-auth-canary-review/REVIEW.md",
+      "sha256": "3356D0FED6DA77E311BFCEBF4619876C7C72D448A907A662C26336AF79791DC1"
+    }
+  ],
+  "nativeTests": {
+    "repair": 12,
+    "generationAuth": 5,
+    "cli": 1,
+    "totalAdded": 18,
+    "portableInventory": 2039,
+    "groupedInventory": 1829,
+    "windowsInventory": 598
+  },
+  "helperTestsDeclared": 30,
+  "localExecutableValidationRan": false,
+  "repair": {
+    "services": 3,
+    "volumes": 6,
+    "classificationBeforeEffects": true,
+    "stoppedAction": "start exact receipt ID",
+    "missingAction": "create only absent owned service with pinned image and retained volumes",
+    "uncertainCreate": "held; no redispatch or label adoption",
+    "receiptRecovery": "Bound: before; ReceiptCommitDispatched: before or exact derived after; Complete: after",
+    "preserves": [
+      "credentials",
+      "volume generation",
+      "pinned images",
+      "original PDF"
+    ]
+  },
+  "freshGenerationAuth": {
+    "trigger": "terminal confirmed purge and new generation",
+    "authority": "snapshot/project/generation/backend/origin marker with token fingerprints",
+    "effect": "bootstrap fresh token and CAS only the Paperless token field",
+    "recovery": "recognize old or already-replaced token, then authenticate and commit receipt before retiring marker",
+    "failureRun": 36132989719,
+    "failureSource": "78bc0a25999b914c0f9eb16be33490a870ff2d41",
+    "failure": "paperless_authenticated_readiness_failed",
+    "priorCleanupProven": false
+  },
+  "productCanary": {
+    "repairSequence": [
+      "healthy",
+      "stopped exact webserver -> started same ID",
+      "removed exact webserver -> recreated new ID",
+      "healthy repeat"
+    ],
+    "witnesses": [
+      "three exact service receipt tuples",
+      "six generation-bound volumes",
+      "authenticated original PDF",
+      "unchanged repair credential bytes",
+      "fresh token-only credential byte change",
+      "old document and download 404",
+      "marker retirement",
+      "stable fresh repeat"
+    ]
+  },
+  "remainingGates": [
+    "hosted rustfmt",
+    "Group1829 native tests",
+    "Windows598 native tests",
+    "production and workspace Clippy plus test typecheck",
+    "CLI reference export/docgen",
+    "real Paperless repair/PDF/purge/fresh-auth product canary"
+  ],
+  "roadmap": {
+    "done": 1077,
+    "open": 245,
+    "partial": 2,
+    "closedByThisBatch": 0
+  },
+  "claude": {
+    "task66": "received, unsafe ambiguous label adoption rejected",
+    "task67": "unacknowledged ownership withdrawn",
+    "task68": "read-only review assigned; no ACK or RESULT observed"
+  }
+}
