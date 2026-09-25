@@ -1,0 +1,24 @@
+{
+  "kind": "HOSTED_ROTATION_COMPILE_REPAIR",
+  "source": "8d8760b547a9e4034b00b04cdf940951f0e2943b",
+  "groupRun": 36134217841,
+  "groupError": "E0425 undefined sources local",
+  "coreRun": 36134223889,
+  "coreError": "private_interfaces on two pub(crate) helpers with parent-private Engine/EnvBinding",
+  "repairs": [
+    "Rename fixture collection s to sources",
+    "Narrow two purge rotation helpers to pub(super)"
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
+      "sha256": "A3C0073B70CB9D956ED80E87A3775EBEB7EF32956015DF25823890E5D3113F76"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_purge.rs",
+      "sha256": "38275E89AA2E43967461C614A368BE5EB4FB274339641DD3204DD8CA44B26E43"
+    }
+  ],
+  "status": "HOSTED_PENDING",
+  "localExecutableValidationRan": false
+}

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1367_FORMAT_LINT_REPAIRED_FRESH_AUTH_OPEN",
+  "status": "W1375_COMPILE_REPAIRED_HOSTED_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 220523,
-    "sha256": "AEE5836A483B9B193E43E8D2A3C8EB1175E872B3874BB539246EE78DB1952B27"
+    "bytes": 220712,
+    "sha256": "2A1DE6F218215741C20EE6FD3E66C60BE6FBD8EBD17831A059430812F35757F5"
   },
-  "sourceInputs": 1238,
+  "sourceInputs": 1239,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -12103,37 +12103,37 @@
       "test": "installers::paperless_lifecycle::paperless_generation_rotation::tests::install_uninstall_purge_fresh_install_rotates_and_archives_exact_old_receipts",
       "sourcePath": "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
       "junitClass": "neoth",
-      "sourceSha256": "487E98B3853565E6CCB21522643098C1E7FE1E433A811B8591949E8C30D5801A"
+      "sourceSha256": "A3C0073B70CB9D956ED80E87A3775EBEB7EF32956015DF25823890E5D3113F76"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_generation_rotation::tests::resumes_all_phases_and_every_archive_or_removal_prefix",
       "sourcePath": "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
       "junitClass": "neoth",
-      "sourceSha256": "487E98B3853565E6CCB21522643098C1E7FE1E433A811B8591949E8C30D5801A"
+      "sourceSha256": "A3C0073B70CB9D956ED80E87A3775EBEB7EF32956015DF25823890E5D3113F76"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_generation_rotation::tests::archive_snapshot_and_terminal_absence_substitutions_reject",
       "sourcePath": "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
       "junitClass": "neoth",
-      "sourceSha256": "487E98B3853565E6CCB21522643098C1E7FE1E433A811B8591949E8C30D5801A"
+      "sourceSha256": "A3C0073B70CB9D956ED80E87A3775EBEB7EF32956015DF25823890E5D3113F76"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_generation_rotation::tests::substituted_new_snapshot_rejects_at_written_and_complete_crash_cuts",
       "sourcePath": "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
       "junitClass": "neoth",
-      "sourceSha256": "487E98B3853565E6CCB21522643098C1E7FE1E433A811B8591949E8C30D5801A"
+      "sourceSha256": "A3C0073B70CB9D956ED80E87A3775EBEB7EF32956015DF25823890E5D3113F76"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_generation_rotation::tests::archived_partial_live_removal_rechecks_old_container_and_volume_absence",
       "sourcePath": "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
       "junitClass": "neoth",
-      "sourceSha256": "487E98B3853565E6CCB21522643098C1E7FE1E433A811B8591949E8C30D5801A"
+      "sourceSha256": "A3C0073B70CB9D956ED80E87A3775EBEB7EF32956015DF25823890E5D3113F76"
     },
     {
       "test": "installers::paperless_lifecycle::paperless_generation_rotation::tests::normal_missing_volume_refuses_and_second_generation_can_rotate",
       "sourcePath": "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
       "junitClass": "neoth",
-      "sourceSha256": "487E98B3853565E6CCB21522643098C1E7FE1E433A811B8591949E8C30D5801A"
+      "sourceSha256": "A3C0073B70CB9D956ED80E87A3775EBEB7EF32956015DF25823890E5D3113F76"
     }
   ],
   "requiredGuiTests": [
@@ -45942,6 +45942,50 @@
       }
     ],
     "note": "Exact hosted rustfmt postimages plus three equivalent if/else lint corrections; fresh product auth failed after confirmed purge and cleanup unproven; repair work separate and uncommitted; no closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1375RotationCompileRepair": {
+    "base": "8d8760b547a9e4034b00b04cdf940951f0e2943b",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1375-rotation-compile-repair.json",
+        "bytes": 852,
+        "sha256": "440A60BE203B389A2FC946C92769FF9CCA9C5131A4228B71941F7D1F2542C62B",
+        "blob": "3065c1fe0eae96ff3e8d8fdb99410be153a6a427"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 382812,
+        "sha256": "6E11FA9134805940CEB3DB10F8B3F435B2C61F9D10174DED3CC3CC6AB72F3FB5",
+        "blob": "08cb4381abb8a500bff8d838976f2d94c92b5d6d"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1401743,
+        "sha256": "0780B48177563571EC52C0D1666C89B8958D9EB74E762E7ECB40FAC92253E1E2",
+        "blob": "98ca11047fb2a16854e9bfc3d24df4a2aae72e06"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2012266,
+        "sha256": "35571C010685F9C0681336D978A782114E0381B974A480E53315FBF839921283",
+        "blob": "b228021319ac62d2dea69a358ca691511169622a"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_generation_rotation_tests.rs",
+        "bytes": 15114,
+        "sha256": "A3C0073B70CB9D956ED80E87A3775EBEB7EF32956015DF25823890E5D3113F76",
+        "blob": "f24b6d762acbd057657bf1885d33da75ef9df4bd"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_purge.rs",
+        "bytes": 37137,
+        "sha256": "38275E89AA2E43967461C614A368BE5EB4FB274339641DD3204DD8CA44B26E43",
+        "blob": "db1f2eee63c7f1a672643c1042e94a840c034a5d"
+      }
+    ],
+    "note": "Exact Group E0425 and Core private_interfaces repairs only; native/Core pending; freshauth and repair WIP excluded; no local runtime or closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

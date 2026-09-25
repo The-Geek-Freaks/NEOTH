@@ -2,6 +2,14 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1375 exact hosted rotation compile repair (2026-09-25):**
+Preflight and CodeQL passed at8d8760b5. Group36134217841 then identified the
+undefined fixture binding `sources`; the local collection now has that exact
+name. Core36134223889 identified four private-interface errors across two purge
+handoff helpers; both functions now expose only their lifecycle parent scope.
+No runtime behavior or parent type visibility was broadened. Native/Core reruns
+remain required. Repair/auth implementation remains independently reviewed WIP;
+fresh post-purge authenticated readiness is still open.
 **W1367/1370/1371 hosted formatting, lint and fresh-generation failure (2026-09-25):**
 The exact five-file rustfmt artifact10862297651 from Preflight36133444348 at
 9b451a11 is imported with API ZIP digest, receipt hashes and postimage checks.

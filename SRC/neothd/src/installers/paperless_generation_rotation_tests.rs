@@ -176,7 +176,7 @@ async fn rotate(h: &Path, f: &mut Fake) -> Result<(), LifecycleError> {
     rotate_completed_purge_generation_at(f, &e, &r, &b).await
 }
 fn make_journal(h: &Path) -> RotationJournal {
-    let s = NAMES
+    let sources = NAMES
         .iter()
         .map(|(role, n)| {
             let b = std::fs::read(dir(h).join(n)).unwrap();

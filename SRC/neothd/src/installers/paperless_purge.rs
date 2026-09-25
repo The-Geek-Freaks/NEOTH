@@ -231,7 +231,7 @@ pub(crate) async fn purge_at_with<E: ComposeExecutor>(
 
 /// Under the lifecycle caller's operation lock, return only a fully verified
 /// terminal purge chain. `None` means that no purge custody exists.
-pub(crate) async fn completed_purge_authority_for_rotation<E: ComposeExecutor>(
+pub(super) async fn completed_purge_authority_for_rotation<E: ComposeExecutor>(
     executor: &mut E,
     engine: &Engine,
     root: &OwnedPaperlessRoot,
@@ -301,7 +301,7 @@ fn confirmation_for(resolved: &ResolvedPurge) -> String {
 
 /// Validate retained terminal authority after an `Archived` crash without
 /// recreating any live receipt. The parsed archived chain remains authoritative.
-pub(crate) async fn validate_archived_purge_authority_for_rotation<E: ComposeExecutor>(
+pub(super) async fn validate_archived_purge_authority_for_rotation<E: ComposeExecutor>(
     executor: &mut E,
     engine: &Engine,
     root: &OwnedPaperlessRoot,
