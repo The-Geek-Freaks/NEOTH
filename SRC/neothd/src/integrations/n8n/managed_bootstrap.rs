@@ -1130,14 +1130,38 @@ mod tests {
             }
         }
         for (failure, expected) in [
-            (BootstrapCommandFailure::EmptyCommand, "n8n_bootstrap_docker_empty_command"),
-            (BootstrapCommandFailure::Spawn, "n8n_bootstrap_docker_spawn_failed"),
-            (BootstrapCommandFailure::Stdin, "n8n_bootstrap_docker_stdin_failed"),
-            (BootstrapCommandFailure::Capture, "n8n_bootstrap_docker_capture_failed"),
-            (BootstrapCommandFailure::Wait, "n8n_bootstrap_docker_wait_failed"),
-            (BootstrapCommandFailure::TimedOut, "n8n_bootstrap_docker_timeout"),
-            (BootstrapCommandFailure::Cancelled, "n8n_bootstrap_docker_cancelled"),
-            (BootstrapCommandFailure::OutputLimit, "n8n_bootstrap_docker_output_limit"),
+            (
+                BootstrapCommandFailure::EmptyCommand,
+                "n8n_bootstrap_docker_empty_command",
+            ),
+            (
+                BootstrapCommandFailure::Spawn,
+                "n8n_bootstrap_docker_spawn_failed",
+            ),
+            (
+                BootstrapCommandFailure::Stdin,
+                "n8n_bootstrap_docker_stdin_failed",
+            ),
+            (
+                BootstrapCommandFailure::Capture,
+                "n8n_bootstrap_docker_capture_failed",
+            ),
+            (
+                BootstrapCommandFailure::Wait,
+                "n8n_bootstrap_docker_wait_failed",
+            ),
+            (
+                BootstrapCommandFailure::TimedOut,
+                "n8n_bootstrap_docker_timeout",
+            ),
+            (
+                BootstrapCommandFailure::Cancelled,
+                "n8n_bootstrap_docker_cancelled",
+            ),
+            (
+                BootstrapCommandFailure::OutputLimit,
+                "n8n_bootstrap_docker_output_limit",
+            ),
         ] {
             let mut runner = FailingRunner { failure, calls: 0 };
             let (_sender, mut cancel) = tokio::sync::oneshot::channel();

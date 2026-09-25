@@ -1,0 +1,32 @@
+{
+  "kind": "EXACT_HOSTED_FORMAT_IMPORT",
+  "run": 36125219245,
+  "source": "fdb186fef79b9a922ae5b4e2c9b5b4cc29167688",
+  "artifact": 10859042174,
+  "zipDigest": "7ca975c49bb5fbb294e3d3f57ed038a1c15d50950b2cef0811adfe668a5df552",
+  "receiptChecksumsVerified": true,
+  "paths": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "preimage": "4c43f38d6ddebcc02efcf74739434efe1c7192f4",
+      "postimage": "800ff580e8d98d11cfd23d01c42f6e525b10f9e8"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_staging.rs",
+      "preimage": "18cca4bb9c944434e84f296e4bbb4642a8a9a801",
+      "postimage": "f24b7a12918290f2cfa195f47a1dd1c088525ca1"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
+      "preimage": "5ace0185ea8d0b006e30f205f6cc2a587dbabfe4",
+      "postimage": "defb633e933522aada50007bf75f1b34a74adc83"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs",
+      "preimage": "c790987fce3c29981c9842f05e1660ac1f89d772",
+      "postimage": "facf00a48a2c6ae55949c84d84b9417827337883"
+    }
+  ],
+  "allPrePostimagesVerified": true,
+  "localExecutableValidationRan": false
+}

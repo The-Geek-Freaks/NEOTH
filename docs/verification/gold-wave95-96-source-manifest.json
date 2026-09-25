@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T10:37:05Z",
-  "validationStatus": "STATIC_REVIEWED_EXACT_SOURCE_HOSTED_PENDING",
+  "capturedUtc": "2026-09-25T10:43:46Z",
+  "validationStatus": "EXACT_HOSTED_FORMAT_IMPORTED_CURRENT_LIFECYCLE_GATES_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1283,8 +1283,8 @@
     },
     {
       "path": "docs/paperless-readiness.md",
-      "bytes": 6579,
-      "sha256": "219117410BAE1B75A7F0E04CCFFA60B4B2AADBC62364AD7572F12CA517E1466C"
+      "bytes": 7156,
+      "sha256": "4E70CBEC5406877297A7BD7FBCE65F344EC4D29CD5C1ADBA662C04C4CEE4EED8"
     },
     {
       "path": "docs/reflection-yearly.md",
@@ -1820,6 +1820,16 @@
       "path": "docs/verification/gold-wave1335-windows557.json",
       "bytes": 2365,
       "sha256": "BD43F1E51A49EADE3C51A635438BF6ED24D358A1DC57961A92AE22DCD8A347D1"
+    },
+    {
+      "path": "docs/verification/gold-wave1337-core-c6cf.json",
+      "bytes": 1040,
+      "sha256": "5497F1D66C3A11EFFA144F7F884807E71CBBD5C2D34A02950538528A12916458"
+    },
+    {
+      "path": "docs/verification/gold-wave1338-hosted-format.json",
+      "bytes": 1181,
+      "sha256": "2050C68E4617B1A53EE1AD42D98505528B66A2A244102FF0F45BDB4847E7399D"
     },
     {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
@@ -2778,18 +2788,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 372241,
-      "sha256": "8C97DAF9FF79B534D5232DD06899AEEB7002CC245CBF20B39FA4FE3E982EDC3C"
+      "bytes": 373055,
+      "sha256": "77D2EEC786AC30B01D8F4099D882C95F24D87DA0C0D63EE2BB818C78A57D3F98"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1391172,
-      "sha256": "7308C0BD2FBA0E1FB24051709F6B613A64A77FE18A39D7C88CE3376CF972660F"
+      "bytes": 1391986,
+      "sha256": "5675423608685C3F64EF20F306145BBB5B1314B0D1108E97EA9B9ADF319C695E"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2001695,
-      "sha256": "AFDE020994BA0D9C0F2B124B4FB1398293C53C8EB13EF53429E041138B2D3004"
+      "bytes": 2002509,
+      "sha256": "C1F0B185EE927E8A451CA49A3502B93069414B71B4CEBF1A4A5750E0B89CEEAE"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4783,8 +4793,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "bytes": 121301,
-      "sha256": "05E414F6E8C23F74324DC7F7274CFA8E5650C0CF44002978F754FC6C636D8C3E"
+      "bytes": 122709,
+      "sha256": "A0CC4943BEB406062C59852AD16F56D89F8E2F5B8D8F8CD9851CCC585DC827D7"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_operation_lock.rs",
@@ -4803,13 +4813,13 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_staging.rs",
-      "bytes": 42269,
-      "sha256": "41802FC13CF0925E4BF68BD4739697A09A675FDC15181631151CEFB7E4C0EE59"
+      "bytes": 42303,
+      "sha256": "C176013466CF52610F86D732B1952B0A61C96CACEE6C3E82A92AF4AAB15C8244"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_uninstall_tests.rs",
-      "bytes": 21595,
-      "sha256": "5D7DB89F43373D67FA02B5999B62B77D2967585647310CB8B15AB3270F52C745"
+      "bytes": 21648,
+      "sha256": "75D4EC7388700FDE4D86986241CCE8ED623D177FE5B8F3CD6B5BB35792FA6DF3"
     },
     {
       "path": "SRC/neothd/src/installers/paperless.rs",
@@ -4853,8 +4863,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs",
-      "bytes": 72133,
-      "sha256": "6B981FB13FE15D597C437A1799E98E5B82DE78F3D508153395E76FB54294042A"
+      "bytes": 72509,
+      "sha256": "EC5617541704078918257E4FC0DBD0AEE25FBFEEFBC769B8DAF9C4FF12535D2C"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_purge_tests.rs",

@@ -363,8 +363,11 @@ pub(crate) fn render_compose_with_volume_set_id(volume_set_id: &str) -> Option<V
     }
     let source = std::str::from_utf8(compose_bytes()).ok()?;
     let rendered = source.replace("${NEOTH_PAPERLESS_VOLUME_SET_ID:-}", volume_set_id);
-    (rendered.matches("io.neoth.paperless.volume-set-id:").count() == PAPERLESS_VOLUMES.len())
-        .then_some(rendered.into_bytes())
+    (rendered
+        .matches("io.neoth.paperless.volume-set-id:")
+        .count()
+        == PAPERLESS_VOLUMES.len())
+    .then_some(rendered.into_bytes())
 }
 
 pub(crate) fn valid_volume_set_id(value: &str) -> bool {
@@ -593,7 +596,8 @@ mod tests {
     #[test]
     fn volume_set_renderer_labels_each_canonical_volume_with_one_opaque_generation() {
         let set_id = "9f1f4b33-8c76-4d42-a0a5-2ee785fa8df0";
-        let rendered = String::from_utf8(render_compose_with_volume_set_id(set_id).unwrap()).unwrap();
+        let rendered =
+            String::from_utf8(render_compose_with_volume_set_id(set_id).unwrap()).unwrap();
         assert_eq!(
             rendered
                 .matches("io.neoth.paperless.volume-set-id:")

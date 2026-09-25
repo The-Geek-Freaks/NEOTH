@@ -3,6 +3,18 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1337-1338 hosted Core completion and formatting (2026-09-25):**
+Core run36121166582 atc6cf2231 is now fully successful: production Clippy,
+core-test typecheck, CLI build/export and Linux workspace Clippy all passed.
+That is historical evidence; the new lifecycle sourcefdb186fe has its own
+Core, Group1797, Windows566 and both real product runs in progress.
+Preflight36125219245 atfdb186fe requested formatting only. Its API-bound
+artifact10859042174 supplied four exact Rust postimages; ZIP/receipt hashes
+and every Git preimage/postimage match. The hosted changes are imported without
+running a local formatter. Claude061's reviewed documentation proposal is
+incorporated into the existing Paperless lifecycle guide. W1336 confirmed
+Paperless purge is separate uncommitted work. No roadmap checkbox closure.
+
 **W1322/1325 and W1328-1335 retained-volume provenance and hosted repairs (2026-09-25):**
 Paperless records one opaque generation before creating its six volumes and
 binds it through real Docker labels, install receipts and safe-uninstall custody.

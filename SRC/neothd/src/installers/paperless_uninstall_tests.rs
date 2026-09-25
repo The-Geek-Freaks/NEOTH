@@ -292,7 +292,12 @@ async fn legacy_unlabelled_install_receipt_remains_safe_uninstall_compatible() {
         .unwrap();
     assert_eq!(receipt.schema_version, 1);
     assert_eq!(receipt.phase, PaperlessUninstallPhase::Complete);
-    assert!(receipt.retained_volume_snapshot.iter().all(|volume| volume.volume_set_id.is_none()));
+    assert!(
+        receipt
+            .retained_volume_snapshot
+            .iter()
+            .all(|volume| volume.volume_set_id.is_none())
+    );
     assert!(fake.present.is_empty());
 }
 

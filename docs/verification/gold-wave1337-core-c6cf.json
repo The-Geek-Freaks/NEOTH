@@ -1,0 +1,35 @@
+{
+  "kind": "HOSTED_CORE_SUCCESS",
+  "source": "c6cf22314a1c6adafc18c919262d670e0ac33b9e",
+  "run": 36121166582,
+  "conclusion": "success",
+  "steps": [
+    {
+      "name": "Install Linux workspace-Clippy build deps",
+      "conclusion": "success"
+    },
+    {
+      "name": "Check exact-source slim-core production Clippy",
+      "conclusion": "success"
+    },
+    {
+      "name": "Type-check core test targets before native validation",
+      "conclusion": "success"
+    },
+    {
+      "name": "Build current public CLI",
+      "conclusion": "success"
+    },
+    {
+      "name": "Export generated reference",
+      "conclusion": "success"
+    },
+    {
+      "name": "Check exact Linux-quality workspace Clippy",
+      "conclusion": "success"
+    }
+  ],
+  "runReceiptSha256": "47B6E951892E19A70AD1AC81F1C7A033CB8D662C2D432D01A03388CDCDC145B3",
+  "scope": "Historical c6cf core; generated CLI artifact already source/digest bound by W1324. New fdb186fe lifecycle changes require their own gates.",
+  "localExecutableValidationRan": false
+}

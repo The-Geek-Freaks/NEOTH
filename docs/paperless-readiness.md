@@ -88,8 +88,9 @@ publication. P2-20 remains open.
 
 `neoth paperless uninstall` removes the three exact managed container IDs from
 the last successful installation. It retains all six named volumes, staged
-configuration, API credentials and the original install receipt. It also retains
-the Docker network. It does not remove an arbitrary Paperless deployment.
+configuration, API credentials, the original install receipt and the recorded
+volume-set generation. It also retains the Docker network. It does not remove an
+arbitrary Paperless deployment.
 
 Install and uninstall share one nonblocking operation lock. A second operation
 reports `paperless_operation_in_progress`. Uninstall records its progress before
@@ -102,6 +103,14 @@ After a completed uninstall, `neoth paperless install` reuses the retained data
 volumes. A later uninstall binds to the new install receipt and new container
 IDs. Invalid or mismatched receipts stop before removal. Purging retained data
 is not part of this command.
+
+Fresh managed installs record one shared generation for all six data volumes
+and schema-2 install and uninstall receipts. A retained reinstall verifies the
+same generation before reusing the volumes. Earlier schema-1 installations with
+unlabelled volumes keep their normal install and safe-uninstall behavior; they
+receive no generation retroactively. A corrupt or lost generation record, or a
+missing member of an already completed volume set, stops reinstall before it
+can recreate volumes. Paperless does not yet expose a purge command.
 
 The implementation and regression tests are reviewed; hosted native and real
 retained-document acceptance remain separate gates. Do not treat a successful
