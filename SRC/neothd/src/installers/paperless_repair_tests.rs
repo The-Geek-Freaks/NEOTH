@@ -10,6 +10,8 @@ struct C {
     foreign: bool,
     bad_image: bool,
     bad_mount: bool,
+    bad_configured_binding: bool,
+    multiple_configured_bindings: bool,
 }
 struct Fake {
     commands: Vec<Vec<String>>,
@@ -41,6 +43,8 @@ impl Fake {
                             foreign: false,
                             bad_image: false,
                             bad_mount: false,
+                            bad_configured_binding: false,
+                            multiple_configured_bindings: false,
                         },
                     )
                 })
@@ -91,13 +95,18 @@ impl Fake {
                 .collect::<Vec<_>>()
                 .join(",")
         };
-        let ports = if c.service == "webserver" {
+        let configured_ports = if c.multiple_configured_bindings {
+            r#"{"8000/tcp":[{"HostIp":"127.0.0.1","HostPort":"18000"},{"HostIp":"127.0.0.1","HostPort":"18001"}]}"#
+        } else if c.bad_configured_binding {
+            r#"{"8000/tcp":[{"HostIp":"0.0.0.0","HostPort":"18000"}]}"#
+        } else if c.service == "webserver" {
             r#"{"8000/tcp":[{"HostIp":"127.0.0.1","HostPort":"18000"}]}"#
         } else {
-            "{}"
+            "null"
         };
+        let runtime_ports = if c.running { configured_ports } else { "{}" };
         Ok(format!(
-            r#"{{"Id":"{id}","Image":"{image}","State":{{"Running":{}}},"Config":{{"Labels":{{"com.docker.compose.project":"{}","com.docker.compose.service":"{service}"}}}},"NetworkSettings":{{"Ports":{ports}}},"Mounts":[{mounts}]}}"#,
+            r#"{{"Id":"{id}","Image":"{image}","State":{{"Running":{}}},"Config":{{"Labels":{{"com.docker.compose.project":"{}","com.docker.compose.service":"{service}"}}}},"HostConfig":{{"PortBindings":{configured_ports}}},"NetworkSettings":{{"Ports":{runtime_ports}}},"Mounts":[{mounts}]}}"#,
             c.running,
             project_name(cwd)
         ))
@@ -232,6 +241,8 @@ impl RetainedComposeExecutor for Fake {
                         foreign: false,
                         bad_image: false,
                         bad_mount: false,
+                        bad_configured_binding: false,
+                        multiple_configured_bindings: false,
                     },
                 );
                 self.created = true
@@ -310,6 +321,38 @@ async fn stopped_exact_id_is_started_and_reconciled() {
             .iter()
             .any(|a| a.windows(2).any(|x| x[0] == "start" && x[1] == id))
     )
+}
+
+#[tokio::test]
+async fn stopped_webserver_uses_configured_loopback_when_runtime_ports_are_empty() {
+    let (home, credentials, _, mut fake) = fix().await;
+    let id = fake.id("webserver");
+    fake.cs.get_mut(&id).unwrap().running = false;
+    let receipt = repair_at_with_readiness(home.path(), &credentials, &mut fake, &Ready)
+        .await
+        .unwrap();
+    assert_eq!(
+        receipt.services.iter().find(|item| item.service == "webserver").unwrap().action,
+        PaperlessRepairAction::Started
+    );
+}
+
+#[tokio::test]
+async fn stopped_webserver_with_invalid_configured_binding_refuses_before_effect() {
+    for multiple in [false, true] {
+        let (home, credentials, _, mut fake) = fix().await;
+        let id = fake.id("webserver");
+        let webserver = fake.cs.get_mut(&id).unwrap();
+        webserver.running = false;
+        webserver.bad_configured_binding = !multiple;
+        webserver.multiple_configured_bindings = multiple;
+        assert!(
+            repair_at_with_readiness(home.path(), &credentials, &mut fake, &Ready)
+                .await
+                .is_err()
+        );
+        assert_eq!(fake.effects(), 0);
+    }
 }
 #[tokio::test]
 async fn missing_owned_recreates_with_six_volumes_and_credentials() {

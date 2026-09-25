@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "batch": "W1389-W1393",
+  "baseCommit": "ea30c4880d47fdacb47da99f10b0c1986b87b262",
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "failedProduct": {
+    "run": 36138119831,
+    "source": "46a037d0277aa1be5a328669cbdf19449593db43",
+    "artifactId": 10865790667,
+    "apiZipSha256": "3ecb8c316f30401b7e759ddf0d576f77a244b52b99f63728c3073cf168b769d5",
+    "build": "success",
+    "helperTestsPassed": 30,
+    "category": "paperless_unowned_or_mismatch",
+    "exactRepairPhase": "not_observed_in_old_receipt",
+    "cleanupProven": false
+  },
+  "repair": "Use exact configured HostConfig.PortBindings for stopped receipt-owned webserver; preserve running-container validator and exact ID/image/labels/mounts. Null bindings are supported for unexposed services.",
+  "newTests": [
+    "stopped_webserver_uses_configured_loopback_when_runtime_ports_are_empty",
+    "stopped_webserver_with_non_loopback_configured_binding_refuses_before_effect"
+  ],
+  "regressions": [
+    "null broker/db HostConfig bindings",
+    "empty stopped runtime ports",
+    "valid configured loopback starts old exact ID",
+    "public binding refuses before effect",
+    "multiple bindings refuse before effect"
+  ],
+  "canary": "31 helper declarations; explicit redacted repair/uninstall/purge labels, repair progress phases, persistent safe stopped-port diagnostic booleans/counts",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "bytes": 127244,
+      "sha256": "A0A6BA06A78B14F600527D9AFDC58356899452F9D1248C25C2F404C25B7A6CE3"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_repair.rs",
+      "bytes": 34402,
+      "sha256": "B8D9BB01C442112C3CD90F4963F2DA2C4B8401853A828A4D7B76D1573D7524DF"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_repair_tests.rs",
+      "bytes": 23172,
+      "sha256": "1574BC6B5FF0D98B18BFEF58C31ACC39AEFC8A987B154744BAA1555743FB7729"
+    },
+    {
+      "path": "packaging/paperless_product_canary.py",
+      "bytes": 67042,
+      "sha256": "5ABC30CFB144CF67A6EDB6CFC8C3AC9110DFD7C93E5D4EB2C2D68728C756473F"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "bytes": 31051,
+      "sha256": "0A1CA086651C6A962754F1CB1A18A9C5501BEC75A21CFC7F23C9DBD3B3C7E66F"
+    }
+  ],
+  "review": {
+    "path": "work/gold-20260906/wave1393-stopped-port-review/REVIEW.md",
+    "sha256": "51524D4AFB9692EEF62AE63B039505DD238C39C38264587445E4F902C223ECD1",
+    "result": "APPROVE_STATIC_ONLY"
+  },
+  "inventory": {
+    "portable": 2041,
+    "grouped": 1831,
+    "windows": 600
+  },
+  "localExecutableValidationRan": false,
+  "roadmapClosures": 0
+}

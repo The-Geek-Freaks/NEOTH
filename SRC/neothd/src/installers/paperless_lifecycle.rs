@@ -91,7 +91,7 @@ const OPERATIONS_LOCK_NAME: &str = ".neoth-paperless-operations.lock";
 const RECEIPT_BYTES: &str =
     include_str!("../../../../docs/verification/paperless-oci-v3.2.1/recursive-blob-receipt.json");
 const IMAGE_INSPECT_TEMPLATE: &str = r#"{{printf "{\"Id\":%q,\"RepoDigests\":%s,\"Os\":%q,\"Architecture\":%q}" .Id (json .RepoDigests) .Os .Architecture}}"#;
-const CONTAINER_INSPECT_TEMPLATE: &str = r#"{{printf "{\"Id\":%q,\"Image\":%q,\"State\":{\"Running\":%t},\"Config\":{\"Labels\":%s},\"NetworkSettings\":{\"Ports\":%s},\"Mounts\":%s}" .Id .Image .State.Running (json .Config.Labels) (json .NetworkSettings.Ports) (json .Mounts)}}"#;
+const CONTAINER_INSPECT_TEMPLATE: &str = r#"{{printf "{\"Id\":%q,\"Image\":%q,\"State\":{\"Running\":%t},\"Config\":{\"Labels\":%s},\"HostConfig\":{\"PortBindings\":%s},\"NetworkSettings\":{\"Ports\":%s},\"Mounts\":%s}" .Id .Image .State.Running (json .Config.Labels) (json .HostConfig.PortBindings) (json .NetworkSettings.Ports) (json .Mounts)}}"#;
 const VOLUME_INSPECT_TEMPLATE: &str =
     r#"{{printf "{\"Name\":%q,\"Labels\":%s}" .Name (json .Labels)}}"#;
 const VOLUME_LIST_TEMPLATE: &str = "{{.Name}}";
@@ -313,10 +313,17 @@ struct DockerContainer {
     config: ContainerConfig,
     #[serde(rename = "State")]
     state: ContainerState,
+    #[serde(rename = "HostConfig", default)]
+    host_config: HostConfig,
     #[serde(rename = "NetworkSettings")]
     network: NetworkSettings,
     #[serde(rename = "Mounts", default)]
     mounts: Vec<DockerMount>,
+}
+#[derive(Default, Deserialize)]
+struct HostConfig {
+    #[serde(rename = "PortBindings", default)]
+    port_bindings: Option<BTreeMap<String, Option<Vec<PortBinding>>>>,
 }
 #[derive(Deserialize)]
 struct DockerMount {

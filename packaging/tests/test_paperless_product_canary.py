@@ -72,6 +72,12 @@ class CustodyTests(unittest.TestCase):
             with self.subTest(mutate=mutate), self.assertRaises(canary.Failure):
                 canary.validate_container(bad, "neoth-paperless-abcdef123456", "webserver", "b" * 64, 18001)
 
+    def test_stopped_container_diagnostic_reports_only_bound_booleans_and_counts(self) -> None:
+        row = container(); row["State"]["Running"] = False; row["NetworkSettings"]["Ports"] = {}; row["HostConfig"] = {"PortBindings": {"8000/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18001"}]}}
+        self.assertEqual(canary.stopped_container_diagnostic(row, "a" * 64, "neoth-paperless-abcdef123456", "webserver", 18001), {"running": False, "runtime_loopback_binding": False, "runtime_binding_count": 0, "configured_loopback_binding": True, "configured_binding_count": 1})
+        with self.assertRaises(canary.Failure):
+            canary.stopped_container_diagnostic(row, "f" * 64, "neoth-paperless-abcdef123456", "webserver", 18001)
+
     def test_volume_rejects_foreign_project_or_logical_name(self) -> None:
         row = {"Name": "neoth-paperless-abcdef123456_paperless_data", "Labels": {"com.docker.compose.project": "neoth-paperless-abcdef123456", "com.docker.compose.volume": "paperless_data"}}
         self.assertEqual(canary.validate_volume(row, "neoth-paperless-abcdef123456", "paperless_data"), row["Name"])
@@ -132,10 +138,13 @@ class CustodyTests(unittest.TestCase):
     def test_command_failure_allowlists_repair_and_generation_auth_markers_without_output(self) -> None:
         secret = "untrusted-command-output"
         result = canary.bounded.Result(1, secret.encode(), ("paperless_repair_start_outcome_ambiguous paperless_generation_auth_token_conflict " + secret).encode(), False, False)
-        encoded = json.dumps(canary.CommandFailure(["neoth", "--output", "json", "paperless", "repair"], result).diagnostic)
-        self.assertNotIn(secret, encoded)
-        self.assertIn("paperless_repair_start_outcome_ambiguous", encoded)
-        self.assertIn("paperless_generation_auth_token_conflict", encoded)
+        for action, command in (("repair", "product_repair"), ("uninstall", "product_uninstall"), ("purge", "product_purge")):
+            encoded = json.dumps(canary.CommandFailure(["neoth", "--output", "json", "paperless", action], result).diagnostic)
+            with self.subTest(action=action):
+                self.assertNotIn(secret, encoded)
+                self.assertIn("paperless_repair_start_outcome_ambiguous", encoded)
+                self.assertIn("paperless_generation_auth_token_conflict", encoded)
+                self.assertIn(command, encoded)
 
     def test_independent_image_admission_rejects_wrong_digest_or_config(self) -> None:
         reference, config = canary.admitted_images()["webserver"]

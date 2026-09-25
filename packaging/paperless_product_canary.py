@@ -81,7 +81,7 @@ class CommandFailure(Failure):
         program = Path(argv[0]).name
         command = "docker" if program == "docker" else "other"
         if program == "neoth" and argv[1:4] == ["--output", "json", "paperless"]:
-            command = {"prepare": "product_prepare", "install": "product_install", "status": "product_status"}.get(argv[4], "other")
+            command = {"prepare": "product_prepare", "install": "product_install", "status": "product_status", "repair": "product_repair", "uninstall": "product_uninstall", "purge": "product_purge"}.get(argv[4], "other")
         elif program == "neoth" and argv[1:2] == ["init"]:
             command = "product_init"
         markers = (
@@ -207,7 +207,7 @@ def docker_json(identifier: str, volume: bool = False) -> dict:
         projection = r'{"Name":{{json .Name}},"Labels":{"com.docker.compose.project":{{json (index .Labels "com.docker.compose.project")}},"com.docker.compose.volume":{{json (index .Labels "com.docker.compose.volume")}},"io.neoth.paperless.volume-set-id":{{json (index .Labels "io.neoth.paperless.volume-set-id")}}}}'
         argv = ["docker", "volume", "inspect", "--format", projection, identifier]
     else:
-        projection = r'{"Id":{{json .Id}},"Image":{{json .Image}},"State":{"Running":{{json .State.Running}}},"Config":{"Labels":{"com.docker.compose.project":{{json (index .Config.Labels "com.docker.compose.project")}},"com.docker.compose.service":{{json (index .Config.Labels "com.docker.compose.service")}}}},"NetworkSettings":{"Ports":{{json .NetworkSettings.Ports}}},"Mounts":{{json .Mounts}}}'
+        projection = r'{"Id":{{json .Id}},"Image":{{json .Image}},"State":{"Running":{{json .State.Running}}},"Config":{"Labels":{"com.docker.compose.project":{{json (index .Config.Labels "com.docker.compose.project")}},"com.docker.compose.service":{{json (index .Config.Labels "com.docker.compose.service")}}}},"NetworkSettings":{"Ports":{{json .NetworkSettings.Ports}}},"HostConfig":{"PortBindings":{{json .HostConfig.PortBindings}}},"Mounts":{{json .Mounts}}}'
         argv = ["docker", "container", "inspect", "--format", projection, identifier]
     raw = run(argv, timeout=45)
     try:
@@ -236,6 +236,18 @@ def validate_container(row: dict, project: str, service: str, image_id: str, por
     elif bindings not in (None, []):
         raise Failure("container_port_invalid")
     return identifier
+
+
+def stopped_container_diagnostic(row: dict, identifier: str, project: str, service: str, port: int) -> dict[str, bool | int]:
+    if row.get("Id") != identifier or row.get("Config", {}).get("Labels", {}).get("com.docker.compose.project") != project or row.get("Config", {}).get("Labels", {}).get("com.docker.compose.service") != service:
+        raise Failure("repair_diagnostic_identity_invalid")
+    ports = row.get("NetworkSettings", {}).get("Ports")
+    bindings = row.get("HostConfig", {}).get("PortBindings")
+    runtime = ports.get("8000/tcp") if isinstance(ports, dict) else None
+    configured = bindings.get("8000/tcp") if isinstance(bindings, dict) else None
+    def matches(value: object) -> bool:
+        return isinstance(value, list) and len(value) == 1 and isinstance(value[0], dict) and value[0].get("HostIp") == "127.0.0.1" and value[0].get("HostPort") == str(port)
+    return {"running": row.get("State", {}).get("Running") is True, "runtime_loopback_binding": matches(runtime), "runtime_binding_count": len(runtime) if isinstance(runtime, list) else 0, "configured_loopback_binding": matches(configured), "configured_binding_count": len(configured) if isinstance(configured, list) else 0}
 
 
 def validate_volume(row: dict, project: str, logical: str, volume_set_id: str | None = None) -> str:
@@ -728,6 +740,7 @@ def main() -> int:
         baseline_id, baseline_title, baseline_sha256 = marker_metadata(args.port, token, document_id)
         credentials_before_repair = (home / "credentials.yaml").read_bytes()
         repair_volume_snapshot_bytes = persisted_volume_set_snapshot(home, project, volume_set_id)
+        receipt["repair_progress"] = {"phase": "healthy", "witness": "before_product_repair"}
         healthy_repair = read_json_bytes(run([str(binary), "--output", "json", "paperless", "repair"], timeout=900), "repair_json_invalid")
         validate_repair(healthy_repair, project, volume_set_id, tuple((service, "healthy", identifier, identifier) for service, identifier in zip(IMAGES, identities[:3], strict=True)))
         if persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port) != install_receipt_bytes or persisted_volume_set_snapshot(home, project, volume_set_id) != repair_volume_snapshot_bytes or (home / "credentials.yaml").read_bytes() != credentials_before_repair:
@@ -735,7 +748,10 @@ def main() -> int:
         retained_volumes(project, identities[3:], volume_set_id)
         verify_api(args.port, configured_token(home)); marker_metadata(args.port, configured_token(home), document_id)
         webserver_id = identities[0]
+        receipt["repair_progress"] = {"phase": "started", "witness": "before_stop_exact_receipt_id"}
         run(["docker", "container", "stop", webserver_id], timeout=45)
+        receipt["repair_stopped_container"] = stopped_container_diagnostic(docker_json(webserver_id), webserver_id, project, "webserver", args.port)
+        receipt["repair_progress"] = {"phase": "started", "witness": "before_product_repair"}
         started_repair = read_json_bytes(run([str(binary), "--output", "json", "paperless", "repair"], timeout=900), "repair_json_invalid")
         validate_repair(started_repair, project, volume_set_id, tuple((service, "started" if service == "webserver" else "healthy", identifier, identifier) for service, identifier in zip(IMAGES, identities[:3], strict=True)))
         install_receipt_bytes = persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port)
@@ -743,8 +759,11 @@ def main() -> int:
             raise Failure("repair_started_mutated_history")
         retained_volumes(project, identities[3:], volume_set_id)
         verify_api(args.port, configured_token(home)); marker_metadata(args.port, configured_token(home), document_id)
+        receipt["repair_progress"] = {"phase": "recreated", "witness": "before_stop_exact_receipt_id"}
         run(["docker", "container", "stop", webserver_id], timeout=45)
+        receipt["repair_progress"] = {"phase": "recreated", "witness": "before_remove_exact_receipt_id"}
         run(["docker", "container", "rm", webserver_id], timeout=45)
+        receipt["repair_progress"] = {"phase": "recreated", "witness": "before_product_repair"}
         recreated_repair = read_json_bytes(run([str(binary), "--output", "json", "paperless", "repair"], timeout=900), "repair_json_invalid")
         recreated = recreated_repair.get("services")
         if not isinstance(recreated, list):
@@ -765,12 +784,14 @@ def main() -> int:
             validate_container(docker_json(identifier), project, service, config_ids[service], args.port)
         retained_volumes(project, identities[3:], volume_set_id)
         verify_api(args.port, configured_token(home)); marker_metadata(args.port, configured_token(home), document_id)
+        receipt["repair_progress"] = {"phase": "repeat", "witness": "before_product_repair"}
         repair_repeat = read_json_bytes(run([str(binary), "--output", "json", "paperless", "repair"], timeout=900), "repair_json_invalid")
         validate_repair(repair_repeat, project, volume_set_id, tuple((service, "healthy", identifier, identifier) for service, identifier in zip(IMAGES, identities[:3], strict=True)))
         if persisted_install_receipt(home, (project, config_ids, identities, volume_set_id), args.port) != install_receipt_bytes or persisted_volume_set_snapshot(home, project, volume_set_id) != repair_volume_snapshot_bytes or (home / "credentials.yaml").read_bytes() != credentials_before_repair:
             raise Failure("repair_repeat_mutated_history")
         retained_volumes(project, identities[3:], volume_set_id)
         verify_api(args.port, configured_token(home)); marker_metadata(args.port, configured_token(home), document_id)
+        receipt["repair_progress"] = {"phase": "complete", "witness": "repeat_verified"}
         receipt["repair"] = {"healthy_noop": True, "started_same_id": True, "recreated_new_id": True, "credentials_preserved": True, "volumes_preserved": True, "marker_preserved": True}
         removed = read_json_bytes(run([str(binary), "--output", "json", "paperless", "uninstall"], timeout=900), "uninstall_json_invalid")
         retired_ids = identities[:3]

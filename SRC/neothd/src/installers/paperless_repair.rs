@@ -433,7 +433,7 @@ async fn classify_all<E: ComposeExecutor>(
                 return Err(LifecycleError::UnownedOrMismatch);
             }
             let raw = inspect(executor, engine, root, binding, &stored.id).await?;
-            verify_original_container(stored, &receipt.project, binding.port, &raw.stdout)?;
+            verify_repair_identity(stored, &receipt.project, binding.port, &raw.stdout)?;
             let actual: DockerContainer =
                 serde_json::from_str(&raw.stdout).map_err(|_| LifecycleError::Receipt)?;
             let action = if actual.state.running {
@@ -465,6 +465,60 @@ async fn classify_all<E: ComposeExecutor>(
         return Err(LifecycleError::Receipt);
     }
     Ok(out)
+}
+
+/// Docker clears `NetworkSettings.Ports` for a stopped container. Repair still
+/// fences its configured loopback publish from `HostConfig.PortBindings`; the
+/// running path retains the lifecycle's runtime-port validation unchanged.
+fn verify_repair_identity(
+    expected: &StoredVerifiedContainer,
+    project: &str,
+    port: u16,
+    raw: &str,
+) -> Result<(), LifecycleError> {
+    let actual: DockerContainer = serde_json::from_str(raw)
+        .map_err(|_| LifecycleError::Container("paperless_container_inspect_invalid"))?;
+    if actual.state.running {
+        return verify_original_container(expected, project, port, raw);
+    }
+    if actual.id != expected.id
+        || actual.image != expected.image_id
+        || actual.config.labels.get("com.docker.compose.project") != Some(&project.to_owned())
+        || actual.config.labels.get("com.docker.compose.service") != Some(&expected.service)
+    {
+        return Err(LifecycleError::UnownedOrMismatch);
+    }
+    if expected.service == "webserver"
+        && !actual
+            .host_config
+            .port_bindings
+            .as_ref()
+            .and_then(|bindings| bindings.get("8000/tcp"))
+            .and_then(|entry| entry.as_ref())
+            .is_some_and(|entries| {
+                entries.len() == 1
+                    && entries[0].host_ip == "127.0.0.1"
+                    && entries[0].host_port == port.to_string()
+            })
+    {
+        return Err(LifecycleError::UnownedOrMismatch);
+    }
+    let expected_mounts: Vec<_> = paperless_staging::PAPERLESS_VOLUMES
+        .iter()
+        .filter(|volume| volume.service == expected.service)
+        .collect();
+    if actual.mounts.len() != expected_mounts.len()
+        || expected_mounts.iter().any(|volume| {
+            !actual.mounts.iter().any(|mount| {
+                mount.kind == "volume"
+                    && mount.name == volume_name(project, volume.logical_name)
+                    && mount.destination == volume.destination
+            })
+        })
+    {
+        return Err(LifecycleError::UnownedOrMismatch);
+    }
+    Ok(())
 }
 async fn service_claimants<E: ComposeExecutor>(
     executor: &mut E,

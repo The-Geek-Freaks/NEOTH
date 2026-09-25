@@ -134,7 +134,10 @@ volume-name inspection as proof that document bytes survived.
 installation using the same pinned images and six retained data volumes. It
 checks every service and volume before changing anything. Healthy installations
 are authenticated no-ops; stopped containers retain their exact IDs, while a
-missing owned container receives a newly verified ID. The JSON result reports
+missing owned container receives a newly verified ID. For a stopped webserver,
+the configured loopback publish is checked even when Docker has cleared its
+runtime port mapping; public or multiple configured publishes are refused.
+The JSON result reports
 all three services as `healthy`, `started`, or `recreated`.
 
 Repair preserves document data, the volume generation and credentials. It

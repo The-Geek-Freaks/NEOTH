@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1389-1393 real repair failure, stopped-port correction and diagnostics (2026-09-25):**
+Product36138119831 at46a037d0 compiled and passed30helper tests, then failed with
+paperless_unowned_or_mismatch during the expanded repair sequence. Its old
+receipt proves authenticated initial/repeat API, but does not identify the exact
+repair subphase and reports cleanup unproven. ZIP/source-bound failure evidence
+is retained. Source review found stopped webserver identity incorrectly depended
+on runtime Docker ports; repair now verifies the exact configured loopback bind
+while retaining ID/image/label/mount validation and the running-container path.
+Null configured bindings on unexposed broker/db are accepted as absence; public
+or multiple webserver publishes still refuse before effects. W1393 independently
+approved the actual final source. Two behavioral tests bring inventories to2041
+portable, Group1831 and Windows600. The canary now has31helper cases, explicit
+redacted command labels and retained per-phase/stopped-port boolean witnesses.
+A fresh real product run must confirm this diagnosis and the full PDF/purge/auth
+sequence; no runtime or roadmap closure is claimed. No local executable checks.
 **W1387 production lint follow-up (2026-09-25):** Core36138113865 at
 46a037d0 now type-checked the repair code and rejected one collapsible nested
 receipt comparison. The equivalent let-chain preserves evaluation order and
