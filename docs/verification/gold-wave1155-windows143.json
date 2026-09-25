@@ -1,0 +1,43 @@
+{
+  "schema": "neoth-wave1155-windows143/v1",
+  "run": {
+    "id": 36087705919,
+    "status": "completed",
+    "conclusion": "success",
+    "headSha": "143158066e454fc566ba65316ffac65575a7ecca",
+    "workflow": "Windows storage regressions",
+    "htmlUrl": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36087705919"
+  },
+  "artifact": {
+    "id": 10844429923,
+    "apiDigest": "sha256:a3b1f95a13013e90bc90da48795c74bec79b88342ce8ba768c2c116c275ad750",
+    "localSha256": "a3b1f95a13013e90bc90da48795c74bec79b88342ce8ba768c2c116c275ad750",
+    "matches": true
+  },
+  "innerEvidenceHashCount": 10,
+  "innerEvidenceHashesAllMatch": true,
+  "runnerCounts": {
+    "expected": 351,
+    "missing": 0,
+    "selection_valid": 1,
+    "compile_status": 0,
+    "total": 351,
+    "passed": 351,
+    "listed": 351,
+    "failed": 0
+  },
+  "parsedTerminalCounts": {
+    "passed": 351,
+    "failed": 0,
+    "missing": 0
+  },
+  "sourceBindingCount": 61,
+  "allSourceBindingsMatch": true,
+  "terminalLogCount": 351,
+  "terminalLogsAllMatch": true,
+  "compileLogSha256": "cbc2cf039ce826350c3193df24b9888a0e7b0a8a1a0eb11a03bc2cc1aeb895e6",
+  "failedTerminals": 0,
+  "admissionEvidence": "ROOT_ADMITTED_351_PASS_61_HISTORICAL_BINDINGS",
+  "rootVerified": true,
+  "localExecutableValidationRan": false
+}

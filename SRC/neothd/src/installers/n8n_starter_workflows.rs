@@ -88,7 +88,7 @@ fn build_workflow_skeleton(
     let http_id = format!("{slug}_http");
     let url = format!("={{{{ $json.neothBaseUrl + '{endpoint}' }}}}");
     let unavailable_note = format!(
-        "Unavailable starter intent: {endpoint} is not one of the nine current NEOTH n8n API routes. Keep this workflow inactive until an explicit adapter and its request-payload contract are implemented; no payload adapter is shipped here."
+        "Unavailable starter intent: {endpoint} has no implemented NEOTH n8n API adapter. Keep this workflow inactive until an explicit adapter and its request-payload contract are implemented; no payload adapter is shipped here."
     );
     let (http_parameters, http_note) = if slug == "memory_decay_report" {
         (
@@ -104,6 +104,21 @@ fn build_workflow_skeleton(
                 "options": {}
             }),
             "Implemented POST /api/memory/drift reads the existing views.db projection with recall:read scope. It returns bounded drift rows and exact counts without creating, migrating, or modifying the database.",
+        )
+    } else if slug == "calendar_morning_agenda" {
+        (
+            serde_json::json!({
+                "url": url,
+                "method": method,
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpHeaderAuth",
+                "sendBody": true,
+                "contentType": "json",
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify({ timezone: $json.calendarTimezone, day: $now.setZone($json.calendarTimezone).toFormat('yyyy-MM-dd'), limit: 20 }) }}",
+                "options": {}
+            }),
+            "Implemented POST /api/calendar/agenda requires calendar:read plus a separate account-bound CalDAV read grant in this NEOTH instance (neoth calendar read-access grant). Set calendarTimezone and the workflow schedule timezone before activation. Supports non-recurring UTC/offset timed events and all-day dates; recurring, floating, TZID or malformed events fail explicitly. Returns bounded day events and conflicts with a truncation indicator, without descriptions, attendees or event IDs.",
         )
     } else if slug == "proposal_review_reminder" {
         (
@@ -166,7 +181,7 @@ fn build_workflow_skeleton(
     // Build via serde_json so escape rules + valid JSON come for
     // free. The shape matches n8n's import format (workflow → nodes
     // → connections).
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "name": name,
         "active": false,
         "nodes": [
@@ -236,6 +251,18 @@ fn build_workflow_skeleton(
             "executionOrder": "v1"
         }
     });
+    if slug == "calendar_morning_agenda" {
+        body["nodes"][1]["parameters"]["assignments"]["assignments"]
+            .as_array_mut()
+            .expect("configuration assignments are an array")
+            .push(serde_json::json!({
+                "id": format!("{slug}_timezone"),
+                "name": "calendarTimezone",
+                "type": "string",
+                "value": "Europe/Berlin"
+            }));
+        body["settings"]["timezone"] = serde_json::json!("Europe/Berlin");
+    }
     serde_json::to_string(&body).expect("serde_json::Value always serialises")
 }
 
@@ -295,10 +322,10 @@ const STARTER_SPECS: &[StarterSpec] = &[
     StarterSpec {
         slug: "calendar_morning_agenda",
         name: "Calendar morning agenda",
-        description: "Unavailable adapter: intended EM-02 weekday agenda and conflict-summary workflow.",
+        description: "Consented CalDAV local-day agenda and conflict summary; configure timezone and a calendar:read credential before activation.",
         cron: "0 8 * * 1-5",
-        endpoint: "/calendar/today",
-        method: "GET",
+        endpoint: "/api/calendar/agenda",
+        method: "POST",
     },
     StarterSpec {
         slug: "proposal_review_reminder",
@@ -602,6 +629,29 @@ mod tests {
                         .is_some_and(|notes| notes.contains("Implemented POST /api/memory/drift")),
                     "implemented drift starter must identify its supported route",
                 );
+            } else if w.slug == "calendar_morning_agenda" {
+                assert_eq!(http["parameters"]["method"], "POST");
+                assert_eq!(http["parameters"]["sendBody"], true);
+                assert_eq!(http["parameters"]["contentType"], "json");
+                assert_eq!(http["parameters"]["specifyBody"], "json");
+                assert_eq!(
+                    http["parameters"]["jsonBody"],
+                    "={{ JSON.stringify({ timezone: $json.calendarTimezone, day: $now.setZone($json.calendarTimezone).toFormat('yyyy-MM-dd'), limit: 20 }) }}",
+                );
+                assert_eq!(
+                    configuration["parameters"]["assignments"]["assignments"][1]["name"],
+                    "calendarTimezone",
+                );
+                assert_eq!(
+                    configuration["parameters"]["assignments"]["assignments"][1]["value"],
+                    v["settings"]["timezone"],
+                );
+                assert_eq!(v["active"], false);
+                assert!(http["notes"].as_str().is_some_and(|notes| {
+                    notes.contains("requires calendar:read")
+                        && notes.contains("separate account-bound CalDAV read grant")
+                        && notes.contains("fail explicitly")
+                }));
             } else if w.slug == "proposal_review_reminder" {
                 assert_eq!(http["parameters"]["method"], "POST");
                 assert_eq!(http["parameters"]["sendBody"], true);

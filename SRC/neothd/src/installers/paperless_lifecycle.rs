@@ -85,7 +85,8 @@ const RECEIPT_BYTES: &str =
     include_str!("../../../../docs/verification/paperless-oci-v3.2.1/recursive-blob-receipt.json");
 const IMAGE_INSPECT_TEMPLATE: &str = r#"{{printf "{\"Id\":%q,\"RepoDigests\":%s,\"Os\":%q,\"Architecture\":%q}" .Id (json .RepoDigests) .Os .Architecture}}"#;
 const CONTAINER_INSPECT_TEMPLATE: &str = r#"{{printf "{\"Id\":%q,\"Image\":%q,\"State\":{\"Running\":%t},\"Config\":{\"Labels\":%s},\"NetworkSettings\":{\"Ports\":%s},\"Mounts\":%s}" .Id .Image .State.Running (json .Config.Labels) (json .NetworkSettings.Ports) (json .Mounts)}}"#;
-const VOLUME_INSPECT_TEMPLATE: &str = r#"{{printf "{\"Name\":%q,\"Labels\":%s}" .Name (json .Labels)}}"#;
+const VOLUME_INSPECT_TEMPLATE: &str =
+    r#"{{printf "{\"Name\":%q,\"Labels\":%s}" .Name (json .Labels)}}"#;
 const VOLUME_LIST_TEMPLATE: &str = "{{.Name}}";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -261,7 +262,6 @@ struct DockerVolume {
 #[async_trait]
 pub trait ComposeExecutor: Send {
     async fn run(&mut self, argv: &[String], cwd: &Path) -> Result<CommandOutput, LifecycleError>;
-
 }
 #[async_trait]
 trait RetainedComposeExecutor: ComposeExecutor {
@@ -352,15 +352,16 @@ impl DockerExecutor {
         for (name, value) in compose_environment(binding)? {
             command.env(name, value);
         }
-        let mut child = crate::updater::process_containment::ContainedChild::spawn_in_retained_directory(
-            command,
-            &root.root,
-            &root.display,
-            paperless_staging::expected_compose_bytes(),
-            OUTPUT_LIMIT,
-        )
-        .await
-        .map_err(|_| LifecycleError::Command("paperless_command_spawn_failed"))?;
+        let mut child =
+            crate::updater::process_containment::ContainedChild::spawn_in_retained_directory(
+                command,
+                &root.root,
+                &root.display,
+                paperless_staging::expected_compose_bytes(),
+                OUTPUT_LIMIT,
+            )
+            .await
+            .map_err(|_| LifecycleError::Command("paperless_command_spawn_failed"))?;
         let output = child
             .wait_until(tokio::time::Instant::now() + COMMAND_TIMEOUT)
             .await
@@ -376,10 +377,7 @@ impl DockerExecutor {
 
 fn configured_docker_command(program: &str, args: &[String], cwd: &Path) -> Command {
     let mut command = Command::new(program);
-    command
-        .args(args)
-        .current_dir(cwd)
-        .env_clear();
+    command.args(args).current_dir(cwd).env_clear();
     for name in OS_LAUNCH_ENV {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
@@ -581,9 +579,12 @@ async fn install_at_with_readiness<E: RetainedComposeExecutor, R: ReadinessVerif
             return Err(LifecycleError::Container("paperless_container_id_changed"));
         }
     }
-    let final_volumes = inspect_owned_volumes(executor, &engine, &project, &owned, &binding).await?;
+    let final_volumes =
+        inspect_owned_volumes(executor, &engine, &project, &owned, &binding).await?;
     if final_volumes != volumes {
-        return Err(LifecycleError::Container("paperless_volume_changed_after_readiness"));
+        return Err(LifecycleError::Container(
+            "paperless_volume_changed_after_readiness",
+        ));
     }
     ensure_stage(&owned, &binding)?;
     let receipt = PaperlessLifecycleReceipt {
@@ -621,18 +622,10 @@ impl Engine {
             .collect()
     }
     fn compose(&self, project: &str, tail: &[&str]) -> Vec<String> {
-        self.docker(
-            "compose",
-            &[
-                "--project-name",
-                project,
-                "-f",
-                "-",
-            ],
-        )
-        .into_iter()
-        .chain(tail.iter().map(|part| (*part).to_owned()))
-        .collect()
+        self.docker("compose", &["--project-name", project, "-f", "-"])
+            .into_iter()
+            .chain(tail.iter().map(|part| (*part).to_owned()))
+            .collect()
     }
 }
 async fn select_local_engine<E: ComposeExecutor>(
@@ -970,7 +963,9 @@ fn verify_container(
             })
         })
     {
-        return Err(LifecycleError::Container("paperless_container_volume_mount_mismatch"));
+        return Err(LifecycleError::Container(
+            "paperless_container_volume_mount_mismatch",
+        ));
     }
     Ok(VerifiedContainer {
         service: image.service,
@@ -1024,7 +1019,12 @@ async fn preflight_existing_volumes<E: ComposeExecutor>(
                 .run(
                     &engine.docker(
                         "volume",
-                        &["inspect", &expected_name, "--format", VOLUME_INSPECT_TEMPLATE],
+                        &[
+                            "inspect",
+                            &expected_name,
+                            "--format",
+                            VOLUME_INSPECT_TEMPLATE,
+                        ],
                     ),
                     &root.display,
                 )
@@ -1051,7 +1051,12 @@ async fn inspect_owned_volumes<E: ComposeExecutor>(
             .run(
                 &engine.docker(
                     "volume",
-                    &["inspect", &expected_name, "--format", VOLUME_INSPECT_TEMPLATE],
+                    &[
+                        "inspect",
+                        &expected_name,
+                        "--format",
+                        VOLUME_INSPECT_TEMPLATE,
+                    ],
                 ),
                 &root.display,
             )
@@ -1073,7 +1078,9 @@ fn verify_volume(
         || actual.labels.get("com.docker.compose.project") != Some(&project.to_owned())
         || actual.labels.get("com.docker.compose.volume") != Some(&expected.logical_name.to_owned())
     {
-        return Err(LifecycleError::Container("paperless_volume_ownership_mismatch"));
+        return Err(LifecycleError::Container(
+            "paperless_volume_ownership_mismatch",
+        ));
     }
     Ok(VerifiedVolume {
         logical_name: expected.logical_name,
@@ -1106,7 +1113,10 @@ fn reject_legacy_state(root: &OwnedPaperlessRoot) -> Result<(), LifecycleError> 
     for entry in state.entries().map_err(|_| LifecycleError::Io)? {
         let entry = entry.map_err(|_| LifecycleError::Io)?;
         let name = entry.file_name();
-        if !matches!(name.to_str(), Some("data" | "media" | "valkey" | "postgres")) {
+        if !matches!(
+            name.to_str(),
+            Some("data" | "media" | "valkey" | "postgres")
+        ) {
             continue;
         }
         let legacy = crate::skills::store::open_real_child_dir(
@@ -1186,19 +1196,37 @@ fn acquire_launch_guard(
 ) -> Result<UnixLaunchGuard, LifecycleError> {
     ensure_stage(root, binding)?;
     let compose = crate::skills::store::read_regular_file_bounded(
-        &root.root, OsStr::new("compose.yaml"), &root.display.join("compose.yaml"), ENV_LIMIT,
-    ).map_err(|_| LifecycleError::LaunchBinding)?;
+        &root.root,
+        OsStr::new("compose.yaml"),
+        &root.display.join("compose.yaml"),
+        ENV_LIMIT,
+    )
+    .map_err(|_| LifecycleError::LaunchBinding)?;
     let env = crate::skills::store::read_regular_file_bounded(
-        &root.root, OsStr::new("paperless.env"), &root.display.join("paperless.env"), ENV_LIMIT,
-    ).map_err(|_| LifecycleError::LaunchBinding)?;
+        &root.root,
+        OsStr::new("paperless.env"),
+        &root.display.join("paperless.env"),
+        ENV_LIMIT,
+    )
+    .map_err(|_| LifecycleError::LaunchBinding)?;
     if compose != paperless_staging::expected_compose_bytes() || env != binding.env.as_slice() {
         return Err(LifecycleError::LaunchBinding);
     }
-    root.root.create_dir("state").or_else(|error| {
-        if error.kind() == std::io::ErrorKind::AlreadyExists { Ok(()) } else { Err(error) }
-    }).map_err(|_| LifecycleError::LaunchBinding)?;
+    root.root
+        .create_dir("state")
+        .or_else(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        })
+        .map_err(|_| LifecycleError::LaunchBinding)?;
     Ok(UnixLaunchGuard {
-        _root: root.root.try_clone().map_err(|_| LifecycleError::LaunchBinding)?,
+        _root: root
+            .root
+            .try_clone()
+            .map_err(|_| LifecycleError::LaunchBinding)?,
         _compose: compose,
         _env: env,
     })
@@ -1326,7 +1354,11 @@ mod tests {
                 .windows(2)
                 .any(|pair| pair[0] == "--pull" && pair[1] == "never")
         );
-        assert!(command.windows(2).any(|pair| pair[0] == "-f" && pair[1] == "-"));
+        assert!(
+            command
+                .windows(2)
+                .any(|pair| pair[0] == "-f" && pair[1] == "-")
+        );
         assert!(!command.iter().any(|part| part == "--env-file"));
     }
     #[test]
@@ -1377,31 +1409,41 @@ mod tests {
         let valid_mounts = paperless_staging::PAPERLESS_VOLUMES
             .iter()
             .filter(|volume| volume.service == image.service)
-            .map(|volume| format!(
-                r#"{{"Type":"volume","Name":"project_{}","Destination":"{}"}}"#,
-                volume.logical_name, volume.destination
-            ))
+            .map(|volume| {
+                format!(
+                    r#"{{"Type":"volume","Name":"project_{}","Destination":"{}"}}"#,
+                    volume.logical_name, volume.destination
+                )
+            })
             .collect::<Vec<_>>()
             .join(",");
-        let inspect = |mounts: &str| format!(
-            r#"{{"Id":"id","Image":"sha256:config","State":{{"Running":true}},"Config":{{"Labels":{{"com.docker.compose.project":"project","com.docker.compose.service":"webserver"}}}},"NetworkSettings":{{"Ports":{{"8000/tcp":[{{"HostIp":"127.0.0.1","HostPort":"18000"}}]}}}},"Mounts":[{mounts}]}}"#
-        );
+        let inspect = |mounts: &str| {
+            format!(
+                r#"{{"Id":"id","Image":"sha256:config","State":{{"Running":true}},"Config":{{"Labels":{{"com.docker.compose.project":"project","com.docker.compose.service":"webserver"}}}},"NetworkSettings":{{"Ports":{{"8000/tcp":[{{"HostIp":"127.0.0.1","HostPort":"18000"}}]}}}},"Mounts":[{mounts}]}}"#
+            )
+        };
         assert!(verify_container(&image, "project", 18000, &inspect(&valid_mounts)).is_ok());
         assert!(verify_container(&image, "project", 18000, &inspect("")).is_err());
-        assert!(verify_container(
-            &image,
-            "project",
-            18000,
-            &inspect(&valid_mounts.replacen("project_paperless_data", "foreign", 1)),
-        )
-        .is_err());
-        assert!(verify_container(
-            &image,
-            "project",
-            18000,
-            &inspect(&format!(r#"{valid_mounts},{{"Type":"volume","Name":"extra","Destination":"/extra"}}"#)),
-        )
-        .is_err());
+        assert!(
+            verify_container(
+                &image,
+                "project",
+                18000,
+                &inspect(&valid_mounts.replacen("project_paperless_data", "foreign", 1)),
+            )
+            .is_err()
+        );
+        assert!(
+            verify_container(
+                &image,
+                "project",
+                18000,
+                &inspect(&format!(
+                    r#"{valid_mounts},{{"Type":"volume","Name":"extra","Destination":"/extra"}}"#
+                )),
+            )
+            .is_err()
+        );
     }
     #[test]
     fn volume_listing_accepts_only_one_exact_name() {
@@ -1589,11 +1631,13 @@ mod tests {
                 let mounts = paperless_staging::PAPERLESS_VOLUMES
                     .iter()
                     .filter(|volume| volume.service == service)
-                    .map(|volume| format!(
-                        r#"{{"Type":"volume","Name":"{}","Destination":"{}"}}"#,
-                        volume_name(&project_name(cwd), volume.logical_name),
-                        volume.destination
-                    ))
+                    .map(|volume| {
+                        format!(
+                            r#"{{"Type":"volume","Name":"{}","Destination":"{}"}}"#,
+                            volume_name(&project_name(cwd), volume.logical_name),
+                            volume.destination
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join(",");
                 return Ok(CommandOutput {
@@ -1694,15 +1738,33 @@ mod tests {
         let receipt = install_at_with_readiness(home.path(), &credentials, &mut executor, &ready)
             .await
             .unwrap();
-        assert_eq!(receipt.volumes.len(), paperless_staging::PAPERLESS_VOLUMES.len());
-        assert!(executor.commands.iter().any(|command| command.iter().any(|part| part == "compose")));
+        assert_eq!(
+            receipt.volumes.len(),
+            paperless_staging::PAPERLESS_VOLUMES.len()
+        );
+        assert!(
+            executor
+                .commands
+                .iter()
+                .any(|command| command.iter().any(|part| part == "compose"))
+        );
         assert!(!executor.retained_compose_inputs.is_empty());
-        assert!(executor
-            .retained_compose_inputs
+        assert!(
+            executor
+                .retained_compose_inputs
+                .iter()
+                .all(|input| input.as_slice() == paperless_staging::expected_compose_bytes())
+        );
+        for command in executor
+            .commands
             .iter()
-            .all(|input| input.as_slice() == paperless_staging::expected_compose_bytes()));
-        for command in executor.commands.iter().filter(|command| command.iter().any(|part| part == "compose")) {
-            assert!(command.windows(2).any(|pair| pair[0] == "-f" && pair[1] == "-"));
+            .filter(|command| command.iter().any(|part| part == "compose"))
+        {
+            assert!(
+                command
+                    .windows(2)
+                    .any(|pair| pair[0] == "-f" && pair[1] == "-")
+            );
             assert!(!command.iter().any(|part| part == "--env-file"));
         }
     }
@@ -1726,7 +1788,12 @@ mod tests {
             install_at_with_readiness(home.path(), &credentials, &mut executor, &ready).await,
             Err(LifecycleError::UnownedOrMismatch)
         ));
-        assert!(!executor.commands.iter().any(|command| command.iter().any(|part| part == "compose")));
+        assert!(
+            !executor
+                .commands
+                .iter()
+                .any(|command| command.iter().any(|part| part == "compose"))
+        );
         assert!(!lifecycle_receipt_path(home.path()).exists());
     }
     #[tokio::test]
@@ -1753,7 +1820,9 @@ mod tests {
         let ready = EventuallyReady(AtomicUsize::new(0));
         assert!(matches!(
             install_at_with_readiness(home.path(), &credentials, &mut executor, &ready).await,
-            Err(LifecycleError::Container("paperless_volume_ownership_mismatch"))
+            Err(LifecycleError::Container(
+                "paperless_volume_ownership_mismatch"
+            ))
         ));
         assert!(!lifecycle_receipt_path(home.path()).exists());
     }
@@ -1769,7 +1838,10 @@ mod tests {
         let error = install_at_with_readiness(home.path(), &credentials, &mut executor, &ready)
             .await
             .unwrap_err();
-        assert!(matches!(error, LifecycleError::Engine("paperless_remote_docker_context_rejected")));
+        assert!(matches!(
+            error,
+            LifecycleError::Engine("paperless_remote_docker_context_rejected")
+        ));
         assert!(!executor.commands.is_empty());
         assert!(!lifecycle_receipt_path(home.path()).exists());
     }

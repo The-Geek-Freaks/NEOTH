@@ -1,0 +1,62 @@
+{
+  "schema": "neoth-static-review/v1",
+  "batch": "W1157 calendar agenda",
+  "independentReview": "W1148 approved consent/config locks, strict transport/projection and route/workflow wiring",
+  "rootDeltas": "Root corrected parser slice typing and updated existing malformed-entry fixtures to valid DAV paths, so each test reaches its intended missing/duplicate/status rejection.",
+  "sourceFiles": [
+    {
+      "path": "SRC/neothd/src/config/credentials.rs",
+      "sha256": "4A1291B814EAB6F31D2184D242D9772EBD20003E9DC24C28F83A01AA5955A178"
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "sha256": "31D14A5C5764C72AE03CFD9C6CC58C308667694F95C17DD4048B6AD859191072"
+    },
+    {
+      "path": "SRC/neothd/src/tools/caldav_account.rs",
+      "sha256": "5A60CC651FBC86904DCD31C918323A6182645A9A3CAE064F9E9ABCB00556EB9C"
+    },
+    {
+      "path": "SRC/neothd/src/tools/caldav_calendar.rs",
+      "sha256": "AA586674CA3D827489B55F90F955528628D2E6274E2DE9F0D92FCB5DF83267CB"
+    },
+    {
+      "path": "SRC/neothd/src/tools/mod.rs",
+      "sha256": "5E3E32428530EA50122B541AE7C57AC9841D5DB5D63EACE6E15BB5F2D93A5868"
+    },
+    {
+      "path": "SRC/neothd/src/cli/calendar.rs",
+      "sha256": "073EF392ABCFFF542B70020D44EF33F3A5A529782ED0737BA8BAF2B3C2649BCF"
+    },
+    {
+      "path": "SRC/neothd/src/cli/todo.rs",
+      "sha256": "15C4D3ECA52C36E87B943C613B045ABDA01A17D4927E0F91B5FF5933D320CBAA"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers/calendar_agenda.rs",
+      "sha256": "F8A45B4F9FA148D9646FF7ECE7DC6859DA9965D171D39F246E2B05FF0A9353C8"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers/calendar_route.rs",
+      "sha256": "16B312A4BC1A76FFE0E6C344E37EBB1D3A4282D20AC3368A197AF0EFEED22C6C"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers.rs",
+      "sha256": "8489782B5DEFE2DC04FF8027994CD4FAE88C84E87BEEA2CD421D50CBA2CADB34"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/server.rs",
+      "sha256": "078BC8EF6B337FA4C4B0AC703B33125CCA87A0B1E9E7563F178F83EC4EF29885"
+    },
+    {
+      "path": "SRC/neothd/src/security/api_tokens.rs",
+      "sha256": "47A80A8C93484C1275A5D8E7ED715EB91D39A2B5170EFCA7F6D67D37CADF14C2"
+    },
+    {
+      "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+      "sha256": "9B6763A3C0715F0C23AC58AFBF88D696190481BB75B6D980FBB737FE5027146B"
+    }
+  ],
+  "hosted": "pending",
+  "localExecutableValidationRan": false
+}

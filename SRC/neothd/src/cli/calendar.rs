@@ -26,6 +26,11 @@ pub struct CalendarArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum CalendarAction {
+    /// Grant, revoke, or inspect the exact CalDAV account permitted to read.
+    ReadAccess {
+        #[command(subcommand)]
+        action: CalendarReadAccessAction,
+    },
     /// List VEVENTs in the configured CalDAV calendar collection. Read-only.
     List {
         /// Override the calendar collection URL (else
@@ -60,13 +65,37 @@ pub enum CalendarAction {
     },
 }
 
+#[derive(Subcommand, Debug, Clone)]
+pub enum CalendarReadAccessAction {
+    /// Persist a private, instance-bound grant for the current effective account.
+    Grant {
+        /// Confirm the described egress without an interactive prompt.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Remove the local grant even when credentials are unavailable. This
+    /// denies subsequent reads; an already admitted bounded read is not
+    /// forcibly cancelled.
+    Revoke,
+    /// Show whether the current effective account has a usable read grant.
+    Status,
+}
+
 pub async fn run_calendar(args: CalendarArgs) -> Result<()> {
-    let creds = crate::cli::todo::caldav_creds()?;
     match &args.action {
+        CalendarAction::ReadAccess { action } => run_read_access(action, args.output),
         CalendarAction::List { url } => {
-            let cal_url = url.clone().unwrap_or_else(|| creds.url.clone());
+            let snapshot = crate::cli::todo::caldav_creds()?;
+            if let Some(url) = url {
+                anyhow::ensure!(
+                    crate::tools::caldav_account::canonical_collection_url(url)? == snapshot.url,
+                    "calendar list URL override is not the configured, granted CalDAV collection"
+                );
+            }
+            let home = crate::config::FreedomConfig::default_neoth_home();
+            let creds = crate::tools::caldav_account::require_at(&home, &snapshot, true)?;
             let events = caldav_calendar::list_events_against(
-                &cal_url,
+                &creds.url,
                 &creds.username,
                 creds.password.expose(),
             )
@@ -83,6 +112,7 @@ pub async fn run_calendar(args: CalendarArgs) -> Result<()> {
             url,
             yes,
         } => {
+            let creds = crate::cli::todo::caldav_creds()?;
             let cal_url = url.clone().unwrap_or_else(|| creds.url.clone());
             let event = CalendarEvent {
                 calendar_id: crate::email::calendar::PRIMARY_CALENDAR_ID.to_string(),
@@ -155,6 +185,68 @@ pub async fn run_calendar(args: CalendarArgs) -> Result<()> {
             )
             .await
         }
+    }
+}
+
+fn run_read_access(action: &CalendarReadAccessAction, output: OutputFormat) -> Result<()> {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    match action {
+        CalendarReadAccessAction::Grant { yes } => {
+            let account = crate::tools::caldav_account::resolve_at(&home, true)?;
+            confirm_read_grant(*yes, &account)?;
+            crate::tools::caldav_account::grant_at(&home, &account)?;
+            render_read_access(output, "granted", true);
+        }
+        CalendarReadAccessAction::Revoke => {
+            let removed = crate::tools::caldav_account::revoke_at(&home)?;
+            render_read_access(output, "revoked", removed);
+        }
+        CalendarReadAccessAction::Status => {
+            let status = crate::tools::caldav_account::status_at(&home, true);
+            let label = match status {
+                crate::tools::caldav_account::GrantStatus::Granted => "granted",
+                crate::tools::caldav_account::GrantStatus::Missing => "missing",
+                crate::tools::caldav_account::GrantStatus::Invalid => "invalid_or_rotated",
+                crate::tools::caldav_account::GrantStatus::CredentialsUnavailable => "credentials_unavailable",
+            };
+            render_read_access(output, label, status == crate::tools::caldav_account::GrantStatus::Granted);
+        }
+    }
+    Ok(())
+}
+
+fn confirm_read_grant(yes: bool, account: &crate::tools::caldav_account::CaldavAccount) -> Result<()> {
+    if yes {
+        return Ok(());
+    }
+    use std::io::{IsTerminal, Write};
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!(
+            "calendar read-access grant requires an interactive confirmation or --yes in non-TTY use"
+        );
+    }
+    eprintln!(
+        "Grant NEOTH permission to send CalDAV READ requests to {}?\nNo password or grant secret will be stored in readable output.",
+        crate::tools::caldav_account::redacted_egress_description(account)
+    );
+    eprint!("Proceed? [y/N] ");
+    std::io::stderr().flush().ok();
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line).context("read CalDAV grant confirmation")?;
+    anyhow::ensure!(
+        matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes"),
+        "CalDAV read grant aborted"
+    );
+    Ok(())
+}
+
+fn render_read_access(output: OutputFormat, state: &str, changed: bool) {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({"caldav_read_access": state, "changed": changed})
+        ),
+        OutputFormat::Table => println!("CalDAV read access: {state}"),
     }
 }
 

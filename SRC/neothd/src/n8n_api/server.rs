@@ -62,6 +62,7 @@ fn required_scope_for(method: &str, path: &str) -> Option<&'static str> {
         ("POST", "/api/proactive/proposals/pending") => Some(api_tokens::SCOPE_PROPOSALS_READ),
         ("POST", "/api/email/drafts/pending") => Some(api_tokens::SCOPE_DRAFTS_READ),
         ("POST", "/api/permissions/audit") => Some(api_tokens::SCOPE_PERMISSIONS_READ),
+        ("POST", "/api/calendar/agenda") => Some(api_tokens::SCOPE_CALENDAR_READ),
         ("POST", "/api/memory/save") => Some(api_tokens::SCOPE_MEMORY_WRITE),
         ("POST", "/api/provider/call") => Some(api_tokens::SCOPE_PROVIDER_CALL),
         ("POST", "/api/channel/send") => Some(api_tokens::SCOPE_CHANNEL_SEND),
@@ -696,6 +697,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn loopback_calendar_agenda_requires_scope_before_body_and_account_grant() {
+        let home = tempfile::tempdir().unwrap();
+        let (calendar_record, calendar_token) = api_tokens::create_token(
+            "calendar-reader",
+            vec![api_tokens::SCOPE_CALENDAR_READ.to_owned()],
+            None,
+        )
+        .unwrap();
+        let (recall_record, recall_token) = api_tokens::create_token(
+            "recall-reader",
+            vec![api_tokens::SCOPE_RECALL_READ.to_owned()],
+            None,
+        )
+        .unwrap();
+        api_tokens::save_store(home.path(), &[calendar_record, recall_record]).unwrap();
+        std::fs::write(home.path().join("freedom.yaml"), "secrets_backend: file\n").unwrap();
+        std::fs::write(
+            home.path().join("credentials.yaml"),
+            "caldav_url: https://calendar.example.test/collection/\ncaldav_username: operator\ncaldav_password: fixture-password\n",
+        )
+        .unwrap();
+        let (state, writer, wal_join, server, shutdown, port) =
+            start_drift_http_test_server(home.path()).await;
+        let path = "/api/calendar/agenda";
+        let denied = post_test_http(port, path, Some(&recall_token), "{not-json").await;
+        assert_eq!(denied["_http_status"], "403");
+        assert_eq!(denied["error"]["code"], "PermissionDenied");
+        let invalid = post_test_http(port, path, Some(&calendar_token), "{not-json").await;
+        assert_eq!(invalid["_http_status"], "400");
+        let no_grant = post_test_http(
+            port,
+            path,
+            Some(&calendar_token),
+            r#"{"timezone":"Europe/Berlin","day":"2026-09-25"}"#,
+        )
+        .await;
+        assert_eq!(no_grant["_http_status"], "403");
+        assert_eq!(no_grant["error"]["message"], "calendar_read_access_not_granted");
+        assert!(!home.path().join("caldav_read_access.grant").exists());
+        stop_drift_http_test_server(state, writer, wal_join, server, shutdown).await;
+    }
+
+    #[tokio::test]
     async fn loopback_pending_proposals_requires_dedicated_scope() {
         let home = tempfile::tempdir().unwrap();
         let (proposal_record, proposal_token) = api_tokens::create_token(
@@ -997,6 +1041,7 @@ mod tests {
             ("POST", "/api/proactive/proposals/pending"),
             ("POST", "/api/email/drafts/pending"),
             ("POST", "/api/permissions/audit"),
+            ("POST", "/api/calendar/agenda"),
             ("POST", "/api/memory/save"),
             ("POST", "/api/provider/call"),
             ("POST", "/api/channel/send"),

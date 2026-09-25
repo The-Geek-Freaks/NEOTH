@@ -381,6 +381,17 @@ async fn run_google(args: &TodoArgs) -> Result<()> {
 
 async fn run_caldav(args: &TodoArgs) -> Result<()> {
     let creds = caldav_creds()?;
+    let creds = if matches!(args.action, TodoAction::List) {
+        // Listing is the read-egress boundary. Reload and compare the effective
+        // instance credentials immediately before the REPORT so a grant cannot
+        // be reused after a config, keychain, environment, or password rotation.
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        crate::tools::caldav_account::require_at(&home, &creds, true)?
+    } else {
+        // Create/close retain their established ExternalTaskWrite admission;
+        // read consent must not alter the CalDAV write contract.
+        creds
+    };
     run_caldav_with_creds(args, &creds).await
 }
 
@@ -728,58 +739,21 @@ fn render_write(args: &TodoArgs, msg: &str) {
     }
 }
 
-/// CalDAV connection settings. Shared by `neoth todo --provider caldav` and
-/// `neoth calendar` (EM-02b) — both resolve the same operator credentials.
-pub(crate) struct CaldavCreds {
-    pub url: String,
-    pub username: String,
-    pub password: SecretString,
-}
+/// CalDAV connection settings shared with `neoth calendar`. The resolver is
+/// instance-bound and understands the configured keychain backend.
+pub(crate) type CaldavCreds = crate::tools::caldav_account::CaldavAccount;
 
 /// Resolve CalDAV creds: `credentials.yaml::caldav_{url,username,password}`
 /// first, then `NEOTH_CALDAV_{URL,USERNAME,PASSWORD}`. Bails with the exact
 /// missing field + how to set it.
 pub(crate) fn caldav_creds() -> Result<CaldavCreds> {
-    let creds = crate::config::credentials::Credentials::load_or_default(
-        &crate::config::credentials::default_path(),
-    )
-    .context("load credentials.yaml")?;
-    let url = creds
-        .caldav_url
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            std::env::var("NEOTH_CALDAV_URL")
-                .ok()
-                .filter(|s| !s.is_empty())
-        })
-        .ok_or_else(|| missing_caldav("url", "NEOTH_CALDAV_URL"))?;
-    let username = creds
-        .caldav_username
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            std::env::var("NEOTH_CALDAV_USERNAME")
-                .ok()
-                .filter(|s| !s.is_empty())
-        })
-        .ok_or_else(|| missing_caldav("username", "NEOTH_CALDAV_USERNAME"))?;
-    let password = creds
-        .caldav_password
-        .or_else(|| env_secret("NEOTH_CALDAV_PASSWORD"))
-        .ok_or_else(|| missing_caldav("password", "NEOTH_CALDAV_PASSWORD"))?;
-    Ok(CaldavCreds {
-        url,
-        username,
-        password,
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    crate::tools::caldav_account::resolve_at(&home, true).map_err(|error| {
+        error.context(
+            "no effective CalDAV account — add caldav_url, caldav_username, and caldav_password \
+             to this instance's credentials.yaml (or use NEOTH_CALDAV_* for this CLI invocation)",
+        )
     })
-}
-
-fn missing_caldav(field: &str, env: &str) -> anyhow::Error {
-    anyhow::anyhow!(
-        "no CalDAV {field} — add `caldav_{field}` to ~/.neoth/credentials.yaml or set {env}. \
-         The url is your task-calendar collection (e.g. Nextcloud: \
-         https://<host>/remote.php/dav/calendars/<user>/<tasklist>/); username + password are \
-         your CalDAV / app-password Basic-auth credentials."
-    )
 }
 
 /// Resolve the Todoist token: `--token` → `credentials.yaml::todoist_token`

@@ -1,0 +1,22 @@
+{
+  "schema": "neoth-static-review/v1",
+  "batch": "W1146 Paperless product canary",
+  "independentReview": "W1149 approved repaired path boundary, independent image verification and exact identity cleanup",
+  "rootDeltas": "Root added autospec to the Path method fixture, three transitive source hashes and authenticated/negative API controls after repeat install.",
+  "sourceFiles": [
+    {
+      "path": "packaging/paperless_product_canary.py",
+      "sha256": "8A6F4228BCD242BCE2EDFD1B2E8E460598C063A641A032DF548F493475424FA9"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "sha256": "9D0AF2A63E847FA9ED0B8A840855944E70B5F06A360F258F1FE6CBBC12E81AF9"
+    },
+    {
+      "path": ".github/workflows/paperless-product.yml",
+      "sha256": "5CA4C31CC6C5FC526A86C098AD58F5D4436761BB8EEBA542FBECF9A964B5AA68"
+    }
+  ],
+  "hosted": "pending",
+  "localExecutableValidationRan": false
+}

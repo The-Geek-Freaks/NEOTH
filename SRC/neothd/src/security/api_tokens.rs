@@ -67,6 +67,8 @@ use uuid::Uuid;
 
 /// Health probe — always granted to any valid, non-expired, non-revoked token.
 pub const SCOPE_API_HEALTH: &str = "api:health";
+/// Read a CalDAV agenda after separate account-bound egress consent.
+pub const SCOPE_CALENDAR_READ: &str = "calendar:read";
 /// Read pending email-draft reminder metadata.
 pub const SCOPE_DRAFTS_READ: &str = "drafts:read";
 /// Read recall / memory search.
@@ -87,6 +89,7 @@ pub const SCOPE_CHANNEL_SEND: &str = "channel:send";
 /// All scopes an operator may request. Sorted for stable CLI display.
 pub const ALL_SCOPES: &[&str] = &[
     SCOPE_API_HEALTH,
+    SCOPE_CALENDAR_READ,
     SCOPE_CHANNEL_SEND,
     SCOPE_DRAFTS_READ,
     SCOPE_MEMORY_WRITE,

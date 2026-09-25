@@ -3,6 +3,33 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1157 calendar agenda, real Paperless canary and hosted results (2026-09-25):**
+The n8n calendar starter now calls POST /api/calendar/agenda with an explicit
+IANA timezone/day and dedicated calendar:read scope. It stays inactive until
+configured. A separate HMAC-bound CalDAV read grant is available through
+calendar read-access grant/revoke/status. Config reload, snapshot equality and
+grant verification share one synchronous home transaction lock; revoke denies
+later admissions while an already admitted bounded request may finish.
+The REPORT reader has a15-second total deadline,1MiB/200-event limits and strict
+DAV/ICS structure. It projects supported timed/all-day events, day conflicts and
+explicit truncation, redacting IDs/descriptions/attendees. Recurrence, floating
+and TZID events fail explicitly; this is not complete CalDAV feature acceptance.
+W1148 reviewed the source boundary;22 new regressions give Native1825,
+Group1606 and Windows383. Hosted behavior and generated CLI reference follow.
+W1146/W1149 add a reviewed GitHub-only real Paperless product canary: public
+init/prepare/install/status, independent pinned-image checks, authenticated and
+negative API controls before/after repeat install, exact resource cleanup.
+Its initial draft defects were repaired; no product pass is claimed yet.
+Root admitted Windows351 run36087705919 at14315806:351PASS,61 historical inputs,
+API ZIP and every terminal verified. Group1574 run36087704150 has1572PASS/2FAIL,
+0missing,274 bindings and three API ZIPs verified. Both failures misclassified
+an externally included test-only provider file; adding its inner cfg(test)
+marker preserves the unchanged strict production callsite guards/digests.
+The three-file hosted Paperless formatter patch from732cb0d8 was applied only
+after API ZIP, inner checksums and exact Git preimage/postimage verification.
+Core143 workspace Clippy remains running. Claude032 still has no ACK/result.
+No roadmap checkbox closes, and no local compiler/formatter/tests/runtime ran.
+
 **W1151 Paperless retained Compose and W1145 n8n acceptance (2026-09-25):**
 Paperless now invokes Compose through a retained directory with the exact staged
 stdin document and a cleared, explicitly populated environment. Four verified

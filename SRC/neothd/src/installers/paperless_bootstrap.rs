@@ -32,10 +32,8 @@ impl BootstrapAdmin {
     /// literal dotenv file. Shell expansion and duplicate required keys are
     /// rejected instead of being interpreted differently by a shell later.
     pub(crate) fn from_env_bytes(bytes: &[u8]) -> Result<Self, &'static str> {
-        let mut values = parse_dotenv_values(
-            bytes,
-            &["PAPERLESS_ADMIN_USER", "PAPERLESS_ADMIN_PASSWORD"],
-        )?;
+        let mut values =
+            parse_dotenv_values(bytes, &["PAPERLESS_ADMIN_USER", "PAPERLESS_ADMIN_PASSWORD"])?;
         let username = values
             .remove("PAPERLESS_ADMIN_USER")
             .filter(|value| !value.is_empty())

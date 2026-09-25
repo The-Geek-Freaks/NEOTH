@@ -36,10 +36,26 @@ pub(crate) struct PaperlessVolumeSpec {
 }
 
 pub(crate) const PAPERLESS_VOLUMES: [PaperlessVolumeSpec; 4] = [
-    PaperlessVolumeSpec { logical_name: "paperless_data", service: "webserver", destination: "/usr/src/paperless/data" },
-    PaperlessVolumeSpec { logical_name: "paperless_media", service: "webserver", destination: "/usr/src/paperless/media" },
-    PaperlessVolumeSpec { logical_name: "paperless_valkey", service: "broker", destination: "/data" },
-    PaperlessVolumeSpec { logical_name: "paperless_postgres", service: "db", destination: "/var/lib/postgresql" },
+    PaperlessVolumeSpec {
+        logical_name: "paperless_data",
+        service: "webserver",
+        destination: "/usr/src/paperless/data",
+    },
+    PaperlessVolumeSpec {
+        logical_name: "paperless_media",
+        service: "webserver",
+        destination: "/usr/src/paperless/media",
+    },
+    PaperlessVolumeSpec {
+        logical_name: "paperless_valkey",
+        service: "broker",
+        destination: "/data",
+    },
+    PaperlessVolumeSpec {
+        logical_name: "paperless_postgres",
+        service: "db",
+        destination: "/var/lib/postgresql",
+    },
 ];
 
 #[cfg(test)]
@@ -614,7 +630,10 @@ mod tests {
         fs::write(root.join(COMPOSE), legacy).unwrap();
         fs::create_dir_all(retained.parent().unwrap()).unwrap();
         fs::write(&retained, b"legacy-data").unwrap();
-        assert_eq!(inspect_at(&root).status, PaperlessStagingStatus::UnownedOrMismatch);
+        assert_eq!(
+            inspect_at(&root).status,
+            PaperlessStagingStatus::UnownedOrMismatch
+        );
         assert!(matches!(
             prepare_at(&root),
             Err(PaperlessStagingError::UnownedOrMismatch)

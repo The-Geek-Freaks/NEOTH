@@ -431,6 +431,28 @@ jobs:
           installers::paperless_lifecycle::tests::preexisting_unowned_volume_aborts_before_compose_up	neothd/src/installers/paperless_lifecycle.rs
           installers::paperless_lifecycle::tests::post_readiness_volume_mismatch_suppresses_receipt	neothd/src/installers/paperless_lifecycle.rs
           installers::paperless_staging::tests::legacy_host_mount_compose_is_rejected_without_replacing_retained_data	neothd/src/installers/paperless_staging.rs
+          tools::caldav_account::tests::grant_roundtrip_revoke_and_rotation_fail_closed	neothd/src/tools/caldav_account.rs
+          tools::caldav_account::tests::malformed_oversized_and_cross_home_grants_fail_closed	neothd/src/tools/caldav_account.rs
+          tools::caldav_account::tests::missing_effective_credentials_are_not_granted	neothd/src/tools/caldav_account.rs
+          tools::caldav_account::tests::require_at_denies_a_snapshot_after_effective_credentials_change	neothd/src/tools/caldav_account.rs
+          tools::caldav_account::tests::copied_grant_is_rejected_by_an_initialized_second_home	neothd/src/tools/caldav_account.rs
+          tools::caldav_account::tests::revoke_denies_the_next_read_admission	neothd/src/tools/caldav_account.rs
+          tools::caldav_calendar::tests::supported_vevent_accepts_basic_utc_rfc3339_offsets_and_all_day	neothd/src/tools/caldav_calendar.rs
+          tools::caldav_calendar::tests::supported_vevent_rejects_tzid_floating_and_recurrence	neothd/src/tools/caldav_calendar.rs
+          tools::caldav_calendar::tests::bounded_report_uses_real_loopback_tcp_and_rejects_bad_responses	neothd/src/tools/caldav_calendar.rs
+          tools::caldav_calendar::tests::bounded_report_rejects_malformed_oversize_and_unsupported_entries	neothd/src/tools/caldav_calendar.rs
+          tools::caldav_calendar::tests::strict_multistatus_rejects_missing_status_duplicate_data_and_bad_entries	neothd/src/tools/caldav_calendar.rs
+          tools::caldav_calendar::tests::strict_multistatus_rejects_misplaced_entries_and_scalar_markup	neothd/src/tools/caldav_calendar.rs
+          tools::caldav_calendar::tests::supported_vevent_rejects_multiple_duplicate_unterminated_and_empty_summary	neothd/src/tools/caldav_calendar.rs
+          tools::caldav_calendar::tests::supported_vevent_ignores_balanced_valarm_but_rejects_bad_component_shapes	neothd/src/tools/caldav_calendar.rs
+          n8n_api::handlers::calendar_agenda::tests::projects_offsets_and_detects_conflicts_and_redacts_serialized_output	neothd/src/n8n_api/handlers/calendar_agenda.rs
+          n8n_api::handlers::calendar_agenda::tests::back_to_back_events_do_not_conflict_and_offsets_roll_into_local_day	neothd/src/n8n_api/handlers/calendar_agenda.rs
+          n8n_api::handlers::calendar_agenda::tests::projects_all_day_half_open_and_marks_truncation	neothd/src/n8n_api/handlers/calendar_agenda.rs
+          n8n_api::handlers::calendar_agenda::tests::rejects_bad_days_ranges_mixed_values_and_floating_times	neothd/src/n8n_api/handlers/calendar_agenda.rs
+          n8n_api::handlers::calendar_route::tests::missing_grant_and_invalid_request_make_zero_transport_calls	neothd/src/n8n_api/handlers/calendar_route.rs
+          n8n_api::handlers::calendar_route::tests::granted_account_reads_once_and_revocation_denies_next_request	neothd/src/n8n_api/handlers/calendar_route.rs
+          n8n_api::handlers::calendar_route::tests::transport_errors_are_redacted_and_missing_account_is_unavailable	neothd/src/n8n_api/handlers/calendar_route.rs
+          n8n_api::server::tests::loopback_calendar_agenda_requires_scope_before_body_and_account_grant	neothd/src/n8n_api/server.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -447,7 +469,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 361 ]]; then
+          if [[ "$expected" -ne 383 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
@@ -533,7 +555,7 @@ jobs:
             fi
           else
             compile_status=64
-            printf 'selection is not the required 361 readable exact test identities\n' > "$evidence/compile.log"
+            printf 'selection is not the required 383 readable exact test identities\n' > "$evidence/compile.log"
           fi
           total=0
           listed=0

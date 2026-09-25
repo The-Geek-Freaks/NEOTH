@@ -15,6 +15,7 @@
 
 pub mod arxiv;
 pub mod caldav;
+pub mod caldav_account;
 /// EM-02b — CalDAV calendar (VEVENT) read/write. Reuses the `caldav` VTODO
 /// primitives + the shared `email::calendar` model/renderer.
 pub mod caldav_calendar;

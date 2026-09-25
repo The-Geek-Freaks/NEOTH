@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T02:58:11.7132302Z",
-  "validationStatus": "W1151 static reviewed Paperless retained Compose; native and product hosted gates pending",
+  "capturedUtc": "2026-09-25T03:09:22.8702150Z",
+  "validationStatus": "W1157 reviewed calendar read agenda and Paperless canary; hosted gates pending; Windows351 and Group1574 evidence admitted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -87,6 +87,11 @@
       "sha256": "AF91A9EF852BABD2CD41A0B11F18FE1FEF727B3FD23234431D7FED2330C3ACD1"
     },
     {
+      "path": ".github/workflows/paperless-product.yml",
+      "bytes": 3312,
+      "sha256": "5CA4C31CC6C5FC526A86C098AD58F5D4436761BB8EEBA542FBECF9A964B5AA68"
+    },
+    {
       "path": ".github/workflows/paperless-provenance.yml",
       "bytes": 2071,
       "sha256": "B0FBF0FBB9B4918F150387C3D1D4FFA0F187DBCB80C144166D7CE5F559CC718C"
@@ -118,8 +123,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 24645,
-      "sha256": "CAD7B3701D02EA588F53B95D9645B53D15F460BDDB3C6F77F974A3A4386999C7"
+      "bytes": 24689,
+      "sha256": "52D6311126693852DE3AFD5E14AF72071903EA33472C48E484AEC0DB320747ED"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -138,8 +143,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 64586,
-      "sha256": "5ACA4DC9AD21E16BB91EAD6C0DB7D5582483E28913D3FF7554DAA5A7B2FEEAC6"
+      "bytes": 67744,
+      "sha256": "54F5D224EFE5D2927CFA7A85641426A10613E39D5AF7DDAA00B4777DAB0FFBCF"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
@@ -1437,6 +1442,26 @@
       "sha256": "8795092BDACDED18EC47B4392AC9638391660CE03D1C431B56B55F5450E034B8"
     },
     {
+      "path": "docs/verification/gold-wave1152-group143.json",
+      "bytes": 3529,
+      "sha256": "E5FC1C3C51C38EB2490AE9A7FB67E347A7CB09F12903D9E74428EBAC79CD075A"
+    },
+    {
+      "path": "docs/verification/gold-wave1155-windows143.json",
+      "bytes": 1290,
+      "sha256": "B752F1F143DFB2C2FE051E7DD9C63CF058225FAEBB3BA28E203B7633F62F1578"
+    },
+    {
+      "path": "docs/verification/gold-wave1157-calendar-review.json",
+      "bytes": 2429,
+      "sha256": "BEA99F62589DB669853B7A5F9237F3F3A12D54FBE2F4D3B736F21A7903BE2E5E"
+    },
+    {
+      "path": "docs/verification/gold-wave1157-canary-review.json",
+      "bytes": 922,
+      "sha256": "97FF23FA53A0EA9458EE855F72F82F1DF094E76EAE7DF84D0CC643E12E56CC1E"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -2297,6 +2322,11 @@
       "sha256": "F4DAADCF06541F980C713E9D9FB6BEA58AF318FF8FBEA44D616CB3F007F3C3A9"
     },
     {
+      "path": "packaging/paperless_product_canary.py",
+      "bytes": 24082,
+      "sha256": "8A6F4228BCD242BCE2EDFD1B2E8E460598C063A641A032DF548F493475424FA9"
+    },
+    {
       "path": "packaging/rust-license-snapshots.json",
       "bytes": 1322529,
       "sha256": "1CF71B7212A9171CEDDDE963E1A4F26786EF84CE9A0E31AADC275D288B7FFCC8"
@@ -2325,6 +2355,11 @@
       "path": "packaging/tests/test_n8n_product_bootstrap_canary.py",
       "bytes": 17319,
       "sha256": "5E36213C2E3768C90A2B0C1EB56A26F0346449E8514B0654A1C6B1151D9553FB"
+    },
+    {
+      "path": "packaging/tests/test_paperless_product_canary.py",
+      "bytes": 6059,
+      "sha256": "9D0AF2A63E847FA9ED0B8A840855944E70B5F06A360F258F1FE6CBBC12E81AF9"
     },
     {
       "path": "packaging/tests/test_preview_windows_workflow_contract.py",
@@ -2378,18 +2413,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 328294,
-      "sha256": "3C62A08768CC9ECB3EB4CF8661B9A900EBB68328C7521229BF58C1EF95872988"
+      "bytes": 330312,
+      "sha256": "DE4FD71956014DFA51A0E7FCD7C5E69D756DF91384DA34A9AE8D91B779758A95"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1345105,
-      "sha256": "48DFBF6070550ACA27EF599931963EEBDB1DA74B4342EAAC7F0629E048887240"
+      "bytes": 1347123,
+      "sha256": "1C2DAB38D47C33837F3E65496B794025F954799F10B7EC037664072AE27E9493"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1955046,
-      "sha256": "E5091EB0D8163B7066AE9558AA69CDEB922A3CD48B02F6A2109EC86762343E68"
+      "bytes": 1957064,
+      "sha256": "C2AD30225D9FA04CE5AB378D910638974EA2706073FABD00D877AC570EEDB3BA"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -3202,6 +3237,11 @@
       "sha256": "5632859932629A75941926A9E7424003E2E93D569F0C0EE2E9F0E6319E8D9D8E"
     },
     {
+      "path": "SRC/neothd/src/cli/calendar.rs",
+      "bytes": 22792,
+      "sha256": "073EF392ABCFFF542B70020D44EF33F3A5A529782ED0737BA8BAF2B3C2649BCF"
+    },
+    {
       "path": "SRC/neothd/src/cli/capabilities.rs",
       "bytes": 13990,
       "sha256": "3E2B81CEB057AAAA2C56B30869F14FD6EC90553A8558488DA8EB2FDA585F1549"
@@ -3557,6 +3597,11 @@
       "sha256": "16677EF3CEAB425A0F46C0E9D2B493D95E7380D12331C177033D8C8CB845DBD7"
     },
     {
+      "path": "SRC/neothd/src/cli/todo.rs",
+      "bytes": 41696,
+      "sha256": "15C4D3ECA52C36E87B943C613B045ABDA01A17D4927E0F91B5FF5933D320CBAA"
+    },
+    {
       "path": "SRC/neothd/src/cli/updater.rs",
       "bytes": 91022,
       "sha256": "990A08CA46CCADCE0272EFEB0DD382149232B5928F9F165BA87F998BA3A512A9"
@@ -3853,8 +3898,8 @@
     },
     {
       "path": "SRC/neothd/src/config/credentials.rs",
-      "bytes": 401291,
-      "sha256": "B70F8AF2F79C8F62DA6CCE65EE22179B64680B11CDAE0B4F55ACD6912582E332"
+      "bytes": 401575,
+      "sha256": "4A1291B814EAB6F31D2184D242D9772EBD20003E9DC24C28F83A01AA5955A178"
     },
     {
       "path": "SRC/neothd/src/config/doc_ingest.rs",
@@ -4308,8 +4353,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "bytes": 34906,
-      "sha256": "67CC5AE3D859B9B568D6EB5B668EBE2260220A65CCE0499F0AC5E68C3165C891"
+      "bytes": 37861,
+      "sha256": "9B6763A3C0715F0C23AC58AFBF88D696190481BB75B6D980FBB737FE5027146B"
     },
     {
       "path": "SRC/neothd/src/installers/n8n_workflows.rs",
@@ -4333,13 +4378,13 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_bootstrap.rs",
-      "bytes": 27242,
-      "sha256": "FEE6F9FC80A88AF649DB6105DE9091FB7637935FD06AC88399B5C5A796E7E70B"
+      "bytes": 27219,
+      "sha256": "9A1CCE5FB16716D2A5BEE0E89BF26772AAB9E5A08103517F7EC658F1EC2CC427"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "bytes": 71481,
-      "sha256": "28210A24968A5245F77324E5783CCEB6FC3649A5694C400F519684B035CDA15C"
+      "bytes": 72679,
+      "sha256": "BF12DF7AAA3176277B1191665E7E0540FDC520F5CD118BD424E9BF51C2DC3444"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_readiness_tests.rs",
@@ -4353,8 +4398,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_staging.rs",
-      "bytes": 37562,
-      "sha256": "62CD9E4B403824E522CC99F95680B88534CEDF15188F71DFE821615250EC0E40"
+      "bytes": 37712,
+      "sha256": "C3D20411F32FE6612B766133949D2AF2A1F42EC1D7EF73FB9CBEE0F91F61A284"
     },
     {
       "path": "SRC/neothd/src/installers/paperless.rs",
@@ -4683,8 +4728,18 @@
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers.rs",
-      "bytes": 63638,
-      "sha256": "2233C8D098088FF4FD105B0C8B431E9CB005B02D176FAC2925F78AB297773E5C"
+      "bytes": 63767,
+      "sha256": "8489782B5DEFE2DC04FF8027994CD4FAE88C84E87BEEA2CD421D50CBA2CADB34"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers/calendar_agenda.rs",
+      "bytes": 10796,
+      "sha256": "F8A45B4F9FA148D9646FF7ECE7DC6859DA9965D171D39F246E2B05FF0A9353C8"
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers/calendar_route.rs",
+      "bytes": 7981,
+      "sha256": "16B312A4BC1A76FFE0E6C344E37EBB1D3A4282D20AC3368A197AF0EFEED22C6C"
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers/pending_drafts.rs",
@@ -4708,8 +4763,8 @@
     },
     {
       "path": "SRC/neothd/src/n8n_api/server.rs",
-      "bytes": 45456,
-      "sha256": "2D5C3FA37FCD5272CCC0CB20E791BAC08AA7AA44DDBBF68B286CF7F67C7B97FF"
+      "bytes": 47603,
+      "sha256": "078BC8EF6B337FA4C4B0AC703B33125CCA87A0B1E9E7563F178F83EC4EF29885"
     },
     {
       "path": "SRC/neothd/src/os_tools/gate.rs",
@@ -4908,8 +4963,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "bytes": 20790,
-      "sha256": "C805A70AC4EFBD509B502AC6CB38E50F637A1E3A07D48E08AEBB910E3C9785E6"
+      "bytes": 20805,
+      "sha256": "45864F9D2F9A2D6BD9FAC6FA63D898ABDFED28563F19471188E3DA2ED0433BF4"
     },
     {
       "path": "SRC/neothd/src/providers/tmux_session.rs",
@@ -5008,8 +5063,8 @@
     },
     {
       "path": "SRC/neothd/src/security/api_tokens.rs",
-      "bytes": 26731,
-      "sha256": "A7D08104B33646483241FD2FF7301817E12BD03E9C2E9767E4C01C74DDBAB1D5"
+      "bytes": 26881,
+      "sha256": "47A80A8C93484C1275A5D8E7ED715EB91D39A2B5170EFCA7F6D67D37CADF14C2"
     },
     {
       "path": "SRC/neothd/src/security/mirror_refusal_pipeline.rs",
@@ -5162,6 +5217,21 @@
       "sha256": "294A7462292066F05C5CDD85BFAE4E8CC6E5F3DD99388D25A7E369A5D3C10D71"
     },
     {
+      "path": "SRC/neothd/src/tools/caldav_account.rs",
+      "bytes": 15365,
+      "sha256": "5A60CC651FBC86904DCD31C918323A6182645A9A3CAE064F9E9ABCB00556EB9C"
+    },
+    {
+      "path": "SRC/neothd/src/tools/caldav_calendar.rs",
+      "bytes": 36491,
+      "sha256": "AA586674CA3D827489B55F90F955528628D2E6274E2DE9F0D92FCB5DF83267CB"
+    },
+    {
+      "path": "SRC/neothd/src/tools/caldav.rs",
+      "bytes": 32578,
+      "sha256": "062C647CC14AA52D8B34C2EC1CD57AE063DFEE68FA947D2C22EC8373876D9422"
+    },
+    {
       "path": "SRC/neothd/src/tools/citation_consent.rs",
       "bytes": 39584,
       "sha256": "255F455918CB9FF71F7FB2E65C989F9F1680B52E589078C243A0F88A761058A5"
@@ -5198,8 +5268,8 @@
     },
     {
       "path": "SRC/neothd/src/tools/mod.rs",
-      "bytes": 3500,
-      "sha256": "23DEF042DB9A06464043F88A5D4577B319544552FA3482EB04705BB1416FDB0E"
+      "bytes": 3524,
+      "sha256": "8FC0114D87D966D1E702A1A1F30DEF47714734A1C0FACD3D974F62674AFF976C"
     },
     {
       "path": "SRC/neothd/src/tools/web_doc_cache.rs",

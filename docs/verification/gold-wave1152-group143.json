@@ -1,0 +1,73 @@
+{
+  "schema": "neoth-wave1152-group143/v1",
+  "source": "143158066e454fc566ba65316ffac65575a7ecca",
+  "run": {
+    "id": 36087704150,
+    "status": "completed",
+    "conclusion": "failure",
+    "workflow": "Research and loop lifecycle quality",
+    "job": {
+      "id": 107923157106,
+      "name": "Research and loop lifecycle quality",
+      "conclusion": "failure",
+      "rawLog": "job-107923157106-logs.zip",
+      "rawLogSha256": "43dfc8ad98ecde3a650a685847a02e4010cb8a2a1c05fdf4d71ff0b1fbea9222"
+    }
+  },
+  "artifactZips": [
+    {
+      "id": 10845051135,
+      "name": "w190-research-lifecycle-log-143158066e454fc566ba65316ffac65575a7ecca",
+      "apiDigest": "sha256:17b74bb301fcd40aa71a522727c8b419039b1cac368b62382250809f9536bdae",
+      "localZip": "group-log.zip",
+      "localSha256": "17b74bb301fcd40aa71a522727c8b419039b1cac368b62382250809f9536bdae",
+      "matches": true
+    },
+    {
+      "id": 10844991250,
+      "name": "w190-research-lifecycle-receipt-143158066e454fc566ba65316ffac65575a7ecca",
+      "apiDigest": "sha256:6ff6e3eac9523de0a224c753e701815fc5d7e393e96a493e423e2a2e5565028f",
+      "localZip": "group-receipt.zip",
+      "localSha256": "6ff6e3eac9523de0a224c753e701815fc5d7e393e96a493e423e2a2e5565028f",
+      "matches": true
+    },
+    {
+      "id": 10844891634,
+      "name": "w190-research-lifecycle-source-143158066e454fc566ba65316ffac65575a7ecca",
+      "apiDigest": "sha256:e052794c801fd7ac0eb610ff412033f6bcf8418d4db0c775e8f9768574201c77",
+      "localZip": "group-source.zip",
+      "localSha256": "e052794c801fd7ac0eb610ff412033f6bcf8418d4db0c775e8f9768574201c77",
+      "matches": true
+    }
+  ],
+  "executed": 1574,
+  "passed": 1572,
+  "failed": 2,
+  "missingTerminal": 0,
+  "sourceBindingCount": 274,
+  "sourceBindingsVerified": true,
+  "groupLogSha256": "fbdc1a43b18dca2e988475772c335751c5878758c5ac1aaa6ef18a603ed8954a",
+  "failedTerminals": [
+    {
+      "test": "providers::cost_authorization::tests::production_raw_complete_stream_surface_is_reviewed",
+      "failure": [
+        "thread 'providers::cost_authorization::tests::production_raw_complete_stream_surface_is_reviewed' (4891) panicked at neothd/src/providers/cost_authorization.rs:9131:9:",
+        "assertion `left == right` failed: raw complete/stream callsite digest changed: classify and centrally wire the concrete receiver/arguments before deliberately updating this reviewed signature"
+      ],
+      "segment": "group-failure-providers__cost_authorization__tests__production_raw_complete_stream_surface_is_reviewed.log",
+      "segmentSha256": "4b7cbaf74cd03dc4ac630a5be57163f9d8d7835d84301bacd81920f25e918a25"
+    },
+    {
+      "test": "providers::cost_authorization::tests::production_transports_cannot_override_the_safe_dispatch_entry",
+      "failure": [
+        "thread 'providers::cost_authorization::tests::production_transports_cannot_override_the_safe_dispatch_entry' (8307) panicked at neothd/src/providers/cost_authorization.rs:8601:9:",
+        "assertion `left == right` failed: only the two authorization decorators and the trait's fail-closed defaults may expose Provider::complete/complete_pinned/stream in production"
+      ],
+      "segment": "group-failure-providers__cost_authorization__tests__production_transports_cannot_override_the_safe_dispatch_entry.log",
+      "segmentSha256": "bf781ae323618d4218ba21c2cc59a0d24945f9bc805a6a7b5af5eaefdb417e88"
+    }
+  ],
+  "admissionEvidence": "SOURCE_ADMITTED_PARTIAL_FAILURE",
+  "localExecutableValidationRan": false,
+  "rootVerified": true
+}

@@ -285,7 +285,12 @@ fn with_legacy_pair_locks<T>(
 /// still-running pre-journal NEOTH during rolling upgrades. The legacy writer
 /// holds these four locks across both renames, so all four must be acquired
 /// before the reader touches either file.
-pub(super) fn with_coherent_pair_transaction_lock<T>(
+///
+/// This is a synchronous scope only: callers must finish their local
+/// configuration admission before returning and must never hold it across an
+/// async wait or external effect. Same-instance nested coherent reads are
+/// explicitly supported by the active-pair guard below.
+pub(crate) fn with_coherent_pair_transaction_lock<T>(
     freedom_path: &Path,
     action: impl FnOnce() -> Result<T>,
 ) -> Result<T> {
