@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "wave": "W1477",
+  "decision": "ADMIT",
+  "admitted_scope": "Positive GitHub CLI default-Sigstore-public-good verification of canonical GHCR n8n provenance subject only",
+  "run": {
+    "repository": "The-Geek-Freaks/NEOTH",
+    "id": 36159049617,
+    "workflow": "W1465 n8n upstream provenance verification",
+    "event": "workflow_dispatch",
+    "conclusion": "success",
+    "head_sha": "b692356bdbfa535dc88a62f617100705bf6c43bf",
+    "started_at": "2026-09-25T16:10:27Z",
+    "updated_at": "2026-09-25T16:10:52Z",
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36159049617"
+  },
+  "artifact": {
+    "id": 10874683311,
+    "name": "n8n-upstream-provenance-receipt-36159049617",
+    "api_digest": "sha256:d6f26be19f1bb93dd3792cce49fbfc8f721c797adc05349a91970e35760718d1",
+    "downloaded_zip_sha256": "d6f26be19f1bb93dd3792cce49fbfc8f721c797adc05349a91970e35760718d1",
+    "zip_digest_matches_api": true,
+    "manifest_member_count": 14,
+    "all_manifest_members_valid": true,
+    "receipt_finalization_exit": 0
+  },
+  "producer_binding": {
+    "checkout_head_matches_run_head": true,
+    "source_path": "SRC/neothd/src/installers/n8n.rs",
+    "source_sha256": "2ddddced6e4c1cb8be49742e039b9aa67b6dad464723d5c728b06bc05e0eefca",
+    "source_hash_matches_receipt": true,
+    "source_bindings_match": true,
+    "workflow_path": ".github/workflows/n8n-upstream-provenance.yml",
+    "workflow_sha256": "ceabb764168965cf5df026b80d36189cf7dfc6894886158aafe3b29137e7616d",
+    "workflow_hash_matches_receipt": true
+  },
+  "positive_verification": {
+    "gh_version": "2.101.0",
+    "primary_exit": 0,
+    "trust_policy": "GitHub CLI default Sigstore public-good verification",
+    "canonical_subject": "oci://ghcr.io/n8n-io/n8n@sha256:9f693fd5565539efd5e75ad168526c8041a6af516d9e50bc4d9cb1c9c5031523",
+    "predicate_type": "https://slsa.dev/provenance/v1",
+    "signer_workflow": "https://github.com/n8n-io/n8n/.github/workflows/docker-build-push.yml@refs/heads/release/2.40.5",
+    "source_ref": "refs/heads/release/2.40.5",
+    "source_digest": "a331d3858797b161e4acba288396be3835425d8e",
+    "runner_environment": "github-hosted",
+    "rekor_verified_timestamp": "2026-09-21T13:56:29Z"
+  },
+  "wrong_signer_control": {
+    "supplied_signer_workflow": "n8n-io/n8n/.github/workflows/release-publish.yml",
+    "exit": 1,
+    "stderr": "Error: verifying with issuer \"sigstore.dev\"",
+    "recorded_assessment": "nonzero_without_documented_identity_signal",
+    "semantic_signer_identity_rejection_proven": false,
+    "classification": "inconclusive_issuer_verification_error"
+  },
+  "excluded_claims": [
+    "Docker Hub and GHCR digest equivalence",
+    "Docker pull or runtime identity",
+    "semantic wrong-signer rejection",
+    "n8n product or release admission"
+  ],
+  "localExecutableValidationRan": false
+}

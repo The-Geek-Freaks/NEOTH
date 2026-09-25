@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T16:08:05Z",
-  "validationStatus": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "capturedUtc": "2026-09-25T16:14:39Z",
+  "validationStatus": "SOURCE_ADMISSIONS_BACKUP_WIP",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2062,9 +2062,24 @@
       "sha256": "8DC1C1E1165869915F019458A28D90270FB1BF5B2BB1FD6308D3D057E964F30E"
     },
     {
+      "path": "docs/verification/gold-wave1471-group1857-accepted.json",
+      "bytes": 2598,
+      "sha256": "CE57D7664BA67B3AAED6AE3EEB1A43AA15C791690A9BF2DFC6F56C457B2F61A2"
+    },
+    {
+      "path": "docs/verification/gold-wave1475-windows622-accepted.json",
+      "bytes": 1410,
+      "sha256": "D60EE2E96BCB1AB58DAA2E1440C524DF1C895C1029259B1F50C6B8168FDB1D2D"
+    },
+    {
       "path": "docs/verification/gold-wave1476-provenance-and-clippy.json",
       "bytes": 1223,
       "sha256": "FA4469166E2E5C11988829E1FC15B5FFB859991D591A630BB9394C8C76C9A411"
+    },
+    {
+      "path": "docs/verification/gold-wave1477-n8n-provenance-accepted.json",
+      "bytes": 2856,
+      "sha256": "2D803169088872EE7E91EDF8988F397A27E752943005F8C80DD50BD151C109BB"
     },
     {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
@@ -3023,18 +3038,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 404495,
-      "sha256": "2D00449A6851C0C0FF6CC820B2E8973A53E7CF3CB0AB8230591EFD21B6997322"
+      "bytes": 405733,
+      "sha256": "B02F84BFB80171D6EBF2D13D0D3A192EF12A1918586286A957E28A40D11C94F7"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1423426,
-      "sha256": "239723F663B350A7D03CF5720B174E222460C4F9C9B42983514A8FD0A446B42B"
+      "bytes": 1424664,
+      "sha256": "82C2B93D08D2F7992136641D147FA01B12980A29355E2B200F6C7AA20E21853D"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2033949,
-      "sha256": "EB16D055D73C7685DF7F58FE22374367105F4240D2F1E0FE976D85E6D12B448F"
+      "bytes": 2035187,
+      "sha256": "3708911E3D343412B7201107F9CF511CC7CAAD58DB34D0A391889FB3D7BC1A23"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

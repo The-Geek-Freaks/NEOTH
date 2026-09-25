@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "status": "SOURCE_ADMISSIONS_BACKUP_WIP",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 227411,
-    "sha256": "7418B69748C4ECEECADFA48C9BD321C96321C08581242F150E74CE7C580743FB"
+    "bytes": 227985,
+    "sha256": "584727914A3ACA5C9564E19E8C131D000308E7BBBF8862CB27E75CD3FBC9A6B8"
   },
-  "sourceInputs": 1274,
+  "sourceInputs": 1277,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -47648,6 +47648,50 @@
     ],
     "note": "Reviewed official upstream n8n attestation workflow with full failure receipts and explicit negative-control admission boundary; two exact channel Clippy diagnostics corrected. Backup WIP excluded.",
     "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1479NativeAndProvenanceAcceptance": {
+    "base": "b692356bdbfa535dc88a62f617100705bf6c43bf",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1471-group1857-accepted.json",
+        "bytes": 2598,
+        "sha256": "CE57D7664BA67B3AAED6AE3EEB1A43AA15C791690A9BF2DFC6F56C457B2F61A2",
+        "blob": "15829112aaa8a1fd9edf705801946c8025bb7694"
+      },
+      {
+        "path": "docs/verification/gold-wave1475-windows622-accepted.json",
+        "bytes": 1410,
+        "sha256": "D60EE2E96BCB1AB58DAA2E1440C524DF1C895C1029259B1F50C6B8168FDB1D2D",
+        "blob": "d85299eeaf2f425d5927b9e51e7f73c3633050f4"
+      },
+      {
+        "path": "docs/verification/gold-wave1477-n8n-provenance-accepted.json",
+        "bytes": 2856,
+        "sha256": "2D803169088872EE7E91EDF8988F397A27E752943005F8C80DD50BD151C109BB",
+        "blob": "147dcc61b6959424d2e58e4333006f5ae037d250"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 405733,
+        "sha256": "B02F84BFB80171D6EBF2D13D0D3A192EF12A1918586286A957E28A40D11C94F7",
+        "blob": "cc6404e9350f41f5c025e2bdf980560390a806bd"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1424664,
+        "sha256": "82C2B93D08D2F7992136641D147FA01B12980A29355E2B200F6C7AA20E21853D",
+        "blob": "b89862a11e7147dd30dd53635b06159b0348c72b"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2035187,
+        "sha256": "3708911E3D343412B7201107F9CF511CC7CAAD58DB34D0A391889FB3D7BC1A23",
+        "blob": "b30e4bbe1379881a33b4c9d995b6d6ebc902c806"
+      }
+    ],
+    "note": "Group1857 and Windows622@32df8d26 source-admitted; positive canonical n8n GHCR upstream provenance@b692356b admitted; wrong-signer inconclusive. Backup code excluded.",
+    "hosted": "EXACT_SOURCE_RUNS_ADMITTED_BACKUP_EXCLUDED",
     "localExecutableValidationRan": false
   }
 }

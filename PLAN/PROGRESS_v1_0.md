@@ -2,6 +2,23 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1471/W1475/W1477 native and upstream-source acceptance (2026-09-25):**
+At32df8d26, Group36155698163 passed all1857 selected/discovered/executed fixtures
+with298 unique source and10 input Git bindings; Windows36155701973 passed all622
+with0missing/0failed,93 source bindings and complete ordered result/log hashes.
+Original ZIP/API digests are verified. This admits the n8n BindingCommit restart
+and custody-negatives plus the native channel corrections at that producer.
+The subsequent channel Clippy-only source change still needs its hosted gate.
+Provenance36159049617 atb692356b passed official gh2.101.0 positive verification:
+canonical GHCR subject, exact n8n signer/ref/source commit and public-good trust
+with Rekor timestamp;14 manifest members and producer source/workflow match.
+Wrong-signer exit1 says only issuer verification error, so semantic rejection
+remains unproven. Docker Hub mirror/runtime trust is not adopted by this result.
+Backup WIP remains outside these admissions. P1-14/P2-20/release stay open;
+ROAD stays1077done/245open/2partial. No local executable validation ran.
+Evidence: gold-wave1471-group1857-accepted.json, gold-wave1475-windows622-accepted.json,
+and gold-wave1477-n8n-provenance-accepted.json.
+
 **W1465/W1466/W1474 upstream verifier and targeted Clippy repair (2026-09-25):**
 The on-demand n8n provenance workflow now uses official gh attestation verify
 with default public-good trust, canonical GHCR digest, exact repo/signer/ref/

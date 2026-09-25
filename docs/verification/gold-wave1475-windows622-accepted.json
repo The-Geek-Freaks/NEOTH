@@ -1,0 +1,45 @@
+{
+  "schema": "neoth-windows-storage-admission/v1",
+  "run": 36155701973,
+  "workflow": "Windows storage regressions",
+  "workflowDispatch": true,
+  "runStatus": "completed",
+  "runConclusion": "success",
+  "sourceHead": "32df8d26b55b8c9827d858acd534e50e4cf5e3d2",
+  "sourceHeadReceipt": "32df8d26b55b8c9827d858acd534e50e4cf5e3d2",
+  "sourceHeadMatchesRun": true,
+  "artifact": {
+    "id": 10875075331,
+    "name": "windows-storage-regressions-32df8d26b55b8c9827d858acd534e50e4cf5e3d2",
+    "sizeBytes": 312447,
+    "apiDigest": "9287afae31fca79e967804b063361ad56e3a4f5b928dbdba1942b4ce4121b792",
+    "downloadedZipDigest": "9287afae31fca79e967804b063361ad56e3a4f5b928dbdba1942b4ce4121b792",
+    "zipMatchesApiDigest": true,
+    "expired": false
+  },
+  "finalCounts": {
+    "expected": 622,
+    "selectionValid": 1,
+    "compileStatus": 0,
+    "total": 622,
+    "listed": 622,
+    "passed": 622,
+    "failed": 0,
+    "missing": 0
+  },
+  "artifactAccounting": {
+    "evidenceManifestRows": 10,
+    "evidenceManifestHashesOk": true,
+    "logManifestRows": 623,
+    "logManifestHashesOk": true,
+    "selectionRows": 622,
+    "resultRows": 622,
+    "sourceBindingRows": 622,
+    "uniqueSourceBindings": 93,
+    "orderedIdentityAndOrdinalJoinOk": true,
+    "allResultRowsPassed": true,
+    "sourceBlobHashesAtSourceHeadOk": true
+  },
+  "admission": "SOURCE_ADMITTED_PASS",
+  "localExecutableValidationRan": false
+}

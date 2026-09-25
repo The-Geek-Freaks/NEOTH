@@ -1,0 +1,72 @@
+{
+  "schema": "neoth-group1857-artifact-admission/v1",
+  "decision": "admitted",
+  "scope": "native hosted Group1857 research and Skill lifecycle fixture cohort only",
+  "limitations": [
+    "Not a product-canary result.",
+    "Not a release, cross-platform, deployment, or broad NEOTH-completion conclusion.",
+    "No local compiler, Rust test, formatter, XML parser, runtime, Docker, or parser execution was performed."
+  ],
+  "run": {
+    "repository": "The-Geek-Freaks/NEOTH",
+    "id": 36155698163,
+    "jobId": 108139583018,
+    "jobName": "Research and loop lifecycle quality",
+    "headSha": "32df8d26b55b8c9827d858acd534e50e4cf5e3d2",
+    "headBranch": "main",
+    "sourceRef": "refs/heads/main",
+    "finalStatus": "completed",
+    "finalConclusion": "success"
+  },
+  "artifacts": [
+    {
+      "role": "grouped-cargo-log",
+      "id": 10873833855,
+      "githubDigestSha256": "4ab3bb1d37ad9b7da2aada4cd47662669b399398c4c3c9def0100493d43f71c3",
+      "localZipSha256": "4ab3bb1d37ad9b7da2aada4cd47662669b399398c4c3c9def0100493d43f71c3",
+      "digestMatch": true
+    },
+    {
+      "role": "grouped-lifecycle-receipt",
+      "id": 10873814088,
+      "githubDigestSha256": "60375f5e626d3c5bf994bb6b527301f161f7d1c286ee41163c7c4a86cb944ef3",
+      "localZipSha256": "60375f5e626d3c5bf994bb6b527301f161f7d1c286ee41163c7c4a86cb944ef3",
+      "digestMatch": true
+    },
+    {
+      "role": "grouped-source-identities",
+      "id": 10873604299,
+      "githubDigestSha256": "29ea9618513044b5abb00b5a6d73bf0e67eeb0c4d90371df39382b11304aa079",
+      "localZipSha256": "29ea9618513044b5abb00b5a6d73bf0e67eeb0c4d90371df39382b11304aa079",
+      "digestMatch": true
+    }
+  ],
+  "cohort": {
+    "discoveredFixtures": 1857,
+    "selectedFixtures": 1857,
+    "executedFixtures": 1857,
+    "failedFixtures": 0,
+    "duplicateFixtureIdentities": 0,
+    "duplicateFixtureNames": 0,
+    "selectionEqualsDiscovery": true,
+    "uniqueFixtureSourcePaths": 298,
+    "uniqueFixtureSourcePathHashPairs": 298,
+    "fixtureSourceGitBlobHashesChecked": 298,
+    "fixtureSourceGitBlobHashMismatches": 0,
+    "declaredInputGitBlobHashesChecked": 10,
+    "declaredInputGitBlobHashMismatches": 0
+  },
+  "logEvidence": {
+    "runHeaders": 1857,
+    "runningOneTestEntries": 1857,
+    "onePassedZeroFailedSummaries": 1857,
+    "failedTestLines": 0,
+    "failureSections": 0,
+    "failedSummaries": 0,
+    "panicLines": 0,
+    "compileStderrBytes": 973,
+    "compileStderrSha256": "c7235617e7d700d1250dad924d2cf3a6b3cb491f3214a1838098325e58a05c67",
+    "compileErrorLines": 0
+  },
+  "localExecutableValidationRan": false
+}
