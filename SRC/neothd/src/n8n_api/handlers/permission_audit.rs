@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{parse_body, ApiErrorCode, ApiRequestCtx, ApiState, HandlerOutcome};
+use super::{ApiErrorCode, ApiRequestCtx, ApiState, HandlerOutcome, parse_body};
 use crate::permissions::trust_ledger::{TrustLedger, TrustLedgerCompleteness};
 
 const DEFAULT_LIMIT: usize = 50;
@@ -179,14 +179,30 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let wal = home.path().join("wal");
         std::fs::create_dir_all(&wal).unwrap();
-        let (writer, join) = crate::wal::writer::spawn_for_home(
-            wal.join("000001.wal"),
-            home.path().to_path_buf(),
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(wal.join("000001.wal"), home.path().to_path_buf())
+                .unwrap();
+        append_trust(
+            &writer,
+            "subject-a",
+            crate::permissions::Decision::Allow,
+            10,
         )
-        .unwrap();
-        append_trust(&writer, "subject-a", crate::permissions::Decision::Allow, 10).await;
-        append_trust(&writer, "subject-a", crate::permissions::Decision::Allow, 20).await;
-        append_trust(&writer, "subject-b", crate::permissions::Decision::Allow, 30).await;
+        .await;
+        append_trust(
+            &writer,
+            "subject-a",
+            crate::permissions::Decision::Allow,
+            20,
+        )
+        .await;
+        append_trust(
+            &writer,
+            "subject-b",
+            crate::permissions::Decision::Allow,
+            30,
+        )
+        .await;
         drop(writer);
         join.await.unwrap();
 
@@ -221,20 +237,15 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let wal = home.path().join("wal");
         std::fs::create_dir_all(&wal).unwrap();
-        let (writer, join) = crate::wal::writer::spawn_for_home(
-            wal.join("000001.wal"),
-            home.path().to_path_buf(),
-        )
-        .unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(wal.join("000001.wal"), home.path().to_path_buf())
+                .unwrap();
         let payload = b"not-json".to_vec();
         writer
             .append_authenticated(
-                crate::wal::HeaderBuilder::new(
-                    crate::wal::events::EVENT_TYPE_EXTENDED,
-                    &payload,
-                )
-                .event_subtype(crate::wal::events::ExtendedSubtype::TrustDecision as u8)
-                .build(),
+                crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+                    .event_subtype(crate::wal::events::ExtendedSubtype::TrustDecision as u8)
+                    .build(),
                 payload,
             )
             .await
@@ -259,11 +270,8 @@ mod tests {
         let wal = home.path().join("wal");
         std::fs::create_dir_all(&wal).unwrap();
         let segment = wal.join("000001.wal");
-        let (writer, join) = crate::wal::writer::spawn_for_home(
-            segment.clone(),
-            home.path().to_path_buf(),
-        )
-        .unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         append_trust(&writer, "local", crate::permissions::Decision::Allow, 10).await;
         drop(writer);
         join.await.unwrap();
@@ -291,11 +299,9 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let wal = home.path().join("wal");
         std::fs::create_dir_all(&wal).unwrap();
-        let (writer, join) = crate::wal::writer::spawn_for_home(
-            wal.join("000001.wal"),
-            home.path().to_path_buf(),
-        )
-        .unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(wal.join("000001.wal"), home.path().to_path_buf())
+                .unwrap();
         append_trust(&writer, "local", crate::permissions::Decision::Allow, 10).await;
         let tail = b"ordinary tail".to_vec();
         writer

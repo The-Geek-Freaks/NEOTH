@@ -730,11 +730,17 @@ mod tests {
     async fn loopback_permission_audit_requires_scope_and_replays_authenticated_subject() {
         let home = tempfile::tempdir().unwrap();
         let (permission_record, permission_token) = api_tokens::create_token(
-            "permission-reader", vec![api_tokens::SCOPE_PERMISSIONS_READ.to_owned()], None,
-        ).unwrap();
+            "permission-reader",
+            vec![api_tokens::SCOPE_PERMISSIONS_READ.to_owned()],
+            None,
+        )
+        .unwrap();
         let (wrong_record, wrong_token) = api_tokens::create_token(
-            "recall-reader", vec![api_tokens::SCOPE_RECALL_READ.to_owned()], None,
-        ).unwrap();
+            "recall-reader",
+            vec![api_tokens::SCOPE_RECALL_READ.to_owned()],
+            None,
+        )
+        .unwrap();
         api_tokens::save_store(home.path(), &[permission_record, wrong_record]).unwrap();
 
         // The endpoint replays `<home>/wal/*`, unlike this test module's
@@ -743,16 +749,20 @@ mod tests {
         // same provenance path as production.
         let wal = home.path().join("wal");
         std::fs::create_dir_all(&wal).unwrap();
-        let (trust_writer, trust_join) = crate::wal::writer::spawn_for_home(
-            wal.join("000001.wal"),
-            home.path().to_path_buf(),
-        ).unwrap();
+        let (trust_writer, trust_join) =
+            crate::wal::writer::spawn_for_home(wal.join("000001.wal"), home.path().to_path_buf())
+                .unwrap();
         let event = crate::permissions::trust_ledger::TrustEvent::from_gate(
             &crate::permissions::Action::Read,
             crate::permissions::AutonomyLevel::Standard,
             &crate::permissions::Decision::Allow,
-            Some("local"), None, None, None, 10,
-        ).unwrap();
+            Some("local"),
+            None,
+            None,
+            None,
+            10,
+        )
+        .unwrap();
         crate::permissions::trust_ledger::append_to_writer(&trust_writer, &event)
             .await
             .unwrap();
@@ -764,7 +774,13 @@ mod tests {
         let path = "/api/permissions/audit";
         let denied = post_test_http(port, path, Some(&wrong_token), "{not-json").await;
         assert_eq!(denied["_http_status"], "403");
-        let allowed = post_test_http(port, path, Some(&permission_token), r#"{"subject":"local","limit":1,"from_ns":10}"#).await;
+        let allowed = post_test_http(
+            port,
+            path,
+            Some(&permission_token),
+            r#"{"subject":"local","limit":1,"from_ns":10}"#,
+        )
+        .await;
         assert_eq!(allowed["_http_status"], "200");
         assert_eq!(allowed["data"]["coverage"], "typed_trust_decisions_only");
         assert_eq!(allowed["data"]["subject"], "local");

@@ -93,7 +93,10 @@ async fn local_loopback_probe_status_categories_are_redacted_and_stage_specific(
         ),
     ] {
         let endpoint = scripted_loopback(vec![response]).await;
-        assert_eq!(HttpN8nApiProbe.negative_control(&endpoint).await, Err(expected));
+        assert_eq!(
+            HttpN8nApiProbe.negative_control(&endpoint).await,
+            Err(expected)
+        );
     }
     for (response, expected) in [
         (

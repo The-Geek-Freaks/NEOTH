@@ -3,6 +3,14 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1099 exact hosted formatting (2026-09-25):**
+Root verified the cdb Preflight36081624026 formatter artifact10842286692:
+API ZIP digest, both inner hashes, source head, three preimage blobs and all
+three resulting postimage blobs. Only the supplied n8n test, permission-audit
+handler and server formatting was applied. No local formatter ran. The bac
+core test type-check and slim Clippy now passed; broader/runtime gates remain
+open. New Group1554/Windows331 gates follow this exact formatted source.
+
 **W1095 bounded typed audit and actionable runtime diagnosis (2026-09-25):**
 The new authenticated POST /api/permissions/audit requires permissions:read
 before body access and reads actual authenticated home-WAL TrustDecision
