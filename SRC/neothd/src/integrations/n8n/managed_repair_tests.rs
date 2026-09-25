@@ -556,18 +556,41 @@ async fn binding_commit_restart_proof_rejects_independent_custody_identity_tampe
     let (old_binding, source) = source_ready(&service, home.path()).unwrap();
     let repair = enqueue_repair(&service, &old_binding, &source, 1).unwrap();
     let mut custody = RepairCustody {
-        schema_version: 1, phase: RepairPhase::BindingCommitDispatched,
-        repair_job_id: repair.job_id.as_str().into(), repair_manifest_sha256: repair.manifest_sha256.as_str().into(), generation: 1,
-        source_install_job_id: source.job_id.as_str().into(), source_install_manifest_sha256: source.manifest_sha256.as_str().into(),
-        action: Some("recreated".into()), old_container_id: old_binding.container_id.clone().unwrap(), new_container_id: Some("d".repeat(64)),
-        old_binding: old_binding.clone(), new_binding: None,
-        old_binding_bytes: super::super::read_binding_bytes(home.path()).unwrap().unwrap(), new_binding_bytes: None,
+        schema_version: 1,
+        phase: RepairPhase::BindingCommitDispatched,
+        repair_job_id: repair.job_id.as_str().into(),
+        repair_manifest_sha256: repair.manifest_sha256.as_str().into(),
+        generation: 1,
+        source_install_job_id: source.job_id.as_str().into(),
+        source_install_manifest_sha256: source.manifest_sha256.as_str().into(),
+        action: Some("recreated".into()),
+        old_container_id: old_binding.container_id.clone().unwrap(),
+        new_container_id: Some("d".repeat(64)),
+        old_binding: old_binding.clone(),
+        new_binding: None,
+        old_binding_bytes: super::super::read_binding_bytes(home.path())
+            .unwrap()
+            .unwrap(),
+        new_binding_bytes: None,
     };
     let next = expected_recreated_binding(&custody, "d".repeat(64));
     custody.new_binding = Some(next.clone());
     custody.new_binding_bytes = Some(serde_json::to_vec(&next).unwrap());
-    assert!(restart_binding_commit_proven(home.path(), &custody, &repair));
-    for name in ["action", "generation", "new_id", "phase", "source", "raw_old", "raw_new", "bound_old"] {
+    assert!(restart_binding_commit_proven(
+        home.path(),
+        &custody,
+        &repair
+    ));
+    for name in [
+        "action",
+        "generation",
+        "new_id",
+        "phase",
+        "source",
+        "raw_old",
+        "raw_new",
+        "bound_old",
+    ] {
         let mut altered = custody.clone();
         match name {
             "action" => altered.action = Some("healthy".into()),
@@ -575,8 +598,13 @@ async fn binding_commit_restart_proof_rejects_independent_custody_identity_tampe
             "new_id" => altered.new_container_id = Some("bad".into()),
             "phase" => altered.phase = RepairPhase::StartDispatched,
             "source" => altered.source_install_manifest_sha256 = "0".repeat(64),
-            "raw_old" => altered.old_binding_bytes = serde_json::to_vec(altered.new_binding.as_ref().unwrap()).unwrap(),
-            "raw_new" => altered.new_binding_bytes = Some(serde_json::to_vec(&altered.old_binding).unwrap()),
+            "raw_old" => {
+                altered.old_binding_bytes =
+                    serde_json::to_vec(altered.new_binding.as_ref().unwrap()).unwrap()
+            }
+            "raw_new" => {
+                altered.new_binding_bytes = Some(serde_json::to_vec(&altered.old_binding).unwrap())
+            }
             "bound_old" => {
                 altered.old_binding.phase = RuntimePhase::Bound;
                 altered.old_binding_bytes = serde_json::to_vec(&altered.old_binding).unwrap();
@@ -608,8 +636,19 @@ async fn binding_commit_restart_proof_rejects_independent_custody_identity_tampe
         "expected the restart custody hold, got {error:#}",
     );
     let persisted = super::super::IntegrationJobService::read_only_snapshot(home.path()).unwrap();
-    assert!(persisted.iter().any(|job| job.job_id == repair.job_id && job.state.is_active()));
-    assert!(!state.lock().unwrap().calls.iter().any(|call| call == "create" || call.starts_with("start:")));
+    assert!(
+        persisted
+            .iter()
+            .any(|job| job.job_id == repair.job_id && job.state.is_active())
+    );
+    assert!(
+        !state
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .any(|call| call == "create" || call.starts_with("start:"))
+    );
     assert_eq!(runtime.state, JobState::Ready);
 }
 

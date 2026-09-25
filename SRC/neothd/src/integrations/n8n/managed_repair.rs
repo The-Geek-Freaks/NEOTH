@@ -48,13 +48,33 @@ struct ExplicitRepairRestartValidator {
 }
 impl RestartValidator for ExplicitRepairRestartValidator {
     fn validate(&self, job: &IntegrationJob) -> RestartDecision {
-        let hold = || RestartDecision::Hold { failure: JobFailure::new("n8n_repair_reconciliation_required", "The interrupted managed repair retains exact effect custody; rerun n8n repair to inspect it without repeating an uncertain effect.").expect("static") };
-        let Ok(Some(custody)) = read_custody(&self.home) else { return hold(); };
-        if !restart_binding_commit_proven(&self.home, &custody, job) { return hold(); }
-        let Some(contract) = job.evidence_contract.as_ref() else { return hold(); };
+        let hold = || {
+            RestartDecision::Hold { failure: JobFailure::new("n8n_repair_reconciliation_required", "The interrupted managed repair retains exact effect custody; rerun n8n repair to inspect it without repeating an uncertain effect.").expect("static") }
+        };
+        let Ok(Some(custody)) = read_custody(&self.home) else {
+            return hold();
+        };
+        if !restart_binding_commit_proven(&self.home, &custody, job) {
+            return hold();
+        }
+        let Some(contract) = job.evidence_contract.as_ref() else {
+            return hold();
+        };
         RestartDecision::Resume {
-            evidence: ResumeEvidence::verified(job.job_id.clone(), job.manifest_sha256.clone(), contract.step_plan_sha256().clone(), sha256_parts(&["n8n-repair-binding-commit-reconcile"])),
-            disposition: RecoveryDispositionEvidence::verified(job.job_id.clone(), job.manifest_sha256.clone(), contract.step_plan_sha256().clone(), job.state_revision, sha256_parts(&["n8n-repair-no-redispatch"]), sha256_parts(&["n8n-repair-binding-commit-retained"])),
+            evidence: ResumeEvidence::verified(
+                job.job_id.clone(),
+                job.manifest_sha256.clone(),
+                contract.step_plan_sha256().clone(),
+                sha256_parts(&["n8n-repair-binding-commit-reconcile"]),
+            ),
+            disposition: RecoveryDispositionEvidence::verified(
+                job.job_id.clone(),
+                job.manifest_sha256.clone(),
+                contract.step_plan_sha256().clone(),
+                job.state_revision,
+                sha256_parts(&["n8n-repair-no-redispatch"]),
+                sha256_parts(&["n8n-repair-binding-commit-retained"]),
+            ),
         }
     }
 }
@@ -62,7 +82,9 @@ fn open_repair_service(home: &Path) -> Result<IntegrationJobService> {
     Ok(IntegrationJobService::open(
         home,
         super::super::n8n_catalog(),
-        &ExplicitRepairRestartValidator { home: home.to_owned() },
+        &ExplicitRepairRestartValidator {
+            home: home.to_owned(),
+        },
     )?)
 }
 
@@ -175,7 +197,11 @@ fn write_custody(home: &Path, custody: &RepairCustody) -> Result<(), &'static st
 /// durable. All earlier effect-dispatch phases remain held, and resume itself
 /// performs no Docker operation; normal repair later rechecks exact runtime
 /// identity/readiness before publishing Ready.
-fn restart_binding_commit_proven(home: &Path, custody: &RepairCustody, job: &IntegrationJob) -> bool {
+fn restart_binding_commit_proven(
+    home: &Path,
+    custody: &RepairCustody,
+    job: &IntegrationJob,
+) -> bool {
     if custody.schema_version != 1
         || custody.phase != RepairPhase::BindingCommitDispatched
         || custody.repair_job_id != job.job_id.as_str()
@@ -183,10 +209,18 @@ fn restart_binding_commit_proven(home: &Path, custody: &RepairCustody, job: &Int
         || custody.generation == 0
         || custody.action.as_deref() != Some("recreated")
         || custody.old_binding.phase != RuntimePhase::Ready
-        || custody.new_container_id.as_deref().is_none_or(|id| !super::valid_container_id(id))
-        || custody.new_binding.as_ref().is_none_or(|binding| binding.container_id.as_deref() != custody.new_container_id.as_deref())
+        || custody
+            .new_container_id
+            .as_deref()
+            .is_none_or(|id| !super::valid_container_id(id))
+        || custody.new_binding.as_ref().is_none_or(|binding| {
+            binding.container_id.as_deref() != custody.new_container_id.as_deref()
+        })
         || custody.old_binding_bytes.is_empty()
-        || custody.new_binding_bytes.as_deref().is_none_or(|bytes| bytes.is_empty())
+        || custody
+            .new_binding_bytes
+            .as_deref()
+            .is_none_or(|bytes| bytes.is_empty())
     {
         return false;
     }
@@ -209,7 +243,9 @@ fn restart_binding_commit_proven(home: &Path, custody: &RepairCustody, job: &Int
     {
         return false;
     }
-    let Ok(old_bytes_binding) = serde_json::from_slice::<RuntimeBinding>(&custody.old_binding_bytes) else {
+    let Ok(old_bytes_binding) =
+        serde_json::from_slice::<RuntimeBinding>(&custody.old_binding_bytes)
+    else {
         return false;
     };
     let Some(new_binding) = custody.new_binding.as_ref() else {

@@ -1,0 +1,22 @@
+{
+  "schema": "neoth-hosted-format-import/v1",
+  "run": 36155678179,
+  "source": "32df8d26b55b8c9827d858acd534e50e4cf5e3d2",
+  "artifact": 10872948436,
+  "zipSha256": "D1AACB92524B711C8EF488A1E2AB3FDE2C0C5DCEEDFD8457B6CEAD89D842F735",
+  "patchSha256": "F0D995BD1EB6731988B73C17C9C241FD44581E7D2CDDC249F5ABB23208E1E969",
+  "files": [
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_repair.rs",
+      "preimage": "78288332f74ab5c727d0a30c80cf12b6503f343c",
+      "postimage": "6562db6babe266f052a4236b3b62588527c45a28"
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_repair_tests.rs",
+      "preimage": "ec1c2689825e2cd9c7e96b0a121685ff6ea7d7c6",
+      "postimage": "78850a0478c4f28ff60d6cc95f9483e0f75e1671"
+    }
+  ],
+  "status": "AUTHENTIC_POSTIMAGES_IMPORTED",
+  "localFormatterRan": false
+}

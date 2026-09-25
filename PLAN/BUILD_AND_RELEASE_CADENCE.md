@@ -3,6 +3,15 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1459 hosted n8n formatting and fresh gates (2026-09-25):**
+Authentic Preflight36155678179 rustfmt postimages at32df8d26 are imported
+for n8n repair and its regression file after ZIP, internal digest, source
+and exact Git pre/postimage checks. No local formatter ran. Functional
+validation continues on32df8d26: Group1857run36155698163, Windows622run36155701973,
+Core36155705555 and actual product36155709239. Channel11run36154654992 remains
+bound to80091494; no unnecessary functional rerun for formatting alone.
+No roadmap closure; source1269/portable2067/Group1857/Windows622 count only
+preceded adding this format receipt. See gold-wave1459-n8n-hosted-format.json.
 **W1451/W1452/W1457/W1458 exact n8n restart recovery (2026-09-25):**
 The authenticated BCD failure was a product restart bug: the repair opener
 held every active job even after a witnessed create and durable binding CAS.
