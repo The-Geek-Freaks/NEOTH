@@ -2,6 +2,28 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1433-1441 shared live-channel recovery and native fixture correction (2026-09-25):**
+Google Chat, IRC, Twitch and Nostr queued-account recovery now share one exact
+live-registry path. It revalidates policy, configured destination, stored
+ChannelRef, current fingerprint and ready permit before existing v6 egress.
+Unsupported sealed v5 bindings stay held with byte-identical original queue
+custody and no claim/send; disabled Nostr settles SidecarOnly. Telegram/Slack,
+Keet and g_01_mini retain their distinct behavior. W1437 review approved.
+Three table-driven default tests cover delivery/replay, denied/stale/foreign
+state, feature-off behavior and repeated held-input preservation. Inventories
+are2065 portable, Group1855, Windows621; the existing feature workflow now runs
+10 cases with gchat-channel,irc-channel,nostr-channel. Hosted execution is pending.
+The preceding seven-case GChat run36148188844 at e9f81999 is fully admitted:
+7 selected/discovered/executed/passed, eight source/workflow bindings and all
+three original artifact digests verified. This is hermetic live-handle proof,
+not external provider acceptance and not acceptance of the new shared source.
+Group36147563911 at6c997a7b compiled and ran1852 tests:1849passed/3failed.
+W1441 corrects only those fixtures: release the setup DB owner before reentry,
+use actual bootstrap provenance, and distinguish pending from malformed custody.
+All three keep no-effect assertions; the production guards remain intact.
+Independent review approved; rerun required. P1-14/P2-20 and roadmap totals
+remain unchanged; no local executable validation ran.
+
 **W1432 actual n8n lifecycle accepted (2026-09-25):**
 Run36147557520 at6c997a7b passed the compiled product lifecycle with Linux
 Secret Service Keychain credentials. Original artifact ZIP/receipt hashes and

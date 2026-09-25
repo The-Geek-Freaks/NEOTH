@@ -1,0 +1,95 @@
+{
+  "schema": "neoth-wave1439-gchat-seven-case-admission/v1",
+  "run": {
+    "id": 36148188844,
+    "workflow": "W548 GChat live regressions",
+    "status": "completed",
+    "conclusion": "success",
+    "source": "e9f81999eb0d420ce368f3bf28ee7d2ba1bcb0c8"
+  },
+  "artifacts": [
+    {
+      "id": 10870971604,
+      "role": "logs",
+      "zip_sha256": "07736b89cdef444b12b7ec388690b5b2c4fe03996d2fbaa967d5a8b216f7b049"
+    },
+    {
+      "id": 10870901749,
+      "role": "source",
+      "zip_sha256": "8c1ff4f51c4a134cf36c61c9a0f1f61bf9abee9ab7448b41595775bd90f484cc"
+    },
+    {
+      "id": 10870886828,
+      "role": "receipt",
+      "zip_sha256": "29a756861a627283e3dec085d23921cf8138aa8ea584e8ff5e2615fcd76688c2"
+    }
+  ],
+  "integrity": {
+    "all_api_zip_digests_verified": true,
+    "source_head_verified": true,
+    "source_and_workflow_bindings": 8,
+    "source_and_workflow_binding_mismatches": 0
+  },
+  "counts": {
+    "selected": 7,
+    "discovered": 7,
+    "executed": 7,
+    "passed": 7,
+    "failed": 0,
+    "failed_file_bytes": 0
+  },
+  "cases": [
+    {
+      "ordinal": 1,
+      "selected": "daemon::proactive_dispatcher::tests::gchat_connection_bound_delivery_uses_the_published_instance_for_both_aliases",
+      "discovered": "daemon::proactive_dispatcher::tests::gchat_connection_bound_delivery_uses_the_published_instance_for_both_aliases",
+      "terminal": "passed"
+    },
+    {
+      "ordinal": 2,
+      "selected": "daemon::proactive_dispatcher::tests::gchat_missing_or_revoked_live_instance_is_sidecar_only_without_send",
+      "discovered": "daemon::proactive_dispatcher::tests::gchat_missing_or_revoked_live_instance_is_sidecar_only_without_send",
+      "terminal": "passed"
+    },
+    {
+      "ordinal": 3,
+      "selected": "daemon::proactive_dispatcher::tests::plan_delivery_gchat_feature_on_requires_complete_canonical_config",
+      "discovered": "daemon::proactive_dispatcher::tests::plan_delivery_gchat_feature_on_requires_complete_canonical_config",
+      "terminal": "passed"
+    },
+    {
+      "ordinal": 4,
+      "selected": "proactive_egress_contract_source_gate::google_chat_proactivity_uses_only_the_published_live_instance",
+      "discovered": "google_chat_proactivity_uses_only_the_published_live_instance",
+      "terminal": "passed"
+    },
+    {
+      "ordinal": 5,
+      "selected": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_uses_exact_published_handle_once",
+      "discovered": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_uses_exact_published_handle_once",
+      "terminal": "passed"
+    },
+    {
+      "ordinal": 6,
+      "selected": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_rejects_foreign_stale_and_revoked_handles",
+      "discovered": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_rejects_foreign_stale_and_revoked_handles",
+      "terminal": "passed"
+    },
+    {
+      "ordinal": 7,
+      "selected": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_policy_denial_never_sends",
+      "discovered": "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_policy_denial_never_sends",
+      "terminal": "passed"
+    }
+  ],
+  "admission": {
+    "accepted": true,
+    "proof": "Each ordinal binds selected to discovered to an actual terminal passed result; failed.txt is empty.",
+    "limit": "The checks exercise fixture/live-registry behavior. Counting fake live handles is not evidence that an external Google Chat provider accepted a send."
+  },
+  "mutations": {
+    "product": false,
+    "plan": false,
+    "index": false
+  }
+}

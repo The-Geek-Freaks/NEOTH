@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "status": "STATIC_REVIEWED_HOSTED_PENDING",
+  "base": "b205096151b6ec4235ecce6af642f98077bf7296",
+  "sharedRecovery": {
+    "source": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+    "workingSha256": "10718C8C8AD3E8ADA7477764B19C1DE5E280DE868F977C9BF2405585BBE7867E",
+    "review": "APPROVE_STATIC",
+    "reviewSha256": "70863C1C3FC46C6CC6EF99A920EE0EF394D41B016C6F0776A2D8559BCACFE2D4",
+    "channels": [
+      "gchat",
+      "irc",
+      "twitch",
+      "nostr"
+    ],
+    "custody": "Unsupported v5 binding returns an error before effects; byte-exact queue input and generation remain held after repeated ticks.",
+    "featureOffNostr": "SidecarOnly",
+    "unchanged": [
+      "Telegram/Slack sealed factory paths",
+      "g_01_mini no-send",
+      "Keet on-demand companion"
+    ]
+  },
+  "n8nFixtureRepairs": {
+    "source": "SRC/neothd/src/integrations/n8n/managed_repair_tests.rs",
+    "workingSha256": "2F843191873C3D6A34F678D81885F6FA86DA6BA9C4B451242EB36AE31F0E648B",
+    "review": "APPROVE_STATIC",
+    "failedRun": 36147563911,
+    "failedSource": "6c997a7b19a8a87eb02f817f5d8a0238c6441a62",
+    "executed": 1852,
+    "passed": 1849,
+    "failed": 3,
+    "verifiedSourceBindings": 308,
+    "changes": [
+      "Release setup service before production opens own owner lock",
+      "Use real bootstrap fixture; vary volume labels only",
+      "Distinguish pending repair custody from invalid serialized custody while retaining no-effects assertions"
+    ]
+  },
+  "validation": {
+    "portableTests": 2065,
+    "linuxGroupTests": 1855,
+    "windowsTests": 621,
+    "combinedFeatureCases": 10,
+    "features": [
+      "gchat-channel",
+      "irc-channel",
+      "nostr-channel"
+    ],
+    "hosted": "pending"
+  },
+  "localExecutableValidationRan": false
+}

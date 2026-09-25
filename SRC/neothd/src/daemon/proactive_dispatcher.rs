@@ -859,6 +859,90 @@ async fn deliver_live_route(
     }
 }
 
+/// Recover a durable item that already selected one default-account live
+/// channel. These adapters retain their authority in the daemon-owned live
+/// registry, so recovery may only reacquire the exact persisted reference.
+async fn recover_persisted_connection_bound_delivery(
+    egress: &crate::daemon::proactive_egress::ProactiveEgressContext<'_>,
+    live: &LiveRouteContext<'_>,
+    item: crate::proactive::ProactiveItem,
+    queue_generation: &str,
+    target_channel: &str,
+    policy: &crate::permissions::AutonomyPolicySnapshot,
+    routing: &crate::channels::routing::ChannelRouting,
+) -> Result<Option<ProactiveStatus>, String> {
+    let expected_channel_id = match target_channel {
+        "gchat" | "google_chat" => crate::channels::registry::ChannelId::GoogleChat,
+        "irc" => crate::channels::registry::ChannelId::Irc,
+        "twitch" => crate::channels::registry::ChannelId::Twitch,
+        "nostr" => crate::channels::registry::ChannelId::Nostr,
+        _ => {
+            return crate::daemon::proactive_egress::record_adapter_configuration_error_once(
+                egress,
+                item,
+                queue_generation,
+                target_channel,
+            )
+            .await;
+        }
+    };
+    let stored_account = item
+        .account_id
+        .clone()
+        .expect("account-bound connection recovery requires an account id");
+    let channel_ref = crate::channels::registry::ChannelRef::new(expected_channel_id, stored_account);
+
+    // Sealed v5 bindings belong only to the mapped Telegram/Slack factories.
+    // A live-instance-owned adapter never accepts them as connection authority.
+    if item.account_binding.is_some() {
+        return Err(format!(
+            "persisted {target_channel} live-channel item carries unsupported sealed account binding; refusing without egress claim"
+        ));
+    }
+
+    let action = Action::ProactiveChannelSend {
+        channel: target_channel.to_string(),
+    };
+    if !evaluate(&action, policy).is_allow() {
+        return crate::daemon::proactive_egress::record_policy_suppressed_once(
+            egress,
+            item,
+            queue_generation,
+            target_channel,
+        )
+        .await;
+    }
+
+    let route = plan_delivery(target_channel, policy, live.config, routing, live.credentials);
+    if matches!(
+        &route,
+        DeliveryRoute::ConnectionBound {
+            channel_ref: configured_ref,
+            ..
+        } if configured_ref == &channel_ref
+    ) {
+        return deliver_live_route(
+            egress,
+            live,
+            item,
+            queue_generation,
+            target_channel,
+            route,
+        )
+        .await
+        .map_err(|error| match error {
+            LiveRouteError::AdapterConfiguration(error) | LiveRouteError::Durability(error) => error,
+        });
+    }
+    crate::daemon::proactive_egress::record_sidecar_only_once(
+        egress,
+        item,
+        queue_generation,
+        target_channel,
+    )
+    .await
+}
+
 fn canonical_target_channel(resolved: Option<String>, item_channel: &str) -> Result<String, usize> {
     let channel = resolved
         .as_deref()
@@ -1267,93 +1351,21 @@ pub(crate) async fn run_proactive_delivery_tick_with_accepted(
                     )
                     .await?
                 }
-            } else if matches!(target_channel.as_str(), "gchat" | "google_chat") {
-                let stored_account = item
-                    .account_id
-                    .clone()
-                    .expect("account-bound branch requires an account id");
-                let channel_ref = crate::channels::registry::ChannelRef::new(
-                    crate::channels::registry::ChannelId::GoogleChat,
-                    stored_account,
-                );
-                if item.account_binding.is_some() {
-                    // Google Chat retains live-instance authority only. The
-                    // sealed v5 account-binding grammar belongs to mapped
-                    // Telegram/Slack accounts, so it cannot be reinterpreted
-                    // as a GChat capability.
-                    crate::daemon::proactive_egress::record_adapter_configuration_error_once(
-                        &egress,
-                        item,
-                        &queue_generation,
-                        &target_channel,
-                    )
-                    .await?
-                } else if !evaluate(&action, &policy).is_allow() {
-                    crate::daemon::proactive_egress::record_policy_suppressed_once(
-                        &egress,
-                        item,
-                        &queue_generation,
-                        &target_channel,
-                    )
-                    .await?
-                } else {
-                    // Revalidate the current operator-owned destination and
-                    // GChat configuration, then acquire only the original
-                    // persisted account's exact ready live handle. This never
-                    // rebuilds a GChat adapter from credentials.
-                    match plan_delivery(
-                        &target_channel,
-                        &policy,
-                        config,
-                        &routing,
-                        &runtime.credentials,
-                    ) {
-                        DeliveryRoute::ConnectionBound {
-                            channel_ref: configured_ref,
-                            recipient,
-                        } if configured_ref == channel_ref => {
-                            match channel_fingerprints.get(&channel_ref).copied() {
-                                Some(fingerprint) => match live_channels
-                                    .acquire(&channel_ref, fingerprint)
-                                    .await
-                                {
-                                    Some(permit) => crate::daemon::proactive_egress::execute_claimed_once_connection_bound(
-                                        &egress,
-                                        item,
-                                        &queue_generation,
-                                        &target_channel,
-                                        recipient,
-                                        permit,
-                                    )
-                                    .await?,
-                                    None => crate::daemon::proactive_egress::record_sidecar_only_once(
-                                        &egress,
-                                        item,
-                                        &queue_generation,
-                                        &target_channel,
-                                    )
-                                    .await?,
-                                },
-                                None => crate::daemon::proactive_egress::record_sidecar_only_once(
-                                    &egress,
-                                    item,
-                                    &queue_generation,
-                                    &target_channel,
-                                )
-                                .await?,
-                            }
-                        }
-                        _ => {
-                            crate::daemon::proactive_egress::record_sidecar_only_once(
-                                &egress,
-                                item,
-                                &queue_generation,
-                                &target_channel,
-                            )
-                            .await?
-                        }
-                    }
-                }
+            } else if let Some(()) = match target_channel.as_str() {
+                "gchat" | "google_chat" | "irc" | "twitch" => Some(()),
+                "nostr" => Some(()),
+                _ => None,
+            } {
+                recover_persisted_connection_bound_delivery(
+                    &egress,
+                    &live_route_context,
+                    item,
+                    &queue_generation,
+                    &target_channel,
+                    &policy,
+                    &routing,
+                )
+                .await?
             } else {
                 crate::daemon::proactive_egress::record_adapter_configuration_error_once(
                     &egress,
@@ -1651,6 +1663,45 @@ mod tests {
         routing
             .save_to(&home.join(crate::channels::routing::CHANNEL_ROUTING_FILE))
             .unwrap();
+    }
+
+    fn connection_bound_ref(channel: &str) -> crate::channels::registry::ChannelRef {
+        let channel_id = match channel {
+            "gchat" => crate::channels::registry::ChannelId::GoogleChat,
+            "irc" => crate::channels::registry::ChannelId::Irc,
+            "twitch" => crate::channels::registry::ChannelId::Twitch,
+            "nostr" => crate::channels::registry::ChannelId::Nostr,
+            _ => unreachable!("fixed connection-bound test channel"),
+        };
+        crate::channels::registry::ChannelRef::default_account(channel_id)
+    }
+
+    fn write_connection_bound_routing(
+        home: &std::path::Path,
+        channel: &str,
+        destination: Option<&str>,
+    ) {
+        let mut routing = crate::channels::routing::ChannelRouting::default();
+        match channel {
+            "irc" => routing.destinations.irc_channel = destination.map(str::to_string),
+            "twitch" => routing.destinations.twitch_channel = destination.map(str::to_string),
+            "nostr" => routing.destinations.nostr_recipient = destination.map(str::to_string),
+            _ => unreachable!("fixed connection-bound test channel"),
+        }
+        routing
+            .save_to(&home.join(crate::channels::routing::CHANNEL_ROUTING_FILE))
+            .unwrap();
+    }
+
+    fn account_bound_connection_item(
+        key: &str,
+        channel: &str,
+    ) -> (ProactiveItem, crate::channels::registry::ChannelRef) {
+        let channel_ref = connection_bound_ref(channel);
+        let mut queued = item(key, 50, 0);
+        queued.channel = channel.to_string();
+        queued.account_id = Some(channel_ref.account_id.clone());
+        (queued, channel_ref)
     }
 
     #[tokio::test]
@@ -2758,6 +2809,307 @@ mod tests {
             history[0].outcome(),
             crate::daemon::proactive_egress::ProactiveEgressOutcome::PolicySuppressed
         );
+    }
+
+    #[tokio::test]
+    async fn default_connection_bound_account_recovery_delivers_once_and_never_replays() {
+        let mut cases = vec![("irc", "#ops"), ("twitch", "#streamer")];
+        #[cfg(feature = "nostr-channel")]
+        cases.push((
+            "nostr",
+            "npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m",
+        ));
+        for (channel, destination) in cases {
+            let tmp = TempDir::new().unwrap();
+            let queue_path = tmp.path().join("proactive_queue.json");
+            let (queued, channel_ref) =
+                account_bound_connection_item(&format!("{channel}-account-recovery"), channel);
+            let mut queue = ProactiveQueue::new();
+            assert!(queue.enqueue(queued).unwrap());
+            queue.save_to(&queue_path).unwrap();
+            write_connection_bound_routing(tmp.path(), channel, Some(destination));
+
+            let mut config = FreedomConfig::default();
+            config.proactive.enabled = true;
+            config.autonomy = AutonomyLevel::Full;
+            let credentials = Credentials::default();
+            let fingerprint = *crate::cli::serve_tasks::channel_account_fingerprints(
+                &config,
+                &credentials,
+                &[],
+                tmp.path(),
+            )
+            .get(&channel_ref)
+            .unwrap();
+            let registry = empty_live_channels();
+            let live_channel = Arc::new(CountingConnectionChannel::new(channel));
+            let lease = registry
+                .begin_replacement(channel_ref.clone(), fingerprint)
+                .await;
+            assert!(registry.publish(&lease, live_channel.clone()).await);
+
+            let wal_dir = tmp.path().join("wal");
+            std::fs::create_dir_all(&wal_dir).unwrap();
+            let segment = wal_dir.join("000001.wal");
+            let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
+                segment.clone(),
+                tmp.path().to_path_buf(),
+            )
+            .unwrap();
+            ready.wait().await.unwrap();
+            assert_eq!(
+                run_proactive_delivery_tick(
+                    tmp.path(),
+                    &segment,
+                    &config,
+                    &credentials,
+                    &writer,
+                    1_700_000_000,
+                    Arc::clone(&registry),
+                )
+                .await
+                .unwrap(),
+                1,
+                "{channel} must use its persisted ready live account",
+            );
+            assert_eq!(
+                run_proactive_delivery_tick(
+                    tmp.path(),
+                    &segment,
+                    &config,
+                    &credentials,
+                    &writer,
+                    1_700_000_001,
+                    Arc::clone(&registry),
+                )
+                .await
+                .unwrap(),
+                0,
+                "{channel} terminal recovery may not send twice",
+            );
+            drop(writer);
+            join.await.unwrap().unwrap();
+
+            assert_eq!(live_channel.sends(), 1, "{channel} must send exactly once");
+            let history =
+                crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
+            assert_eq!(history.len(), 1);
+            assert_eq!(
+                history[0].outcome(),
+                crate::daemon::proactive_egress::ProactiveEgressOutcome::Delivered
+            );
+            assert_eq!(
+                history[0].connection_binding_identity_for_test(),
+                Some((&channel_ref, 1, fingerprint)),
+                "{channel} must retain its exact v6 connection binding",
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn default_connection_bound_account_recovery_refuses_nonmatching_or_denied_state() {
+        let cases = vec![
+            ("irc", "#ops"),
+            ("twitch", "#streamer"),
+            (
+            "nostr",
+            "npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m",
+            ),
+        ];
+        for (channel, destination) in cases {
+            for state in [
+                "foreign",
+                "stale",
+                "revoked",
+                "missing",
+                "no_current_config",
+                "policy_denied",
+            ] {
+                let tmp = TempDir::new().unwrap();
+                let queue_path = tmp.path().join("proactive_queue.json");
+                let (queued, channel_ref) = account_bound_connection_item(
+                    &format!("{channel}-account-{state}"),
+                    channel,
+                );
+                let mut queue = ProactiveQueue::new();
+                assert!(queue.enqueue(queued).unwrap());
+                queue.save_to(&queue_path).unwrap();
+                write_connection_bound_routing(
+                    tmp.path(),
+                    channel,
+                    (state != "no_current_config").then_some(destination),
+                );
+
+                let mut config = FreedomConfig::default();
+                config.proactive.enabled = true;
+                config.autonomy = if state == "policy_denied" {
+                    AutonomyLevel::Strict
+                } else {
+                    AutonomyLevel::Full
+                };
+                let credentials = Credentials::default();
+                let fingerprint = *crate::cli::serve_tasks::channel_account_fingerprints(
+                    &config,
+                    &credentials,
+                    &[],
+                    tmp.path(),
+                )
+                .get(&channel_ref)
+                .unwrap();
+                let registry = empty_live_channels();
+                let live_channel = Arc::new(CountingConnectionChannel::new(channel));
+                if state != "missing" {
+                    let (published_ref, published_fingerprint) = match state {
+                        "foreign" => (
+                            crate::channels::registry::ChannelRef::new(
+                                channel_ref.channel_id.clone(),
+                                crate::channels::registry::ChannelAccountId::new("other").unwrap(),
+                            ),
+                            fingerprint,
+                        ),
+                        "stale" => (channel_ref.clone(), fingerprint.wrapping_add(1)),
+                        _ => (channel_ref.clone(), fingerprint),
+                    };
+                    let lease = registry
+                        .begin_replacement(published_ref, published_fingerprint)
+                        .await;
+                    assert!(registry.publish(&lease, live_channel.clone()).await);
+                    if state == "revoked" {
+                        registry.revoke_and_drain(&channel_ref).await;
+                    }
+                }
+
+                let wal_dir = tmp.path().join("wal");
+                std::fs::create_dir_all(&wal_dir).unwrap();
+                let segment = wal_dir.join("000001.wal");
+                let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
+                    segment.clone(),
+                    tmp.path().to_path_buf(),
+                )
+                .unwrap();
+                ready.wait().await.unwrap();
+                assert_eq!(
+                    run_proactive_delivery_tick(
+                        tmp.path(),
+                        &segment,
+                        &config,
+                        &credentials,
+                        &writer,
+                        1_700_000_000,
+                        Arc::clone(&registry),
+                    )
+                    .await
+                    .unwrap(),
+                    0,
+                    "{channel}/{state} must not start live transport",
+                );
+                drop(writer);
+                join.await.unwrap().unwrap();
+
+                assert_eq!(
+                    live_channel.sends(),
+                    0,
+                    "{channel}/{state} reached the live adapter",
+                );
+                let history =
+                    crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
+                assert_eq!(history.len(), 1, "{channel}/{state} must settle once");
+                let expected = match state {
+                    "policy_denied" => {
+                        crate::daemon::proactive_egress::ProactiveEgressOutcome::PolicySuppressed
+                    }
+                    _ => crate::daemon::proactive_egress::ProactiveEgressOutcome::SidecarOnly,
+                };
+                assert_eq!(history[0].outcome(), expected, "{channel}/{state} outcome");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn default_connection_bound_account_recovery_holds_unsupported_sealed_binding_without_effect(
+    ) {
+        for channel in ["gchat", "irc", "twitch", "nostr"] {
+            let tmp = TempDir::new().unwrap();
+            let queue_path = tmp.path().join("proactive_queue.json");
+            let (mut queued, channel_ref) =
+                account_bound_connection_item(&format!("{channel}-sealed-binding"), channel);
+            queued.account_binding = Some(
+                serde_json::from_value(serde_json::json!({
+                    "channel_ref": {
+                        "channel_id": "telegram",
+                        "account_id": channel_ref.account_id.as_str(),
+                    },
+                    "incarnation": "018f3d1e-2c50-7000-8000-000000000001",
+                }))
+                .unwrap(),
+            );
+            let mut queue = ProactiveQueue::new();
+            assert!(queue.enqueue(queued).unwrap());
+            queue.save_to(&queue_path).unwrap();
+            let queue_before = std::fs::read(&queue_path).unwrap();
+
+            let mut config = FreedomConfig::default();
+            config.proactive.enabled = true;
+            config.autonomy = AutonomyLevel::Full;
+            let credentials = Credentials::default();
+            let fingerprint = *crate::cli::serve_tasks::channel_account_fingerprints(
+                &config,
+                &credentials,
+                &[],
+                tmp.path(),
+            )
+            .get(&channel_ref)
+            .unwrap();
+            let registry = empty_live_channels();
+            let live_channel = Arc::new(CountingConnectionChannel::new(channel));
+            let lease = registry
+                .begin_replacement(channel_ref, fingerprint)
+                .await;
+            assert!(registry.publish(&lease, live_channel.clone()).await);
+
+            let wal_dir = tmp.path().join("wal");
+            std::fs::create_dir_all(&wal_dir).unwrap();
+            let segment = wal_dir.join("000001.wal");
+            let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
+                segment.clone(),
+                tmp.path().to_path_buf(),
+            )
+            .unwrap();
+            ready.wait().await.unwrap();
+            for now_unix in [1_700_000_000, 1_700_000_001] {
+                let error = run_proactive_delivery_tick(
+                    tmp.path(),
+                    &segment,
+                    &config,
+                    &credentials,
+                    &writer,
+                    now_unix,
+                    Arc::clone(&registry),
+                )
+                .await
+                .unwrap_err();
+                assert!(
+                    error.contains("unsupported sealed account binding"),
+                    "{channel} must preserve the explicit no-claim refusal: {error}",
+                );
+                assert_eq!(
+                    std::fs::read(&queue_path).unwrap(),
+                    queue_before,
+                    "{channel} rejection must retain the exact original queue bytes",
+                );
+            }
+            drop(writer);
+            join.await.unwrap().unwrap();
+
+            assert_eq!(live_channel.sends(), 0, "{channel} sealed binding reached transport");
+            assert!(
+                crate::daemon::proactive_egress::read_delivery_history(tmp.path())
+                    .unwrap()
+                    .is_empty(),
+                "{channel} sealed binding must not create a terminal projection",
+            );
+            assert!(!tmp.path().join(PROACTIVE_INFLIGHT_DIR).exists());
+        }
     }
 
     #[tokio::test]

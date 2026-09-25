@@ -517,6 +517,7 @@ async fn binding_commit_cas_recovers_with_old_or_already_new_binding_without_red
             super::super::write_binding(home.path(), &next).unwrap();
         }
         write_custody(home.path(), &custody).unwrap();
+        drop(service);
 
         let ready =
             repair_managed_at_with(home.path(), key(), &mut runner, &Ready(true), &Probe(true))
@@ -541,23 +542,9 @@ async fn binding_commit_cas_recovers_with_old_or_already_new_binding_without_red
 #[tokio::test]
 async fn bootstrap_volume_owner_labels_allow_repair_and_foreign_or_missing_labels_block_effects() {
     for labels_valid in [true, false] {
-        let (home, mut runner, state, source) = fixture().await;
-        let mut binding = super::super::read_binding(home.path()).unwrap().unwrap();
-        binding.bootstrap_volume_owner_job_id = Some(source.job_id.as_str().into());
-        super::super::write_binding(home.path(), &binding).unwrap();
-        if labels_valid {
-            state.lock().unwrap().volume_present = true;
-            state.lock().unwrap().volume_labels = std::collections::BTreeMap::from([
-                (
-                    super::super::MANAGED_LABEL_KEY.into(),
-                    super::super::MANAGED_LABEL_VALUE.into(),
-                ),
-                ("io.neoth.n8n-job".into(), source.job_id.as_str().into()),
-                (
-                    "io.neoth.n8n-bootstrap".into(),
-                    super::super::super::managed_bootstrap::BOOTSTRAP_SCHEMA.into(),
-                ),
-            ]);
+        let (home, mut runner, state, source) = bootstrap_fixture().await;
+        if !labels_valid {
+            state.lock().unwrap().volume_labels.clear();
         }
         let result =
             repair_managed_at_with(home.path(), key(), &mut runner, &Ready(true), &Probe(true))
@@ -956,13 +943,15 @@ async fn pending_and_malformed_repair_custody_block_purge_before_volume_effects(
             super::super::managed_uninstall::uninstall_managed_at_with(home.path(), &mut runner)
                 .await
                 .unwrap();
-        if let Some(phase) = phase {
+        let expected_failure = if let Some(phase) = phase {
             let mut pending = saved;
             pending.phase = phase;
             write_custody(home.path(), &pending).unwrap();
+            "n8n_purge_repair_custody_pending"
         } else {
             std::fs::write(home.path().join("n8n-managed-repair.v1.json"), b"not-json").unwrap();
-        }
+            "n8n_repair_custody_invalid"
+        };
         let plan =
             super::super::super::managed_purge::prepare_purge_at(home.path(), &uninstall.job_id)
                 .unwrap();
@@ -979,7 +968,7 @@ async fn pending_and_malformed_repair_custody_block_purge_before_volume_effects(
         assert!(
             failure
                 .to_string()
-                .contains("n8n_purge_repair_custody_pending")
+                .contains(expected_failure)
         );
         assert_no_effect_after_setup(&state);
     }
