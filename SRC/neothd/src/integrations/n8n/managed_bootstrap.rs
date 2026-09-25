@@ -1186,7 +1186,7 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        assert_eq!(read_custody(home).unwrap(), None);
+        assert!(read_custody(home).unwrap().is_none());
         assert!(!home.join("n8n-managed-runtime.v2.json").exists());
         assert!(!home.join("setup.db").exists());
         assert!(!home.join("credentials.yaml").exists());

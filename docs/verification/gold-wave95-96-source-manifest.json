@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T02:26:32.6175634Z",
-  "validationStatus": "W1135 preflight and W1137 path comparison source-reviewed; W1136 historical product canary admitted; new hosted gates pending",
+  "capturedUtc": "2026-09-25T02:38:05.1505012Z",
+  "validationStatus": "W1143 fixes exact hosted E0369 test compile error;89ace product canary success;typecheck rerun pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2368,18 +2368,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 326220,
-      "sha256": "A8D5E238B9B230FE6EE0A32D0E6FCADDA8F49EFDD96EA5D2ED5A53CF3F6B8DA4"
+      "bytes": 326739,
+      "sha256": "CAF7D5FE15246E503FE0201073749509E311A8A8DBF98E22C70F78A96F1B37C9"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1343031,
-      "sha256": "33D6F004BD21BB89C62BFECB44E468F4FBF0F52BFEA34B879747611C152F5CED"
+      "bytes": 1343550,
+      "sha256": "5446EA18CE27392E3D884766EF794DBAA9D605D54809D8A5B643D567389930AA"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1952972,
-      "sha256": "DA1CACCB114F0C410FE58E8041E5DF5528108700DB323B4C5FFC07C66BE62B19"
+      "bytes": 1953491,
+      "sha256": "419C9B976D068299A0EE6B3E53949539D1761A2ECA582D14C819A9824F1B0E31"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4388,8 +4388,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs",
-      "bytes": 69264,
-      "sha256": "B4091BBBCB098A784FDB32D6FB02C80B0F8882E563209A263371E8CA30F159EA"
+      "bytes": 69265,
+      "sha256": "ED02C39C88FC171CD421DB4856DA5EED360EB52533BC2F8D6FBC11AF6FE28A27"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_runtime_tests.rs",

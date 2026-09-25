@@ -8,6 +8,14 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1143 bootstrap assertion compile repair (2026-09-25):**
+Product36086474604 at89ace075 passed the real compiled n8n installation/import
+canary; its independent artifact admission is pending. Core36086473014 passed
+slim production Clippy but failed test type-check on exactly one E0369:
+BootstrapCustody has no PartialEq, so the new absence assertion now uses
+Option::is_none instead of equality with None. The tested absence invariant is
+unchanged; no production type or lifecycle is modified. Hosted rerun follows.
+
 **W1135/W1136/W1137 install preflight and real n8n acceptance (2026-09-25):**
 Root admitted product run36085493669 at9be25dd3 after checking the GitHub API
 ZIP digest, its receipt,26 historical source/input bindings and the completed
