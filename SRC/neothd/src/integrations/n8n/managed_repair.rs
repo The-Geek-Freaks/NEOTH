@@ -16,9 +16,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     HttpN8nApiProbe, IntegrationJob, IntegrationJobService, JobEvidenceContract, JobOperation,
-    JobRequester, ManagedDockerRunner, N8N_CAPABILITY_ID, N8nApiProbe,
-    ProductionReadiness, RuntimeBinding, RuntimePhase, is_managed_job, read_binding,
-    read_binding_bytes, sha256_parts, validate_binding, validate_existing_identity, write_binding,
+    JobRequester, ManagedDockerRunner, N8N_CAPABILITY_ID, N8nApiProbe, ProductionReadiness,
+    RuntimeBinding, RuntimePhase, is_managed_job, read_binding, read_binding_bytes, sha256_parts,
+    validate_binding, validate_existing_identity, write_binding,
 };
 use crate::{
     integrations::{
@@ -614,7 +614,8 @@ pub(in crate::integrations) async fn repair_managed_at_with<
     }
     if custody.phase == RepairPhase::RuntimeVerified {
         if active.state == JobState::Validating {
-            active = service.begin_configuration(&active.job_id, active.state_revision, STEPS[2])?;
+            active =
+                service.begin_configuration(&active.job_id, active.state_revision, STEPS[2])?;
         }
         if active.progress.completed_steps < 3 {
             active = checkpoint(&service, &active, 3, STEPS[2])?;

@@ -420,11 +420,19 @@ async fn binding_commit_cas_recovers_with_old_or_already_new_binding_without_red
         let repair = match recovery_state {
             JobState::Queued => queued,
             JobState::Running => service
-                .start(&queued.job_id, queued.state_revision, "crash-before-validation")
+                .start(
+                    &queued.job_id,
+                    queued.state_revision,
+                    "crash-before-validation",
+                )
                 .unwrap(),
             JobState::Validating => {
                 let running = service
-                    .start(&queued.job_id, queued.state_revision, "crash-before-validation")
+                    .start(
+                        &queued.job_id,
+                        queued.state_revision,
+                        "crash-before-validation",
+                    )
                     .unwrap();
                 service
                     .begin_validation(
@@ -436,7 +444,11 @@ async fn binding_commit_cas_recovers_with_old_or_already_new_binding_without_red
             }
             JobState::Configuring => {
                 let running = service
-                    .start(&queued.job_id, queued.state_revision, "crash-before-validation")
+                    .start(
+                        &queued.job_id,
+                        queued.state_revision,
+                        "crash-before-validation",
+                    )
                     .unwrap();
                 let validating = service
                     .begin_validation(
@@ -909,9 +921,8 @@ async fn completed_sidecar_with_queued_or_running_repair_job_blocks_uninstall_an
         &completed_sidecar_for_nonready_repair(&running, &source, &binding, binding_bytes),
     )
     .unwrap();
-    let plan =
-        super::super::super::managed_purge::prepare_purge_at(home.path(), &uninstall.job_id)
-            .unwrap();
+    let plan = super::super::super::managed_purge::prepare_purge_at(home.path(), &uninstall.job_id)
+        .unwrap();
     state.lock().unwrap().calls.clear();
     let purge = super::super::super::managed_purge::purge_retained_volume_at_with(
         home.path(),
@@ -986,9 +997,8 @@ async fn repair_uninstall_and_purge_complete_with_retained_owner_provenance() {
         super::super::managed_uninstall::uninstall_managed_at_with(home.path(), &mut runner)
             .await
             .unwrap();
-    let plan =
-        super::super::super::managed_purge::prepare_purge_at(home.path(), &uninstall.job_id)
-            .unwrap();
+    let plan = super::super::super::managed_purge::prepare_purge_at(home.path(), &uninstall.job_id)
+        .unwrap();
     let purged = super::super::super::managed_purge::purge_retained_volume_at_with(
         home.path(),
         &uninstall.job_id,

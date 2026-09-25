@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "status": "STATIC_REVIEWED_FEATURE_HOSTED_PENDING",
+  "base": "6c997a7b19a8a87eb02f817f5d8a0238c6441a62",
+  "source": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+  "reviewedWorkingSha256": "FED745DD73C26E6EC62FD3A3BB4DC5D4B9DD3C965D4B5C164CA1E34F292A0CE5",
+  "review": "APPROVE_STATIC",
+  "reviewSha256": "C6F947E97431FE25722B168B9E2C8764C749372BCEADA56025F98741FDEBE9A4",
+  "requiredFeature": "gchat-channel",
+  "focusedWorkflow": ".github/workflows/gchat-live-regressions.yml",
+  "focusedCases": 7,
+  "newTests": [
+    "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_uses_exact_published_handle_once",
+    "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_rejects_foreign_stale_and_revoked_handles",
+    "daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_policy_denial_never_sends"
+  ],
+  "scope": "Persisted queued Google Chat account recovery through current exact ready live ChannelRef/fingerprint and durable v6 egress. Policy, operator-owned target, v5 sealed-authority separation and g_01_mini sidecar-only behavior retained.",
+  "boundary": "Not a provider-accepted delivery or in-flight Armed-claim recovery proof. No default native inventory expansion; three added cases require gchat-channel.",
+  "localExecutableValidationRan": false
+}

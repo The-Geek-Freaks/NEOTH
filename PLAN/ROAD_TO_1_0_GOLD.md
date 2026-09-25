@@ -8,6 +8,23 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1424-1428 Google Chat queued-account recovery (2026-09-25):**
+A durable queued Google Chat item with a selected account now reacquires only
+that exact current fingerprinted ready live handle. Previously this early
+account-bound branch supported Telegram/Slack only and settled Google Chat
+as a configuration error. Recovery preserves policy, validated operator-owned
+space, account isolation and the existing v6 egress transaction. Wrong, stale,
+rotated or revoked handles settle without a send; completed replay cannot send
+twice. The g_01_mini sidecar-only restriction and v5 sealed-account boundaries
+remain intact. Independent W1426 static review approved. Three new feature-only
+regressions join four existing cases in gchat-live-regressions.yml; default
+2062/1852/621 inventories stay unchanged. Fresh feature-enabled GitHub execution
+and provider-accepted delivery remain distinct pending gates; P1-14 stays open.
+W1427 also imports the authentic two-file n8n rustfmt artifact from
+Preflight36147528715 at6c997a7b after ZIP, source and Git pre/postimage checks.
+Core36147550725, Product36147557520, Group36147563911 and Windows36147569552
+remain in progress at this checkpoint. No local executable validation ran.
+
 **W1417-1423 exact n8n hosted failure repairs (2026-09-25):**
 Both new native gates stopped at compilation: fourteen test-only parent-module
 references were stale after extraction. The product run passed bootstrap,

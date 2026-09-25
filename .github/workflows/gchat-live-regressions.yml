@@ -112,9 +112,13 @@ jobs:
           run_case 03 lib daemon::proactive_dispatcher::tests::plan_delivery_gchat_feature_on_requires_complete_canonical_config daemon::proactive_dispatcher::tests::plan_delivery_gchat_feature_on_requires_complete_canonical_config --lib
           run_case 04 integration proactive_egress_contract_source_gate::google_chat_proactivity_uses_only_the_published_live_instance google_chat_proactivity_uses_only_the_published_live_instance --test proactive_egress_contract_source_gate
 
-          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 4
-          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 4
-          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 4
+          run_case 05 lib daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_uses_exact_published_handle_once daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_uses_exact_published_handle_once --lib
+          run_case 06 lib daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_rejects_foreign_stale_and_revoked_handles daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_rejects_foreign_stale_and_revoked_handles --lib
+          run_case 07 lib daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_policy_denial_never_sends daemon::proactive_dispatcher::tests::gchat_account_bound_recovery_policy_denial_never_sends --lib
+
+          test "$(wc -l < "$W548_ROOT/receipt/started.txt")" -eq 7
+          test "$(wc -l < "$W548_ROOT/receipt/executed.txt")" -eq 7
+          test "$(wc -l < "$W548_ROOT/receipt/passed.txt")" -eq 7
           test ! -s "$W548_ROOT/receipt/failed.txt"
 
       - name: Save Cargo cache
