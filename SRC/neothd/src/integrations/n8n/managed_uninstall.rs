@@ -14,17 +14,17 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     InspectOutcome, IntegrationJob, IntegrationJobService, JobEvidenceContract, JobOperation,
-    JobRequester, ManagedDockerRunner, ManagedN8nRequest, N8N_CAPABILITY_ID, RetainedReinstallSource, RuntimeBinding, RuntimePhase,
-    is_managed_job, read_binding, remove_binding, sha256_parts, validate_binding,
-    validate_existing_identity, managed_manifest,
+    JobRequester, ManagedDockerRunner, ManagedN8nRequest, N8N_CAPABILITY_ID,
+    RetainedReinstallSource, RuntimeBinding, RuntimePhase, is_managed_job, managed_manifest,
+    read_binding, remove_binding, sha256_parts, validate_binding, validate_existing_identity,
 };
 use crate::integrations::{
     catalog::CapabilityId,
     jobs::EnqueueIntegrationJob,
     jobs::RestartValidator,
     state::{
-        JobProgress, JobState, ProgressEvidence, ProgressEvidenceClaim, ReadyEvidence,
-        RecoveryDispositionEvidence, RestartDecision, ResumeEvidence, JobId,
+        JobId, JobProgress, JobState, ProgressEvidence, ProgressEvidenceClaim, ReadyEvidence,
+        RecoveryDispositionEvidence, RestartDecision, ResumeEvidence,
     },
 };
 
@@ -148,8 +148,7 @@ fn write_completion_receipt(home: &Path, custody: &UninstallCustody) -> Result<(
         .cleanup_disposition
         .as_deref()
         .ok_or("n8n_uninstall_cleanup_disposition_missing")?;
-    let binding = read_binding(home)?
-        .ok_or("n8n_uninstall_receipt_source_binding_missing")?;
+    let binding = read_binding(home)?.ok_or("n8n_uninstall_receipt_source_binding_missing")?;
     if binding.job_id != custody.source_install_job_id
         || binding.manifest_sha256 != custody.source_install_manifest_sha256
         || binding.container_id.as_deref() != Some(custody.container_id.as_str())
@@ -237,29 +236,48 @@ pub(crate) fn retained_reinstall_request_in_service(
     }
     let receipt = read_completion_receipt(home, &uninstall)?
         .ok_or("n8n_retained_reinstall_receipt_missing")?;
-    let (container_id, image, host_port, volume, bootstrap_volume, volume_owner_install_job_id) = match (
-        receipt.source_container_id.as_deref(), receipt.source_image.as_deref(),
-        receipt.source_host_port, receipt.source_volume.as_deref(), receipt.source_bootstrap_volume,
-        receipt.source_volume_owner_install_job_id.as_deref(),
-    ) {
-        (Some(container_id), Some(image), Some(host_port), Some(volume), Some(true), Some(owner))
-            if super::valid_container_id(container_id)
+    let (container_id, image, host_port, volume, bootstrap_volume, volume_owner_install_job_id) =
+        match (
+            receipt.source_container_id.as_deref(),
+            receipt.source_image.as_deref(),
+            receipt.source_host_port,
+            receipt.source_volume.as_deref(),
+            receipt.source_bootstrap_volume,
+            receipt.source_volume_owner_install_job_id.as_deref(),
+        ) {
+            (
+                Some(container_id),
+                Some(image),
+                Some(host_port),
+                Some(volume),
+                Some(true),
+                Some(owner),
+            ) if super::valid_container_id(container_id)
                 && super::valid_volume_name(volume)
                 && host_port != 0
                 && JobId::parse(owner.to_owned()).is_ok() =>
-                (container_id, image, host_port, volume, true, owner),
-        (Some(_), Some(_), Some(_), Some(_), Some(false), _) =>
-            return Err("n8n_retained_reinstall_volume_unproven"),
-        _ => return Err("n8n_retained_reinstall_receipt_incomplete"),
-    };
+            {
+                (container_id, image, host_port, volume, true, owner)
+            }
+            (Some(_), Some(_), Some(_), Some(_), Some(false), _) => {
+                return Err("n8n_retained_reinstall_volume_unproven");
+            }
+            _ => return Err("n8n_retained_reinstall_receipt_incomplete"),
+        };
     if image != crate::installers::n8n::N8N_OCI_REFERENCE {
         return Err("n8n_retained_reinstall_receipt_mismatch");
     }
-    let source = service.snapshot().map_err(|_| "n8n_retained_reinstall_job_read_failed")?
-        .into_iter().find(|job| job.job_id.as_str() == receipt.source_install_job_id)
+    let source = service
+        .snapshot()
+        .map_err(|_| "n8n_retained_reinstall_job_read_failed")?
+        .into_iter()
+        .find(|job| job.job_id.as_str() == receipt.source_install_job_id)
         .ok_or("n8n_retained_reinstall_source_missing")?;
-    if source.operation != JobOperation::Install || source.state != JobState::Ready || !is_managed_job(&source)
-        || source.manifest_sha256.as_str() != receipt.source_install_manifest_sha256 {
+    if source.operation != JobOperation::Install
+        || source.state != JobState::Ready
+        || !is_managed_job(&source)
+        || source.manifest_sha256.as_str() != receipt.source_install_manifest_sha256
+    {
         return Err("n8n_retained_reinstall_source_mismatch");
     }
     let source_reinstall = receipt.source_retained_reinstall.clone();
@@ -274,8 +292,14 @@ pub(crate) fn retained_reinstall_request_in_service(
         }
         None => {}
     }
-    let mut source_request = ManagedN8nRequest::new_with_volume(host_port, crate::installers::n8n::N8N_OCI_REFERENCE, volume.into())?;
-    if let Some(previous) = source_reinstall.clone() { source_request = source_request.with_retained_reinstall(previous); }
+    let mut source_request = ManagedN8nRequest::new_with_volume(
+        host_port,
+        crate::installers::n8n::N8N_OCI_REFERENCE,
+        volume.into(),
+    )?;
+    if let Some(previous) = source_reinstall.clone() {
+        source_request = source_request.with_retained_reinstall(previous);
+    }
     if source.manifest_sha256 != managed_manifest(&source_request) {
         return Err("n8n_retained_reinstall_source_manifest_mismatch");
     }
@@ -292,15 +316,19 @@ pub(crate) fn retained_reinstall_request_in_service(
     {
         return Err("n8n_retained_reinstall_uninstall_manifest_mismatch");
     }
-    Ok(ManagedN8nRequest::new_with_volume(host_port, crate::installers::n8n::N8N_OCI_REFERENCE, volume.into())?
-        .with_retained_reinstall(RetainedReinstallSource {
-            uninstall_job_id: uninstall.job_id.as_str().into(),
-            uninstall_manifest_sha256: uninstall.manifest_sha256.as_str().into(),
-            source_install_job_id: source.job_id.as_str().into(),
-            source_install_manifest_sha256: source.manifest_sha256.as_str().into(),
-            bootstrap_volume,
-            volume_owner_install_job_id: volume_owner_install_job_id.into(),
-        }))
+    Ok(ManagedN8nRequest::new_with_volume(
+        host_port,
+        crate::installers::n8n::N8N_OCI_REFERENCE,
+        volume.into(),
+    )?
+    .with_retained_reinstall(RetainedReinstallSource {
+        uninstall_job_id: uninstall.job_id.as_str().into(),
+        uninstall_manifest_sha256: uninstall.manifest_sha256.as_str().into(),
+        source_install_job_id: source.job_id.as_str().into(),
+        source_install_manifest_sha256: source.manifest_sha256.as_str().into(),
+        bootstrap_volume,
+        volume_owner_install_job_id: volume_owner_install_job_id.into(),
+    }))
 }
 
 fn uninstall_manifest_from_identity(

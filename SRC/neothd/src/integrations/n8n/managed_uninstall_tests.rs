@@ -1,15 +1,16 @@
-use super::super::{
-    DEFAULT_VOLUME, InspectOutcome, InspectVolumeOutcome, MANAGED_LABEL_KEY, MANAGED_LABEL_VALUE, ManagedCommandReceipt,
-    ManagedDockerRunner, ManagedN8nRequest, ManagedReadiness, ObservedContainer,
-    ObservedVolume, install_managed_at_with, install_retained_at_with, write_binding,
-};
 use super::super::super::managed_bootstrap::BOOTSTRAP_SCHEMA;
+use super::super::{
+    DEFAULT_VOLUME, InspectOutcome, InspectVolumeOutcome, MANAGED_LABEL_KEY, MANAGED_LABEL_VALUE,
+    ManagedCommandReceipt, ManagedDockerRunner, ManagedN8nRequest, ManagedReadiness,
+    ObservedContainer, ObservedVolume, install_managed_at_with, install_retained_at_with,
+    write_binding,
+};
 use super::{
     STEPS, UninstallCustody, UninstallPhase, checkpoint, cleanup_disposition_at, create_custody,
     enqueue_uninstall, finalize_ready_uninstall_custody, open_explicit_uninstall_service_with,
     read_binding, read_custody, receipt_path, retained_reinstall_request_in_service,
-    source_ready_binding, uninstall_managed_at_with,
-    uninstall_managed_at_with_restart_inspector, write_custody,
+    source_ready_binding, uninstall_managed_at_with, uninstall_managed_at_with_restart_inspector,
+    write_custody,
 };
 use crate::installers::n8n::N8N_OCI_REFERENCE;
 use crate::integrations::jobs::{IntegrationJobService, JobServiceError};
@@ -77,7 +78,12 @@ impl ManagedDockerRunner for Fake {
         if state.volume_unknown {
             Ok(InspectVolumeOutcome::Unknown)
         } else {
-            Ok(state.volume.clone().filter(|volume| volume.name == name).map(InspectVolumeOutcome::Found).unwrap_or(InspectVolumeOutcome::Absent))
+            Ok(state
+                .volume
+                .clone()
+                .filter(|volume| volume.name == name)
+                .map(InspectVolumeOutcome::Found)
+                .unwrap_or(InspectVolumeOutcome::Absent))
         }
     }
     async fn create(&mut self, argv: &[String]) -> Result<ManagedCommandReceipt, &'static str> {
@@ -157,7 +163,12 @@ async fn installed_bootstrap_like(home: &std::path::Path, runner: &mut Fake) -> 
     let (_tx, mut cancel) = tokio::sync::oneshot::channel();
     let job = install_managed_at_with(
         home,
-        ManagedN8nRequest::new_with_volume(5678, N8N_OCI_REFERENCE, "neoth_n8n_bootstrap_test".into()).unwrap(),
+        ManagedN8nRequest::new_with_volume(
+            5678,
+            N8N_OCI_REFERENCE,
+            "neoth_n8n_bootstrap_test".into(),
+        )
+        .unwrap(),
         crate::secret::SecretString::from("test-key"),
         runner,
         &Ready,
@@ -298,35 +309,66 @@ async fn retained_bootstrap_volume_reinstalls_twice_with_the_original_label_owne
         ]),
     });
 
-    let first_uninstall = uninstall_managed_at_with(home.path(), &mut runner).await.unwrap();
+    let first_uninstall = uninstall_managed_at_with(home.path(), &mut runner)
+        .await
+        .unwrap();
     let first_calls = state.lock().unwrap().calls.len();
     let (_tx, mut cancel) = tokio::sync::oneshot::channel();
     let first_reinstall = install_retained_at_with(
-        home.path(), &first_uninstall.job_id, crate::secret::SecretString::from("test-key"),
-        &mut runner, &Ready, &Probe, &mut cancel,
-    ).await.unwrap();
+        home.path(),
+        &first_uninstall.job_id,
+        crate::secret::SecretString::from("test-key"),
+        &mut runner,
+        &Ready,
+        &Probe,
+        &mut cancel,
+    )
+    .await
+    .unwrap();
     assert_ne!(first_reinstall.job_id, original.job_id);
     assert_ne!(first_reinstall.job_id, first_uninstall.job_id);
     let first_reinstall_calls = state.lock().unwrap().calls[first_calls..].to_vec();
-    let inspect = first_reinstall_calls.iter().position(|call| call == "inspect_volume:neoth_n8n_bootstrap_test").unwrap();
-    let create = first_reinstall_calls.iter().position(|call| call == "create").unwrap();
+    let inspect = first_reinstall_calls
+        .iter()
+        .position(|call| call == "inspect_volume:neoth_n8n_bootstrap_test")
+        .unwrap();
+    let create = first_reinstall_calls
+        .iter()
+        .position(|call| call == "create")
+        .unwrap();
     assert!(inspect < create);
 
-    let second_uninstall = uninstall_managed_at_with(home.path(), &mut runner).await.unwrap();
+    let second_uninstall = uninstall_managed_at_with(home.path(), &mut runner)
+        .await
+        .unwrap();
     let before_second_reinstall = state.lock().unwrap().calls.len();
     let (_tx, mut cancel) = tokio::sync::oneshot::channel();
     let second_reinstall = install_retained_at_with(
-        home.path(), &second_uninstall.job_id, crate::secret::SecretString::from("test-key"),
-        &mut runner, &Ready, &Probe, &mut cancel,
-    ).await.unwrap();
+        home.path(),
+        &second_uninstall.job_id,
+        crate::secret::SecretString::from("test-key"),
+        &mut runner,
+        &Ready,
+        &Probe,
+        &mut cancel,
+    )
+    .await
+    .unwrap();
     assert_ne!(second_reinstall.job_id, first_reinstall.job_id);
     let calls = state.lock().unwrap().calls[before_second_reinstall..].to_vec();
-    assert!(calls.iter().any(|call| call == "inspect_volume:neoth_n8n_bootstrap_test"));
+    assert!(
+        calls
+            .iter()
+            .any(|call| call == "inspect_volume:neoth_n8n_bootstrap_test")
+    );
     assert!(calls.iter().any(|call| call == "create"));
     let binding = read_binding(home.path()).unwrap().unwrap();
     assert_eq!(binding.volume, "neoth_n8n_bootstrap_test");
     assert_eq!(
-        binding.retained_reinstall.unwrap().volume_owner_install_job_id,
+        binding
+            .retained_reinstall
+            .unwrap()
+            .volume_owner_install_job_id,
         original.job_id.as_str(),
     );
 }
@@ -338,15 +380,30 @@ async fn retained_reinstall_rejects_unproven_missing_unknown_and_foreign_volumes
     let state = Arc::new(Mutex::new(FakeState::default()));
     let mut runner = Fake(state.clone());
     let ordinary = installed(home.path(), &mut runner).await;
-    let ordinary_uninstall = uninstall_managed_at_with(home.path(), &mut runner).await.unwrap();
+    let ordinary_uninstall = uninstall_managed_at_with(home.path(), &mut runner)
+        .await
+        .unwrap();
     let before = state.lock().unwrap().calls.len();
     let (_tx, mut cancel) = tokio::sync::oneshot::channel();
-    assert!(install_retained_at_with(
-        home.path(), &ordinary_uninstall.job_id, crate::secret::SecretString::from("test-key"),
-        &mut runner, &Ready, &Probe, &mut cancel,
-    ).await.is_err());
+    assert!(
+        install_retained_at_with(
+            home.path(),
+            &ordinary_uninstall.job_id,
+            crate::secret::SecretString::from("test-key"),
+            &mut runner,
+            &Ready,
+            &Probe,
+            &mut cancel,
+        )
+        .await
+        .is_err()
+    );
     assert_eq!(ordinary.state, JobState::Ready);
-    assert!(!state.lock().unwrap().calls[before..].iter().any(|call| call == "create"));
+    assert!(
+        !state.lock().unwrap().calls[before..]
+            .iter()
+            .any(|call| call == "create")
+    );
 
     for case in ["missing", "unknown", "foreign"] {
         let home = tempfile::tempdir().unwrap();
@@ -354,58 +411,85 @@ async fn retained_reinstall_rejects_unproven_missing_unknown_and_foreign_volumes
         let state = Arc::new(Mutex::new(FakeState::default()));
         let mut runner = Fake(state.clone());
         let original = installed_bootstrap_like(home.path(), &mut runner).await;
-        let uninstall = uninstall_managed_at_with(home.path(), &mut runner).await.unwrap();
+        let uninstall = uninstall_managed_at_with(home.path(), &mut runner)
+            .await
+            .unwrap();
         match case {
             "missing" => {}
             "unknown" => state.lock().unwrap().volume_unknown = true,
-            "foreign" => state.lock().unwrap().volume = Some(ObservedVolume {
-                name: "neoth_n8n_bootstrap_test".into(), labels: Default::default(),
-            }),
+            "foreign" => {
+                state.lock().unwrap().volume = Some(ObservedVolume {
+                    name: "neoth_n8n_bootstrap_test".into(),
+                    labels: Default::default(),
+                })
+            }
             _ => unreachable!(),
         }
         let before = state.lock().unwrap().calls.len();
         let (_tx, mut cancel) = tokio::sync::oneshot::channel();
-        assert!(install_retained_at_with(
-            home.path(), &uninstall.job_id, crate::secret::SecretString::from("test-key"),
-            &mut runner, &Ready, &Probe, &mut cancel,
-        ).await.is_err());
+        assert!(
+            install_retained_at_with(
+                home.path(),
+                &uninstall.job_id,
+                crate::secret::SecretString::from("test-key"),
+                &mut runner,
+                &Ready,
+                &Probe,
+                &mut cancel,
+            )
+            .await
+            .is_err()
+        );
         let calls = state.lock().unwrap().calls[before..].to_vec();
-        assert!(calls.iter().any(|call| call == "inspect_volume:neoth_n8n_bootstrap_test"));
+        assert!(
+            calls
+                .iter()
+                .any(|call| call == "inspect_volume:neoth_n8n_bootstrap_test")
+        );
         assert!(!calls.iter().any(|call| call == "create"));
         assert_eq!(original.state, JobState::Ready);
     }
 }
 
 #[tokio::test]
-async fn retained_reinstall_rejects_missing_legacy_malformed_and_mismatched_receipts_without_docker() {
+async fn retained_reinstall_rejects_missing_legacy_malformed_and_mismatched_receipts_without_docker()
+ {
     for case in ["missing", "legacy", "malformed", "mismatched"] {
         let home = tempfile::tempdir().unwrap();
         initialize(home.path());
         let state = Arc::new(Mutex::new(FakeState::default()));
         let mut runner = Fake(state.clone());
-        let (source, uninstall) = completed_bootstrap_uninstall_seed(home.path(), &mut runner).await;
+        let (source, uninstall) =
+            completed_bootstrap_uninstall_seed(home.path(), &mut runner).await;
         let jobs_before = job_snapshot(home.path());
         let calls_before = state.lock().unwrap().calls.len();
         let path = receipt_path(home.path(), uninstall.job_id.as_str());
         match case {
             "missing" => std::fs::remove_file(&path).unwrap(),
             "legacy" => {
-                let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                let mut value: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
                 value.as_object_mut().unwrap().remove("source_container_id");
                 std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
             }
             "malformed" => std::fs::write(&path, b"{").unwrap(),
             "mismatched" => {
-                let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                let mut value: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
                 value.as_object_mut().unwrap().insert(
-                    "uninstall_manifest_sha256".into(), serde_json::Value::String("d".repeat(64)),
+                    "uninstall_manifest_sha256".into(),
+                    serde_json::Value::String("d".repeat(64)),
                 );
                 std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
             }
             _ => unreachable!(),
         }
         assert_receipt_selector_rejected_without_docker(
-            home.path(), &state, &uninstall.job_id, &jobs_before, calls_before,
+            home.path(),
+            &state,
+            &uninstall.job_id,
+            &jobs_before,
+            calls_before,
         );
         assert_eq!(source.state, JobState::Ready);
         assert_eq!(uninstall.state, JobState::Ready);
@@ -428,7 +512,8 @@ async fn retained_reinstall_rejects_selected_or_mutated_source_evidence_without_
         initialize(home.path());
         let state = Arc::new(Mutex::new(FakeState::default()));
         let mut runner = Fake(state.clone());
-        let (source, uninstall) = completed_bootstrap_uninstall_seed(home.path(), &mut runner).await;
+        let (source, uninstall) =
+            completed_bootstrap_uninstall_seed(home.path(), &mut runner).await;
         let jobs_before = job_snapshot(home.path());
         let calls_before = state.lock().unwrap().calls.len();
         let mut selector = uninstall.job_id.clone();
@@ -436,25 +521,63 @@ async fn retained_reinstall_rejects_selected_or_mutated_source_evidence_without_
             selector = source.job_id.clone();
         } else {
             let path = receipt_path(home.path(), uninstall.job_id.as_str());
-            let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
             let receipt = value.as_object_mut().unwrap();
             match case {
                 "source_operation" => {
-                    receipt.insert("source_install_job_id".into(), serde_json::Value::String(uninstall.job_id.as_str().into()));
-                    receipt.insert("source_install_manifest_sha256".into(), serde_json::Value::String(uninstall.manifest_sha256.as_str().into()));
+                    receipt.insert(
+                        "source_install_job_id".into(),
+                        serde_json::Value::String(uninstall.job_id.as_str().into()),
+                    );
+                    receipt.insert(
+                        "source_install_manifest_sha256".into(),
+                        serde_json::Value::String(uninstall.manifest_sha256.as_str().into()),
+                    );
                 }
-                "source_manifest" => { receipt.insert("source_install_manifest_sha256".into(), serde_json::Value::String("d".repeat(64))); }
-                "source_image" => { receipt.insert("source_image".into(), serde_json::Value::String("unreviewed:image".into())); }
-                "source_port" => { receipt.insert("source_host_port".into(), serde_json::json!(5679)); }
-                "source_volume" => { receipt.insert("source_volume".into(), serde_json::Value::String("neoth_n8n_other".into())); }
-                "source_owner" => { receipt.insert("source_volume_owner_install_job_id".into(), serde_json::Value::String(uuid::Uuid::now_v7().to_string())); }
-                "source_container" => { receipt.insert("source_container_id".into(), serde_json::Value::String("d".repeat(64))); }
+                "source_manifest" => {
+                    receipt.insert(
+                        "source_install_manifest_sha256".into(),
+                        serde_json::Value::String("d".repeat(64)),
+                    );
+                }
+                "source_image" => {
+                    receipt.insert(
+                        "source_image".into(),
+                        serde_json::Value::String("unreviewed:image".into()),
+                    );
+                }
+                "source_port" => {
+                    receipt.insert("source_host_port".into(), serde_json::json!(5679));
+                }
+                "source_volume" => {
+                    receipt.insert(
+                        "source_volume".into(),
+                        serde_json::Value::String("neoth_n8n_other".into()),
+                    );
+                }
+                "source_owner" => {
+                    receipt.insert(
+                        "source_volume_owner_install_job_id".into(),
+                        serde_json::Value::String(uuid::Uuid::now_v7().to_string()),
+                    );
+                }
+                "source_container" => {
+                    receipt.insert(
+                        "source_container_id".into(),
+                        serde_json::Value::String("d".repeat(64)),
+                    );
+                }
                 _ => unreachable!(),
             }
             std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         }
         assert_receipt_selector_rejected_without_docker(
-            home.path(), &state, &selector, &jobs_before, calls_before,
+            home.path(),
+            &state,
+            &selector,
+            &jobs_before,
+            calls_before,
         );
         assert_eq!(source.state, JobState::Ready);
         assert_eq!(uninstall.state, JobState::Ready);

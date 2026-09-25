@@ -1,0 +1,12 @@
+{
+  "kind": "ROOT_REVIEWED_HOSTED_N8N_COMPILE_REPAIR",
+  "source": "f22e7734fddd94de23e11c132ed34371226f6309",
+  "failedCore": 36112323907,
+  "failedProduct": 36112332320,
+  "diagnostic": "E0277: cannot compare &String with String in retained owner validation",
+  "change": "Compare owner to &binding.job_id; condition unchanged",
+  "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+  "sha256": "EA76B1D62337C36DE46090FBE6670681CBACC71DB5D95FE1D55D2A54F1D9D97A",
+  "localExecutableValidationRan": false,
+  "hosted": "pending"
+}

@@ -1,0 +1,67 @@
+{
+  "run": 36112303133,
+  "source": "f22e7734fddd94de23e11c132ed34371226f6309",
+  "artifact": {
+    "id": 10853926274,
+    "api_digest": "sha256:0f424a04c9bf6af03425220b4e2cab061e75382728c23935e4c8e242f7dd2c12",
+    "zip_sha256": "0f424a04c9bf6af03425220b4e2cab061e75382728c23935e4c8e242f7dd2c12",
+    "matches": true
+  },
+  "inner": [
+    {
+      "path": "rustfmt.patch",
+      "expected": "2277ce951c7c41087a394fcf06ccbc13864dd8b779a267aebe68b3183eac1b54",
+      "actual": "2277ce951c7c41087a394fcf06ccbc13864dd8b779a267aebe68b3183eac1b54",
+      "matches": true
+    },
+    {
+      "path": "source-head.txt",
+      "expected": "db0a7ea8464146a16caae3ffa7b793840be075ef4815286161009ad84a337e0c",
+      "actual": "db0a7ea8464146a16caae3ffa7b793840be075ef4815286161009ad84a337e0c",
+      "matches": true
+    }
+  ],
+  "receipt_source": "f22e7734fddd94de23e11c132ed34371226f6309",
+  "source_match": true,
+  "entries": [
+    {
+      "path": "SRC/neothd/src/cli/n8n.rs",
+      "preimage_blob": "4acff2fa6e65b6eaf27b3df45998c3219f080b83",
+      "before_sha256": "5736a8be47cc8bfd9e3f41313007c24517008ac6ca49c31813498e9ca9a95fdb",
+      "postimage_blob": "1019949ac830a30fd11989921c90fca97d09fda3",
+      "preimage_matches": true
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "preimage_blob": "e76a5c93f4293512a4c7561d82a79267bbe7f6e0",
+      "before_sha256": "3b37187bcfca54442be8bec71af67a2e83deb8be3636fd12694134244a1e1b1e",
+      "postimage_blob": "014d2dd70eac18389578643cce4d83004fe91215",
+      "preimage_matches": true
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime_tests.rs",
+      "preimage_blob": "a58d317573ebe6898b0a685e52a014a1e16b6de8",
+      "before_sha256": "ca0b1131c2faa77b48e604a0d01f4346910584c511286dc72c3c543918630f5a",
+      "postimage_blob": "61685f5e2ff96cf076e09e1f2d512d775a5c78e1",
+      "preimage_matches": true
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",
+      "preimage_blob": "864adf0cdbe8be10b42b85894372818c91bae884",
+      "before_sha256": "8dedc0b6971be31e121b10b671a58c69b5f3723d938eaddae6c45b632c0785d4",
+      "postimage_blob": "420a80024284bff364fdab0fe232a9c2402387d8",
+      "preimage_matches": true
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_uninstall_tests.rs",
+      "preimage_blob": "bbbcb43abcbd7083e21d1542c68b54ab345a1189",
+      "before_sha256": "f50a060057d8f6a381a15cdc306959b56d93737713ad4c16b1ea54a77b297f47",
+      "postimage_blob": "00d6ba280671da1d908ecf15b795f0497804e049",
+      "preimage_matches": true
+    }
+  ],
+  "all_preimages_match": true,
+  "patch_path": "receipt/rustfmt.patch",
+  "scope": "Exact patch retained; no application.",
+  "rootExactPostimagesVerified": true
+}

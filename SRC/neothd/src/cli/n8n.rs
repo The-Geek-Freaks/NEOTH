@@ -69,7 +69,16 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
             api_key_stdin,
             bootstrap_owner,
             reuse_uninstall,
-        } => run_install(port, api_key_stdin, bootstrap_owner, reuse_uninstall.as_deref(), output).await,
+        } => {
+            run_install(
+                port,
+                api_key_stdin,
+                bootstrap_owner,
+                reuse_uninstall.as_deref(),
+                output,
+            )
+            .await
+        }
         N8nAction::Uninstall => run_uninstall(output).await,
         N8nAction::Adopt {
             endpoint,
@@ -218,17 +227,28 @@ async fn run_install(
     });
     let home = crate::config::FreedomConfig::default_neoth_home();
     let result = if let Some(value) = reuse_uninstall {
-            let job_id = JobId::parse(value.to_owned())
-                .map_err(anyhow::Error::msg)?;
-            crate::integrations::n8n::managed_runtime::install_retained_at(
-                &home, &job_id, api_key, &mut cancel_rx,
-            ).await
-        } else {
-            let request = crate::integrations::n8n::managed_runtime::ManagedN8nRequest::new(
-                port, crate::installers::n8n::N8N_OCI_REFERENCE,
-            ).map_err(anyhow::Error::msg)?;
-            crate::integrations::n8n::managed_runtime::install_managed_at(&home, request, api_key, &mut cancel_rx).await
-        };
+        let job_id = JobId::parse(value.to_owned()).map_err(anyhow::Error::msg)?;
+        crate::integrations::n8n::managed_runtime::install_retained_at(
+            &home,
+            &job_id,
+            api_key,
+            &mut cancel_rx,
+        )
+        .await
+    } else {
+        let request = crate::integrations::n8n::managed_runtime::ManagedN8nRequest::new(
+            port,
+            crate::installers::n8n::N8N_OCI_REFERENCE,
+        )
+        .map_err(anyhow::Error::msg)?;
+        crate::integrations::n8n::managed_runtime::install_managed_at(
+            &home,
+            request,
+            api_key,
+            &mut cancel_rx,
+        )
+        .await
+    };
     cancellation_task.abort();
     render_managed_install_job(&result?, output)
 }
@@ -588,12 +608,21 @@ mod tests {
             }) if value == uninstall
         ));
         for args in [
-            vec!["--reuse-uninstall", uninstall.as_str(), "--port", "5679", "--api-key-stdin"],
+            vec![
+                "--reuse-uninstall",
+                uninstall.as_str(),
+                "--port",
+                "5679",
+                "--api-key-stdin",
+            ],
             vec!["--reuse-uninstall", uninstall.as_str(), "--bootstrap-owner"],
         ] {
-            assert!(crate::cli::Cli::try_parse_from(
-                ["neoth", "n8n", "install"].into_iter().chain(args)
-            ).is_err());
+            assert!(
+                crate::cli::Cli::try_parse_from(
+                    ["neoth", "n8n", "install"].into_iter().chain(args)
+                )
+                .is_err()
+            );
         }
     }
 

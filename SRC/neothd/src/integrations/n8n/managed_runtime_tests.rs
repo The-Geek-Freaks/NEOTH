@@ -31,7 +31,10 @@ impl FakeRunner {
     fn fresh() -> (Self, Arc<Mutex<RunnerState>>) {
         let state = Arc::new(Mutex::new(RunnerState {
             container: None,
-            volume: Some(ObservedVolume { name: DEFAULT_VOLUME.into(), labels: Default::default() }),
+            volume: Some(ObservedVolume {
+                name: DEFAULT_VOLUME.into(),
+                labels: Default::default(),
+            }),
             create_error_after_effect: false,
             remove_succeeds: true,
             named_unknown: false,
@@ -88,7 +91,12 @@ impl ManagedDockerRunner for FakeRunner {
     async fn inspect_volume(&mut self, name: &str) -> Result<InspectVolumeOutcome, &'static str> {
         let mut state = self.0.lock().unwrap();
         state.calls.push(format!("inspect_volume:{name}"));
-        Ok(state.volume.clone().filter(|volume| volume.name == name).map(InspectVolumeOutcome::Found).unwrap_or(InspectVolumeOutcome::Absent))
+        Ok(state
+            .volume
+            .clone()
+            .filter(|volume| volume.name == name)
+            .map(InspectVolumeOutcome::Found)
+            .unwrap_or(InspectVolumeOutcome::Absent))
     }
     async fn create(&mut self, argv: &[String]) -> Result<ManagedCommandReceipt, &'static str> {
         let mut state = self.0.lock().unwrap();

@@ -476,14 +476,20 @@ fn validate_binding(
         Some(source) => {
             source.bootstrap_volume
                 && source.volume_owner_install_job_id
-                    == binding.bootstrap_volume_owner_job_id.clone().unwrap_or_default()
+                    == binding
+                        .bootstrap_volume_owner_job_id
+                        .clone()
+                        .unwrap_or_default()
                 && valid_retained_reinstall_source(source)
         }
     };
-    let bootstrap_owner_matches = match (&binding.retained_reinstall, &binding.bootstrap_volume_owner_job_id) {
+    let bootstrap_owner_matches = match (
+        &binding.retained_reinstall,
+        &binding.bootstrap_volume_owner_job_id,
+    ) {
         (Some(_), Some(_)) => retained_owner_matches,
         (Some(_), None) => false,
-        (None, Some(owner)) => owner == binding.job_id && binding.volume != DEFAULT_VOLUME,
+        (None, Some(owner)) => owner == &binding.job_id && binding.volume != DEFAULT_VOLUME,
         (None, None) => true,
     };
     if !is_managed_job(job)
@@ -679,8 +685,15 @@ async fn verify_retained_volume<R: ManagedDockerRunner>(
     runner: &mut R,
     request: &ManagedN8nRequest,
 ) -> anyhow::Result<()> {
-    let source = request.retained_reinstall.as_ref().ok_or_else(|| anyhow::anyhow!("n8n_retained_reinstall_source_missing"))?;
-    let found = match runner.inspect_volume(request.volume()).await.map_err(anyhow::Error::msg)? {
+    let source = request
+        .retained_reinstall
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("n8n_retained_reinstall_source_missing"))?;
+    let found = match runner
+        .inspect_volume(request.volume())
+        .await
+        .map_err(anyhow::Error::msg)?
+    {
         InspectVolumeOutcome::Found(found) if found.name == request.volume() => found,
         InspectVolumeOutcome::Absent => anyhow::bail!("n8n_retained_volume_absent"),
         InspectVolumeOutcome::Unknown => anyhow::bail!("n8n_retained_volume_unknown"),
@@ -690,7 +703,10 @@ async fn verify_retained_volume<R: ManagedDockerRunner>(
         || found.labels.get(MANAGED_LABEL_KEY).map(String::as_str) != Some(MANAGED_LABEL_VALUE)
         || found.labels.get("io.neoth.n8n-job").map(String::as_str)
             != Some(source.volume_owner_install_job_id.as_str())
-        || found.labels.get("io.neoth.n8n-bootstrap").map(String::as_str)
+        || found
+            .labels
+            .get("io.neoth.n8n-bootstrap")
+            .map(String::as_str)
             != Some(super::managed_bootstrap::BOOTSTRAP_SCHEMA)
     {
         anyhow::bail!("n8n_retained_volume_foreign");
@@ -717,10 +733,14 @@ pub(in crate::integrations) async fn install_retained_at_with<
     if read_binding(home).map_err(anyhow::Error::msg)?.is_some() {
         anyhow::bail!("n8n_retained_reinstall_already_active");
     }
-    let request = managed_uninstall::retained_reinstall_request_in_service(&service, home, uninstall_id)
-        .map_err(anyhow::Error::msg)?;
+    let request =
+        managed_uninstall::retained_reinstall_request_in_service(&service, home, uninstall_id)
+            .map_err(anyhow::Error::msg)?;
     verify_retained_volume(runner, &request).await?;
-    install_managed_in_service_with(&service, home, request, api_key, runner, readiness, probe, cancel).await
+    install_managed_in_service_with(
+        &service, home, request, api_key, runner, readiness, probe, cancel,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -977,7 +997,16 @@ pub(crate) async fn install_retained_at(
     api_key: SecretString,
     cancel: &mut tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<IntegrationJob> {
-    install_retained_at_with(home, uninstall_id, api_key, &mut DockerManagedRunner, &ProductionReadiness, &HttpN8nApiProbe, cancel).await
+    install_retained_at_with(
+        home,
+        uninstall_id,
+        api_key,
+        &mut DockerManagedRunner,
+        &ProductionReadiness,
+        &HttpN8nApiProbe,
+        cancel,
+    )
+    .await
 }
 
 pub(crate) async fn install_prepared_managed_in_service(
@@ -1413,13 +1442,29 @@ async fn inspect_target(target: &str) -> Result<InspectOutcome, &'static str> {
 }
 
 async fn inspect_volume_target(name: &str) -> Result<InspectVolumeOutcome, &'static str> {
-    let (ok, data, _) = docker(&["docker".into(), "volume".into(), "inspect".into(), name.into()]).await?;
-    if !ok { return Ok(InspectVolumeOutcome::Unknown); }
-    let mut rows: Vec<DockerVolume> = serde_json::from_str(&data).map_err(|_| "n8n_volume_inspect_invalid")?;
-    if rows.len() != 1 { return Ok(InspectVolumeOutcome::Unknown); }
+    let (ok, data, _) = docker(&[
+        "docker".into(),
+        "volume".into(),
+        "inspect".into(),
+        name.into(),
+    ])
+    .await?;
+    if !ok {
+        return Ok(InspectVolumeOutcome::Unknown);
+    }
+    let mut rows: Vec<DockerVolume> =
+        serde_json::from_str(&data).map_err(|_| "n8n_volume_inspect_invalid")?;
+    if rows.len() != 1 {
+        return Ok(InspectVolumeOutcome::Unknown);
+    }
     let row = rows.pop().expect("length checked");
-    if row.name != name { return Ok(InspectVolumeOutcome::Unknown); }
-    Ok(InspectVolumeOutcome::Found(ObservedVolume { name: row.name, labels: row.labels.unwrap_or_default() }))
+    if row.name != name {
+        return Ok(InspectVolumeOutcome::Unknown);
+    }
+    Ok(InspectVolumeOutcome::Found(ObservedVolume {
+        name: row.name,
+        labels: row.labels.unwrap_or_default(),
+    }))
 }
 
 #[async_trait]

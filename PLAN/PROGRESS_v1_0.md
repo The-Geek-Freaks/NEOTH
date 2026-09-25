@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1292 hosted format and retained-owner type correction (2026-09-25):**
+Root imported all five exact rustfmt postimages from Preflight36112303133,
+sourcef22e7734, artifact10853926274; API ZIP digest, embedded source, patch
+preimages and postimage Git identities verified. Core36112323907 and real
+product36112332320 then exposed E0277 in retained-owner equality: the borrowed
+owner now compares against a borrowed binding job ID. No condition weakened.
+Native and product checks for this repair remain pending GitHub.
+Historical Windows519 run36109913207 at2b77c183 is now ROOT-ADMITTED:
+519/519 exact successful terminals, 94 historical source/input Git bindings
+and530 evidence/log hashes verified. It does not prove newer reinstall source.
+Claude049/050 received and corrected;051 researches versioned Paperless upload,
+async consumption and original-byte download for actual retained-data proof.
+Paperless lifecycle source, operation lock and tests remain a separate reviewed
+work-in-progress. No roadmap closure and no local executable validation.
+
 **W1285 retained-volume n8n reinstall batch (2026-09-25):**
 The explicit `n8n install --reuse-uninstall <job> --api-key-stdin` path resolves
 one completed uninstall and its original Ready Install under the same owner
