@@ -1385,15 +1385,19 @@ mod tests {
     #[test]
     fn volume_validation_requires_exact_name_and_compose_labels() {
         let expected = paperless_staging::PAPERLESS_VOLUMES[0];
-        let good = r#"{"Name":"project_paperless_data","Labels":{"com.docker.compose.project":"project","com.docker.compose.volume":"paperless_data"}}"#;
-        assert!(verify_volume(expected, "project", good).is_ok());
+        let name = volume_name("project", expected.logical_name);
+        let good = format!(
+            r#"{{"Name":"{name}","Labels":{{"com.docker.compose.project":"project","com.docker.compose.volume":"{}"}}}}"#,
+            expected.logical_name
+        );
+        assert!(verify_volume(expected, "project", &good).is_ok());
         for invalid in [
-            r#"{"Name":"foreign","Labels":{"com.docker.compose.project":"project","com.docker.compose.volume":"paperless_data"}}"#,
-            r#"{"Name":"project_paperless_data","Labels":{"com.docker.compose.project":"other","com.docker.compose.volume":"paperless_data"}}"#,
-            r#"{"Name":"project_paperless_data","Labels":{"com.docker.compose.project":"project","com.docker.compose.volume":"other"}}"#,
-            "not-json",
+            format!(r#"{{"Name":"foreign","Labels":{{"com.docker.compose.project":"project","com.docker.compose.volume":"{}"}}}}"#, expected.logical_name),
+            format!(r#"{{"Name":"{name}","Labels":{{"com.docker.compose.project":"other","com.docker.compose.volume":"{}"}}}}"#, expected.logical_name),
+            format!(r#"{{"Name":"{name}","Labels":{{"com.docker.compose.project":"project","com.docker.compose.volume":"other"}}}}"#),
+            "not-json".to_owned(),
         ] {
-            assert!(verify_volume(expected, "project", invalid).is_err());
+            assert!(verify_volume(expected, "project", &invalid).is_err());
         }
     }
     #[test]

@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1212 hosted regression repair and current product evidence (2026-09-25):**
+Group1635 atff32 completed with a Paperless volume-validation fixture failure:
+its fixed paperless_data receipt no longer matched the first declared volume,
+paperless_consume. The fixture now follows the selected volume spec while
+retaining independent name/project/volume-label rejection cases. Executable
+validation of the repair remains pending; no production validator was weakened.
+Preflight58a passed formatting but rejected the stale PROGRESS WS-LF rollup.
+That canonical paragraph now matches ROAD:39done/79open; no criterion closes.
+The n8nProduct614 run36095014487 passed. Root checked the API ZIP/receipt hashes
+and all26 historical source bindings:13 compiled starter graphs imported,
+positive200/negative401 twice, repeat read-only, same job and exact canary cleanup.
+This includes the manual consult graph's import, not its business execution.
+Core390 workspace Clippy continues and Core614 remains queued. Consult behavior
+and the current Group1647/Windows422 gates remain pending. No local executable ran.
+
 **W1205 exact hosted consult formatter import (2026-09-25):**
 The sole614 preflight failure was formatting. Root verified and imported all
 four exact hosted outputs (reader, handler, HTTP tests and starter), including
@@ -7487,7 +7502,7 @@ New-source GitHub static/native results remain pending; no local formatter ran.
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
 > P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
-> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay, P1-20 sidebar preview, P2-03 vault, P1-10 reasoning, P1-12 citation and P2-17 recorded skip decision and P1-22 provider wizard and P2-19 BudgetToken, P1-19 local resources, P1-02 mirror refusal, P1-09 Ouro Q8 and P2-04 reflection hygiene accepted: **38 done / 80
+> closed with P2-10 registry injection, P2-29 throughput, P1-21 watchdog, P2-02 Hippocampus, P1-17 channel Doctor, P2-05 proposal quality, P2-22 counterparty consent, P2-08 WAL sessions, P2-11 CodeGraph, P2-12 skill autonomy, P2-28 response feedback and P2-15 role enforcement and P2-24 BGE-M3, P2-01 Dream phases, P2-09 research and P2-23 Dream opt-in and P2-14 bounded error-aware retry, P2-06 capability decay, P1-20 sidebar preview, P2-03 vault, P1-10 reasoning, P1-12 citation and P2-17 recorded skip decision and P1-22 provider wizard and P2-19 BudgetToken, P1-19 local resources, P1-02 mirror refusal, P1-09 Ouro Q8 and P2-04 reflection hygiene and LF-002-09 managed n8n/Paperless installation accepted: **39 done / 79
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

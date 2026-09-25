@@ -1,0 +1,224 @@
+{
+  "kind": "hosted-product-n8n-bootstrap-import-evidence",
+  "run": {
+    "id": 36095014487,
+    "status": "completed",
+    "conclusion": "success",
+    "sourceHead": "614e2273f2a272e75e2c5a4135f5c65580188c0e",
+    "workflow": ".github/workflows/n8n-product-bootstrap.yml"
+  },
+  "artifact": {
+    "id": 10847431439,
+    "apiDigest": "sha256:b8984f97fec4ed9e98225ae6f981abc115b18884903450333096ad539ba5b838",
+    "localZipSha256": "b8984f97fec4ed9e98225ae6f981abc115b18884903450333096ad539ba5b838",
+    "zipMatches": true,
+    "receiptSha256": "b543e89b2d9ec7735dd8083fbf3eca4347094b276894b88ae94b5e230f58b46c"
+  },
+  "receipt": {
+    "outcome": "passed",
+    "stage": "second_workflow_import",
+    "ready": true,
+    "firstState": "ready",
+    "httpAuth200": 200,
+    "httpAnonymous401": 401,
+    "secondHttpAuth200": 200,
+    "secondHttpAnonymous401": 401,
+    "workflowCount": 13,
+    "workflowSetSha256": "d9c76a65e3a3b8f5cd0ea8e1be01f4485309e2585ecf229527316901d33c42ac",
+    "repeatReadOnly": true,
+    "reusedSameJob": true,
+    "noRebootstrapEvents": true,
+    "cleanupProven": true,
+    "dockerCleanupProven": true,
+    "isolatedHomeRemoved": true,
+    "bootstrapSecretsCleared": true
+  },
+  "sourceBindings": [
+    {
+      "path": ".github/workflows/n8n-product-bootstrap.yml",
+      "blob": "46689506492ce9c8f4c8c3209e1aacd8d5890837",
+      "expectedSha256": "e61db5ccde0cc3dfe6ee103031e40a6025dac328977c24bbf2abc376ff258d60",
+      "actualSha256": "e61db5ccde0cc3dfe6ee103031e40a6025dac328977c24bbf2abc376ff258d60",
+      "matches": true
+    },
+    {
+      "path": "packaging/n8n_bootstrap_canary.py",
+      "blob": "1550e751dbc1e674062a5ce86eba846fbc2510ca",
+      "expectedSha256": "23118857e4655bad3fedbb702e4d0840aec9114482386aab5fee783ef688500a",
+      "actualSha256": "23118857e4655bad3fedbb702e4d0840aec9114482386aab5fee783ef688500a",
+      "matches": true
+    },
+    {
+      "path": "packaging/n8n_product_bootstrap_canary.py",
+      "blob": "a75eb63d902e71d4cad402a4829f0180a3c92388",
+      "expectedSha256": "da9cd92f3e9555ab95a340dd8bb69d39e3d9c32729d0029c3ae6cb64622188a7",
+      "actualSha256": "da9cd92f3e9555ab95a340dd8bb69d39e3d9c32729d0029c3ae6cb64622188a7",
+      "matches": true
+    },
+    {
+      "path": "packaging/tests/test_n8n_product_bootstrap_canary.py",
+      "blob": "947cc772f7eba6f6e61281985d10a1241d42dbe4",
+      "expectedSha256": "5e36213c2e3768c90a2b0c1eb56a26f0346449e8514b0654a1c6b1151d9553fb",
+      "actualSha256": "5e36213c2e3768c90a2b0c1eb56a26f0346449e8514b0654a1c6b1151d9553fb",
+      "matches": true
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "blob": "f89a0cdee009703aeb423562fefea56dcf467ee6",
+      "expectedSha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+      "actualSha256": "eaf75eaf1045b7736010227542dac09d0fa0711e59f9338fefb057f711322b56",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/assets/n8n_workflows/daily_summary.json",
+      "blob": "114da8333f1733f43692d5e7d49be0dd447f44aa",
+      "expectedSha256": "1f4087959463bbff751f8d9be6beb5f6dd1b2eb55d85a662f01cd8e2ec0562c7",
+      "actualSha256": "1f4087959463bbff751f8d9be6beb5f6dd1b2eb55d85a662f01cd8e2ec0562c7",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/assets/n8n_workflows/morning_brief.json",
+      "blob": "d6742615a8c4f478fa23cb4eb1b4ba179cb056f8",
+      "expectedSha256": "35c68f9f5a05bb9af17a46e8b0a8d48e4e5a10e2742bec24aa4831400a9b44d0",
+      "actualSha256": "35c68f9f5a05bb9af17a46e8b0a8d48e4e5a10e2742bec24aa4831400a9b44d0",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/assets/n8n_workflows/weekly_stats.json",
+      "blob": "f122c72624db63558f07fc550cf02f00ea54b486",
+      "expectedSha256": "f16326f0e1ed99946438a1aea69ab0f8e0fcb8e2a6acb7e267418af0c53b6328",
+      "actualSha256": "f16326f0e1ed99946438a1aea69ab0f8e0fcb8e2a6acb7e267418af0c53b6328",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/credential.rs",
+      "blob": "b10d29f476aaf759e842ac5a708db868ce79eac0",
+      "expectedSha256": "869ee22da169e1a1e1ef839052225b1a9d2d1f9032d8312da7fd404b0164dfcd",
+      "actualSha256": "869ee22da169e1a1e1ef839052225b1a9d2d1f9032d8312da7fd404b0164dfcd",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/init.rs",
+      "blob": "2b775a1c0e05f669173c7aae21d9bd77ebd6ec5a",
+      "expectedSha256": "40d0f6cfa68c8588fe5d3be4968e40e7eb3700b8235243a2707d325bb6f220c8",
+      "actualSha256": "40d0f6cfa68c8588fe5d3be4968e40e7eb3700b8235243a2707d325bb6f220c8",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/io.rs",
+      "blob": "d7646518596245a7c86137fd46f6e7619a73cc90",
+      "expectedSha256": "cbf51fe4243d9f218d2edf416630f435d0ab6532f8b7ac499a8c1e50fc17305b",
+      "actualSha256": "cbf51fe4243d9f218d2edf416630f435d0ab6532f8b7ac499a8c1e50fc17305b",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/steps_provider.rs",
+      "blob": "425868fd09b61d7a2df443d5a60ca5cc545236c3",
+      "expectedSha256": "334fc5957650adff66d11a6efe6429e8d099c56b123b275bba89f1ef40b32817",
+      "actualSha256": "334fc5957650adff66d11a6efe6429e8d099c56b123b275bba89f1ef40b32817",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/init/types.rs",
+      "blob": "497ac95ced4af7f542b5734753c5dca20fa8a2f4",
+      "expectedSha256": "5a938f592f1dbaf6d142c69fa85a5f8a67566093e6ed6e8ad4c64c0e7e748297",
+      "actualSha256": "5a938f592f1dbaf6d142c69fa85a5f8a67566093e6ed6e8ad4c64c0e7e748297",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/n8n.rs",
+      "blob": "cb0c236e3cc36fe8ba35da387df0fb2be71330cd",
+      "expectedSha256": "0932bd9ff3ccb73e4f7832fbda81d45de6974b37ab5984fc886bea65c5c55bec",
+      "actualSha256": "0932bd9ff3ccb73e4f7832fbda81d45de6974b37ab5984fc886bea65c5c55bec",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/config/credentials.rs",
+      "blob": "7622444dc9e1ec8ab5e7e067433ec9e750d7b43f",
+      "expectedSha256": "4a1291b814eab6f31d2184d242d9772ebd20003e9dc24c28f83a01aa5955a178",
+      "actualSha256": "4a1291b814eab6f31d2184d242d9772ebd20003e9dc24c28f83a01aa5955a178",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/config/keychain.rs",
+      "blob": "4027f4882543303f08b7c14575a10bd0cc921f8e",
+      "expectedSha256": "1b83b306aae415ac8edaa39256271e779bee5f3181a7b8f796079cfcf8b87d0f",
+      "actualSha256": "1b83b306aae415ac8edaa39256271e779bee5f3181a7b8f796079cfcf8b87d0f",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "blob": "e8c281a0ed2d6a51c9da602b8cd38d7e7049d607",
+      "expectedSha256": "31d14a5c5764c72ae03cfd9c6cc58c308667694f95c17dd4048b6ad859191072",
+      "actualSha256": "31d14a5c5764c72ae03cfd9c6cc58c308667694f95c17dd4048b6ad859191072",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+      "blob": "9b9a1cd9f43fd1d59ec02cf55fe453b15ce037b3",
+      "expectedSha256": "bb79ac2bf90379d3be2382fb7a302adbb1278cb14e6161cd6058ed0c4bb45e68",
+      "actualSha256": "bb79ac2bf90379d3be2382fb7a302adbb1278cb14e6161cd6058ed0c4bb45e68",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/installers/n8n_workflows.rs",
+      "blob": "7e0f040bbf3ab5dd2e301ff7f7b428df15368460",
+      "expectedSha256": "f3e7fb2f481cfce01ce9d865cd700a9e180855a176b5218501f57a3fa395e846",
+      "actualSha256": "f3e7fb2f481cfce01ce9d865cd700a9e180855a176b5218501f57a3fa395e846",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/integrations/jobs.rs",
+      "blob": "257a91e995990c4c9ab6b19ceab6ff8520890939",
+      "expectedSha256": "ebab8e1be541406e7d09007f5988eb3cca0ce20a5308a0a7c78c3d32ecaaed8a",
+      "actualSha256": "ebab8e1be541406e7d09007f5988eb3cca0ce20a5308a0a7c78c3d32ecaaed8a",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n.rs",
+      "blob": "535590a63d75f1bddb1f232f92bc9e616729036f",
+      "expectedSha256": "fb30123da3cdeb2377ada2591d2e7269fadd362e822d757d09e8e063048fdf25",
+      "actualSha256": "fb30123da3cdeb2377ada2591d2e7269fadd362e822d757d09e8e063048fdf25",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/bootstrap_transport.rs",
+      "blob": "e9bd63f07a664ae6988ed3d5872c25f13a169c67",
+      "expectedSha256": "efedfb5665ca6d3ab1c6a7bf9c9c2339d7f17be0c79bfd58c40a1d20d12bba38",
+      "actualSha256": "efedfb5665ca6d3ab1c6a7bf9c9c2339d7f17be0c79bfd58c40a1d20d12bba38",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs",
+      "blob": "3e48034b38cc573ea81b0a545eabd58e69a0fa66",
+      "expectedSha256": "ed02c39c88fc171cd421db4856da5eed360eb52533bc2f8d6fbc11af6fe28a27",
+      "actualSha256": "ed02c39c88fc171cd421db4856da5eed360eb52533bc2f8d6fbc11af6fe28a27",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "blob": "9a612a19e6ee9885da384c047b7a4159e30b9297",
+      "expectedSha256": "165fd44fdd483631c662a11db4e6a287d1e8ab0edcdf0d1dacde8f24c93fbba2",
+      "actualSha256": "165fd44fdd483631c662a11db4e6a287d1e8ab0edcdf0d1dacde8f24c93fbba2",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/workflow_import.rs",
+      "blob": "21bb0ecb21e6d31b4e7ccc010eb498ea122db119",
+      "expectedSha256": "5f3b30b13a778e99ba10e412d1e9ca11f0b5cda2fff072ec8bead87a19403ecd",
+      "actualSha256": "5f3b30b13a778e99ba10e412d1e9ca11f0b5cda2fff072ec8bead87a19403ecd",
+      "matches": true
+    },
+    {
+      "path": "SRC/neothd/src/integrations/state.rs",
+      "blob": "5b785cb45b3a93f87a406342a5011acdaf583d7f",
+      "expectedSha256": "1d87b3036cee8ddc68277265238801ebfa44af0ef779b41d11eb3dd83e196f93",
+      "actualSha256": "1d87b3036cee8ddc68277265238801ebfa44af0ef779b41d11eb3dd83e196f93",
+      "matches": true
+    }
+  ],
+  "rootAdmission": "ROOT_ADMITTED_HISTORICAL_PASS",
+  "scopeLimit": "Historical receipt only; no retained binary/container/live service/cleanup filesystem.",
+  "localExecutableValidationRan": false,
+  "admissionUtc": "2026-09-25T04:44:31.7355188Z"
+}

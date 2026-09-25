@@ -1,0 +1,16 @@
+{
+  "schema": "neoth-regression-repair/v1",
+  "base": "58a2119016c0c407133bbdddf3c8b5df3f26b7df",
+  "groupRun": 36094501407,
+  "groupSource": "ff32ff861a22d1f9ce2a418df8a0880fbee21b08",
+  "test": "installers::paperless_lifecycle::tests::volume_validation_requires_exact_name_and_compose_labels",
+  "cause": "Declared first volume changed to paperless_consume; fixture still built hard-coded paperless_data",
+  "repair": "Use the selected volume spec in positive receipt, preserve name/project/logical-label negative controls",
+  "productionChanged": false,
+  "preflightRun": 36095321522,
+  "preflightCause": "PROGRESS WS-LF39/79 drifted at38/80",
+  "preflightRepair": "Canonical progress rollup synchronized to roadmap; no checkbox changes",
+  "review": "Root inspected validator, declared volume array, failed assertion and complete fixture delta",
+  "localExecutableValidationRan": false,
+  "hostedRepairValidation": "pending"
+}

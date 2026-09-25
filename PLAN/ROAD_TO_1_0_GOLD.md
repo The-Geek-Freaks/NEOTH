@@ -8,6 +8,21 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1212 hosted regression repair and current product evidence (2026-09-25):**
+Group1635 atff32 completed with a Paperless volume-validation fixture failure:
+its fixed paperless_data receipt no longer matched the first declared volume,
+paperless_consume. The fixture now follows the selected volume spec while
+retaining independent name/project/volume-label rejection cases. Executable
+validation of the repair remains pending; no production validator was weakened.
+Preflight58a passed formatting but rejected the stale PROGRESS WS-LF rollup.
+That canonical paragraph now matches ROAD:39done/79open; no criterion closes.
+The n8nProduct614 run36095014487 passed. Root checked the API ZIP/receipt hashes
+and all26 historical source bindings:13 compiled starter graphs imported,
+positive200/negative401 twice, repeat read-only, same job and exact canary cleanup.
+This includes the manual consult graph's import, not its business execution.
+Core390 workspace Clippy continues and Core614 remains queued. Consult behavior
+and the current Group1647/Windows422 gates remain pending. No local executable ran.
+
 **W1205 exact hosted consult formatter import (2026-09-25):**
 The sole614 preflight failure was formatting. Root verified and imported all
 four exact hosted outputs (reader, handler, HTTP tests and starter), including

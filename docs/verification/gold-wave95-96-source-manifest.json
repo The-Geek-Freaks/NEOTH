@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T04:37:28.1703319Z",
-  "validationStatus": "W1205 exact hosted consult formatter4; behavior pending Core614/Group1647",
+  "capturedUtc": "2026-09-25T04:46:02.2972191Z",
+  "validationStatus": "W1212 volume fixture and WS-LF rollup repaired; hosted rerun pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1532,6 +1532,16 @@
       "sha256": "84D856EB03E95B61825F490A0DFA58E42B7F975440962A265E90E5A50FA1E034"
     },
     {
+      "path": "docs/verification/gold-wave1209-n8n-product.json",
+      "bytes": 10111,
+      "sha256": "84D85A2C5DF882D8338F5DF6670D486C9B65B6D75A1997EC93124DFC7B670BD0"
+    },
+    {
+      "path": "docs/verification/gold-wave1212-regression-repair.json",
+      "bytes": 931,
+      "sha256": "D025527E3A43C7BA7CC4CD1F1D5A38D5A3684C34F0ECBA0B23458E784610EC19"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -2488,13 +2498,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1358551,
-      "sha256": "DA0A91D1893FCCC6AAD64F5760F05DE0B39CF0C8190F0E32AFB45DC8D2350C8F"
+      "bytes": 1359701,
+      "sha256": "DFE1256BDE5C8049834F1850D751A874999D7E53CE7A3030C2ED82F987D91AA6"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1969123,
-      "sha256": "4405DD3A62F3274127396626B886F49C139CAB59589B4E77031BF4C40DBF53DF"
+      "bytes": 1970224,
+      "sha256": "569A6935B59D5B61224EC471F9BE3B93406C6B3A253E9A918B1DA2C81282EE1C"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4473,8 +4483,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
-      "bytes": 73366,
-      "sha256": "D93273446C0BBA5B61D1FA249AFD85F016834560430BAC57DFD240A101A6B478"
+      "bytes": 73516,
+      "sha256": "27D6AE775512354F201CA3B43CB053CFFD6B85B0D5D3DBC885E2FE6637907928"
     },
     {
       "path": "SRC/neothd/src/installers/paperless_readiness_tests.rs",
