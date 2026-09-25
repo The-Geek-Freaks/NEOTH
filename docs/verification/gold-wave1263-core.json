@@ -1,0 +1,76 @@
+{
+  "schema": "neoth-wave1263-core204/v1",
+  "run": {
+    "id": 36100798375,
+    "status": "completed",
+    "conclusion": "success",
+    "sourceHead": "2043225134b18bc054ee30ee1ddb0827b7e53e86",
+    "workflow": ".github/workflows/cli-reference.yml",
+    "started": "2026-09-25T05:58:18Z",
+    "updated": "2026-09-25T07:03:51Z"
+  },
+  "gates": [
+    {
+      "name": "Check exact-source slim-core production Clippy",
+      "conclusion": "success",
+      "started": "2026-09-25T06:24:33Z",
+      "completed": "2026-09-25T06:27:02Z"
+    },
+    {
+      "name": "Type-check core test targets before native validation",
+      "conclusion": "success",
+      "started": "2026-09-25T06:27:02Z",
+      "completed": "2026-09-25T06:31:49Z"
+    },
+    {
+      "name": "Build current public CLI",
+      "conclusion": "success",
+      "started": "2026-09-25T06:31:49Z",
+      "completed": "2026-09-25T06:35:59Z"
+    },
+    {
+      "name": "Export generated reference",
+      "conclusion": "success",
+      "started": "2026-09-25T06:35:59Z",
+      "completed": "2026-09-25T06:35:59Z"
+    },
+    {
+      "name": "Upload generated reference",
+      "conclusion": "success",
+      "started": "2026-09-25T06:35:59Z",
+      "completed": "2026-09-25T06:36:00Z"
+    },
+    {
+      "name": "Check exact Linux-quality workspace Clippy",
+      "conclusion": "success",
+      "started": "2026-09-25T06:36:00Z",
+      "completed": "2026-09-25T07:03:47Z"
+    }
+  ],
+  "allRequiredGatesSuccess": true,
+  "artifact": {
+    "id": 10850311226,
+    "apiDigest": "sha256:0ab8fecf558b728c5a9baacfeb04f89daa80ac726d81d4533dab85c9b8f86468",
+    "localZipSha256": "0ab8fecf558b728c5a9baacfeb04f89daa80ac726d81d4533dab85c9b8f86468",
+    "zipMatches": true,
+    "sourceHeadArtifact": "2043225134b18bc054ee30ee1ddb0827b7e53e86",
+    "sourceHeadMatches": true,
+    "generatedReferenceSha256": "b7ef122a5d336bdc35570df1632724fbd5f1461ff1914fd7b4292ab187335050",
+    "sha256SumsMatches": true
+  },
+  "historicalGeneratorInputs": {
+    "count": 7,
+    "allMatch": true,
+    "file": "historical-cli-input-bindings.json"
+  },
+  "trackedDocsComparison": {
+    "historicalTrackedDocsSha256": "b7ef122a5d336bdc35570df1632724fbd5f1461ff1914fd7b4292ab187335050",
+    "generatedMatchesHistoricalTrackedDocs": true,
+    "currentTrackedHead": "ddd7b190dd90b5b9fcdc8396769daea30feff22b",
+    "currentTrackedDocsSha256": "b7ef122a5d336bdc35570df1632724fbd5f1461ff1914fd7b4292ab187335050",
+    "generatedMatchesCurrentTrackedDocs": true
+  },
+  "localClockUsed": false,
+  "rootAdmission": "ROOT_ADMITTED_HISTORICAL_CORE204",
+  "localExecutableValidationRan": false
+}

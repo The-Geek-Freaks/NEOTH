@@ -3,6 +3,26 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1266 managed n8n uninstall implementation (2026-09-25):**
+The operator command `neoth n8n uninstall` removes only the full container ID
+bound to the original Ready managed Install job, retaining the named volume.
+Durable dispatch custody prevents duplicate removal after uncertainty; explicit
+restart reconciles exact absence. Completion retains a private per-job receipt
+and finalizes the matching runtime custody before command success. Historical
+Ready install rows remain unchanged. File-backed config/key cleanup requires
+retained publication proof plus matching endpoint/API version/backend/key;
+legacy, changed and keychain-backed bindings are preserved with explicit status.
+Root repaired phase/receipt ordering, finalizer crash windows and checkpoint
+recovery; W1261 final independent static review found no remaining blocker.
+Nineteen new universal tests are registered:9 lifecycle,8 credential ownership,
+1 service-Hold and1 CLI. Native1960/Group1749/Windows519; executable verification
+is pending on GitHub. The real compiled-product canary now includes uninstall,
+retained-volume/canonical-key proof, immutable install row and read-only repeat.
+Claude042/043/044 informed ownership and canary boundaries; early assumptions
+were corrected in feedback. No safe-uninstall/purge or Obsidian row is closed.
+Core204 run36100798375 is ROOT-ADMITTED for slim/workspace Clippy, test typecheck
+and CLI export (7 historical bindings; generated docs unchanged). Core8f1 is
+running; neither historical run proves this new uninstall source.
 **W1256/W1259 weekly consumer hosted acceptance (2026-09-25):**
 Windows500 run36102659350 atd4836aa4 is ROOT-ADMITTED:500PASS/0FAIL/0missing,
 all actual named terminals, ten inner hashes and91 historical input bindings.

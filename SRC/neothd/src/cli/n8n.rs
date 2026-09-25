@@ -1,4 +1,4 @@
-//! `neoth n8n {install,adopt,status,import-workflows,workflows}`.
+//! `neoth n8n {install,uninstall,adopt,status,import-workflows,workflows}`.
 //!
 //! Adoption binds an operator-supplied, already-running literal-loopback n8n
 //! instance. It never installs, starts, discovers, or owns an n8n process.
@@ -38,6 +38,9 @@ pub enum N8nAction {
         #[arg(long, conflicts_with = "api_key_stdin")]
         bootstrap_owner: bool,
     },
+    /// Remove the exact NEOTH-managed container and retain its data volume.
+    /// Repeating an interrupted command reconciles absence without retrying deletion.
+    Uninstall,
     /// Adopt an already-running n8n API at an exact literal-loopback origin.
     Adopt {
         #[arg(long)]
@@ -63,6 +66,7 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
             api_key_stdin,
             bootstrap_owner,
         } => run_install(port, api_key_stdin, bootstrap_owner, output).await,
+        N8nAction::Uninstall => run_uninstall(output).await,
         N8nAction::Adopt {
             endpoint,
             api_key_stdin,
@@ -71,6 +75,56 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
         N8nAction::ImportWorkflows => run_import_workflows(output).await,
         N8nAction::Workflows => run_workflows(output),
     }
+}
+
+async fn run_uninstall(output: OutputFormat) -> Result<()> {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let job = crate::integrations::n8n::managed_runtime::managed_uninstall::uninstall_managed_at(
+        &home,
+    )
+    .await?;
+    let disposition =
+        crate::integrations::n8n::managed_runtime::managed_uninstall::disposition(&job);
+    let cleanup =
+        crate::integrations::n8n::managed_runtime::managed_uninstall::cleanup_disposition_at(
+            &home, &job,
+        )
+        .ok()
+        .flatten()
+        .unwrap_or("unknown_or_preserved");
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "job_id": job.job_id,
+                "operation": "uninstall",
+                "state": job.state,
+                "disposition": disposition,
+                "config_cleanup": cleanup,
+                "data_volume_policy": "retain",
+                "failure_code": job.failure.as_ref().map(|failure| &failure.code),
+            })
+        ),
+        OutputFormat::Table => {
+            println!("n8n uninstall job: {}", job.job_id);
+            println!("state: {}", job.state);
+            println!("disposition: {disposition}");
+            println!("configuration cleanup: {cleanup}");
+            println!("data volume policy: retain");
+            if let Some(failure) = &job.failure {
+                println!("failure: {} — {}", failure.code, failure.redacted_message);
+            }
+        }
+    }
+    if job.state != crate::integrations::JobState::Ready {
+        return Err(anyhow!(
+            "n8n uninstall job {} requires reconciliation (state: {}, disposition: {})",
+            job.job_id,
+            job.state,
+            disposition,
+        ));
+    }
+    Ok(())
 }
 
 async fn run_import_workflows(output: OutputFormat) -> Result<()> {
@@ -345,6 +399,13 @@ fn run_status(selected_job: Option<&str>, output: OutputFormat) -> Result<()> {
             match &view.job {
                 Some(job) => {
                     println!("job: {} ({})", job.id, job.state);
+                    println!("operation: {}", job.operation.as_str());
+                    if let Some(disposition) = job.disposition {
+                        println!("disposition: {disposition}");
+                    }
+                    if let Some(cleanup) = job.config_cleanup {
+                        println!("configuration cleanup: {cleanup}");
+                    }
                     println!("progress: {}/{}", job.completed_steps, job.total_steps);
                     if let Some(step) = &job.current_step {
                         println!("current step: {step}");
@@ -386,6 +447,26 @@ fn run_workflows(output: OutputFormat) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uninstall_cli_retains_data_and_has_no_foreign_target_override() {
+        use clap::Parser;
+        let cli = crate::cli::Cli::try_parse_from(["neoth", "n8n", "uninstall"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            crate::cli::Commands::N8n(N8nArgs { action: N8nAction::Uninstall })
+        ));
+        for args in [
+            vec!["--purge"],
+            vec!["--volume", "foreign"],
+            vec!["--container", "foreign"],
+            vec!["--endpoint", "http://127.0.0.1:7777"],
+        ] {
+            assert!(crate::cli::Cli::try_parse_from(
+                ["neoth", "n8n", "uninstall"].into_iter().chain(args)
+            ).is_err());
+        }
+    }
 
     #[test]
     fn stdin_key_line_accepts_exact_limit_with_lf_and_crlf() {

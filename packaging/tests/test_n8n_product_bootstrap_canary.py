@@ -44,6 +44,104 @@ class ProductReceiptTests(unittest.TestCase):
         with self.assertRaises(canary.Failure): canary.validate_custody(boot, runtime, job, 5681)
 
 
+class ProductUninstallReceiptTests(unittest.TestCase):
+    source_job = "12345678-1234-7234-8234-123456789abc"
+    uninstall_job = "abcdef12-1234-7234-8234-123456789abc"
+    manifest = "a" * 64
+    volume = "neoth_n8n_" + "b" * 32
+
+    def uninstall_output(self) -> dict:
+        return {"job_id": self.uninstall_job, "operation": "uninstall", "state": "ready", "failure_code": None, "disposition": "container_removed_data_volume_retained", "config_cleanup": "preserved_unproven", "data_volume_policy": "retain"}
+
+    def test_uninstall_output_requires_distinct_ready_retained_disposition(self) -> None:
+        output = self.uninstall_output()
+        self.assertEqual(canary.validate_uninstall_product(output, self.source_job), self.uninstall_job)
+        for key, value in (("job_id", self.source_job), ("state", "failed"), ("disposition", "container_removed"), ("config_cleanup", "cleared"), ("data_volume_policy", "purge")):
+            with self.subTest(key=key):
+                changed = dict(output)
+                changed[key] = value
+                with self.assertRaisesRegex(canary.Failure, "uninstall_not_ready"):
+                    canary.validate_uninstall_product(changed, self.source_job)
+
+    def test_uninstall_status_rejects_wrong_job_or_incomplete_state(self) -> None:
+        row = {"id": self.uninstall_job, "operation": "uninstall", "state": "ready", "disposition": "container_removed_data_volume_retained", "config_cleanup": "preserved_unproven", "failure_code": None, "completed_steps": 4, "total_steps": 4}
+        canary.validate_uninstall_status({"job": row}, self.uninstall_job)
+        for key, value in (("id", self.source_job), ("operation", "install"), ("completed_steps", 3), ("config_cleanup", "cleared")):
+            with self.subTest(key=key):
+                changed = dict(row)
+                changed[key] = value
+                with self.assertRaisesRegex(canary.Failure, "uninstall_status_invalid"):
+                    canary.validate_uninstall_status({"job": changed}, self.uninstall_job)
+
+    def test_completion_receipt_binds_exact_source_and_uninstall_jobs(self) -> None:
+        receipt = {"schema_version": 1, "uninstall_job_id": self.uninstall_job, "uninstall_manifest_sha256": self.manifest, "source_install_job_id": self.source_job, "source_install_manifest_sha256": self.manifest, "cleanup_disposition": "preserved_unproven"}
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            path = home / f"n8n-uninstall-{self.uninstall_job}.receipt.json"
+            path.write_text(json.dumps(receipt))
+            observed = canary.read_uninstall_completion_receipt(home, self.uninstall_job, self.manifest, self.source_job, self.manifest)
+            self.assertEqual(observed["bytes"], path.stat().st_size)
+            receipt["source_install_job_id"] = "wrong"
+            path.write_text(json.dumps(receipt))
+            with self.assertRaisesRegex(canary.Failure, "uninstall_completion_receipt_invalid"):
+                canary.read_uninstall_completion_receipt(home, self.uninstall_job, self.manifest, self.source_job, self.manifest)
+
+    def test_retained_volume_rejects_wrong_id_volume_or_job(self) -> None:
+        row = {"Name": self.volume, "Labels": {"io.neoth.managed": "n8n", "io.neoth.n8n-job": self.source_job, "io.neoth.n8n-bootstrap": "v2"}}
+        canary.validate_retained_volume(row, self.source_job, self.volume)
+        cases = (("Name", "foreign"), ("io.neoth.n8n-job", "wrong-job"), ("io.neoth.managed", "other"))
+        for key, value in cases:
+            with self.subTest(key=key):
+                changed = {"Name": row["Name"], "Labels": dict(row["Labels"])}
+                if key == "Name":
+                    changed[key] = value
+                else:
+                    changed["Labels"][key] = value
+                with self.assertRaisesRegex(canary.Failure, "retained_volume_identity_invalid"):
+                    canary.validate_retained_volume(changed, self.source_job, self.volume)
+
+    def test_cleanup_accepts_product_absent_runtime_but_removes_only_exact_volume(self) -> None:
+        volume_row = {"Name": self.volume, "Labels": {"io.neoth.managed": "n8n", "io.neoth.n8n-job": self.source_job, "io.neoth.n8n-bootstrap": "v2"}}
+        with patch.object(canary, "exact_absent", side_effect=[True, True]) as absent, patch.object(canary, "docker_inspect", return_value=volume_row) as inspect, patch.object(canary, "run") as command:
+            self.assertTrue(canary.cleanup_owned_runtime_and_volume("c" * 64, self.volume, self.source_job, 5681, True))
+        inspect.assert_called_once_with(self.volume)
+        command.assert_called_once_with(["docker", "volume", "rm", self.volume])
+        self.assertEqual(absent.call_args_list[0].args, ("container", "c" * 64))
+        self.assertEqual(absent.call_args_list[1].args, ("volume", self.volume))
+
+    def test_canonical_keychain_key_requires_a_bounded_non_control_value(self) -> None:
+        with patch.object(canary, "run", return_value=b"canonical-key\n") as lookup:
+            self.assertEqual(canary.canonical_n8n_api_key(), b"canonical-key")
+        lookup.assert_called_once_with(["secret-tool", "lookup", "neoth-key", "n8n_api_key"], timeout=10)
+        for value in (b"short", b"contains\x00control"):
+            with self.subTest(value=value):
+                with patch.object(canary, "run", return_value=value):
+                    with self.assertRaisesRegex(canary.Failure, "canonical_n8n_key_unavailable"):
+                        canary.canonical_n8n_api_key()
+    def test_active_runtime_or_uninstall_sidecar_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            for name in ("n8n-managed-runtime.v2.json", "n8n-managed-uninstall.v1.json"):
+                with self.subTest(name=name):
+                    (home / name).write_text("{}")
+                    with self.assertRaisesRegex(canary.Failure, "active_sidecar_retained"):
+                        canary.sidecar_absent(home, name)
+                    (home / name).unlink()
+
+    def test_exact_job_snapshot_detects_changes_outside_progress_fields(self) -> None:
+        row = {"job_id": self.source_job, "operation": "install", "state": "ready", "state_revision": 4, "completed_steps": 4, "total_steps": 4, "manifest_sha256": self.manifest, "ready_evidence_json": "original"}
+        with patch.object(canary, "run", return_value=json.dumps([row]).encode()):
+            before = canary.observe_exact_job(Path("fixture"), self.source_job, "install")
+        row["ready_evidence_json"] = "changed"
+        with patch.object(canary, "run", return_value=json.dumps([row]).encode()):
+            after = canary.observe_exact_job(Path("fixture"), self.source_job, "install")
+        self.assertNotEqual(before["row_sha256"], after["row_sha256"])
+
+    def test_failed_uninstall_cleanup_reconciles_absence_before_any_container_remove(self) -> None:
+        volume_row = {"Name": self.volume, "Labels": {"io.neoth.managed": "n8n", "io.neoth.n8n-job": self.source_job, "io.neoth.n8n-bootstrap": "v2"}}
+        with patch.object(canary, "exact_absent", side_effect=[True, True, True]), patch.object(canary, "docker_inspect", return_value=volume_row), patch.object(canary, "run") as command:
+            self.assertTrue(canary.cleanup_owned_runtime_and_volume("c" * 64, self.volume, self.source_job, 5681, False))
+        command.assert_called_once_with(["docker", "volume", "rm", self.volume])
 class CustodyBoundaryTests(unittest.TestCase):
     def test_fresh_product_initialization_precedes_install_and_requires_keychain(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

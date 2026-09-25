@@ -22,6 +22,9 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+#[path = "managed_uninstall.rs"]
+pub(crate) mod managed_uninstall;
+
 pub(crate) const MANAGED_CONTAINER_NAME: &str = "neoth-n8n";
 pub(crate) const MANAGED_LABEL_KEY: &str = "io.neoth.managed";
 pub(crate) const MANAGED_LABEL_VALUE: &str = "n8n";

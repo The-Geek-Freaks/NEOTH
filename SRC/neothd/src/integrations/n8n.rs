@@ -303,7 +303,10 @@ pub struct N8nStatusView {
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct N8nJobStatusView {
     pub id: JobId,
+    pub operation: JobOperation,
     pub state: JobState,
+    pub disposition: Option<&'static str>,
+    pub config_cleanup: Option<&'static str>,
     pub current_step: Option<String>,
     pub completed_steps: u32,
     pub total_steps: u32,
@@ -314,7 +317,11 @@ impl From<&IntegrationJob> for N8nJobStatusView {
     fn from(job: &IntegrationJob) -> Self {
         Self {
             id: job.job_id.clone(),
+            operation: job.operation,
             state: job.state,
+            disposition: (job.operation == JobOperation::Uninstall)
+                .then(|| managed_runtime::managed_uninstall::disposition(job)),
+            config_cleanup: None,
             current_step: job.current_step.clone(),
             completed_steps: job.progress.completed_steps,
             total_steps: job.progress.total_steps,
@@ -448,6 +455,17 @@ impl N8nRestartValidator {
 
 impl RestartValidator for N8nRestartValidator {
     fn validate(&self, job: &IntegrationJob) -> RestartDecision {
+        if job.operation == JobOperation::Uninstall {
+            // Opening a job service never repeats an interrupted delete. The
+            // explicit uninstall command reconciles its exact persisted ID.
+            return RestartDecision::Hold {
+                failure: JobFailure::new(
+                    "n8n_uninstall_reconciliation_required",
+                    "The interrupted uninstall retains custody; run n8n uninstall to inspect its exact container without repeating removal.",
+                )
+                .expect("static failure is valid"),
+            };
+        }
         if job.operation == JobOperation::Import {
             return RestartDecision::Hold {
                 failure: JobFailure::new(
@@ -572,6 +590,7 @@ pub(super) fn has_ready_managed_binding(
 ) -> Result<bool, JobServiceError> {
     for job in service.snapshot()? {
         if job.state == JobState::Ready
+            && job.operation == JobOperation::Install
             && managed_runtime::is_managed_job(&job)
             && job.capability_id.as_str() == N8N_CAPABILITY_ID
             && expected_authenticated_probe_sha256(endpoint)
@@ -601,6 +620,14 @@ pub(crate) fn open_n8n_job_service(home: &Path) -> Result<IntegrationJobService,
         .into_iter()
         .filter(|job| job.capability_id.as_str() == N8N_CAPABILITY_ID)
     {
+        if job.operation == JobOperation::Uninstall {
+            if job.state == JobState::Ready {
+                let _ = managed_runtime::managed_uninstall::finalize_ready_uninstall_custody(
+                    home, &job,
+                );
+            }
+            continue;
+        }
         if managed_runtime::is_managed_job(&job) {
             // Keep runtime custody until the matching durable terminal exists.
             // A failed reconciliation retains the sidecar for a later retry.
@@ -972,10 +999,22 @@ pub(crate) fn status_at(
             .into_iter()
             .max_by_key(|candidate| (candidate.updated_at, candidate.job_id.clone())),
     };
+    let job = job.as_ref().map(|job| {
+        let mut view = N8nJobStatusView::from(job);
+        if job.operation == JobOperation::Uninstall {
+            view.config_cleanup = Some(
+                managed_runtime::managed_uninstall::cleanup_disposition_at(home, job)
+                    .ok()
+                    .flatten()
+                    .unwrap_or("unknown_or_preserved"),
+            );
+        }
+        view
+    });
     Ok(N8nStatusView {
         configured_endpoint,
         api_key_present,
-        job: job.as_ref().map(N8nJobStatusView::from),
+        job,
     })
 }
 

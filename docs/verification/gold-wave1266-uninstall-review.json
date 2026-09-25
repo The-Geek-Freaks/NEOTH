@@ -1,0 +1,59 @@
+{
+  "kind": "managed-n8n-uninstall-static-review",
+  "review": "W1261",
+  "status": "NO_STATIC_BLOCKER_HOSTED_PENDING",
+  "sources": [
+    {
+      "path": "SRC/neothd/src/config/credentials.rs",
+      "sha256": "5D6E902E2C79D55C03647BC068A98D06E6FC1BEA714990573AE79F2444C266D1",
+      "bytes": 423049
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_runtime.rs",
+      "sha256": "67EB699FE82B464184FC4A124F7C499AF79EEDDA7AE46A7889BD55B6E4D8904D",
+      "bytes": 47924
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",
+      "sha256": "3CB9EB71CCAB9D8368DA63226D82457AC265FB13A99698BB335E310342230B62",
+      "bytes": 24408
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_uninstall_tests.rs",
+      "sha256": "D8D06FBD7C0532B43DA7BBFAEED08FF7B56F186E98060D0A9459142CE57D20BF",
+      "bytes": 15554
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n.rs",
+      "sha256": "D64FDC359F90E0719B3870375CF595FD5703AF6B6532562914CDD59168EBF4DE",
+      "bytes": 45822
+    },
+    {
+      "path": "SRC/neothd/src/integrations/n8n_tests.rs",
+      "sha256": "BDDE229C9F3ACD58DD54FDF406B514D14AA82E511A8FB305AAFCBDA2C8A74785",
+      "bytes": 16115
+    },
+    {
+      "path": "SRC/neothd/src/cli/n8n.rs",
+      "sha256": "6DB488C225C1C93D13660BBB533ED21664FD5E69357CBE2812DD2F8289269B4A",
+      "bytes": 20024
+    }
+  ],
+  "newUniversalNativeTests": 19,
+  "groupedSelection": 1749,
+  "windowsSelection": 519,
+  "behaviour": [
+    "exact original Ready install/runtime binding",
+    "durable removal dispatch;inspect-only after uncertainty",
+    "volume retained;source install row immutable",
+    "file-backed matching config/key clear;keychain and legacy preserved",
+    "durable receipt;idempotent finalization and repeat"
+  ],
+  "limits": [
+    "no local execution",
+    "no keychain deletion",
+    "no confirmed purge",
+    "no full roadmap closure"
+  ],
+  "localExecutableValidationRan": false
+}

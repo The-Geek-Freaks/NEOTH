@@ -374,3 +374,43 @@ fn read_only_status_of_absent_state_creates_no_config_or_job_database() {
     assert!(!home.path().join("freedom.yaml").exists());
     assert!(!home.path().join("setup.db").exists());
 }
+
+#[test]
+fn uninstall_service_open_holds_without_rewriting_job_or_configuration() {
+    let home = tempfile::tempdir().unwrap();
+    initialize_home(home.path());
+    let before = std::fs::read(home.path().join("freedom.yaml")).unwrap();
+    let job = {
+        let service = open_n8n_job_service(home.path()).unwrap();
+        let digest = sha256_parts(&["uninstall-recovery-hold-fixture"]);
+        let queued = service.enqueue(EnqueueIntegrationJob {
+            capability_id: CapabilityId::parse(N8N_CAPABILITY_ID).unwrap(),
+            operation: JobOperation::Uninstall,
+            release_version: "1.0.0".into(),
+            manifest_sha256: digest.clone(),
+            evidence_contract: JobEvidenceContract::verified(
+                digest.clone(), digest.clone(), digest.clone(), digest,
+            ),
+            requested_by: JobRequester::Cli,
+            total_steps: 1,
+            bytes_total: None,
+        }).unwrap().job;
+        service.start(&queued.job_id, queued.state_revision, "inspect-exact-container").unwrap()
+    };
+    assert!(matches!(
+        open_n8n_job_service(home.path()),
+        Err(JobServiceError::RecoveryHold { failure })
+            if failure.code == "n8n_uninstall_reconciliation_required"
+    ));
+    let jobs = IntegrationJobService::read_only_snapshot(home.path()).unwrap();
+    assert_eq!(jobs, vec![job.clone()]);
+    let view = status_at(home.path(), Some(&job.job_id)).unwrap();
+    let status = view.job.unwrap();
+    assert_eq!(status.operation, JobOperation::Uninstall);
+    assert_eq!(status.state, JobState::Running);
+    assert!(status.disposition.is_some());
+    assert_eq!(status.config_cleanup, Some("unknown_or_preserved"));
+    assert_eq!(std::fs::read(home.path().join("freedom.yaml")).unwrap(), before);
+    assert!(!home.path().join("credentials.yaml").exists());
+    assert_eq!(IntegrationJobService::read_only_snapshot(home.path()).unwrap(), jobs);
+}

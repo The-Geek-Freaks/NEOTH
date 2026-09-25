@@ -570,6 +570,25 @@ jobs:
           security::api_tokens::tests::weekly_reflection_write_scope_is_isolated_from_dreams_and_other_effects	neothd/src/security/api_tokens.rs
           installers::n8n_starter_workflows::tests::reflection_starter_exports_current_utc_iso_week_only	neothd/src/installers/n8n_starter_workflows.rs
           n8n_api::server::tests::required_scope_for_all_mapped_routes_return_some	neothd/src/n8n_api/server.rs
+          config::credentials::n8n_adoption_transaction_tests::owned_file_binding_clear_is_exact_idempotent_and_preserves_unknown_yaml	neothd/src/config/credentials.rs
+          config::credentials::n8n_adoption_transaction_tests::owned_cleanup_preserves_unproven_changed_and_partial_generations	neothd/src/config/credentials.rs
+          config::credentials::n8n_adoption_transaction_tests::owned_cleanup_preserves_a_backend_switch_before_already_absent	neothd/src/config/credentials.rs
+          config::credentials::n8n_adoption_transaction_tests::pending_finalization_without_a_receipt_never_mints_retroactive_ownership	neothd/src/config/credentials.rs
+          config::credentials::n8n_adoption_transaction_tests::owned_cleanup_preserves_a_replaced_key_with_the_original_endpoint	neothd/src/config/credentials.rs
+          config::credentials::n8n_adoption_transaction_tests::owned_cleanup_preserves_a_changed_api_version_with_the_original_endpoint_and_key	neothd/src/config/credentials.rs
+          config::credentials::n8n_adoption_transaction_tests::wrong_receipt_job_fails_before_writing_the_file_pair	neothd/src/config/credentials.rs
+          config::credentials::n8n_adoption_transaction_tests::pending_receipt_never_rebinds_a_replacement_key	neothd/src/config/credentials.rs
+          integrations::n8n::tests::uninstall_service_open_holds_without_rewriting_job_or_configuration	neothd/src/integrations/n8n_tests.rs
+          cli::n8n::tests::uninstall_cli_retains_data_and_has_no_foreign_target_override	neothd/src/cli/n8n.rs
+          integrations::n8n::managed_runtime::managed_uninstall::tests::exact_id_uninstall_removes_container_never_volume_and_repeats_without_docker	neothd/src/integrations/n8n/managed_uninstall_tests.rs
+          integrations::n8n::managed_runtime::managed_uninstall::tests::dispatched_error_never_repeats_remove_and_retains_custody	neothd/src/integrations/n8n/managed_uninstall_tests.rs
+          integrations::n8n::managed_runtime::managed_uninstall::tests::dispatched_live_or_unknown_restart_holds_without_another_remove	neothd/src/integrations/n8n/managed_uninstall_tests.rs
+          integrations::n8n::managed_runtime::managed_uninstall::tests::missing_runtime_binding_has_zero_docker_mutations	neothd/src/integrations/n8n/managed_uninstall_tests.rs
+          integrations::n8n::managed_runtime::managed_uninstall::tests::foreign_exact_identity_never_dispatches_remove	neothd/src/integrations/n8n/managed_uninstall_tests.rs
+          integrations::n8n::managed_runtime::managed_uninstall::tests::ready_finalizer_reentry_handles_both_post_ready_crash_boundaries	neothd/src/integrations/n8n/managed_uninstall_tests.rs
+          integrations::n8n::managed_runtime::managed_uninstall::tests::queued_before_custody_is_terminalized_without_orphaning_the_runtime_binding	neothd/src/integrations/n8n/managed_uninstall_tests.rs
+          integrations::n8n::managed_runtime::managed_uninstall::tests::configuring_between_checkpoint_one_and_three_reopens_from_the_durable_receipt	neothd/src/integrations/n8n/managed_uninstall_tests.rs
+          integrations::n8n::managed_runtime::managed_uninstall::tests::later_uninstall_recovery_never_finalizes_an_earlier_ready_uninstall	neothd/src/integrations/n8n/managed_uninstall_tests.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -586,10 +605,10 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 500 ]]; then
+          if [[ "$expected" -ne 519 ]]; then
             selection_valid=0
           fi
-          sha256sum Cargo.lock neothd/Cargo.toml neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
+          sha256sum Cargo.lock neothd/Cargo.toml neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"
 
           artifact_log="$evidence/neoth-lib-test-artifacts.jsonl"
           binary_receipt="$evidence/neoth-lib-test-binary.json"
