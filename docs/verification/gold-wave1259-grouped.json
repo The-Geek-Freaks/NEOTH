@@ -1,0 +1,35 @@
+{
+  "run": 36103473052,
+  "source": "12318656eb2aaffc58669f340432d73e00d203e6",
+  "artifacts": [
+    {
+      "d": "198fe293b7fc20a9b9821723f1c7642df8969b3199b0781a9cb63df4c9bfc8d5",
+      "n": "w190-research-lifecycle-receipt-12318656eb2aaffc58669f340432d73e00d203e6",
+      "id": 10851075252,
+      "a": "198fe293b7fc20a9b9821723f1c7642df8969b3199b0781a9cb63df4c9bfc8d5",
+      "m": true
+    },
+    {
+      "d": "7d4fdc3a164b3b3a3416f1e66b5ea80e8d7290da55ac4b64398e208a4a97dcee",
+      "n": "w190-research-lifecycle-source-12318656eb2aaffc58669f340432d73e00d203e6",
+      "id": 10851065423,
+      "a": "7d4fdc3a164b3b3a3416f1e66b5ea80e8d7290da55ac4b64398e208a4a97dcee",
+      "m": true
+    },
+    {
+      "d": "01f4016859ea41f9d231d471e0f1b81a43265d8bc5ff74350aa25b6309d52148",
+      "n": "w190-research-lifecycle-log-12318656eb2aaffc58669f340432d73e00d203e6",
+      "id": 10850776771,
+      "a": "01f4016859ea41f9d231d471e0f1b81a43265d8bc5ff74350aa25b6309d52148",
+      "m": true
+    }
+  ],
+  "rootVerifiedHistoricalBindings": 297,
+  "actualUniquePassingTerminals": 1730,
+  "failed": 0,
+  "missing": 0,
+  "logSha256": "98E334FBF9787A98C1B0336965832EDE1EEACF26B5854428794504EA166E7D76",
+  "rootAdmission": "ROOT_ADMITTED_GROUP1730",
+  "sourceScope": "Weekly producer and consumer at 12318656; no new uninstall or full release claim",
+  "localExecutableValidationRan": false
+}

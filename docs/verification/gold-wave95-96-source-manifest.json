@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T06:32:28.6705411Z",
-  "validationStatus": "n8nd483 imports admitted;Group shell guard corrected;consumer behavior pending",
+  "capturedUtc": "2026-09-25T06:57:57.5530007Z",
+  "validationStatus": "Historical Windows500 and Group1730 ROOT-ADMITTED; new uninstall WIP",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1647,6 +1647,16 @@
       "sha256": "44449A6EB665194504B2A6D1A04E4E38B40C96364FDFCB9299899CB057162D88"
     },
     {
+      "path": "docs/verification/gold-wave1256-windows.json",
+      "bytes": 740,
+      "sha256": "6895BD33E7714E49E84FFCF1A9BB0F5B2C8DC36697509E9097B8745BAF553AA7"
+    },
+    {
+      "path": "docs/verification/gold-wave1259-grouped.json",
+      "bytes": 1377,
+      "sha256": "E39CB4102E51BE31E0D7A1A6C2F55A9B81F1EADF19A174678BDDEA9CC864119B"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -2603,18 +2613,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 352735,
-      "sha256": "0E0FBF79FE87AE313839EE07B1275FCD1FC9C30EBBA097A61696A2C00E7539D2"
+      "bytes": 353668,
+      "sha256": "1B99781AD094C546FD4831B9720DB613FB244FB09351246863AE51A2F771D58D"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1371666,
-      "sha256": "2F34A36BB1D2F700E347E61116527886D4D31B239CB13FA23BD75AFFAC59FB04"
+      "bytes": 1372599,
+      "sha256": "DEC08BCE9256E4A24FE57A0695E320BE2435AA84CAD5642A73359421E675A5AB"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1982189,
-      "sha256": "D76EE401BE37261C8C6500BFACF609CC6FC3BEDD685C147D15601211EB1E2F0B"
+      "bytes": 1983122,
+      "sha256": "1A09BEE4F4965813D4B0F04CF67855686EEABFFBD90C418F741189E4F107AC80"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

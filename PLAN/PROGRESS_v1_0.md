@@ -2,6 +2,18 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1256/W1259 weekly consumer hosted acceptance (2026-09-25):**
+Windows500 run36102659350 atd4836aa4 is ROOT-ADMITTED:500PASS/0FAIL/0missing,
+all actual named terminals, ten inner hashes and91 historical input bindings.
+Linux Group1730 run36103473052 at12318656 is ROOT-ADMITTED:1730PASS/0FAIL/
+0missing and297 historical bindings. These gates cover the weekly archive producer
+and scoped Obsidian consumer. Full Core checks remain active; no release or
+new uninstall acceptance is inferred. Inventory and roadmap checkboxes unchanged.
+Claude RESULT042 was read: completed runtime custody does not include installed
+key ownership. W1257/W1258 now implement retained publication proof and an
+operator-initiated exact-ID n8n uninstall with retained data volume. Legacy or
+changed config/key values are preserved explicitly. TASK043 requests independent
+ownership/crash review while implementation proceeds. No local executable checks.
 **W1254 n8n import proof and second selection guard (2026-09-25):**
 Run36102662394 atd4836aa4 is ROOT-ADMITTED:13 compiled workflow imports,
 26historical source/input bindings, auth200/anonymous401 on both attempts,

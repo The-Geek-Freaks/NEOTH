@@ -1,0 +1,21 @@
+{
+  "run": {
+    "id": 36102659350,
+    "status": "completed",
+    "conclusion": "success",
+    "headSha": "d4836aa47b8b1ede1451895ba46508966b933666",
+    "workflow": "Windows storage regressions",
+    "htmlUrl": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/36102659350"
+  },
+  "artifactId": 10850751724,
+  "zipSha256": "93b296aa8b962aa131b12e65537679e28a401ae69b5ba7e81a0284b87e6d16d3",
+  "rootVerifiedHistoricalBindings": 91,
+  "rootVerifiedInnerHashes": 10,
+  "actualUniquePassingTerminals": 500,
+  "failed": 0,
+  "missing": 0,
+  "compileStatus": 0,
+  "rootAdmission": "ROOT_ADMITTED_WINDOWS500",
+  "sourceScope": "Historical d4836aa4; no new uninstall or current-head runtime claim",
+  "localExecutableValidationRan": false
+}
