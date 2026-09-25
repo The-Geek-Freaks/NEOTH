@@ -383,8 +383,8 @@ async fn queued_before_custody_is_terminalized_without_orphaning_the_runtime_bin
     installed(home.path(), &mut runner).await;
     let inspector = restart_inspector(state.clone());
     let service = open_explicit_uninstall_service_with(home.path(), &inspector).unwrap();
-    let (binding, source) = source_ready_binding(&service, home.path()).unwrap();
-    let queued = enqueue_uninstall(&service, &binding, &source).unwrap();
+    let (binding, _source) = source_ready_binding(&service, home.path()).unwrap();
+    let queued = enqueue_uninstall(&service, &binding).unwrap();
     drop(service);
     let service = open_explicit_uninstall_service_with(home.path(), &inspector).unwrap();
     let recovered = service.get(&queued.job_id).unwrap().unwrap();
@@ -411,7 +411,7 @@ async fn configuring_between_checkpoint_one_and_three_reopens_from_the_durable_r
     let inspector = restart_inspector(state.clone());
     let service = open_explicit_uninstall_service_with(home.path(), &inspector).unwrap();
     let (binding, source) = source_ready_binding(&service, home.path()).unwrap();
-    let queued = enqueue_uninstall(&service, &binding, &source).unwrap();
+    let queued = enqueue_uninstall(&service, &binding).unwrap();
     let custody = UninstallCustody {
         schema_version: 1,
         phase: UninstallPhase::IntentPersisted,

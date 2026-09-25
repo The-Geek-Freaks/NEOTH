@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T07:40:17Z",
-  "validationStatus": "W1276 zeroizing snapshot type repair; hosted runtime pending",
+  "capturedUtc": "2026-09-25T07:49:36Z",
+  "validationStatus": "W1281 two stale test-call arguments repaired; native rerun pending; historical Core8f1 admitted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1682,6 +1682,11 @@
       "sha256": "B84C47148A53A445089CBE6F7885845474CC631934D485C676A73B4BA2D73727"
     },
     {
+      "path": "docs/verification/gold-wave1279-core.json",
+      "bytes": 3752,
+      "sha256": "44AC973B0F22647EDE22BF9BEC68892A8F4234C85B821CB685CBF4F1756A99E4"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -2638,18 +2643,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 357186,
-      "sha256": "B57904C77F802BF7E43DA6176DAC382557B3CF2D8BA97772C0A6E02DBE7EF36F"
+      "bytes": 358378,
+      "sha256": "0574494B4383B3E01523D1FA979A83D63AB8362E3A22E653F00269834208F37B"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1376117,
-      "sha256": "BC0EBD8A88E0FD72898A812A52583423BCD1E6BA02DF82B3B81DA0BACAC9DFCF"
+      "bytes": 1377309,
+      "sha256": "3A022588419535FDC44FE941EB76C78C21FB7913C9704D198DB777D55E2D1022"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1986640,
-      "sha256": "D45CBC00DD1650726655C816DE27D4EF1E6C90797554BD6A0094AEDAD70AA952"
+      "bytes": 1987832,
+      "sha256": "7597B756A56BC95DCEC43D96B0709564DD0818195D01AA8C7D2DD16E6D76828E"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4718,8 +4723,8 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_uninstall_tests.rs",
-      "bytes": 17600,
-      "sha256": "94F9AF58E2FFABFAB170EE0CF00F63B83E2C668BA00E425C6FAA8E7D65BFEED0"
+      "bytes": 17583,
+      "sha256": "69D9171275649DE17DAAADDAB877A00C2AA12C11734A5C8DFB8EEBB31DAE04AB"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",

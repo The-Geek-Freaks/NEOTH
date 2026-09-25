@@ -3,6 +3,23 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1281 hosted test-caller repair (2026-09-25):**
+Group1749 run36109123995 at e991eaa6 exposed two E0061 errors in the
+uninstall recovery fixtures: they still supplied the removed unused enqueue
+parameter. Both calls now use the two-argument API; the unused first fixture
+binding is explicitly ignored. Test assertions and product behavior remain
+unchanged. Root staged this narrow correction from the published source while
+preserving the independent W1275 reinstall edits in the working tree. Native
+behavior verification remains pending; no local compiler or tests ran.
+**W1279 historical Core8f1 accepted (2026-09-25):**
+Run36103186985 at8f1da900 completed all required slim production Clippy,
+core-test typecheck, public CLI build/export and workspace Clippy gates.
+Root verified artifact10851237302 against its API ZIP digest, embedded source
+and CLI checksum plus seven historical Git input bindings. The generated
+reference matches the historical tracked document. This is the weekly/Obsidian
+consumer source before managed uninstall; it does not prove the newer CLI,
+uninstall or retained-volume reinstall. Current e991 executable gates remain
+separate. No roadmap checkbox changes.
 **W1276 zeroizing snapshot type repair (2026-09-25):**
 Preflight and Code Quality passed on a7e6b6ab. Product run36108384251 passed
 all29 Python helper tests, then the Rust build exposed E0507: an owned byte

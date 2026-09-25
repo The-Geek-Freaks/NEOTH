@@ -1,0 +1,114 @@
+{
+  "kind": "ROOT_ADMITTED_HISTORICAL_CORE8F1",
+  "run": 36103186985,
+  "source": "8f1da900127bffc55b882fa35b39be12afa4e4ea",
+  "artifact": 10851237302,
+  "apiDigest": "sha256:2a72c0e76aa677a24d2cf36c1db9c9a459ebef005d31354cf3ab3613ebd315ca",
+  "zipSha256": "2a72c0e76aa677a24d2cf36c1db9c9a459ebef005d31354cf3ab3613ebd315ca",
+  "gates": [
+    {
+      "completedAt": "2026-09-25T07:07:37Z",
+      "conclusion": "success",
+      "name": "Check exact-source slim-core production Clippy",
+      "number": 6,
+      "startedAt": "2026-09-25T07:05:03Z",
+      "status": "completed"
+    },
+    {
+      "completedAt": "2026-09-25T07:12:31Z",
+      "conclusion": "success",
+      "name": "Type-check core test targets before native validation",
+      "number": 7,
+      "startedAt": "2026-09-25T07:07:37Z",
+      "status": "completed"
+    },
+    {
+      "completedAt": "2026-09-25T07:16:48Z",
+      "conclusion": "success",
+      "name": "Build current public CLI",
+      "number": 8,
+      "startedAt": "2026-09-25T07:12:31Z",
+      "status": "completed"
+    },
+    {
+      "completedAt": "2026-09-25T07:16:49Z",
+      "conclusion": "success",
+      "name": "Export generated reference",
+      "number": 9,
+      "startedAt": "2026-09-25T07:16:48Z",
+      "status": "completed"
+    },
+    {
+      "completedAt": "2026-09-25T07:16:50Z",
+      "conclusion": "success",
+      "name": "Upload generated reference",
+      "number": 10,
+      "startedAt": "2026-09-25T07:16:49Z",
+      "status": "completed"
+    },
+    {
+      "completedAt": "2026-09-25T07:45:04Z",
+      "conclusion": "success",
+      "name": "Check exact Linux-quality workspace Clippy",
+      "number": 11,
+      "startedAt": "2026-09-25T07:16:50Z",
+      "status": "completed"
+    }
+  ],
+  "historicalGeneratorInputs": [
+    {
+      "path": ".github/workflows/cli-reference.yml",
+      "blob": "684d6b6b4ec73643edf2a04cdb16950e55f268ba",
+      "sha256": "0B971561DCB33D02FC5943F1AD3F37CFE22FFA0BCC8229704D9D7E395695403B",
+      "bytes": 5255,
+      "blobMatches": true
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "blob": "f89a0cdee009703aeb423562fefea56dcf467ee6",
+      "sha256": "EAF75EAF1045B7736010227542DAC09D0FA0711E59F9338FEFB057F711322B56",
+      "bytes": 385403,
+      "blobMatches": true
+    },
+    {
+      "path": "SRC/neothd/Cargo.toml",
+      "blob": "b8f5d5e3e675d73954c209ae6f6dc7299d4939c6",
+      "sha256": "31063C67DF245D078107CE93BA153C11C54C32CD60295C11D14BD9C5EFF798CC",
+      "bytes": 46356,
+      "blobMatches": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/mod.rs",
+      "blob": "04447fa44f5a9a7d0c0a2968c75afff5ff44f825",
+      "sha256": "DCA911E2F4E5D46B68D1C92762E39DF04481247068656E423B4C74FC41683514",
+      "bytes": 120750,
+      "blobMatches": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/completions.rs",
+      "blob": "856546e42646b1fa6c9105f7b5a85d45549a7964",
+      "sha256": "55BBFE6E3CE9D38DFEDECFD141A17AD553B76E026BAACD3D22A2506829EA7BF1",
+      "bytes": 5060,
+      "blobMatches": true
+    },
+    {
+      "path": "SRC/neothd/src/cli/docgen.rs",
+      "blob": "b56f427938ee1464e6b3df210c33f1288bb34376",
+      "sha256": "63EEDCFA5868E5C0BA3E6117CBCCFE93F90052FF0DD815DC41FB5CCC6A4F7E66",
+      "bytes": 10245,
+      "blobMatches": true
+    },
+    {
+      "path": "docs/cli-commands.md",
+      "blob": "8e8ecc6fe3bc610d8de3757ad780ff4e09d0f311",
+      "sha256": "B7EF122A5D336BDC35570DF1632724FBD5F1461FF1914FD7B4292AB187335050",
+      "bytes": 253593,
+      "blobMatches": true
+    }
+  ],
+  "generatedReferenceSha256": "b7ef122a5d336bdc35570df1632724fbd5f1461ff1914fd7b4292ab187335050",
+  "generatedEqualsHistoricalTracked": true,
+  "newUninstallCliCovered": false,
+  "currentHeadPass": false,
+  "localExecutableValidationRan": false
+}
