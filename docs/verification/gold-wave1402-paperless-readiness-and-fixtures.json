@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "batch": "W1398-W1402",
+  "baseCommit": "a2420012bf2bebcd9f3b0e323fa1128930e91ebb",
+  "status": "SOURCE_FIXED_HOSTED_RERUN_PENDING",
+  "product": {
+    "run": 36140003129,
+    "source": "9faca554b44b8dbcab2525d9398ddb10ebab87d1",
+    "artifactId": 10866094155,
+    "zipSha256": "d695c8497e9d918dbad4b1b17c68799ba729d2e1994feb6273628ac11f1e50bc",
+    "phase": "started",
+    "failure": "paperless_authenticated_readiness_failed",
+    "stoppedObservation": {
+      "running": false,
+      "runtimeBindings": 0,
+      "configuredBindings": 1,
+      "configuredLoopback": true
+    },
+    "dockerCleanupProven": true,
+    "overallCleanupProven": false
+  },
+  "change": "Repair now reuses existing bounded stage-bound wait_for_readiness after exact start/create and during finalization; no Docker retries or expanded deadline",
+  "regression": "stopped_container_waits_for_eventual_authenticated_readiness_without_repeat_start",
+  "windows": {
+    "run": 36138125971,
+    "source": "46a037d0277aa1be5a328669cbdf19449593db43",
+    "artifactId": 10865854048,
+    "zipSha256": "8631802afeafde62740fd77681b149947eaa657609cca5a48382688e2a735fdd",
+    "passed": 592,
+    "failed": 6,
+    "sourceBindingsVerified": 92,
+    "logHashesVerified": 599,
+    "repairs": [
+      "Complete journal fixture now supplies its required live after-receipt bytes",
+      "Auth fixture creates allowed state child before rooted receipt I/O; all five names unchanged"
+    ]
+  },
+  "sources": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_repair.rs",
+      "sha256": "092D6685477C497E6C53D4CE6C2457630FBF8ECEE227456DDFA1D492CEA42C67"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_repair_tests.rs",
+      "sha256": "B7647AF0DE2787411D81E1FF50E26E9E23132F0D7F22B84817BED4A81CACFD2D"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_generation_auth_tests.rs",
+      "sha256": "1C9E97D2B51D01B07DC4B70143536A629D372429A77C0412E926426713C75B15"
+    }
+  ],
+  "inventory": {
+    "portable": 2042,
+    "grouped": 1832,
+    "windows": 601
+  },
+  "localExecutableValidationRan": false,
+  "roadmapClosures": 0,
+  "latestGroupedFailure": {
+    "run": 36140799596,
+    "source": "a2420012bf2bebcd9f3b0e323fa1128930e91ebb",
+    "repairs": [
+      "Running unexposed services now emit NetworkSettings.Ports as empty map instead of null",
+      "Inventory identity now matches existing test covering public and multiple configured port bindings"
+    ],
+    "hosted": "pending"
+  }
+}

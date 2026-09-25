@@ -143,7 +143,7 @@ pub(super) async fn repair_at_with_readiness<E: RetainedComposeExecutor, R: Read
         .iter()
         .all(|item| item.action == PaperlessRepairAction::Healthy)
     {
-        require_ready(home, credentials, readiness, &binding).await?;
+        require_ready(home, credentials, readiness, &owned, &binding).await?;
         return repair_receipt(&receipt.project, &volume_set_id, &members);
     }
     let journal = PaperlessRepairJournal {
@@ -345,7 +345,7 @@ async fn resume_repair<E: RetainedComposeExecutor, R: ReadinessVerifier>(
         write_repair_journal(root, &journal)?;
     }
     revalidate_bound_resources(executor, engine, root, binding, receipt, &journal).await?;
-    require_ready(home, credentials, readiness, binding).await?;
+    require_ready(home, credentials, readiness, root, binding).await?;
     journal.phase = RepairPhase::ReceiptCommitDispatched;
     write_repair_journal(root, &journal)?;
     commit_receipt_exact(root, &journal)?;
@@ -399,6 +399,7 @@ async fn finish_committed_repair<E: ComposeExecutor, R: ReadinessVerifier>(
         context.home,
         context.credentials,
         context.readiness,
+        root,
         binding,
     )
     .await?;
@@ -724,15 +725,12 @@ async fn require_ready<R: ReadinessVerifier>(
     home: &Path,
     credentials: &Credentials,
     readiness: &R,
+    root: &OwnedPaperlessRoot,
     binding: &EnvBinding,
 ) -> Result<(), LifecycleError> {
     let mut current = credentials.clone();
     current.paperless_url = Some(binding.origin.clone());
-    if readiness.ready(home, &current).await {
-        Ok(())
-    } else {
-        Err(LifecycleError::Readiness)
-    }
+    wait_for_readiness(home, &current, readiness, root, binding).await
 }
 fn refuse_repair_custody(root: &OwnedPaperlessRoot) -> Result<(), LifecycleError> {
     if read_uninstall_receipt(root)?.is_some() {

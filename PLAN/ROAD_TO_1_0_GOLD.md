@@ -8,6 +8,26 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1403 exact hosted fixture diagnosis (2026-09-25):** Group36140799596 at
+ a2420012 exposed invalid fake runtime ports for running broker/db (null instead
+ of the required map) and one renamed configured-binding test missing from the
+ inventory. The fake now emits an empty runtime map for unexposed services;
+ inventories use the existing broader invalid-binding test covering both public
+ and multiple binds. Counts stay unchanged; fresh hosted execution is required.
+**W1398-1402 exact startup-readiness and native-fixture repairs (2026-09-25):**
+Product36140003129 at9faca554 now proves the stopped-port distinction: runtime
+bindings are empty while exactly one configured loopback binding remains.
+Repair reaches the started phase but its immediate authentication probe fails
+before the service has recovered. It now uses the existing bounded, stage-bound
+readiness loop, with no repeated Docker effects. A new eventual-readiness regression covers two false probes followed by
+success with exactly one start; hosted execution is still pending. Docker cleanup in
+the failed product run was proven; overall isolated-home cleanup was not.
+Windows36138125971 at46a037d0 supplied fully verified592/598passes and6failures.
+The Complete-journal fixture now writes the required live after-image; five auth
+fixtures now create the allowed state directory before rooted I/O. Production
+ownership and journal validators remain strict. Inventories are2042portable,
+Group1832 and Windows601. Fresh hosted native/Core/product gates remain required;
+no P2-20 or other roadmap checkbox is closed. Local executable checks stayed off.
 **W1395-1397 authentic CLI export, hosted test formatting and earlier feedback (2026-09-25):**
 Group36138116933 at46a037d0 found one missing blank line in the manually extended
 CLI reference. The exact generated export from Core36138775902 at ea30c488 is now

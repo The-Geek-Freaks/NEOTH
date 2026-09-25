@@ -8,6 +8,10 @@ fn fresh_root() -> (
     let home = tempfile::tempdir().unwrap();
     let root_path = crate::config::InstancePaths::for_home(home.path()).paperless_root;
     paperless_staging::prepare_at(&root_path).unwrap();
+    // `state` is an allowed operator-owned child of a prepared root. The
+    // lifecycle creates it before writing receipts; this fixture follows that
+    // production ordering before opening rooted receipt I/O.
+    std::fs::create_dir(root_path.join(RECEIPT_DIR)).unwrap();
     let root = paperless_staging::open_owned_root_at(&root_path).unwrap();
     let project = project_name(&root.display);
     let snapshot = PaperlessVolumeSetSnapshot {

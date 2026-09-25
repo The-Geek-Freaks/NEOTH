@@ -2,6 +2,7 @@
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 #[derive(Clone)]
 struct C {
     service: String,
@@ -104,7 +105,11 @@ impl Fake {
         } else {
             "null"
         };
-        let runtime_ports = if c.running { configured_ports } else { "{}" };
+        let runtime_ports = if c.running && c.service == "webserver" {
+            configured_ports
+        } else {
+            "{}"
+        };
         Ok(format!(
             r#"{{"Id":"{id}","Image":"{image}","State":{{"Running":{}}},"Config":{{"Labels":{{"com.docker.compose.project":"{}","com.docker.compose.service":"{service}"}}}},"HostConfig":{{"PortBindings":{configured_ports}}},"NetworkSettings":{{"Ports":{runtime_ports}}},"Mounts":[{mounts}]}}"#,
             c.running,
@@ -268,6 +273,17 @@ impl ReadinessVerifier for Ready {
         true
     }
 }
+
+struct EventuallyReady {
+    false_before_success: usize,
+    probes: AtomicUsize,
+}
+#[async_trait]
+impl ReadinessVerifier for EventuallyReady {
+    async fn ready(&self, _: &Path, _: &Credentials) -> bool {
+        self.probes.fetch_add(1, Ordering::SeqCst) >= self.false_before_success
+    }
+}
 async fn fix() -> (tempfile::TempDir, Credentials, Vec<u8>, Fake) {
     let (h, c, b) = installed_home_for_uninstall_test().await;
     let f = Fake::from(&b);
@@ -321,6 +337,33 @@ async fn stopped_exact_id_is_started_and_reconciled() {
             .iter()
             .any(|a| a.windows(2).any(|x| x[0] == "start" && x[1] == id))
     )
+}
+
+#[tokio::test]
+async fn stopped_container_waits_for_eventual_authenticated_readiness_without_repeat_start() {
+    let (home, credentials, _, mut fake) = fix().await;
+    let id = fake.id("broker");
+    fake.cs.get_mut(&id).unwrap().running = false;
+    let readiness = EventuallyReady {
+        false_before_success: 2,
+        probes: AtomicUsize::new(0),
+    };
+    let receipt = repair_at_with_readiness(home.path(), &credentials, &mut fake, &readiness)
+        .await
+        .unwrap();
+    assert_eq!(receipt.services.len(), 3);
+    assert_eq!(
+        fake.commands
+            .iter()
+            .filter(|command| {
+                command
+                    .windows(2)
+                    .any(|window| window[0] == "start" && window[1] == id)
+            })
+            .count(),
+        1
+    );
+    assert!(readiness.probes.load(Ordering::SeqCst) >= 3);
 }
 
 #[tokio::test]
@@ -491,6 +534,7 @@ async fn captured_complete_journal_recovers_exact_receipt_write_once() {
         effect_service: None,
     };
     j.after_receipt_bytes = Some(replacement_receipt_bytes(&j).unwrap());
+    std::fs::write(rp(h.path()), j.after_receipt_bytes.as_ref().unwrap()).unwrap();
     std::fs::write(
         sp(h.path(), REPAIR_JOURNAL_NAME),
         serde_json::to_vec(&j).unwrap(),
