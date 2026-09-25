@@ -67,7 +67,8 @@ fn build_email_threat_workflow(name: &str, endpoint: &str, method: &str) -> Stri
     let configuration_id = "email_threat_quarantine_configuration";
     let retain_id = "email_threat_quarantine_retain_triage_fields";
     let http_id = "email_threat_quarantine_http";
-    let url = format!("={{{{ $('Operator Configuration').item.json.neothBaseUrl + '{endpoint}' }}}}");
+    let url =
+        format!("={{{{ $('Operator Configuration').item.json.neothBaseUrl + '{endpoint}' }}}}");
 
     let body = serde_json::json!({
         "name": name, "active": false,
@@ -542,18 +543,32 @@ mod tests {
             let v: serde_json::Value = serde_json::from_str(w.body).unwrap();
             let nodes = v["nodes"].as_array().expect("nodes is array");
             if spec.slug == "email_threat_quarantine" {
-                assert!(nodes.iter().any(|n| n["type"] == "n8n-nodes-base.emailReadImap"));
-                assert!(!nodes.iter().any(|n| n["type"] == "n8n-nodes-base.scheduleTrigger"));
+                assert!(
+                    nodes
+                        .iter()
+                        .any(|n| n["type"] == "n8n-nodes-base.emailReadImap")
+                );
+                assert!(
+                    !nodes
+                        .iter()
+                        .any(|n| n["type"] == "n8n-nodes-base.scheduleTrigger")
+                );
                 continue;
             }
             let schedule = nodes
                 .iter()
                 .find(|n| n["type"] == "n8n-nodes-base.scheduleTrigger")
-                .unwrap_or_else(|| panic!("no scheduleTrigger node in {:?}: {}", spec.slug, w.body));
+                .unwrap_or_else(|| {
+                    panic!("no scheduleTrigger node in {:?}: {}", spec.slug, w.body)
+                });
             let expression = schedule["parameters"]["rule"]["interval"][0]["expression"]
                 .as_str()
                 .unwrap_or_else(|| panic!("missing cron expression in {:?}", spec.slug));
-            assert_eq!(expression, spec.cron, "body for {:?} has wrong cron", spec.slug);
+            assert_eq!(
+                expression, spec.cron,
+                "body for {:?} has wrong cron",
+                spec.slug
+            );
         }
     }
 
@@ -595,13 +610,28 @@ mod tests {
         for w in starter_workflows() {
             let v: serde_json::Value = serde_json::from_str(w.body).unwrap();
             if w.slug == "email_threat_quarantine" {
-                assert_eq!(v["connections"]["Email Trigger (IMAP)"]["main"][0][0]["node"], "Operator Configuration");
-                assert_eq!(v["connections"]["Operator Configuration"]["main"][0][0]["node"], "Retain Triage Fields");
-                assert_eq!(v["connections"]["Retain Triage Fields"]["main"][0][0]["node"], "NEOTH HTTP");
+                assert_eq!(
+                    v["connections"]["Email Trigger (IMAP)"]["main"][0][0]["node"],
+                    "Operator Configuration"
+                );
+                assert_eq!(
+                    v["connections"]["Operator Configuration"]["main"][0][0]["node"],
+                    "Retain Triage Fields"
+                );
+                assert_eq!(
+                    v["connections"]["Retain Triage Fields"]["main"][0][0]["node"],
+                    "NEOTH HTTP"
+                );
                 continue;
             }
-            assert_eq!(v["connections"]["Schedule Trigger"]["main"][0][0]["node"], "Operator Configuration");
-            assert_eq!(v["connections"]["Operator Configuration"]["main"][0][0]["node"], "NEOTH HTTP");
+            assert_eq!(
+                v["connections"]["Schedule Trigger"]["main"][0][0]["node"],
+                "Operator Configuration"
+            );
+            assert_eq!(
+                v["connections"]["Operator Configuration"]["main"][0][0]["node"],
+                "NEOTH HTTP"
+            );
         }
     }
 
@@ -779,44 +809,128 @@ mod tests {
         let w = find_by_slug("email_threat_quarantine").expect("email starter exists");
         let v: serde_json::Value = serde_json::from_str(w.body).unwrap();
         let nodes = v["nodes"].as_array().unwrap();
-        let imap = nodes.iter().find(|n| n["type"] == "n8n-nodes-base.emailReadImap").unwrap();
+        let imap = nodes
+            .iter()
+            .find(|n| n["type"] == "n8n-nodes-base.emailReadImap")
+            .unwrap();
         assert_eq!(imap["typeVersion"], 2.2);
         assert_eq!(imap["parameters"]["mailbox"], "INBOX");
         assert_eq!(imap["parameters"]["format"], "simple");
         assert_eq!(imap["parameters"]["downloadAttachments"], false);
         assert_eq!(imap["parameters"]["postProcessAction"], "nothing");
         assert_eq!(imap["parameters"]["options"]["trackLastMessageId"], true);
-        assert!(imap.get("credentials").is_none(), "credential data must not be exported");
+        assert!(
+            imap.get("credentials").is_none(),
+            "credential data must not be exported"
+        );
 
-        let configuration = nodes.iter().find(|n| n["name"] == "Operator Configuration").unwrap();
-        let configured = configuration["parameters"]["assignments"]["assignments"].as_array().unwrap();
+        let configuration = nodes
+            .iter()
+            .find(|n| n["name"] == "Operator Configuration")
+            .unwrap();
+        let configured = configuration["parameters"]["assignments"]["assignments"]
+            .as_array()
+            .unwrap();
         assert_eq!(configured[0]["name"], "neothBaseUrl");
         assert_eq!(configured[1]["name"], "sourceKey");
         assert_eq!(configured[1]["value"], "work-inbox");
 
-        let retain = nodes.iter().find(|n| n["name"] == "Retain Triage Fields").unwrap();
-        let retained = retain["parameters"]["assignments"]["assignments"].as_array().unwrap();
-        let names: Vec<_> = retained.iter().map(|field| field["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["source_key", "message_key", "from", "subject", "body", "attachment_filenames"]);
-        assert!(retained[1]["value"].as_str().unwrap().contains("metadata?.[\"message-id\"]"));
-        assert!(retained[1]["value"].as_str().unwrap().contains("typeof $json.metadata?.[\"message-id\"] === 'string'"));
-        assert!(retained[1]["value"].as_str().unwrap().contains(".trim().length > 0"));
-        assert!(retained[1]["value"].as_str().unwrap().contains("Number.isSafeInteger($json.attributes?.uid)"));
-        assert!(retained[1]["value"].as_str().unwrap().contains("$json.attributes.uid > 0"));
-        assert!(retained[1]["value"].as_str().unwrap().contains("'uid:' + $json.attributes.uid"));
+        let retain = nodes
+            .iter()
+            .find(|n| n["name"] == "Retain Triage Fields")
+            .unwrap();
+        let retained = retain["parameters"]["assignments"]["assignments"]
+            .as_array()
+            .unwrap();
+        let names: Vec<_> = retained
+            .iter()
+            .map(|field| field["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "source_key",
+                "message_key",
+                "from",
+                "subject",
+                "body",
+                "attachment_filenames"
+            ]
+        );
+        assert!(
+            retained[1]["value"]
+                .as_str()
+                .unwrap()
+                .contains("metadata?.[\"message-id\"]")
+        );
+        assert!(
+            retained[1]["value"]
+                .as_str()
+                .unwrap()
+                .contains("typeof $json.metadata?.[\"message-id\"] === 'string'")
+        );
+        assert!(
+            retained[1]["value"]
+                .as_str()
+                .unwrap()
+                .contains(".trim().length > 0")
+        );
+        assert!(
+            retained[1]["value"]
+                .as_str()
+                .unwrap()
+                .contains("Number.isSafeInteger($json.attributes?.uid)")
+        );
+        assert!(
+            retained[1]["value"]
+                .as_str()
+                .unwrap()
+                .contains("$json.attributes.uid > 0")
+        );
+        assert!(
+            retained[1]["value"]
+                .as_str()
+                .unwrap()
+                .contains("'uid:' + $json.attributes.uid")
+        );
         assert_eq!(retained[3]["value"], "={{ $json.subject || '' }}");
-        assert_eq!(retained[4]["value"], "={{ $json.textPlain || $json.textHtml || '' }}");
+        assert_eq!(
+            retained[4]["value"],
+            "={{ $json.textPlain || $json.textHtml || '' }}"
+        );
         assert_eq!(retained[5]["value"], "={{ [] }}");
 
-        let http = nodes.iter().find(|n| n["type"] == "n8n-nodes-base.httpRequest").unwrap();
-        assert_eq!(http["parameters"]["authentication"], "genericCredentialType");
+        let http = nodes
+            .iter()
+            .find(|n| n["type"] == "n8n-nodes-base.httpRequest")
+            .unwrap();
+        assert_eq!(
+            http["parameters"]["authentication"],
+            "genericCredentialType"
+        );
         assert_eq!(http["parameters"]["genericAuthType"], "httpHeaderAuth");
         assert_eq!(http["parameters"]["method"], "POST");
-        assert_eq!(http["parameters"]["url"], "={{ $('Operator Configuration').item.json.neothBaseUrl + '/api/email/threat/scan' }}");
+        assert_eq!(
+            http["parameters"]["url"],
+            "={{ $('Operator Configuration').item.json.neothBaseUrl + '/api/email/threat/scan' }}"
+        );
         assert_eq!(http["parameters"]["sendBody"], true);
-        assert!(http["parameters"]["url"].as_str().unwrap().contains("$('Operator Configuration').item.json.neothBaseUrl"), "HTTP URL must retain its configuration provenance after Retain Triage Fields strips other fields");
+        assert!(
+            http["parameters"]["url"]
+                .as_str()
+                .unwrap()
+                .contains("$('Operator Configuration').item.json.neothBaseUrl"),
+            "HTTP URL must retain its configuration provenance after Retain Triage Fields strips other fields"
+        );
         let json_body = http["parameters"]["jsonBody"].as_str().unwrap();
-        for field in ["source_key", "message_key", "from", "subject", "body", "attachment_filenames"] {
+        for field in [
+            "source_key",
+            "message_key",
+            "from",
+            "subject",
+            "body",
+            "attachment_filenames",
+        ] {
             assert!(json_body.contains(field), "request body omits {field}");
         }
         assert!(!json_body.contains("metadata"));

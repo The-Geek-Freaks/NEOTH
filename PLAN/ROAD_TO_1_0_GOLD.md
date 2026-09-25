@@ -8,6 +8,13 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1196 exact hosted E-mail formatter import (2026-09-25):**
+Preflight390 failed only formatting. Root verified the API ZIP, both inner
+checksums and all four Git preimages/postimages, then imported the exact hosted
+outputs for the email backend, HTTP handler/tests and IMAP starter. No test or
+behavior was changed. Core390 slim production Clippy passed; test type-check
+and real n8n product bootstrap are active. No local formatter or runtime ran.
+
 **W1192 email triage, real IMAP starter and generated CLI reference (2026-09-25):**
 POST /api/email/threat/scan now requires email:threat:write and accepts a strict,
 bounded six-field request under the configured instance home. The existing

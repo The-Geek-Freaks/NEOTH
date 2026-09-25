@@ -1,9 +1,7 @@
 //! Local triage of a concrete submitted email, without mailbox or delivery effects.
 
 use super::{ApiErrorCode, ApiRequestCtx, ApiState, HandlerOutcome, parse_body};
-use crate::email::workflow_triage::{
-    WorkflowTriageRequest, triage_workflow_at, validate_request,
-};
+use crate::email::workflow_triage::{WorkflowTriageRequest, triage_workflow_at, validate_request};
 
 pub(super) fn handle(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcome {
     let request: WorkflowTriageRequest = match parse_body(&ctx.body) {

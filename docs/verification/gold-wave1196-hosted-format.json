@@ -1,0 +1,68 @@
+{
+  "schema": "neoth-format-receipt/v1",
+  "run": 36093798506,
+  "source": "390df51c771d19685b30286bf5c4533496349682",
+  "run_conclusion": "failure",
+  "failed_steps": [
+    "Check Rust formatting without compiling"
+  ],
+  "artifact": {
+    "id": 10845884600,
+    "api_digest": "sha256:7d2ee7fb34cda366087436b2e2c7c2c991f7d5f45a908d95271d794ab9b11186",
+    "zip_sha256": "7d2ee7fb34cda366087436b2e2c7c2c991f7d5f45a908d95271d794ab9b11186",
+    "matches": true
+  },
+  "inner_hashes": [
+    {
+      "path": "rustfmt.patch",
+      "expected": "9f5880bf8635d29c8a46ce75c0e31c493c378314ffbed73f91c2bc0abeaa0e8d",
+      "actual": "9f5880bf8635d29c8a46ce75c0e31c493c378314ffbed73f91c2bc0abeaa0e8d",
+      "matches": true
+    },
+    {
+      "path": "source-head.txt",
+      "expected": "4a95d737877e3aea5d79ac7fd68424a24ea52b773127e545940ecf062de28114",
+      "actual": "4a95d737877e3aea5d79ac7fd68424a24ea52b773127e545940ecf062de28114",
+      "matches": true
+    }
+  ],
+  "receipt_source": "390df51c771d19685b30286bf5c4533496349682",
+  "receipt_source_matches_run": true,
+  "touched_path_count": 4,
+  "preimages_all_match": true,
+  "entries": [
+    {
+      "path": "SRC/neothd/src/email/workflow_triage.rs",
+      "preimage_git_blob": "678b26bb91ba83c49b0cac08a384fed782437486",
+      "historical_sha256": "e8e51b101241c8f17651ba34dba5740d5820e8c730f0ed543d99801c17a4de89",
+      "postimage_git_blob": "215a86b2d0b200ca4386f4a6a8b617bda977305e",
+      "preimage_matches": true,
+      "postimage_present": false
+    },
+    {
+      "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
+      "preimage_git_blob": "f57e9d39211c8d82f2afda86675c02257453d907",
+      "historical_sha256": "07972e0ed38905581620465e3e37abf3f278c4a588f45226f3f55a7f53a6315b",
+      "postimage_git_blob": "ac03b5d67dcdd2a7c67c2703131bdd3a8f1f6432",
+      "preimage_matches": true,
+      "postimage_present": false
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/email_threat_http_tests.rs",
+      "preimage_git_blob": "c5a733f51697d6380ef7108330107776f7261d5d",
+      "historical_sha256": "3b2d5f7dcbd32e04bb96a9f20ee210b3b318054c5be707ce47d8c8e36aa825b0",
+      "postimage_git_blob": "4d2b16c1d19e7f19558d576ec9bbba157d9b1d8d",
+      "preimage_matches": true,
+      "postimage_present": false
+    },
+    {
+      "path": "SRC/neothd/src/n8n_api/handlers/email_threat.rs",
+      "preimage_git_blob": "ab03212088ea942752a6fdc75dc437a9b4e0fea4",
+      "historical_sha256": "871021f0b6de8002a632c58b1c73d48c466423705164b87427031ea73ae27c1a",
+      "postimage_git_blob": "473d811c4fea182fd42ad2f8db6ee40f0655bbc9",
+      "preimage_matches": true,
+      "postimage_present": false
+    }
+  ],
+  "scope": "Root applied exact hosted patch after API ZIP, inner hash, current preimage and postimage verification; no local formatter"
+}

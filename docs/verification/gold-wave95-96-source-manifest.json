@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-25T04:14:03.9363868Z",
-  "validationStatus": "W1192 reviewed email triage/HTTP/IMAP source; exact CLI export imported; hosted behavior pending",
+  "capturedUtc": "2026-09-25T04:19:49.6183162Z",
+  "validationStatus": "W1196 exact hosted formatter4 imported; no behavior change; Core390 and n8nProduct390 active",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1507,6 +1507,11 @@
       "sha256": "D1242655E4ED09FE4BB857EC4EE0A245A3D6C0F647DC90A7A486309C46707A80"
     },
     {
+      "path": "docs/verification/gold-wave1196-hosted-format.json",
+      "bytes": 2800,
+      "sha256": "70547FF37236D0B1231257E85DC6889E8129A57CBE21011F991270D0B37118E4"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -2458,18 +2463,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 338113,
-      "sha256": "66BFDD5F36515F71A9A99163F8E748A9BAE2000F45FFE92D3E980D4E7135E7C8"
+      "bytes": 338564,
+      "sha256": "46446D4B59FABA88AEF9567E511EB5C76328E33551D7F160EE7F7FF786775EB5"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1354924,
-      "sha256": "229FEEE40549CDA7CBC6CEA92B7917E24615262C5D4B690AEBC5721259534D14"
+      "bytes": 1355375,
+      "sha256": "5236BF3A908F2784385D92D9EF3B6A263AEC94A968CE363A17D490EC88F7DAE6"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1964865,
-      "sha256": "EB37F745082399449BB681BA9E162D13F729E7938BB63C43D851D356838E82E6"
+      "bytes": 1965316,
+      "sha256": "C1753D26033D6682CA9D381B1D766D6575B9099DB2FFB21EA4E7DBAC31AD1995"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -4363,8 +4368,8 @@
     },
     {
       "path": "SRC/neothd/src/email/workflow_triage.rs",
-      "bytes": 18451,
-      "sha256": "E8E51B101241C8F17651BA34DBA5740D5820E8C730F0ED543D99801C17A4DE89"
+      "bytes": 18676,
+      "sha256": "2E5CAE30B62398011F42D6D10999270B0C093F86BFEE9AF9657245DF0DAA0789"
     },
     {
       "path": "SRC/neothd/src/feedback/consume.rs",
@@ -4418,8 +4423,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/n8n_starter_workflows.rs",
-      "bytes": 49634,
-      "sha256": "07972E0ED38905581620465E3E37ABF3F278C4A588F45226F3F55A7F53A6315B"
+      "bytes": 51319,
+      "sha256": "1FD4C6E93C2270FCA6F8E0BBA90232B64AE31E3309B71AB50D3D25A486F7DFAE"
     },
     {
       "path": "SRC/neothd/src/installers/n8n_workflows.rs",
@@ -4793,8 +4798,8 @@
     },
     {
       "path": "SRC/neothd/src/n8n_api/email_threat_http_tests.rs",
-      "bytes": 9986,
-      "sha256": "3B2D5F7DCBD32E04BB96A9F20EE210B3B318054C5BE707CE47D8C8E36AA825B0"
+      "bytes": 10396,
+      "sha256": "0436956E048817FF0DC842688271A61BA19B7BD2C1AF76C8CCB15430ADC66F90"
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers.rs",
@@ -4813,8 +4818,8 @@
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers/email_threat.rs",
-      "bytes": 1778,
-      "sha256": "871021F0B6DE8002A632C58B1C73D48C466423705164B87427031EA73AE27C1A"
+      "bytes": 1771,
+      "sha256": "38857C2E7EEB4CC01704B384270B4467C5B979970E5E0BCAA32FD781C8010EA4"
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers/paperless_findings.rs",

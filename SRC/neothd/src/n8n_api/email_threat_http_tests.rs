@@ -46,7 +46,11 @@ async fn start_email_threat_http_test_server(
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let shutdown = Arc::new(Notify::new());
-    let server = tokio::spawn(run_server(listener, Arc::clone(&state), Arc::clone(&shutdown)));
+    let server = tokio::spawn(run_server(
+        listener,
+        Arc::clone(&state),
+        Arc::clone(&shutdown),
+    ));
     (state, writer, wal_join, server, shutdown, port)
 }
 
@@ -76,9 +80,8 @@ async fn post_email_threat_http(port: u16, token: Option<&str>, body: &str) -> s
         let response = String::from_utf8(response).unwrap();
         let (head, body) = response.split_once("\r\n\r\n").unwrap();
         let mut envelope: serde_json::Value = serde_json::from_str(body).unwrap();
-        envelope["_http_status"] = serde_json::Value::String(
-            head.split_whitespace().nth(1).unwrap().to_owned(),
-        );
+        envelope["_http_status"] =
+            serde_json::Value::String(head.split_whitespace().nth(1).unwrap().to_owned());
         envelope
     })
     .await
@@ -128,7 +131,10 @@ fn only_quarantine_item(home: &std::path::Path) -> std::path::PathBuf {
     let mut items = std::fs::read_dir(&directory)
         .unwrap()
         .map(|entry| entry.expect("quarantine directory entry").path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "json"));
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        });
     let item = items.next().expect("one quarantine item");
     assert!(items.next().is_none(), "only one quarantined email record");
     item
@@ -152,7 +158,10 @@ async fn scope_is_rejected_before_malformed_email_threat_body_or_quarantine_stor
 #[tokio::test]
 async fn strict_email_threat_request_rejects_unknown_fields_and_bounds_with_400() {
     let home = tempfile::tempdir().unwrap();
-    let token = scoped_token(home.path(), vec![api_tokens::SCOPE_EMAIL_THREAT_WRITE.to_owned()]);
+    let token = scoped_token(
+        home.path(),
+        vec![api_tokens::SCOPE_EMAIL_THREAT_WRITE.to_owned()],
+    );
     let (state, writer, wal_join, server, shutdown, port) =
         start_email_threat_http_test_server(home.path()).await;
 
@@ -160,7 +169,8 @@ async fn strict_email_threat_request_rejects_unknown_fields_and_bounds_with_400(
     let oversized = serde_json::json!({
         "source_key": "x".repeat(129), "message_key": "m", "from": "a@example.test",
         "subject": "s", "body": "text",
-    }).to_string();
+    })
+    .to_string();
     for body in [unknown, oversized.as_str()] {
         let response = post_email_threat_http(port, Some(&token), body).await;
         assert_eq!(response["_http_status"], "400", "{body}");
@@ -176,21 +186,38 @@ async fn strict_email_threat_request_rejects_unknown_fields_and_bounds_with_400(
 #[tokio::test]
 async fn quarantine_is_persisted_under_explicit_home_redacted_and_idempotent_over_http() {
     let home = tempfile::tempdir().unwrap();
-    let token = scoped_token(home.path(), vec![api_tokens::SCOPE_EMAIL_THREAT_WRITE.to_owned()]);
+    let token = scoped_token(
+        home.path(),
+        vec![api_tokens::SCOPE_EMAIL_THREAT_WRITE.to_owned()],
+    );
     let (state, writer, wal_join, server, shutdown, port) =
         start_email_threat_http_test_server(home.path()).await;
     let request = quarantined_request();
 
     let first = post_email_threat_http(port, Some(&token), &request).await;
     assert_eq!(first["_http_status"], "200");
-    assert_eq!(first["data"]["coverage"], "submitted_text_and_filenames_only");
+    assert_eq!(
+        first["data"]["coverage"],
+        "submitted_text_and_filenames_only"
+    );
     assert_eq!(first["data"]["result"]["quarantine_recorded"], true);
     assert_eq!(first["data"]["result"]["action_allowed"], false);
     let first_json = first.to_string();
-    for secret in [PRIVATE_BODY, PRIVATE_FROM, PRIVATE_SUBJECT, "private-attachment.pdf"] {
-        assert!(!first_json.contains(secret), "response leaked submitted email data");
+    for secret in [
+        PRIVATE_BODY,
+        PRIVATE_FROM,
+        PRIVATE_SUBJECT,
+        "private-attachment.pdf",
+    ] {
+        assert!(
+            !first_json.contains(secret),
+            "response leaked submitted email data"
+        );
     }
-    let record_id = first["data"]["result"]["record_id"].as_str().unwrap().to_owned();
+    let record_id = first["data"]["result"]["record_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let item_path = only_quarantine_item(home.path());
     let before = std::fs::read(&item_path).unwrap();
 
@@ -198,7 +225,11 @@ async fn quarantine_is_persisted_under_explicit_home_redacted_and_idempotent_ove
     assert_eq!(second["_http_status"], "200");
     assert_eq!(second["data"]["result"]["record_id"], record_id);
     assert_eq!(second["data"]["result"]["reused"], true);
-    assert_eq!(std::fs::read(&item_path).unwrap(), before, "retry preserves original record timestamp");
+    assert_eq!(
+        std::fs::read(&item_path).unwrap(),
+        before,
+        "retry preserves original record timestamp"
+    );
     assert!(!home.path().join("vault").exists());
     assert!(!home.path().join("delivery").exists());
 
@@ -206,20 +237,39 @@ async fn quarantine_is_persisted_under_explicit_home_redacted_and_idempotent_ove
 }
 
 #[tokio::test]
-async fn unavailable_quarantine_store_returns_fixed_redacted_503_without_delivery_or_vault_effect() {
+async fn unavailable_quarantine_store_returns_fixed_redacted_503_without_delivery_or_vault_effect()
+{
     let home = tempfile::tempdir().unwrap();
-    let token = scoped_token(home.path(), vec![api_tokens::SCOPE_EMAIL_THREAT_WRITE.to_owned()]);
-    std::fs::write(home.path().join("paperless_quarantine"), b"private-corrupt-store").unwrap();
+    let token = scoped_token(
+        home.path(),
+        vec![api_tokens::SCOPE_EMAIL_THREAT_WRITE.to_owned()],
+    );
+    std::fs::write(
+        home.path().join("paperless_quarantine"),
+        b"private-corrupt-store",
+    )
+    .unwrap();
     let (state, writer, wal_join, server, shutdown, port) =
         start_email_threat_http_test_server(home.path()).await;
 
     let response = post_email_threat_http(port, Some(&token), &quarantined_request()).await;
     assert_eq!(response["_http_status"], "503");
     assert_eq!(response["error"]["code"], "StoreUnavailable");
-    assert_eq!(response["error"]["message"], "email_threat_record_unavailable");
+    assert_eq!(
+        response["error"]["message"],
+        "email_threat_record_unavailable"
+    );
     let serialized = response.to_string();
-    for secret in [PRIVATE_BODY, PRIVATE_FROM, PRIVATE_SUBJECT, "private-corrupt-store"] {
-        assert!(!serialized.contains(secret), "503 leaked private store or email content");
+    for secret in [
+        PRIVATE_BODY,
+        PRIVATE_FROM,
+        PRIVATE_SUBJECT,
+        "private-corrupt-store",
+    ] {
+        assert!(
+            !serialized.contains(secret),
+            "503 leaked private store or email content"
+        );
     }
     assert!(!serialized.contains(home.path().to_string_lossy().as_ref()));
     assert!(!home.path().join("vault").exists());
