@@ -227,9 +227,27 @@ pub(crate) fn retained_reinstall_request_in_service(
     home: &Path,
     uninstall_id: &JobId,
 ) -> Result<ManagedN8nRequest, &'static str> {
-    let uninstall = service
-        .get(uninstall_id)
-        .map_err(|_| "n8n_retained_reinstall_job_read_failed")?
+    retained_reinstall_request_from_snapshot(
+        home,
+        uninstall_id,
+        service
+            .snapshot()
+            .map_err(|_| "n8n_retained_reinstall_job_read_failed")?,
+    )
+}
+
+/// Resolve a retained-volume authorization from a read-only job snapshot.  This
+/// keeps confirmation previews observational: callers need not acquire the job
+/// owner lease or apply restart recovery merely to print the exact phrase.
+pub(crate) fn retained_reinstall_request_from_snapshot(
+    home: &Path,
+    uninstall_id: &JobId,
+    jobs: Vec<IntegrationJob>,
+) -> Result<ManagedN8nRequest, &'static str> {
+    let uninstall = jobs
+        .iter()
+        .find(|job| job.job_id == *uninstall_id)
+        .cloned()
         .ok_or("n8n_retained_reinstall_job_missing")?;
     if uninstall.operation != JobOperation::Uninstall || uninstall.state != JobState::Ready {
         return Err("n8n_retained_reinstall_job_not_ready");
@@ -267,9 +285,7 @@ pub(crate) fn retained_reinstall_request_in_service(
     if image != crate::installers::n8n::N8N_OCI_REFERENCE {
         return Err("n8n_retained_reinstall_receipt_mismatch");
     }
-    let source = service
-        .snapshot()
-        .map_err(|_| "n8n_retained_reinstall_job_read_failed")?
+    let source = jobs
         .into_iter()
         .find(|job| job.job_id.as_str() == receipt.source_install_job_id)
         .ok_or("n8n_retained_reinstall_source_missing")?;

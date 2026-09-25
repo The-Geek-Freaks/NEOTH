@@ -208,6 +208,7 @@ pub enum JobOperation {
     Repair,
     Update,
     Uninstall,
+    Purge,
 }
 
 impl JobOperation {
@@ -218,6 +219,7 @@ impl JobOperation {
             Self::Repair => "repair",
             Self::Update => "update",
             Self::Uninstall => "uninstall",
+            Self::Purge => "purge",
         }
     }
 }
@@ -232,6 +234,7 @@ impl FromStr for JobOperation {
             "repair" => Ok(Self::Repair),
             "update" => Ok(Self::Update),
             "uninstall" => Ok(Self::Uninstall),
+            "purge" => Ok(Self::Purge),
             _ => Err(StateValidationError::UnknownOperation),
         }
     }
@@ -1314,6 +1317,7 @@ mod tests {
             (JobOperation::Repair, "repair"),
             (JobOperation::Update, "update"),
             (JobOperation::Uninstall, "uninstall"),
+            (JobOperation::Purge, "purge"),
         ] {
             assert_eq!(operation.as_str(), encoded);
             assert_eq!(JobOperation::from_str(encoded).unwrap(), operation);

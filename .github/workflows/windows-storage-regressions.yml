@@ -612,6 +612,21 @@ jobs:
           installers::paperless_lifecycle::paperless_operation_lock::tests::malformed_state_entry_is_rejected	neothd/src/installers/paperless_operation_lock.rs
           installers::paperless_lifecycle::tests::safe_uninstall_accepts_only_exact_64_hex_container_ids	neothd/src/installers/paperless_lifecycle.rs
           integrations::n8n::managed_runtime::tests::volume_listing_matches_proves_only_an_exact_empty_or_single_name_result	neothd/src/integrations/n8n/managed_runtime_tests.rs
+          integrations::jobs::tests::schema_v3_migrates_representative_history_and_round_trips_purge_jobs	neothd/src/integrations/jobs.rs
+          integrations::jobs::tests::read_only_snapshot_reads_v3_history_without_schema_writes_then_owned_open_migrates_v4	neothd/src/integrations/jobs.rs
+          integrations::jobs::tests::schema_v3_corrupt_index_refuses_before_v4_migration	neothd/src/integrations/jobs.rs
+          cli::n8n::tests::purge_cli_selects_only_an_uninstall_job_and_preserves_exact_confirmation	neothd/src/cli/n8n.rs
+          integrations::n8n::managed_purge::tests::purge_ready_uninstall_removes_only_the_label_proven_volume_and_repeats_read_only	neothd/src/integrations/n8n/managed_purge_tests.rs
+          integrations::n8n::managed_purge::tests::purge_wrong_confirmation_and_bad_receipts_never_open_or_mutate_docker	neothd/src/integrations/n8n/managed_purge_tests.rs
+          integrations::n8n::managed_purge::tests::purge_rejects_active_runtime_and_foreign_or_unknown_volume_without_remove	neothd/src/integrations/n8n/managed_purge_tests.rs
+          integrations::n8n::managed_purge::tests::dispatched_purge_reconciles_only_by_later_absence_without_a_second_remove	neothd/src/integrations/n8n/managed_purge_tests.rs
+          integrations::n8n::managed_purge::tests::remove_error_after_effect_is_accepted_only_after_exact_absence	neothd/src/integrations/n8n/managed_purge_tests.rs
+          integrations::n8n::managed_purge::tests::completed_custody_rotates_only_after_a_valid_new_bootstrap_uninstall_generation	neothd/src/integrations/n8n/managed_purge_tests.rs
+          integrations::n8n::managed_purge::tests::purge_owner_lock_contention_keeps_the_preflight_read_only_and_never_calls_docker	neothd/src/integrations/n8n/managed_purge_tests.rs
+          integrations::n8n::managed_purge::tests::locked_preflight_rechecks_a_binding_created_after_read_only_plan_resolution	neothd/src/integrations/n8n/managed_purge_tests.rs
+          integrations::n8n::managed_purge::tests::intent_with_durable_inspection_checkpoint_recovers_and_removes_once	neothd/src/integrations/n8n/managed_purge_tests.rs
+          integrations::n8n::managed_purge::tests::completed_custody_with_receipt_before_ready_recovers_without_remove	neothd/src/integrations/n8n/managed_purge_tests.rs
+          integrations::n8n::managed_purge::tests::absent_verified_custody_before_configuration_recovers_without_remove	neothd/src/integrations/n8n/managed_purge_tests.rs
           EOF
 
           : > "$evidence/source-bindings.tsv"
@@ -628,7 +643,7 @@ jobs:
             test -n "$source_sha"
             printf '%s\t%s\t%s\n' "$test_name" "$source_path" "$source_sha" >> "$evidence/source-bindings.tsv"
           done < "$evidence/selection.tsv"
-          if [[ "$expected" -ne 542 ]]; then
+          if [[ "$expected" -ne 557 ]]; then
             selection_valid=0
           fi
           sha256sum Cargo.lock neothd/Cargo.toml neothd/src/integrations/n8n/managed_uninstall.rs neothd/src/n8n_api/handlers/reflection_weekly_obsidian_sync.rs neothd/src/memory/drift.rs neothd/src/proactive/action_staging.rs neothd/assets/n8n_workflows/daily_summary.json neothd/assets/n8n_workflows/morning_brief.json neothd/assets/n8n_workflows/weekly_stats.json "$evidence/selection.tsv" "$evidence/source-bindings.tsv" > "$evidence/input-sha256sums.txt"

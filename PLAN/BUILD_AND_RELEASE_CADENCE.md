@@ -3,6 +3,26 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1317 confirmed n8n retained-volume purge (2026-09-25):**
+A separate `n8n purge --uninstall ID` previews the exact receipt-derived
+bootstrap volume. Only the exact displayed confirmation authorizes its removal.
+The owner lock protects a second provenance/runtime-binding check. Durable
+dispatch custody permits one removal; uncertain outcomes reconcile absence
+without repeating deletion. Validated completed history permits a later full
+install/uninstall generation. Normal uninstall still retains all integration data.
+SQLite V4 adds typed Purge jobs; validated read-only V3 observation permits
+upgrade without preview mutations. Independent schema, Rust and product-canary
+reviews accepted the repaired source. Fifteen focused native tests cover schema,
+CLI and11actual-service lifecycle/lock/crash paths; hosted execution is pending.
+Claude057 reviewed the frozen CLI/docs; response and shell-quoting docs clarified.
+W1313 fixes the two hosted workspace-Clippy findings in Paperless test code.
+W1315 admits Group1773 at7bed:1773PASS/0FAIL,300historical source bindings,
+all exact terminal records and three API-bound artifact digests verified.
+The prior61c group had the same eight fixture failures repaired by7bed.
+Windows542@7bed remains pending. The new purge requires its own hosted Core,
+CLI export, native selections and real-product canary. No roadmap closure,
+full-home wipe, release assertion or local executable validation.
+
 **W1312 strict Paperless uninstall fixture correction (2026-09-25):**
 Windows542 run36115884957 atbe003 compiled and executed all542 selected tests:
 534PASS,8FAIL,0missing. The eight failures all came from the uninstall fake

@@ -182,6 +182,35 @@ class ProductUninstallReceiptTests(unittest.TestCase):
             self.assertTrue(canary.cleanup_owned_runtime_and_volume("c" * 64, self.volume, self.source_job, 5681, False))
         command.assert_called_once_with(["docker", "volume", "rm", self.volume])
 class CustodyBoundaryTests(unittest.TestCase):
+    def test_purge_plan_requires_exact_uninstall_volume_and_phrase(self) -> None:
+        job = "12345678-1234-7234-8234-123456789abc"; volume = "neoth_n8n_" + "a" * 32
+        phrase = canary.purge_phrase(job, volume)
+        self.assertEqual(canary.validate_purge_plan({"operation":"purge","state":"confirmation_required","uninstall_job_id":job,"volume":volume,"confirmation":phrase}, job, volume), phrase)
+        with self.assertRaises(canary.Failure): canary.validate_purge_plan({"operation":"purge","state":"confirmation_required","uninstall_job_id":job,"volume":volume,"confirmation":phrase + "x"}, job, volume)
+
+    def test_purge_ready_response_requires_exact_source_and_disposition(self) -> None:
+        uninstall = "12345678-1234-7234-8234-123456789abc"; purge = "22345678-1234-7234-8234-123456789abc"
+        value = {"job_id":purge,"operation":"purge","state":"ready","disposition":"volume_removed","uninstall_job_id":uninstall,"failure_code":None}
+        self.assertEqual(canary.validate_purge_product(value, uninstall), purge)
+        value["uninstall_job_id"] = "32345678-1234-7234-8234-123456789abc"
+        with self.assertRaises(canary.Failure): canary.validate_purge_product(value, uninstall)
+
+    def test_cleanup_after_confirmed_purge_does_not_remove_absent_volume(self) -> None:
+        with patch.object(canary, "exact_absent", return_value=True), patch.object(canary, "docker_inspect") as inspect, patch.object(canary, "run") as command:
+            self.assertTrue(canary.cleanup_owned_runtime_and_volume("a" * 64, "neoth_n8n_" + "b" * 32, "job", 5681, True, True))
+        inspect.assert_not_called(); command.assert_not_called()
+
+    def test_wrong_confirmation_witness_requires_no_purge_custody_or_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            self.assertEqual(canary.purge_artifacts_absent(home), ())
+            (home / "n8n-managed-purge.v1.json").write_text("{}")
+            with self.assertRaisesRegex(canary.Failure, "purge_custody_present"):
+                canary.purge_artifacts_absent(home)
+            (home / "n8n-managed-purge.v1.json").unlink()
+            (home / "n8n-purge-12345678-1234-7234-8234-123456789abc.receipt.json").write_text("{}")
+            with self.assertRaisesRegex(canary.Failure, "purge_receipt_present"):
+                canary.purge_artifacts_absent(home)
     def test_fresh_product_initialization_precedes_install_and_requires_keychain(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)

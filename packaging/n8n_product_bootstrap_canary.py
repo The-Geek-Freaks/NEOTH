@@ -239,6 +239,18 @@ def observe_full_job_row(home: Path, job: str, operation: str) -> str:
     if value.get("job_id") != job or value.get("operation") != operation:
         raise Failure("full_job_row_invalid")
     return hashlib.sha256(rows[0]).hexdigest()
+def observe_all_job_rows(home: Path) -> str:
+    output = run(["sqlite3", "-readonly", "-json", str(home / "setup.db"), "SELECT * FROM integration_jobs ORDER BY job_id;"])
+    try: value = json.loads(output)
+    except Exception as error: raise Failure("all_job_rows_invalid") from error
+    if not isinstance(value, list) or any(not isinstance(row, dict) or not isinstance(row.get("job_id"), str) for row in value): raise Failure("all_job_rows_invalid")
+    return hashlib.sha256(output).hexdigest()
+def purge_artifacts_absent(home: Path) -> tuple[str, ...]:
+    custody = home / "n8n-managed-purge.v1.json"
+    if custody.exists() or custody.is_symlink(): raise Failure("purge_custody_present")
+    receipts = tuple(sorted(path.name for path in home.iterdir() if path.is_file() and not path.is_symlink() and re.fullmatch(r"n8n-purge-[0-9a-f-]{36}\.receipt\.json", path.name)))
+    if receipts: raise Failure("purge_receipt_present")
+    return receipts
 def validate_retained_volume(row: dict, source_job: str, volume: str) -> None:
     labels = row.get("Labels")
     if (row.get("Name") != volume or not isinstance(labels, dict)
@@ -255,7 +267,23 @@ def sidecar_absent(home: Path, name: str) -> None:
 def json_sha256(value: dict) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
-def cleanup_owned_runtime_and_volume(runtime_id: str, volume: str, job: str, port: int, runtime_already_absent: bool) -> bool:
+def purge_phrase(uninstall_job: str, volume: str) -> str:
+    if not JOB.fullmatch(uninstall_job) or not VOLUME.fullmatch(volume): raise Failure("purge_target_invalid")
+    return f"PURGE N8N VOLUME {uninstall_job} {volume}"
+def validate_purge_plan(value: dict, uninstall_job: str, volume: str) -> str:
+    phrase = purge_phrase(uninstall_job, volume)
+    if value != {"operation": "purge", "state": "confirmation_required", "uninstall_job_id": uninstall_job, "volume": volume, "confirmation": phrase}: raise Failure("purge_plan_invalid")
+    return phrase
+def validate_purge_product(value: dict, uninstall_job: str) -> str:
+    job = required(value, "job_id", str)
+    if not JOB.fullmatch(job) or value != {"job_id": job, "operation": "purge", "state": "ready", "disposition": "volume_removed", "uninstall_job_id": uninstall_job, "failure_code": None}: raise Failure("purge_product_invalid")
+    return job
+def read_purge_receipt(home: Path, purge_job: str, purge_manifest: str, uninstall_job: str, volume: str) -> dict:
+    path = home / f"n8n-purge-{purge_job}.receipt.json"; value = read_json(path)
+    if value != {"schema_version": 1, "purge_job_id": purge_job, "purge_manifest_sha256": purge_manifest, "uninstall_job_id": uninstall_job, "volume": volume, "disposition": "volume_removed"}: raise Failure("purge_receipt_invalid")
+    return {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "bytes": path.stat().st_size}
+
+def cleanup_owned_runtime_and_volume(runtime_id: str, volume: str, job: str, port: int, runtime_already_absent: bool, volume_already_absent: bool = False) -> bool:
     try:
         if runtime_already_absent or exact_absent("container", runtime_id):
             if not exact_absent("container", runtime_id):
@@ -265,6 +293,8 @@ def cleanup_owned_runtime_and_volume(runtime_id: str, volume: str, job: str, por
             run(["docker", "rm", "-f", runtime_id])
             if not exact_absent("container", runtime_id):
                 return False
+        if volume_already_absent:
+            return exact_absent("volume", volume)
         row = docker_inspect(volume)
         validate_retained_volume(row, job, volume)
         run(["docker", "volume", "rm", volume])
@@ -537,14 +567,14 @@ def main() -> int:
             return 2
     except Exception:
         return 2
-    receipt = {"schema": 1, "source_sha": os.environ.get("GITHUB_SHA"), "port": args.port, "outcome": "failed"}; runtime_id = volume = job = None; uninstall_runtime_absent = False
+    receipt = {"schema": 1, "source_sha": os.environ.get("GITHUB_SHA"), "port": args.port, "outcome": "failed"}; runtime_id = volume = job = None; uninstall_runtime_absent = False; volume_purged = False
     try:
         receipt.update({"helper_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), "bounded_helper_sha256": hashlib.sha256(Path(bounded.__file__).read_bytes()).hexdigest(), "workflow_sha256": hashlib.sha256((Path.cwd() / ".github/workflows/n8n-product-bootstrap.yml").read_bytes()).hexdigest(), "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(), "cargo_lock_sha256": hashlib.sha256((Path.cwd() / "SRC/Cargo.lock").read_bytes()).hexdigest()})
         input_names = (
             "packaging/tests/test_n8n_product_bootstrap_canary.py",
             "SRC/neothd/src/cli/n8n.rs", "SRC/neothd/src/integrations/n8n.rs",
             "SRC/neothd/src/integrations/n8n/managed_bootstrap.rs",
-            "SRC/neothd/src/integrations/n8n/managed_runtime.rs", "SRC/neothd/src/integrations/n8n/managed_uninstall.rs",
+            "SRC/neothd/src/integrations/n8n/managed_runtime.rs", "SRC/neothd/src/integrations/n8n/managed_uninstall.rs", "SRC/neothd/src/integrations/n8n/managed_purge.rs",
             "SRC/neothd/src/integrations/n8n/bootstrap_transport.rs",
             "SRC/neothd/src/integrations/n8n/workflow_import.rs",
             "SRC/neothd/src/integrations/jobs.rs", "SRC/neothd/src/integrations/state.rs",
@@ -708,6 +738,23 @@ def main() -> int:
         if read_json(home / "n8n-managed-bootstrap.v2.json") != boot or observe_exact_job(home, job, "install") != source_install or observe_exact_job(home, uninstall_job, "uninstall") != uninstall_record:
             raise Failure("reinstall_final_history_mutation")
         receipt["reinstall"] = {"job_id": reinstall_job, "job_row_sha256": reinstall_record["row_sha256"], "full_job_row_sha256": reinstall_record_full, "runtime_id": reinstall_runtime_id, "reused_volume": volume, "workflows_persisted": True, "canonical_api_key_preserved": True, "repeat": reinstall_repeat, "final_uninstall_job_id": reinstall_uninstall_job, "final_uninstall_row_sha256": reinstall_uninstall_record["row_sha256"], "final_uninstall_full_row_sha256": reinstall_uninstall_record_full, "final_completion_receipt_sha256": reinstall_completion["sha256"], "final_completion_receipt_bytes": reinstall_completion["bytes"], "final_runtime_absent": True, "volume_retained": True}
+        receipt["stage"] = "confirmed_retained_volume_purge"
+        plan_raw = run([str(binary), "--output", "json", "n8n", "purge", "--uninstall", reinstall_uninstall_job])
+        phrase = validate_purge_plan(read_json_bytes(plan_raw), reinstall_uninstall_job, volume)
+        validate_retained_volume(docker_inspect(volume), job, volume)
+        source_before = observe_full_job_row(home, job, "install"); uninstall_before = observe_full_job_row(home, uninstall_job, "uninstall"); import_before = observe_full_job_row(home, import_job, "import_inactive_workflows"); final_before = observe_full_job_row(home, reinstall_uninstall_job, "uninstall"); all_jobs_before = observe_all_job_rows(home); original_receipts_before = (completion, reinstall_completion, first_custody); purge_receipts_before = purge_artifacts_absent(home)
+        wrong = bounded.run([str(binary), "--output", "json", "n8n", "purge", "--uninstall", reinstall_uninstall_job, "--confirm", phrase + " wrong"], timeout=180)
+        if wrong.code == 0 or wrong.timed_out or wrong.overflow or b"n8n_purge_confirmation_mismatch" not in wrong.stderr: raise Failure("purge_wrong_confirmation_unproven")
+        validate_retained_volume(docker_inspect(volume), job, volume)
+        if purge_artifacts_absent(home) != purge_receipts_before or observe_all_job_rows(home) != all_jobs_before or (read_uninstall_completion_receipt(home, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"], runtime_id, volume, args.port), read_reinstall_uninstall_completion_receipt(home, reinstall_uninstall_job, reinstall_uninstall_record["manifest_sha256"], reinstall_job, reinstall_record["manifest_sha256"], reinstall_runtime_id, volume, args.port, uninstall_job, uninstall_record["manifest_sha256"], job, source_install["manifest_sha256"]), observe_workflow_custody(home, import_job, first_workflows["entries"])) != original_receipts_before: raise Failure("purge_wrong_confirmation_mutated_history")
+        purge_raw = run([str(binary), "--output", "json", "n8n", "purge", "--uninstall", reinstall_uninstall_job, "--confirm", phrase])
+        purge_job = validate_purge_product(read_json_bytes(purge_raw), reinstall_uninstall_job); purge_record = observe_exact_job(home, purge_job, "purge"); purge_full = observe_full_job_row(home, purge_job, "purge")
+        if not exact_absent("volume", volume) or canonical_n8n_api_key() != canonical_key: raise Failure("purge_effect_unproven")
+        purge_completion = read_purge_receipt(home, purge_job, purge_record["manifest_sha256"], reinstall_uninstall_job, volume)
+        repeat_purge_raw = run([str(binary), "--output", "json", "n8n", "purge", "--uninstall", reinstall_uninstall_job, "--confirm", phrase])
+        if repeat_purge_raw != purge_raw or validate_purge_product(read_json_bytes(repeat_purge_raw), reinstall_uninstall_job) != purge_job or observe_exact_job(home, purge_job, "purge") != purge_record or observe_full_job_row(home, purge_job, "purge") != purge_full or read_purge_receipt(home, purge_job, purge_record["manifest_sha256"], reinstall_uninstall_job, volume) != purge_completion: raise Failure("purge_repeat_mutation")
+        if (observe_full_job_row(home, job, "install"), observe_full_job_row(home, uninstall_job, "uninstall"), observe_full_job_row(home, import_job, "import_inactive_workflows"), observe_full_job_row(home, reinstall_uninstall_job, "uninstall")) != (source_before, uninstall_before, import_before, final_before): raise Failure("purge_history_mutation")
+        volume_purged = True; receipt["purge"] = {"source_uninstall_job_sha256": hashlib.sha256(reinstall_uninstall_job.encode()).hexdigest(), "purge_job_sha256": hashlib.sha256(purge_job.encode()).hexdigest(), "target_sha256": hashlib.sha256(phrase.encode()).hexdigest(), "job_row_sha256": purge_record["row_sha256"], "receipt_sha256": purge_completion["sha256"], "receipt_bytes": purge_completion["bytes"], "volume_absent": True, "canonical_api_key_preserved": True, "repeat_read_only": True}
         receipt.update({"manifest_sha256": boot["manifest_sha256"], "volume": volume, "bootstrap_id": bootstrap_id, "runtime_id": runtime_id, "status_ready": True, "reused_same_job": True, "no_rebootstrap_events": True})
         receipt["outcome"] = "passed"
     except Exception as error:
@@ -736,7 +783,7 @@ def main() -> int:
         # report it unproven if the complete exact identities were not read.
         cleanup = False
         if runtime_id and volume and job:
-            cleanup = cleanup_owned_runtime_and_volume(runtime_id, volume, job, args.port, uninstall_runtime_absent)
+            cleanup = cleanup_owned_runtime_and_volume(runtime_id, volume, job, args.port, uninstall_runtime_absent, volume_purged)
         receipt["docker_cleanup_proven"] = cleanup
         if not cleanup: receipt["outcome"] = "failed"
         if receipt["outcome"] == "passed" and cleanup:

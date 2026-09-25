@@ -1,4 +1,4 @@
-//! `neoth n8n {install,uninstall,adopt,status,import-workflows,workflows}`.
+//! `neoth n8n {install,uninstall,purge,adopt,status,import-workflows,workflows}`.
 //!
 //! Adoption binds an operator-supplied, already-running literal-loopback n8n
 //! instance. It never installs, starts, discovers, or owns an n8n process.
@@ -44,6 +44,16 @@ pub enum N8nAction {
     /// Remove the exact NEOTH-managed container and retain its data volume.
     /// Repeating an interrupted command reconciles absence without retrying deletion.
     Uninstall,
+    /// Permanently delete the owned data volume retained by a completed uninstall.
+    /// Without --confirm, show the exact target and required confirmation only.
+    Purge {
+        /// Ready uninstall job whose receipt identifies the retained volume.
+        #[arg(long)]
+        uninstall: String,
+        /// Exact confirmation phrase shown by this command without --confirm.
+        #[arg(long)]
+        confirm: Option<String>,
+    },
     /// Adopt an already-running n8n API at an exact literal-loopback origin.
     Adopt {
         #[arg(long)]
@@ -80,6 +90,9 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
             .await
         }
         N8nAction::Uninstall => run_uninstall(output).await,
+        N8nAction::Purge { uninstall, confirm } => {
+            run_purge(&uninstall, confirm.as_deref(), output).await
+        }
         N8nAction::Adopt {
             endpoint,
             api_key_stdin,
@@ -135,6 +148,68 @@ async fn run_uninstall(output: OutputFormat) -> Result<()> {
             job.state,
             disposition,
         ));
+    }
+    Ok(())
+}
+
+async fn run_purge(
+    uninstall: &str,
+    confirmation: Option<&str>,
+    output: OutputFormat,
+) -> Result<()> {
+    use crate::integrations::n8n::managed_purge;
+
+    let uninstall_id = JobId::parse(uninstall.to_owned())?;
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let Some(confirmation) = confirmation else {
+        let plan = managed_purge::prepare_purge_at(&home, &uninstall_id)?;
+        match output {
+            OutputFormat::Json | OutputFormat::Jsonl => println!(
+                "{}",
+                serde_json::json!({
+                    "operation": "purge",
+                    "state": "confirmation_required",
+                    "uninstall_job_id": plan.uninstall_job_id,
+                    "volume": plan.volume,
+                    "confirmation": plan.confirmation,
+                })
+            ),
+            OutputFormat::Table => {
+                println!("Retained n8n data volume: {}", plan.volume);
+                println!("Source uninstall job: {}", plan.uninstall_job_id);
+                println!("Purge permanently deletes the workflows and data in this volume.");
+                println!("To proceed, repeat this command with --confirm {:?}.", plan.confirmation);
+            }
+        }
+        return Ok(());
+    };
+    let job = managed_purge::purge_retained_volume_at(&home, &uninstall_id, confirmation).await?;
+    let ready = job.state == crate::integrations::JobState::Ready;
+    let disposition = if ready {
+        "volume_removed"
+    } else {
+        "reconciliation_required"
+    };
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "job_id": job.job_id,
+                "operation": "purge",
+                "state": job.state,
+                "disposition": disposition,
+                "uninstall_job_id": uninstall_id,
+                "failure_code": job.failure.as_ref().map(|failure| &failure.code),
+            })
+        ),
+        OutputFormat::Table => {
+            println!("n8n purge job: {}", job.job_id);
+            println!("state: {}", job.state);
+            println!("disposition: {disposition}");
+        }
+    }
+    if !ready {
+        anyhow::bail!("n8n purge requires reconciliation; an uncertain deletion is not retried");
     }
     Ok(())
 }
@@ -496,6 +571,35 @@ mod tests {
                 )
                 .is_err()
             );
+        }
+    }
+
+    #[test]
+    fn purge_cli_selects_only_an_uninstall_job_and_preserves_exact_confirmation() {
+        use clap::Parser;
+        let id = uuid::Uuid::now_v7().to_string();
+        let preview = crate::cli::Cli::try_parse_from([
+            "neoth", "n8n", "purge", "--uninstall", id.as_str(),
+        ]).unwrap();
+        assert!(matches!(preview.command,
+            crate::cli::Commands::N8n(N8nArgs {
+                action: N8nAction::Purge { uninstall, confirm: None },
+            }) if uninstall == id
+        ));
+        let phrase = format!("PURGE N8N VOLUME {id} neoth_n8n_owned");
+        let confirmed = crate::cli::Cli::try_parse_from([
+            "neoth", "n8n", "purge", "--uninstall", id.as_str(), "--confirm", phrase.as_str(),
+        ]).unwrap();
+        assert!(matches!(confirmed.command,
+            crate::cli::Commands::N8n(N8nArgs {
+                action: N8nAction::Purge { uninstall, confirm: Some(value) },
+            }) if uninstall == id && value == phrase
+        ));
+        assert!(crate::cli::Cli::try_parse_from(["neoth", "n8n", "purge"]).is_err());
+        for argument in ["--volume", "--container", "--endpoint", "--home", "--yes", "--purge-data"] {
+            assert!(crate::cli::Cli::try_parse_from([
+                "neoth", "n8n", "purge", "--uninstall", id.as_str(), argument, "foreign",
+            ]).is_err());
         }
     }
 

@@ -1,0 +1,38 @@
+{
+  "kind": "EXACT_SOURCE_GROUPED_SUCCESS",
+  "source": "7bedcc1fc36cb7beec04fc3a581ad4e8f10f9b87",
+  "run": 36118720954,
+  "expected": 1773,
+  "executed": 1773,
+  "passed": 1773,
+  "failed": 0,
+  "missingTerminal": 0,
+  "historicalSourceBindings": 300,
+  "artifacts": [
+    {
+      "n": "w190-research-lifecycle-log-7bedcc1fc36cb7beec04fc3a581ad4e8f10f9b87",
+      "id": 10856327559,
+      "a": "e454e8e8e00b11eab696ae06d6a900e4bc6f28acdad0b93ee568a0c9dee74d32",
+      "d": "e454e8e8e00b11eab696ae06d6a900e4bc6f28acdad0b93ee568a0c9dee74d32",
+      "match": true
+    },
+    {
+      "n": "w190-research-lifecycle-receipt-7bedcc1fc36cb7beec04fc3a581ad4e8f10f9b87",
+      "id": 10856142644,
+      "a": "1a110b7750685e2f49539c760ddc8b19a7aacff70c7ba539bfa9383bdcd6db29",
+      "d": "1a110b7750685e2f49539c760ddc8b19a7aacff70c7ba539bfa9383bdcd6db29",
+      "match": true
+    },
+    {
+      "n": "w190-research-lifecycle-source-7bedcc1fc36cb7beec04fc3a581ad4e8f10f9b87",
+      "id": 10855928127,
+      "a": "8283e74153877a4992f821a1614bcc0befc24765adc0c7c26b92f48a9cad8c0c",
+      "d": "8283e74153877a4992f821a1614bcc0befc24765adc0c7c26b92f48a9cad8c0c",
+      "match": true
+    }
+  ],
+  "admissionSha256": "ADC42FDD6BC4FFEA477EFA11123E1C848B0B76F46FB564AB2059C761A7DBF4FF",
+  "logSha256": "972C43A72B282FAA29EABFDDF0C2D634507F78D206CC1E809AFBB7B5BEB73CE4",
+  "scope": "Exact historical7bed Linux grouped selection; all eight Paperless fake failures now pass. New unpublished purge changes require fresh gates.",
+  "localExecutableValidationRan": false
+}

@@ -1,0 +1,24 @@
+{
+  "kind": "CONFIRMED_N8N_RETAINED_VOLUME_PURGE_SOURCE",
+  "baseline": "7bedcc1fc36cb7beec04fc3a581ad4e8f10f9b87",
+  "status": "INDEPENDENT_STATIC_REVIEWS_ACCEPTED_HOSTED_PENDING",
+  "scope": "Separately confirmed integration volume purge; no full home or keychain wipe",
+  "newNativeTests": 15,
+  "groupedSelection": 1788,
+  "windowsSelection": 557,
+  "reviewReports": [
+    "work/gold-20260906/wave1308-purge-operation/REVIEW.md",
+    "work/gold-20260906/wave1309-n8n-retained-purge/REVIEW.md",
+    "work/gold-20260906/wave1310-n8n-purge-canary/REVIEW.md"
+  ],
+  "claude": "TASK057/RESULT057 reviewed; FEEDBACK057 and response docs updated",
+  "repairs": [
+    "Lock-time provenance and runtime binding revalidation",
+    "Intent+step2 valid crash recovery before first dispatch",
+    "AbsentVerified and Completed preReady recovery",
+    "Validated completed custody rotation for a new generation",
+    "Readonly V3 before V4 owned migration",
+    "Paperless duplicate cfg and obfuscated_if_else Clippy findings"
+  ],
+  "localExecutableValidationRan": false
+}

@@ -100,6 +100,9 @@ impl ManagedN8nRequest {
     pub(crate) fn volume(&self) -> &str {
         &self.volume
     }
+    pub(crate) fn retained_reinstall_source(&self) -> Option<&RetainedReinstallSource> {
+        self.retained_reinstall.as_ref()
+    }
     /// Only the bootstrap coordinator may supply a job it created before its
     /// first Docker mutation.  The runtime consumes it exactly once.
     pub(crate) fn with_prepared_job(mut self, job: IntegrationJob) -> Self {
@@ -230,6 +233,9 @@ pub(crate) trait ManagedDockerRunner: Send {
     async fn inspect_named(&mut self) -> Result<InspectOutcome, &'static str>;
     async fn inspect_exact(&mut self, id: &str) -> Result<InspectOutcome, &'static str>;
     async fn inspect_volume(&mut self, name: &str) -> Result<InspectVolumeOutcome, &'static str>;
+    async fn remove_volume(&mut self, _name: &str) -> Result<ManagedCommandReceipt, &'static str> {
+        Err("n8n_volume_remove_unavailable")
+    }
     async fn create(&mut self, argv: &[String]) -> Result<ManagedCommandReceipt, &'static str>;
     async fn remove(&mut self, id: &str) -> Result<ManagedCommandReceipt, &'static str>;
 }
@@ -293,6 +299,9 @@ fn read_binding(home: &Path) -> Result<Option<RuntimeBinding>, &'static str> {
         .map(Some)
         .map_err(|_| "n8n_runtime_binding_invalid")
 }
+pub(crate) fn has_runtime_binding(home: &Path) -> Result<bool, &'static str> {
+    Ok(read_binding(home)?.is_some())
+}
 /// Bootstrap records the final exact ID only after the existing runtime has
 /// persisted its own binding.  No caller gets the wider private binding.
 pub(crate) fn bound_container_id(home: &Path) -> Result<Option<String>, &'static str> {
@@ -304,6 +313,15 @@ fn write_binding(home: &Path, value: &RuntimeBinding) -> Result<(), &'static str
         &serde_json::to_vec(value).map_err(|_| "n8n_runtime_binding_serialize_failed")?,
     )
     .map_err(|_| "n8n_runtime_binding_write_failed")
+}
+#[cfg(test)]
+pub(super) fn mark_bootstrap_volume_owner_for_test(
+    home: &Path,
+    owner_job_id: &str,
+) -> Result<(), &'static str> {
+    let mut binding = read_binding(home)?.ok_or("n8n_runtime_binding_missing")?;
+    binding.bootstrap_volume_owner_job_id = Some(owner_job_id.into());
+    write_binding(home, &binding)
 }
 fn remove_binding(home: &Path) -> Result<(), &'static str> {
     let path = binding_path(home);
@@ -1561,6 +1579,15 @@ impl ManagedDockerRunner for DockerManagedRunner {
     }
     async fn inspect_volume(&mut self, name: &str) -> Result<InspectVolumeOutcome, &'static str> {
         inspect_volume_target(name).await
+    }
+    async fn remove_volume(&mut self, name: &str) -> Result<ManagedCommandReceipt, &'static str> {
+        if !valid_volume_name(name) {
+            return Err("n8n_volume_remove_invalid_name");
+        }
+        let (_, _, receipt) = docker(&[
+            "docker".into(), "volume".into(), "rm".into(), name.into(),
+        ]).await?;
+        Ok(receipt)
     }
     async fn create(&mut self, argv: &[String]) -> Result<ManagedCommandReceipt, &'static str> {
         let (_, _, receipt) = docker(argv).await?;

@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -111,11 +109,11 @@ impl ComposeExecutor for UninstallFake {
                 return Err(LifecycleError::Command("fake_container_listing_error"));
             }
             return Ok(CommandOutput {
-                stdout: self
-                    .present
-                    .contains(id)
-                    .then(|| format!("{id}\n"))
-                    .unwrap_or_default(),
+                stdout: if self.present.contains(id) {
+                    format!("{id}\n")
+                } else {
+                    String::new()
+                },
             });
         }
         if let Some(remove) = argv.iter().position(|part| part == "rm") {

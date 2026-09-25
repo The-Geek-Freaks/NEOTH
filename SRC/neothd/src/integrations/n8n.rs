@@ -33,6 +33,7 @@ use super::{EnqueueResult, IntegrationJobService, JobServiceError, RestartValida
 
 pub(crate) mod bootstrap_transport;
 pub(crate) mod managed_bootstrap;
+pub(crate) mod managed_purge;
 pub(crate) mod managed_runtime;
 pub(crate) mod workflow_import;
 
@@ -319,8 +320,12 @@ impl From<&IntegrationJob> for N8nJobStatusView {
             id: job.job_id.clone(),
             operation: job.operation,
             state: job.state,
-            disposition: (job.operation == JobOperation::Uninstall)
-                .then(|| managed_runtime::managed_uninstall::disposition(job)),
+            disposition: match job.operation {
+                JobOperation::Uninstall => Some(managed_runtime::managed_uninstall::disposition(job)),
+                JobOperation::Purge if job.state == JobState::Ready => Some("volume_removed"),
+                JobOperation::Purge => Some("reconciliation_required"),
+                _ => None,
+            },
             config_cleanup: None,
             current_step: job.current_step.clone(),
             completed_steps: job.progress.completed_steps,
@@ -462,6 +467,15 @@ impl RestartValidator for N8nRestartValidator {
                 failure: JobFailure::new(
                     "n8n_uninstall_reconciliation_required",
                     "The interrupted uninstall retains custody; run n8n uninstall to inspect its exact container without repeating removal.",
+                )
+                .expect("static failure is valid"),
+            };
+        }
+        if job.operation == JobOperation::Purge {
+            return RestartDecision::Hold {
+                failure: JobFailure::new(
+                    "n8n_purge_reconciliation_required",
+                    "The retained-volume purge retains durable dispatch custody; rerun n8n purge to inspect exact absence without retrying deletion.",
                 )
                 .expect("static failure is valid"),
             };
@@ -626,6 +640,9 @@ pub(crate) fn open_n8n_job_service(home: &Path) -> Result<IntegrationJobService,
                     home, &job,
                 );
             }
+            continue;
+        }
+        if job.operation == JobOperation::Purge {
             continue;
         }
         if managed_runtime::is_managed_job(&job) {

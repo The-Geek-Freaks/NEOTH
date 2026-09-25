@@ -78,6 +78,50 @@ A repeat while a managed runtime is active is rejected before Docker actions.
 Older receipts without retained-volume proof and ordinary unlabelled default
 volumes remain readable in status but cannot authorize this explicit selector.
 The existing ordinary stdin-key installation path is unchanged.
+
+## Permanently purge a retained bootstrap volume
+
+After a successful uninstall, inspect the exact retained-data target:
+
+```text
+neoth n8n purge --uninstall <uninstall-job-id>
+```
+
+Without `--confirm`, this shows the receipt-derived volume and the confirmation
+phrase; it does not delete the volume. To proceed, repeat the command with
+`--confirm` and the exact displayed phrase. Purge permanently deletes the n8n
+workflows, executions and other data stored in that volume.
+
+The table output includes shell quotes around the `--confirm` argument. Copy
+that argument as displayed; the quotes group the phrase and are not part of
+its value. JSON output instead returns the raw phrase in `confirmation`.
+
+| Response | Meaning |
+| --- | --- |
+| `state: "confirmation_required"` | Preview only; no deletion was requested. |
+| `state: "ready"`, `disposition: "volume_removed"` | The selected purge has a completed receipt. |
+| `disposition: "reconciliation_required"` | Completion is unproven; the command exits unsuccessfully. |
+
+Preflight and execution errors also exit unsuccessfully and can be reported
+before a job response is available.
+
+The target comes exclusively from a completed managed-uninstall receipt and
+its original install job. Only a bootstrap volume carrying the matching NEOTH
+ownership labels is eligible. An active managed runtime, unproven ownership,
+conflicting operation or incorrect confirmation prevents removal. There is no
+volume-name, container, endpoint or filesystem override.
+
+The separate Purge job records the dispatch before deleting the exact volume.
+If the result is uncertain, repeating the command may establish that the volume
+is absent; it cannot dispatch another deletion. A completed purge keeps the
+original install and uninstall history, receipts and credentials. Repeating
+that completed operation returns its recorded result. Retained reinstall is
+no longer possible once the data volume is gone.
+
+The integration-job lock coordinates NEOTH operations. Docker addresses a
+volume by its name, so an external Docker administrator replacing the same
+name between inspection and removal is outside that lock's protection.
+
 ## Validation boundary
 
 The implementation includes focused fake-runner and configuration transaction
