@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-25
 
+**W1093 hosted failure repair and exact product diagnosis (2026-09-25):**
+The e3 Core36080132883 and Group36080135291 both stopped before tests at
+one restart-validator closure in the v2 migration fixture. Its argument now
+uses the existing explicit IntegrationJob reference pattern; the assertion
+also incorporates the exact one-location hosted formatter output. No test
+expectation changed. The e3 product canary36080139360 built the public CLI
+and passed its18 helper tests, but real installation returned the original
+Failed job with n8n_invalid_response after BootstrapRemoved. Root verified
+its API ZIP digest and19 historical source/input hashes in W1091. Real
+installation, import/repeat and cleanup remain unaccepted; W1092 traces the
+runtime response boundary. W1085 stays uncommitted while independent W1088
+review findings are repaired. Claude032 remains pending. No roadmap box
+is closed from compilation, helper tests or these source corrections.
+
 **W1087 import compiler repair and actual CLI acceptance lane (2026-09-25):**
 The first621 Core/Group build exposed three source errors before the new
 fixtures could run: missing test JobFailure import, moved job_id while

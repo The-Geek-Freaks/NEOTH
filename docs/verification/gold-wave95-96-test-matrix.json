@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1087 importer3compilefixes + reviewed actualCLI13importrepeatcanary;hostedpending",
+  "status": "W1093 source-only migration-fixture lifetime repair; e3 product diagnosis admitted, native gates pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 191008,
-    "sha256": "490637C00A0C6861A3C9B7B2CD647B941DDBE0D5445BBDF3D828C930867881CC"
+    "bytes": 191229,
+    "sha256": "140FE9AED654EF418C2B7F084070F8D609987A1A0DE51219FF388E9F6C00CD43"
   },
-  "sourceInputs": 1078,
+  "sourceInputs": 1079,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -9840,13 +9840,13 @@
     {
       "test": "integrations::jobs::tests::restart_hold_preserves_active_cancel_intent_until_a_proven_reject",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "D41881FB62F6BBD05C24022321F88A965583C310B4F5D6CEF618F0679FB3BFEF",
+      "sourceSha256": "EBAB8E1BE541406E7D09007F5988EB3CCA0CE20A5308A0A7C78C3D32ECAAED8A",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::jobs::tests::later_restart_hold_rolls_back_recovery_for_two_active_capability_leases",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "D41881FB62F6BBD05C24022321F88A965583C310B4F5D6CEF618F0679FB3BFEF",
+      "sourceSha256": "EBAB8E1BE541406E7D09007F5988EB3CCA0CE20A5308A0A7C78C3D32ECAAED8A",
       "junitClass": "neoth"
     },
     {
@@ -10542,43 +10542,43 @@
     {
       "test": "integrations::jobs::tests::schema_v2_migrates_existing_history_and_round_trips_import_jobs",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "D41881FB62F6BBD05C24022321F88A965583C310B4F5D6CEF618F0679FB3BFEF",
+      "sourceSha256": "EBAB8E1BE541406E7D09007F5988EB3CCA0CE20A5308A0A7C78C3D32ECAAED8A",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::jobs::tests::schema_v2_malformed_history_rolls_back_without_relabeling_source",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "D41881FB62F6BBD05C24022321F88A965583C310B4F5D6CEF618F0679FB3BFEF",
+      "sourceSha256": "EBAB8E1BE541406E7D09007F5988EB3CCA0CE20A5308A0A7C78C3D32ECAAED8A",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::jobs::tests::schema_v1_migrates_active_work_to_fail_closed_history",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "D41881FB62F6BBD05C24022321F88A965583C310B4F5D6CEF618F0679FB3BFEF",
+      "sourceSha256": "EBAB8E1BE541406E7D09007F5988EB3CCA0CE20A5308A0A7C78C3D32ECAAED8A",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::jobs::tests::schema_v1_foreign_key_failure_rolls_back_without_losing_source_history",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "D41881FB62F6BBD05C24022321F88A965583C310B4F5D6CEF618F0679FB3BFEF",
+      "sourceSha256": "EBAB8E1BE541406E7D09007F5988EB3CCA0CE20A5308A0A7C78C3D32ECAAED8A",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::jobs::tests::schema_v1_malformed_terminal_history_rolls_back_without_relabeling_source",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "D41881FB62F6BBD05C24022321F88A965583C310B4F5D6CEF618F0679FB3BFEF",
+      "sourceSha256": "EBAB8E1BE541406E7D09007F5988EB3CCA0CE20A5308A0A7C78C3D32ECAAED8A",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::jobs::tests::schema_v3_rejects_same_name_wrong_index_contract",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "D41881FB62F6BBD05C24022321F88A965583C310B4F5D6CEF618F0679FB3BFEF",
+      "sourceSha256": "EBAB8E1BE541406E7D09007F5988EB3CCA0CE20A5308A0A7C78C3D32ECAAED8A",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::jobs::tests::schema_v3_rejects_missing_retry_foreign_key_with_same_columns",
       "sourcePath": "SRC/neothd/src/integrations/jobs.rs",
-      "sourceSha256": "D41881FB62F6BBD05C24022321F88A965583C310B4F5D6CEF618F0679FB3BFEF",
+      "sourceSha256": "EBAB8E1BE541406E7D09007F5988EB3CCA0CE20A5308A0A7C78C3D32ECAAED8A",
       "junitClass": "neoth"
     },
     {
@@ -39478,6 +39478,44 @@
       }
     ],
     "note": "W1086artifact E0433/E0505/E0616 minimalrepair;W1079Pythonreviewfinal3hashesmatched;18helpertests;noRoadclosure;W1085excluded",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1093LifetimeRepair": {
+    "base": "e3ffecc0946edf64f1dbd4a8eae07dc948480be2",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1091-product-bootstrap-diagnosis.json",
+        "bytes": 7636,
+        "sha256": "C73EE79DD9C9053672268EAB823969DAF579ADB305BC439BBF118903FB53B361",
+        "blob": "37e798286dfb14e222a667597882ee8dad2e7ec5"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 317141,
+        "sha256": "0DFA47AE658200CB089E398859DA8DD8EAD25F9FB4EE0D423168262B6AFC9D6F",
+        "blob": "a83a899117ac889fd27b446da5b9900c1f510fcb"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1333019,
+        "sha256": "2CC230F27B727D4480ED06BD63718A68C3355B87F37468D5945A2C6B13705F1A",
+        "blob": "3597eb62cc6af1fd5bdc790e87e95a1ae74773ab"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1942960,
+        "sha256": "327F67955C224671D5902D3DCB86F524B833722007BE6CD51EB03B88D3808E20",
+        "blob": "b1cb95a54cd01c8e68afa0e1f449d821a00e2b2c"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/jobs.rs",
+        "bytes": 146533,
+        "sha256": "EBAB8E1BE541406E7D09007F5988EB3CCA0CE20A5308A0A7C78C3D32ECAAED8A",
+        "blob": "257a91e995990c4c9ab6b19ceab6ff8520890939"
+      }
+    ],
+    "note": "Typed restart validator and exact hosted getter format; e3 product n8n_invalid_response remains open; Root verified ZIP and19 historical inputs; no local executable checks",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
