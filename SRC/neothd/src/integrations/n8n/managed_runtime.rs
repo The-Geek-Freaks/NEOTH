@@ -29,6 +29,14 @@ pub(crate) mod managed_backup;
 pub(crate) mod managed_repair;
 #[path = "managed_uninstall.rs"]
 pub(crate) mod managed_uninstall;
+#[path = "managed_restore_candidate.rs"]
+pub(crate) mod managed_restore_candidate;
+#[path = "managed_restore.rs"]
+pub(crate) mod managed_restore;
+#[path = "managed_restore_io.rs"]
+mod managed_restore_io;
+#[path = "managed_restore_content.rs"]
+mod managed_restore_content;
 
 pub(crate) const MANAGED_CONTAINER_NAME: &str = "neoth-n8n";
 pub(crate) const MANAGED_LABEL_KEY: &str = "io.neoth.managed";
@@ -292,6 +300,41 @@ pub(crate) trait ManagedDockerRunner: Send {
         _max_bytes: u64,
     ) -> Result<ManagedArchiveReceipt, &'static str> {
         Err("n8n_managed_archive_unavailable")
+    }
+    /// Copy a verified private archive into one exact, stopped restore
+    /// candidate. The archive remains opaque to the runner interface.
+    async fn extract_private_archive_to_exact_container(
+        &mut self,
+        _archive: &Path,
+        _expected_sha256: &str,
+        _expected_bytes: u64,
+        _id: &str,
+    ) -> Result<ManagedArchiveReceipt, &'static str> {
+        Err("n8n_restore_archive_unavailable")
+    }
+    async fn create_restore_volume_exact(
+        &mut self,
+        _job: &crate::integrations::state::JobId,
+    ) -> Result<ManagedCommandReceipt, &'static str> {
+        Err("n8n_restore_candidate_unavailable")
+    }
+    async fn inspect_restore_candidate_exact(
+        &mut self,
+        _id: &str,
+    ) -> Result<managed_restore_candidate::InspectRestoreCandidateOutcome, &'static str> {
+        Err("n8n_restore_candidate_unavailable")
+    }
+    async fn create_restore_candidate_exact(
+        &mut self,
+        _spec: managed_restore_candidate::RestoreCandidateSpec<'_>,
+    ) -> Result<ManagedCreateReceipt, &'static str> {
+        Err("n8n_restore_candidate_unavailable")
+    }
+    async fn validate_restore_candidate_content_exact(
+        &mut self,
+        id: &str,
+    ) -> Result<managed_restore_candidate::RestoreCandidateContentReceipt, &'static str> {
+        managed_restore_content::validate_content_exact(id).await
     }
     async fn remove(&mut self, id: &str) -> Result<ManagedCommandReceipt, &'static str>;
 }
@@ -762,6 +805,7 @@ pub(in crate::integrations) async fn install_managed_at_with<
     cancel: &mut tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<IntegrationJob> {
     super::ensure_initialized_home_for_new_managed_install(home)?;
+    managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
     let service = super::open_n8n_job_service(home)?;
     install_managed_in_service_with(
         &service, home, request, api_key, runner, readiness, probe, cancel,
@@ -849,6 +893,7 @@ pub(in crate::integrations) async fn install_retained_at_with<
     cancel: &mut tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<IntegrationJob> {
     super::ensure_initialized_home_for_new_managed_install(home)?;
+    managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
     let service = super::open_n8n_job_service(home)?;
     if read_binding(home).map_err(anyhow::Error::msg)?.is_some() {
         anyhow::bail!("n8n_retained_reinstall_already_active");
@@ -1136,6 +1181,7 @@ pub(crate) async fn install_prepared_managed_in_service(
     api_key: SecretString,
     cancel: &mut tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<IntegrationJob> {
+    managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
     install_managed_in_service_with(
         service,
         home,
@@ -2074,6 +2120,94 @@ impl ManagedDockerRunner for DockerManagedRunner {
         })
         .await
         .map_err(|_| "n8n_docker_wait_failed")?
+    }
+    async fn extract_private_archive_to_exact_container(
+        &mut self,
+        archive: &Path,
+        expected_sha256: &str,
+        expected_bytes: u64,
+        id: &str,
+    ) -> Result<ManagedArchiveReceipt, &'static str> {
+        managed_restore_io::extract_private_archive_to_exact_container(
+            archive,
+            expected_sha256,
+            expected_bytes,
+            id,
+        )
+        .await
+    }
+    async fn create_restore_volume_exact(
+        &mut self,
+        job: &crate::integrations::state::JobId,
+    ) -> Result<ManagedCommandReceipt, &'static str> {
+        let (_, _, receipt) = docker(&managed_restore_candidate::restore_volume_command(job)).await?;
+        if !receipt.succeeded {
+            return Err("n8n_restore_volume_create_command_failed");
+        }
+        Ok(receipt)
+    }
+    async fn inspect_restore_candidate_exact(
+        &mut self,
+        id: &str,
+    ) -> Result<managed_restore_candidate::InspectRestoreCandidateOutcome, &'static str> {
+        if !valid_container_id(id) {
+            return Err("n8n_restore_candidate_invalid_id");
+        }
+        let (listed, ids, _) = docker(&[
+            "docker".into(),
+            "container".into(),
+            "ls".into(),
+            "-a".into(),
+            "--no-trunc".into(),
+            "--filter".into(),
+            format!("id={id}"),
+            "--format".into(),
+            "{{.ID}}".into(),
+        ])
+        .await?;
+        if !listed {
+            return Ok(managed_restore_candidate::InspectRestoreCandidateOutcome::Unknown);
+        }
+        let rows: Vec<_> = ids.lines().filter(|value| !value.is_empty()).collect();
+        if rows.is_empty() {
+            return Ok(managed_restore_candidate::InspectRestoreCandidateOutcome::Absent);
+        }
+        if rows.len() != 1 || rows[0] != id {
+            return Ok(managed_restore_candidate::InspectRestoreCandidateOutcome::Unknown);
+        }
+        let (inspected, body, _) = docker(&[
+            "docker".into(),
+            "container".into(),
+            "inspect".into(),
+            "--format".into(),
+            managed_restore_candidate::CANDIDATE_INSPECT_FORMAT.into(),
+            id.into(),
+        ])
+        .await?;
+        if !inspected {
+            return Ok(managed_restore_candidate::InspectRestoreCandidateOutcome::Unknown);
+        }
+        match managed_restore_candidate::parse_observed_restore_candidate_json(body.as_bytes()) {
+            Ok(found) if found.id == id => {
+                Ok(managed_restore_candidate::InspectRestoreCandidateOutcome::Found(found))
+            }
+            _ => Ok(managed_restore_candidate::InspectRestoreCandidateOutcome::Unknown),
+        }
+    }
+    async fn create_restore_candidate_exact(
+        &mut self,
+        spec: managed_restore_candidate::RestoreCandidateSpec<'_>,
+    ) -> Result<ManagedCreateReceipt, &'static str> {
+        let command = managed_restore_candidate::restore_candidate_command(spec)?;
+        let (_, stdout, receipt) = docker(&command).await?;
+        if !receipt.succeeded {
+            return Err("n8n_restore_candidate_create_command_failed");
+        }
+        let id = stdout.trim();
+        Ok(ManagedCreateReceipt {
+            command: receipt,
+            container_id: valid_container_id(id).then(|| id.to_owned()),
+        })
     }
     async fn remove(&mut self, id: &str) -> Result<ManagedCommandReceipt, &'static str> {
         let (_, _, receipt) =

@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "base": "ecf99aa764f889cdea1bd925b4f855568770e5bf",
+  "contract": "Historical verified backup; separate inert isolated candidate and retained volume; candidate_only with no live cutover",
+  "portableTests": 2116,
+  "groupedTests": 1906,
+  "windowsTests": 671,
+  "newTests": [
+    "integrations::n8n::managed_runtime::managed_restore::tests::ready_backup_restores_nonempty_content_to_exact_candidate_then_retires_it",
+    "integrations::n8n::managed_runtime::managed_restore::tests::zero_credentials_never_claims_decryption_even_when_restore_is_ready",
+    "integrations::n8n::managed_runtime::managed_restore::tests::extract_digest_receipt_mismatch_fails_and_removes_only_owned_candidate_and_volume",
+    "integrations::n8n::managed_runtime::managed_restore::tests::wrong_candidate_identity_stops_before_extract_or_removal",
+    "integrations::n8n::managed_runtime::managed_restore::tests::lost_extract_receipt_is_not_replayed_and_cleanup_retires_custody",
+    "integrations::n8n::managed_runtime::managed_restore::tests::lost_content_receipt_compensates_without_replaying_extract",
+    "integrations::n8n::managed_runtime::managed_restore::tests::remove_receipt_loss_is_observed_once_without_second_dispatch",
+    "integrations::n8n::managed_runtime::managed_restore::tests::ready_custody_reentry_does_not_enqueue_or_repeat_external_effects",
+    "integrations::n8n::managed_runtime::managed_restore::tests::persisted_extract_dispatch_recovers_by_cleanup_without_a_second_extract",
+    "integrations::n8n::managed_runtime::managed_restore::tests::candidate_dispatch_without_exact_id_holds_recovery_without_name_discovery",
+    "integrations::n8n::managed_runtime::managed_restore::tests::custody_bound_to_one_backup_rejects_a_different_requested_backup",
+    "integrations::n8n::managed_runtime::managed_restore::tests::corrupted_custody_and_completion_receipt_are_rejected_before_new_effects",
+    "integrations::n8n::managed_runtime::managed_restore::tests::custody_manifest_tampering_is_rejected_before_candidate_creation",
+    "integrations::n8n::managed_runtime::managed_restore::tests::pending_restore_custody_fences_backup_before_it_can_stop_or_archive_live_state",
+    "integrations::n8n::managed_runtime::managed_restore_candidate::tests::restore_names_are_exact_and_not_generic",
+    "integrations::n8n::managed_runtime::managed_restore_candidate::tests::restore_candidate_command_is_inert_and_uses_fixed_immutable_identity",
+    "integrations::n8n::managed_runtime::managed_restore_candidate::tests::parse_restore_candidate_accepts_real_docker_volume_mount_shape",
+    "integrations::n8n::managed_runtime::managed_restore_candidate::tests::parse_restore_candidate_rejects_each_non_inert_or_ambiguous_shape",
+    "integrations::n8n::managed_runtime::managed_restore_candidate::tests::parse_restore_candidate_rejects_duplicate_mounts_and_tmpfs",
+    "integrations::n8n::managed_runtime::managed_restore_io::tests::restore_contract_rejects_invalid_identity_digest_and_bounds",
+    "integrations::n8n::managed_runtime::managed_restore_io::tests::restore_validation_hashes_entire_regular_archive_and_rewinds_same_handle",
+    "integrations::n8n::managed_runtime::managed_restore_io::tests::restore_validation_rejects_trailing_data_before_docker",
+    "integrations::n8n::managed_runtime::managed_restore_io::tests::restore_validation_rejects_symlinked_archive_member_before_docker",
+    "integrations::n8n::managed_runtime::managed_restore_content::tests::content_proof_distinguishes_empty_credentials_from_verified_decryption",
+    "integrations::n8n::managed_runtime::managed_restore_content::tests::content_proof_rejects_modified_counts_and_unexpected_payloads",
+    "integrations::jobs::tests::schema_v5_migrates_backup_history_preserves_foreign_key_indexes_and_round_trips_restore_jobs",
+    "integrations::jobs::tests::read_only_snapshot_reads_v5_backup_history_without_schema_writes_then_owned_open_migrates_v6",
+    "cli::n8n::tests::n8n_restore_cli_accepts_only_a_canonical_backup_uuid_without_overrides",
+    "integrations::n8n::managed_runtime::managed_backup::tests::verified_historical_backup_archive_accepts_prior_pin_and_rejects_mismatched_pin"
+  ],
+  "recovery": "Unknown candidate ID holds; uncertain extract/content/remove effects are never replayed",
+  "staticReview": [
+    {
+      "scope": "Backend",
+      "sha256": "E97718621ACDDEAAC9C29F2DA4F469AE156A93D8578EDD2C19CCFB8735482484"
+    },
+    {
+      "scope": "Rust integration",
+      "sha256": "84E8CD7B7E7E24B731B8476663388B7E4BF25C0146EAFA3FB454A750F3BF1468"
+    },
+    {
+      "scope": "Content exporter contract disposition",
+      "sha256": "D7CDD37A6C357496156C8F1196D094778BC6A1B0259B48C911123D05FF052052"
+    },
+    {
+      "scope": "Canary route and cleanup",
+      "sha256": "22953E5F56514C65044E9BD11DC999CC19B9DA2CBA8E5DF0663A5C3F809A6A17"
+    }
+  ],
+  "hostedGates": "pending",
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

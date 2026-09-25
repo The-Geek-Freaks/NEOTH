@@ -8,6 +8,26 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1515 managed n8n isolated Restore source publication (2026-09-25):**
+`neoth n8n restore --backup <ReadyBackupJobId>` resolves a historical verified
+archive, creates one separate labelled volume and one inert networkless
+candidate, validates SQLite plus every workflow and credential through the
+pinned n8n exporters, removes the candidate, and retains the validated volume.
+The content-free receipt explicitly records candidate_only; no live cutover.
+Schema-v6 preserves prior history. Durable dispatch boundaries never replay an
+uncertain extract, content validation or removal; an unknown created container
+ID holds reconciliation. Backup/install/repair/removal paths fence pending
+Restore custody. Static backend and integration reviews passed; 29 new native
+identities extend Portable2087 to2116, Group1877 to1906 and Windows642 to671.
+The product canary now exercises zero and nonzero credential restores, proves
+live state preservation, and attempts every exactly owned cleanup target.
+Formatting, compiler, native and real pinned-image product gates are pending
+GitHub execution. Core36168674462 at ecf99aa7 separately rechecks the admitted
+Backup source after its two lint fixes. No local executable validation ran.
+ROAD remains1324 total/1077done/245open/2partial; no release or roadmap closure.
+Claude TASK080 remains queued without ACK/RESULT at the latest inbox check.
+Evidence: docs/verification/gold-wave1515-n8n-restore-source.json.
+
 **W1503/W1508/W1510 backup native and product acceptance (2026-09-25):**
 Group36164834715 ata276a0c4 passed1877/1877 selected/discovered/executed fixtures;
 299 source and10 input Git bindings plus all three original ZIP digests verify.

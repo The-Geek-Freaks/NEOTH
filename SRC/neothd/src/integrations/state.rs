@@ -208,6 +208,7 @@ pub enum JobOperation {
     Repair,
     Update,
     Backup,
+    Restore,
     Uninstall,
     Purge,
 }
@@ -220,6 +221,7 @@ impl JobOperation {
             Self::Repair => "repair",
             Self::Update => "update",
             Self::Backup => "backup",
+            Self::Restore => "restore",
             Self::Uninstall => "uninstall",
             Self::Purge => "purge",
         }
@@ -236,6 +238,7 @@ impl FromStr for JobOperation {
             "repair" => Ok(Self::Repair),
             "update" => Ok(Self::Update),
             "backup" => Ok(Self::Backup),
+            "restore" => Ok(Self::Restore),
             "uninstall" => Ok(Self::Uninstall),
             "purge" => Ok(Self::Purge),
             _ => Err(StateValidationError::UnknownOperation),
@@ -1320,6 +1323,7 @@ mod tests {
             (JobOperation::Repair, "repair"),
             (JobOperation::Update, "update"),
             (JobOperation::Backup, "backup"),
+            (JobOperation::Restore, "restore"),
             (JobOperation::Uninstall, "uninstall"),
             (JobOperation::Purge, "purge"),
         ] {

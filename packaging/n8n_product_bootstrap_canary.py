@@ -15,6 +15,9 @@ JOB = re.compile(r"[0-9a-f-]{36}")
 WORKFLOW_COUNT = 13
 WORKFLOW_RESPONSE_MAX = 256 * 1024
 PRODUCT_CONFIG_MAX = 256 * 1024
+RESTORE_CREDENTIAL_NAME = "neoth-restore-decrypt-fixture"
+RESTORE_CREDENTIAL_HEADER = "X-NEOTH-Restore-Fixture"
+RESTORE_CREDENTIAL_VALUE = "neoth-restore-dummy"
 INSTALL_FAILURE_CODES = (
     "n8n_bootstrap_runtime_finalize_unproven", "n8n_loopback_health_timeout",
     "n8n_adoption_cancelled", "n8n_postcommit_probe_failed", "n8n_probe_timeout",
@@ -518,6 +521,120 @@ def workflow_api_json(port: int, key: bytes, path: str) -> dict:
         raise Failure("workflow_observer_response_too_large")
     return read_json_bytes(raw)
 
+def workflow_api_post_json(port: int, key: bytes, path: str, value: dict) -> dict:
+    """POST a bounded fixture body without returning it in any receipt."""
+    body = json.dumps(value, separators=(",", ":")).encode("utf-8")
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}", data=body, method="POST",
+        headers={"X-N8N-API-KEY": key.decode("utf-8", "strict"), "Content-Type": "application/json"},
+    )
+    try:
+        with workflow_opener().open(request, timeout=20) as response:
+            if 300 <= response.status < 400:
+                raise Failure("workflow_observer_redirect")
+            raw = response.read(WORKFLOW_RESPONSE_MAX + 1)
+    except urllib.error.HTTPError as error:
+        if 300 <= error.code < 400:
+            raise Failure("workflow_observer_redirect") from error
+        raise Failure("credential_fixture_request_failed") from error
+    except Exception as error:
+        raise Failure("credential_fixture_request_failed") from error
+    if len(raw) > WORKFLOW_RESPONSE_MAX:
+        raise Failure("credential_fixture_response_too_large")
+    return read_json_bytes(raw)
+
+def observe_credential_count(port: int, key: bytes) -> int:
+    value = workflow_api_json(port, key, "/api/v1/credentials?limit=100")
+    rows = value.get("data")
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise Failure("credential_fixture_list_invalid")
+    return len(rows)
+
+def create_restore_fixture_credential(port: int, key: bytes) -> None:
+    value = workflow_api_post_json(port, key, "/api/v1/credentials", {
+        "name": RESTORE_CREDENTIAL_NAME,
+        "type": "httpHeaderAuth",
+        "data": {"name": RESTORE_CREDENTIAL_HEADER, "value": RESTORE_CREDENTIAL_VALUE},
+    })
+    created = value.get("data", value)
+    identifier = created.get("id") if isinstance(created, dict) else None
+    if (not isinstance(identifier, str) or not identifier or len(identifier) > 256
+            or any(ord(character) < 32 or ord(character) == 127 for character in identifier)):
+        raise Failure("credential_fixture_create_invalid")
+
+def restore_volume_name(job: str) -> str:
+    if not JOB.fullmatch(job):
+        raise Failure("restore_job_invalid")
+    return "neoth_n8n_" + job.replace("-", "")
+
+def validate_restore_volume(row: dict, restore_job: str, live_volume: str) -> str:
+    volume = restore_volume_name(restore_job)
+    expected_labels = {
+        "io.neoth.managed": "n8n",
+        "io.neoth.n8n-restore": restore_job,
+        "io.neoth.n8n-restore-schema": "1",
+    }
+    if volume == live_volume or row.get("Name") != volume or row.get("Labels") != expected_labels:
+        raise Failure("restore_volume_identity_invalid")
+    return volume
+
+def validate_restore_product(value: dict, backup_job: str, backup_record: dict,
+                             backup_view: dict, live_volume: str,
+                             credential_count: int) -> tuple[str, dict]:
+    job = required(value, "job_id", str)
+    restore = required(value, "receipt", dict)
+    expected_value_keys = {"job_id", "state", "operation", "backup_job_id", "receipt", "live_n8n", "failure_code"}
+    expected_receipt_keys = {
+        "schema_version", "restore_job_id", "restore_manifest_sha256", "backup_job_id",
+        "backup_manifest_sha256", "backup_generation", "source_pinned_image",
+        "source_archive_sha256", "source_archive_bytes", "restore_volume",
+        "candidate_container_id", "candidate_only", "workflow_count", "credential_count",
+        "credential_decryption_proven", "evidence_sha256",
+    }
+    if (set(value) != expected_value_keys or not JOB.fullmatch(job) or job == backup_job
+            or value.get("state") != "ready" or value.get("operation") != "restore"
+            or value.get("backup_job_id") != backup_job or value.get("live_n8n") != "unchanged"
+            or value.get("failure_code") is not None or set(restore) != expected_receipt_keys
+            or restore.get("schema_version") != 1 or restore.get("restore_job_id") != job
+            or not ID.fullmatch(restore.get("restore_manifest_sha256", ""))
+            or restore.get("backup_job_id") != backup_job
+            or restore.get("backup_manifest_sha256") != backup_record.get("manifest_sha256")
+            or restore.get("backup_generation") != backup_view.get("generation")
+            or restore.get("source_pinned_image") != IMAGE
+            or restore.get("source_archive_sha256") != backup_view.get("archive_sha256")
+            or restore.get("source_archive_bytes") != backup_view.get("archive_bytes")
+            or restore.get("restore_volume") != restore_volume_name(job)
+            or restore.get("restore_volume") == live_volume
+            or not ID.fullmatch(restore.get("candidate_container_id", ""))
+            or restore.get("candidate_only") is not True or restore.get("workflow_count") != WORKFLOW_COUNT
+            or restore.get("credential_count") != credential_count
+            or restore.get("credential_decryption_proven") is not (credential_count > 0)
+            or not ID.fullmatch(restore.get("evidence_sha256", ""))):
+        raise Failure("restore_not_ready")
+    return job, restore
+
+def cleanup_restore_volume(restore_job: str, candidate_id: str, volume: str,
+                           live_volume: str) -> bool:
+    """Remove only a candidate volume whose receipt and Docker labels agree."""
+    try:
+        if volume != restore_volume_name(restore_job) or not ID.fullmatch(candidate_id):
+            return False
+        if not exact_absent("container", candidate_id):
+            return False
+        validate_restore_volume(docker_inspect(volume), restore_job, live_volume)
+        run(["docker", "volume", "rm", volume])
+        return exact_absent("volume", volume)
+    except Exception:
+        return False
+
+def cleanup_restore_targets(targets: list[tuple[str, str, str]], live_volume: str) -> bool:
+    """Attempt every validated target; one failure must not skip later custody."""
+    results = tuple(
+        cleanup_restore_volume(restore_job, candidate_id, volume, live_volume)
+        for restore_job, candidate_id, volume in reversed(targets)
+    )
+    return all(results)
+
 def workflow_data(value: dict) -> dict:
     data = value.get("data", value)
     if not isinstance(data, dict):
@@ -793,7 +910,7 @@ def main() -> int:
             return 2
     except Exception:
         return 2
-    receipt = {"schema": 1, "source_sha": os.environ.get("GITHUB_SHA"), "port": args.port, "outcome": "failed"}; runtime_id = volume = job = None; uninstall_runtime_absent = False; volume_purged = False
+    receipt = {"schema": 1, "source_sha": os.environ.get("GITHUB_SHA"), "port": args.port, "outcome": "failed"}; runtime_id = volume = job = None; uninstall_runtime_absent = False; volume_purged = False; restore_cleanup_targets: list[tuple[str, str, str]] = []
     try:
         receipt.update({"helper_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), "bounded_helper_sha256": hashlib.sha256(Path(bounded.__file__).read_bytes()).hexdigest(), "workflow_sha256": hashlib.sha256((Path.cwd() / ".github/workflows/n8n-product-bootstrap.yml").read_bytes()).hexdigest(), "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(), "cargo_lock_sha256": hashlib.sha256((Path.cwd() / "SRC/Cargo.lock").read_bytes()).hexdigest()})
         input_names = (
@@ -804,6 +921,13 @@ def main() -> int:
             "SRC/neothd/src/integrations/n8n/managed_backup.rs",
             "SRC/neothd/src/integrations/n8n/managed_backup_tests.rs",
             "SRC/neothd/src/integrations/n8n/managed_repair.rs", "SRC/neothd/src/integrations/n8n/managed_repair_tests.rs", "SRC/neothd/src/integrations/n8n/managed_uninstall.rs", "SRC/neothd/src/integrations/n8n/managed_purge.rs",
+            "SRC/neothd/src/integrations/n8n/managed_restore.rs",
+            "SRC/neothd/src/integrations/n8n/managed_restore_io.rs",
+            "SRC/neothd/src/integrations/n8n/managed_restore_candidate.rs",
+            "SRC/neothd/src/integrations/n8n/managed_restore_content.rs",
+            "SRC/neothd/src/integrations/n8n/managed_restore_verify.js",
+            "SRC/neothd/src/integrations/n8n/managed_restore_tests.rs",
+            "packaging/tests/n8n_restore_content.test.cjs",
             "SRC/neothd/src/integrations/n8n/bootstrap_transport.rs",
             "SRC/neothd/src/integrations/n8n/workflow_import.rs",
             "SRC/neothd/src/integrations/jobs.rs", "SRC/neothd/src/integrations/state.rs",
@@ -827,6 +951,7 @@ def main() -> int:
         status = read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", job]); validate_status(status, job, args.port)
         boot = read_json(home / "n8n-managed-bootstrap.v2.json"); runtime = read_json(home / "n8n-managed-runtime.v2.json")
         volume, bootstrap_id, runtime_id = validate_custody(boot, runtime, job, args.port); validate_runtime(docker_inspect(runtime_id), job, volume, runtime_id, args.port)
+        product_config = read_product_config(home / "freedom.yaml")
         validate_single_job(home, job, boot["manifest_sha256"])
         source_install = observe_exact_job(home, job, "install")
         source_install_full = observe_full_job_row(home, job, "install")
@@ -876,6 +1001,87 @@ def main() -> int:
         if second_workflows != first_workflows or second_custody != first_custody or second_import_job != first_import_job:
             raise Failure("workflow_import_repeat_not_read_only")
         receipt["workflow_import"] = {"workflow_count": WORKFLOW_COUNT, "first_cli_sha256": hashlib.sha256(first_import_raw).hexdigest(), "workflow_set_sha256": first_workflows["workflow_set_sha256"], "custody_sha256": first_custody["sha256"], "custody_bytes": first_custody["bytes"], "job_row_sha256": first_import_job["sha256"], "job_revision": first_import_job["revision"], "repeat_read_only": True}
+        # A fresh bootstrap contains no credentials.  Preserve that legitimate
+        # zero-credential restore case before adding the disposable decrypt
+        # fixture used by the later non-empty archive.
+        receipt["stage"] = "managed_n8n_zero_credential_stopped_backup"
+        if observe_credential_count(args.port, canonical_key) != 0:
+            raise Failure("zero_credential_source_not_empty")
+        run(["docker", "container", "stop", runtime_id])
+        assert_runtime_running(runtime_id, False)
+        zero_backup_raw = run([str(binary), "--output", "json", "n8n", "backup"])
+        if canonical_key in zero_backup_raw:
+            raise Failure("backup_output_key_leak")
+        zero_backup_job, zero_backup_view = validate_backup_product(
+            read_json_bytes(zero_backup_raw), job, original_running=False,
+        )
+        zero_backup_record = observe_exact_job(home, zero_backup_job, "backup")
+        if (zero_backup_view["source_container_id"] != runtime_id
+                or zero_backup_view["volume_name"] != volume):
+            raise Failure("zero_backup_source_custody_mismatch")
+        zero_backup_completion = read_backup_completion_receipt(
+            home, zero_backup_job, zero_backup_record["manifest_sha256"], zero_backup_view,
+            job, source_install["manifest_sha256"], runtime_id, volume, original_running=False,
+        )
+        zero_header_count = validate_archive_headers(home / "n8n-backups" / f"{zero_backup_job}.tar")
+        if (read_json(home / "n8n-managed-runtime.v2.json") != runtime
+                or read_json(home / "n8n-managed-bootstrap.v2.json") != boot
+                or read_product_config(home / "freedom.yaml") != product_config
+                or observe_exact_job(home, job, "install") != source_install
+                or observe_full_job_row(home, job, "install") != source_install_full
+                or canonical_n8n_api_key() != canonical_key):
+            raise Failure("zero_backup_live_mutation")
+        run(["docker", "container", "start", runtime_id])
+        assert_runtime_running(runtime_id, True)
+        if (authenticated_probe(job, args.port) != receipt["http_probe"]
+                or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
+                or observe_credential_count(args.port, canonical_key) != 0):
+            raise Failure("zero_backup_api_or_workflow_persistence_unproven")
+        receipt["backup_zero_credential"] = {
+            "job_id": zero_backup_job, "job_row_sha256": zero_backup_record["row_sha256"],
+            "job_manifest_sha256": zero_backup_record["manifest_sha256"],
+            "receipt_sha256": zero_backup_completion["receipt_sha256"],
+            "archive_sha256": zero_backup_completion["archive_sha256"],
+            "archive_bytes": zero_backup_completion["archive_bytes"],
+            "safe_header_count": zero_header_count, "original_running_state": False,
+            "restored_running_state": False,
+        }
+        receipt["stage"] = "managed_n8n_zero_credential_restore"
+        zero_restore_raw = run([str(binary), "--output", "json", "n8n", "restore", "--backup", zero_backup_job])
+        if canonical_key in zero_restore_raw:
+            raise Failure("restore_output_key_leak")
+        zero_restore_job, zero_restore = validate_restore_product(
+            read_json_bytes(zero_restore_raw), zero_backup_job, zero_backup_record,
+            zero_backup_view, volume, 0,
+        )
+        zero_restore_record = observe_exact_job(home, zero_restore_job, "restore")
+        validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", zero_restore_job]), zero_restore_job, args.port)
+        if not exact_absent("container", zero_restore["candidate_container_id"]):
+            raise Failure("zero_restore_candidate_absence_unproven")
+        zero_restore_volume = validate_restore_volume(
+            docker_inspect(zero_restore["restore_volume"]), zero_restore_job, volume,
+        )
+        restore_cleanup_targets.append((zero_restore_job, zero_restore["candidate_container_id"], zero_restore_volume))
+        if (read_json(home / "n8n-managed-runtime.v2.json") != runtime
+                or read_json(home / "n8n-managed-bootstrap.v2.json") != boot
+                or read_product_config(home / "freedom.yaml") != product_config
+                or observe_exact_job(home, job, "install") != source_install
+                or observe_full_job_row(home, job, "install") != source_install_full
+                or canonical_n8n_api_key() != canonical_key
+                or authenticated_probe(job, args.port) != receipt["http_probe"]
+                or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows):
+            raise Failure("zero_restore_live_mutation")
+        receipt["restore_zero_credential"] = {
+            "job_id": zero_restore_job, "job_row_sha256": zero_restore_record["row_sha256"],
+            "backup_job_id": zero_backup_job, "candidate_only": True,
+            "candidate_absent": True, "credential_count": 0,
+            "credential_decryption_proven": False, "workflow_count": WORKFLOW_COUNT,
+            "restore_volume_sha256": hashlib.sha256(zero_restore_volume.encode()).hexdigest(),
+        }
+        receipt["stage"] = "managed_n8n_restore_fixture_credential"
+        create_restore_fixture_credential(args.port, canonical_key)
+        if observe_credential_count(args.port, canonical_key) != 1:
+            raise Failure("credential_fixture_count_invalid")
         receipt["stage"] = "managed_n8n_full_backup"
         backup_raw = run([str(binary), "--output", "json", "n8n", "backup"])
         if canonical_key in backup_raw:
@@ -916,6 +1122,38 @@ def main() -> int:
             "volume": volume, "original_running_state": True,
             "restored_running_state": True, "api_preserved": True,
             "workflows_persisted": True,
+        }
+        receipt["stage"] = "managed_n8n_credential_restore"
+        restore_raw = run([str(binary), "--output", "json", "n8n", "restore", "--backup", backup_job])
+        if canonical_key in restore_raw:
+            raise Failure("restore_output_key_leak")
+        restore_job, restore = validate_restore_product(
+            read_json_bytes(restore_raw), backup_job, backup_record, backup_view, volume, 1,
+        )
+        restore_record = observe_exact_job(home, restore_job, "restore")
+        validate_status(read_json_from_command([str(binary), "--output", "json", "n8n", "status", "--job", restore_job]), restore_job, args.port)
+        if not exact_absent("container", restore["candidate_container_id"]):
+            raise Failure("restore_candidate_absence_unproven")
+        restore_volume = validate_restore_volume(
+            docker_inspect(restore["restore_volume"]), restore_job, volume,
+        )
+        restore_cleanup_targets.append((restore_job, restore["candidate_container_id"], restore_volume))
+        if (read_json(home / "n8n-managed-runtime.v2.json") != runtime
+                or read_json(home / "n8n-managed-bootstrap.v2.json") != boot
+                or read_product_config(home / "freedom.yaml") != product_config
+                or observe_exact_job(home, job, "install") != source_install
+                or observe_full_job_row(home, job, "install") != source_install_full
+                or canonical_n8n_api_key() != canonical_key
+                or authenticated_probe(job, args.port) != receipt["http_probe"]
+                or observe_imported_workflows(args.port, canonical_key, templates) != first_workflows
+                or observe_credential_count(args.port, canonical_key) != 1):
+            raise Failure("restore_live_mutation")
+        receipt["restore_credential"] = {
+            "job_id": restore_job, "job_row_sha256": restore_record["row_sha256"],
+            "backup_job_id": backup_job, "candidate_only": True,
+            "candidate_absent": True, "credential_count": 1,
+            "credential_decryption_proven": True, "workflow_count": WORKFLOW_COUNT,
+            "restore_volume_sha256": hashlib.sha256(restore_volume.encode()).hexdigest(),
         }
         receipt["stage"] = "managed_n8n_stopped_source_backup"
         run(["docker", "container", "stop", runtime_id])
@@ -1192,8 +1430,11 @@ def main() -> int:
     finally:
         # A failed product command can leave partial custody. Preserve it and
         # report it unproven if the complete exact identities were not read.
+        restore_cleanup = cleanup_restore_targets(restore_cleanup_targets, volume)
+        receipt["restore_cleanup_proven"] = restore_cleanup
+        receipt["restore_cleanup_count"] = len(restore_cleanup_targets)
         cleanup = False
-        if runtime_id and volume and job:
+        if restore_cleanup and runtime_id and volume and job:
             cleanup = cleanup_owned_runtime_and_volume(runtime_id, volume, job, args.port, uninstall_runtime_absent, volume_purged)
         receipt["docker_cleanup_proven"] = cleanup
         if not cleanup: receipt["outcome"] = "failed"

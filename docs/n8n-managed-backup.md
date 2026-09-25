@@ -34,6 +34,7 @@ and never receive a successful backup receipt.
 The shared integration database upgrades from schema v4 to v5 to record the
 separate Backup operation while retaining existing job history.
 
-This command creates and verifies an archive. Restore into a new volume,
-boot verification of restored credentials and workflows, version updates,
-and rollback remain separate work; archive creation does not prove them.
+This command creates and verifies an archive. Use
+[`neoth n8n restore --backup <backup-job-id>`](n8n-managed-restore.md) to validate
+it in a separate candidate volume. Archive creation alone does not prove that
+restore validation, a version update or a live rollback has succeeded.

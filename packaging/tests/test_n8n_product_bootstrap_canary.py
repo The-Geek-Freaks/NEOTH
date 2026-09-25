@@ -76,6 +76,67 @@ INSERT INTO integration_jobs VALUES ('00000000-0000-7000-8000-000000000002', 'ba
                     canary.observe_all_job_rows(Path("fixture"))
 
 
+class ProductRestoreReceiptTests(unittest.TestCase):
+    backup_job = "12345678-1234-7234-8234-123456789abc"
+    restore_job = "abcdef12-1234-7234-8234-123456789abc"
+    live_volume = "neoth_n8n_" + "b" * 32
+
+    def product(self) -> dict:
+        receipt = {
+            "schema_version": 1, "restore_job_id": self.restore_job,
+            "restore_manifest_sha256": "a" * 64, "backup_job_id": self.backup_job,
+            "backup_manifest_sha256": "b" * 64, "backup_generation": 3,
+            "source_pinned_image": canary.IMAGE, "source_archive_sha256": "c" * 64,
+            "source_archive_bytes": 123, "restore_volume": canary.restore_volume_name(self.restore_job),
+            "candidate_container_id": "d" * 64, "candidate_only": True,
+            "workflow_count": 13, "credential_count": 1,
+            "credential_decryption_proven": True, "evidence_sha256": "e" * 64,
+        }
+        return {"job_id": self.restore_job, "state": "ready", "operation": "restore",
+                "backup_job_id": self.backup_job, "receipt": receipt,
+                "live_n8n": "unchanged", "failure_code": None}
+
+    def test_restore_receipt_requires_full_candidate_only_backup_binding(self) -> None:
+        value = self.product()
+        backup_record = {"manifest_sha256": "b" * 64}
+        backup_view = {"generation": 3, "archive_sha256": "c" * 64, "archive_bytes": 123}
+        self.assertEqual(
+            canary.validate_restore_product(value, self.backup_job, backup_record, backup_view, self.live_volume, 1)[0],
+            self.restore_job,
+        )
+        for key, changed in (("candidate_only", False), ("credential_count", 0),
+                             ("source_archive_sha256", "f" * 64),
+                             ("restore_volume", self.live_volume)):
+            with self.subTest(key=key):
+                invalid = self.product(); invalid["receipt"][key] = changed
+                with self.assertRaisesRegex(canary.Failure, "restore_not_ready"):
+                    canary.validate_restore_product(invalid, self.backup_job, backup_record, backup_view, self.live_volume, 1)
+
+    def test_restore_cleanup_refuses_candidate_or_volume_without_exact_custody(self) -> None:
+        volume = canary.restore_volume_name(self.restore_job)
+        foreign = {"Name": volume, "Labels": {"io.neoth.managed": "n8n", "io.neoth.n8n-restore": "other", "io.neoth.n8n-restore-schema": "1"}}
+        with patch.object(canary, "exact_absent", return_value=True), patch.object(canary, "docker_inspect", return_value=foreign), patch.object(canary, "run") as command:
+            self.assertFalse(canary.cleanup_restore_volume(self.restore_job, "d" * 64, volume, self.live_volume))
+        command.assert_not_called()
+        with patch.object(canary, "exact_absent", return_value=False), patch.object(canary, "docker_inspect") as inspect, patch.object(canary, "run") as command:
+            self.assertFalse(canary.cleanup_restore_volume(self.restore_job, "d" * 64, volume, self.live_volume))
+        inspect.assert_not_called(); command.assert_not_called()
+
+    def test_restore_cleanup_attempts_every_validated_target_before_aggregating(self) -> None:
+        first = (self.restore_job, "d" * 64, canary.restore_volume_name(self.restore_job))
+        second_job = "fedcba98-1234-7234-8234-123456789abc"
+        second = (second_job, "e" * 64, canary.restore_volume_name(second_job))
+        with patch.object(canary, "cleanup_restore_volume", side_effect=[False, True]) as cleanup:
+            self.assertFalse(canary.cleanup_restore_targets([first, second], self.live_volume))
+        self.assertEqual(
+            [call.args for call in cleanup.call_args_list],
+            [
+                (second_job, "e" * 64, canary.restore_volume_name(second_job), self.live_volume),
+                (self.restore_job, "d" * 64, canary.restore_volume_name(self.restore_job), self.live_volume),
+            ],
+        )
+
+
 class ProductReceiptTests(unittest.TestCase):
     def test_product_output_requires_ready_and_nonempty_job(self) -> None:
         job = "12345678-1234-7234-8234-123456789abc"

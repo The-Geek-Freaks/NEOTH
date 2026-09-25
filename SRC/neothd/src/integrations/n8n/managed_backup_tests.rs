@@ -3,7 +3,13 @@
 use super::*;
 use crate::{
     installers::n8n::N8N_OCI_REFERENCE,
-    integrations::n8n::{N8nApiProbe, N8nProbeError, N8nProbeReceipt, parse_workflows_response},
+    integrations::{
+        JobRequester,
+        catalog::CapabilityId,
+        jobs::EnqueueIntegrationJob,
+        n8n::{N8nApiProbe, N8nProbeError, N8nProbeReceipt, parse_workflows_response},
+        state::ReadyEvidence,
+    },
     secret::SecretString,
 };
 use std::{
@@ -497,6 +503,97 @@ async fn sequential_backups_retain_historical_first_receipt() {
         completed_receipt_at(home.path(), &first).unwrap().unwrap(),
         first_receipt
     );
+}
+
+#[tokio::test]
+async fn verified_historical_backup_archive_accepts_prior_pin_and_rejects_mismatched_pin() {
+    let (home, runner, _, source) = fixture().await;
+    let binding = super::super::read_binding(home.path()).unwrap().unwrap();
+    let service = open_backup_service(home.path()).unwrap();
+    let generation = next_generation(home.path()).unwrap();
+    let historical_image = format!("docker.io/n8nio/n8n@sha256:{}", "b".repeat(64));
+    assert_ne!(historical_image, N8N_OCI_REFERENCE);
+    let manifest = backup_manifest_scalars(
+        &source,
+        binding.container_id.as_deref().unwrap(),
+        &historical_image,
+        &binding.volume,
+        generation,
+    );
+    let queued = service
+        .enqueue(EnqueueIntegrationJob {
+            capability_id: CapabilityId::parse(N8N_CAPABILITY_ID).unwrap(),
+            operation: JobOperation::Backup,
+            release_version: "1.4.0".into(),
+            manifest_sha256: manifest.clone(),
+            evidence_contract: backup_contract(
+                &source,
+                binding.container_id.as_deref().unwrap(),
+                &binding.volume,
+                manifest,
+            ),
+            requested_by: JobRequester::Cli,
+            total_steps: STEPS.len() as u32,
+            bytes_total: None,
+        })
+        .unwrap()
+        .job;
+    let mut active = service.start(&queued.job_id, queued.state_revision, STEPS[0]).unwrap();
+    active = service.begin_validation(&active.job_id, active.state_revision, STEPS[0]).unwrap();
+    active = service.begin_configuration(&active.job_id, active.state_revision, STEPS[2]).unwrap();
+    for (index, step) in STEPS.iter().enumerate() {
+        active = checkpoint(&service, &active, index as u32 + 1, step, 0).unwrap();
+    }
+    let archive_dir = ensure_private_backup_dir(home.path()).unwrap();
+    let archive = archive_dir.join(format!("{}.tar", queued.job_id));
+    let bytes = b"historical-backup-authority";
+    std::fs::write(&archive, bytes).unwrap();
+    let digest = hex::encode(sha2::Sha256::digest(bytes));
+    let receipt = BackupReceiptView {
+        schema_version: 1,
+        backup_job_id: queued.job_id.as_str().into(),
+        backup_manifest_sha256: queued.manifest_sha256.as_str().into(),
+        source_install_job_id: source.job_id.as_str().into(),
+        source_pinned_image: historical_image.clone(),
+        source_container_id: binding.container_id.clone().unwrap(),
+        volume_name: binding.volume.clone(),
+        generation,
+        archive_sha256: digest,
+        archive_bytes: bytes.len() as u64,
+        original_running_state: true,
+        restored_running_state: true,
+    };
+    write_receipt(home.path(), &receipt).unwrap();
+    let contract = active.evidence_contract.as_ref().unwrap();
+    let ready = service.mark_ready(
+        &active.job_id,
+        active.state_revision,
+        ReadyEvidence::verified(
+            active.job_id.clone(),
+            active.manifest_sha256.clone(),
+            contract.artifact_binding_sha256().clone(),
+            contract.config_binding_sha256().clone(),
+            contract.authenticated_probe_sha256().clone(),
+            contract.step_plan_sha256().clone(),
+        ),
+    ).unwrap();
+    let verified = completed_verified_archive_at(home.path(), &ready).unwrap().unwrap();
+    assert_eq!(verified.receipt, receipt);
+    assert_eq!(verified.archive_path, archive);
+    let mut mismatched = receipt;
+    mismatched.source_pinned_image = format!("docker.io/n8nio/n8n@sha256:{}", "c".repeat(64));
+    std::fs::write(
+        receipt_path(home.path(), ready.job_id.as_str()),
+        serde_json::to_vec(&mismatched).unwrap(),
+    ).unwrap();
+    assert_eq!(completed_verified_archive_at(home.path(), &ready), Err("n8n_backup_receipt_mismatch"));
+    mismatched.source_pinned_image = "docker.io/n8nio/n8n@sha256:not-a-digest".into();
+    std::fs::write(
+        receipt_path(home.path(), ready.job_id.as_str()),
+        serde_json::to_vec(&mismatched).unwrap(),
+    ).unwrap();
+    assert_eq!(completed_verified_archive_at(home.path(), &ready), Err("n8n_backup_receipt_mismatch"));
+    drop(runner);
 }
 
 #[tokio::test]

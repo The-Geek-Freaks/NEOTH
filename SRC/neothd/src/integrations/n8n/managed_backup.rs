@@ -101,6 +101,15 @@ pub struct BackupReceiptView {
     pub restored_running_state: bool,
 }
 
+/// A Ready backup receipt with its only NEOTH-derived archive path. Consumers
+/// must use this instead of accepting a caller path or consulting live runtime
+/// binding: both image and archive are historic backup authority.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VerifiedBackupArchive {
+    pub receipt: BackupReceiptView,
+    pub archive_path: PathBuf,
+}
+
 fn custody_path(home: &Path) -> PathBuf {
     home.join(BACKUP_FILE)
 }
@@ -125,6 +134,12 @@ fn archive_path(home: &Path, job_id: &str) -> Result<PathBuf, &'static str> {
         return Err("n8n_backup_directory_invalid");
     }
     Ok(dir.join(format!("{job_id}.tar")))
+}
+
+fn valid_historical_n8n_image(image: &str) -> bool {
+    image
+        .strip_prefix("docker.io/n8nio/n8n@sha256:")
+        .is_some_and(super::valid_manifest_sha256)
 }
 
 /// The runner accepts only an existing real parent. Create that parent here,
@@ -691,6 +706,7 @@ pub(in crate::integrations) async fn backup_managed_at_with<R: ManagedDockerRunn
     home: &Path,
     runner: &mut R,
 ) -> Result<IntegrationJob> {
+    super::managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
     let _operation_lock = crate::util::locked_file::try_lock_file_once(
         &super::operation_lock_path(home),
         "n8n managed runtime operation",
@@ -1029,7 +1045,7 @@ pub(crate) fn completed_receipt_at(
         || !is_managed_job(source)
         || !super::valid_container_id(&receipt.source_container_id)
         || !super::valid_volume_name(&receipt.volume_name)
-        || receipt.source_pinned_image != crate::installers::n8n::N8N_OCI_REFERENCE
+        || !valid_historical_n8n_image(&receipt.source_pinned_image)
         || receipt.generation == 0
         || receipt.archive_bytes > MAX_N8N_BACKUP_ARCHIVE_BYTES
         || receipt.original_running_state != receipt.restored_running_state
@@ -1065,6 +1081,23 @@ pub(crate) fn completed_receipt_at(
         &receipt.archive_sha256,
     )?;
     Ok(Some(receipt))
+}
+
+/// Resolve only an immutable Ready Backup receipt and its derived archive.
+/// `completed_receipt_at` binds the exact Ready Backup and source-install
+/// witnesses, recomputes the historical image-bearing backup manifest, and
+/// re-hashes the archive. Recheck the derived path immediately before handing
+/// this snapshot to Restore so no CLI path or live binding becomes authority.
+pub(crate) fn completed_verified_archive_at(
+    home: &Path,
+    job: &IntegrationJob,
+) -> Result<Option<VerifiedBackupArchive>, &'static str> {
+    let Some(receipt) = completed_receipt_at(home, job)? else {
+        return Ok(None);
+    };
+    let archive_path = archive_path(home, job.job_id.as_str())?;
+    durable_archive_matches(&archive_path, receipt.archive_bytes, &receipt.archive_sha256)?;
+    Ok(Some(VerifiedBackupArchive { receipt, archive_path }))
 }
 
 /// Fence all other lifecycle operations. A malformed, sidecar-only or

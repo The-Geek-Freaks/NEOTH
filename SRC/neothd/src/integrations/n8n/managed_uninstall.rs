@@ -683,6 +683,7 @@ async fn uninstall_managed_at_with_restart_inspector<
     )?
     .ok_or_else(|| anyhow::anyhow!("n8n_managed_operation_busy"))?;
     super::managed_backup::reject_pending_backup(home).map_err(anyhow::Error::msg)?;
+    super::managed_restore::reject_pending_restore(home).map_err(anyhow::Error::msg)?;
     if super::managed_repair::repair_has_pending_custody(home).map_err(anyhow::Error::msg)? {
         anyhow::bail!("n8n_uninstall_repair_custody_pending");
     }

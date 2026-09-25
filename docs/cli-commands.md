@@ -2965,6 +2965,12 @@ Permanently delete the owned data volume retained by a completed uninstall. With
 
 Restore the receipt-owned container with its pinned image, retained volume and stored API key
 
+### `neoth n8n restore`
+
+Validate a receipt-owned backup in an isolated candidate volume. The live n8n runtime is unchanged
+
+- `--backup <BACKUP>` — Ready backup job whose verified archive is the only restore source
+
 ### `neoth n8n status`
 
 Read durable adoption status. This does not make a live HTTP request

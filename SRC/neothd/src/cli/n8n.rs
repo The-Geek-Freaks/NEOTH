@@ -1,4 +1,4 @@
-//! `neoth n8n {install,repair,backup,uninstall,purge,adopt,status,import-workflows,workflows}`.
+//! `neoth n8n {install,repair,backup,restore,uninstall,purge,adopt,status,import-workflows,workflows}`.
 //!
 //! Adoption binds an operator-supplied, already-running literal-loopback n8n
 //! instance. It never installs, starts, discovers, or owns an n8n process.
@@ -46,6 +46,12 @@ pub enum N8nAction {
     /// Stop the owned runtime, archive its complete data volume, and restore its running state.
     /// Repeating an interrupted backup reconciles custody without repeating an uncertain copy.
     Backup,
+    /// Validate a receipt-owned backup in an isolated candidate volume. The live n8n runtime is unchanged.
+    Restore {
+        /// Ready backup job whose verified archive is the only restore source.
+        #[arg(long)]
+        backup: String,
+    },
     /// Remove the exact NEOTH-managed container and retain its data volume.
     /// Repeating an interrupted command reconciles absence without retrying deletion.
     Uninstall,
@@ -96,6 +102,7 @@ pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
         }
         N8nAction::Repair => run_repair(output).await,
         N8nAction::Backup => run_backup(output).await,
+        N8nAction::Restore { backup } => run_restore(&backup, output).await,
         N8nAction::Uninstall => run_uninstall(output).await,
         N8nAction::Purge { uninstall, confirm } => {
             run_purge(&uninstall, confirm.as_deref(), output).await
@@ -149,6 +156,69 @@ async fn run_backup(output: OutputFormat) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+async fn run_restore(backup: &str, output: OutputFormat) -> Result<()> {
+    let backup = parse_restore_backup_id(backup)?;
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let job = crate::integrations::n8n::managed_runtime::managed_restore::restore_managed_at(
+        &home, &backup,
+    )
+    .await?;
+    let receipt = crate::integrations::n8n::managed_runtime::managed_restore::completed_receipt_at(
+        &home, &job,
+    )
+    .map_err(anyhow::Error::msg)?;
+    if job.state == crate::integrations::JobState::Ready && receipt.is_none() {
+        return Err(anyhow!("n8n restore has no verified completion receipt"));
+    }
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "job_id": job.job_id,
+                "state": job.state,
+                "operation": "restore",
+                "backup_job_id": backup,
+                "receipt": receipt,
+                "live_n8n": "unchanged",
+                "failure_code": job.failure.as_ref().map(|failure| &failure.code),
+            })
+        ),
+        OutputFormat::Table => {
+            println!("n8n restore job: {}", job.job_id);
+            println!("state: {}", job.state);
+            println!("backup job: {backup}");
+            println!("candidate: isolated retained volume validation");
+            println!("live n8n: unchanged");
+            if let Some(receipt) = &receipt {
+                println!("candidate validation: verified");
+                println!("workflows validated: {}", receipt.workflow_count);
+                println!("credentials validated: {}", receipt.credential_count);
+                println!(
+                    "credential decryption proven: {}",
+                    receipt.credential_decryption_proven
+                );
+            }
+            if let Some(failure) = &job.failure {
+                println!("failure: {} — {}", failure.code, failure.redacted_message);
+            }
+        }
+    }
+    if job.state != crate::integrations::JobState::Ready || receipt.is_none() {
+        return Err(anyhow!(
+            "n8n restore job {} requires reconciliation (state: {})",
+            job.job_id,
+            job.state,
+        ));
+    }
+    Ok(())
+}
+
+fn parse_restore_backup_id(value: &str) -> Result<JobId> {
+    JobId::parse(value.to_owned())
+        .map_err(anyhow::Error::msg)
+        .context("n8n restore --backup must be a canonical v7 UUID")
 }
 
 fn print_backup_receipt(
@@ -627,6 +697,16 @@ fn run_status(selected_job: Option<&str>, output: OutputFormat) -> Result<()> {
                     if let Some(receipt) = &job.backup {
                         print_backup_receipt(receipt)?;
                     }
+                    if let Some(receipt) = &job.restore {
+                        println!("restore candidate: validated retained volume");
+                        println!("live n8n: unchanged");
+                        println!("workflows validated: {}", receipt.workflow_count);
+                        println!("credentials validated: {}", receipt.credential_count);
+                        println!(
+                            "credential decryption proven: {}",
+                            receipt.credential_decryption_proven
+                        );
+                    }
                     println!("progress: {}/{}", job.completed_steps, job.total_steps);
                     if let Some(step) = &job.current_step {
                         println!("current step: {step}");
@@ -693,6 +773,52 @@ mod tests {
         }
         for argument in ["--follow-links", "--live", "--api-key-stdin"] {
             assert!(crate::cli::Cli::try_parse_from(["neoth", "n8n", "backup", argument]).is_err());
+        }
+    }
+
+    #[test]
+    fn n8n_restore_cli_accepts_only_a_canonical_backup_uuid_without_overrides() {
+        use clap::Parser;
+
+        let backup = uuid::Uuid::now_v7().to_string();
+        let cli = crate::cli::Cli::try_parse_from([
+            "neoth",
+            "n8n",
+            "restore",
+            "--backup",
+            backup.as_str(),
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            crate::cli::Commands::N8n(N8nArgs {
+                action: N8nAction::Restore { backup: value },
+            }) if value == backup
+        ));
+        assert!(crate::cli::Cli::try_parse_from(["neoth", "n8n", "restore"]).is_err());
+        assert!(parse_restore_backup_id("not-a-uuid").is_err());
+        assert!(parse_restore_backup_id("018f8a5a-6e7b-4000-8000-000000000000").is_err());
+        for argument in [
+            "--container",
+            "--image",
+            "--volume",
+            "--path",
+            "--port",
+            "--endpoint",
+            "--api-key-stdin",
+        ] {
+            assert!(
+                crate::cli::Cli::try_parse_from([
+                    "neoth",
+                    "n8n",
+                    "restore",
+                    "--backup",
+                    backup.as_str(),
+                    argument,
+                    "unowned",
+                ])
+                .is_err()
+            );
         }
     }
 
