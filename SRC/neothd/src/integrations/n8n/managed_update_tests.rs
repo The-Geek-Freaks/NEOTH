@@ -143,8 +143,8 @@ impl super::super::ManagedDockerRunner for Runner {
         Ok(
             s.source.as_ref().is_some_and(|x| x.id == wanted) && s.source_running
                 || s.live.as_ref().is_some_and(|x| x.id == wanted) && s.live_running
-                || s.seed.as_ref().is_some_and(|x| x.id == wanted) && x.running
-                || s.candidate.as_ref().is_some_and(|x| x.id == wanted) && x.running,
+                || s.seed.as_ref().is_some_and(|x| x.id == wanted && x.running)
+                || s.candidate.as_ref().is_some_and(|x| x.id == wanted && x.running),
         )
     }
     async fn inspect_volume(

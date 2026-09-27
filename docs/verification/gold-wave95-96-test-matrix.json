@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "product-validator-repaired-rerun-required",
+  "status": "test-type-repair-hosted-pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 247699,
-    "sha256": "2088BB07E5DBBC33302516C5DFADB916A4E288E443BEFBA5162EB24B643F8B86"
+    "bytes": 247883,
+    "sha256": "D0504D1C8D1138CD370896E0FC5613E1B8FD307E9A0C90A99851EACE728B03BE"
   },
-  "sourceInputs": 1380,
+  "sourceInputs": 1381,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -12864,73 +12864,73 @@
     {
       "test": "integrations::n8n::managed_runtime::managed_update::tests::update_ready_preserves_source_custody_and_is_idempotent",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_update_tests.rs",
-      "sourceSha256": "98C5697ACB7EB56A11FC0E21FEDAE8E37E04BD9DBAD3853FA1AA65F907B28811",
+      "sourceSha256": "BBF7ABDBEDBB911356F2253AF156CD8980DC58390DF9BABE2173F95C07855058",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_update::tests::stopped_source_remains_stopped_after_ready_update",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_update_tests.rs",
-      "sourceSha256": "98C5697ACB7EB56A11FC0E21FEDAE8E37E04BD9DBAD3853FA1AA65F907B28811",
+      "sourceSha256": "BBF7ABDBEDBB911356F2253AF156CD8980DC58390DF9BABE2173F95C07855058",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_update::tests::ready_update_is_a_valid_source_for_the_real_backup_coordinator",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_update_tests.rs",
-      "sourceSha256": "98C5697ACB7EB56A11FC0E21FEDAE8E37E04BD9DBAD3853FA1AA65F907B28811",
+      "sourceSha256": "BBF7ABDBEDBB911356F2253AF156CD8980DC58390DF9BABE2173F95C07855058",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_update::tests::known_content_mismatch_compensates_running_source_to_exact_prior_binding",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_update_tests.rs",
-      "sourceSha256": "98C5697ACB7EB56A11FC0E21FEDAE8E37E04BD9DBAD3853FA1AA65F907B28811",
+      "sourceSha256": "BBF7ABDBEDBB911356F2253AF156CD8980DC58390DF9BABE2173F95C07855058",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_update::tests::known_content_mismatch_preserves_a_previously_stopped_source",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_update_tests.rs",
-      "sourceSha256": "98C5697ACB7EB56A11FC0E21FEDAE8E37E04BD9DBAD3853FA1AA65F907B28811",
+      "sourceSha256": "BBF7ABDBEDBB911356F2253AF156CD8980DC58390DF9BABE2173F95C07855058",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_update::tests::lost_archive_receipt_is_held_and_reentry_never_rearchives_source",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_update_tests.rs",
-      "sourceSha256": "98C5697ACB7EB56A11FC0E21FEDAE8E37E04BD9DBAD3853FA1AA65F907B28811",
+      "sourceSha256": "BBF7ABDBEDBB911356F2253AF156CD8980DC58390DF9BABE2173F95C07855058",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_update::tests::ambiguous_candidate_removal_holds_after_one_remove_without_live_create",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_update_tests.rs",
-      "sourceSha256": "98C5697ACB7EB56A11FC0E21FEDAE8E37E04BD9DBAD3853FA1AA65F907B28811",
+      "sourceSha256": "BBF7ABDBEDBB911356F2253AF156CD8980DC58390DF9BABE2173F95C07855058",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_update::tests::lost_candidate_id_does_not_retry_create_on_reentry",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_update_tests.rs",
-      "sourceSha256": "98C5697ACB7EB56A11FC0E21FEDAE8E37E04BD9DBAD3853FA1AA65F907B28811",
+      "sourceSha256": "BBF7ABDBEDBB911356F2253AF156CD8980DC58390DF9BABE2173F95C07855058",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_update_candidate::tests::target_candidate_is_networkless_normal_and_hardened",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_update_candidate.rs",
-      "sourceSha256": "858FA8EF1AC1DDE63C36359F7772A0CB54A59A9E82EDCA6E89B800F6429D0053",
+      "sourceSha256": "DA98C9349571DBBAB1E890B3AF4B710D3B2866939E6F2303C3D2CC7E74F09754",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_update_candidate::tests::production_inspect_projection_emits_parseable_json",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_update_candidate.rs",
-      "sourceSha256": "858FA8EF1AC1DDE63C36359F7772A0CB54A59A9E82EDCA6E89B800F6429D0053",
+      "sourceSha256": "DA98C9349571DBBAB1E890B3AF4B710D3B2866939E6F2303C3D2CC7E74F09754",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_update_candidate::tests::parsers_reject_the_other_process_and_any_exposure",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_update_candidate.rs",
-      "sourceSha256": "858FA8EF1AC1DDE63C36359F7772A0CB54A59A9E82EDCA6E89B800F6429D0053",
+      "sourceSha256": "DA98C9349571DBBAB1E890B3AF4B710D3B2866939E6F2303C3D2CC7E74F09754",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_update_candidate::tests::parsers_bind_the_exact_reserved_name",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_update_candidate.rs",
-      "sourceSha256": "858FA8EF1AC1DDE63C36359F7772A0CB54A59A9E82EDCA6E89B800F6429D0053",
+      "sourceSha256": "DA98C9349571DBBAB1E890B3AF4B710D3B2866939E6F2303C3D2CC7E74F09754",
       "junitClass": "neoth"
     },
     {
@@ -12978,25 +12978,25 @@
     {
       "test": "integrations::n8n::managed_runtime::managed_update::tests::lost_extract_receipt_is_held_and_reentry_never_reextracts_or_creates_target",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_update_tests.rs",
-      "sourceSha256": "98C5697ACB7EB56A11FC0E21FEDAE8E37E04BD9DBAD3853FA1AA65F907B28811",
+      "sourceSha256": "BBF7ABDBEDBB911356F2253AF156CD8980DC58390DF9BABE2173F95C07855058",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_update::tests::source_tuple_image_mismatch_blocks_before_source_mutation",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_update_tests.rs",
-      "sourceSha256": "98C5697ACB7EB56A11FC0E21FEDAE8E37E04BD9DBAD3853FA1AA65F907B28811",
+      "sourceSha256": "BBF7ABDBEDBB911356F2253AF156CD8980DC58390DF9BABE2173F95C07855058",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_update::tests::compensation_candidate_remove_unknown_holds_then_observed_absence_finalizes_failed",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_update_tests.rs",
-      "sourceSha256": "98C5697ACB7EB56A11FC0E21FEDAE8E37E04BD9DBAD3853FA1AA65F907B28811",
+      "sourceSha256": "BBF7ABDBEDBB911356F2253AF156CD8980DC58390DF9BABE2173F95C07855058",
       "junitClass": "neoth"
     },
     {
       "test": "integrations::n8n::managed_runtime::managed_update::tests::invalid_persisted_content_proof_holds_before_recovery_effects",
       "sourcePath": "SRC/neothd/src/integrations/n8n/managed_update_tests.rs",
-      "sourceSha256": "98C5697ACB7EB56A11FC0E21FEDAE8E37E04BD9DBAD3853FA1AA65F907B28811",
+      "sourceSha256": "BBF7ABDBEDBB911356F2253AF156CD8980DC58390DF9BABE2173F95C07855058",
       "junitClass": "neoth"
     }
   ],
@@ -51201,6 +51201,50 @@
       }
     ],
     "note": "Original failed product artifact and30 raw source bindings verified. Observer projection contract repaired; static review only. No local runtime or acceptance.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1642UpdateTestTypes": {
+    "base": "ef2ecebc989ddd9fa3ea4f05d194987aeb2a44b4",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1642-update-test-type-repair.json",
+        "bytes": 623,
+        "sha256": "BECFC00162E8BBE0ADDDF60EA28C880F927513485C27803A13AD3891EF89DD6A",
+        "blob": "b3c3d118ccde9c07a892e29c5a0d17b4602fdada"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 452185,
+        "sha256": "33CC3B28EA58B515C3BBBF9D02BB5E3E8A991D6A97E17DBAAD18892B1C393E55",
+        "blob": "55dc94cf3d2c6f59626f1a153f1df824583ae8e6"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1471116,
+        "sha256": "4454C2CFA1AD0D3680ACC30B7A59D8B53D0BFBB9119C91527ACB3E13CBC5C55D",
+        "blob": "22391b2bf28b405153894e5518bbc626b6355452"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2081639,
+        "sha256": "39CC52EEA79D2E85E148829AC3ACFFB3AD87BC2DBF500FCE4566BE34EF50910F",
+        "blob": "9f9e5645197d9c490f9febf401687f54a2964a9e"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_update_candidate.rs",
+        "bytes": 18403,
+        "sha256": "DA98C9349571DBBAB1E890B3AF4B710D3B2866939E6F2303C3D2CC7E74F09754",
+        "blob": "8a2973865c0cc28925d91381e9a60003a7e1785d"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_update_tests.rs",
+        "bytes": 34892,
+        "sha256": "BBF7ABDBEDBB911356F2253AF156CD8980DC58390DF9BABE2173F95C07855058",
+        "blob": "1ae3cf42276a67bceefa5463a496f7790dda33b1"
+      }
+    ],
+    "note": "Production slim Clippy passed on2bac2a4c; three new test-only compiler diagnostics repaired and reviewed. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

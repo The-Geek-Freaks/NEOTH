@@ -1,0 +1,18 @@
+{
+  "schema": "neoth-gold-hosted-repair/v1",
+  "batch": "W1642",
+  "capturedUtc": "2026-09-27T13:52:55.4095405Z",
+  "producer": "2bac2a4cda4ed0e01626b23b7c9d56c62654a665",
+  "coreRun": 36323249105,
+  "status": "TEST_TYPE_DIAGNOSTICS_CORRECTED_RERUN_REQUIRED",
+  "slimProductionClippyPassed": true,
+  "diagnostics": [
+    "E0425 seed x.running outside closure",
+    "E0425 candidate x.running outside closure",
+    "E0283 ambiguous JobId literal into"
+  ],
+  "productionBehaviorChanged": false,
+  "independentStaticReview": "APPROVE exact three compiler errors",
+  "localExecutableValidationRan": false,
+  "roadClosed": 0
+}

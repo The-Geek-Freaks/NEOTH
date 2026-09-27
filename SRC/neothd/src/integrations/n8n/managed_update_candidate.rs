@@ -366,7 +366,7 @@ fn valid_target_image(value: &str) -> bool {
 mod tests {
     use super::*;
     fn job() -> JobId {
-        JobId::parse("018f713e-2abc-7def-8abc-0123456789ab".into()).unwrap()
+        JobId::parse("018f713e-2abc-7def-8abc-0123456789ab").unwrap()
     }
     fn image() -> String {
         format!("{N8N_IMAGE_PREFIX}{}", "a".repeat(64))

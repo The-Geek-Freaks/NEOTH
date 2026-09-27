@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1642 Managed Update production Clippy passes; test-source repair (2026-09-27):**
+Core36323249105 at2bac2a4c passed slim production Clippy, then its native test
+source check found exactly three errors: two fake-runner running predicates
+used the closure variable outside its scope; one test JobId literal had an
+ambiguous into conversion. All three are narrowly corrected and independently
+reviewed; no production behavior changed. A new Core run must validate test
+compilation and supply the exact CLI reference before Group1955/Windows720.
+Product36323839089 at ef2ecebc is running with the observer-contract repair.
+Paperless Backup remains unpublished pending complete custody corrections and
+stateful behavior coverage. No local execution or ROAD checkbox closure.
+Evidence: docs/verification/gold-wave1642-update-test-type-repair.json.
 **W1639 Managed Update product validator contract repair (2026-09-27):**
 Product36322785782 at4670105b failed downstream_job_manifest_invalid after
 successful compilation. Its original artifact10933850282/API digest and all30
