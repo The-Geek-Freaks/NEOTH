@@ -1,0 +1,50 @@
+{
+  "schema": "neoth-restore-build-repair/v1",
+  "capturedUtc": "2026-09-27T17:45:09.3152664Z",
+  "base": "9b28e59f419c0b2ca0093fcccde08c6a7b46bba1",
+  "failedProducer": "36a329a7e11e64851616102f29c08377025be39f",
+  "failedRuns": [
+    36337439917,
+    36337441758
+  ],
+  "productHelpers": {
+    "passed": 43,
+    "failed": 0,
+    "runtimeStarted": false
+  },
+  "rootCauses": [
+    "E0106 result lifetime tied to ids",
+    "E0425 optional receipt reader name reconciled, including generation-auth consumers",
+    "E0308 VerifiedImage reconstructed from validated historical receipt before full container checks"
+  ],
+  "sources": [
+    {
+      "path": "SRC/neothd/src/installers/paperless_lifecycle.rs",
+      "sha256": "A5CA93959BFEC30DDC8B09D46AE0EFF3F35D399972CABD9222E32330EED71F5A"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_generation_auth.rs",
+      "sha256": "D61527646F63F363003ED40CA8CD4EBE737DD15D6DEA3ED3F7826D2EDA77483A"
+    },
+    {
+      "path": "SRC/neothd/src/installers/paperless_restore.rs",
+      "sha256": "62BB2E8AD37395A66DA5C9858BFF53AA45281AB3E4853A27A95D5AB1342D3EA5"
+    }
+  ],
+  "logs": [
+    {
+      "path": "work/gold-20260906/wave1700-restore-build-repair/core-failed.log",
+      "sha256": "A9689ECFA4C05D363CC5EBC8202D3AC70890317B6AA98CD47CFEDC75D8943BE0"
+    },
+    {
+      "path": "work/gold-20260906/wave1700-restore-build-repair/product-failed.log",
+      "sha256": "055138FC8FFF83316C4C3FCB71C0DB707761C04F79A6BE29BE9AE3EC2250E4D5"
+    },
+    {
+      "path": "work/gold-20260906/wave1700-restore-build-repair/product-full.log",
+      "sha256": "0AF0754853CAF80E2F24844F742D70B375C4F79B8301DBB6931B3E11A20B5A0E"
+    }
+  ],
+  "localExecutableValidationRan": false,
+  "hostedValidation": "pending on repaired source"
+}

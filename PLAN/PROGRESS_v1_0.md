@@ -2,6 +2,9 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1700 Restore hosted-build repairs (2026-09-27):** Core36337439917 and Product36337441758 at36a329a7 failed with5 compile errors from3 causes: ambiguous returned borrow, missing optional receipt-reader name and ExpectedImage/VerifiedImage mismatch. Corrected the lifetime, reconciled every reader call including generation auth with strict NotFound-only absence, and retained full container checks against validated recorded image evidence. Product helper43/43 passed; the real runtime never started. Preflight/CodeQL at formatting9b28e59f passed. Fresh Core/product gates required; no native/runtime/ROAD acceptance and no local executable validation.
+Evidence: docs/verification/gold-wave1700-restore-build-repair.json.
+
 **W1699 Hosted Restore formatting (2026-09-27):** Verified original Preflight36337404786 artifact10938100772 at36a329a7 (ZIP2f26b9e68d71a50b40aa3d3ea0111330cd7d21a81dc9b145bbe7c01cf2f3d436) and imported its exact9-file Rust patch. Product helper tests passed; Core36337439917 and Product36337441758 stopped at Rust compilation, with no runtime acceptance. Targeted build repairs follow. No local formatter/runtime ran; no ROAD closure.
 Evidence: docs/verification/gold-wave1699-hosted-restore-format.json.
 

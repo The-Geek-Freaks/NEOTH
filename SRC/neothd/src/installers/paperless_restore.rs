@@ -543,7 +543,20 @@ async fn restore_at_with<E: RetainedComposeExecutor, R: ReadinessVerifier>(
                 .into_iter()
                 .find(|image| image.service == old.service)
                 .ok_or(LifecycleError::Receipt)?;
-            verify_container(&expected, &current.project, binding.port, &inspected.stdout)
+            let recorded = current
+                .images
+                .iter()
+                .find(|image| image.service == old.service)
+                .ok_or(LifecycleError::Receipt)?;
+            let verified = VerifiedImage {
+                service: expected.service,
+                reference: expected.reference,
+                repo_digest: recorded.repo_digest.clone(),
+                config_id: recorded.config_id.clone(),
+                os: recorded.os.clone(),
+                architecture: recorded.architecture.clone(),
+            };
+            verify_container(&verified, &current.project, binding.port, &inspected.stdout)
                 .map_err(|_| LifecycleError::Command("paperless_restore_old_source_changed"))?;
         }
         old.running = actual.state.running;
@@ -879,9 +892,9 @@ async fn restore_at_with<E: RetainedComposeExecutor, R: ReadinessVerifier>(
     if write_restore_journal(&owned, &custody).is_err() {
         return receipt_from_committed_custody(&owned, &custody);
     }
-    return Ok(compensate_try!(receipt_from_committed_custody(
+    Ok(compensate_try!(receipt_from_committed_custody(
         &owned, &custody
-    )));
+    )))
 }
 
 /// Deterministic compensation for a known failure after source-stop dispatch.
@@ -1097,7 +1110,10 @@ async fn restore_container_ids<E: RetainedComposeExecutor>(
     Ok(ids)
 }
 
-fn candidate_id_for_service(ids: &[String], service: &str) -> Result<&str, LifecycleError> {
+fn candidate_id_for_service<'a>(
+    ids: &'a [String],
+    service: &str,
+) -> Result<&'a str, LifecycleError> {
     ids.iter()
         .find_map(|value| {
             value

@@ -141,7 +141,7 @@ pub(crate) fn begin_fresh_generation_token(
         .map_err(|_| "paperless_generation_auth_receipt")?
         .is_some()
     {
-        read_completed_install_for_volume_set(root)
+        read_install_receipt(root)
             .map_err(|_| "paperless_generation_auth_receipt")?;
         return Err("paperless_generation_auth_receipt");
     }
@@ -280,7 +280,7 @@ pub(crate) fn retire_if_completed_receipt_matches(
     {
         return Ok(false);
     }
-    let Some(receipt) = read_completed_install_for_volume_set(root)? else {
+    let Some(receipt) = read_install_receipt(root)? else {
         return Ok(false);
     };
     if !receipt.authenticated_api_ready

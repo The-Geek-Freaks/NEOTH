@@ -1444,7 +1444,7 @@ fn read_install_receipt_with_bytes(
 }
 /// A missing receipt is the only admissible incomplete-first-install state.
 /// Any present but malformed or invalid receipt is evidence of custody drift.
-fn read_completed_install_for_volume_set(
+fn read_install_receipt(
     root: &OwnedPaperlessRoot,
 ) -> Result<Option<StoredPaperlessInstallReceipt>, LifecycleError> {
     ensure_bound(root)?;
@@ -2361,7 +2361,7 @@ async fn preflight_existing_volumes<E: ComposeExecutor>(
             listed_expected_volume(&listed.stdout, &expected_name)?,
         ));
     }
-    let completed_install = read_completed_install_for_volume_set(root)?;
+    let completed_install = read_install_receipt(root)?;
     let snapshot = read_volume_set_snapshot(root)?;
     if let Some(snapshot) = snapshot {
         validate_volume_set_snapshot(&snapshot, project)?;
