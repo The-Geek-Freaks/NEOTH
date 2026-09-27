@@ -1,0 +1,18 @@
+{
+  "schema": "neoth-hosted-format-admission/v1",
+  "status": "HOSTED_FORMAT_IMPORTED",
+  "run": 36309438293,
+  "producer": "cd2bfc6edd46e8bb2ada40f9af302a8341a488c6",
+  "artifact": 10928725207,
+  "zipSha256": "3e2bd3a0426587a3cb65f8c5010327ab58072744399c733fb669f7cb1933bf80",
+  "paths": [
+    {
+      "path": "SRC/neothd/src/integrations/n8n/managed_rollback_tests.rs",
+      "preimage": "ef0b63333a6f8bea0408a62b53b6513c1f52a2ee",
+      "postimage": "b11316e051605c3a4219af2c282a596d60236164"
+    }
+  ],
+  "internalHashesVerified": true,
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

@@ -2,6 +2,34 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1582 Compensated reentry observation regression corrected (2026-09-27):**
+One old native failure counted the three required exact/name/readiness reads
+as repeated effects (27 versus30 calls). Source review confirms no repeated
+create/remove/rename/stop/start. The test now demands unchanged mutation
+counters plus the exact three observation calls, same Failed job and retired
+custody. Runtime identity/authentication/readiness checks remain unchanged.
+Independent review accepts this test-only correction with W1579. Hosted proof
+is still required; no local execution or ROAD closure.
+Evidence: docs/verification/gold-wave1582-compensation-reentry-regression.json.
+**W1575-W1579 Completed Rollback repeat repair and retained evidence (2026-09-27):**
+Original c3b079dd native artifacts authenticate actual Group1924/Windows689
+execution, with six coincident Rollback failures; Windows683passed/6failed/
+0missing. This supersedes compile-only uncertainty, not native acceptance.
+Actual4719 product36309143264 reached the same-Restore repeat and failed with
+n8n_rollback_custody_mismatch; Docker/fixture cleanup passed but overall
+scenario/aggregate cleanup did not. All37 exact producer inputs verify.
+Source diagnosis: after Ready retires temporary custody, the active binding
+already owns the Restore volume; a repeated request incorrectly tried a new
+same-volume swap. Independent review accepts a narrow receipt/lineage-bound
+Ready return for the exact same chain; other requests retain existing guards.
+The reentry regression now asserts persisted binding semantics explicitly.
+Authentic Preflight36309438293 formatting imported for the two Clippy helper
+expressions (original artifact10928725207, exact pre/post Git blobs verified).
+No local executable validation or ROAD closure. Current hosted reruns still
+precede this repeat correction and cannot admit it.
+Evidence: gold-wave1575-rollback-native-results.json,
+ gold-wave1576-rollback-product.json, gold-wave1578-rollback-hosted-format.json
+ and gold-wave1579-rollback-ready-repeat-repair.json under docs/verification.
 **W1569 Downstream actual-product coverage source reviewed (2026-09-27):**
 The separate rollback_only scenario now continues through two historical-key
 Uninstall/Reinstall cycles, third Uninstall and confirmed Restore-volume Purge.

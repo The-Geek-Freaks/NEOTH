@@ -494,6 +494,24 @@ pub(in crate::integrations) async fn rollback_managed_at_with_readiness<
     } else {
         None
     };
+    // A completed historical rollback already owns the requested Restore
+    // volume. Repeating that exact request is a read-only idempotent result,
+    // not a second cutover from that volume onto itself. `active_source`
+    // proves the live binding still belongs to this exact Ready job, and the
+    // completed receipt resolves and verifies the Restore/Backup chain.
+    if let Some((_, source_job, _)) = original.as_ref()
+        && source_job.operation == JobOperation::Rollback
+        && source_job.state == JobState::Ready
+        && let Some(receipt) = completed_receipt_at(home, source_job).map_err(anyhow::Error::msg)?
+        && receipt.restore_job_id == restore.restore_job_id
+        && receipt.restore_manifest_sha256 == restore.restore_manifest_sha256
+        && receipt.backup_job_id == restore.backup_job_id
+        && receipt.backup_manifest_sha256 == restore.backup_manifest_sha256
+        && receipt.source_pinned_image == restore.source_pinned_image
+        && receipt.restore_volume == restore.restore_volume
+    {
+        return Ok(source_job.clone());
+    }
     let queued = if let Some(c) = prior.as_ref() {
         service
             .get(&JobId::parse(c.rollback_job_id.clone()).map_err(anyhow::Error::msg)?)?

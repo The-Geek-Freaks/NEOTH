@@ -107,11 +107,13 @@ impl super::super::ManagedDockerRunner for Runner {
         name: &str,
     ) -> Result<super::super::InspectVolumeOutcome, &'static str> {
         let s = self.0.lock().unwrap();
-        Ok(if s.restore_volume.name == name && !s.restore_volume_removed {
-            super::super::InspectVolumeOutcome::Found(s.restore_volume.clone())
-        } else {
-            super::super::InspectVolumeOutcome::Absent
-        })
+        Ok(
+            if s.restore_volume.name == name && !s.restore_volume_removed {
+                super::super::InspectVolumeOutcome::Found(s.restore_volume.clone())
+            } else {
+                super::super::InspectVolumeOutcome::Absent
+            },
+        )
     }
     async fn create(
         &mut self,
@@ -354,6 +356,10 @@ async fn ready_success_keeps_same_old_id_and_reentry_has_no_effect() {
     let r = completed_receipt_at(home.path(), &ready).unwrap().unwrap();
     assert_eq!(r.retained_source_container_id, old);
     assert_eq!(state.lock().unwrap().old_name, r.retained_source_name);
+    let active = read_binding(home.path()).unwrap().unwrap();
+    assert_eq!(active.job_id, ready.job_id.as_str());
+    assert_eq!(active.manifest_sha256, ready.manifest_sha256.as_str());
+    assert_eq!(active.volume, r.restore_volume);
     assert_eq!(runner.calls("rename:"), 1);
     assert_eq!(runner.calls("create"), 1);
     assert_ne!(
@@ -546,6 +552,7 @@ async fn failed_compensated_reentry_retires_only_custody() {
     )
     .unwrap()
     .unwrap();
+    let old_id = old.id.clone();
     let c = Custody {
         schema_version: 1,
         phase: Phase::Compensated,
@@ -557,7 +564,7 @@ async fn failed_compensated_reentry_retires_only_custody() {
         backup_manifest_sha256: restored.backup_manifest_sha256,
         image: restored.source_pinned_image,
         restore_volume: restored.restore_volume,
-        old_container_id: old.id,
+        old_container_id: old_id.clone(),
         old_image: old.image,
         old_volume: old.volume,
         host_port: old.host_port,
@@ -568,7 +575,9 @@ async fn failed_compensated_reentry_retires_only_custody() {
         new_container_id: Some("2".repeat(64)),
     };
     create(home.path(), &c).unwrap();
-    let calls = state.lock().unwrap().calls.len();
+    let mutation_counts = ["create", "remove:", "rename:", "stop:", "start:"]
+        .map(|prefix| runner.calls(prefix));
+    let call_count = state.lock().unwrap().calls.len();
     let replay = rollback_managed_at_with(
         home.path(),
         &restore,
@@ -580,7 +589,19 @@ async fn failed_compensated_reentry_retires_only_custody() {
     .unwrap();
     assert_eq!(replay.job_id, failed.job_id);
     assert_eq!(replay.state, JobState::Failed);
-    assert_eq!(state.lock().unwrap().calls.len(), calls);
+    assert_eq!(
+        ["create", "remove:", "rename:", "stop:", "start:"].map(|prefix| runner.calls(prefix)),
+        mutation_counts
+    );
+    let observations = state.lock().unwrap().calls[call_count..].to_vec();
+    assert_eq!(
+        observations,
+        vec![
+            format!("exact:{old_id}"),
+            format!("name:{}", super::super::MANAGED_CONTAINER_NAME),
+            format!("exact:{old_id}"),
+        ]
+    );
     assert!(read(home.path()).unwrap().is_none())
 }
 #[tokio::test]

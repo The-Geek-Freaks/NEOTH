@@ -1,0 +1,58 @@
+{
+  "schema": "neoth-gold-verification/v1",
+  "wave": "W1575",
+  "status": "AUTHENTICATED_FAILURE_NOT_ADMITTED",
+  "producer_commit": "c3b079dd1a98de4d4e5ca79791c4bfe440848004",
+  "hosted_runs": {
+    "group": 36308248753,
+    "windows": 36308250787
+  },
+  "outcome": "failed_native_fixture_results",
+  "results": {
+    "group": {
+      "selected": 1924,
+      "executed": 1924,
+      "failed": 6
+    },
+    "windows": {
+      "expected": 689,
+      "executed": 689,
+      "passed": 683,
+      "failed": 6,
+      "missing": 0
+    }
+  },
+  "admission": "not_admitted",
+  "provenance": {
+    "group_input_count": 10,
+    "group_input_mismatches": 0,
+    "windows_source_bindings": 689,
+    "windows_unique_source_paths": 99,
+    "windows_source_mismatches": 0,
+    "windows_evidence_hash_mismatches": 0,
+    "windows_log_hash_mismatches": 0
+  },
+  "admissionSha256": "9544CB8E0041004C34C265FC370839BA25ED733B69DFCF3770F05FF12FA7796A",
+  "artifacts": {
+    "group_receipt": {
+      "id": 10928268716,
+      "sha256": "c7c077bd364d55a8cf655ae5b5fbc6c0d3efa96020c4bbd13820c4b417da70b5",
+      "safe_entries": 6
+    },
+    "group_log": {
+      "id": 10928223817,
+      "sha256": "61a4541144538b9eb55355ea5517678fea6572748bd3d76df84e9e48bbe0f495",
+      "safe_entries": 3
+    },
+    "group_source": {
+      "id": 10928223812,
+      "sha256": "91fc1e89a29082ee2f59b9492b63909748c18057cbcbd35057d61c56c67dfdfb",
+      "safe_entries": 3
+    },
+    "windows": {
+      "id": 10928194507,
+      "sha256": "1b3e11b1d8862568fd38ecb0cceffc070a8e8c63bc4f5a18d95f356663f14f9a",
+      "safe_entries": 701
+    }
+  }
+}

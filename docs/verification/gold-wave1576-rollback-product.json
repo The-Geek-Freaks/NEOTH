@@ -1,0 +1,34 @@
+{
+  "schema": "neoth-gold-verification/v1",
+  "wave": "W1576",
+  "status": "AUTHENTICATED_FAILURE_NOT_ADMITTED",
+  "producer_commit": "4719d3b0babdf7c60d25822ecefd37671e1bcbde",
+  "hosted_run": 36309143264,
+  "outcome": "failed_product_diagnostic",
+  "receipt_projection": {
+    "stage": "repeat_historical_rollback",
+    "failure_stage": "command_failed",
+    "command": "product_rollback",
+    "exit_code": 1,
+    "known_error_categories": [
+      "n8n_rollback_custody_mismatch"
+    ],
+    "timed_out": false,
+    "restore_cleanup_proven": true,
+    "docker_cleanup_proven": true,
+    "rollback_fixture_cleanup_proven": true,
+    "cleanup_proven": false
+  },
+  "admission": "not_admitted",
+  "provenance": {
+    "input_count": 37,
+    "input_mismatches": 0,
+    "producer_is_origin_main_ancestor": true
+  },
+  "admissionSha256": "3B76B4D9524BF664C111BD3DDD1A1C42A63253EFB6446D6CB196FAFE5A4631E8",
+  "artifact": {
+    "id": 10928199563,
+    "sha256": "fea2fe6f0ebf42de5f90140b1946444317a9f3d028b73dde30dc71f65bff75bc",
+    "safe_entries": 1
+  }
+}

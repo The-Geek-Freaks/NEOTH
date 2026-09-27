@@ -1,0 +1,21 @@
+{
+  "schema": "neoth-compensated-reentry-regression-correction/v1",
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "failedProducer": "c3b079dd1a98de4d4e5ca79791c4bfe440848004",
+  "failedRuns": [
+    36308248753,
+    36308250787
+  ],
+  "fixture": "integrations::n8n::managed_runtime::managed_rollback::tests::failed_compensated_reentry_retires_only_custody",
+  "diagnosis": "The previous total-call equality rejected three deliberate read-only observations during validation of the retained original runtime.",
+  "assertions": [
+    "create/remove/rename/stop/start mutation counters unchanged",
+    "Exact observation suffix is exact(old), name(neoth-n8n), exact(old)",
+    "Same Failed job returned and completed compensation custody retired"
+  ],
+  "reviewedBlob": "3abab613b969b018f3c1f2a8db9387334971c282",
+  "reviewSha256": "4849A10C925D39DA49DF5055B75A7DC5C017F7CEA36586535A948D5EC04026DB",
+  "productionBehaviorChanged": false,
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}

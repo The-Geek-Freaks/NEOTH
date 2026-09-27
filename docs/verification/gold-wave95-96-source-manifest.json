@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T09:25:37.6323787Z",
-  "validationStatus": "SOURCE_REVIEWED_ROLLBACK_REPAIR_AND_DOWNSTREAM_HOSTED_PENDING",
+  "capturedUtc": "2026-09-27T09:45:48.8409377Z",
+  "validationStatus": "SOURCE_REVIEWED_REPEAT_REPAIR_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2277,6 +2277,31 @@
       "sha256": "C66866619368503E69BA22BD5F7632C8B58AAD79305621B0AB33DDBE11CB2E2C"
     },
     {
+      "path": "docs/verification/gold-wave1575-rollback-native-results.json",
+      "bytes": 1598,
+      "sha256": "AE0536CE812AC250F27D9F49A25D981F35E030B5FAB58748D417E148079B966E"
+    },
+    {
+      "path": "docs/verification/gold-wave1576-rollback-product.json",
+      "bytes": 1049,
+      "sha256": "9ACBF5FB59F3D0AAEA81AFA168EBB2085790F25997F6825ECEB1FD9ED86B548A"
+    },
+    {
+      "path": "docs/verification/gold-wave1578-rollback-hosted-format.json",
+      "bytes": 610,
+      "sha256": "CC3B9EF54ACFCBB6BD6CC950D78FD0B81A9D00DA310976A0D43E34425D0C4C2B"
+    },
+    {
+      "path": "docs/verification/gold-wave1579-rollback-ready-repeat-repair.json",
+      "bytes": 1208,
+      "sha256": "DA2D91331F0DB3AB1597B479C4E5FEFBE394B0662AB5032040D466209650CF23"
+    },
+    {
+      "path": "docs/verification/gold-wave1582-compensation-reentry-regression.json",
+      "bytes": 1005,
+      "sha256": "2FBF0A3CE44CFF611947F36BFB7EEFF09231F36971311075D993A8FDEB55DC77"
+    },
+    {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
       "sha256": "5E4BD665F504F87DB4FCA154CF3A20E6D4AA4ACF29B1B0C7174386129DCE3FE3"
@@ -3238,18 +3263,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 432508,
-      "sha256": "A0D65FB7730F7935C56B8A29C4E24BCCC4E2DB16CA9FED8DC183AC33592AE3E1"
+      "bytes": 434589,
+      "sha256": "729652160BE67BE1CF632AAE52CFE2C2B154ACB28A20DF5CF8BF2DA80511F4C8"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1451439,
-      "sha256": "012A3F86477C513583B36244F5569582976D65AB3973FD870A7579FE4CC2A1AE"
+      "bytes": 1453520,
+      "sha256": "8AF1C8F74024C684579CF86F625111771D15DD024BBEA9B867E69E1E6083A881"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2061962,
-      "sha256": "6FFD540E88690017268A3963B3D47C068275603093D0F744E577DBA34CC6B7A2"
+      "bytes": 2064043,
+      "sha256": "2F917F676C06E80E02F2A36C9DA14F50784C5C113449111AD9EDBFFFB3545D0D"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",
@@ -5418,13 +5443,13 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_rollback_tests.rs",
-      "bytes": 28423,
-      "sha256": "7ECD936E6C69E46C4FDD4432F117E3037723ADDB2BFE6138E7AB8A4B726D42FD"
+      "bytes": 29245,
+      "sha256": "BD84A579FB10CC1406470B760A57BD8D455C31A8A12BD01C60FC191C08334D16"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_rollback.rs",
-      "bytes": 44327,
-      "sha256": "1503DD74110072409F6FC5433C54A829A946367D856A8F68CA454390F97B4D7D"
+      "bytes": 45417,
+      "sha256": "18108459DB1501B94E30E9CB29E1CDE8C6FDE15285F55D52E91296CCAF18A184"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n/managed_runtime_tests.rs",

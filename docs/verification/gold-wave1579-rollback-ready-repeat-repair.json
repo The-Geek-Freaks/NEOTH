@@ -1,0 +1,17 @@
+{
+  "schema": "neoth-rollback-completed-repeat-repair/v1",
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "base": "cd2bfc6edd46e8bb2ada40f9af302a8341a488c6",
+  "failedProduct": 36309143264,
+  "producer": "4719d3b0babdf7c60d25822ecefd37671e1bcbde",
+  "diagnosis": "After completed custody is retired, the active binding already owns the requested Restore volume; treating its repeat as a fresh swap triggers the distinct-volume custody guard.",
+  "repair": "Return only the matching active Ready Rollback after binding lineage, immutable receipt and exact Restore/Backup/image/volume validation; distinct requests retain original custody and distinct-volume guards.",
+  "reviewedBlobs": {
+    "SRC/neothd/src/integrations/n8n/managed_rollback.rs": "55333b53fe41d47381da84b2d3d2b5d8eeedfb3e",
+    "SRC/neothd/src/integrations/n8n/managed_rollback_tests.rs": "3abab613b969b018f3c1f2a8db9387334971c282"
+  },
+  "reviewSha256": "4849A10C925D39DA49DF5055B75A7DC5C017F7CEA36586535A948D5EC04026DB",
+  "regression": "Existing ready/reentry fixture explicitly verifies persisted binding job/manifest/Restore volume before unchanged replay checks.",
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}
