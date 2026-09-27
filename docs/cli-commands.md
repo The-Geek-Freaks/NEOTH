@@ -2988,6 +2988,17 @@ Read durable adoption status. This does not make a live HTTP request
 
 Remove the exact NEOTH-managed container and retain its data volume. Repeating an interrupted command reconciles absence without retrying deletion
 
+### `neoth n8n update-target`
+
+Verify a reviewed update image before any managed lifecycle operation
+
+#### `neoth n8n update-target verify`
+
+Pull a reviewed immutable target and verify its platform and image identity. This downloads an image; it does not start n8n or migrate its data
+
+- `--target <TARGET>` — Exact reviewed target selector, for example n8n-2.40.7
+- `--platform <PLATFORM>` — Linux platform used by the Docker engine, including remote engines
+
 ### `neoth n8n workflows`
 
 List NEOTH workflow templates bundled in the binary

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1605_HISTORICAL_CORE_ACCEPTED_W1606_DOCGEN_FAILED_W1607_TARGET_CORE_RERUN_PENDING",
+  "status": "WINDOWS697_ACCEPTED_CURRENT_CLI_REFERENCE_IMPORTED_GROUP1932_RERUN_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 243375,
-    "sha256": "627AE4AA6668BBF0F7C498454128C7CA4607FC02797BEB67B895C7E2C6A41097"
+    "bytes": 243567,
+    "sha256": "0659A02A813F74927BFEF7400708E724235DB9C9E8AFF9019EAB73CD5B867374"
   },
-  "sourceInputs": 1357,
+  "sourceInputs": 1358,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -50402,6 +50402,44 @@
       }
     ],
     "note": "Exact historical Core accepted. Current Group1932 has sole stale docgen failure. Target Core Clippy separation clarified without semantic change; hosted rerun required. No local executable validation or ROAD closure.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1611TargetCliAdmission": {
+    "base": "d9f70cab9db7b8989515b74c031a2bf574fe8d06",
+    "sources": [
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 255970,
+        "sha256": "EA5D13CE3DE8D9B7289B8175AC6268CEA294F64C376E0CE6ED0C4428EDF6D0B6",
+        "blob": "af95c9e9a68643477063d6da84969993e7fa7d3d"
+      },
+      {
+        "path": "docs/verification/gold-wave1611-target-windows-cli-admission.json",
+        "bytes": 2081,
+        "sha256": "A09A3A8B1A4A0AE20150A64DBDAE545A9E4BA436AF0BE5DAD69CF7D104C72F65",
+        "blob": "fd7e88138dc67ac2f0af4046b9bc59fa73437a7b"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 443769,
+        "sha256": "E81C054EB180CD47F16308CB60202925D09263ECD6F0D170EC2ADC4BFC5CEBDE",
+        "blob": "ab7ee9994b37403b7713675d540e3bab9ebc20b3"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1462700,
+        "sha256": "39BDE46559BBB6DA1CE4C58A59389D9277097F7324BF0C8F3A3890C85873D1ED",
+        "blob": "fa98206fb31f72bd09e91d3ef0835c777710ae38"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2073223,
+        "sha256": "2BF74E16959B9AD061BF731D8F0ED8C0ED8FC4A103724CCE2429C3E2E717AB7A",
+        "blob": "a3af44df83890f30b1b592b4a49ef792cb71ec64"
+      }
+    ],
+    "note": "Original Windows697 fully accepted. Exact current hosted generated CLI bytes imported. Group1932 docgen rerun required; workspace Clippy running. No local execution or ROAD closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

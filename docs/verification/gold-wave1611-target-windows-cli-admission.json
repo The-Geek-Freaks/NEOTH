@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "wave": "W1606-W1611",
+  "status": "WINDOWS697_ACCEPTED_EXACT_GENERATED_CLI_IMPORTED",
+  "captured_utc": "2026-09-27T11:27:43.7835756Z",
+  "windows": {
+    "run_id": 36312860764,
+    "head_sha": "3b267d83d9f843ff639f1ab0ab08e05a6972e1a2",
+    "conclusion": "success",
+    "passed": 697,
+    "failed": 0,
+    "missing": 0,
+    "artifact_id": 10929719946,
+    "artifact_digest": "sha256:da81114d87f8450fa13c9708117e13d3078cbadee4cc3348ed67b8bcd11e7988",
+    "artifact_bytes": 344599,
+    "provenance": {
+      "artifact_id": 10929719946,
+      "zip_digest_matches": true,
+      "safe_entries": 709,
+      "unsafe_entries": 0,
+      "source_bindings": 697,
+      "unique_source_paths": 100,
+      "source_matched": 100,
+      "source_mismatches": 0
+    }
+  },
+  "reference": {
+    "run_id": 36314693354,
+    "head_sha": "d9f70cab9db7b8989515b74c031a2bf574fe8d06",
+    "artifact_id": 10930786393,
+    "artifact_sha256": "c3514345118886aadc5612dfc5172197abe93c02c5b4199e2a0c884ce8673cbb",
+    "artifact_bytes": 87654,
+    "api_zip_digest_matches": true,
+    "safe_zip_entries": 3,
+    "internal_checksum_matches": true,
+    "source_head_matches": true,
+    "path": "docs/cli-commands.md",
+    "sha256": "ea5d13ce3de8d9b7289b8175ac6268cea294f64c376e0ce6ed0c4428edf6d0b6",
+    "source_cli_blob": "046252b8ca1b08c60b1d1270309d2333f672336c",
+    "source_integration_blob": "68478cd71ba48e5f3e9ed18e734d8dd0f37555ba",
+    "source_target_blob": "dd5372f63f3f85d45565ef66f1dc60564c968461",
+    "import": "exact bytes; new target command only",
+    "slim_clippy": "success",
+    "core_test_targets": "typecheck success, not test execution",
+    "cli_build": "success",
+    "workspace_clippy": "in_progress_at_import"
+  },
+  "group": {
+    "previous_run": 36313319668,
+    "sole_failure": "cli::docgen::tests::cli_commands_md_is_up_to_date",
+    "status": "rerun_required_after_exact_reference_import"
+  },
+  "excluded_claims": [
+    "full managed Update",
+    "migration product proof",
+    "release or roadmap closure"
+  ],
+  "localExecutableValidationRan": false
+}

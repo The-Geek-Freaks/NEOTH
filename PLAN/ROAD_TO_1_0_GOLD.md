@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1606/W1611 Windows target cohort accepted and exact CLI reference imported (2026-09-27):**
+Windows36312860764 at3b267d83 passed all697 selected cases, zero failures or
+missing cases. Original artifact10929719946 matches its API digest;709 ZIP
+entries and all697 bindings across100 raw producer source paths verify.
+Current Core36314693354 atd9f70cab passed slim Clippy, test-target typecheck,
+public CLI build and export. Its authenticated artifact10930786393 supplies
+the exact new CLI reference (SHA256 ea5d13ce3de8d9b7289b8175ac6268cea294f64c376e0ce6ed0c4428edf6d0b6),
+now imported to docs/cli-commands.md. The eleven added lines describe only
+update-target verify. Workspace Clippy remains running at this snapshot.
+Group1932 must rerun after this import; its earlier sole Docgen failure remains
+recorded. No local execution, Update/migration acceptance or ROAD closure.
+Evidence: docs/verification/gold-wave1611-target-windows-cli-admission.json.
 **W1605-W1607 Core/native evidence and target Clippy repair (2026-09-27):**
 Historical Core36310584760 at cbc2f93c passed slim production Clippy, core test
 source typecheck, public CLI build/export and workspace Clippy. Original
