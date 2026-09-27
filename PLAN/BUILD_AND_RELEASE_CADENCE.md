@@ -3,6 +3,13 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1705 Hosted regression formatting (2026-09-27):** Imported the exact
+one-assertion rustfmt patch from Preflight36339824033 atf009bc94; original
+artifact10938696605 ZIP17e624d092651328cda7f4b3b40a89483c3964f906f7a97580fd85faf2f52e3d,
+source identity and internal hashes verified. Core36339834144 and actual
+Product36339835900 continue on semantic sourcef009bc94. No local formatter,
+no changed behavior and no ROAD closure.
+
 **W1704 Restore archive-target and hosted-gate repairs (2026-09-27):**
 Product36338229910 at95fc23ee built the CLI and ran the real isolated flow,
 but returned generic Receipt failure; the original ZIP and29 raw producer

@@ -659,7 +659,10 @@ async fn restore_stateful_full_backup_orders_six_stopped_copies_before_no_port_c
             );
         }
     }
-    assert!(saw_broker_copy, "all six restores include the broker archive");
+    assert!(
+        saw_broker_copy,
+        "all six restores include the broker archive"
+    );
 }
 
 #[tokio::test]
