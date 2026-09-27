@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "rollback-native-both-platforms-and-target-amd64-preflight-admitted",
+  "status": "W1605_HISTORICAL_CORE_ACCEPTED_W1606_DOCGEN_FAILED_W1607_TARGET_CORE_RERUN_PENDING",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 243163,
-    "sha256": "DC7D04A20493BBB30E9316794D416BF7A4F4C1DC870880C36630BF64B21DB9F2"
+    "bytes": 243375,
+    "sha256": "627AE4AA6668BBF0F7C498454128C7CA4607FC02797BEB67B895C7E2C6A41097"
   },
-  "sourceInputs": 1356,
+  "sourceInputs": 1357,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -50364,6 +50364,44 @@
       }
     ],
     "note": "Original Rollback Group1924 and Windows689 admitted exacte639; actual target preflight36312856719@3b267d83 admitted Linux amd64 only. No migration or full Update acceptance, no local execution.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1607TargetCore": {
+    "base": "97c69c1908aa54d2e01349ab36be5532332f3fbd",
+    "sources": [
+      {
+        "path": "docs/verification/gold-wave1605-1607-core-native-results.json",
+        "bytes": 2972,
+        "sha256": "19169AFB692C8EB40CEEFB09B391A457F480169668F66224EBFADA2C6142D947",
+        "blob": "2d0eb9d7f217362b158b4eb92da7ca2894e3e4bf"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 442814,
+        "sha256": "8D2AFD2AF1E0673DA02B9465E9FC8EACA5CEBE4F125F6AF341E4BCA914603382",
+        "blob": "8c7804c41873cd347459431db3cf28895ca7808b"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1461745,
+        "sha256": "72038F55C21EDA7409F218BE387CA5F8ECC76FB0E43BBB1F3DA5DDA7B6FAD113",
+        "blob": "a2443012501f91e217236c32aa2ede44c0759a2e"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2072268,
+        "sha256": "9224A874D6BD0EDFE94FA137C6CDEC4E94339DC36273AE8B87A78FC59231CAF6",
+        "blob": "4f8e447bfdabba03bc425c8276fdf056ffd15e93"
+      },
+      {
+        "path": "SRC/neothd/src/integrations/n8n/managed_update_target.rs",
+        "bytes": 19220,
+        "sha256": "8524D1B00D686A67115969C56CEAA5441F43FAF39176EC022223C663C9742900",
+        "blob": "dd5372f63f3f85d45565ef66f1dc60564c968461"
+      }
+    ],
+    "note": "Exact historical Core accepted. Current Group1932 has sole stale docgen failure. Target Core Clippy separation clarified without semantic change; hosted rerun required. No local executable validation or ROAD closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1605-W1607 Core/native evidence and target Clippy repair (2026-09-27):**
+Historical Core36310584760 at cbc2f93c passed slim production Clippy, core test
+source typecheck, public CLI build/export and workspace Clippy. Original
+artifact10929543363 API/ZIP/internal hashes and producer workflow verify;
+its generated CLI reference is stale for the new target command and is not
+imported. Current Group36313319668 at5cc5ba68 compiled and executed1932 cases;
+its sole failure is cli::docgen::tests::cli_commands_md_is_up_to_date. All three
+original artifact digests and10 raw producer inputs verify. Current Core
+36312862595 at3b267d83 stopped at possible_missing_else before export. The
+formatted read_capped checks are explicitly separated without behavior change;
+a hosted rerun must supply the new reference before native revalidation.
+Windows36312860764 remains pending at this snapshot. Isolated migration is
+unpublished source under repair; no Update/migration or ROAD completion claim.
+Absolute local BSOD hold persists. Road counts1324/1077/245/2 unchanged.
+Evidence: docs/verification/gold-wave1605-1607-core-native-results.json.
 **W1597/W1599 Native Rollback and actual target-preflight accepted (2026-09-27):**
 The original e639e712 Windows run36311759439 completed689/689 pass, zero failed
 or missing; artifact10929608049 and689 source bindings through99 raw producer

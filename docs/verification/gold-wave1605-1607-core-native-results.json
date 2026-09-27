@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "wave": "W1605-W1607",
+  "status": "HISTORICAL_CORE_ACCEPTED_CURRENT_NATIVE_DOCGEN_AND_CORE_FORMAT_REPAIR_PENDING",
+  "captured_utc": "2026-09-27T11:04:11.1019397Z",
+  "historical_core": {
+    "run_id": 36310584760,
+    "head_sha": "cbc2f93c62a0a061e5e589c3ebdee3236137273e",
+    "conclusion": "success",
+    "artifact_id": 10929543363,
+    "artifact_sha256": "0e16949b02cba7e6f9ee2629e3e029aec3c77ea973c6aa9fe32a6d9c16461ddb",
+    "api_digest_matches_download": true,
+    "source_head_matches": true,
+    "internal_reference_sha256": "375e26be61b4d91edf90c1bafa8ce187755fa81f68b1031c4af33423af2401c3",
+    "verified_gates": [
+      "slim production Clippy",
+      "core test-target typecheck (not test execution)",
+      "public CLI build and reference export",
+      "workspace Clippy"
+    ],
+    "reference_imported": false
+  },
+  "current_group": {
+    "run_id": 36313319668,
+    "head_sha": "5cc5ba686dfc4f0645ba21a162267d7bfcbbaeba",
+    "conclusion": "failure",
+    "selected": 1932,
+    "executed": 1932,
+    "sole_failure": "cli::docgen::tests::cli_commands_md_is_up_to_date",
+    "source_bindings": {
+      "input_count": 10,
+      "matched": 10,
+      "mismatches": 0
+    },
+    "artifacts": [
+      {
+        "name": "source",
+        "artifact_id": 10930300757,
+        "expected": "884e764109bc9265ea2d3078cb5d64811b16ecb7796b2da4df475a888726bb75",
+        "actual": "884e764109bc9265ea2d3078cb5d64811b16ecb7796b2da4df475a888726bb75",
+        "matches": true
+      },
+      {
+        "name": "receipt",
+        "artifact_id": 10930006373,
+        "expected": "e77b47ed298f4bd593e01ae45b0f2340c4320a4c4db86a4b5ad9574489e973bb",
+        "actual": "e77b47ed298f4bd593e01ae45b0f2340c4320a4c4db86a4b5ad9574489e973bb",
+        "matches": true
+      },
+      {
+        "name": "log",
+        "artifact_id": 10929314897,
+        "expected": "7ea0bed74a294c165185c47dd77350ac151ba4ff70d6b26ac20a42e09c82c8bd",
+        "actual": "7ea0bed74a294c165185c47dd77350ac151ba4ff70d6b26ac20a42e09c82c8bd",
+        "matches": true
+      }
+    ]
+  },
+  "current_core": {
+    "run_id": 36312862595,
+    "head_sha": "3b267d83d9f843ff639f1ab0ab08e05a6972e1a2",
+    "conclusion": "failure",
+    "stage": "slim production Clippy",
+    "diagnostic": "clippy::possible_missing_else in managed_update_target.rs read_capped",
+    "repair": "Current formatted source separates the two early-return checks onto separate lines; one explicit blank line makes this boundary clear. No behavior change.",
+    "generated_cli_artifact_available": false,
+    "hosted_rerun_required": true
+  },
+  "windows": {
+    "run_id": 36312860764,
+    "status_at_snapshot": "in_progress",
+    "admitted": false
+  },
+  "migration": {
+    "status": "unpublished_source_under_repair",
+    "product_migration_proven": false
+  },
+  "road": {
+    "total": 1324,
+    "done": 1077,
+    "open": 245,
+    "partial": 2,
+    "closed_this_batch": 0
+  },
+  "localExecutableValidationRan": false
+}

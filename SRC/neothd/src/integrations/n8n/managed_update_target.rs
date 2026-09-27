@@ -534,6 +534,7 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R) -> Result<V
         if count == 0 {
             return Ok(bytes);
         }
+
         if bytes.len().saturating_add(count) > MAX_COMMAND_BYTES {
             return Err(anyhow!("n8n_update_target_docker_output_too_large"));
         }
