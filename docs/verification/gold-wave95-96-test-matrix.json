@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 249026,
-    "sha256": "556D53A4E2AAECF240BB5FC832DE402EA6F7AFB3403B24AC13B2C80067E0BA95"
+    "sha256": "91D55E06AE8F181DAA4EECD024A7779047AA51235091A68D84B55D9BF1DD31F4"
   },
   "sourceInputs": 1387,
   "requiredNativeTests": [
@@ -51787,6 +51787,20 @@
       }
     ],
     "note": "Immutable Backup source/recovery and bounded readiness; repeated Update retention preserved;5 new native cases. Product failures authenticated, new hosted gates pending.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1666WindowsSourcePath": {
+    "base": "f6fb62c3c436333b0e00f0b77c7396f23e7d5730",
+    "sources": [
+      {
+        "path": ".github/workflows/windows-storage-regressions.yml",
+        "bytes": 129712,
+        "sha256": "A378EDB7AE16EE669D0A2B005A627182E43FB27A2968021A99B18127FCDAA759",
+        "blob": "3e93ca12f4bf9e54a953bbb8c71bf3ec77fea7a1"
+      }
+    ],
+    "note": "Five new Windows selection paths corrected relative to existing SRC working directory before native dispatch; production unchanged.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

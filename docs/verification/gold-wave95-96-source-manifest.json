@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T15:23:22.5588441Z",
+  "capturedUtc": "2026-09-27T15:24:05.6424146Z",
   "validationStatus": "SOURCE_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -168,8 +168,8 @@
     },
     {
       "path": ".github/workflows/windows-storage-regressions.yml",
-      "bytes": 129732,
-      "sha256": "BA6E1F12FBF9C7E5AA4CEA98F37AF2BFE2BEEEE23834FC451449E500407CF9BB"
+      "bytes": 129712,
+      "sha256": "A378EDB7AE16EE669D0A2B005A627182E43FB27A2968021A99B18127FCDAA759"
     },
     {
       "path": ".github/workflows/workflow-replay-witness.yml",
