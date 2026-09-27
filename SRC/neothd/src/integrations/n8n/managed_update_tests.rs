@@ -804,11 +804,8 @@ async fn update_volume_reinstalls_after_uninstall_with_its_lineage_owner() {
     ));
     assert!(std::fs::metadata(&second_receipt).unwrap().len() > 4096);
     assert_eq!(
-        super::super::managed_uninstall::cleanup_disposition_at(
-            home.path(),
-            &second_uninstall,
-        )
-        .unwrap(),
+        super::super::managed_uninstall::cleanup_disposition_at(home.path(), &second_uninstall,)
+            .unwrap(),
         Some("cleared")
     );
     let second_view: serde_json::Value =

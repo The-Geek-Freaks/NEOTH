@@ -2,6 +2,7 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1674 Hosted format import (2026-09-27):** Preflight36331275739 at6c03220c supplied authenticated artifact10934789646 (ZIP1243c2923812ae3c7072f86299a47a05acbac176f20f0f53ad22494e7d084d9b). Its exact one-file native-test formatting patch was imported. Group1979run36331277964, Windows744run36331279741 and Update36331276264 remain active on the semantic producer; Paperless36330901213 runs atc48aadb4. No local formatter, duplicate native dispatch, or acceptance claim.
 **W1673 Repeated Update receipt bound (2026-09-27):**
 Update product36329535494 at70e8b768 reached the later uninstall-status check
 and failed there; original artifact10935785886 and30 raw producer bindings verify.
