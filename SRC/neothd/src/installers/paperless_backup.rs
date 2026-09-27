@@ -7,11 +7,12 @@
 use super::*;
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _};
 use cap_std::fs::OpenOptions;
-use sha2::{Digest as _, Sha256};
+use sha2::Sha256;
 use std::{ffi::OsStr, io::Read as _, path::Path};
 
 pub(crate) const BACKUP_CUSTODY_NAME: &str = ".neoth-paperless-backup-custody.v1.json";
 const BACKUP_DIR: &str = "backups";
+const BACKUP_SOURCE_NAME: &str = "source.v1.json";
 const BACKUP_ARCHIVE_LIMIT: u64 = 8 * 1024 * 1024 * 1024;
 const BACKUP_TOTAL_LIMIT: u64 = 24 * 1024 * 1024 * 1024;
 
@@ -55,6 +56,15 @@ struct BackupCustody {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct BackupSource {
+    schema_version: u8,
+    operation: String,
+    job_id: String,
+    install_receipt_bytes: Vec<u8>,
+    volume_set_snapshot_bytes: Vec<u8>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct PaperlessBackupArchive {
     pub(crate) logical_name: String,
     pub(crate) service: String,
@@ -94,7 +104,7 @@ pub(crate) async fn backup_at(
 ) -> Result<PaperlessBackupReceipt, LifecycleError> {
     backup_at_with(home, credentials, &mut DockerExecutor, &ConfiguredReadiness).await
 }
-pub(crate) async fn backup_at_with<E: ComposeExecutor, R: ReadinessVerifier>(
+async fn backup_at_with<E: ComposeExecutor, R: ReadinessVerifier>(
     home: &Path,
     credentials: &Credentials,
     executor: &mut E,
@@ -134,11 +144,20 @@ pub(crate) async fn backup_at_with<E: ComposeExecutor, R: ReadinessVerifier>(
         return Err(LifecycleError::UnownedOrMismatch);
     }
     let mut custody = match read_custody(&owned)? {
-        Some(c) => {
+        Some(mut c) => {
             if c.phase == BackupPhase::Complete {
                 validate_historical_custody(&owned, &c)?;
             } else {
                 validate_custody(&c, &install, &install_bytes, &snapshot_bytes)?;
+                if ensure_source_companion(&owned, &c).is_err() {
+                    if c.phase == BackupPhase::Held {
+                        return Err(LifecycleError::Receipt);
+                    }
+                    return restore_then_hold(
+                        executor, &engine, &owned, &binding, &install, &mut c,
+                        "paperless_backup_source_companion_invalid",
+                    ).await;
+                }
             }
             c
         }
@@ -161,6 +180,7 @@ pub(crate) async fn backup_at_with<E: ComposeExecutor, R: ReadinessVerifier>(
                 volume_set_snapshot_bytes: snapshot_bytes.clone(),
             };
             write_custody_new(&owned, &c)?;
+            ensure_source_companion(&owned, &c)?;
             c
         }
     };
@@ -189,9 +209,9 @@ pub(crate) async fn backup_at_with<E: ComposeExecutor, R: ReadinessVerifier>(
         let receipt = read_receipt(
             &owned,
             &custody,
-            &historical,
-            &custody.install_receipt_bytes,
-            &custody.volume_set_snapshot_bytes,
+            &historical.install,
+            &historical.source.install_receipt_bytes,
+            &historical.source.volume_set_snapshot_bytes,
         )?;
         verify_archives_on_disk(&owned, &receipt)?;
         // A completed receipt records historical source state. The operator
@@ -214,6 +234,7 @@ pub(crate) async fn backup_at_with<E: ComposeExecutor, R: ReadinessVerifier>(
             volume_set_snapshot_bytes: snapshot_bytes.clone(),
         };
         write_custody(&owned, &next)?;
+        ensure_source_companion(&owned, &next)?;
         custody = next;
     }
     if matches!(
@@ -240,7 +261,10 @@ pub(crate) async fn backup_at_with<E: ComposeExecutor, R: ReadinessVerifier>(
         if receipt.authenticated_api_ready {
             let mut c = credentials.clone();
             c.paperless_url = Some(binding.origin.clone());
-            if !readiness.ready(home, &c).await {
+            if wait_for_readiness(home, &c, readiness, &owned, &binding)
+                .await
+                .is_err()
+            {
                 return hold(
                     &owned,
                     &mut custody,
@@ -660,7 +684,10 @@ pub(crate) async fn backup_at_with<E: ComposeExecutor, R: ReadinessVerifier>(
     if custody.members.iter().all(|m| m.running) {
         let mut c = credentials.clone();
         c.paperless_url = Some(binding.origin.clone());
-        if !readiness.ready(home, &c).await {
+        if wait_for_readiness(home, &c, readiness, &owned, &binding)
+            .await
+            .is_err()
+        {
             return hold(&owned, &mut custody, "paperless_backup_readiness_failed");
         }
     }
@@ -711,6 +738,7 @@ pub(crate) async fn backup_at_with<E: ComposeExecutor, R: ReadinessVerifier>(
             .collect(),
         authenticated_api_ready: fully_running,
     };
+    ensure_source_companion(&owned, &custody)?;
     if write_receipt_new(&owned, &receipt).is_err() {
         return hold(
             &owned,
@@ -800,22 +828,27 @@ pub(super) fn blocks_peer_operation(root: &OwnedPaperlessRoot) -> Result<bool, L
     read_receipt(
         root,
         &custody,
-        &historical,
-        &custody.install_receipt_bytes,
-        &custody.volume_set_snapshot_bytes,
+        &historical.install,
+        &historical.source.install_receipt_bytes,
+        &historical.source.volume_set_snapshot_bytes,
     )?;
     Ok(false)
+}
+struct HistoricalBackupSource {
+    install: StoredPaperlessInstallReceipt,
+    source: BackupSource,
 }
 fn validate_historical_custody(
     root: &OwnedPaperlessRoot,
     custody: &BackupCustody,
-) -> Result<StoredPaperlessInstallReceipt, LifecycleError> {
+) -> Result<HistoricalBackupSource, LifecycleError> {
+    let source = read_source_companion(root, custody)?;
     let install: StoredPaperlessInstallReceipt =
-        serde_json::from_slice(&custody.install_receipt_bytes)
+        serde_json::from_slice(&source.install_receipt_bytes)
             .map_err(|_| LifecycleError::Receipt)?;
     validate_install_receipt(&install, &root.display)?;
     let snapshot: PaperlessVolumeSetSnapshot =
-        serde_json::from_slice(&custody.volume_set_snapshot_bytes)
+        serde_json::from_slice(&source.volume_set_snapshot_bytes)
             .map_err(|_| LifecycleError::Receipt)?;
     validate_volume_set_snapshot(&snapshot, &install.project)?;
     if snapshot.volume_set_id != custody.volume_set_id {
@@ -824,10 +857,10 @@ fn validate_historical_custody(
     validate_custody(
         custody,
         &install,
-        &custody.install_receipt_bytes,
-        &custody.volume_set_snapshot_bytes,
+        &source.install_receipt_bytes,
+        &source.volume_set_snapshot_bytes,
     )?;
-    Ok(install)
+    Ok(HistoricalBackupSource { install, source })
 }
 fn validate_custody(
     c: &BackupCustody,
@@ -953,6 +986,97 @@ fn receipt_exists(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(_) => Err(LifecycleError::Receipt),
     }
+}
+fn source_companion_exists(
+    root: &OwnedPaperlessRoot,
+    custody: &BackupCustody,
+) -> Result<bool, LifecycleError> {
+    let dir = backup_job_dir(root, &custody.job_id)?;
+    match dir.symlink_metadata(BACKUP_SOURCE_NAME) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => Ok(true),
+        Ok(_) => Err(LifecycleError::Receipt),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Err(LifecycleError::Receipt),
+    }
+}
+fn read_source_companion(
+    root: &OwnedPaperlessRoot,
+    custody: &BackupCustody,
+) -> Result<BackupSource, LifecycleError> {
+    let dir = backup_job_dir(root, &custody.job_id)?;
+    let path = root
+        .display
+        .join("state")
+        .join(BACKUP_DIR)
+        .join(&custody.job_id)
+        .join(BACKUP_SOURCE_NAME);
+    let bytes = crate::skills::store::read_regular_file_bounded(
+        &dir,
+        OsStr::new(BACKUP_SOURCE_NAME),
+        &path,
+        RECEIPT_READ_LIMIT,
+    )
+    .map_err(|_| LifecycleError::Receipt)?;
+    let source: BackupSource = serde_json::from_slice(&bytes).map_err(|_| LifecycleError::Receipt)?;
+    if source.schema_version != 1
+        || source.operation != "paperless.backup.source"
+        || source.job_id != custody.job_id
+        || source.install_receipt_bytes != custody.install_receipt_bytes
+        || source.volume_set_snapshot_bytes != custody.volume_set_snapshot_bytes
+    {
+        return Err(LifecycleError::Receipt);
+    }
+    Ok(source)
+}
+fn write_source_companion_new(
+    root: &OwnedPaperlessRoot,
+    custody: &BackupCustody,
+) -> Result<(), LifecycleError> {
+    let source = BackupSource {
+        schema_version: 1,
+        operation: "paperless.backup.source".into(),
+        job_id: custody.job_id.clone(),
+        install_receipt_bytes: custody.install_receipt_bytes.clone(),
+        volume_set_snapshot_bytes: custody.volume_set_snapshot_bytes.clone(),
+    };
+    let bytes = serde_json::to_vec(&source).map_err(|_| LifecycleError::Io)?;
+    if bytes.len() > RECEIPT_READ_LIMIT {
+        return Err(LifecycleError::Receipt);
+    }
+    let dir = backup_job_dir(root, &custody.job_id)?;
+    crate::skills::store::atomic_write_private_child_create_new(
+        &dir,
+        OsStr::new(BACKUP_SOURCE_NAME),
+        &root
+            .display
+            .join("state")
+            .join(BACKUP_DIR)
+            .join(&custody.job_id)
+            .join(BACKUP_SOURCE_NAME),
+        &bytes,
+    )
+    .map_err(|_| LifecycleError::Io)?;
+    ensure_bound(root)
+}
+fn ensure_source_companion(
+    root: &OwnedPaperlessRoot,
+    custody: &BackupCustody,
+) -> Result<(), LifecycleError> {
+    ensure_archive_parent(root, &custody.job_id)?;
+    if source_companion_exists(root, custody)? {
+        read_source_companion(root, custody)?;
+        return Ok(());
+    }
+    // A final receipt cannot retroactively manufacture its missing source.
+    if receipt_exists(root, custody)? {
+        return Err(LifecycleError::Receipt);
+    }
+    if write_source_companion_new(root, custody).is_err() {
+        // A create-new result can be uncertain. Only an exact existing
+        // companion makes retry safe; it is never replaced.
+        read_source_companion(root, custody)?;
+    }
+    Ok(())
 }
 fn write_custody(root: &OwnedPaperlessRoot, c: &BackupCustody) -> Result<(), LifecycleError> {
     write_json(root, BACKUP_CUSTODY_NAME, c)
@@ -1130,6 +1254,12 @@ fn read_receipt(
     install_bytes: &[u8],
     snapshot: &[u8],
 ) -> Result<PaperlessBackupReceipt, LifecycleError> {
+    let source = read_source_companion(root, c)?;
+    if source.install_receipt_bytes != install_bytes
+        || source.volume_set_snapshot_bytes != snapshot
+    {
+        return Err(LifecycleError::Receipt);
+    }
     let dir = backup_job_dir(root, &c.job_id)?;
     let path = root
         .display

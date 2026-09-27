@@ -214,6 +214,10 @@ container mount into a bounded archive, verifies its byte count and SHA-256,
 and restores the original running, stopped or mixed service state. A fully
 running source must also pass authenticated API readiness before completion.
 The JSON receipt names all six archives and binds their exact source generation.
+The private immutable source.v1.json beside it preserves the exact nonsecret
+install receipt and volume snapshot for that job, even after later backups.
+Missing or changed committed source metadata is rejected. A fully running
+source uses the same bounded API-readiness wait as Install and Repair.
 Limits are 8 GiB per archive and 24 GiB across the six archives.
 
 A fresh deliberate invocation creates a new job. Interrupted copies or uncertain

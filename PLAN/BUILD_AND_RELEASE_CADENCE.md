@@ -3,6 +3,29 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1660-W1665 Backup source custody and repeated Update retention (2026-09-27):**
+Each Paperless Backup now retains private immutable source.v1.json with exact
+raw install-receipt and volume-snapshot bytes. Missing/tampered completed source
+is rejected; interrupted active source errors restore the original running
+state then hold without replay. A final receipt cannot recreate lost source.
+Read/write admission and the product checker share the64KiB source limit.
+Product36328183083 at0e2d83d4 built successfully then failed at immediate Backup
+readiness after restart. Backup now uses the existing bounded Install/Repair
+readiness wait, including receipt reentry. Its original artifact10934676943
+and27 raw producer bindings authenticate that failure, not product acceptance.
+Product36328185182 built and passed all helper suites, then failed retained
+reattach. The second uninstall discarded nested UpdateRetention from a retained
+Install binding. It now preserves that validated immutable provenance; a full
+second cycle and pre-effect tamper regression cover the producer/consumer chain.
+Original artifact10934702057 and30 producer bindings authenticate the failure.
+The2 Core Clippy findings (unused Digest import and private-bound visibility)
+are fixed. Independent Backup review approved; Root verified the narrow nested
+Update projection and corrected the product-source size-limit review finding.
+Five native cases are added: Portable2189/Group1979/Windows744. Exact generated
+CLI reference remains required before dispatching the native cohorts. Fresh
+hosted Core/product gates are required; no local executable validation, no
+ROAD closure (1324 total/1077 done/245 open/2 partial), no Restore/Update claim
+for Paperless. Evidence: docs/verification/gold-wave1660-1665-lifecycle-recovery.json.
 **W1658-W1659 Hosted Backup build and helper corrections (2026-09-27):**
 The first new gates stopped before product execution: Paperless helper38 found
 two physical receipt paths accidentally changed with the semantic contract ID,

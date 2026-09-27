@@ -4,7 +4,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     io::Write,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 struct Ready(AtomicBool);
@@ -12,6 +12,21 @@ struct Ready(AtomicBool);
 impl ReadinessVerifier for Ready {
     async fn ready(&self, _: &Path, _: &Credentials) -> bool {
         self.0.load(Ordering::SeqCst)
+    }
+}
+struct EventuallyReady(AtomicUsize);
+impl EventuallyReady {
+    fn new() -> Self {
+        Self(AtomicUsize::new(0))
+    }
+    fn calls(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+#[async_trait::async_trait]
+impl ReadinessVerifier for EventuallyReady {
+    async fn ready(&self, _: &Path, _: &Credentials) -> bool {
+        self.0.fetch_add(1, Ordering::SeqCst) >= 2
     }
 }
 
@@ -265,6 +280,12 @@ fn receipt_count(state: &Path) -> usize {
         })
         .count()
 }
+fn source_path(home: &Path, job_id: &str) -> PathBuf {
+    state(home)
+        .join("backups")
+        .join(job_id)
+        .join(BACKUP_SOURCE_NAME)
+}
 fn completed_repair_journal(before: &[u8]) -> (Vec<u8>, Vec<u8>) {
     let receipt: serde_json::Value = serde_json::from_slice(before).unwrap();
     let after = serde_json::to_vec(&receipt).unwrap();
@@ -374,6 +395,40 @@ async fn all_stopped_and_mixed_sources_are_returned_to_their_exact_original_stat
         );
         assert_eq!(fake.streams(), 6);
     }
+}
+#[tokio::test]
+async fn backup_readiness_waits_after_source_restart_and_committed_receipt_reentry() {
+    let (home, credentials, _) = super::super::tests::installed_home_for_uninstall_test().await;
+    let mut fake = StatefulBackupExecutor::new(true);
+    let after_restart = EventuallyReady::new();
+    let completed = backup_at_with(home.path(), &credentials, &mut fake, &after_restart)
+        .await
+        .unwrap();
+    assert!(completed.authenticated_api_ready);
+    assert_eq!(after_restart.calls(), 3);
+    let streams = fake.streams();
+    let stops = fake.commands("stop");
+    let starts = fake.commands("start");
+    let custody_path = state(home.path()).join(BACKUP_CUSTODY_NAME);
+    let mut custody: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&custody_path).unwrap()).unwrap();
+    custody["phase"] = serde_json::Value::String("archive_verified".into());
+    custody["pending_start"] = serde_json::Value::Null;
+    std::fs::write(&custody_path, serde_json::to_vec(&custody).unwrap()).unwrap();
+    let committed_reentry = EventuallyReady::new();
+    let resumed = backup_at_with(
+        home.path(),
+        &credentials,
+        &mut fake,
+        &committed_reentry,
+    )
+    .await
+    .unwrap();
+    assert_eq!(resumed.job_id, completed.job_id);
+    assert_eq!(committed_reentry.calls(), 3);
+    assert_eq!(fake.streams(), streams);
+    assert_eq!(fake.commands("stop"), stops);
+    assert_eq!(fake.commands("start"), starts);
 }
 #[tokio::test]
 async fn exit_zero_stop_or_start_that_did_not_change_state_blocks_copy_or_receipt() {
@@ -682,6 +737,8 @@ async fn source_restored_with_six_archives_and_missing_receipt_commits_same_job_
     )
     .await
     .unwrap();
+    let source_path = source_path(home.path(), &completed.job_id);
+    let source_before = std::fs::read(&source_path).unwrap();
     let custody_path = state(home.path()).join(BACKUP_CUSTODY_NAME);
     let mut custody: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&custody_path).unwrap()).unwrap();
@@ -708,6 +765,7 @@ async fn source_restored_with_six_archives_and_missing_receipt_commits_same_job_
     assert_eq!(fake.streams(), 6);
     assert_eq!(fake.commands("stop"), 3);
     assert_eq!(fake.commands("start"), 3);
+    assert_eq!(std::fs::read(source_path).unwrap(), source_before);
     assert!(
         home.path()
             .join("paperless")
@@ -823,7 +881,18 @@ async fn completed_backup_accepts_changed_active_receipt_and_preserves_first_imm
         .join(&first.job_id)
         .join("receipt.v1.json");
     let first_receipt_bytes = std::fs::read(&first_receipt_path).unwrap();
+    let first_source_path = source_path(home.path(), &first.job_id);
+    let first_source_bytes = std::fs::read(&first_source_path).unwrap();
+    let first_source: BackupSource = serde_json::from_slice(&first_source_bytes).unwrap();
     let active = std::fs::read(receipt_path(home.path())).unwrap();
+    assert_eq!(first_source.schema_version, 1);
+    assert_eq!(first_source.operation, "paperless.backup.source");
+    assert_eq!(first_source.job_id, first.job_id);
+    assert_eq!(first_source.install_receipt_bytes, active);
+    assert_eq!(
+        first_source.volume_set_snapshot_bytes,
+        std::fs::read(state(home.path()).join(VOLUME_SET_NAME)).unwrap()
+    );
     let changed_active = [b"\n".as_slice(), active.as_slice()].concat();
     std::fs::write(receipt_path(home.path()), &changed_active).unwrap();
     let second = backup_at_with(
@@ -840,5 +909,171 @@ async fn completed_backup_accepts_changed_active_receipt_and_preserves_first_imm
         std::fs::read(&first_receipt_path).unwrap(),
         first_receipt_bytes
     );
+    assert_eq!(std::fs::read(first_source_path).unwrap(), first_source_bytes);
     assert_eq!(fake.streams(), 12);
+}
+#[tokio::test]
+async fn completed_backup_rejects_missing_tampered_or_foreign_source_companion_before_effects() {
+    for mutation in ["missing", "tampered", "foreign"] {
+        let (home, credentials, _) =
+            super::super::tests::installed_home_for_uninstall_test().await;
+        let mut fake = StatefulBackupExecutor::new(true);
+        let receipt = backup_at_with(
+            home.path(),
+            &credentials,
+            &mut fake,
+            &Ready(AtomicBool::new(true)),
+        )
+        .await
+        .unwrap();
+        let path = source_path(home.path(), &receipt.job_id);
+        match mutation {
+            "missing" => std::fs::remove_file(&path).unwrap(),
+            "tampered" => std::fs::write(&path, b"{}\n").unwrap(),
+            "foreign" => {
+                let mut source: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                source["job_id"] = serde_json::Value::String(format!(
+                    "paperless-backup-{}",
+                    "f".repeat(64)
+                ));
+                std::fs::write(&path, serde_json::to_vec(&source).unwrap()).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        assert!(matches!(
+            backup_at_with(
+                home.path(),
+                &credentials,
+                &mut fake,
+                &Ready(AtomicBool::new(true))
+            )
+            .await,
+            Err(LifecycleError::Receipt)
+        ));
+        assert_eq!(fake.streams(), 6, "{mutation}");
+        assert_eq!(fake.commands("stop"), 3, "{mutation}");
+        assert_eq!(fake.commands("start"), 3, "{mutation}");
+    }
+}
+#[tokio::test]
+async fn source_restored_with_receipt_but_missing_source_companion_rejects_without_recreation_or_effects()
+{
+    let (home, credentials, _) = super::super::tests::installed_home_for_uninstall_test().await;
+    let mut fake = StatefulBackupExecutor::new(true);
+    let completed = backup_at_with(
+        home.path(),
+        &credentials,
+        &mut fake,
+        &Ready(AtomicBool::new(true)),
+    )
+    .await
+    .unwrap();
+    let custody_path = state(home.path()).join(BACKUP_CUSTODY_NAME);
+    let mut custody: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&custody_path).unwrap()).unwrap();
+    custody["phase"] = serde_json::Value::String("source_restored".into());
+    custody["pending_start"] = serde_json::Value::Null;
+    std::fs::write(&custody_path, serde_json::to_vec(&custody).unwrap()).unwrap();
+    let source_path = source_path(home.path(), &completed.job_id);
+    std::fs::remove_file(&source_path).unwrap();
+    assert!(home
+        .path()
+        .join("paperless")
+        .join("state/backups")
+        .join(&completed.job_id)
+        .join("receipt.v1.json")
+        .is_file());
+    let streams = fake.streams();
+    let stops = fake.commands("stop");
+    let starts = fake.commands("start");
+    assert!(matches!(
+        backup_at_with(
+            home.path(),
+            &credentials,
+            &mut fake,
+            &Ready(AtomicBool::new(true))
+        )
+        .await,
+        Err(LifecycleError::Command(
+            "paperless_backup_source_companion_invalid"
+        ))
+    ));
+    assert!(!source_path.is_file());
+    assert_eq!(fake.streams(), streams);
+    assert_eq!(fake.commands("stop"), stops);
+    assert_eq!(fake.commands("start"), starts);
+}
+#[tokio::test]
+async fn corrupt_interrupted_source_companion_restores_then_holds_without_copy_replay() {
+    for phase in ["stopped", "archive_verified"] {
+        let (home, credentials, _) =
+            super::super::tests::installed_home_for_uninstall_test().await;
+        let mut fake = StatefulBackupExecutor::new(true);
+        let completed = backup_at_with(
+            home.path(),
+            &credentials,
+            &mut fake,
+            &Ready(AtomicBool::new(true)),
+        )
+        .await
+        .unwrap();
+        let custody_path = state(home.path()).join(BACKUP_CUSTODY_NAME);
+        let mut custody: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&custody_path).unwrap()).unwrap();
+        custody["phase"] = serde_json::Value::String(phase.into());
+        custody["pending_start"] = serde_json::Value::Null;
+        if phase == "stopped" {
+            custody["archives"] = serde_json::Value::Array(vec![]);
+        } else {
+            std::fs::remove_file(
+                home.path()
+                    .join("paperless")
+                    .join("state/backups")
+                    .join(&completed.job_id)
+                    .join("receipt.v1.json"),
+            )
+            .unwrap();
+        }
+        std::fs::write(&custody_path, serde_json::to_vec(&custody).unwrap()).unwrap();
+        let source_path = source_path(home.path(), &completed.job_id);
+        std::fs::write(&source_path, b"{}\n").unwrap();
+        fake.running.values_mut().for_each(|running| *running = false);
+        let streams = fake.streams();
+        let stops = fake.commands("stop");
+        let starts = fake.commands("start");
+        assert!(matches!(
+            backup_at_with(
+                home.path(),
+                &credentials,
+                &mut fake,
+                &Ready(AtomicBool::new(true))
+            )
+            .await,
+            Err(LifecycleError::Command(
+                "paperless_backup_source_companion_invalid"
+            ))
+        ));
+        assert!(fake.running.values().all(|running| *running), "{phase}");
+        assert_eq!(fake.streams(), streams, "{phase}");
+        assert_eq!(fake.commands("stop"), stops, "{phase}");
+        assert_eq!(fake.commands("start"), starts + 3, "{phase}");
+        let held: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&custody_path).unwrap()).unwrap();
+        assert_eq!(held["phase"], "held", "{phase}");
+        assert_eq!(std::fs::read(&source_path).unwrap(), b"{}\n");
+        assert!(matches!(
+            backup_at_with(
+                home.path(),
+                &credentials,
+                &mut fake,
+                &Ready(AtomicBool::new(true))
+            )
+            .await,
+            Err(LifecycleError::Receipt)
+        ));
+        assert_eq!(fake.streams(), streams, "{phase}");
+        assert_eq!(fake.commands("stop"), stops, "{phase}");
+        assert_eq!(fake.commands("start"), starts + 3, "{phase}");
+    }
 }

@@ -16,6 +16,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import paperless_product_canary as canary
 
 
+def write_backup_source(root: Path, job_id: str, install_raw: bytes, snapshot_raw: bytes) -> None:
+    path = root / "source.v1.json"
+    path.write_text(json.dumps({"schema_version": 1, "operation": "paperless.backup.source", "job_id": job_id, "install_receipt_bytes": list(install_raw), "volume_set_snapshot_bytes": list(snapshot_raw)}), encoding="utf-8")
+    os.chmod(path, 0o600)
+
+
 def container(service: str = "webserver") -> dict:
     project = "neoth-paperless-abcdef123456"
     mounts = [{"Type": "volume", "Name": f"{project}_paperless_consume", "Destination": "/usr/src/paperless/consume"}, {"Type": "volume", "Name": f"{project}_paperless_data", "Destination": "/usr/src/paperless/data"}, {"Type": "volume", "Name": f"{project}_paperless_media", "Destination": "/usr/src/paperless/media"}, {"Type": "volume", "Name": f"{project}_paperless_export", "Destination": "/usr/src/paperless/export"}] if service == "webserver" else [{"Type": "volume", "Name": f"{project}_paperless_valkey", "Destination": "/data"}]
@@ -396,6 +402,7 @@ class CustodyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory); root = home / "paperless" / "state" / "backups" / job_id; root.mkdir(parents=True)
             for path in (home, home / "paperless", home / "paperless" / "state", home / "paperless" / "state" / "backups", root): os.chmod(path, 0o700)
+            write_backup_source(root, job_id, install_raw, snapshot_raw)
             archives = []
             for index, ((logical, service, mount), container_id) in enumerate(zip(canary.VOLUMES, (identities[0], identities[0], identities[0], identities[0], identities[1], identities[2]), strict=True)):
                 path = root / f"{logical}.tar"
@@ -427,6 +434,7 @@ class CustodyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory); root = home / "paperless" / "state" / "backups" / job_id; root.mkdir(parents=True)
             for path in (home, home / "paperless", home / "paperless" / "state", home / "paperless" / "state" / "backups", root): os.chmod(path, 0o700)
+            write_backup_source(root, job_id, install_raw, snapshot_raw)
             archives = []
             for index, ((logical, service, mount), container_id) in enumerate(zip(canary.VOLUMES, (identities[0], identities[0], identities[0], identities[0], identities[1], identities[2]), strict=True)):
                 path = root / f"{logical}.tar"; payload = canary.MARKER_PDF if logical == "paperless_media" else f"archive-{index}".encode()
@@ -453,11 +461,41 @@ class CustodyTests(unittest.TestCase):
             archive.unlink(); os.symlink(home / "elsewhere", archive)
             with self.assertRaises(canary.Failure):
                 canary.backup_archive_path(home, job_id, "paperless_data", f"state/backups/{job_id}/paperless_data.tar")
+
             archive.unlink(); archive.write_bytes(b"archive"); os.chmod(archive, 0o600)
             (home / "paperless" / "state" / "backups").rename(home / "backups-real")
             os.symlink(home / "backups-real", home / "paperless" / "state" / "backups")
             with self.assertRaises(canary.Failure):
                 canary.backup_archive_path(home, job_id, "paperless_data", f"state/backups/{job_id}/paperless_data.tar")
+
+    def test_backup_source_requires_exact_private_immutable_generation_metadata(self) -> None:
+        job_id = "paperless-backup-" + "e" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory); root = home / "paperless" / "state" / "backups" / job_id
+            root.mkdir(parents=True)
+            for path in (home, home / "paperless", home / "paperless" / "state", home / "paperless" / "state" / "backups", root): os.chmod(path, 0o700)
+            path = root / "source.v1.json"
+            with self.assertRaises(canary.Failure): canary.validate_backup_source(home, job_id, b"install", b"snapshot")
+            write_backup_source(root, job_id, b"install", b"snapshot")
+            original = path.read_bytes()
+            canary.validate_backup_source(home, job_id, b"install", b"snapshot")
+            path.write_bytes(original + b" " * (64 * 1024 - len(original)))
+            canary.validate_backup_source(home, job_id, b"install", b"snapshot")
+            path.write_bytes(original + b" " * (64 * 1024 + 1 - len(original)))
+            with self.assertRaises(canary.Failure): canary.validate_backup_source(home, job_id, b"install", b"snapshot")
+            for mutate in (
+                lambda value: value.__setitem__("job_id", "paperless-backup-" + "f" * 64),
+                lambda value: value.__setitem__("install_receipt_bytes", list(b"other")),
+                lambda value: value.__setitem__("volume_set_snapshot_bytes", list(b"other")),
+                lambda value: value.__setitem__("schema_version", True),
+            ):
+                changed = json.loads(original); mutate(changed); path.write_text(json.dumps(changed))
+                with self.subTest(mutate=mutate), self.assertRaises(canary.Failure): canary.validate_backup_source(home, job_id, b"install", b"snapshot")
+            path.write_bytes(original); os.chmod(path, 0o644)
+            with self.assertRaises(canary.Failure): canary.validate_backup_source(home, job_id, b"install", b"snapshot")
+            os.chmod(path, 0o600); path.unlink(); os.symlink(home / "foreign", path)
+            with self.assertRaises(canary.Failure): canary.validate_backup_source(home, job_id, b"install", b"snapshot")
+
 
     def test_backup_digest_stream_cap_and_media_member_cap_are_enforced(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

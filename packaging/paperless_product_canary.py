@@ -717,6 +717,30 @@ def media_archive_contains_marker(path: Path) -> None:
         raise Failure("backup_media_archive_invalid") from error
 
 
+def validate_backup_source(home: Path, job_id: str, install_raw: bytes, snapshot_raw: bytes) -> None:
+    path = backup_root(home, job_id) / "source.v1.json"
+    code = "backup_source_invalid"
+    private_path(path, False, code)
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as source:
+            before = os.fstat(source.fileno())
+            raw = source.read(64 * 1024 + 1)
+            after = os.fstat(source.fileno())
+        current = os.lstat(path)
+    except OSError as error:
+        raise Failure(code) from error
+    identity = lambda metadata: (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns)
+    if len(raw) > 64 * 1024 or identity(before) != identity(after) or identity(after) != identity(current):
+        raise Failure(code)
+    if not stat.S_ISREG(before.st_mode) or before.st_mode & 0o077:
+        raise Failure(code)
+    expected = {"schema_version": 1, "operation": "paperless.backup.source", "job_id": job_id, "install_receipt_bytes": list(install_raw), "volume_set_snapshot_bytes": list(snapshot_raw)}
+    value = read_json_bytes(raw, code)
+    if type(value.get("schema_version")) is not int or any(not isinstance(value.get(key), list) or any(type(byte) is not int for byte in value[key]) for key in ("install_receipt_bytes", "volume_set_snapshot_bytes")) or value != expected:
+        raise Failure(code)
+
+
 def validate_backup(value: dict, home: Path, project: str, config_ids: dict[str, str], identities: tuple[str, ...], volume_set_id: str, install_receipt_bytes: bytes, volume_set_snapshot_bytes: bytes, expected_running: bool) -> tuple[str, tuple[Path, ...]]:
     required = {"schema_version", "operation", "job_id", "contract_id", "project", "install_receipt_sha256", "volume_set_id", "volume_set_snapshot_sha256", "archives", "original_running", "restored_running", "authenticated_api_ready"}
     if set(value) != required or value.get("schema_version") != 1 or value.get("operation") != "paperless.backup" or not isinstance(value.get("job_id"), str) or not BACKUP_JOB_ID.fullmatch(value["job_id"]) or value.get("contract_id") != PAPERLESS_CONTRACT_ID or value.get("project") != project or value.get("install_receipt_sha256") != hashlib.sha256(install_receipt_bytes).hexdigest() or value.get("volume_set_id") != volume_set_id or value.get("volume_set_snapshot_sha256") != hashlib.sha256(volume_set_snapshot_bytes).hexdigest() or value.get("authenticated_api_ready") is not expected_running:
@@ -724,6 +748,7 @@ def validate_backup(value: dict, home: Path, project: str, config_ids: dict[str,
     expected_states = [{"service": service, "running": expected_running} for service in IMAGES]
     if value.get("original_running") != expected_states or value.get("restored_running") != expected_states or not isinstance(value.get("archives"), list) or len(value["archives"]) != len(VOLUMES):
         raise Failure("backup_receipt_invalid")
+    validate_backup_source(home, value["job_id"], install_receipt_bytes, volume_set_snapshot_bytes)
     paths: list[Path] = []
     for item, (logical, service, mount), container_id in zip(value["archives"], VOLUMES, (identities[0], identities[0], identities[0], identities[0], identities[1], identities[2]), strict=True):
         if not isinstance(item, dict) or set(item) != {"logical_name", "service", "container_id", "image_id", "mounted_source", "archive_path", "bytes", "sha256"} or item.get("logical_name") != logical or item.get("service") != service or item.get("container_id") != container_id or item.get("image_id") != config_ids[service] or item.get("mounted_source") != mount:

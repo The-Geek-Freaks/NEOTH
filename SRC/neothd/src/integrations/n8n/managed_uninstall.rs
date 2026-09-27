@@ -201,7 +201,10 @@ fn write_completion_receipt(
                 .retained_reinstall
                 .as_ref()
                 .and_then(|source| source.rollback_restore.clone()),
-            None,
+            binding
+                .retained_reinstall
+                .as_ref()
+                .and_then(|source| source.update.clone()),
         ),
         super::RuntimeLineage::Rollback(lineage) => {
             let receipt = super::managed_rollback::resolve_ready_receipt_at(home, source)?

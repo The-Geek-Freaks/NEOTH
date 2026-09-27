@@ -787,6 +787,137 @@ async fn update_volume_reinstalls_after_uninstall_with_its_lineage_owner() {
         Some(update.job_id.as_str())
     );
     assert!(state.lock().unwrap().live.is_some());
+    let expected_update = binding
+        .retained_reinstall
+        .as_ref()
+        .and_then(|source| source.update.clone())
+        .unwrap();
+
+    let second_uninstall = super::super::managed_uninstall::uninstall_managed_at_with(
+        home.path(),
+        &mut runner,
+    )
+    .await
+    .unwrap();
+    assert_eq!(second_uninstall.state, JobState::Ready);
+    let second_receipt = home
+        .path()
+        .join(format!("n8n-uninstall-{}.receipt.json", second_uninstall.job_id));
+    let second_view: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&second_receipt).unwrap()).unwrap();
+    assert_eq!(
+        second_view["update"]["update_job_id"].as_str(),
+        Some(expected_update.update_job_id.as_str())
+    );
+    assert_eq!(
+        second_view["update"]["update_manifest_sha256"].as_str(),
+        Some(expected_update.update_manifest_sha256.as_str())
+    );
+    assert_eq!(
+        second_view["update"]["source_archive_sha256"].as_str(),
+        Some(expected_update.source_archive_sha256.as_str())
+    );
+    assert_eq!(
+        second_view["update"]["migrated_content_sha256"].as_str(),
+        Some(expected_update.migrated_content_sha256.as_str())
+    );
+    assert_eq!(
+        second_view["source_volume_owner_install_job_id"].as_str(),
+        Some(update.job_id.as_str())
+    );
+    assert_eq!(
+        second_view["source_install_job_id"].as_str(),
+        Some(reinstall.job_id.as_str())
+    );
+    let (_tx, mut cancel) = tokio::sync::oneshot::channel();
+    let second_reinstall = super::super::install_retained_at_with(
+        home.path(),
+        &second_uninstall.job_id,
+        SecretString::from("update-key"),
+        &mut runner,
+        &Ready,
+        &Probe,
+        &mut cancel,
+    )
+    .await
+    .unwrap();
+    assert_eq!(second_reinstall.state, JobState::Ready);
+    let binding = super::super::read_binding(home.path()).unwrap().unwrap();
+    assert_eq!(binding.volume, update_volume);
+    assert_eq!(
+        binding
+            .retained_reinstall
+            .as_ref()
+            .and_then(|source| source.update.as_ref())
+            .map(|source| (source.update_job_id.as_str(), source.update_manifest_sha256.as_str())),
+        Some((expected_update.update_job_id.as_str(), expected_update.update_manifest_sha256.as_str()))
+    );
+}
+
+#[tokio::test]
+async fn tampered_retained_update_provenance_blocks_second_reinstall_before_effects() {
+    let (home, mut runner, state, _source) = fixture(true).await;
+    let update = update_managed_at_with(
+        home.path(),
+        "n8n-2.40.7",
+        "linux/amd64",
+        SecretString::from("update-key"),
+        &mut runner,
+        &Reader,
+        &Ready,
+        &Probe,
+    )
+    .await
+    .unwrap();
+    let uninstall = super::super::managed_uninstall::uninstall_managed_at_with(
+        home.path(),
+        &mut runner,
+    )
+    .await
+    .unwrap();
+    let (_tx, mut cancel) = tokio::sync::oneshot::channel();
+    super::super::install_retained_at_with(
+        home.path(),
+        &uninstall.job_id,
+        SecretString::from("update-key"),
+        &mut runner,
+        &Ready,
+        &Probe,
+        &mut cancel,
+    )
+    .await
+    .unwrap();
+    let second_uninstall = super::super::managed_uninstall::uninstall_managed_at_with(
+        home.path(),
+        &mut runner,
+    )
+    .await
+    .unwrap();
+    let path = home
+        .path()
+        .join(format!("n8n-uninstall-{}.receipt.json", second_uninstall.job_id));
+    let mut receipt: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    receipt["update"]["source_archive_sha256"] = serde_json::Value::String("0".repeat(64));
+    std::fs::write(path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+
+    let before = state.lock().unwrap().calls.clone();
+    let (_tx, mut cancel) = tokio::sync::oneshot::channel();
+    assert!(
+        super::super::install_retained_at_with(
+            home.path(),
+            &second_uninstall.job_id,
+            SecretString::from("update-key"),
+            &mut runner,
+            &Ready,
+            &Probe,
+            &mut cancel,
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(state.lock().unwrap().calls, before);
+    assert_eq!(update.state, JobState::Ready);
 }
 
 #[tokio::test]

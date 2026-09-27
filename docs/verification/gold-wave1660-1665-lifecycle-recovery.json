@@ -1,0 +1,59 @@
+{
+  "schema": "neoth-gold-lifecycle-recovery/v1",
+  "batch": "W1660-W1665",
+  "capturedUtc": "2026-09-27T15:23:20.0018762Z",
+  "base": "0e2d83d4f003674d4cdd6af7ce48c4530f2146dd",
+  "paperlessFailure": {
+    "diagnostic": "paperless_backup_readiness_failed",
+    "cleanupProven": false,
+    "artifact": 10934676943,
+    "sourceBindings": 27,
+    "run": 36328183083,
+    "zipSha256": "3f100ea1bc31b75aeff7022a275b2e97cd756062d00136370dcc45a77a16c607"
+  },
+  "updateFailure": {
+    "diagnostic": "n8n_retained_reinstall_volume_unproven",
+    "cleanupProven": false,
+    "artifact": 10934702057,
+    "sourceBindings": 30,
+    "run": 36328185182,
+    "zipSha256": "2a9c5a81336487d6ba3535de08dfb629d4e951c33b1c3f2aae58c22ab1d752f4"
+  },
+  "coreFailure": {
+    "fixes": [
+      "remove unused Digest import",
+      "keep private readiness bound helper private"
+    ],
+    "run": 36328180683
+  },
+  "changes": [
+    "immutable exact raw per-job Backup source metadata",
+    "receipt-present source loss cannot recreate metadata",
+    "interrupted corrupt source restores services then Held without replay",
+    "bounded readiness after restart and receipt reentry",
+    "preserve nested Update retention on repeated uninstall",
+    "source writer and canary share64KiB limit"
+  ],
+  "newNativeTests": 5,
+  "inventories": {
+    "windows": 744,
+    "group": 1979,
+    "portable": 2189
+  },
+  "review": {
+    "backup": "W1661/W1665 independent static approval; Root added pre-write size bound",
+    "product": "W1663 size-limit mismatch fixed by Root with exact64KiB/64KiB+1 boundary coverage",
+    "update": "W1664 author plus independent Root projection/manifest-chain review"
+  },
+  "sourceHashes": {
+    "SRC/neothd/src/installers/paperless_backup_tests.rs": "116A39D2E6BD86BB226875FFE1BEC4585739037C4D777535827DFE2C66489F76",
+    "SRC/neothd/src/integrations/n8n/managed_update_tests.rs": "9C17CFAE8B0F4D5FA2566EA537C4ADB8A2BDF92747604887441967CD750D8013",
+    "SRC/neothd/src/integrations/n8n/managed_uninstall.rs": "9CD2B43DE00DE702A3818869C8E0614BE4FB83341AEB7BF950F201B44BD2F027",
+    "SRC/neothd/src/installers/paperless_backup.rs": "979C1D613E41A54CAD322138DC14C7A13A8C132D719603A3C6F88CDA81EE8B5D",
+    "packaging/tests/test_paperless_product_canary.py": "561F2728B56949F51FD39F51362D113E6789BF5FAF2F2AB0618F8EE11651E014",
+    "packaging/paperless_product_canary.py": "C086DAE7EBDBF1703A02C115C97B577B988475D30AEF7FC49AAB81056A172646"
+  },
+  "hostedAcceptance": "pending",
+  "localExecutableValidationRan": false,
+  "roadClosed": 0
+}
