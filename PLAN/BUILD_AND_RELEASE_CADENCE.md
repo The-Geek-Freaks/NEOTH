@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1639 Managed Update product validator contract repair (2026-09-27):**
+Product36322785782 at4670105b failed downstream_job_manifest_invalid after
+successful compilation. Its original artifact10933850282/API digest and all30
+raw producer bindings verify. The canary expected raw Ready-row fields from
+observe_exact_job, whose actual contract validates that row and returns only
+its manifest/revision/hash projection. The consumer now uses that projection;
+regressions exercise the real observer with valid, nonready, foreign,
+incomplete and malformed database rows. Independent static review approved.
+The failed run proves neither full downstream lifecycle nor cleanup; all four
+cleanup booleans were false. A fresh product run is required. Core36323249105
+passed slim Clippy and is type-checking tests. Paperless Backup remains WIP
+under independent correction; no ROAD closure or local executable checks.
+Evidence: docs/verification/gold-wave1639-update-observer-repair.json.
 **W1638 Managed Update builds; remaining Clippy corrections (2026-09-27):**
 Product36322785782 at4670105b passed its helper checks and compiled the public
 CLI; its actual Docker lifecycle is still running at this snapshot. Core

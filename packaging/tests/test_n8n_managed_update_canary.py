@@ -107,4 +107,17 @@ class Boundaries(unittest.TestCase):
    value["source_operation"]="install"
    receipt_path.write_text(json.dumps(value),encoding="utf-8")
    with self.assertRaises(canary.Failure): canary.validate_update_backup(home,"backup","f"*64,update)
+class JobManifestTests(unittest.TestCase):
+ def test_real_observer_projection_returns_validated_manifest(self):
+  job="00000000-0000-4000-8000-000000000001"
+  row={"job_id":job,"operation":"backup","state":"ready","state_revision":5,"completed_steps":4,"total_steps":4,"manifest_sha256":"a"*64}
+  with patch.object(canary.product,"run",return_value=json.dumps([row]).encode()):
+   self.assertEqual(canary.job_manifest(Path("/unused"),job,"backup"),"a"*64)
+ def test_real_observer_rejects_nonready_foreign_incomplete_or_invalid_row(self):
+  job="00000000-0000-4000-8000-000000000001"
+  base={"job_id":job,"operation":"backup","state":"ready","state_revision":5,"completed_steps":4,"total_steps":4,"manifest_sha256":"a"*64}
+  for change in ({"state":"failed"},{"operation":"repair"},{"job_id":"foreign"},{"completed_steps":3},{"manifest_sha256":"invalid"}):
+   row={**base,**change}
+   with self.subTest(change=change), patch.object(canary.product,"run",return_value=json.dumps([row]).encode()):
+    with self.assertRaises(canary.product.Failure): canary.job_manifest(Path("/unused"),job,"backup")
 if __name__=="__main__": unittest.main()

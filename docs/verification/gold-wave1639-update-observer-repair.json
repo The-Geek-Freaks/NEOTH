@@ -1,0 +1,17 @@
+{
+  "schema": "neoth-gold-hosted-repair/v1",
+  "batch": "W1639",
+  "capturedUtc": "2026-09-27T13:49:15.4662387Z",
+  "producer": "4670105bb42c9d8cf5984d2148c7ee30357c972f",
+  "productRun": 36322785782,
+  "artifact": 10933850282,
+  "zipSha256": "361c1515e7723d3e8ab7eee05bc46d4cde7aa2bf2c6b8962ff13bdd73cd374f5",
+  "producerBindings": 30,
+  "status": "PRODUCT_FAILURE_AUTHENTICATED_VALIDATOR_REPAIRED_RERUN_REQUIRED",
+  "failureStage": "downstream_job_manifest_invalid",
+  "diagnosis": "Raw row fields were required on an already validated hashed observer projection",
+  "regressions": "Real observe_exact_job with runner boundary mocked; Ready success and nonready/foreign/incomplete/invalid manifest rejection",
+  "cleanupProven": false,
+  "localExecutableValidationRan": false,
+  "roadClosed": 0
+}

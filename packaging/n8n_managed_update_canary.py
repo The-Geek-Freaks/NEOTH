@@ -75,10 +75,11 @@ def ready_operation(raw_bytes, operation):
     return value["job_id"]
 
 def job_manifest(home, job, operation):
-    row = product.observe_exact_job(home, job, operation)
-    manifest = row.get("manifest_sha256")
-    if (row.get("state") != "ready" or row.get("failure_code") is not None
-            or not isinstance(manifest, str) or not re.fullmatch(r"[0-9a-f]{64}", manifest)):
+    # The observer validates the complete Ready row and returns its hashed
+    # projection, not the original database row.
+    observation = product.observe_exact_job(home, job, operation)
+    manifest = observation.get("manifest_sha256")
+    if not isinstance(manifest, str) or not re.fullmatch(r"[0-9a-f]{64}", manifest):
         raise Failure("downstream_job_manifest_invalid")
     return manifest
 
