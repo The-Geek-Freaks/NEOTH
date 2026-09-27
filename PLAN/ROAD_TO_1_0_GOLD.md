@@ -8,6 +8,24 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W1744-W1746 Archive Bridge startup evidence and native comparison (2026-09-28):**
+ArchiveBridge36353049554 atfd141bf4 failed before initial pairing with
+`daemon_exited_early`, rc1, and an unclassified1731-byte startup log. Original
+artifact10943331032 ZIP093dfeea8f438784c2a9391bf8cfa4e9016b4db0b8fb43248e8540219743cc59
+is authenticated; all six cleanup flags are true. The removed raw log does not
+prove a particular error. The next canary reports only existing fixed startup
+milestones/error classes. Its private short RUNNER_TEMP root also resolves the
+separately proven later Unix socket-path cap; it is not claimed as the cause
+of the unpaired startup failure. Production startup guards remain unchanged.
+Old Windows36351443009 atb26808ea is now authenticated:777 selected,773 pass,
+4 failures matching the old Linux cohort exactly; original artifact10942952990
+ZIP02f077da90afc05b6ed2af1daa91a425d9082f4b80e5cd35d97a3db50b9b87fc.
+The immutable-volume fixture fix is published at8b434951. Its Preflight and
+CodeQL pass; Group36353588150 and Windows36353589543 remain pending.
+No new native/product acceptance or ROAD closure;1324/1077/245/2 unchanged.
+Evidence: work/gold-20260906/wave1744-bridge-startup and
+work/gold-20260906/wave1746-native-rollback-evidence. Strict local BSOD hold.
+
 **W1742 Rollback native failure isolated (2026-09-27):**
 Group36351441068 atb26808ea executed2012 selected cases:2008 single-pass
 terminals and4 failures, all in the new stateful Rollback cohort. The original

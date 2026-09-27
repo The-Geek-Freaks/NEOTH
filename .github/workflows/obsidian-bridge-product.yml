@@ -32,6 +32,9 @@ jobs:
           set -euo pipefail
           evidence="$RUNNER_TEMP/obsidian-bridge-evidence-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           mkdir -m 700 -p "$evidence"
+          # Bridge pathname sockets must fit the product's <100-byte cap.
+          root="$(mktemp -d "$RUNNER_TEMP/ab.XXXXXX")"
+          printf 'BRIDGE_CANARY_ROOT=%s\n' "$root" >> "$GITHUB_ENV"
           printf '{"schema_version":1,"source_head":"%s","outcome":"failed","stage":"product_not_started","cleanup_proven":false}\n' "$GITHUB_SHA" > "$evidence/receipt.json"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -82,8 +85,7 @@ jobs:
           RUST_BACKTRACE: '0'
         run: |
           set -euo pipefail
-          root="$RUNNER_TEMP/w1736-obsidian-bridge-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          mkdir -m 700 "$root"
+          root="$BRIDGE_CANARY_ROOT"
           python3 packaging/obsidian_archive_bridge_product_canary.py \
             --binary "$PWD/SRC/target/debug/neoth" \
             --root "$root" --home "$root/neoth-home" --vault "$root/vault" \
@@ -94,9 +96,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          receipt="$RUNNER_TEMP/w1736-obsidian-bridge-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/receipt/receipt.json"
+          receipt="${BRIDGE_CANARY_ROOT:-}/receipt/receipt.json"
           evidence="$RUNNER_TEMP/obsidian-bridge-evidence-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          if [ -f "$receipt" ] && [ ! -L "$receipt" ]; then
+          if [ -n "${BRIDGE_CANARY_ROOT:-}" ] && [ -f "$receipt" ] && [ ! -L "$receipt" ]; then
             cp "$receipt" "$evidence/receipt.json"
           fi
       - name: Upload redacted product receipt

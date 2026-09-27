@@ -34,6 +34,12 @@ def require_hosted(root: Path, home: Path, vault: Path, receipt: Path) -> None:
     if not re.fullmatch(r"[0-9a-f]{40}", os.environ.get("GITHUB_SHA", "")): raise Failure("hosted_guard_failed")
     if not root.is_dir() or root.is_symlink() or root.parent.resolve() != Path(os.environ.get("RUNNER_TEMP", "")).resolve() or any(root.iterdir()): raise Failure("isolated_root_invalid")
     if home.resolve() != root.resolve() / "neoth-home" or vault.resolve() != root.resolve() / "vault" or receipt.resolve().parent != root.resolve() / "receipt" or receipt.name != "receipt.json": raise Failure("isolated_path_invalid")
+    # The paired Unix implementation appends exactly this 32-hex UUID suffix
+    # and rejects encoded socket paths at 100 bytes.  Check the prospective
+    # path before init so a workflow-root change cannot defer this failure to
+    # the later paired start.  The hosted product lane runs on Linux.
+    prospective_socket = home / ("obsidian-bridge-" + "0" * 32 + ".sock")
+    if len(os.fsencode(prospective_socket)) >= 100: raise Failure("bridge_socket_path_too_long")
 
 def run(argv: list[str], env: dict[str, str], timeout: int = 45) -> bytes:
     try:
@@ -59,15 +65,60 @@ def write_bridge_config(home: Path, vault: Path) -> None:
 def redacted_daemon_diagnostic(reason: str, returncode: int | None, raw: bytes) -> dict:
     if reason not in {"daemon_exited_early", "daemon_not_ready"}: raise Failure("daemon_diagnostic_reason_invalid")
     bounded = raw[:LIMIT]
+    # These literals are stable source-owned error contexts.  They turn a
+    # failed hosted start into a closed diagnostic category without retaining
+    # the surrounding error text, which can contain local paths or secrets.
     signatures = (
         (b"GOLD-ADAPT-OH-03: onboarding incomplete", "onboarding_incomplete"),
         (b"mode 0o700 required", "home_permissions_rejected"),
         (b"missing field", "configuration_missing_field"),
         (b"runtime config pair at", "runtime_config_pair_rejected"),
+        (b"operator hooks at", "startup_hooks_rejected"),
+        (b"establish instance WAL HMAC authority before recovery scan", "wal_authority_rejected"),
+        (b"write BOOT WAL frame", "boot_wal_write_failed"),
+        (b"persist instance clock floor", "clock_floor_persist_failed"),
+        (b"open daemon membership authority", "membership_authority_open_failed"),
+        (b"join membership outbox startup replay", "membership_outbox_join_failed"),
+        (b"replay membership outbox before carrier startup", "membership_outbox_replay_failed"),
+        (b"start daemon membership/audit RPC", "membership_audit_rpc_start_failed"),
+        (b"start mandatory daemon audit RPC", "audit_rpc_start_failed"),
+        (b"select active Obsidian connector authority for Archive Bridge", "bridge_authority_rejected"),
+        (b"obsidian_vault is required", "bridge_vault_missing"),
+        (b"existing WAL master key is absent at", "wal_master_key_missing"),
+        (b"read bridge pairing record", "bridge_pairing_record_unreadable"),
+        (b"parse bridge pairing record", "bridge_pairing_record_invalid"),
+        (b"invalid bridge pairing record", "bridge_pairing_record_invalid"),
+        (b"construct private connector-control authority projection", "connector_control_projection_failed"),
+        (b"connector-control operator_id is incompatible with SubjectId", "connector_control_subject_invalid"),
+        (b"connector-control requires an operator_id compatible with SubjectId", "connector_control_subject_invalid"),
+        (b"attach sealed connector-control runtime to Obsidian Archive Bridge", "bridge_runtime_attachment_failed"),
+        (b"bind existing private Obsidian Archive Bridge IPC", "bridge_ipc_bind_failed"),
+        (b"start private connector-control RPC", "connector_control_rpc_start_failed"),
+        (b"recover pending consent mutation before provider startup", "consent_recovery_failed"),
+        (b"recover pending counterparty-consent audit before provider startup", "counterparty_consent_recovery_failed"),
+        (b"recover pending audited Skill mutation before daemon registry load", "skill_mutation_recovery_failed"),
+        (b"join Self-Improve journal recovery before daemon registry load", "self_improve_recovery_join_failed"),
+        (b"recover Self-Improve journal after installed-Skill reconciliation", "self_improve_recovery_failed"),
+        (b"invalid OMI configuration", "omi_configuration_invalid"),
+        (b"consent gate (V03-08 + A-2)", "provider_consent_rejected"),
+        (b"daemon startup cannot retain Allow Once consent", "provider_consent_ephemeral_rejected"),
+        (b"load skill registry for daemon instance", "skill_registry_load_failed"),
+        (b"start skill registry watcher for daemon instance", "skill_registry_watcher_start_failed"),
+    )
+    # These are success messages already emitted by serve.  They only say how
+    # far this start demonstrably got; no synthetic progress is inferred.
+    milestones = (
+        (b"loaded freedom.yaml", "config_loaded"),
+        (b"BOOT event written and fsynced", "boot_wal_persisted"),
+        (b"obsidian vault reader cron enabled", "obsidian_reader_started"),
+        (b"skill registry primed for daemon", "skill_registry_primed"),
+        (b"TRAIL-04: ViewsExecutor ready (writer:1 + readers:4)", "views_executor_ready"),
     )
     # Emit only a fixed diagnostic class; never return matched text or paths.
     classification = next((code for marker, code in signatures if marker in bounded), "unclassified")
-    return {"reason": reason, "classification": classification, "returncode": returncode, "log_sha256": hashlib.sha256(bounded).hexdigest(), "log_bytes": len(bounded), "log_truncated": len(raw) > LIMIT}
+    observed = ((bounded.rfind(marker), code) for marker, code in milestones if marker in bounded)
+    last_milestone = max(observed, default=(-1, "not_observed"))[1]
+    return {"reason": reason, "classification": classification, "last_milestone": last_milestone, "returncode": returncode, "log_sha256": hashlib.sha256(bounded).hexdigest(), "log_bytes": len(bounded), "log_truncated": len(raw) > LIMIT}
 
 def capture_daemon_diagnostic(path: Path, reason: str, returncode: int | None) -> dict:
     try:

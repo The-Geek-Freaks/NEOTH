@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-27T21:55:41.8218219Z",
-  "validationStatus": "Rollback original Docker-label fixture correction reviewed; hosted2012/777 retry pending",
+  "capturedUtc": "2026-09-27T22:13:05.9950246Z",
+  "validationStatus": "W1745 ArchiveBridge diagnostic source reviewed; hosted execution pending; W1746 old native failures authenticated",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -108,8 +108,8 @@
     },
     {
       "path": ".github/workflows/obsidian-bridge-product.yml",
-      "bytes": 4436,
-      "sha256": "FB5ABF6FBF1DB7267EF3FB74D15E13E082526753D3D1901F59BFFA29037A4D71"
+      "bytes": 4542,
+      "sha256": "95DC305BD7E289494EAB37784CAC44F3A39E057AE6E70B53D77F1F013637AD35"
     },
     {
       "path": ".github/workflows/openclaw-schema-inventory.yml",
@@ -3488,8 +3488,8 @@
     },
     {
       "path": "packaging/obsidian_archive_bridge_product_canary.py",
-      "bytes": 24968,
-      "sha256": "5D2652FC3E1704C342ACE206B98255E98EF1D54E47282790389542F8D3A9EA37"
+      "bytes": 29215,
+      "sha256": "ED5B4F8C9A3907E641F40AF755982BDBAECF1BFCF33E4080A5686344F0F98308"
     },
     {
       "path": "packaging/obsidian_archive_bridge_product_driver.cjs",
@@ -3568,8 +3568,8 @@
     },
     {
       "path": "packaging/tests/test_obsidian_archive_bridge_product_canary.py",
-      "bytes": 4935,
-      "sha256": "15B17338671E187CF037C4011F988CB56C57B27C0259C16F38C1BA413768E0F5"
+      "bytes": 8040,
+      "sha256": "E64BEAABE9BB19377D9961F3DF530AD27F8795110E779D42638C6B7BBC105CBF"
     },
     {
       "path": "packaging/tests/test_paperless_product_canary.py",
@@ -3633,18 +3633,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 487333,
-      "sha256": "F13A0BABB7BF5AEA73093FD9C20FF347784453EE677130A9FE185ED43B14A3C7"
+      "bytes": 488628,
+      "sha256": "FCF6D82B727267E8C56A96EAB1D3652C666F7CD205E6E8E7093E248BDC618C00"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1506849,
-      "sha256": "F3FA6A9CB930CC68E734A5DE788C5F0E671A38BDF908026C3D597D227E0F4765"
+      "bytes": 1508144,
+      "sha256": "10FFFF61C74BD3A303C3716362EFB6AB616AEF2AB5D0B946E510F5FF744F105B"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 2117372,
-      "sha256": "350B49BF775A011B076B0A96EB7E14FE8E66EA19573C2BF0E1543E0FA80A49BF"
+      "bytes": 2118667,
+      "sha256": "91CE1999FE73A522AA5798ED55F14CA0E15FA29CF48AF563171C4D033BCE5B2A"
     },
     {
       "path": "PLAN/SPEC_mirror_refusal.md",

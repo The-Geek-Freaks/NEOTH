@@ -35,6 +35,17 @@ class ArchiveBridgeCanaryContractTests(unittest.TestCase):
             finally:
                 os.environ.clear(); os.environ.update(original)
 
+    def test_hosted_guard_rejects_a_root_that_would_exceed_bridge_socket_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / ("x" * 55); root.mkdir()
+            original = dict(os.environ)
+            try:
+                os.environ.update({"GITHUB_ACTIONS": "true", "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": "a" * 40, "RUNNER_TEMP": directory})
+                with self.assertRaisesRegex(canary.Failure, "bridge_socket_path_too_long"):
+                    canary.require_hosted(root, root / "neoth-home", root / "vault", root / "receipt" / "receipt.json")
+            finally:
+                os.environ.clear(); os.environ.update(original)
+
     def test_ownership_marker_is_exactly_bound_to_bundle_hashes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); asset, slot = root / "asset", root / "slot"; asset.mkdir(); slot.mkdir()
@@ -68,6 +79,7 @@ class ArchiveBridgeCanaryContractTests(unittest.TestCase):
         encoded = __import__("json").dumps(value)
         self.assertEqual(value["reason"], "daemon_exited_early")
         self.assertEqual(value["returncode"], 17)
+        self.assertEqual(value["last_milestone"], "not_observed")
         self.assertNotIn("do-not-emit", encoded)
         self.assertNotIn("token=", encoded)
         self.assertIn("log_sha256", value)
@@ -75,5 +87,36 @@ class ArchiveBridgeCanaryContractTests(unittest.TestCase):
         classified = canary.redacted_daemon_diagnostic("daemon_exited_early", 1, b"GOLD-ADAPT-OH-03: onboarding incomplete secret=never-output")
         self.assertEqual(classified["classification"], "onboarding_incomplete")
         self.assertNotIn("never-output", __import__("json").dumps(classified))
+
+    def test_daemon_diagnostic_uses_closed_source_categories_and_observed_milestones(self) -> None:
+        cases = (
+            (b"operator hooks at /private/hook rejected token=hidden", "startup_hooks_rejected"),
+            (b"establish instance WAL HMAC authority before recovery scan at /private/key", "wal_authority_rejected"),
+            (b"select active Obsidian connector authority for Archive Bridge: hidden", "bridge_authority_rejected"),
+            (b"existing WAL master key is absent at /private/key hidden", "wal_master_key_missing"),
+            (b"parse bridge pairing record: hidden", "bridge_pairing_record_invalid"),
+            (b"bind existing private Obsidian Archive Bridge IPC: hidden", "bridge_ipc_bind_failed"),
+            (b"start daemon membership/audit RPC: hidden", "membership_audit_rpc_start_failed"),
+            (b"connector-control operator_id is incompatible with SubjectId: hidden", "connector_control_subject_invalid"),
+            (b"consent gate (V03-08 + A-2): hidden", "provider_consent_rejected"),
+            (b"load skill registry for daemon instance at /private/skills", "skill_registry_load_failed"),
+        )
+        for raw, expected in cases:
+            with self.subTest(expected=expected):
+                value = canary.redacted_daemon_diagnostic("daemon_exited_early", 1, raw)
+                self.assertEqual(value["classification"], expected)
+                self.assertNotIn("hidden", __import__("json").dumps(value))
+                self.assertNotIn("/private", __import__("json").dumps(value))
+        milestone = canary.redacted_daemon_diagnostic(
+            "daemon_exited_early", 1,
+            b"loaded freedom.yaml\nBOOT event written and fsynced\nobsidian vault reader cron enabled\nskill registry primed for daemon\nTRAIL-04: ViewsExecutor ready (writer:1 + readers:4)",
+        )
+        self.assertEqual(milestone["last_milestone"], "views_executor_ready")
+        full_start = canary.redacted_daemon_diagnostic(
+            "daemon_exited_early", 1,
+            b"loaded freedom.yaml\nBOOT event written and fsynced\nskill registry primed for daemon\n"
+            b"TRAIL-04: ViewsExecutor ready (writer:1 + readers:4)\nobsidian vault reader cron enabled",
+        )
+        self.assertEqual(full_start["last_milestone"], "obsidian_reader_started")
 
 if __name__ == "__main__": unittest.main()

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "Rollback original Docker-label fixture correction reviewed; hosted2012/777 retry pending",
+  "status": "W1745 ArchiveBridge diagnostic source reviewed; hosted execution pending; W1746 old native failures authenticated",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 255816,
-    "sha256": "13C726F8B2CC80755D113E6046F0E275D672CEDD7E15BBE81AB436E0D027DB6A"
+    "bytes": 255841,
+    "sha256": "976F91F9B5F7D1AFD07EDC9D18EB08C3A96C3CD7128304C474CAD8FA1DC71709"
   },
   "sourceInputs": 1422,
   "requiredNativeTests": [
@@ -53602,6 +53602,50 @@
       }
     ],
     "note": "Group36351441068@b26808ea executed2008pass/4fail. Original ZIP digests and failing raw fixture blob verified; source volume labels now remain bound to original generation. Production validation/assertions unchanged; no local execution.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1745StartupDiagnostics": {
+    "base": "8b434951497195713b8f3e12dc24628f568a5392",
+    "sources": [
+      {
+        "path": ".github/workflows/obsidian-bridge-product.yml",
+        "bytes": 4542,
+        "sha256": "95DC305BD7E289494EAB37784CAC44F3A39E057AE6E70B53D77F1F013637AD35",
+        "blob": "b912269ff5f6e45789cb0d25535889df04dac2c7"
+      },
+      {
+        "path": "packaging/obsidian_archive_bridge_product_canary.py",
+        "bytes": 29215,
+        "sha256": "ED5B4F8C9A3907E641F40AF755982BDBAECF1BFCF33E4080A5686344F0F98308",
+        "blob": "7700c835257056610e4ba6ed5ddaca3ed9f8126a"
+      },
+      {
+        "path": "packaging/tests/test_obsidian_archive_bridge_product_canary.py",
+        "bytes": 8040,
+        "sha256": "E64BEAABE9BB19377D9961F3DF530AD27F8795110E779D42638C6B7BBC105CBF",
+        "blob": "a42d8082326fe062ca777c3d8bc09cc4cfc04a1c"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 488628,
+        "sha256": "FCF6D82B727267E8C56A96EAB1D3652C666F7CD205E6E8E7093E248BDC618C00",
+        "blob": "f1ac2bd23d5cec48dce5b26359aa847b38117fbf"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1508144,
+        "sha256": "10FFFF61C74BD3A303C3716362EFB6AB616AEF2AB5D0B946E510F5FF744F105B",
+        "blob": "74e57c6a8e79d1fe508054b7cec8fcb5ba828e93"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2118667,
+        "sha256": "91CE1999FE73A522AA5798ED55F14CA0E15FA29CF48AF563171C4D033BCE5B2A",
+        "blob": "754dde632765db7d6136d3665dd9567bf0b5779a"
+      }
+    ],
+    "note": "W1748 independent static PASS; source-owned redacted error classes and latest observed startup milestone, short private runner root and socket-cap preflight. ArchiveBridge36353049554 failed daemon_start_for_pair rc1; original artifact10943331032 authenticated, full cleanup true, exact cause unknown. Old Windows777 773pass/4fail matches Linux4; 8b434951 native retries active. Strict BSOD hold, no local executable checks or ROAD closure.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
