@@ -757,8 +757,9 @@ async fn rollback_restore_volume_uninstall_reinstall_and_purge_preserve_retired_
         super::super::managed_uninstall::uninstall_managed_at_with(home.path(), &mut runner)
             .await
             .unwrap();
-    let plan = super::super::managed_purge::prepare_purge_at(home.path(), &uninstall_third.job_id)
-        .unwrap();
+    let plan =
+        super::super::super::managed_purge::prepare_purge_at(home.path(), &uninstall_third.job_id)
+            .unwrap();
     assert_eq!(
         plan.confirmation,
         format!(
@@ -768,7 +769,7 @@ async fn rollback_restore_volume_uninstall_reinstall_and_purge_preserve_retired_
     );
     let before_wrong = state.lock().unwrap().calls.len();
     assert!(
-        super::super::managed_purge::purge_retained_volume_at_with(
+        super::super::super::managed_purge::purge_retained_volume_at_with(
             home.path(),
             &uninstall_third.job_id,
             "PURGE N8N RESTORE VOLUME wrong",
@@ -778,7 +779,7 @@ async fn rollback_restore_volume_uninstall_reinstall_and_purge_preserve_retired_
         .is_err()
     );
     assert_eq!(state.lock().unwrap().calls.len(), before_wrong);
-    super::super::managed_purge::purge_retained_volume_at_with(
+    super::super::super::managed_purge::purge_retained_volume_at_with(
         home.path(),
         &uninstall_third.job_id,
         &plan.confirmation,
@@ -831,7 +832,10 @@ async fn tampered_restore_volume_uninstall_receipt_has_no_reinstall_or_purge_eff
         .await
         .is_err()
     );
-    assert!(super::super::managed_purge::prepare_purge_at(home.path(), &uninstall.job_id).is_err());
+    assert!(
+        super::super::super::managed_purge::prepare_purge_at(home.path(), &uninstall.job_id)
+            .is_err()
+    );
     assert_eq!(state.lock().unwrap().calls.len(), before);
     assert!(!state.lock().unwrap().restore_volume_removed);
 }

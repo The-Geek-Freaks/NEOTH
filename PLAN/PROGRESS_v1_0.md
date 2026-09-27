@@ -2,6 +2,18 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1568/W1570 Native compiler correction and failure custody (2026-09-27):**
+Original Group36307422610 and Windows36307423883 artifacts authenticate exact
+producer0c69696d, source bindings and internal hashes. Both selections stopped
+before execution: Group1924/executed0, Windows689/executed0; neither admitted.
+Four E0433 test references resolved managed_purge relative to managed_runtime
+instead of n8n. Each now ascends three parent modules; independent source
+review confirms visibility and unchanged arguments. Production code unchanged.
+Hosted native recompilation/execution and current Core remain required.
+W1567 diagnostics published15bfbcb0; actual product36308031598 is running.
+ROAD1324/1077done/245open/2partial unchanged; no local executable validation.
+Evidence: docs/verification/gold-wave1568-rollback-native-compile-repair.json
+ and docs/verification/gold-wave1570-rollback-native-failure.json.
 **W1567 Rollback diagnostics source reviewed (2026-09-27):**
 The failed actual Rollback now has bounded diagnostics for the exact product
 command: only allowlisted scalar state/failure_code values and fixed Rust

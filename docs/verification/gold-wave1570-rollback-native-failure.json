@@ -1,0 +1,45 @@
+{
+  "schema": "neoth-wave1570-rollback-native-failure/v1",
+  "decision": "recorded_compile_failure_not_admitted",
+  "producer": "0c69696d14e9fd7a956629e039640ae8eb21f9d4",
+  "runs": {
+    "group": {
+      "id": 36307422610,
+      "selected": 1924,
+      "executed": 0,
+      "admitted": 0,
+      "conclusion": "failure"
+    },
+    "windows": {
+      "id": 36307423883,
+      "expected": 689,
+      "executed": 0,
+      "admitted": 0,
+      "conclusion": "failure"
+    }
+  },
+  "compiler_failure": {
+    "error": "E0433",
+    "count": 4,
+    "location": "SRC/neothd/src/integrations/n8n/managed_rollback_tests.rs",
+    "unresolved_module": "managed_purge"
+  },
+  "limits": [
+    "Failure evidence only; neither native selection is admitted.",
+    "Does not validate the separately owned repair."
+  ],
+  "admissionSha256": "75D39E40FE62EBBBFB9DFD564CF9293B47B824F9F9A6C4691903DB68D66C7871",
+  "artifactIntegrity": {
+    "unsafe_zip_entries": 0,
+    "group_input_hash_records": 10,
+    "group_input_hash_mismatches": 0,
+    "windows_source_binding_records": 689,
+    "windows_source_binding_mismatches": 0,
+    "windows_evidence_hash_records": 10,
+    "windows_evidence_hash_mismatches": 0,
+    "windows_log_hash_records": 1,
+    "windows_log_hash_mismatches": 0,
+    "exact_raw_git_paths": 109,
+    "git_blob_hash_object_mismatches": 0
+  }
+}

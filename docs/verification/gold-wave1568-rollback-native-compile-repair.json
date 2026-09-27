@@ -1,0 +1,17 @@
+{
+  "schema": "neoth-rollback-native-compile-repair/v1",
+  "status": "SOURCE_REVIEWED_HOSTED_PENDING",
+  "base": "15bfbcb0ae30e6909468f092765626903d55d627",
+  "failedProducer": "0c69696d14e9fd7a956629e039640ae8eb21f9d4",
+  "failedRuns": [
+    36307422610,
+    36307423883
+  ],
+  "sourcePath": "SRC/neothd/src/integrations/n8n/managed_rollback_tests.rs",
+  "reviewedBlob": "926ff8502bd9bc4c3580d97d059f4b93e4ab98f1",
+  "reviewSha256": "6B3C4848D0007E80A1EAE83946DADDC50629BB34BC741674EC476FD861DFE097",
+  "repair": "Four test-only managed_purge references now ascend three parent modules; arguments and production behavior unchanged.",
+  "executedNativeTestsInFailedRuns": 0,
+  "localExecutableValidationRan": false,
+  "roadmapClosure": false
+}
