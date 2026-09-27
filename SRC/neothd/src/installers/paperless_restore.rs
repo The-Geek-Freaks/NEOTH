@@ -1307,7 +1307,7 @@ fn validate_old_source_mounts(
     Ok(())
 }
 
-async fn authenticated_candidate_probe<E: ComposeExecutor>(
+async fn authenticated_candidate_probe<E: RetainedComposeExecutor>(
     executor: &mut E,
     engine: &Engine,
     root: &OwnedPaperlessRoot,

@@ -3,6 +3,14 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W1706 Restore candidate-probe bound (2026-09-27):**
+Core36339834144 and Product36339835900 atf009bc94 exposed one remaining
+E0599 after the private executor-trait correction. The candidate API probe's
+generic bound now requires RetainedComposeExecutor, matching its contained
+stdin call. All callers of the two moved methods were independently checked;
+no other mismatch found. The product stopped at build, with no new runtime
+acceptance. Hosted Core/product retries required; local BSOD hold unchanged.
+
 **W1705 Hosted regression formatting (2026-09-27):** Imported the exact
 one-assertion rustfmt patch from Preflight36339824033 atf009bc94; original
 artifact10938696605 ZIP17e624d092651328cda7f4b3b40a89483c3964f906f7a97580fd85faf2f52e3d,

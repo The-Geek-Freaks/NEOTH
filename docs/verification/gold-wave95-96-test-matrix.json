@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W1705 exact hosted formatting imported; Core/product pending",
+  "status": "W1706 one-line E0599 repair; fresh hosted validation pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 251389,
-    "sha256": "2DCC682DE350C750EE1C08DF6DD9F47A5965C9CC32B51E00A0E3BD5D40C0BC0B"
+    "sha256": "96666177D9BF0D90B1CFB86A32CBD17FE67126248D71CF162D6EE6F7BF4568D2"
   },
   "sourceInputs": 1399,
   "requiredNativeTests": [
@@ -52745,6 +52745,38 @@
       }
     ],
     "note": "Original authenticated artifact10938696605 from36339824033 atf009bc94; only one assertion formatting. No behavior acceptance.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave1706RestoreCandidateTrait": {
+    "base": "cdd6a555908099a52d98fba7134f551f6d4d09ff",
+    "sources": [
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 470346,
+        "sha256": "B92F958ECFA61320730304CD0D18C42F8C8DD6927692F3995841F9D314865791",
+        "blob": "a66718d2249aef6fe1c900c97006bea32ec8a15c"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1489277,
+        "sha256": "713343F55B8BA776C6AEAF86519631D0429BF27C51238ECB095BB393D9036E05",
+        "blob": "7958c80173a1ab44538d86f031afa9d3b3866642"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 2099800,
+        "sha256": "FFD869CB39D530959E81CEACF36C4D5E3EDF1BB5586321CA8A68AE4ACDF2438C",
+        "blob": "37bd420150ea561f34e46deedac1e8c2d696c676"
+      },
+      {
+        "path": "SRC/neothd/src/installers/paperless_restore.rs",
+        "bytes": 66358,
+        "sha256": "2FB68F97535D74E070B7D26B189BBED952999C2E043021A386457A97D4996930",
+        "blob": "90e05433a1353ba8c3281513a8eb4dc48b034439"
+      }
+    ],
+    "note": "Core36339834144/Product36339835900 atf009bc94 failed stale candidate probe bound; corrected to private RetainedComposeExecutor and all moved-method callers independently checked. Core log20673B6C8855859D1786AAFEB9A69E65F22CA7C3BC44BE0F3046ED9DC144F93F.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
