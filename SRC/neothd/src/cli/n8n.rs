@@ -157,12 +157,13 @@ async fn run_verify_update_target(
     platform: &str,
     output: OutputFormat,
 ) -> Result<()> {
-    let receipt = crate::integrations::n8n::managed_update_target::verify_update_target(
-        target, platform,
-    )
-    .await?;
+    let receipt =
+        crate::integrations::n8n::managed_update_target::verify_update_target(target, platform)
+            .await?;
     match output {
-        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string(&receipt)?),
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string(&receipt)?)
+        }
         OutputFormat::Table => {
             println!("n8n update target: {}", receipt.selector);
             println!("version: {}", receipt.version);
@@ -874,11 +875,12 @@ mod tests {
     fn update_target_cli_requires_explicit_target_and_supported_platform() {
         use clap::Parser;
         let base = ["neoth", "n8n", "update-target", "verify"];
-        let cli = crate::cli::Cli::try_parse_from(
-            base.into_iter().chain([
-                "--target", "n8n-2.40.7", "--platform", "linux/amd64",
-            ]),
-        )
+        let cli = crate::cli::Cli::try_parse_from(base.into_iter().chain([
+            "--target",
+            "n8n-2.40.7",
+            "--platform",
+            "linux/amd64",
+        ]))
         .unwrap();
         assert!(matches!(
             cli.command,
@@ -892,8 +894,22 @@ mod tests {
             vec!["--target", "n8n-2.40.7"],
             vec!["--platform", "linux/amd64"],
             vec!["--target", "n8n-2.40.7", "--platform", "windows/amd64"],
-            vec!["--target", "n8n-2.40.7", "--platform", "linux/amd64", "--image", "unreviewed"],
-            vec!["--target", "n8n-2.40.7", "--platform", "linux/amd64", "--volume", "live"],
+            vec![
+                "--target",
+                "n8n-2.40.7",
+                "--platform",
+                "linux/amd64",
+                "--image",
+                "unreviewed",
+            ],
+            vec![
+                "--target",
+                "n8n-2.40.7",
+                "--platform",
+                "linux/amd64",
+                "--volume",
+                "live",
+            ],
         ] {
             assert!(crate::cli::Cli::try_parse_from(base.into_iter().chain(arguments)).is_err());
         }

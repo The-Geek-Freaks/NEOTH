@@ -5,15 +5,16 @@
 //! containers, volumes, jobs, bindings, or configuration. It may download the
 //! admitted immutable image into the operator-selected Docker engine.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
-use futures_util::StreamExt;
 use tokio::{io::AsyncReadExt, process::Command, time::timeout};
 
-const REGISTRY_TOKEN_URL: &str = "https://auth.docker.io/token?service=registry.docker.io&scope=repository:n8nio/n8n:pull";
+const REGISTRY_TOKEN_URL: &str =
+    "https://auth.docker.io/token?service=registry.docker.io&scope=repository:n8nio/n8n:pull";
 const REGISTRY_MANIFEST_BASE: &str = "https://registry-1.docker.io/v2/n8nio/n8n/manifests/";
 const OCI_INDEX_MEDIA_TYPE: &str = "application/vnd.oci.image.index.v1+json";
 const OCI_MANIFEST_MEDIA_TYPE: &str = "application/vnd.oci.image.manifest.v1+json";
@@ -115,7 +116,10 @@ pub(crate) async fn verify_update_target(
     verify_update_target_with(selector, platform, &reader, &mut docker).await
 }
 
-pub(crate) async fn verify_update_target_with<R: RegistryTargetReader, D: UpdateTargetDockerRunner>(
+pub(crate) async fn verify_update_target_with<
+    R: RegistryTargetReader,
+    D: UpdateTargetDockerRunner,
+>(
     selector: &str,
     platform: &str,
     reader: &R,
@@ -132,13 +136,24 @@ async fn verify_target_with<R: RegistryTargetReader, D: UpdateTargetDockerRunner
     docker: &mut D,
 ) -> Result<TargetPreflightReceiptView> {
     let platform_entry = target_platform(target, platform)?;
-    let index_raw = bounded_registry_read(reader, RegistryObject::Manifest(target.index_digest)).await?;
+    let index_raw =
+        bounded_registry_read(reader, RegistryObject::Manifest(target.index_digest)).await?;
     let child_descriptor = verify_index(&index_raw, target, platform_entry)?;
-    let child_raw = bounded_registry_read(reader, RegistryObject::Manifest(platform_entry.child_manifest_digest)).await?;
+    let child_raw = bounded_registry_read(
+        reader,
+        RegistryObject::Manifest(platform_entry.child_manifest_digest),
+    )
+    .await?;
     let config_digest = verify_child_manifest(&child_raw, platform_entry, child_descriptor.size)?;
 
-    docker.pull_exact_target(platform, target.runtime_image).await.map_err(|_| anyhow!("n8n_update_target_docker_pull_failed"))?;
-    let observed = docker.inspect_pulled_target(target.runtime_image).await.map_err(|_| anyhow!("n8n_update_target_docker_inspect_failed"))?;
+    docker
+        .pull_exact_target(platform, target.runtime_image)
+        .await
+        .map_err(|_| anyhow!("n8n_update_target_docker_pull_failed"))?;
+    let observed = docker
+        .inspect_pulled_target(target.runtime_image)
+        .await
+        .map_err(|_| anyhow!("n8n_update_target_docker_inspect_failed"))?;
     verify_pulled_target(&observed, target, platform_entry, &config_digest)?;
 
     Ok(TargetPreflightReceiptView {
@@ -160,7 +175,10 @@ fn resolve_target(selector: &str) -> Result<&'static UpdateTargetCatalogEntry> {
         .ok_or_else(|| anyhow!("n8n_update_target_selector_not_admitted"))
 }
 
-fn target_platform(target: &UpdateTargetCatalogEntry, platform: &str) -> Result<&'static PlatformEntry> {
+fn target_platform(
+    target: &UpdateTargetCatalogEntry,
+    platform: &str,
+) -> Result<&'static PlatformEntry> {
     let (os, architecture) = platform
         .split_once('/')
         .ok_or_else(|| anyhow!("n8n_update_target_platform_not_supported"))?;
@@ -171,35 +189,86 @@ fn target_platform(target: &UpdateTargetCatalogEntry, platform: &str) -> Result<
         .ok_or_else(|| anyhow!("n8n_update_target_platform_not_supported"))
 }
 
-async fn bounded_registry_read<R: RegistryTargetReader>(reader: &R, object: RegistryObject) -> Result<Vec<u8>> {
-    let bytes = reader.read(object).await.map_err(|_| anyhow!("n8n_update_target_registry_read_failed"))?;
+async fn bounded_registry_read<R: RegistryTargetReader>(
+    reader: &R,
+    object: RegistryObject,
+) -> Result<Vec<u8>> {
+    let bytes = reader
+        .read(object)
+        .await
+        .map_err(|_| anyhow!("n8n_update_target_registry_read_failed"))?;
     if bytes.is_empty() || bytes.len() > MAX_REGISTRY_BYTES {
         return Err(anyhow!("n8n_update_target_registry_response_invalid"));
     }
     Ok(bytes)
 }
 
-fn verify_index(raw: &[u8], target: &UpdateTargetCatalogEntry, selected: &PlatformEntry) -> Result<OciDescriptor> {
-    require_digest(raw, target.index_digest, "n8n_update_target_index_digest_mismatch")?;
-    let index: OciIndex = serde_json::from_slice(raw).map_err(|_| anyhow!("n8n_update_target_index_invalid"))?;
-    if index.schema_version != 2 || index.media_type != OCI_INDEX_MEDIA_TYPE || index.manifests.len() != target.platforms.len() {
-            return Err(anyhow!("n8n_update_target_index_shape_invalid"));
+fn verify_index(
+    raw: &[u8],
+    target: &UpdateTargetCatalogEntry,
+    selected: &PlatformEntry,
+) -> Result<OciDescriptor> {
+    require_digest(
+        raw,
+        target.index_digest,
+        "n8n_update_target_index_digest_mismatch",
+    )?;
+    let index: OciIndex =
+        serde_json::from_slice(raw).map_err(|_| anyhow!("n8n_update_target_index_invalid"))?;
+    if index.schema_version != 2
+        || index.media_type != OCI_INDEX_MEDIA_TYPE
+        || index.manifests.len() != target.platforms.len()
+    {
+        return Err(anyhow!("n8n_update_target_index_shape_invalid"));
     }
     for expected in target.platforms {
-        let found = index.manifests.iter().filter(|descriptor| {
-            descriptor.platform.as_ref().is_some_and(|platform| platform.os == expected.os && platform.architecture == expected.architecture)
-        }).collect::<Vec<_>>();
-        if found.len() != 1 || found[0].digest != expected.child_manifest_digest || found[0].size <= 0 || !is_manifest_media_type(&found[0].media_type) {
+        let found = index
+            .manifests
+            .iter()
+            .filter(|descriptor| {
+                descriptor.platform.as_ref().is_some_and(|platform| {
+                    platform.os == expected.os && platform.architecture == expected.architecture
+                })
+            })
+            .collect::<Vec<_>>();
+        if found.len() != 1
+            || found[0].digest != expected.child_manifest_digest
+            || found[0].size <= 0
+            || !is_manifest_media_type(&found[0].media_type)
+        {
             return Err(anyhow!("n8n_update_target_index_descriptor_invalid"));
         }
     }
-    index.manifests.into_iter().find(|descriptor| descriptor.platform.as_ref().is_some_and(|platform| platform.os == selected.os && platform.architecture == selected.architecture)).ok_or_else(|| anyhow!("n8n_update_target_index_descriptor_invalid"))
+    index
+        .manifests
+        .into_iter()
+        .find(|descriptor| {
+            descriptor.platform.as_ref().is_some_and(|platform| {
+                platform.os == selected.os && platform.architecture == selected.architecture
+            })
+        })
+        .ok_or_else(|| anyhow!("n8n_update_target_index_descriptor_invalid"))
 }
 
-fn verify_child_manifest(raw: &[u8], expected: &PlatformEntry, descriptor_size: i64) -> Result<String> {
-    require_digest(raw, expected.child_manifest_digest, "n8n_update_target_child_digest_mismatch")?;
-    let child: OciManifest = serde_json::from_slice(raw).map_err(|_| anyhow!("n8n_update_target_child_invalid"))?;
-    if descriptor_size != raw.len() as i64 || child.schema_version != 2 || !is_manifest_media_type(&child.media_type) || child.config.size <= 0 || child.config.media_type != OCI_CONFIG_MEDIA_TYPE || !valid_sha256_digest(&child.config.digest) {
+fn verify_child_manifest(
+    raw: &[u8],
+    expected: &PlatformEntry,
+    descriptor_size: i64,
+) -> Result<String> {
+    require_digest(
+        raw,
+        expected.child_manifest_digest,
+        "n8n_update_target_child_digest_mismatch",
+    )?;
+    let child: OciManifest =
+        serde_json::from_slice(raw).map_err(|_| anyhow!("n8n_update_target_child_invalid"))?;
+    if descriptor_size != raw.len() as i64
+        || child.schema_version != 2
+        || !is_manifest_media_type(&child.media_type)
+        || child.config.size <= 0
+        || child.config.media_type != OCI_CONFIG_MEDIA_TYPE
+        || !valid_sha256_digest(&child.config.digest)
+    {
         return Err(anyhow!("n8n_update_target_child_shape_invalid"));
     }
     Ok(child.config.digest)
@@ -217,58 +286,109 @@ fn verify_pulled_target(
     if observed.os != platform.os || observed.architecture != platform.architecture {
         return Err(anyhow!("n8n_update_target_docker_platform_mismatch"));
     }
-    if !observed.repo_digests.iter().any(|candidate| normalized_repo_digest(candidate) == normalized_repo_digest(target.repo_digest)) {
+    if !observed.repo_digests.iter().any(|candidate| {
+        normalized_repo_digest(candidate) == normalized_repo_digest(target.repo_digest)
+    }) {
         return Err(anyhow!("n8n_update_target_docker_repo_digest_mismatch"));
     }
     Ok(())
 }
 
 fn normalized_repo_digest(value: &str) -> &str {
-    value.strip_prefix("docker.io/").or_else(|| value.strip_prefix("index.docker.io/")).unwrap_or(value)
+    value
+        .strip_prefix("docker.io/")
+        .or_else(|| value.strip_prefix("index.docker.io/"))
+        .unwrap_or(value)
 }
 
 fn require_digest(raw: &[u8], expected: &str, error: &'static str) -> Result<()> {
     let actual = format!("sha256:{:x}", Sha256::digest(raw));
-    if actual != expected { return Err(anyhow!(error)); }
+    if actual != expected {
+        return Err(anyhow!(error));
+    }
     Ok(())
 }
 
 fn valid_sha256_digest(value: &str) -> bool {
-    value.len() == 71 && value.starts_with("sha256:") && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+    value.len() == 71
+        && value.starts_with("sha256:")
+        && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn is_manifest_media_type(value: &str) -> bool { value == OCI_MANIFEST_MEDIA_TYPE || value == DOCKER_MANIFEST_MEDIA_TYPE }
+fn is_manifest_media_type(value: &str) -> bool {
+    value == OCI_MANIFEST_MEDIA_TYPE || value == DOCKER_MANIFEST_MEDIA_TYPE
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct OciIndex { schema_version: u32, media_type: String, manifests: Vec<OciDescriptor> }
+struct OciIndex {
+    schema_version: u32,
+    media_type: String,
+    manifests: Vec<OciDescriptor>,
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[derive(Clone)]
-struct OciDescriptor { media_type: String, digest: String, size: i64, platform: Option<OciPlatform> }
+struct OciDescriptor {
+    media_type: String,
+    digest: String,
+    size: i64,
+    platform: Option<OciPlatform>,
+}
 #[derive(Clone, Deserialize)]
-struct OciPlatform { os: String, architecture: String }
+struct OciPlatform {
+    os: String,
+    architecture: String,
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct OciManifest { schema_version: u32, media_type: String, config: OciDescriptor }
+struct OciManifest {
+    schema_version: u32,
+    media_type: String,
+    config: OciDescriptor,
+}
 
-struct DockerHubRegistryTargetReader { client: reqwest::Client }
+struct DockerHubRegistryTargetReader {
+    client: reqwest::Client,
+}
 impl DockerHubRegistryTargetReader {
     fn new() -> Result<Self> {
-        let client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(10)).build().map_err(|_| anyhow!("n8n_update_target_registry_client_unavailable"))?;
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|_| anyhow!("n8n_update_target_registry_client_unavailable"))?;
         Ok(Self { client })
     }
     async fn token(&self) -> Result<String> {
         let bytes = self.request(REGISTRY_TOKEN_URL, None, None).await?;
         parse_docker_hub_token(&bytes)
     }
-    async fn request(&self, url: &str, bearer: Option<&str>, accept: Option<&str>) -> Result<Vec<u8>> {
+    async fn request(
+        &self,
+        url: &str,
+        bearer: Option<&str>,
+        accept: Option<&str>,
+    ) -> Result<Vec<u8>> {
         let mut request = self.client.get(url);
-        if let Some(token) = bearer { request = request.bearer_auth(token); }
-        if let Some(value) = accept { request = request.header(reqwest::header::ACCEPT, value); }
-        let response = request.send().await.map_err(|_| anyhow!("n8n_update_target_registry_unavailable"))?;
-        if !response.status().is_success() { return Err(anyhow!("n8n_update_target_registry_rejected")); }
-        if response.content_length().is_some_and(|length| length as usize > MAX_REGISTRY_BYTES) {
+        if let Some(token) = bearer {
+            request = request.bearer_auth(token);
+        }
+        if let Some(value) = accept {
+            request = request.header(reqwest::header::ACCEPT, value);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|_| anyhow!("n8n_update_target_registry_unavailable"))?;
+        if !response.status().is_success() {
+            return Err(anyhow!("n8n_update_target_registry_rejected"));
+        }
+        if response
+            .content_length()
+            .is_some_and(|length| length as usize > MAX_REGISTRY_BYTES)
+        {
             return Err(anyhow!("n8n_update_target_registry_response_invalid"));
         }
         let mut stream = response.bytes_stream();
@@ -280,7 +400,9 @@ impl DockerHubRegistryTargetReader {
             }
             bytes.extend_from_slice(&chunk);
         }
-        if bytes.is_empty() { return Err(anyhow!("n8n_update_target_registry_response_invalid")); }
+        if bytes.is_empty() {
+            return Err(anyhow!("n8n_update_target_registry_response_invalid"));
+        }
         Ok(bytes)
     }
 }
@@ -295,9 +417,15 @@ struct DockerHubToken {
 }
 
 fn parse_docker_hub_token(bytes: &[u8]) -> Result<String> {
-    let envelope: DockerHubToken = serde_json::from_slice(bytes).map_err(|_| anyhow!("n8n_update_target_registry_token_invalid"))?;
-    let token = envelope.token.or(envelope.access_token).ok_or_else(|| anyhow!("n8n_update_target_registry_token_invalid"))?;
-    if token.is_empty() || token.len() > 4096 { return Err(anyhow!("n8n_update_target_registry_token_invalid")); }
+    let envelope: DockerHubToken = serde_json::from_slice(bytes)
+        .map_err(|_| anyhow!("n8n_update_target_registry_token_invalid"))?;
+    let token = envelope
+        .token
+        .or(envelope.access_token)
+        .ok_or_else(|| anyhow!("n8n_update_target_registry_token_invalid"))?;
+    if token.is_empty() || token.len() > 4096 {
+        return Err(anyhow!("n8n_update_target_registry_token_invalid"));
+    }
     let _ = (envelope.expires_in, envelope.issued_at);
     Ok(token)
 }
@@ -306,7 +434,9 @@ impl RegistryTargetReader for DockerHubRegistryTargetReader {
     async fn read(&self, object: RegistryObject) -> Result<Vec<u8>> {
         match object {
             RegistryObject::Manifest(digest) => {
-                if !valid_sha256_digest(digest) { return Err(anyhow!("n8n_update_target_registry_digest_invalid")); }
+                if !valid_sha256_digest(digest) {
+                    return Err(anyhow!("n8n_update_target_registry_digest_invalid"));
+                }
                 let token = self.token().await?;
                 let url = format!("{REGISTRY_MANIFEST_BASE}{digest}");
                 self.request(&url, Some(&token), Some("application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json")).await
@@ -319,40 +449,96 @@ struct LocalUpdateTargetDockerRunner;
 #[async_trait]
 impl UpdateTargetDockerRunner for LocalUpdateTargetDockerRunner {
     async fn pull_exact_target(&mut self, platform: &str, image: &str) -> Result<()> {
-        if target_platform(resolve_target("n8n-2.40.7")?, platform).is_err() || image != N8N_UPDATE_TARGETS[0].runtime_image { return Err(anyhow!("n8n_update_target_docker_input_invalid")); }
-        run_docker(&["pull", "--platform", platform, image], PULL_TIMEOUT).await.map(|_| ())
+        if target_platform(resolve_target("n8n-2.40.7")?, platform).is_err()
+            || image != N8N_UPDATE_TARGETS[0].runtime_image
+        {
+            return Err(anyhow!("n8n_update_target_docker_input_invalid"));
+        }
+        run_docker(&["pull", "--platform", platform, image], PULL_TIMEOUT)
+            .await
+            .map(|_| ())
     }
     async fn inspect_pulled_target(&mut self, image: &str) -> Result<DockerImageObservation> {
-        if image != N8N_UPDATE_TARGETS[0].runtime_image { return Err(anyhow!("n8n_update_target_docker_input_invalid")); }
+        if image != N8N_UPDATE_TARGETS[0].runtime_image {
+            return Err(anyhow!("n8n_update_target_docker_input_invalid"));
+        }
         let output = run_docker(&["image", "inspect", image], INSPECT_TIMEOUT).await?;
-        let images: Vec<DockerImageInspect> = serde_json::from_slice(&output).map_err(|_| anyhow!("n8n_update_target_docker_inspect_invalid"))?;
-        if images.len() != 1 { return Err(anyhow!("n8n_update_target_docker_inspect_invalid")); }
+        let images: Vec<DockerImageInspect> = serde_json::from_slice(&output)
+            .map_err(|_| anyhow!("n8n_update_target_docker_inspect_invalid"))?;
+        if images.len() != 1 {
+            return Err(anyhow!("n8n_update_target_docker_inspect_invalid"));
+        }
         let image = images.into_iter().next().expect("one checked image");
-        Ok(DockerImageObservation { id: image.id, repo_digests: image.repo_digests, os: image.os, architecture: image.architecture })
+        Ok(DockerImageObservation {
+            id: image.id,
+            repo_digests: image.repo_digests,
+            os: image.os,
+            architecture: image.architecture,
+        })
     }
 }
 #[derive(Deserialize)]
-struct DockerImageInspect { #[serde(rename = "Id")] id: String, #[serde(rename = "RepoDigests")] repo_digests: Vec<String>, #[serde(rename = "Os")] os: String, #[serde(rename = "Architecture")] architecture: String }
+struct DockerImageInspect {
+    #[serde(rename = "Id")]
+    id: String,
+    #[serde(rename = "RepoDigests")]
+    repo_digests: Vec<String>,
+    #[serde(rename = "Os")]
+    os: String,
+    #[serde(rename = "Architecture")]
+    architecture: String,
+}
 
 async fn run_docker(args: &[&str], deadline: Duration) -> Result<Vec<u8>> {
     let mut command = Command::new("docker");
-    command.args(args).kill_on_drop(true).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).stdin(std::process::Stdio::null());
-    let mut child = command.spawn().map_err(|_| anyhow!("n8n_update_target_docker_unavailable"))?;
-    let stdout = child.stdout.take().ok_or_else(|| anyhow!("n8n_update_target_docker_unavailable"))?;
-    let stderr = child.stderr.take().ok_or_else(|| anyhow!("n8n_update_target_docker_unavailable"))?;
+    command
+        .args(args)
+        .kill_on_drop(true)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null());
+    let mut child = command
+        .spawn()
+        .map_err(|_| anyhow!("n8n_update_target_docker_unavailable"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("n8n_update_target_docker_unavailable"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("n8n_update_target_docker_unavailable"))?;
     timeout(deadline, async {
-        let (outcome, stdout, stderr) = tokio::join!(child.wait(), read_capped(stdout), read_capped(stderr));
+        let (outcome, stdout, stderr) =
+            tokio::join!(child.wait(), read_capped(stdout), read_capped(stderr));
         let status = outcome.map_err(|_| anyhow!("n8n_update_target_docker_unavailable"))?;
         let stdout = stdout?;
         stderr?;
-        if !status.success() { return Err(anyhow!("n8n_update_target_docker_rejected")); }
+        if !status.success() {
+            return Err(anyhow!("n8n_update_target_docker_rejected"));
+        }
         Ok(stdout)
-    }).await.map_err(|_| anyhow!("n8n_update_target_docker_timeout"))?
+    })
+    .await
+    .map_err(|_| anyhow!("n8n_update_target_docker_timeout"))?
 }
 
 async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new(); let mut buffer = [0u8; 4096];
-    loop { let count = reader.read(&mut buffer).await.map_err(|_| anyhow!("n8n_update_target_docker_unavailable"))?; if count == 0 { return Ok(bytes); } if bytes.len().saturating_add(count) > MAX_COMMAND_BYTES { return Err(anyhow!("n8n_update_target_docker_output_too_large")); } bytes.extend_from_slice(&buffer[..count]); }
+    let mut bytes = Vec::new();
+    let mut buffer = [0u8; 4096];
+    loop {
+        let count = reader
+            .read(&mut buffer)
+            .await
+            .map_err(|_| anyhow!("n8n_update_target_docker_unavailable"))?;
+        if count == 0 {
+            return Ok(bytes);
+        }
+        if bytes.len().saturating_add(count) > MAX_COMMAND_BYTES {
+            return Err(anyhow!("n8n_update_target_docker_output_too_large"));
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+    }
 }
 
 #[cfg(test)]

@@ -1,0 +1,27 @@
+{
+  "schema": "neoth-gold-verification/v1",
+  "wave": "W1598",
+  "status": "authentic_hosted_format_import",
+  "run": 36312829512,
+  "producer": "3b267d83d9f843ff639f1ab0ab08e05a6972e1a2",
+  "artifact": 10929820860,
+  "zipSha256": "098263de803efec7403e35e5b6e5405c89de342d51c59ed7efeec098ac8ead4a",
+  "bindings": [
+    {
+      "after": "046252b8ca1b08c60b1d1270309d2333f672336c",
+      "before": "50333ead47de64f9cbd9f8ba0f1ab316c63cedf3",
+      "path": "SRC/neothd/src/cli/n8n.rs"
+    },
+    {
+      "after": "c16218ab89cde19d92fd32776c66f287612a0229",
+      "before": "2da18ff564cdc8d568dc3d57f07d19d26de74add",
+      "path": "SRC/neothd/src/integrations/n8n/managed_update_target.rs"
+    },
+    {
+      "after": "9268ac0730f3a953489ea82003233da0cad208cc",
+      "before": "dccb730989ba614bb35035a94da94a5e07216305",
+      "path": "SRC/neothd/src/integrations/n8n/managed_update_target_tests.rs"
+    }
+  ],
+  "localExecutableValidationRan": false
+}

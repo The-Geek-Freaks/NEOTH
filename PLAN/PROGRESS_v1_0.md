@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-27
 
+**W1597/W1598 Rollback Linux native acceptance and hosted target formatting (2026-09-27):**
+Group36311757940 at e639e712 executed all1924 selected regressions with no
+failures. Original three artifact ZIPs and10 producer inputs verify; this admits
+exactly the hosted Linux group, including W1585's retained-lifecycle correction.
+Windows36311759439 remains separate and pending. New target CLI/product/Core/
+Group1932/Windows697 run on3b267d83; no result is inferred from older gates.
+Authentic Preflight36312829512 artifact10929820860 supplies formatting for the
+three new/changed Rust sources. API/ZIP/internal checksums and all three raw
+pre/post blobs match; no local formatter or compiler ran. ROAD remains open.
+Evidence: gold-wave1597-retained-native-admission.json and
+ gold-wave1598-update-target-hosted-format.json under docs/verification.
 **W1591/W1592 Update target verification implemented; W1594 Core accepted (2026-09-27):**
 The CLI now exposes update-target verify with an explicit reviewed selector and
 Linux Docker platform. It binds the compiled W1587 catalog to raw index and

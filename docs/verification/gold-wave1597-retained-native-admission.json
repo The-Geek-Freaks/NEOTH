@@ -1,0 +1,22 @@
+{
+  "schema": "neoth-gold-verification/v1",
+  "wave": "W1597",
+  "status": "root_admitted_exact_linux_group_scope",
+  "producer_commit": "e639e712f1b8243fb68533ecd7a1508f0ec31a14",
+  "admitted_scope": "exact_hosted_linux_group_native_selection_only",
+  "group": {
+    "run": 36311757940,
+    "selected": 1924,
+    "executed": 1924,
+    "failed": 0,
+    "compiled": true,
+    "inputs_matched": 10,
+    "inputs_mismatches": 0
+  },
+  "windows": {
+    "run": 36311759439,
+    "status": "in_progress",
+    "not_included": true
+  },
+  "public_docs_published": true
+}
